@@ -1,0 +1,11 @@
+{
+  "name": "context-monorepo",
+  "private": true,
+  "packageManager": "pnpm@9.15.1",
+  "scripts": {
+    "test": "cargo test -q && pnpm -C apps/web test",
+    "test:e2e": "pnpm -C apps/web test:e2e",
+    "verify:quiet": "pnpm test"
+  }
+}
+

@@ -1,0 +1,44 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+.idea/
+*.swp
+*.swo
+
+# Rust
+target/
+**/target/
+**/*.rs.bk
+
+# Node / frontend builds
+node_modules/
+dist/
+**/dist/
+.vite/
+coverage/
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Playwright
+playwright-report/
+test-results/
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# Context temp/scratch directories (repo-scoped)
+**/.context/context-pack/tmp/
+**/.context/tmp/
+
+# Local databases (when using --data-dir inside the repo)
+*.sqlite
+*.sqlite3
+*.db
+*.db-journal
