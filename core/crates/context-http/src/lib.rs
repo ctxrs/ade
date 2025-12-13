@@ -1,6 +1,10 @@
 pub mod api;
 pub mod daemon;
+pub mod installs;
+pub mod installer;
+pub mod logs;
 pub mod scheduler;
+pub mod updates;
 
 #[cfg(test)]
 mod tests {
@@ -72,6 +76,7 @@ mod tests {
             store.clone(),
             providers,
             "http://127.0.0.1:4399".to_string(),
+            None,
         ));
         let app = api::router(state.clone());
 
@@ -180,6 +185,7 @@ mod tests {
             store.clone(),
             providers,
             "http://127.0.0.1:4399".to_string(),
+            None,
         ));
         {
             let mut statuses = HashMap::new();

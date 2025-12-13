@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use anyhow::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
@@ -65,6 +66,7 @@ pub struct ProviderStatus {
 pub struct TurnInput {
     pub content: String,
     pub attachments: Vec<MessageAttachment>,
+    pub context_blocks: Vec<Value>,
 }
 
 #[derive(Debug)]
@@ -87,6 +89,13 @@ pub trait ProviderAdapter: Send + Sync {
 
     async fn cancel(&self, handle: RunHandle) -> Result<()>;
 
+    /// Whether this adapter has an in-memory live provider session for the given key.
+    ///
+    /// Used to decide whether to apply one-time rehydrate strategies after daemon restart.
+    async fn has_live_session(&self, _session_key: &str) -> bool {
+        false
+    }
+
     /// Best-effort per-session model selection (only for providers that support it via ACP).
     async fn set_session_model(&self, _session_key: String, _model_id: String) -> Result<()> {
         anyhow::bail!("provider does not support session model selection");
@@ -95,5 +104,17 @@ pub trait ProviderAdapter: Send + Sync {
     /// Best-effort per-session mode selection (only for providers that support it via ACP).
     async fn set_session_mode(&self, _session_key: String, _mode_id: String) -> Result<()> {
         anyhow::bail!("provider does not support session mode selection");
+    }
+
+    /// Best-effort session authentication (ACP `authenticate`).
+    async fn authenticate_session(
+        &self,
+        _session_key: String,
+        _workdir: PathBuf,
+        _env: HashMap<String, String>,
+        _method_id: Option<String>,
+        _event_sink: tokio::sync::mpsc::Sender<NormalizedEvent>,
+    ) -> Result<()> {
+        anyhow::bail!("provider does not support authenticate");
     }
 }

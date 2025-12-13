@@ -39,6 +39,21 @@ impl Tier1AcpAdapter {
         }
     }
 
+    pub fn from_raw(id: &str, command: String, args: Vec<String>) -> Self {
+        Self::new(id, &command, args)
+    }
+
+    pub fn from_command(
+        id: &str,
+        command: impl AsRef<std::path::Path>,
+        script_path: impl AsRef<std::path::Path>,
+        extra_args: Vec<String>,
+    ) -> Self {
+        let mut args = vec![script_path.as_ref().to_string_lossy().to_string()];
+        args.extend(extra_args);
+        Self::new(id, &command.as_ref().to_string_lossy(), args)
+    }
+
     pub fn codex() -> Self {
         Self::new("codex", "codex-acp", vec![])
     }
@@ -55,15 +70,41 @@ impl Tier1AcpAdapter {
 #[async_trait]
 impl ProviderAdapter for Tier1AcpAdapter {
     async fn inspect(&self) -> Result<ProviderStatus> {
-        let detected_path = which::which(&self.command).ok();
-        let installed = detected_path.is_some();
+        let detected_path = {
+            let p = std::path::Path::new(&self.command);
+            if p.is_absolute() || self.command.contains(std::path::MAIN_SEPARATOR) {
+                if p.exists() {
+                    Some(p.to_path_buf())
+                } else {
+                    None
+                }
+            } else {
+                which::which(&self.command).ok()
+            }
+        };
+        let mut installed = detected_path.is_some();
 
         let mut diagnostics = Vec::new();
         if !installed {
             diagnostics.push(format!(
-                "ACP agent executable not found on PATH: {}",
+                "ACP agent executable not found: {}",
                 self.command
             ));
+        }
+
+        if installed {
+            // Managed installs commonly run `node <script> ...`; ensure the script exists.
+            if let Some(first) = self.args.first() {
+                let p = std::path::Path::new(first);
+                if (self.command.ends_with("/node") || self.command.ends_with("\\node")) && !p.exists()
+                {
+                    installed = false;
+                    diagnostics.push(format!(
+                        "ACP agent entrypoint missing: {}",
+                        p.to_string_lossy()
+                    ));
+                }
+            }
         }
 
         Ok(ProviderStatus {
@@ -95,48 +136,7 @@ impl ProviderAdapter for Tier1AcpAdapter {
     ) -> Result<RunHandle> {
         let (cancel_tx, cancel_rx) = oneshot::channel::<()>();
 
-        let mut mcp_env = HashMap::new();
-        if let Some(url) = env.get("CONTEXT_DAEMON_URL") {
-            mcp_env.insert("CONTEXT_DAEMON_URL".to_string(), url.clone());
-        }
-        if let Some(token) = env.get("CONTEXT_MCP_TOKEN") {
-            mcp_env.insert("CONTEXT_MCP_TOKEN".to_string(), token.clone());
-        }
-        if let Some(session_id) = env.get("CONTEXT_SESSION_ID") {
-            mcp_env.insert("CONTEXT_SESSION_ID".to_string(), session_id.clone());
-        }
-
-        let mcp_command = env
-            .get("CONTEXT_MCP_COMMAND")
-            .cloned()
-            .unwrap_or_else(|| "context-mcp".to_string());
-
-        let mcp_enabled = env
-            .get("CONTEXT_MCP_DISABLED")
-            .map(|v| v != "1" && v.to_lowercase() != "true")
-            .unwrap_or(true);
-
-        let mcp_servers = if mcp_enabled {
-            vec![AcpMcpServer {
-                name: "context".to_string(),
-                command: mcp_command,
-                args: vec!["--stdio".to_string()],
-                env: mcp_env,
-            }]
-        } else {
-            vec![]
-        };
-
-        let client = AcpClientConfig {
-            client_name: "context".to_string(),
-            client_title: "Context".to_string(),
-            client_version: env!("CARGO_PKG_VERSION").to_string(),
-            client_capabilities: json!({
-                "fs": {"readTextFile": false, "writeTextFile": false},
-                "terminal": false
-            }),
-            mcp_servers,
-        };
+        let client = build_acp_client_config(&env);
 
         let session_key = env
             .get("CONTEXT_SESSION_ID")
@@ -147,6 +147,10 @@ impl ProviderAdapter for Tier1AcpAdapter {
         let pool = Arc::clone(&self.pool);
         let join = tokio::spawn(async move {
             let mut prompt: Vec<serde_json::Value> = Vec::new();
+
+            if !input.context_blocks.is_empty() {
+                prompt.extend(input.context_blocks);
+            }
 
             for att in input.attachments.iter() {
                 match att {
@@ -213,6 +217,72 @@ impl ProviderAdapter for Tier1AcpAdapter {
 
     async fn set_session_mode(&self, session_key: String, mode_id: String) -> Result<()> {
         self.pool.set_mode(session_key, mode_id).await
+    }
+
+    async fn authenticate_session(
+        &self,
+        session_key: String,
+        workdir: PathBuf,
+        env: HashMap<String, String>,
+        method_id: Option<String>,
+        event_sink: mpsc::Sender<NormalizedEvent>,
+    ) -> Result<()> {
+        let client = build_acp_client_config(&env);
+        self.pool
+            .authenticate(session_key, client, workdir, env, method_id, event_sink)
+            .await
+    }
+
+    async fn has_live_session(&self, session_key: &str) -> bool {
+        self.pool.has_session(session_key).await
+    }
+}
+
+fn build_acp_client_config(env: &HashMap<String, String>) -> AcpClientConfig {
+    let mut mcp_env = HashMap::new();
+    if let Some(url) = env.get("CONTEXT_DAEMON_URL") {
+        mcp_env.insert("CONTEXT_DAEMON_URL".to_string(), url.clone());
+    }
+    if let Some(token) = env.get("CONTEXT_AUTH_TOKEN") {
+        mcp_env.insert("CONTEXT_AUTH_TOKEN".to_string(), token.clone());
+    }
+    if let Some(token) = env.get("CONTEXT_MCP_TOKEN") {
+        mcp_env.insert("CONTEXT_MCP_TOKEN".to_string(), token.clone());
+    }
+    if let Some(session_id) = env.get("CONTEXT_SESSION_ID") {
+        mcp_env.insert("CONTEXT_SESSION_ID".to_string(), session_id.clone());
+    }
+
+    let mcp_command = env
+        .get("CONTEXT_MCP_COMMAND")
+        .cloned()
+        .unwrap_or_else(|| "context-mcp".to_string());
+
+    let mcp_enabled = env
+        .get("CONTEXT_MCP_DISABLED")
+        .map(|v| v != "1" && v.to_lowercase() != "true")
+        .unwrap_or(true);
+
+    let mcp_servers = if mcp_enabled {
+        vec![AcpMcpServer {
+            name: "context".to_string(),
+            command: mcp_command,
+            args: vec!["--stdio".to_string()],
+            env: mcp_env,
+        }]
+    } else {
+        vec![]
+    };
+
+    AcpClientConfig {
+        client_name: "context".to_string(),
+        client_title: "Context".to_string(),
+        client_version: env!("CARGO_PKG_VERSION").to_string(),
+        client_capabilities: json!({
+            "fs": {"readTextFile": false, "writeTextFile": false},
+            "terminal": false
+        }),
+        mcp_servers,
     }
 }
 

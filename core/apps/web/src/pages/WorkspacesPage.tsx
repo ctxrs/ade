@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { createWorkspace, listWorkspaces, Workspace } from "../api/client";
+import { createWorkspace, listProviders, listWorkspaces, ProviderStatus, Workspace } from "../api/client";
 
 export default function WorkspacesPage() {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
+  const [providers, setProviders] = useState<ProviderStatus[]>([]);
   const [rootPath, setRootPath] = useState("");
   const [name, setName] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -15,6 +16,7 @@ export default function WorkspacesPage() {
 
   useEffect(() => {
     refresh();
+    listProviders().then(setProviders).catch(() => {});
   }, []);
 
   const onCreate = async (e: React.FormEvent) => {
@@ -32,7 +34,16 @@ export default function WorkspacesPage() {
 
   return (
     <div className="page">
-      <h1>Workspaces</h1>
+      <div className="row">
+        <h1 style={{ marginRight: "auto" }}>Workspaces</h1>
+        <Link to="/providers">Providers</Link>
+      </div>
+
+      {providers.some((p) => !p.installed) && (
+        <div className="banner">
+          Some providers are not installed. <Link to="/providers">Install providers</Link>.
+        </div>
+      )}
 
       <form onSubmit={onCreate} className="card">
         <label>
@@ -62,4 +73,3 @@ export default function WorkspacesPage() {
     </div>
   );
 }
-

@@ -478,6 +478,25 @@ impl Store {
         Ok(())
     }
 
+    pub async fn update_session_provider_session_ref(
+        &self,
+        id: SessionId,
+        provider_session_ref: Option<String>,
+    ) -> Result<()> {
+        let now = Utc::now().to_rfc3339();
+        sqlx::query(
+            r#"UPDATE sessions
+               SET provider_session_ref = ?, updated_at = ?
+               WHERE id = ?"#,
+        )
+        .bind(provider_session_ref)
+        .bind(now)
+        .bind(id.0.to_string())
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
     pub async fn list_sessions_for_track(&self, track_id: TrackId) -> Result<Vec<Session>> {
         let rows = sqlx::query(
             r#"SELECT id, track_id, task_id, workspace_id, worktree_id, provider_id, model_id, agent_role,
@@ -893,6 +912,8 @@ fn session_event_type_to_str(event_type: &SessionEventType) -> &'static str {
         SessionEventType::Init => "init",
         SessionEventType::UserMessage => "user_message",
         SessionEventType::InputQueued => "input_queued",
+        SessionEventType::AuthRequired => "auth_required",
+        SessionEventType::Notice => "notice",
         SessionEventType::AssistantChunk => "assistant_chunk",
         SessionEventType::ThoughtChunk => "thought_chunk",
         SessionEventType::AssistantComplete => "assistant_complete",
@@ -912,6 +933,8 @@ fn parse_session_event_type(value: &str) -> SessionEventType {
         "init" => SessionEventType::Init,
         "user_message" => SessionEventType::UserMessage,
         "input_queued" => SessionEventType::InputQueued,
+        "auth_required" => SessionEventType::AuthRequired,
+        "notice" => SessionEventType::Notice,
         "assistant_chunk" => SessionEventType::AssistantChunk,
         "thought_chunk" => SessionEventType::ThoughtChunk,
         "assistant_complete" => SessionEventType::AssistantComplete,

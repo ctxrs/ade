@@ -8,6 +8,7 @@ members = [
   "crates/context-mcp",
   "crates/context-http",
 ]
+exclude = ["apps/desktop/src-tauri"]
 resolver = "2"
 
 [workspace.package]

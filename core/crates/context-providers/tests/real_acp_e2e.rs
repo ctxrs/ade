@@ -45,6 +45,7 @@ async fn run_and_collect(adapter: &dyn ProviderAdapter, workdir: &Path, prompt: 
             TurnInput {
                 content: prompt.to_string(),
                 attachments: vec![],
+                context_blocks: vec![],
             },
             workdir.to_path_buf(),
             HashMap::new(),

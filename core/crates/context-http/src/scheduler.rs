@@ -142,9 +142,12 @@ async fn start_turn(
     workdir: &PathBuf,
     message: Message,
 ) -> Result<RunningTurn> {
-    let adapter = match state.providers.get(&session.provider_id) {
-        Some(a) => a.clone(),
-        None => state.providers.get("fake").expect("fake provider").clone(),
+    let adapter = {
+        let map = state.providers.lock().await;
+        map.get(&session.provider_id)
+            .cloned()
+            .or_else(|| map.get("fake").cloned())
+            .expect("fake provider")
     };
 
     let mut message = message;
@@ -165,6 +168,12 @@ async fn start_turn(
 
     let mut provider_env = std::collections::HashMap::new();
     provider_env.insert("CONTEXT_DAEMON_URL".to_string(), state.daemon_url.clone());
+    if let Some(token) = state.auth_token.clone() {
+        provider_env.insert("CONTEXT_AUTH_TOKEN".to_string(), token);
+    }
+    if let Some(provider_ref) = session.provider_session_ref.clone() {
+        provider_env.insert("CONTEXT_PROVIDER_SESSION_REF".to_string(), provider_ref);
+    }
     provider_env.insert(
         "CONTEXT_SESSION_ID".to_string(),
         session.id.0.to_string(),
@@ -179,11 +188,35 @@ async fn start_turn(
     if let Ok(v) = std::env::var("CONTEXT_MCP_DISABLED") {
         provider_env.insert("CONTEXT_MCP_DISABLED".to_string(), v);
     }
+
+    let session_key = session.id.0.to_string();
+    let needs_rehydrate = session.provider_session_ref.is_some()
+        && !adapter.has_live_session(&session_key).await;
+    let mut context_blocks: Vec<serde_json::Value> = Vec::new();
+    if needs_rehydrate {
+        if let Ok(block) = build_rehydrate_transcript_block(&state.store, session.id).await {
+            context_blocks.push(block);
+            let _ = emit_event(
+                state,
+                session.id,
+                Some(run_id),
+                Some(turn_id),
+                SessionEventType::Notice,
+                json!({
+                    "kind": "rehydrate",
+                    "message": "Daemon restarted; providing transcript to rehydrate provider context.",
+                }),
+            )
+            .await;
+        }
+    }
+
     let handle = adapter
         .run(
             TurnInput {
                 content: prompt,
                 attachments: message.attachments.clone(),
+                context_blocks,
             },
             workdir.clone(),
             provider_env,
@@ -200,6 +233,16 @@ async fn start_turn(
     tokio::spawn(async move {
         while let Some(ev) = ev_rx.recv().await {
             let mut payload = ev.payload_json.clone();
+            if matches!(ev.event_type, SessionEventType::Init) {
+                if let Some(ps) = payload.get("acp_session_id").and_then(Value::as_str) {
+                    let _ = store
+                        .update_session_provider_session_ref(
+                            session_id,
+                            Some(ps.to_string()),
+                        )
+                        .await;
+                }
+            }
             if matches!(ev.event_type, SessionEventType::Done) {
                 if let (Some(metrics), Some(obj)) =
                     (context_window_metrics.clone(), payload.as_object_mut())
@@ -255,6 +298,52 @@ async fn start_turn(
         run_id,
         turn_id,
     })
+}
+
+async fn build_rehydrate_transcript_block(
+    store: &context_store::Store,
+    session_id: context_core::ids::SessionId,
+) -> Result<serde_json::Value> {
+    let msgs = store.list_messages_for_session(session_id).await?;
+    if msgs.is_empty() {
+        anyhow::bail!("no messages to rehydrate");
+    }
+
+    const MAX_MESSAGES: usize = 24;
+    const MAX_CHARS_PER_MESSAGE: usize = 4000;
+    let tail: Vec<_> = msgs
+        .into_iter()
+        .rev()
+        .take(MAX_MESSAGES)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+
+    let mut text = String::new();
+    text.push_str("Session transcript (for continuity after Context daemon restart):\n\n");
+    for m in tail {
+        let role = match m.role {
+            MessageRole::User => "user",
+            MessageRole::Assistant => "assistant",
+            MessageRole::System => "system",
+        };
+        let mut content = m.content;
+        if content.chars().count() > MAX_CHARS_PER_MESSAGE {
+            content = content.chars().take(MAX_CHARS_PER_MESSAGE).collect::<String>();
+            content.push_str("\n…(truncated)");
+        }
+        text.push_str(&format!("[{}] {role}:\n{content}\n\n", m.created_at.to_rfc3339()));
+    }
+
+    Ok(json!({
+        "type": "resource",
+        "resource": {
+            "uri": format!("context://session/{}/transcript", session_id.0),
+            "mimeType": "text/plain",
+            "text": text
+        }
+    }))
 }
 
 async fn emit_event(

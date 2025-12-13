@@ -1,0 +1,6 @@
+/target/
+/Cargo.lock
+/bin/context*
+/bin/context-mcp*
+/web/dist/
+

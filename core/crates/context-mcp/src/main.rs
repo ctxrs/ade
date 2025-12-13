@@ -138,7 +138,14 @@ async fn main() -> Result<()> {
 
 async fn list_workspaces(daemon_url: &str) -> Result<Value> {
     let url = format!("{}/api/workspaces", daemon_url.trim_end_matches('/'));
-    let res = reqwest::get(url).await?.error_for_status()?;
+    let mut req = reqwest::Client::new().get(url);
+    if let Ok(token) = std::env::var("CONTEXT_DESKTOP_TOKEN")
+        .or_else(|_| std::env::var("CONTEXT_DAEMON_TOKEN"))
+        .or_else(|_| std::env::var("CONTEXT_AUTH_TOKEN"))
+    {
+        req = req.bearer_auth(token);
+    }
+    let res = req.send().await?.error_for_status()?;
     Ok(res.json::<Value>().await?)
 }
 
@@ -161,4 +168,3 @@ fn error(id: Value, code: i64, message: &str, data: Option<Value>) -> Value {
         }
     })
 }
-

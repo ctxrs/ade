@@ -7,6 +7,11 @@
     "test:e2e": "pnpm -C apps/web test:e2e",
     "test:providers:e2e": "cargo test -p context-providers --test real_acp_e2e -- --ignored --nocapture --test-threads=1",
     "test:providers:e2e:runner": "cargo test -p context-http --test provider_runner_acp_e2e -- --ignored --nocapture --test-threads=1",
+    "desktop:prep": "node scripts/desktop_check_versions.cjs && cargo build -p context-http -p context-mcp && pnpm -C apps/web build && node scripts/desktop_sync_resources.cjs --profile debug",
+    "desktop:prep:release": "node scripts/desktop_check_versions.cjs && cargo build -p context-http -p context-mcp --release && pnpm -C apps/web build && node scripts/desktop_sync_resources.cjs --profile release",
+    "desktop:build": "pnpm desktop:prep:release && pnpm -C apps/desktop build",
+    "desktop:build:debug": "pnpm desktop:prep && pnpm -C apps/desktop build -- --debug",
+    "desktop:build:release": "pnpm desktop:build",
     "verify:quiet": "pnpm test"
   }
 }

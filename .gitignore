@@ -37,6 +37,9 @@ test-results/
 **/.context/context-pack/tmp/
 **/.context/tmp/
 
+# Local git worktrees (agent/dev tooling)
+.worktrees/
+
 # Local databases (when using --data-dir inside the repo)
 *.sqlite
 *.sqlite3

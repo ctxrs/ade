@@ -16,6 +16,7 @@ import {
   SessionEvent,
   setSessionMode,
   setSessionModel,
+  authenticateSession,
   trackDiff,
   idToString,
   interruptSession,
@@ -67,6 +68,9 @@ export default function SessionPage() {
   const [atBottom, setAtBottom] = useState(true);
   const [hasNewActivity, setHasNewActivity] = useState(false);
   const [interruptBanner, setInterruptBanner] = useState<string | null>(null);
+  const [authMethodId, setAuthMethodId] = useState<string>("");
+  const [authBusy, setAuthBusy] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
@@ -99,8 +103,16 @@ export default function SessionPage() {
 
   useEffect(() => {
     if (!id) return;
+    const token = (() => {
+      try {
+        return sessionStorage.getItem("contextAuthToken");
+      } catch {
+        return null;
+      }
+    })();
+    const qs = token ? `?token=${encodeURIComponent(token)}` : "";
     const ws = new WebSocket(
-      `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/api/sessions/${id}/stream`,
+      `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/api/sessions/${id}/stream${qs}`,
     );
     ws.onmessage = (ev) => {
       try {
@@ -139,6 +151,15 @@ export default function SessionPage() {
     const entries = update?.entries ?? [];
     return Array.isArray(entries) ? (entries as any[]) : [];
   }, [events]);
+
+  const authUi = useMemo(() => deriveAuthUi(events), [events]);
+
+  useEffect(() => {
+    if (authMethodId) return;
+    if (authUi.methods.length > 0) {
+      setAuthMethodId(authUi.methods[0].id);
+    }
+  }, [authUi.methods, authMethodId]);
 
   const acpSessionInfo = useMemo(() => {
     return [...events]
@@ -341,6 +362,67 @@ export default function SessionPage() {
         )}
 
         {interruptBanner && <div className="banner">{interruptBanner}</div>}
+
+        {(authUi.status === "required" || authUi.status === "failed") && (
+          <div className="banner">
+            <div className="row" style={{ justifyContent: "space-between" }}>
+              <strong>Authentication required</strong>
+              <span className="muted">{authUi.provider ?? session?.provider_id}</span>
+            </div>
+            <div className="muted">
+              {authUi.message ??
+                "This provider requires authentication before it can run."}
+            </div>
+            {authUi.methods.length > 0 ? (
+              <div className="row" style={{ flexWrap: "wrap" }}>
+                {authUi.methods.length > 1 && (
+                  <label>
+                    Method
+                    <select
+                      value={authMethodId}
+                      onChange={(e) => setAuthMethodId(e.target.value)}
+                    >
+                      {authUi.methods.map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+                <button
+                  type="button"
+                  disabled={authBusy || !id || !authMethodId}
+                  onClick={async () => {
+                    if (!id) return;
+                    setAuthBusy(true);
+                    setAuthError(null);
+                    try {
+                      await authenticateSession(id, authMethodId);
+                      await refreshAll();
+                    } catch (e: any) {
+                      setAuthError(e?.message ?? String(e));
+                    } finally {
+                      setAuthBusy(false);
+                    }
+                  }}
+                >
+                  {authBusy ? "Authenticating…" : "Authenticate"}
+                </button>
+              </div>
+            ) : (
+              <div className="muted">
+                No authentication methods were advertised by the provider.
+              </div>
+            )}
+            {(authError || authUi.status === "failed") && (
+              <div className="muted">
+                {authError ??
+                  "Authentication attempt failed. Check provider logs and try again."}
+              </div>
+            )}
+          </div>
+        )}
 
         {planEntries.length > 0 && <PlanPanel entries={planEntries} />}
 
@@ -896,6 +978,16 @@ function buildThreadItems(events: SessionEvent[]): ThreadItem[] {
         });
         break;
       }
+      case "notice": {
+        items.push({
+          kind: "meta",
+          id,
+          created_at: ev.created_at,
+          title: "Notice",
+          payload_json: ev.payload_json,
+        });
+        break;
+      }
       case "error": {
         items.push({
           kind: "meta",
@@ -912,6 +1004,76 @@ function buildThreadItems(events: SessionEvent[]): ThreadItem[] {
   }
 
   return items;
+}
+
+type AuthMethodOption = { id: string; name: string };
+
+type AuthUi = {
+  status: "unknown" | "required" | "failed" | "authenticated";
+  provider?: string;
+  message?: string;
+  methods: AuthMethodOption[];
+};
+
+function deriveAuthUi(events: SessionEvent[]): AuthUi {
+  const fromMethodsValue = (value: any): AuthMethodOption[] => {
+    const list = Array.isArray(value) ? value : [];
+    return list
+      .map((m: any) => ({
+        id: m?.methodId ?? m?.method_id ?? m?.id,
+        name: m?.name ?? m?.label ?? (m?.methodId ?? m?.method_id ?? m?.id),
+      }))
+      .filter((m: any) => typeof m.id === "string" && m.id.length > 0)
+      .map((m: any) => ({ id: String(m.id), name: String(m.name ?? m.id) }));
+  };
+
+  let status: AuthUi["status"] = "unknown";
+  let provider: string | undefined;
+  let message: string | undefined;
+  let methods: AuthMethodOption[] = [];
+
+  const lastInit = [...events].reverse().find((e) => e.event_type === "init");
+  const initMethods =
+    lastInit?.payload_json?.auth_methods ??
+    lastInit?.payload_json?.authMethods ??
+    lastInit?.payload_json?.auth_methods;
+  const initMethodOptions = fromMethodsValue(initMethods);
+
+  for (const ev of events) {
+    if (ev.event_type === "auth_required") {
+      status = "required";
+      provider = ev.payload_json?.provider;
+      message = ev.payload_json?.message;
+      methods = fromMethodsValue(ev.payload_json?.auth_methods ?? ev.payload_json?.authMethods);
+      continue;
+    }
+
+    if (ev.event_type !== "notice") continue;
+    const kind = ev.payload_json?.kind;
+    if (kind === "auth_required") {
+      status = "required";
+      provider = ev.payload_json?.provider;
+      message = ev.payload_json?.message;
+      methods = fromMethodsValue(ev.payload_json?.auth_methods ?? ev.payload_json?.authMethods);
+    }
+    if (kind === "auth_failed") {
+      status = "failed";
+      provider = ev.payload_json?.provider;
+      message = ev.payload_json?.message;
+    }
+    if (kind === "auth_finished") {
+      status = "authenticated";
+      provider = ev.payload_json?.provider;
+      message = undefined;
+      methods = [];
+    }
+  }
+
+  if ((status === "required" || status === "failed") && methods.length === 0) {
+    methods = initMethodOptions;
+  }
+
+  return { status, provider, message, methods };
 }
 
 function readFileAsDataUrl(file: File): Promise<string> {

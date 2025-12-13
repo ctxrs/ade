@@ -114,6 +114,10 @@ impl AcpSessionPool {
         }
     }
 
+    pub async fn has_session(&self, session_key: &str) -> bool {
+        self.sessions.lock().await.contains_key(session_key)
+    }
+
     pub async fn set_model(&self, session_key: String, model_id: String) -> Result<()> {
         let handle = {
             let map = self.sessions.lock().await;
@@ -138,6 +142,35 @@ impl AcpSessionPool {
         session.set_mode(mode_id, tx).await
     }
 
+    pub async fn authenticate(
+        &self,
+        session_key: String,
+        client: AcpClientConfig,
+        workdir: PathBuf,
+        env: HashMap<String, String>,
+        method_id: Option<String>,
+        event_sink: mpsc::Sender<NormalizedEvent>,
+    ) -> Result<()> {
+        let handle = self
+            .get_or_create(session_key.clone(), client, workdir, env, event_sink.clone())
+            .await?;
+
+        {
+            let mut last_used = handle.last_used.lock().await;
+            *last_used = std::time::Instant::now();
+        }
+
+        let mut session = handle.session.lock().await;
+        let method_id = if let Some(method_id) = method_id {
+            method_id
+        } else {
+            session
+                .default_auth_method_id()
+                .context("no auth method id provided and no authMethods advertised")?
+        };
+        session.authenticate(method_id, event_sink).await
+    }
+
     async fn get_or_create(
         &self,
         session_key: String,
@@ -153,7 +186,15 @@ impl AcpSessionPool {
             }
         }
 
-        let session = AcpSession::spawn(self.agent.clone(), client, workdir, env, event_sink)
+        let resume_session_id = env.get("CONTEXT_PROVIDER_SESSION_REF").cloned();
+        let session = AcpSession::spawn(
+            self.agent.clone(),
+            client,
+            workdir,
+            env,
+            event_sink,
+            resume_session_id,
+        )
             .await
             .context("creating ACP session")?;
 
@@ -208,6 +249,11 @@ struct AcpSession {
     next_id: u64,
     pending: HashMap<u64, oneshot::Sender<serde_json::Value>>,
     acp_session_id: String,
+    supports_load: bool,
+    resume_session_id: Option<String>,
+    cwd: String,
+    mcp_servers: Vec<serde_json::Value>,
+    auth_methods: Option<serde_json::Value>,
     stderr_lines: Vec<String>,
     stdout_non_json: Vec<String>,
 }
@@ -219,6 +265,7 @@ impl AcpSession {
         workdir: PathBuf,
         env: HashMap<String, String>,
         event_sink: mpsc::Sender<NormalizedEvent>,
+        resume_session_id: Option<String>,
     ) -> Result<Self> {
         let mut cmd = Command::new(&agent.command);
         cmd.args(&agent.args);
@@ -266,18 +313,26 @@ impl AcpSession {
             next_id: 1,
             pending: HashMap::new(),
             acp_session_id: String::new(),
+            supports_load: false,
+            resume_session_id: None,
+            cwd: String::new(),
+            mcp_servers: Vec::new(),
+            auth_methods: None,
             stderr_lines: Vec::new(),
             stdout_non_json: Vec::new(),
         };
 
-        session.initialize_and_new_session(client, event_sink).await?;
+        session
+            .initialize_and_prepare_session(client, event_sink, resume_session_id)
+            .await?;
         Ok(session)
     }
 
-    async fn initialize_and_new_session(
+    async fn initialize_and_prepare_session(
         &mut self,
         client: AcpClientConfig,
         event_sink: mpsc::Sender<NormalizedEvent>,
+        resume_session_id: Option<String>,
     ) -> Result<()> {
         // initialize
         let (init_rx, init_line, _init_id) = make_request(
@@ -298,14 +353,19 @@ impl AcpSession {
             .send(init_line)
             .map_err(|_| anyhow::anyhow!("ACP writer task unavailable"))?;
         let init_resp = self
-            .drive_until_response(init_rx, None, event_sink.clone(), None)
+            .drive_until_response(init_rx, None, event_sink.clone(), None, false)
             .await
             .context("waiting for initialize response")?;
         if let Some(err) = init_resp.get("error") {
             anyhow::bail!("ACP initialize error: {err}");
         }
 
-        // session/new
+        let auth_methods = init_resp
+            .get("result")
+            .and_then(|v| v.get("authMethods").or_else(|| v.get("auth_methods")))
+            .cloned();
+        self.auth_methods = auth_methods.clone();
+
         let cwd = self
             .workdir
             .canonicalize()
@@ -325,33 +385,148 @@ impl AcpSession {
             })
             .collect::<Vec<_>>();
 
-        let (new_rx, new_line, _new_id) = make_request(
-            &mut self.next_id,
-            &mut self.pending,
-            "session/new",
-            json!({"cwd": cwd, "mcpServers": mcp_servers}),
-        )?;
-        self.write_tx
-            .send(new_line)
-            .map_err(|_| anyhow::anyhow!("ACP writer task unavailable"))?;
-        let new_resp = self
-            .drive_until_response(new_rx, None, event_sink.clone(), None)
-            .await
-            .context("waiting for session/new response")?;
-        if let Some(err) = new_resp.get("error") {
-            anyhow::bail!("ACP session/new error: {err}");
-        }
-        let session_id = new_resp
-            .get("result")
-            .and_then(|v| v.get("sessionId"))
-            .and_then(|v| v.as_str())
-            .context("missing sessionId in session/new response")?
-            .to_string();
-        self.acp_session_id = session_id.clone();
+        self.cwd = cwd.clone();
+        self.mcp_servers = mcp_servers.clone();
+        self.resume_session_id = resume_session_id.clone();
 
-        // The NewSessionResponse may contain optional `modes` and `models` (Zed-style adapters).
-        let modes = new_resp.get("result").and_then(|v| v.get("modes")).cloned();
-        let models = new_resp.get("result").and_then(|v| v.get("models")).cloned();
+        let supports_load = init_resp
+            .get("result")
+            .and_then(|v| v.get("capabilities").or_else(|| v.get("agentCapabilities")))
+            .and_then(|v| v.get("loadSession"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        self.supports_load = supports_load;
+
+        let _ = event_sink
+            .send(NormalizedEvent {
+                event_type: SessionEventType::Init,
+                payload_json: json!({
+                    "provider": self.agent.provider_id,
+                    "auth_methods": auth_methods.clone(),
+                    "authMethods": auth_methods,
+                    "supports_load": supports_load,
+                }),
+            })
+            .await;
+
+        let mut resumed = false;
+        let mut session_id: Option<String> = None;
+        let mut modes: Option<serde_json::Value> = None;
+        let mut models: Option<serde_json::Value> = None;
+
+        if let Some(resume_id) = resume_session_id.clone() {
+            if supports_load {
+                let (load_rx, load_line, _load_id) = make_request(
+                    &mut self.next_id,
+                    &mut self.pending,
+                    "session/load",
+                    json!({"sessionId": resume_id, "cwd": cwd, "mcpServers": mcp_servers}),
+                )?;
+                self.write_tx
+                    .send(load_line)
+                    .map_err(|_| anyhow::anyhow!("ACP writer task unavailable"))?;
+                let load_resp = self
+                    .drive_until_response(load_rx, None, event_sink.clone(), None, false)
+                    .await
+                    .context("waiting for session/load response")?;
+                if load_resp.get("error").is_none() {
+                    resumed = true;
+                    session_id = Some(resume_id);
+                    modes = load_resp.get("result").and_then(|v| v.get("modes")).cloned();
+                    models = load_resp.get("result").and_then(|v| v.get("models")).cloned();
+                } else {
+                    if let Some(err) = load_resp.get("error") {
+                        if is_auth_required_error(err) {
+                            let _ = event_sink
+                                .send(NormalizedEvent {
+                                    event_type: SessionEventType::AuthRequired,
+                                    payload_json: json!({
+                                        "kind": "auth_required",
+                                        "provider": self.agent.provider_id,
+                                        "message": "Provider requires authentication before loading a session.",
+                                        "auth_methods": self.auth_methods.clone(),
+                                        "authMethods": self.auth_methods,
+                                        "acp_error": err,
+                                    }),
+                                })
+                                .await;
+                            return Ok(());
+                        }
+                    }
+                    // Fall back to creating a new session if load fails.
+                    let _ = event_sink
+                        .send(NormalizedEvent {
+                            event_type: SessionEventType::Error,
+                            payload_json: json!({
+                                "provider": self.agent.provider_id,
+                                "message": "session/load failed; starting a new provider session",
+                                "acp_error": load_resp.get("error"),
+                            }),
+                        })
+                        .await;
+                }
+            } else {
+                let _ = event_sink
+                    .send(NormalizedEvent {
+                        event_type: SessionEventType::Init,
+                        payload_json: json!({
+                            "provider": self.agent.provider_id,
+                            "notice": "provider does not support session/load; will rehydrate as needed",
+                            "previous_provider_session_ref": resume_id,
+                        }),
+                    })
+                    .await;
+            }
+        }
+
+        if session_id.is_none() {
+            // session/new
+            let (new_rx, new_line, _new_id) = make_request(
+                &mut self.next_id,
+                &mut self.pending,
+                "session/new",
+                json!({"cwd": cwd, "mcpServers": mcp_servers}),
+            )?;
+            self.write_tx
+                .send(new_line)
+                .map_err(|_| anyhow::anyhow!("ACP writer task unavailable"))?;
+            let new_resp = self
+                .drive_until_response(new_rx, None, event_sink.clone(), None, false)
+                .await
+                .context("waiting for session/new response")?;
+            if let Some(err) = new_resp.get("error") {
+                if is_auth_required_error(err) {
+                    let _ = event_sink
+                        .send(NormalizedEvent {
+                            event_type: SessionEventType::AuthRequired,
+                            payload_json: json!({
+                                "kind": "auth_required",
+                                "provider": self.agent.provider_id,
+                                "message": "Provider requires authentication before starting a session.",
+                                "auth_methods": self.auth_methods.clone(),
+                                "authMethods": self.auth_methods,
+                                "acp_error": err,
+                            }),
+                        })
+                        .await;
+                    return Ok(());
+                }
+                anyhow::bail!("ACP session/new error: {err}");
+            }
+            let id = new_resp
+                .get("result")
+                .and_then(|v| v.get("sessionId"))
+                .and_then(|v| v.as_str())
+                .context("missing sessionId in session/new response")?
+                .to_string();
+            session_id = Some(id.clone());
+            modes = new_resp.get("result").and_then(|v| v.get("modes")).cloned();
+            models = new_resp.get("result").and_then(|v| v.get("models")).cloned();
+        }
+
+        let session_id = session_id.context("missing ACP sessionId")?;
+        self.acp_session_id = session_id.clone();
 
         let _ = event_sink
             .send(NormalizedEvent {
@@ -359,8 +534,145 @@ impl AcpSession {
                 payload_json: json!({
                     "provider": self.agent.provider_id,
                     "acp_session_id": session_id,
+                    "resumed": resumed,
+                    "supports_load": supports_load,
                     "modes": modes,
                     "models": models,
+                    "auth_methods": self.auth_methods.clone(),
+                    "authMethods": self.auth_methods,
+                }),
+            })
+            .await;
+
+        Ok(())
+    }
+
+    fn default_auth_method_id(&self) -> Option<String> {
+        let Some(methods) = self.auth_methods.as_ref() else {
+            return None;
+        };
+        let list = methods.as_array()?;
+        for m in list {
+            if let Some(id) = m
+                .get("methodId")
+                .or_else(|| m.get("method_id"))
+                .or_else(|| m.get("id"))
+                .and_then(|v| v.as_str())
+            {
+                if !id.trim().is_empty() {
+                    return Some(id.to_string());
+                }
+            }
+        }
+        None
+    }
+
+    async fn authenticate(
+        &mut self,
+        method_id: String,
+        event_sink: mpsc::Sender<NormalizedEvent>,
+    ) -> Result<()> {
+        let (rx, line, _id) = make_request(
+            &mut self.next_id,
+            &mut self.pending,
+            "authenticate",
+            json!({"methodId": method_id}),
+        )?;
+        self.write_tx
+            .send(line)
+            .map_err(|_| anyhow::anyhow!("ACP writer task unavailable"))?;
+        let resp = self
+            .drive_until_response(rx, None, event_sink.clone(), None, false)
+            .await
+            .context("waiting for authenticate response")?;
+
+        if let Some(err) = resp.get("error") {
+            anyhow::bail!("ACP authenticate error: {err}");
+        }
+
+        if !self.acp_session_id.is_empty() {
+            return Ok(());
+        }
+
+        // Authentication succeeded; try to load or create a session.
+        self.prepare_session_after_auth(event_sink).await
+    }
+
+    async fn prepare_session_after_auth(
+        &mut self,
+        event_sink: mpsc::Sender<NormalizedEvent>,
+    ) -> Result<()> {
+        let mut resumed = false;
+        let mut session_id: Option<String> = None;
+        let mut modes: Option<serde_json::Value> = None;
+        let mut models: Option<serde_json::Value> = None;
+
+        if let Some(resume_id) = self.resume_session_id.clone() {
+            if self.supports_load {
+                let (load_rx, load_line, _load_id) = make_request(
+                    &mut self.next_id,
+                    &mut self.pending,
+                    "session/load",
+                    json!({"sessionId": resume_id, "cwd": self.cwd.clone(), "mcpServers": self.mcp_servers.clone()}),
+                )?;
+                self.write_tx
+                    .send(load_line)
+                    .map_err(|_| anyhow::anyhow!("ACP writer task unavailable"))?;
+                let load_resp = self
+                    .drive_until_response(load_rx, None, event_sink.clone(), None, false)
+                    .await
+                    .context("waiting for session/load response")?;
+                if load_resp.get("error").is_none() {
+                    resumed = true;
+                    session_id = Some(resume_id);
+                    modes = load_resp.get("result").and_then(|v| v.get("modes")).cloned();
+                    models = load_resp.get("result").and_then(|v| v.get("models")).cloned();
+                }
+            }
+        }
+
+        if session_id.is_none() {
+            let (new_rx, new_line, _new_id) = make_request(
+                &mut self.next_id,
+                &mut self.pending,
+                "session/new",
+                json!({"cwd": self.cwd.clone(), "mcpServers": self.mcp_servers.clone()}),
+            )?;
+            self.write_tx
+                .send(new_line)
+                .map_err(|_| anyhow::anyhow!("ACP writer task unavailable"))?;
+            let new_resp = self
+                .drive_until_response(new_rx, None, event_sink.clone(), None, false)
+                .await
+                .context("waiting for session/new response")?;
+            if let Some(err) = new_resp.get("error") {
+                anyhow::bail!("ACP session/new error after authenticate: {err}");
+            }
+            let id = new_resp
+                .get("result")
+                .and_then(|v| v.get("sessionId"))
+                .and_then(|v| v.as_str())
+                .context("missing sessionId in session/new response")?
+                .to_string();
+            session_id = Some(id.clone());
+            modes = new_resp.get("result").and_then(|v| v.get("modes")).cloned();
+            models = new_resp.get("result").and_then(|v| v.get("models")).cloned();
+        }
+
+        let session_id = session_id.context("missing ACP sessionId")?;
+        self.acp_session_id = session_id.clone();
+
+        let _ = event_sink
+            .send(NormalizedEvent {
+                event_type: SessionEventType::Init,
+                payload_json: json!({
+                    "provider": self.agent.provider_id,
+                    "acp_session_id": session_id,
+                    "resumed": resumed,
+                    "supports_load": self.supports_load,
+                    "modes": modes,
+                    "models": models,
+                    "auth_methods": self.auth_methods,
                 }),
             })
             .await;
@@ -374,6 +686,22 @@ impl AcpSession {
         event_sink: mpsc::Sender<NormalizedEvent>,
         mut cancel_rx: oneshot::Receiver<()>,
     ) -> Result<()> {
+        if self.acp_session_id.is_empty() {
+            let _ = event_sink
+                .send(NormalizedEvent {
+                    event_type: SessionEventType::AuthRequired,
+                    payload_json: json!({
+                        "kind": "auth_required",
+                        "provider": self.agent.provider_id,
+                        "message": "Provider session is not authenticated; run authenticate first.",
+                        "auth_methods": self.auth_methods.clone(),
+                        "authMethods": self.auth_methods,
+                    }),
+                })
+                .await;
+            anyhow::bail!("ACP session not ready: authentication required");
+        }
+
         let mut state = StreamState::default();
 
         let (prompt_rx, prompt_line, _prompt_id) = make_request(
@@ -392,12 +720,28 @@ impl AcpSession {
                 Some(&mut cancel_rx),
                 event_sink.clone(),
                 Some(&mut state),
+                true,
             )
             .await
             .context("waiting for session/prompt response")?;
         state.saw_done = true;
 
         if let Some(err) = prompt_resp.get("error") {
+            if is_auth_required_error(err) {
+                let _ = event_sink
+                    .send(NormalizedEvent {
+                        event_type: SessionEventType::AuthRequired,
+                        payload_json: json!({
+                            "kind": "auth_required",
+                            "provider": self.agent.provider_id,
+                            "message": "Provider requires authentication to continue.",
+                            "auth_methods": self.auth_methods.clone(),
+                            "authMethods": self.auth_methods,
+                            "acp_error": err,
+                        }),
+                    })
+                    .await;
+            }
             let _ = event_sink
                 .send(NormalizedEvent {
                     event_type: SessionEventType::Error,
@@ -453,7 +797,7 @@ impl AcpSession {
             .send(line)
             .map_err(|_| anyhow::anyhow!("ACP writer task unavailable"))?;
         let resp = self
-            .drive_until_response(rx, None, event_sink, None)
+            .drive_until_response(rx, None, event_sink, None, false)
             .await
             .context("waiting for session/set_model response")?;
         if let Some(err) = resp.get("error") {
@@ -477,7 +821,7 @@ impl AcpSession {
             .send(line)
             .map_err(|_| anyhow::anyhow!("ACP writer task unavailable"))?;
         let resp = self
-            .drive_until_response(rx, None, event_sink, None)
+            .drive_until_response(rx, None, event_sink, None, false)
             .await
             .context("waiting for session/set_mode response")?;
         if let Some(err) = resp.get("error") {
@@ -492,6 +836,7 @@ impl AcpSession {
         mut cancel_rx: Option<&mut oneshot::Receiver<()>>,
         event_sink: mpsc::Sender<NormalizedEvent>,
         mut stream_state: Option<&mut StreamState>,
+        emit_raw_notifications: bool,
     ) -> Result<serde_json::Value> {
         loop {
             tokio::select! {
@@ -538,20 +883,24 @@ impl AcpSession {
                                         let _ = event_sink.send(ev).await;
                                     }
                                 } else {
-                                    // No per-turn state (initialize/new_session); keep raw updates for debugging.
-                                    let _ = event_sink.send(NormalizedEvent {
-                                        event_type: SessionEventType::Init,
-                                        payload_json: json!({"provider": self.agent.provider_id, "acp_event": parsed}),
-                                    }).await;
+                                    // No per-turn state; optionally keep raw updates for debugging.
+                                    if emit_raw_notifications {
+                                        let _ = event_sink.send(NormalizedEvent {
+                                            event_type: SessionEventType::Init,
+                                            payload_json: json!({"provider": self.agent.provider_id, "acp_event": parsed}),
+                                        }).await;
+                                    }
                                 }
                                 continue;
                             }
 
                             // Unknown notification: keep for debugging.
-                            let _ = event_sink.send(NormalizedEvent {
-                                event_type: SessionEventType::Init,
-                                payload_json: json!({"provider": self.agent.provider_id, "acp_event": parsed}),
-                            }).await;
+                            if emit_raw_notifications {
+                                let _ = event_sink.send(NormalizedEvent {
+                                    event_type: SessionEventType::Init,
+                                    payload_json: json!({"provider": self.agent.provider_id, "acp_event": parsed}),
+                                }).await;
+                            }
                         }
                         Ok(None) => {
                             anyhow::bail!("agent stdout closed");
@@ -771,6 +1120,36 @@ fn content_text(block: &serde_json::Value) -> Option<String> {
         return block.get("text").and_then(|v| v.as_str()).map(|s| s.to_string());
     }
     None
+}
+
+fn is_auth_required_error(err: &serde_json::Value) -> bool {
+    let Some(obj) = err.as_object() else {
+        return false;
+    };
+
+    let code_matches = obj
+        .get("code")
+        .and_then(|v| v.as_i64())
+        .is_some_and(|code| code == -32001 || code == 401);
+
+    let message = obj
+        .get("message")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_lowercase();
+    let msg_matches = message.contains("authrequired")
+        || message.contains("auth_required")
+        || message.contains("authentication required")
+        || message.contains("unauthorized");
+
+    let data_str = obj
+        .get("data")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_lowercase();
+    let data_matches = data_str.contains("authrequired") || data_str.contains("auth_required");
+
+    code_matches || msg_matches || data_matches
 }
 
 fn make_request(

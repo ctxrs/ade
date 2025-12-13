@@ -20,6 +20,7 @@ mod tests {
                 crate::adapters::TurnInput {
                     content: "hi".into(),
                     attachments: vec![],
+                    context_blocks: vec![],
                 },
                 std::env::current_dir().unwrap(),
                 Default::default(),

@@ -139,6 +139,8 @@ pub enum SessionEventType {
     Init,
     UserMessage,
     InputQueued,
+    AuthRequired,
+    Notice,
     AssistantChunk,
     ThoughtChunk,
     AssistantComplete,

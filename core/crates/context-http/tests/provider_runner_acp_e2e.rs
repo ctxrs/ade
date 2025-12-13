@@ -62,6 +62,7 @@ async fn setup_state_with_real_providers() -> (tempfile::TempDir, Store, Arc<App
         store.clone(),
         providers,
         "http://127.0.0.1:4399".to_string(),
+        None,
     ));
 
     (data_dir, store, state)
