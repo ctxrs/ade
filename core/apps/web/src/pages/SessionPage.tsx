@@ -47,19 +47,27 @@ type ThreadItem =
       kind: "tool";
       id: string;
       created_at: string;
-      event_type: string;
-      payload_json: any;
-    }
-  | {
-      kind: "meta";
-      id: string;
-      created_at: string;
+      updated_at: string;
+      tool_call_id: string;
+      tool_kind: string;
       title: string;
-      payload_json: any;
+      status: string;
+      locations: Array<{ path?: string; range?: any }>;
+      input: any;
+      output_text: string;
+      raw: any;
+      updates_seen: number;
     };
 
 export default function SessionPage() {
   const { id } = useParams<{ id: string }>();
+  const showDebug = useMemo(() => {
+    try {
+      return new URLSearchParams(window.location.search).get("debug") === "1";
+    } catch {
+      return false;
+    }
+  }, [id]);
   const [session, setSession] = useState<Session | null>(null);
   const [events, setEvents] = useState<SessionEvent[]>([]);
   const [queue, setQueue] = useState<Message[]>([]);
@@ -192,7 +200,8 @@ export default function SessionPage() {
     };
   }, [id, streamConnected, session]);
 
-  const threadItems = useMemo(() => buildThreadItems(events), [events]);
+  const threadView = useMemo(() => buildThreadViewModel(events), [events]);
+  const threadItems = threadView.items;
 
   useEffect(() => {
     if (didInitialScrollRef.current) return;
@@ -363,19 +372,30 @@ export default function SessionPage() {
           <div className="header">
             <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
               <Link to={`/tasks/${idToString(session.task_id)}`}>← Task</Link>
-              {threadItems.length > 0 && (
-                <button
-                  type="button"
-                  onClick={() =>
-                    virtuosoRef.current?.scrollToIndex({
-                      index: threadItems.length - 1,
-                      align: "end",
-                    })
-                  }
-                >
-                  Jump to latest
-                </button>
-              )}
+              <div className="row" style={{ alignItems: "center" }}>
+                {showDebug ? (
+                  <a className="muted" href={window.location.pathname}>
+                    Hide debug
+                  </a>
+                ) : (
+                  <a className="muted" href={`${window.location.pathname}?debug=1`}>
+                    Debug
+                  </a>
+                )}
+                {threadItems.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      virtuosoRef.current?.scrollToIndex({
+                        index: threadItems.length - 1,
+                        align: "end",
+                      })
+                    }
+                  >
+                    Jump to latest
+                  </button>
+                )}
+              </div>
             </div>
             <div className="muted">
               {session.provider_id} / {session.model_id} ·{" "}
@@ -518,7 +538,7 @@ export default function SessionPage() {
           </div>
         )}
 
-        {planEntries.length > 0 && <PlanPanel entries={planEntries} />}
+        {/* Zed-style: plan moves into the bottom activity bar; keep hidden above thread. */}
 
         {queue.length > 0 && (
           <div className="queue-panel card">
@@ -539,6 +559,10 @@ export default function SessionPage() {
               })}
             </ul>
           </div>
+        )}
+
+        {showDebug && threadView.debugEvents.length > 0 && (
+          <DebugPanel events={threadView.debugEvents} />
         )}
 
         <Virtuoso
@@ -572,6 +596,8 @@ export default function SessionPage() {
             New activity ↓
           </button>
         )}
+
+        <ActivityBar planEntries={planEntries} diffText={diff} />
 
         <form onSubmit={onSend} className="composer">
           <div className="row">
@@ -717,23 +743,7 @@ function ThreadItemView({ item }: { item: ThreadItem }) {
         />
       );
     case "tool":
-      return (
-        <ToolEventCard
-          id={item.id}
-          createdAt={item.created_at}
-          eventType={item.event_type}
-          payload={item.payload_json}
-        />
-      );
-    case "meta":
-      return (
-        <MetaEventCard
-          id={item.id}
-          createdAt={item.created_at}
-          title={item.title}
-          payload={item.payload_json}
-        />
-      );
+      return <ToolCard item={item} />;
   }
 }
 
@@ -809,94 +819,144 @@ function AssistantEntry({
     <div className="msg assistant">
       <div className="row">
         <div className="role">assistant</div>
-        <div className="muted">{isComplete ? "complete" : "streaming…"}</div>
+        <span className={`pill ${isComplete ? "ok" : "run"}`}>
+          {isComplete ? "complete" : "streaming"}
+        </span>
       </div>
       <div id={`msg-${id}`}>
         <Markdown content={content} />
       </div>
       {thought.trim() && (
-        <>
+        <div className="thinking">
           <button
             type="button"
-            className="link"
+            className="thinking-header"
             aria-expanded={showThought}
             aria-controls={`thought-${id}`}
             onClick={() => setShowThought((s) => !s)}
           >
-            {showThought ? "Hide thought" : "Show thought"}
+            <span className="thinking-title">Thinking</span>
+            <span className="thinking-chev">{showThought ? "▴" : "▾"}</span>
           </button>
           {showThought && (
             <pre id={`thought-${id}`} className="thought">
               {thought}
             </pre>
           )}
-        </>
+        </div>
       )}
     </div>
   );
 }
 
-function ToolEventCard({
-  id,
-  createdAt,
-  eventType,
-  payload,
-}: {
-  id: string;
-  createdAt: string;
-  eventType: string;
-  payload: any;
-}) {
+function ToolCard({ item }: { item: Extract<ThreadItem, { kind: "tool" }> }) {
   const [expanded, setExpanded] = useState(false);
-  const update = payload?.acp_update ?? payload;
-  const toolCallId = payload?.tool_call_id ?? update?.toolCallId ?? "";
-  const title = update?.title ?? update?.toolCall?.title ?? eventType;
-  const status = update?.status ?? update?.toolCall?.status ?? "";
-  const kind = update?.kind ?? update?.toolCall?.kind ?? "";
+  const isRunning = item.status === "in_progress" || item.status === "pending";
+  const isFailed = item.status === "failed";
+  const hasOutput = item.output_text.trim().length > 0;
+  const shouldDefaultOpen = item.tool_kind === "execute" && isRunning;
+  const isOpen = expanded || shouldDefaultOpen;
+  const summary = useMemo(() => toolSummaryLine(item.tool_kind, item.input), [item.tool_kind, item.input]);
 
   return (
-    <div className="card tool">
-      <div className="row">
-        <strong>{title}</strong>
-        <span className="muted">
-          {eventType}
-          {kind ? ` · ${kind}` : ""}
-          {status ? ` · ${status}` : ""}
-        </span>
-      </div>
-      {toolCallId && <div className="muted">id: {toolCallId}</div>}
-      <div className="row">
-        <button type="button" onClick={() => setExpanded((e) => !e)}>
-          {expanded ? "Hide details" : "Show details"}
-        </button>
-        <span className="muted">{new Date(createdAt).toLocaleTimeString()}</span>
-      </div>
-      {expanded && <pre className="json">{JSON.stringify(payload, null, 2)}</pre>}
+    <div className={`tool-card ${isOpen ? "expanded" : ""}`}>
+      <button
+        type="button"
+        className="tool-header"
+        onClick={() => setExpanded((e) => !e)}
+        aria-expanded={isOpen}
+        aria-controls={`tool-${item.id}`}
+      >
+        <div className="tool-header-left">
+          <span className={`tool-icon kind-${item.tool_kind}`}>{toolKindIcon(item.tool_kind)}</span>
+          <div className="tool-title-wrap">
+            <div className="tool-title">{item.title}</div>
+            <div className="tool-subtitle">
+              <span className={`pill ${isFailed ? "err" : isRunning ? "run" : "ok"}`}>
+                {humanToolStatus(item.status)}
+              </span>
+              {item.locations?.length === 1 && item.locations[0]?.path && (
+                <span className="muted tool-path">{item.locations[0].path}</span>
+              )}
+              {summary && <span className="muted tool-summary">{summary}</span>}
+            </div>
+          </div>
+        </div>
+        <div className="tool-header-right">
+          <span className="muted">{new Date(item.updated_at).toLocaleTimeString()}</span>
+          <span className="thinking-chev">{isOpen ? "▴" : "▾"}</span>
+        </div>
+      </button>
+
+      {isOpen && (
+        <div id={`tool-${item.id}`} className="tool-body">
+          {item.input && (
+            <div className="tool-section">
+              <div className="tool-section-title">Input</div>
+              <pre className="tool-pre">{formatToolInput(item.tool_kind, item.input)}</pre>
+            </div>
+          )}
+          {hasOutput && (
+            <div className="tool-section">
+              <div className="tool-section-title">Output</div>
+              {looksLikeMarkdown(item.output_text) ? (
+                <div className="tool-markdown">
+                  <Markdown content={item.output_text} />
+                </div>
+              ) : (
+                <pre className="tool-pre tool-output">{item.output_text}</pre>
+              )}
+            </div>
+          )}
+          <details className="tool-raw">
+            <summary className="link">
+              Raw event {item.updates_seen > 1 ? `(updated ${item.updates_seen}×)` : ""}
+            </summary>
+            <pre className="json">{JSON.stringify(item.raw, null, 2)}</pre>
+          </details>
+        </div>
+      )}
     </div>
   );
 }
 
-function MetaEventCard({
-  createdAt,
-  title,
-  payload,
-}: {
-  id: string;
-  createdAt: string;
-  title: string;
-  payload: any;
-}) {
-  const [expanded, setExpanded] = useState(false);
+function DebugPanel({ events }: { events: SessionEvent[] }) {
+  const [open, setOpen] = useState(false);
+  const kinds = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const e of events) {
+      counts[e.event_type] = (counts[e.event_type] ?? 0) + 1;
+    }
+    return counts;
+  }, [events]);
+
   return (
-    <div className="card meta">
-      <div className="row">
-        <strong>{title}</strong>
-        <span className="muted">{new Date(createdAt).toLocaleTimeString()}</span>
-      </div>
-      <button type="button" onClick={() => setExpanded((e) => !e)}>
-        {expanded ? "Hide" : "Show"}
+    <div className="debug card">
+      <button type="button" className="debug-header" onClick={() => setOpen((v) => !v)}>
+        <strong>Debug</strong>
+        <span className="muted">
+          {Object.entries(kinds)
+            .map(([k, v]) => `${k}:${v}`)
+            .join(" · ")}
+        </span>
+        <span className="thinking-chev">{open ? "▴" : "▾"}</span>
       </button>
-      {expanded && <pre className="json">{JSON.stringify(payload, null, 2)}</pre>}
+      {open && (
+        <div className="debug-body">
+          {events.map((e) => {
+            const key = idToString(e.id) || `${e.created_at}-${e.event_type}`;
+            return (
+              <details key={key} className="debug-event">
+                <summary>
+                  <span className="muted">{new Date(e.created_at).toLocaleTimeString()}</span>{" "}
+                  <strong>{e.event_type}</strong>
+                </summary>
+                <pre className="json">{JSON.stringify(e.payload_json, null, 2)}</pre>
+              </details>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -939,6 +999,100 @@ function PlanPanel({ entries }: { entries: any[] }) {
   );
 }
 
+function ActivityBar({ planEntries, diffText }: { planEntries: any[]; diffText: string }) {
+  const [planOpen, setPlanOpen] = useState(false);
+  const [editsOpen, setEditsOpen] = useState(false);
+
+  const planStats = useMemo(() => {
+    const counts = planEntries.reduce(
+      (acc, e) => {
+        const status = e?.status ?? "pending";
+        if (status === "completed") acc.completed += 1;
+        else if (status === "in_progress") acc.in_progress += 1;
+        else acc.pending += 1;
+        return acc;
+      },
+      { pending: 0, in_progress: 0, completed: 0 },
+    );
+    const current = planEntries.find((e) => e?.status === "in_progress") ?? null;
+    return { ...counts, current };
+  }, [planEntries]);
+
+  const editedFiles = useMemo(() => extractEditedFiles(diffText), [diffText]);
+
+  if (planEntries.length === 0 && editedFiles.length === 0) return null;
+
+  return (
+    <div className="activity-bar">
+      {planEntries.length > 0 && (
+        <div className="activity-section">
+          <button type="button" className="activity-summary" onClick={() => setPlanOpen((v) => !v)}>
+            <span className="activity-title">Plan</span>
+            {planStats.current && !planOpen ? (
+              <span className="muted activity-current">
+                Current: {String(planStats.current.content ?? "").trim() || "in progress"}
+              </span>
+            ) : (
+              <span className="muted">
+                {planStats.in_progress} in progress · {planStats.pending} pending · {planStats.completed} done
+              </span>
+            )}
+            {planStats.pending > 0 && !planOpen && (
+              <span className="muted activity-right">{planStats.pending} left</span>
+            )}
+            <span className="thinking-chev">{planOpen ? "▴" : "▾"}</span>
+          </button>
+          {planOpen && (
+            <ul className="activity-list">
+              {planEntries.map((e, idx) => (
+                <li key={idx} className={`plan-item ${e.status ?? ""}`}>
+                  <span className={`plan-dot ${e.status ?? ""}`} />
+                  <span className="muted">{e.status ?? "pending"}</span>{" "}
+                  <span className="activity-item-text">{e.content}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
+      {editedFiles.length > 0 && (
+        <div className="activity-section">
+          <button type="button" className="activity-summary" onClick={() => setEditsOpen((v) => !v)}>
+            <span className="activity-title">Edits</span>
+            <span className="muted">{editedFiles.length} file{editedFiles.length === 1 ? "" : "s"}</span>
+            <span className="thinking-chev">{editsOpen ? "▴" : "▾"}</span>
+          </button>
+          {editsOpen && (
+            <ul className="activity-list">
+              {editedFiles.map((f) => (
+                <li key={f} className="activity-item-text">
+                  {f}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function extractEditedFiles(diffText: string): string[] {
+  const text = String(diffText ?? "");
+  const files = new Set<string>();
+  for (const line of text.split("\n")) {
+    const m = /^diff --git a\/(.+?) b\/(.+)$/.exec(line);
+    if (m) {
+      files.add(m[2]);
+      continue;
+    }
+    const m2 = /^\+\+\+ b\/(.+)$/.exec(line);
+    if (m2) files.add(m2[1]);
+  }
+  return [...files].slice(0, 200);
+}
+
 function Markdown({ content }: { content: string }) {
   return (
     <ReactMarkdown
@@ -974,13 +1128,59 @@ function Markdown({ content }: { content: string }) {
   );
 }
 
-function buildThreadItems(events: SessionEvent[]): ThreadItem[] {
+function buildThreadViewModel(events: SessionEvent[]): {
+  items: ThreadItem[];
+  debugEvents: SessionEvent[];
+} {
   const items: ThreadItem[] = [];
-  const assistantByTurn: Record<string, ThreadItem & { kind: "assistant" }> = {};
+  const debugEvents: SessionEvent[] = [];
+
+  const assistantByTurn = new Map<string, Extract<ThreadItem, { kind: "assistant" }>>();
+  const toolById = new Map<string, Extract<ThreadItem, { kind: "tool" }>>();
+
+  const upsertAssistant = (turnId: string, createdAt: string) => {
+    const existing = assistantByTurn.get(turnId);
+    if (existing) return existing;
+    const item: Extract<ThreadItem, { kind: "assistant" }> = {
+      kind: "assistant",
+      id: `assistant-${turnId}`,
+      created_at: createdAt,
+      content: "",
+      thought: "",
+      is_complete: false,
+    };
+    assistantByTurn.set(turnId, item);
+    items.push(item);
+    return item;
+  };
+
+  const upsertTool = (toolCallId: string, createdAt: string) => {
+    const existing = toolById.get(toolCallId);
+    if (existing) return existing;
+    const item: Extract<ThreadItem, { kind: "tool" }> = {
+      kind: "tool",
+      id: `tool-${toolCallId}`,
+      tool_call_id: toolCallId,
+      created_at: createdAt,
+      updated_at: createdAt,
+      tool_kind: "tool",
+      title: "Tool",
+      status: "pending",
+      locations: [],
+      input: null,
+      output_text: "",
+      raw: null,
+      updates_seen: 0,
+    };
+    toolById.set(toolCallId, item);
+    items.push(item);
+    return item;
+  };
 
   for (const ev of events) {
     const id = idToString(ev.id) || `${ev.created_at}`;
     const turnId = idToString((ev as any).turn_id) || "no-turn";
+
     switch (ev.event_type) {
       case "user_message": {
         items.push({
@@ -996,112 +1196,204 @@ function buildThreadItems(events: SessionEvent[]): ThreadItem[] {
         break;
       }
       case "assistant_chunk": {
-        const fragment = ev.payload_json?.content_fragment ?? "";
-        if (!assistantByTurn[turnId]) {
-          const item: ThreadItem & { kind: "assistant" } = {
-            kind: "assistant",
-            id: `assistant-${turnId}`,
-            created_at: ev.created_at,
-            content: fragment,
-            thought: "",
-            is_complete: false,
-          };
-          assistantByTurn[turnId] = item;
-          items.push(item);
-        } else {
-          assistantByTurn[turnId].content += fragment;
-        }
+        const fragment = String(ev.payload_json?.content_fragment ?? "");
+        if (!fragment) break;
+        const item = upsertAssistant(turnId, ev.created_at);
+        item.content += fragment;
         break;
       }
       case "assistant_complete": {
-        const full = ev.payload_json?.full_content ?? ev.payload_json?.content ?? "";
-        if (!assistantByTurn[turnId]) {
-          const item: ThreadItem & { kind: "assistant" } = {
-            kind: "assistant",
-            id: `assistant-${turnId}`,
-            created_at: ev.created_at,
-            content: full,
-            thought: "",
-            is_complete: true,
-          };
-          assistantByTurn[turnId] = item;
-          items.push(item);
-        } else {
-          assistantByTurn[turnId].content = full || assistantByTurn[turnId].content;
-          assistantByTurn[turnId].is_complete = true;
-        }
+        const full = String(ev.payload_json?.full_content ?? ev.payload_json?.content ?? "");
+        const item = upsertAssistant(turnId, ev.created_at);
+        if (full) item.content = full;
+        item.is_complete = true;
         break;
       }
       case "thought_chunk": {
-        const fragment = ev.payload_json?.content_fragment ?? "";
-        if (!assistantByTurn[turnId]) {
-          const item: ThreadItem & { kind: "assistant" } = {
-            kind: "assistant",
-            id: `assistant-${turnId}`,
-            created_at: ev.created_at,
-            content: "",
-            thought: fragment,
-            is_complete: false,
-          };
-          assistantByTurn[turnId] = item;
-          items.push(item);
-        } else {
-          assistantByTurn[turnId].thought += fragment;
-        }
+        const fragment = String(ev.payload_json?.content_fragment ?? "");
+        if (!fragment) break;
+        const item = upsertAssistant(turnId, ev.created_at);
+        item.thought += fragment;
         break;
       }
       case "tool_call":
       case "tool_call_update":
       case "tool_result": {
-        items.push({
-          kind: "tool",
-          id,
-          created_at: ev.created_at,
-          event_type: ev.event_type,
-          payload_json: ev.payload_json,
-        });
+        const update = ev.payload_json?.acp_update ?? ev.payload_json ?? {};
+        const toolCallId =
+          String(ev.payload_json?.tool_call_id ?? update?.toolCallId ?? update?.rawInput?.call_id ?? "").trim();
+        if (!toolCallId) {
+          debugEvents.push(ev);
+          break;
+        }
+        const tool = upsertTool(toolCallId, ev.created_at);
+        tool.updated_at = ev.created_at;
+        tool.updates_seen += 1;
+        tool.raw = ev.payload_json;
+
+        const nextKind = String(update?.kind ?? update?.toolCall?.kind ?? "").trim();
+        if (nextKind) tool.tool_kind = nextKind;
+
+        const nextTitle =
+          String(update?.title ?? update?.toolCall?.title ?? update?.toolCall?.name ?? "").trim();
+        if (nextTitle) tool.title = nextTitle;
+        else if (tool.tool_kind && tool.title === "Tool") tool.title = humanToolKind(tool.tool_kind);
+
+        const nextStatus = String(update?.status ?? update?.toolCall?.status ?? "").trim();
+        if (nextStatus) tool.status = normalizeToolStatus(nextStatus, ev.event_type);
+        else if (ev.event_type === "tool_result") tool.status = "completed";
+
+        const locs = Array.isArray(update?.locations) ? update.locations : [];
+        tool.locations = locs.map((l: any) => ({ path: l?.path, range: l?.range }));
+
+        const input = update?.rawInput ?? update?.toolCall?.input ?? update?.args ?? null;
+        if (input) tool.input = input;
+
+        const nextOutput = extractToolOutputText(update);
+        if (nextOutput) {
+          tool.output_text = mergeStreamingText(tool.output_text, nextOutput);
+        }
         break;
       }
-      case "plan": {
-        // Rendered in the plan bar above.
+      case "plan":
         break;
-      }
-      case "init": {
-        items.push({
-          kind: "meta",
-          id,
-          created_at: ev.created_at,
-          title: "Init",
-          payload_json: ev.payload_json,
-        });
+      case "init":
+      case "notice":
+      case "error":
+      case "auth_required":
+      case "done":
+      case "interrupt_requested":
+      case "turn_interrupted":
+      case "input_queued":
+        debugEvents.push(ev);
         break;
-      }
-      case "notice": {
-        items.push({
-          kind: "meta",
-          id,
-          created_at: ev.created_at,
-          title: "Notice",
-          payload_json: ev.payload_json,
-        });
-        break;
-      }
-      case "error": {
-        items.push({
-          kind: "meta",
-          id,
-          created_at: ev.created_at,
-          title: "Error",
-          payload_json: ev.payload_json,
-        });
-        break;
-      }
       default:
         break;
     }
   }
 
-  return items;
+  return { items, debugEvents };
+}
+
+function extractToolOutputText(update: any): string {
+  const raw = update?.rawOutput?.aggregated_output ?? update?.rawOutput?.output ?? null;
+  if (typeof raw === "string" && raw.trim()) return raw;
+
+  const blocks = Array.isArray(update?.content) ? update.content : [];
+  const parts: string[] = [];
+  for (const b of blocks) {
+    const c = b?.content ?? b;
+    const t = c?.text;
+    if (typeof t === "string") parts.push(t);
+  }
+  return parts.join("").trim();
+}
+
+function mergeStreamingText(prev: string, next: string): string {
+  const p = prev ?? "";
+  const n = next ?? "";
+  if (!p) return n;
+  if (!n) return p;
+  if (n.startsWith(p)) return n;
+  if (p.startsWith(n)) return p;
+  return n.length >= p.length ? n : p;
+}
+
+function normalizeToolStatus(status: string, eventType: string): string {
+  const s = status.toLowerCase();
+  if (s === "inprogress") return "in_progress";
+  if (s === "in_progress") return "in_progress";
+  if (s === "running") return "in_progress";
+  if (s === "pending" || s === "queued") return "pending";
+  if (s === "completed" || s === "complete" || s === "ok" || s === "succeeded") return "completed";
+  if (s === "failed" || s === "error") return "failed";
+  if (eventType === "tool_result") return "completed";
+  return s || "pending";
+}
+
+function humanToolStatus(status: string): string {
+  switch (status) {
+    case "pending":
+      return "Pending";
+    case "in_progress":
+      return "Running";
+    case "completed":
+      return "Done";
+    case "failed":
+      return "Failed";
+    default:
+      return status || "Unknown";
+  }
+}
+
+function humanToolKind(kind: string): string {
+  const k = (kind || "").toLowerCase();
+  if (k === "execute") return "Run Command";
+  if (k === "search") return "Search";
+  if (k === "read") return "Read File";
+  if (k === "edit" || k === "write") return "Edit File";
+  if (k === "fetch") return "Fetch";
+  if (k === "think") return "Think";
+  return kind || "Tool";
+}
+
+function toolKindIcon(kind: string): string {
+  const k = (kind || "").toLowerCase();
+  if (k === "execute") return "⌘";
+  if (k === "search") return "⌕";
+  if (k === "read") return "⟲";
+  if (k === "edit" || k === "write") return "✎";
+  if (k === "fetch") return "⇣";
+  if (k === "think") return "…";
+  return "▦";
+}
+
+function formatToolInput(toolKind: string, input: any): string {
+  const k = (toolKind || "").toLowerCase();
+  if (k === "execute") {
+    const cmd = Array.isArray(input?.command) ? input.command.join(" ") : input?.command;
+    const cwd = input?.cwd;
+    const out: string[] = [];
+    if (cwd) out.push(`cwd: ${cwd}`);
+    if (cmd) out.push(`cmd: ${cmd}`);
+    return out.join("\n") || JSON.stringify(input, null, 2);
+  }
+  if (typeof input === "string") return input;
+  return JSON.stringify(input, null, 2);
+}
+
+function toolSummaryLine(toolKind: string, input: any): string {
+  const k = (toolKind || "").toLowerCase();
+  if (k === "execute") {
+    const cmd = Array.isArray(input?.command) ? input.command.join(" ") : input?.command;
+    return cmd ? truncateMiddle(String(cmd), 120) : "";
+  }
+  if (k === "search") {
+    const q = input?.query ?? input?.pattern ?? input?.text;
+    return q ? truncateMiddle(String(q), 120) : "";
+  }
+  if (k === "read" || k === "edit" || k === "write") {
+    const path = input?.path ?? input?.file ?? input?.filename;
+    return path ? truncateMiddle(String(path), 120) : "";
+  }
+  return "";
+}
+
+function truncateMiddle(text: string, maxLen: number): string {
+  const s = String(text ?? "");
+  if (s.length <= maxLen) return s;
+  const head = Math.max(10, Math.floor(maxLen * 0.6));
+  const tail = Math.max(10, maxLen - head - 3);
+  return `${s.slice(0, head)}...${s.slice(-tail)}`;
+}
+
+function looksLikeMarkdown(text: string): boolean {
+  const t = String(text ?? "");
+  if (t.includes("```")) return true;
+  if (/^#{1,6}\s/m.test(t)) return true;
+  if (/^\s*[-*]\s+/m.test(t)) return true;
+  if (/\[[^\]]+\]\([^)]+\)/.test(t)) return true;
+  return false;
 }
 
 function mergeEvents(prev: SessionEvent[], incoming: SessionEvent[]): SessionEvent[] {
