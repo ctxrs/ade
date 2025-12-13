@@ -19,7 +19,7 @@
     },
     "bundle": {
       "active": true,
-      "identifier": "com.context.desktop",
+      "identifier": "rs.context.desktop",
       "resources": ["bin/*", "web/dist/**"],
       "externalBin": ["bin/context", "bin/context-mcp"],
       "targets": "all"
