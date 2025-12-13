@@ -10,7 +10,7 @@ use tokio::process::Command;
 use tower::ServiceExt;
 
 use context_core::models::SessionEventType;
-use context_providers::tier1::HeadlessCliAdapter;
+use context_providers::tier1::Tier1AcpAdapter;
 use context_store::Store;
 
 use context_http::api;
@@ -53,14 +53,15 @@ async fn setup_state_with_real_providers() -> (tempfile::TempDir, Store, Arc<App
 
     let mut providers: HashMap<String, Arc<dyn context_providers::adapters::ProviderAdapter>> =
         HashMap::new();
-    providers.insert("codex".into(), Arc::new(HeadlessCliAdapter::codex()));
-    providers.insert("claude".into(), Arc::new(HeadlessCliAdapter::claude()));
-    providers.insert("gemini".into(), Arc::new(HeadlessCliAdapter::gemini()));
+    providers.insert("codex".into(), Arc::new(Tier1AcpAdapter::codex()));
+    providers.insert("claude".into(), Arc::new(Tier1AcpAdapter::claude()));
+    providers.insert("gemini".into(), Arc::new(Tier1AcpAdapter::gemini()));
 
     let state = Arc::new(AppState::new(
         data_dir.path().to_path_buf(),
         store.clone(),
         providers,
+        "http://127.0.0.1:4399".to_string(),
     ));
 
     (data_dir, store, state)
@@ -172,8 +173,8 @@ Reply with just: done
 
 #[tokio::test]
 #[ignore]
-async fn runner_codex_real_cli_produces_tool_events() {
-    which::which("codex").expect("codex binary not found on PATH");
+async fn runner_codex_real_acp_produces_tool_events() {
+    which::which("codex-acp").expect("codex-acp binary not found on PATH");
     let git_repo = setup_git_repo().await;
     let (_data_dir, store, state) = setup_state_with_real_providers().await;
     let mut app = api::router(state);
@@ -185,8 +186,8 @@ async fn runner_codex_real_cli_produces_tool_events() {
 
 #[tokio::test]
 #[ignore]
-async fn runner_claude_real_cli_produces_tool_events() {
-    which::which("claude").expect("claude binary not found on PATH");
+async fn runner_claude_real_acp_produces_tool_events() {
+    which::which("claude-code-acp").expect("claude-code-acp binary not found on PATH");
     let git_repo = setup_git_repo().await;
     let (_data_dir, store, state) = setup_state_with_real_providers().await;
     let mut app = api::router(state);
@@ -198,7 +199,7 @@ async fn runner_claude_real_cli_produces_tool_events() {
 
 #[tokio::test]
 #[ignore]
-async fn runner_gemini_real_cli_produces_tool_events() {
+async fn runner_gemini_real_acp_produces_tool_events() {
     which::which("gemini").expect("gemini binary not found on PATH");
     let git_repo = setup_git_repo().await;
     let (_data_dir, store, state) = setup_state_with_real_providers().await;
@@ -208,4 +209,3 @@ async fn runner_gemini_real_cli_produces_tool_events() {
     post_message(&mut app, &session.id.0.to_string(), PROMPT).await;
     wait_for_tool_events(&store, session.id).await;
 }
-

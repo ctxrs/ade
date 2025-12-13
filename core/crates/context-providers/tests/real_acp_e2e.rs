@@ -8,7 +8,7 @@ use tokio::sync::mpsc;
 use context_core::models::SessionEventType;
 use context_providers::adapters::{ProviderAdapter, TurnInput};
 use context_providers::events::NormalizedEvent;
-use context_providers::tier1::HeadlessCliAdapter;
+use context_providers::tier1::Tier1AcpAdapter;
 
 async fn run_git(root: &Path, args: &[&str]) {
     let output = Command::new("git")
@@ -44,6 +44,7 @@ async fn run_and_collect(adapter: &dyn ProviderAdapter, workdir: &Path, prompt: 
         .run(
             TurnInput {
                 content: prompt.to_string(),
+                attachments: vec![],
             },
             workdir.to_path_buf(),
             HashMap::new(),
@@ -116,34 +117,33 @@ Reply with just: done
 
 #[tokio::test]
 #[ignore]
-async fn codex_real_cli_parses_jsonl() {
-    which::which("codex").expect("codex binary not found on PATH");
+async fn codex_real_acp_produces_tool_events() {
+    which::which("codex-acp").expect("codex-acp binary not found on PATH");
     let repo = setup_git_repo().await;
 
-    let adapter = HeadlessCliAdapter::codex();
+    let adapter = Tier1AcpAdapter::codex();
     let events = run_and_collect(&adapter, repo.path(), PROMPT).await;
     assert_has_correlated_tool_call(&events);
 }
 
 #[tokio::test]
 #[ignore]
-async fn claude_real_cli_parses_stream_json() {
-    which::which("claude").expect("claude binary not found on PATH");
+async fn claude_real_acp_produces_tool_events() {
+    which::which("claude-code-acp").expect("claude-code-acp binary not found on PATH");
     let repo = setup_git_repo().await;
 
-    let adapter = HeadlessCliAdapter::claude();
+    let adapter = Tier1AcpAdapter::claude();
     let events = run_and_collect(&adapter, repo.path(), PROMPT).await;
     assert_has_correlated_tool_call(&events);
 }
 
 #[tokio::test]
 #[ignore]
-async fn gemini_real_cli_parses_stream_json() {
+async fn gemini_real_acp_produces_tool_events() {
     which::which("gemini").expect("gemini binary not found on PATH");
     let repo = setup_git_repo().await;
 
-    let adapter = HeadlessCliAdapter::gemini();
+    let adapter = Tier1AcpAdapter::gemini();
     let events = run_and_collect(&adapter, repo.path(), PROMPT).await;
     assert_has_correlated_tool_call(&events);
 }
-

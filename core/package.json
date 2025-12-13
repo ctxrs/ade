@@ -5,8 +5,8 @@
   "scripts": {
     "test": "cargo test -q && pnpm -C apps/web test",
     "test:e2e": "pnpm -C apps/web test:e2e",
-    "test:providers:e2e": "cargo test -p context-providers --test real_cli_e2e -- --ignored --nocapture --test-threads=1",
-    "test:providers:e2e:runner": "cargo test -p context-http --test provider_runner_e2e -- --ignored --nocapture --test-threads=1",
+    "test:providers:e2e": "cargo test -p context-providers --test real_acp_e2e -- --ignored --nocapture --test-threads=1",
+    "test:providers:e2e:runner": "cargo test -p context-http --test provider_runner_acp_e2e -- --ignored --nocapture --test-threads=1",
     "verify:quiet": "pnpm test"
   }
 }

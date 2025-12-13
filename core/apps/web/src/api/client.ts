@@ -41,7 +41,26 @@ export type Message = {
   session_id: { 0: string } | string;
   role: "user" | "assistant" | "system";
   content: string;
+  attachments?: MessageAttachment[];
   delivery: "immediate" | "queued";
+  created_at: string;
+};
+
+export type MessageAttachment =
+  | {
+      kind: "image";
+      mime_type: string;
+      data_base64: string;
+      name?: string | null;
+    };
+
+export type SessionEvent = {
+  id: { 0: string } | string;
+  session_id: { 0: string } | string;
+  run_id?: { 0: string } | string | null;
+  turn_id?: { 0: string } | string | null;
+  event_type: string;
+  payload_json: any;
   created_at: string;
 };
 
@@ -114,14 +133,18 @@ export const getSession = (sessionId: string) =>
 export const listMessages = (sessionId: string) =>
   api<Message[]>(`/api/sessions/${sessionId}/messages`);
 
+export const listSessionEvents = (sessionId: string) =>
+  api<SessionEvent[]>(`/api/sessions/${sessionId}/events`);
+
 export const postMessage = (
   sessionId: string,
   content: string,
   delivery?: "immediate" | "queued",
+  attachments?: MessageAttachment[],
 ) =>
   api<Message>(`/api/sessions/${sessionId}/messages`, {
     method: "POST",
-    body: JSON.stringify({ content, delivery }),
+    body: JSON.stringify({ content, delivery, attachments: attachments ?? [] }),
   });
 
 export const cancelSession = (sessionId: string) =>
@@ -129,6 +152,18 @@ export const cancelSession = (sessionId: string) =>
 
 export const interruptSession = (sessionId: string) =>
   api(`/api/sessions/${sessionId}/interrupt`, { method: "POST" });
+
+export const setSessionModel = (sessionId: string, model_id: string) =>
+  api<Session>(`/api/sessions/${sessionId}/model`, {
+    method: "POST",
+    body: JSON.stringify({ model_id }),
+  });
+
+export const setSessionMode = (sessionId: string, mode_id: string) =>
+  api(`/api/sessions/${sessionId}/mode`, {
+    method: "POST",
+    body: JSON.stringify({ mode_id }),
+  });
 
 export const trackDiff = (trackId: string) =>
   api<{ diff: string }>(`/api/tracks/${trackId}/diff`);

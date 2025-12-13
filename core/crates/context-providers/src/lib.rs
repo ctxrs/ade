@@ -1,3 +1,4 @@
+pub mod acp;
 pub mod adapters;
 pub mod events;
 pub mod fake;
@@ -18,6 +19,7 @@ mod tests {
             .run(
                 crate::adapters::TurnInput {
                     content: "hi".into(),
+                    attachments: vec![],
                 },
                 std::env::current_dir().unwrap(),
                 Default::default(),

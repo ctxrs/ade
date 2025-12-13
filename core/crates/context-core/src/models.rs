@@ -106,6 +106,17 @@ pub enum MessageDelivery {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum MessageAttachment {
+    Image {
+        mime_type: String,
+        data_base64: String,
+        #[serde(default)]
+        name: Option<String>,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
     pub id: MessageId,
     pub session_id: SessionId,
@@ -115,6 +126,8 @@ pub struct Message {
     pub turn_id: Option<TurnId>,
     pub role: MessageRole,
     pub content: String,
+    #[serde(default)]
+    pub attachments: Vec<MessageAttachment>,
     pub delivery: MessageDelivery,
     pub delivered_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
@@ -127,9 +140,12 @@ pub enum SessionEventType {
     UserMessage,
     InputQueued,
     AssistantChunk,
+    ThoughtChunk,
     AssistantComplete,
     ToolCall,
+    ToolCallUpdate,
     ToolResult,
+    Plan,
     Done,
     InterruptRequested,
     TurnInterrupted,

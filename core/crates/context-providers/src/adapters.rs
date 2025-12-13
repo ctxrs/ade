@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
+use context_core::models::MessageAttachment;
+
 use crate::events::NormalizedEvent;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -62,6 +64,7 @@ pub struct ProviderStatus {
 #[derive(Debug, Clone)]
 pub struct TurnInput {
     pub content: String,
+    pub attachments: Vec<MessageAttachment>,
 }
 
 #[derive(Debug)]
@@ -83,4 +86,14 @@ pub trait ProviderAdapter: Send + Sync {
     ) -> Result<RunHandle>;
 
     async fn cancel(&self, handle: RunHandle) -> Result<()>;
+
+    /// Best-effort per-session model selection (only for providers that support it via ACP).
+    async fn set_session_model(&self, _session_key: String, _model_id: String) -> Result<()> {
+        anyhow::bail!("provider does not support session model selection");
+    }
+
+    /// Best-effort per-session mode selection (only for providers that support it via ACP).
+    async fn set_session_mode(&self, _session_key: String, _mode_id: String) -> Result<()> {
+        anyhow::bail!("provider does not support session mode selection");
+    }
 }

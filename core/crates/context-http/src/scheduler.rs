@@ -157,24 +157,36 @@ async fn start_turn(
         message.delivered_at = Some(Utc::now());
     }
 
-    let history = state
-        .store
-        .list_messages_for_session(session.id)
-        .await?
-        .into_iter()
-        .filter(|m| m.delivered_at.is_some() && m.id.0 != message.id.0)
-        .collect::<Vec<_>>();
-
-    let prompt = build_prompt(&history, &message);
+    let prompt = message.content.clone();
     let context_window_metrics =
         compute_context_window_metrics(&session.provider_id, &session.model_id, &prompt);
 
     let (ev_tx, mut ev_rx) = mpsc::channel::<NormalizedEvent>(128);
+
+    let mut provider_env = std::collections::HashMap::new();
+    provider_env.insert("CONTEXT_DAEMON_URL".to_string(), state.daemon_url.clone());
+    provider_env.insert(
+        "CONTEXT_SESSION_ID".to_string(),
+        session.id.0.to_string(),
+    );
+    provider_env.insert(
+        "CONTEXT_MCP_TOKEN".to_string(),
+        uuid::Uuid::new_v4().to_string(),
+    );
+    if let Ok(v) = std::env::var("CONTEXT_MCP_COMMAND") {
+        provider_env.insert("CONTEXT_MCP_COMMAND".to_string(), v);
+    }
+    if let Ok(v) = std::env::var("CONTEXT_MCP_DISABLED") {
+        provider_env.insert("CONTEXT_MCP_DISABLED".to_string(), v);
+    }
     let handle = adapter
         .run(
-            TurnInput { content: prompt },
+            TurnInput {
+                content: prompt,
+                attachments: message.attachments.clone(),
+            },
             workdir.clone(),
-            Default::default(),
+            provider_env,
             ev_tx,
         )
         .await?;
@@ -225,6 +237,7 @@ async fn start_turn(
                             turn_id: Some(turn_id),
                             role: MessageRole::Assistant,
                             content: content.to_string(),
+                            attachments: vec![],
                             delivery: MessageDelivery::Immediate,
                             delivered_at: Some(event.created_at),
                             created_at: event.created_at,
@@ -242,31 +255,6 @@ async fn start_turn(
         run_id,
         turn_id,
     })
-}
-
-fn build_prompt(history: &[Message], new_message: &Message) -> String {
-    let mut out = String::new();
-    for m in history {
-        match m.role {
-            MessageRole::System => {
-                out.push_str("System: ");
-            }
-            MessageRole::User => {
-                out.push_str("User: ");
-            }
-            MessageRole::Assistant => {
-                out.push_str("Assistant: ");
-            }
-        }
-        out.push_str(&m.content);
-        if !out.ends_with('\n') {
-            out.push('\n');
-        }
-    }
-    out.push_str("User: ");
-    out.push_str(&new_message.content);
-    out.push('\n');
-    out
 }
 
 async fn emit_event(

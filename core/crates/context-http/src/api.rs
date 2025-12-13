@@ -37,6 +37,9 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
         )
         .route("/api/sessions/:id", get(get_session))
         .route("/api/sessions/:id/messages", get(list_messages).post(post_message))
+        .route("/api/sessions/:id/model", post(set_session_model))
+        .route("/api/sessions/:id/mode", post(set_session_mode))
+        .route("/api/sessions/:id/events", get(list_session_events))
         .route("/api/sessions/:id/queue", get(list_queue))
         .route("/api/messages/:id", delete(delete_message))
         .route("/api/sessions/:id/cancel", post(cancel_session))
@@ -275,6 +278,7 @@ async fn create_session_for_track(
             turn_id: Some(turn_id),
             role: MessageRole::User,
             content: prompt,
+            attachments: vec![],
             delivery: MessageDelivery::Immediate,
             delivered_at: None,
             created_at: chrono::Utc::now(),
@@ -292,7 +296,12 @@ async fn create_session_for_track(
                 Some(run_id),
                 Some(turn_id),
                 SessionEventType::UserMessage,
-                serde_json::json!({"message_id": saved.id.0, "content": saved.content.clone(), "delivery": saved.delivery.clone()}),
+                serde_json::json!({
+                    "message_id": saved.id.0,
+                    "content": saved.content.clone(),
+                    "delivery": saved.delivery.clone(),
+                    "attachments": saved.attachments,
+                }),
             )
             .await
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -356,6 +365,19 @@ async fn list_queue(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
+async fn list_session_events(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<Vec<SessionEvent>>, StatusCode> {
+    let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
+    state
+        .store
+        .list_session_events(session_id)
+        .await
+        .map(Json)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
 async fn delete_message(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
@@ -387,6 +409,8 @@ async fn delete_message(
 struct PostMessageReq {
     content: String,
     delivery: Option<MessageDelivery>,
+    #[serde(default)]
+    attachments: Vec<MessageAttachment>,
 }
 
 async fn post_message(
@@ -424,6 +448,7 @@ async fn post_message(
         turn_id: Some(turn_id),
         role: MessageRole::User,
         content: req.content,
+        attachments: req.attachments,
         delivery,
         delivered_at: None,
         created_at: chrono::Utc::now(),
@@ -442,7 +467,12 @@ async fn post_message(
             Some(run_id),
             Some(turn_id),
             SessionEventType::UserMessage,
-            serde_json::json!({"message_id": saved.id.0, "content": saved.content.clone(), "delivery": saved.delivery.clone()}),
+            serde_json::json!({
+                "message_id": saved.id.0,
+                "content": saved.content.clone(),
+                "delivery": saved.delivery.clone(),
+                "attachments": saved.attachments,
+            }),
         )
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -498,6 +528,97 @@ async fn interrupt_session(
         .ok_or(StatusCode::NOT_FOUND)?;
     let tx = state.ensure_scheduler(session).await;
     let _ = tx.send(SchedulerCommand::Interrupt).await;
+    Ok(StatusCode::OK)
+}
+
+#[derive(Debug, Deserialize)]
+struct SetSessionModelReq {
+    model_id: String,
+}
+
+async fn set_session_model(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(req): Json<SetSessionModelReq>,
+) -> Result<Json<Session>, StatusCode> {
+    let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
+    let session = state
+        .store
+        .get_session(session_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    let adapter = state
+        .providers
+        .get(&session.provider_id)
+        .or_else(|| state.providers.get("fake"))
+        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    adapter
+        .set_session_model(session.id.0.to_string(), req.model_id.clone())
+        .await
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+
+    state
+        .store
+        .update_session_model(session_id, req.model_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let updated = state
+        .store
+        .get_session(session_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    Ok(Json(updated))
+}
+
+#[derive(Debug, Deserialize)]
+struct SetSessionModeReq {
+    mode_id: String,
+}
+
+async fn set_session_mode(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(req): Json<SetSessionModeReq>,
+) -> Result<StatusCode, StatusCode> {
+    let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
+    let session = state
+        .store
+        .get_session(session_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    let adapter = state
+        .providers
+        .get(&session.provider_id)
+        .or_else(|| state.providers.get("fake"))
+        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    adapter
+        .set_session_mode(session.id.0.to_string(), req.mode_id.clone())
+        .await
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+
+    let event = state
+        .store
+        .append_session_event(
+            session_id,
+            None,
+            None,
+            SessionEventType::Init,
+            serde_json::json!({"set_mode": req.mode_id}),
+        )
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let broadcaster = state.get_broadcaster(session_id).await;
+    let _ = broadcaster.send(event);
+
     Ok(StatusCode::OK)
 }
 

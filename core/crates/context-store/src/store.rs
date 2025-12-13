@@ -463,6 +463,21 @@ impl Store {
         }))
     }
 
+    pub async fn update_session_model(&self, id: SessionId, model_id: String) -> Result<()> {
+        let now = Utc::now().to_rfc3339();
+        sqlx::query(
+            r#"UPDATE sessions
+               SET model_id = ?, updated_at = ?
+               WHERE id = ?"#,
+        )
+        .bind(model_id)
+        .bind(now)
+        .bind(id.0.to_string())
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
     pub async fn list_sessions_for_track(&self, track_id: TrackId) -> Result<Vec<Session>> {
         let rows = sqlx::query(
             r#"SELECT id, track_id, task_id, workspace_id, worktree_id, provider_id, model_id, agent_role,
@@ -505,9 +520,17 @@ impl Store {
         if matches!(message.delivery, MessageDelivery::Immediate) && message.delivered_at.is_none() {
             message.delivered_at = Some(Utc::now());
         }
+        let attachments_json = if message.attachments.is_empty() {
+            None
+        } else {
+            Some(
+                serde_json::to_string(&message.attachments)
+                    .context("serializing message attachments")?,
+            )
+        };
         sqlx::query(
-            r#"INSERT INTO messages (id, session_id, task_id, track_id, run_id, turn_id, role, content, delivery, delivered_at, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+            r#"INSERT INTO messages (id, session_id, task_id, track_id, run_id, turn_id, role, content, attachments_json, delivery, delivered_at, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
         )
         .bind(message.id.0.to_string())
         .bind(message.session_id.0.to_string())
@@ -517,6 +540,7 @@ impl Store {
         .bind(message.turn_id.map(|t| t.0.to_string()))
         .bind(message_role_to_str(&message.role))
         .bind(&message.content)
+        .bind(attachments_json)
         .bind(message_delivery_to_str(&message.delivery))
         .bind(message.delivered_at.map(|d| d.to_rfc3339()))
         .bind(message.created_at.to_rfc3339())
@@ -527,7 +551,7 @@ impl Store {
 
     pub async fn list_messages_for_session(&self, session_id: SessionId) -> Result<Vec<Message>> {
         let rows = sqlx::query(
-            r#"SELECT id, session_id, task_id, track_id, run_id, turn_id, role, content, delivery, delivered_at, created_at
+            r#"SELECT id, session_id, task_id, track_id, run_id, turn_id, role, content, attachments_json, delivery, delivered_at, created_at
                FROM messages WHERE session_id = ? ORDER BY created_at ASC"#,
         )
         .bind(session_id.0.to_string())
@@ -544,6 +568,11 @@ impl Store {
             let delivered_at: Option<String> = r.try_get("delivered_at")?;
             let run_id: Option<String> = r.try_get("run_id")?;
             let turn_id: Option<String> = r.try_get("turn_id")?;
+            let attachments_json: Option<String> = r.try_get("attachments_json")?;
+            let attachments = attachments_json
+                .as_deref()
+                .and_then(|s| serde_json::from_str::<Vec<MessageAttachment>>(s).ok())
+                .unwrap_or_default();
             out.push(Message {
                 id: MessageId(uuid::Uuid::parse_str(&id)?),
                 session_id: SessionId(uuid::Uuid::parse_str(&session_id)?),
@@ -559,6 +588,7 @@ impl Store {
                     .map(TurnId),
                 role: parse_message_role(r.try_get::<String, _>("role")?.as_str()),
                 content: r.try_get("content")?,
+                attachments,
                 delivery: parse_message_delivery(r.try_get::<String, _>("delivery")?.as_str()),
                 delivered_at: delivered_at.as_deref().map(parse_dt).transpose()?,
                 created_at: parse_dt(&created_at)?,
@@ -572,7 +602,7 @@ impl Store {
         session_id: SessionId,
     ) -> Result<Vec<Message>> {
         let rows = sqlx::query(
-            r#"SELECT id, session_id, task_id, track_id, run_id, turn_id, role, content, delivery, delivered_at, created_at
+            r#"SELECT id, session_id, task_id, track_id, run_id, turn_id, role, content, attachments_json, delivery, delivered_at, created_at
                FROM messages
                WHERE session_id = ? AND delivery = 'queued' AND delivered_at IS NULL
                ORDER BY created_at ASC"#,
@@ -590,6 +620,11 @@ impl Store {
             let created_at: String = r.try_get("created_at")?;
             let run_id: Option<String> = r.try_get("run_id")?;
             let turn_id: Option<String> = r.try_get("turn_id")?;
+            let attachments_json: Option<String> = r.try_get("attachments_json")?;
+            let attachments = attachments_json
+                .as_deref()
+                .and_then(|s| serde_json::from_str::<Vec<MessageAttachment>>(s).ok())
+                .unwrap_or_default();
             out.push(Message {
                 id: MessageId(uuid::Uuid::parse_str(&id)?),
                 session_id: SessionId(uuid::Uuid::parse_str(&session_id)?),
@@ -605,6 +640,7 @@ impl Store {
                     .map(TurnId),
                 role: parse_message_role(r.try_get::<String, _>("role")?.as_str()),
                 content: r.try_get("content")?,
+                attachments,
                 delivery: MessageDelivery::Queued,
                 delivered_at: None,
                 created_at: parse_dt(&created_at)?,
@@ -615,7 +651,7 @@ impl Store {
 
     pub async fn get_message(&self, id: MessageId) -> Result<Option<Message>> {
         let row = sqlx::query(
-            r#"SELECT id, session_id, task_id, track_id, run_id, turn_id, role, content, delivery, delivered_at, created_at
+            r#"SELECT id, session_id, task_id, track_id, run_id, turn_id, role, content, attachments_json, delivery, delivered_at, created_at
                FROM messages WHERE id = ?"#,
         )
         .bind(id.0.to_string())
@@ -631,6 +667,11 @@ impl Store {
             let delivered_at: Option<String> = r.try_get("delivered_at").ok()?;
             let run_id: Option<String> = r.try_get("run_id").ok()?;
             let turn_id: Option<String> = r.try_get("turn_id").ok()?;
+            let attachments_json: Option<String> = r.try_get("attachments_json").ok()?;
+            let attachments = attachments_json
+                .as_deref()
+                .and_then(|s| serde_json::from_str::<Vec<MessageAttachment>>(s).ok())
+                .unwrap_or_default();
             Some(Message {
                 id: MessageId(uuid::Uuid::parse_str(&id).ok()?),
                 session_id: SessionId(uuid::Uuid::parse_str(&session_id).ok()?),
@@ -646,6 +687,7 @@ impl Store {
                     .map(TurnId),
                 role: parse_message_role(r.try_get::<String, _>("role").ok()?.as_str()),
                 content: r.try_get("content").ok()?,
+                attachments,
                 delivery: parse_message_delivery(r.try_get::<String, _>("delivery").ok()?.as_str()),
                 delivered_at: delivered_at.as_deref().map(parse_dt).transpose().ok()?,
                 created_at: parse_dt(&created_at).ok()?,
@@ -852,9 +894,12 @@ fn session_event_type_to_str(event_type: &SessionEventType) -> &'static str {
         SessionEventType::UserMessage => "user_message",
         SessionEventType::InputQueued => "input_queued",
         SessionEventType::AssistantChunk => "assistant_chunk",
+        SessionEventType::ThoughtChunk => "thought_chunk",
         SessionEventType::AssistantComplete => "assistant_complete",
         SessionEventType::ToolCall => "tool_call",
+        SessionEventType::ToolCallUpdate => "tool_call_update",
         SessionEventType::ToolResult => "tool_result",
+        SessionEventType::Plan => "plan",
         SessionEventType::Done => "done",
         SessionEventType::InterruptRequested => "interrupt_requested",
         SessionEventType::TurnInterrupted => "turn_interrupted",
@@ -868,9 +913,12 @@ fn parse_session_event_type(value: &str) -> SessionEventType {
         "user_message" => SessionEventType::UserMessage,
         "input_queued" => SessionEventType::InputQueued,
         "assistant_chunk" => SessionEventType::AssistantChunk,
+        "thought_chunk" => SessionEventType::ThoughtChunk,
         "assistant_complete" => SessionEventType::AssistantComplete,
         "tool_call" => SessionEventType::ToolCall,
+        "tool_call_update" => SessionEventType::ToolCallUpdate,
         "tool_result" => SessionEventType::ToolResult,
+        "plan" => SessionEventType::Plan,
         "done" => SessionEventType::Done,
         "interrupt_requested" => SessionEventType::InterruptRequested,
         "turn_interrupted" => SessionEventType::TurnInterrupted,

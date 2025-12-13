@@ -89,6 +89,51 @@ button {
   cursor: pointer;
 }
 
+.file-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid #ddd;
+  background: #fafafa;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.file-btn input {
+  display: none;
+}
+
+.thumb {
+  display: grid;
+  gap: 6px;
+  padding: 6px;
+  border: 1px solid #eee;
+  border-radius: 6px;
+  background: #fff;
+}
+
+.thumb img {
+  width: 120px;
+  height: 80px;
+  object-fit: cover;
+  border-radius: 4px;
+}
+
+.attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.attachment-img {
+  max-width: 240px;
+  max-height: 180px;
+  border-radius: 6px;
+  border: 1px solid #eee;
+}
+
 .link {
   background: none;
   border: none;
@@ -198,4 +243,34 @@ button {
   border-radius: 6px;
   max-height: 70vh;
   overflow: auto;
+}
+
+.json {
+  white-space: pre-wrap;
+  font-size: 12px;
+  background: #0f172a;
+  color: #e2e8f0;
+  padding: 10px;
+  border-radius: 6px;
+  overflow: auto;
+  max-height: 50vh;
+}
+
+.thought {
+  white-space: pre-wrap;
+  font-size: 12px;
+  background: #111827;
+  color: #d1d5db;
+  padding: 10px;
+  border-radius: 6px;
+  overflow: auto;
+  max-height: 40vh;
+}
+
+.plan-bar {
+  margin-bottom: 8px;
+}
+
+.plan-item.in_progress {
+  font-weight: 600;
 }

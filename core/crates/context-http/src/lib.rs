@@ -71,6 +71,7 @@ mod tests {
             data_dir.path().to_path_buf(),
             store.clone(),
             providers,
+            "http://127.0.0.1:4399".to_string(),
         ));
         let app = api::router(state.clone());
 
@@ -178,6 +179,7 @@ mod tests {
             data_dir.path().to_path_buf(),
             store.clone(),
             providers,
+            "http://127.0.0.1:4399".to_string(),
         ));
         {
             let mut statuses = HashMap::new();

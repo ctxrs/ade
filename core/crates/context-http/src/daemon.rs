@@ -12,7 +12,7 @@ use context_core::models::{Session, SessionEvent};
 use context_providers::adapters::ProviderAdapter;
 use context_providers::adapters::ProviderStatus;
 use context_providers::fake::FakeProviderAdapter;
-use context_providers::tier1::HeadlessCliAdapter;
+use context_providers::tier1::Tier1AcpAdapter;
 use context_store::Store;
 
 use crate::api;
@@ -23,6 +23,7 @@ pub struct AppState {
     pub store: Store,
     pub providers: HashMap<String, Arc<dyn ProviderAdapter>>,
     pub provider_statuses: Mutex<HashMap<String, ProviderStatus>>,
+    pub daemon_url: String,
     schedulers: Mutex<HashMap<SessionId, mpsc::Sender<SchedulerCommand>>>,
     broadcasters: Mutex<HashMap<SessionId, broadcast::Sender<SessionEvent>>>,
     running_sessions: Mutex<HashSet<SessionId>>,
@@ -33,12 +34,14 @@ impl AppState {
         data_root: PathBuf,
         store: Store,
         providers: HashMap<String, Arc<dyn ProviderAdapter>>,
+        daemon_url: String,
     ) -> Self {
         Self {
             data_root,
             store,
             providers,
             provider_statuses: Mutex::new(HashMap::new()),
+            daemon_url,
             schedulers: Mutex::new(HashMap::new()),
             broadcasters: Mutex::new(HashMap::new()),
             running_sessions: Mutex::new(HashSet::new()),
@@ -111,11 +114,12 @@ pub async fn serve(bind: String, data_dir: Option<String>) -> Result<()> {
 
     let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
     providers.insert("fake".into(), Arc::new(FakeProviderAdapter::new()));
-    providers.insert("codex".into(), Arc::new(HeadlessCliAdapter::codex()));
-    providers.insert("claude".into(), Arc::new(HeadlessCliAdapter::claude()));
-    providers.insert("gemini".into(), Arc::new(HeadlessCliAdapter::gemini()));
+    providers.insert("codex".into(), Arc::new(Tier1AcpAdapter::codex()));
+    providers.insert("claude".into(), Arc::new(Tier1AcpAdapter::claude()));
+    providers.insert("gemini".into(), Arc::new(Tier1AcpAdapter::gemini()));
 
-    let state = Arc::new(AppState::new(data_root, store, providers));
+    let daemon_url = format!("http://{}", bind.replace("0.0.0.0", "127.0.0.1"));
+    let state = Arc::new(AppState::new(data_root, store, providers, daemon_url));
     {
         let mut statuses = HashMap::new();
         for (id, adapter) in state.providers.iter() {
