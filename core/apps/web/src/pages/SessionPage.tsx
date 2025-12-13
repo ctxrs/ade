@@ -6,10 +6,6 @@ import { Link, useParams } from "react-router-dom";
 import {
   cancelSession,
   deleteMessage,
-  getSession,
-  getHealth,
-  listQueue,
-  listSessionEvents,
   Message,
   MessageAttachment,
   postMessage,
@@ -18,11 +14,11 @@ import {
   setSessionMode,
   setSessionModel,
   authenticateSession,
-  trackDiff,
   applyTrackDiffPatch,
   idToString,
   interruptSession,
 } from "../api/client";
+import { useOpenSession, useSessionCacheSnapshot, useSessionEntry, useSessionSupervisor } from "../state/sessionSupervisor";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 
@@ -62,6 +58,8 @@ type ThreadItem =
 
 export default function SessionPage() {
   const { id } = useParams<{ id: string }>();
+  const supervisor = useSessionSupervisor();
+  const supervisorSnap = useSessionCacheSnapshot();
   const showDebug = useMemo(() => {
     try {
       return new URLSearchParams(window.location.search).get("debug") === "1";
@@ -77,154 +75,50 @@ export default function SessionPage() {
     }
   }, [id]);
   const perfStartRef = useRef<number>(0);
-  const perfMarksRef = useRef<Array<{ name: string; ms: number }>>([]);
-  const [session, setSession] = useState<Session | null>(null);
-  const [events, setEvents] = useState<SessionEvent[]>([]);
-  const [queue, setQueue] = useState<Message[]>([]);
-  const [streamConnected, setStreamConnected] = useState(false);
-  const [daemonWsBase, setDaemonWsBase] = useState<string | null>(null);
   const [input, setInput] = useState("");
   const [draftAttachments, setDraftAttachments] = useState<MessageAttachment[]>([]);
-  const [diff, setDiff] = useState<string>("");
   const [atBottom, setAtBottom] = useState(true);
   const [hasNewActivity, setHasNewActivity] = useState(false);
-  const [interruptBanner, setInterruptBanner] = useState<string | null>(null);
   const [authMethodId, setAuthMethodId] = useState<string>("");
   const [authBusy, setAuthBusy] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const didInitialScrollRef = useRef(false);
-  const lastDiffPollAtRef = useRef(0);
+  useOpenSession(id ?? "", { watchDiff: true });
 
-  const refreshAll = async () => {
-    if (!id) return;
-    if (perfEnabled) {
-      perfStartRef.current = performance.now();
-      perfMarksRef.current = [];
-    }
-    const s = await perfWrap("getSession", () => getSession(id), perfEnabled, perfMarksRef);
-    setSession(s);
-    setEvents(await perfWrap("listSessionEvents", () => listSessionEvents(id), perfEnabled, perfMarksRef));
-    setQueue(await perfWrap("listQueue", () => listQueue(id), perfEnabled, perfMarksRef));
-    const trackId = idToString(s.track_id);
-    const d = await perfWrap("trackDiff", () => trackDiff(trackId), perfEnabled, perfMarksRef);
-    setDiff(d.diff);
-    if (perfEnabled) {
-      reportPerf("refreshAll", perfStartRef.current, perfMarksRef.current);
-    }
-  };
+  const entry = useSessionEntry(id ?? "");
+  const session: Session | null = entry?.session ?? null;
+  const events: SessionEvent[] = entry?.events ?? [];
+  const queue: Message[] = entry?.queue ?? [];
+  const diff = entry?.diff ?? "";
+  const eventsKey = `${entry?.lastEventId ?? ""}:${events.length}`;
+  const streamConnected = supervisorSnap.connection === "connected";
 
-  const refreshQueue = async () => {
-    if (!id) return;
-    setQueue(await listQueue(id));
-  };
-
-  const refreshDiff = async () => {
-    if (!session) return;
-    const trackId = idToString(session.track_id);
-    const d = await trackDiff(trackId);
-    setDiff(d.diff);
-  };
+  const interruptBanner = useMemo(() => {
+    const last = [...events].reverse().find((e) => e.event_type === "turn_interrupted");
+    if (!last) return null;
+    return `Interrupted at ${new Date(last.created_at).toLocaleTimeString()}.`;
+  }, [eventsKey]);
 
   useEffect(() => {
-    didInitialScrollRef.current = false;
-    refreshAll();
-  }, [id]);
+    if (!perfEnabled) return;
+    perfStartRef.current = performance.now();
+  }, [id, perfEnabled]);
 
   useEffect(() => {
-    if (!id) return;
-    getHealth()
-      .then((h) => {
-        const base = String(h.daemon_url || "").trim();
-        if (!base) return;
-        const wsBase = base.startsWith("https://")
-          ? base.replace(/^https:\/\//, "wss://")
-          : base.replace(/^http:\/\//, "ws://");
-        setDaemonWsBase(wsBase);
-      })
-      .catch(() => {});
-  }, [id]);
-
-  useEffect(() => {
-    if (!id) return;
-    const token = (() => {
-      try {
-        return sessionStorage.getItem("contextAuthToken");
-      } catch {
-        return null;
-      }
-    })();
-    const qs = token ? `?token=${encodeURIComponent(token)}` : "";
-    const wsUrl =
-      (daemonWsBase ? `${daemonWsBase}/api/sessions/${id}/stream${qs}` : null) ??
-      `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/api/sessions/${id}/stream${qs}`;
-    const ws = new WebSocket(
-      wsUrl,
+    if (!perfEnabled) return;
+    if (!perfStartRef.current) return;
+    if (!entry) return;
+    if (entry.loading) return;
+    // eslint-disable-next-line no-console
+    console.log(
+      `[perf] session_ready_ms=${(performance.now() - perfStartRef.current).toFixed(1)} events=${entry.events.length} diff_bytes=${(entry.diff ?? "").length}`,
     );
-    setStreamConnected(false);
-    ws.onopen = () => setStreamConnected(true);
-    ws.onerror = () => setStreamConnected(false);
-    ws.onclose = () => setStreamConnected(false);
-    ws.onmessage = (ev) => {
-      try {
-        const data = JSON.parse(ev.data);
-        setEvents((s) => mergeEvents(s, [data]));
-        if (data.event_type === "turn_interrupted") {
-          setInterruptBanner(`Interrupted at ${new Date(data.created_at).toLocaleTimeString()}.`);
-        }
-        if (data.event_type === "done") {
-          refreshQueue();
-          refreshDiff();
-        }
-      } catch {
-        // ignore
-      }
-    };
-    return () => ws.close();
-  }, [id, session, daemonWsBase]);
+    perfStartRef.current = 0;
+  }, [perfEnabled, entry?.loading, entry?.events.length, entry?.diff]);
 
-  // Fallback polling when WS streaming is unavailable (common in some dev/proxy setups).
-  useEffect(() => {
-    if (!id) return;
-    if (streamConnected) return;
-
-    let cancelled = false;
-    const tick = async () => {
-      try {
-        const [evs, q] = await Promise.all([listSessionEvents(id), listQueue(id)]);
-        if (cancelled) return;
-        setEvents((s) => mergeEvents(s, evs));
-        setQueue(q);
-
-        const trackId = session ? idToString(session.track_id) : "";
-        const now = Date.now();
-        if (trackId && now - lastDiffPollAtRef.current > 1500) {
-          lastDiffPollAtRef.current = now;
-          const d = await trackDiff(trackId);
-          if (!cancelled) setDiff(d.diff);
-        }
-      } catch {
-        // ignore
-      }
-    };
-
-    tick();
-    const interval = window.setInterval(tick, 1500);
-    return () => {
-      cancelled = true;
-      window.clearInterval(interval);
-    };
-  }, [id, streamConnected, session]);
-
-  const threadView = useMemo(() => {
-    if (!perfEnabled) return buildThreadViewModel(events);
-    const t0 = performance.now();
-    const out = buildThreadViewModel(events);
-    const ms = performance.now() - t0;
-    perfMarksRef.current.push({ name: "buildThreadViewModel", ms });
-    return out;
-  }, [events, perfEnabled]);
+  const threadView = useMemo(() => buildThreadViewModel(events), [eventsKey]);
   const threadItems = threadView.items;
 
   useEffect(() => {
@@ -232,11 +126,6 @@ export default function SessionPage() {
     if (threadItems.length === 0) return;
     virtuosoRef.current?.scrollToIndex({ index: threadItems.length - 1, align: "end" });
     didInitialScrollRef.current = true;
-    if (perfEnabled && perfStartRef.current) {
-      const ms = performance.now() - perfStartRef.current;
-      perfMarksRef.current.push({ name: "firstThreadRender", ms });
-      reportPerf("firstThreadRender", perfStartRef.current, perfMarksRef.current);
-    }
   }, [threadItems.length]);
 
   const contextIndicator = useMemo(() => {
@@ -248,16 +137,16 @@ export default function SessionPage() {
       context_tokens_estimate: number;
       remaining_fraction: number;
     };
-  }, [events]);
+  }, [eventsKey]);
 
   const planEntries = useMemo(() => {
     const last = [...events].reverse().find((e) => e.event_type === "plan");
     const update = last?.payload_json?.acp_update ?? last?.payload_json;
     const entries = update?.entries ?? [];
     return Array.isArray(entries) ? (entries as any[]) : [];
-  }, [events]);
+  }, [eventsKey]);
 
-  const authUi = useMemo(() => deriveAuthUi(events), [events]);
+  const authUi = useMemo(() => deriveAuthUi(events), [eventsKey]);
 
   useEffect(() => {
     if (authMethodId) return;
@@ -270,7 +159,7 @@ export default function SessionPage() {
     return [...events]
       .reverse()
       .find((e) => e.event_type === "init" && (e.payload_json?.models || e.payload_json?.modes));
-  }, [events]);
+  }, [eventsKey]);
 
   const acpModels = acpSessionInfo?.payload_json?.models;
   const acpModes = acpSessionInfo?.payload_json?.modes;
@@ -336,18 +225,8 @@ export default function SessionPage() {
     await postMessage(id, input.trim(), undefined, draftAttachments);
     setInput("");
     setDraftAttachments([]);
-    await refreshQueue();
-    try {
-      const evs = await listSessionEvents(id);
-      setEvents((s) => mergeEvents(s, evs));
-      if (session) {
-        const trackId = idToString(session.track_id);
-        const d = await trackDiff(trackId);
-        setDiff(d.diff);
-      }
-    } catch {
-      // ignore
-    }
+    supervisor.refreshQueue(id);
+    supervisor.refreshSession(id, { watchDiff: true });
   };
 
   const onSend = async (e: React.FormEvent) => {
@@ -357,7 +236,7 @@ export default function SessionPage() {
 
   const onRemoveQueued = async (messageId: string) => {
     await deleteMessage(messageId);
-    await refreshQueue();
+    supervisor.refreshQueue(id ?? "");
   };
 
   const insertIntoComposer = (text: string) => {
@@ -397,6 +276,12 @@ export default function SessionPage() {
   return (
     <div className="page split">
       <div className="left">
+        {entry?.error && (
+          <div className="banner">
+            <span className="error">{entry.error}</span>
+          </div>
+        )}
+        {entry?.loading && !entry?.error && <div className="banner">Loading…</div>}
         {session && (
           <div className="header">
             <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
@@ -460,7 +345,7 @@ export default function SessionPage() {
                   onChange={async (e) => {
                     const next = e.target.value;
                     const updated = await setSessionModel(id, next);
-                    setSession(updated);
+                    supervisor.setSession(updated);
                   }}
                 >
                   {modelOptions.map((m) => (
@@ -481,7 +366,7 @@ export default function SessionPage() {
                     const base = String(currentModelId).split("/")[0];
                     const next = `${base}/${e.target.value}`;
                     const updated = await setSessionModel(id, next);
-                    setSession(updated);
+                    supervisor.setSession(updated);
                   }}
                 >
                   {effortOptions.map((eff) => (
@@ -500,6 +385,7 @@ export default function SessionPage() {
                   value={currentModeId}
                   onChange={async (e) => {
                     await setSessionMode(id, e.target.value);
+                    supervisor.refreshSession(id, { watchDiff: true });
                   }}
                 >
                   {modeOptions.map((m) => (
@@ -755,7 +641,7 @@ export default function SessionPage() {
         <DiffReviewPane
           diff={diff}
           trackId={session ? idToString(session.track_id) : ""}
-          onDiffUpdated={(d) => setDiff(d)}
+          onDiffUpdated={(d) => id && supervisor.setDiff(id, d)}
         />
       </div>
     </div>
@@ -969,7 +855,7 @@ function DebugPanel({ events }: { events: SessionEvent[] }) {
       counts[e.event_type] = (counts[e.event_type] ?? 0) + 1;
     }
     return counts;
-  }, [events]);
+  }, [events.length]);
 
   return (
     <div className="debug card">
@@ -1680,36 +1566,6 @@ function looksLikeMarkdown(text: string): boolean {
   if (/^\s*[-*]\s+/m.test(t)) return true;
   if (/\[[^\]]+\]\([^)]+\)/.test(t)) return true;
   return false;
-}
-
-async function perfWrap<T>(
-  name: string,
-  fn: () => Promise<T>,
-  enabled: boolean,
-  sinkRef: React.MutableRefObject<Array<{ name: string; ms: number }>>,
-): Promise<T> {
-  if (!enabled) return fn();
-  const t0 = performance.now();
-  try {
-    return await fn();
-  } finally {
-    const ms = performance.now() - t0;
-    sinkRef.current.push({ name, ms });
-  }
-}
-
-function reportPerf(label: string, startAt: number, marks: Array<{ name: string; ms: number }>) {
-  const total = startAt ? performance.now() - startAt : undefined;
-  const rows = marks.map((m) => ({ step: m.name, ms: Number(m.ms.toFixed(1)) }));
-  const sum = marks.reduce((acc, m) => acc + m.ms, 0);
-  // eslint-disable-next-line no-console
-  console.log(
-    `[perf] ${label}: total=${total ? total.toFixed(1) : "?"}ms, sum(steps)=${sum.toFixed(1)}ms`,
-  );
-  // eslint-disable-next-line no-console
-  console.log(`[perf] ${label}: marks=${JSON.stringify(rows)}`);
-  // eslint-disable-next-line no-console
-  console.table(rows);
 }
 
 function mergeEvents(prev: SessionEvent[], incoming: SessionEvent[]): SessionEvent[] {

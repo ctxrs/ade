@@ -771,13 +771,72 @@ impl Store {
     }
 
     pub async fn list_session_events(&self, session_id: SessionId) -> Result<Vec<SessionEvent>> {
-        let rows = sqlx::query(
-            r#"SELECT id, session_id, run_id, turn_id, event_type, payload_json, created_at
-               FROM session_events WHERE session_id = ? ORDER BY created_at ASC"#,
-        )
-        .bind(session_id.0.to_string())
-        .fetch_all(&self.pool)
-        .await?;
+        self.list_session_events_page(session_id, None, None).await
+    }
+
+    pub async fn list_session_events_page(
+        &self,
+        session_id: SessionId,
+        after: Option<SessionEventId>,
+        limit: Option<u32>,
+    ) -> Result<Vec<SessionEvent>> {
+        let session_id_str = session_id.0.to_string();
+        let limit_i64 = limit.map(|n| n as i64);
+
+        let (query, binds): (String, Vec<String>) = if let Some(after_id) = after {
+            let after_id_str = after_id.0.to_string();
+            let row = sqlx::query(
+                r#"SELECT created_at FROM session_events WHERE id = ? AND session_id = ?"#,
+            )
+            .bind(&after_id_str)
+            .bind(&session_id_str)
+            .fetch_optional(&self.pool)
+            .await?;
+            let Some(row) = row else {
+                anyhow::bail!("after event not found for session");
+            };
+            let after_created_at: String = row.try_get("created_at")?;
+
+            let mut q = String::from(
+                r#"SELECT id, session_id, run_id, turn_id, event_type, payload_json, created_at
+                   FROM session_events
+                   WHERE session_id = ?
+                     AND (created_at > ? OR (created_at = ? AND id > ?))
+                   ORDER BY created_at ASC, id ASC"#,
+            );
+            if limit_i64.is_some() {
+                q.push_str(" LIMIT ?");
+            }
+            (
+                q,
+                vec![
+                    session_id_str.clone(),
+                    after_created_at.clone(),
+                    after_created_at,
+                    after_id_str,
+                ],
+            )
+        } else {
+            let mut q = String::from(
+                r#"SELECT id, session_id, run_id, turn_id, event_type, payload_json, created_at
+                   FROM session_events WHERE session_id = ?
+                   ORDER BY created_at ASC, id ASC"#,
+            );
+            if limit_i64.is_some() {
+                q.push_str(" LIMIT ?");
+            }
+            (q, vec![session_id_str.clone()])
+        };
+
+        let mut sql = sqlx::query(&query);
+        for b in binds {
+            sql = sql.bind(b);
+        }
+        if let Some(l) = limit_i64 {
+            sql = sql.bind(l);
+        }
+
+        let rows = sql.fetch_all(&self.pool).await?;
 
         let mut out = Vec::with_capacity(rows.len());
         for r in rows {

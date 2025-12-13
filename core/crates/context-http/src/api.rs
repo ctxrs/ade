@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::extract::ws::{Message as WsMessage, WebSocket, WebSocketUpgrade};
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::Request;
 use axum::http::StatusCode;
 use axum::middleware::{self, Next};
@@ -107,6 +107,7 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
         .route("/api/sessions/:id/authenticate", post(authenticate_session))
         .route("/api/tracks/:id/diff", get(track_diff))
         .route("/api/tracks/:id/diff/apply", post(track_diff_apply))
+        .route("/api/stream", get(global_stream_ws))
         .route("/api/sessions/:id/stream", get(session_stream_ws))
         .layer(middleware::from_fn_with_state(auth_state, auth_middleware))
         .with_state(state)
@@ -939,8 +940,7 @@ async fn create_session_for_track(
             )
             .await
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-        let broadcaster = state.get_broadcaster(session.id).await;
-        let _ = broadcaster.send(event);
+        state.publish_event(event).await;
 
         let tx = state.ensure_scheduler(session.clone()).await;
         let _ = tx.send(SchedulerCommand::Enqueue(saved)).await;
@@ -1030,16 +1030,31 @@ async fn list_queue(
 async fn list_session_events(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
+    Query(q): Query<ListSessionEventsQuery>,
 ) -> Result<Json<Vec<SessionEvent>>, StatusCode> {
     let perf = std::env::var_os("CONTEXT_PERF").is_some();
     let t0 = Instant::now();
     let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    let out = state
+    let after = q
+        .after
+        .as_deref()
+        .and_then(|s| uuid::Uuid::parse_str(s).ok())
+        .map(SessionEventId);
+    let out = match state
         .store
-        .list_session_events(session_id)
+        .list_session_events_page(session_id, after, q.limit)
         .await
-        .map(Json)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR);
+    {
+        Ok(events) => Ok(Json(events)),
+        Err(e) => {
+            let msg = e.to_string().to_lowercase();
+            if msg.contains("after event not found") {
+                Err(StatusCode::BAD_REQUEST)
+            } else {
+                Err(StatusCode::INTERNAL_SERVER_ERROR)
+            }
+        }
+    };
     if perf {
         tracing::info!(
             target: "context_perf",
@@ -1049,6 +1064,12 @@ async fn list_session_events(
         );
     }
     out
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct ListSessionEventsQuery {
+    after: Option<String>,
+    limit: Option<u32>,
 }
 
 async fn delete_message(
@@ -1132,7 +1153,6 @@ async fn post_message(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let broadcaster = state.get_broadcaster(session_id).await;
     let event = state
         .store
         .append_session_event(
@@ -1149,7 +1169,7 @@ async fn post_message(
         )
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let _ = broadcaster.send(event);
+    state.publish_event(event).await;
 
     if matches!(saved.delivery, MessageDelivery::Queued) {
         let queued = state
@@ -1163,7 +1183,7 @@ async fn post_message(
             )
             .await
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-        let _ = broadcaster.send(queued);
+        state.publish_event(queued).await;
     }
 
     let tx = state.ensure_scheduler(session).await;
@@ -1293,8 +1313,7 @@ async fn set_session_mode(
         )
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let broadcaster = state.get_broadcaster(session_id).await;
-    let _ = broadcaster.send(event);
+    state.publish_event(event).await;
 
     Ok(StatusCode::OK)
 }
@@ -1391,13 +1410,12 @@ async fn authenticate_session(
         provider_env.insert("CONTEXT_MCP_COMMAND".to_string(), v);
     }
     if let Ok(v) = std::env::var("CONTEXT_MCP_DISABLED") {
-        provider_env.insert("CONTEXT_MCP_DISABLED".to_string(), v);
+    provider_env.insert("CONTEXT_MCP_DISABLED".to_string(), v);
     }
 
     let (ev_tx, mut ev_rx) = mpsc::channel::<NormalizedEvent>(128);
+    let state_for_events = state.clone();
     let store = state.store.clone();
-    let broadcaster = state.get_broadcaster(session_id).await;
-    let drain_broadcaster = broadcaster.clone();
     tokio::spawn(async move {
         while let Some(ev) = ev_rx.recv().await {
             let payload = ev.payload_json.clone();
@@ -1413,7 +1431,7 @@ async fn authenticate_session(
                 .append_session_event(session_id, None, None, ev.event_type.clone(), payload)
                 .await;
             if let Ok(event) = appended {
-                let _ = drain_broadcaster.send(event);
+                state_for_events.publish_event(event).await;
             }
         }
     });
@@ -1440,7 +1458,7 @@ async fn authenticate_session(
                 }),
             )
         })?;
-    let _ = broadcaster.send(started);
+    state.publish_event(started).await;
 
     let session_key = session.id.0.to_string();
     let result = adapter
@@ -1470,7 +1488,7 @@ async fn authenticate_session(
                         }),
                     )
                 })?;
-            let _ = broadcaster.send(done);
+            state.publish_event(done).await;
             Ok(StatusCode::OK)
         }
         Err(e) => {
@@ -1497,7 +1515,7 @@ async fn authenticate_session(
                         }),
                     )
                 })?;
-            let _ = broadcaster.send(failed);
+            state.publish_event(failed).await;
             Err((
                 StatusCode::BAD_REQUEST,
                 Json(ApiErrorResp {
@@ -1714,6 +1732,76 @@ async fn session_stream_ws(
         Err(_) => return StatusCode::BAD_REQUEST.into_response(),
     };
     ws.on_upgrade(move |socket| handle_ws(socket, state, session_id))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum GlobalStreamClientMsg {
+    Subscribe { session_ids: Vec<String> },
+    Unsubscribe { session_ids: Vec<String> },
+    Set { session_ids: Vec<String> },
+}
+
+async fn global_stream_ws(
+    ws: WebSocketUpgrade,
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    ws.on_upgrade(move |socket| handle_global_ws(socket, state))
+}
+
+async fn handle_global_ws(mut socket: WebSocket, state: Arc<AppState>) {
+    use tokio::select;
+
+    let mut rx = state.global_broadcaster().subscribe();
+    let mut subscribed: std::collections::HashSet<SessionId> = std::collections::HashSet::new();
+
+    loop {
+        select! {
+            msg = socket.recv() => {
+                let Some(Ok(msg)) = msg else { break };
+                let WsMessage::Text(text) = msg else { continue };
+                let parsed: Result<GlobalStreamClientMsg, _> = serde_json::from_str(&text);
+                let Ok(parsed) = parsed else { continue };
+
+                let ids = match parsed {
+                    GlobalStreamClientMsg::Subscribe { session_ids } => {
+                        for s in session_ids {
+                            if let Ok(u) = uuid::Uuid::parse_str(&s) {
+                                subscribed.insert(SessionId(u));
+                            }
+                        }
+                        continue;
+                    }
+                    GlobalStreamClientMsg::Unsubscribe { session_ids } => {
+                        for s in session_ids {
+                            if let Ok(u) = uuid::Uuid::parse_str(&s) {
+                                subscribed.remove(&SessionId(u));
+                            }
+                        }
+                        continue;
+                    }
+                    GlobalStreamClientMsg::Set { session_ids } => session_ids,
+                };
+
+                subscribed.clear();
+                for s in ids {
+                    if let Ok(u) = uuid::Uuid::parse_str(&s) {
+                        subscribed.insert(SessionId(u));
+                    }
+                }
+            }
+            ev = rx.recv() => {
+                let Ok(event) = ev else { continue };
+                if subscribed.is_empty() { continue; }
+                if !subscribed.contains(&event.session_id) { continue; }
+                if let Ok(text) = serde_json::to_string(&event) {
+                    if socket.send(WsMessage::Text(text)).await.is_err() {
+                        break;
+                    }
+                }
+            }
+        }
+    }
 }
 
 async fn handle_ws(mut socket: WebSocket, state: Arc<AppState>, session_id: SessionId) {

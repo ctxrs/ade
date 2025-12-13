@@ -32,6 +32,7 @@ pub struct AppState {
     pub shutdown_tx: broadcast::Sender<()>,
     schedulers: Mutex<HashMap<SessionId, mpsc::Sender<SchedulerCommand>>>,
     broadcasters: Mutex<HashMap<SessionId, broadcast::Sender<SessionEvent>>>,
+    global_broadcaster: broadcast::Sender<SessionEvent>,
     running_sessions: Mutex<HashSet<SessionId>>,
     installs: Mutex<HashMap<InstallId, InstallState>>,
 }
@@ -45,6 +46,7 @@ impl AppState {
         auth_token: Option<String>,
     ) -> Self {
         let (shutdown_tx, _) = broadcast::channel(8);
+        let (global_broadcaster, _) = broadcast::channel(2048);
         Self {
             data_root,
             store,
@@ -55,6 +57,7 @@ impl AppState {
             shutdown_tx,
             schedulers: Mutex::new(HashMap::new()),
             broadcasters: Mutex::new(HashMap::new()),
+            global_broadcaster,
             running_sessions: Mutex::new(HashSet::new()),
             installs: Mutex::new(HashMap::new()),
         }
@@ -68,6 +71,16 @@ impl AppState {
                 tx
             })
             .clone()
+    }
+
+    pub fn global_broadcaster(&self) -> broadcast::Sender<SessionEvent> {
+        self.global_broadcaster.clone()
+    }
+
+    pub async fn publish_event(&self, event: SessionEvent) {
+        let tx = self.get_broadcaster(event.session_id).await;
+        let _ = tx.send(event.clone());
+        let _ = self.global_broadcaster.send(event);
     }
 
     pub async fn ensure_scheduler(

@@ -252,6 +252,14 @@ export const listMessages = (sessionId: string) =>
 export const listSessionEvents = (sessionId: string) =>
   api<SessionEvent[]>(`/api/sessions/${sessionId}/events`);
 
+export const listSessionEventsPage = (sessionId: string, after?: string, limit?: number) => {
+  const qs = new URLSearchParams();
+  if (after) qs.set("after", after);
+  if (limit) qs.set("limit", String(limit));
+  const suffix = qs.toString() ? `?${qs.toString()}` : "";
+  return api<SessionEvent[]>(`/api/sessions/${sessionId}/events${suffix}`);
+};
+
 export const postMessage = (
   sessionId: string,
   content: string,

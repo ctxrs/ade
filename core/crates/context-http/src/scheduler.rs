@@ -224,8 +224,8 @@ async fn start_turn(
         )
         .await?;
 
+    let state_for_events = state.clone();
     let store = state.store.clone();
-    let broadcaster = state.get_broadcaster(session.id).await;
     let session_id = session.id;
     let task_id = session.task_id;
     let track_id = session.track_id;
@@ -262,7 +262,7 @@ async fn start_turn(
                 )
                 .await;
             if let Ok(event) = appended {
-                let _ = broadcaster.send(event.clone());
+                state_for_events.publish_event(event.clone()).await;
                 if matches!(event.event_type, SessionEventType::AssistantComplete) {
                     let content = event
                         .payload_json
@@ -358,8 +358,7 @@ async fn emit_event(
         .store
         .append_session_event(session_id, run_id, turn_id, event_type, payload_json)
         .await?;
-    let broadcaster = state.get_broadcaster(session_id).await;
-    let _ = broadcaster.send(event);
+    state.publish_event(event).await;
     Ok(())
 }
 
