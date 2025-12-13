@@ -34,7 +34,7 @@ enum Commands {
         /// Release channel (e.g. stable, nightly)
         #[arg(long, default_value = "stable")]
         channel: String,
-        /// Base URL for release manifests and downloads (e.g. https://download.context.dev)
+        /// Base URL for release manifests and downloads (e.g. https://api.context.rs/functions/v1)
         #[arg(long)]
         base_url: Option<String>,
         /// Run non-interactively.

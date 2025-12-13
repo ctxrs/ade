@@ -31,7 +31,8 @@ pub struct ReleaseManifest {
 }
 
 pub fn default_download_base_url() -> String {
-    std::env::var("CONTEXT_DOWNLOAD_BASE_URL").unwrap_or_else(|_| "https://download.context.dev".to_string())
+    std::env::var("CONTEXT_DOWNLOAD_BASE_URL")
+        .unwrap_or_else(|_| "https://api.context.rs/functions/v1".to_string())
 }
 
 pub fn platform_key() -> Option<&'static str> {
