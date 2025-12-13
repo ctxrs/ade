@@ -55,5 +55,34 @@ pub async fn diff_worktree(
     worktree_path: impl AsRef<Path>,
     base_commit_sha: &str,
 ) -> Result<String> {
-    git::git_diff(worktree_path, base_commit_sha).await
+    let root = worktree_path.as_ref();
+    let mut out = git::git_diff(root, base_commit_sha).await?;
+
+    // `git diff <base>` does not include untracked files, but we want the UI to show newly created
+    // files even before they are staged.
+    let untracked = git::list_untracked_files(root).await.unwrap_or_default();
+    for rel in untracked {
+        // Avoid dumping huge blobs into the diff view.
+        let abs = root.join(&rel);
+        if let Ok(meta) = tokio::fs::metadata(&abs).await {
+            const MAX_BYTES: u64 = 512 * 1024;
+            if meta.len() > MAX_BYTES {
+                out.push_str(&format!(
+                    "\n# untracked: {} ({} bytes; omitted)\n",
+                    rel,
+                    meta.len()
+                ));
+                continue;
+            }
+        }
+
+        if let Ok(patch) = git::git_diff_untracked_file(root, &rel).await {
+            if !patch.trim().is_empty() {
+                out.push('\n');
+                out.push_str(&patch);
+            }
+        }
+    }
+
+    Ok(out)
 }

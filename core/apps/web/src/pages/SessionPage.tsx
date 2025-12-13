@@ -77,6 +77,7 @@ export default function SessionPage() {
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const didInitialScrollRef = useRef(false);
+  const lastDiffPollAtRef = useRef(0);
 
   const refreshAll = async () => {
     if (!id) return;
@@ -170,6 +171,14 @@ export default function SessionPage() {
         if (cancelled) return;
         setEvents((s) => mergeEvents(s, evs));
         setQueue(q);
+
+        const trackId = session ? idToString(session.track_id) : "";
+        const now = Date.now();
+        if (trackId && now - lastDiffPollAtRef.current > 1500) {
+          lastDiffPollAtRef.current = now;
+          const d = await trackDiff(trackId);
+          if (!cancelled) setDiff(d.diff);
+        }
       } catch {
         // ignore
       }
@@ -181,7 +190,7 @@ export default function SessionPage() {
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [id, streamConnected]);
+  }, [id, streamConnected, session]);
 
   const threadItems = useMemo(() => buildThreadItems(events), [events]);
 
@@ -293,6 +302,11 @@ export default function SessionPage() {
     try {
       const evs = await listSessionEvents(id);
       setEvents((s) => mergeEvents(s, evs));
+      if (session) {
+        const trackId = idToString(session.track_id);
+        const d = await trackDiff(trackId);
+        setDiff(d.diff);
+      }
     } catch {
       // ignore
     }
@@ -347,7 +361,22 @@ export default function SessionPage() {
       <div className="left">
         {session && (
           <div className="header">
-            <Link to={`/tasks/${idToString(session.task_id)}`}>← Task</Link>
+            <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
+              <Link to={`/tasks/${idToString(session.task_id)}`}>← Task</Link>
+              {threadItems.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    virtuosoRef.current?.scrollToIndex({
+                      index: threadItems.length - 1,
+                      align: "end",
+                    })
+                  }
+                >
+                  Jump to latest
+                </button>
+              )}
+            </div>
             <div className="muted">
               {session.provider_id} / {session.model_id} ·{" "}
               {contextIndicator ? (

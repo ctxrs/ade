@@ -52,3 +52,60 @@ pub async fn git_diff(root_path: impl AsRef<Path>, base_commit_sha: &str) -> Res
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
+pub async fn list_untracked_files(root_path: impl AsRef<Path>) -> Result<Vec<String>> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root_path.as_ref())
+        .arg("ls-files")
+        .arg("--others")
+        .arg("--exclude-standard")
+        .arg("-z")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .await
+        .context("running git ls-files --others")?;
+    if !output.status.success() {
+        bail!(
+            "git ls-files failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let bytes = output.stdout;
+    let mut out = Vec::new();
+    for part in bytes.split(|b| *b == 0) {
+        if part.is_empty() {
+            continue;
+        }
+        out.push(String::from_utf8_lossy(part).to_string());
+    }
+    Ok(out)
+}
+
+pub async fn git_diff_untracked_file(
+    root_path: impl AsRef<Path>,
+    rel_path: &str,
+) -> Result<String> {
+    // `git diff --no-index` uses exit code 1 to indicate differences; treat 0/1 as success.
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root_path.as_ref())
+        .arg("diff")
+        .arg("--no-index")
+        .arg("--")
+        .arg("/dev/null")
+        .arg(rel_path)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .await
+        .context("running git diff --no-index for untracked file")?;
+
+    if !output.status.success() && output.status.code() != Some(1) {
+        bail!(
+            "git diff --no-index failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
