@@ -1,11 +1,13 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use tokio::process::Command;
+use tokio::sync::Mutex;
 use tokio::time::timeout;
 
 use crate::daemon::AppState;
@@ -23,6 +25,12 @@ const RETRY_COUNT: u32 = 2;
 const RETRY_BACKOFF_BASE_MS: u64 = 750;
 const LAST_ERROR_MAX_LEN: usize = 8000;
 const INSTALL_EVENT_ERROR_MAX_LEN: usize = 6000;
+
+static NODE_RUNTIME_INSTALL_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+fn node_runtime_install_lock() -> &'static Mutex<()> {
+    NODE_RUNTIME_INSTALL_LOCK.get_or_init(|| Mutex::new(()))
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ManagedInstallError {
@@ -565,6 +573,31 @@ async fn ensure_node_runtime(
         .join("bin")
         .join("npm-cli.js");
 
+    if node_bin.exists() && npm_cli_js.exists() {
+        emit_install(
+            state,
+            install_id,
+            provider_id,
+            InstallEventLevel::Info,
+            "node",
+            format!("Using existing Node runtime v{NODE_VERSION} ({target})"),
+            None,
+            None,
+            None,
+        )
+        .await;
+        return Ok(NodeRuntime {
+            node_root,
+            node_bin,
+            npm_cli_js,
+        });
+    }
+
+    // `install_all` runs provider installs concurrently; without a lock, multiple tasks can race by
+    // deleting/recreating the same `.extract` directory and corrupting the unpack.
+    let _lock = node_runtime_install_lock().lock().await;
+
+    // Another task may have completed the install while we waited.
     if node_bin.exists() && npm_cli_js.exists() {
         emit_install(
             state,

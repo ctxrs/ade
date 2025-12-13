@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { forwardRef, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Virtuoso, VirtuosoHandle } from "react-virtuoso";
@@ -7,6 +7,7 @@ import {
   cancelSession,
   deleteMessage,
   getSession,
+  getHealth,
   listQueue,
   listSessionEvents,
   Message,
@@ -62,6 +63,8 @@ export default function SessionPage() {
   const [session, setSession] = useState<Session | null>(null);
   const [events, setEvents] = useState<SessionEvent[]>([]);
   const [queue, setQueue] = useState<Message[]>([]);
+  const [streamConnected, setStreamConnected] = useState(false);
+  const [daemonWsBase, setDaemonWsBase] = useState<string | null>(null);
   const [input, setInput] = useState("");
   const [draftAttachments, setDraftAttachments] = useState<MessageAttachment[]>([]);
   const [diff, setDiff] = useState<string>("");
@@ -73,6 +76,7 @@ export default function SessionPage() {
   const [authError, setAuthError] = useState<string | null>(null);
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const didInitialScrollRef = useRef(false);
 
   const refreshAll = async () => {
     if (!id) return;
@@ -98,7 +102,22 @@ export default function SessionPage() {
   };
 
   useEffect(() => {
+    didInitialScrollRef.current = false;
     refreshAll();
+  }, [id]);
+
+  useEffect(() => {
+    if (!id) return;
+    getHealth()
+      .then((h) => {
+        const base = String(h.daemon_url || "").trim();
+        if (!base) return;
+        const wsBase = base.startsWith("https://")
+          ? base.replace(/^https:\/\//, "wss://")
+          : base.replace(/^http:\/\//, "ws://");
+        setDaemonWsBase(wsBase);
+      })
+      .catch(() => {});
   }, [id]);
 
   useEffect(() => {
@@ -111,13 +130,20 @@ export default function SessionPage() {
       }
     })();
     const qs = token ? `?token=${encodeURIComponent(token)}` : "";
+    const wsUrl =
+      (daemonWsBase ? `${daemonWsBase}/api/sessions/${id}/stream${qs}` : null) ??
+      `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/api/sessions/${id}/stream${qs}`;
     const ws = new WebSocket(
-      `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/api/sessions/${id}/stream${qs}`,
+      wsUrl,
     );
+    setStreamConnected(false);
+    ws.onopen = () => setStreamConnected(true);
+    ws.onerror = () => setStreamConnected(false);
+    ws.onclose = () => setStreamConnected(false);
     ws.onmessage = (ev) => {
       try {
         const data = JSON.parse(ev.data);
-        setEvents((s) => [...s, data]);
+        setEvents((s) => mergeEvents(s, [data]));
         if (data.event_type === "turn_interrupted") {
           setInterruptBanner(`Interrupted at ${new Date(data.created_at).toLocaleTimeString()}.`);
         }
@@ -130,9 +156,41 @@ export default function SessionPage() {
       }
     };
     return () => ws.close();
-  }, [id, session]);
+  }, [id, session, daemonWsBase]);
+
+  // Fallback polling when WS streaming is unavailable (common in some dev/proxy setups).
+  useEffect(() => {
+    if (!id) return;
+    if (streamConnected) return;
+
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const [evs, q] = await Promise.all([listSessionEvents(id), listQueue(id)]);
+        if (cancelled) return;
+        setEvents((s) => mergeEvents(s, evs));
+        setQueue(q);
+      } catch {
+        // ignore
+      }
+    };
+
+    tick();
+    const interval = window.setInterval(tick, 1500);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [id, streamConnected]);
 
   const threadItems = useMemo(() => buildThreadItems(events), [events]);
+
+  useEffect(() => {
+    if (didInitialScrollRef.current) return;
+    if (threadItems.length === 0) return;
+    virtuosoRef.current?.scrollToIndex({ index: threadItems.length - 1, align: "end" });
+    didInitialScrollRef.current = true;
+  }, [threadItems.length]);
 
   const contextIndicator = useMemo(() => {
     const done = [...events]
@@ -232,6 +290,12 @@ export default function SessionPage() {
     setInput("");
     setDraftAttachments([]);
     await refreshQueue();
+    try {
+      const evs = await listSessionEvents(id);
+      setEvents((s) => mergeEvents(s, evs));
+    } catch {
+      // ignore
+    }
   };
 
   const onSend = async (e: React.FormEvent) => {
@@ -294,6 +358,7 @@ export default function SessionPage() {
               ) : (
                 <span title="Tokenizer/model window unknown">Unknown</span>
               )}
+              {!streamConnected && <span title="Live stream disconnected; polling for updates."> · Polling</span>}
             </div>
           </div>
         )}
@@ -457,8 +522,12 @@ export default function SessionPage() {
             if (b) setHasNewActivity(false);
           }}
           components={{
-            List: (props) => <div {...props} role="list" />,
-            Item: (props) => <div {...props} role="listitem" />,
+            List: forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>((props, ref) => (
+              <div {...props} ref={ref} role="list" />
+            )),
+            Item: forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>((props, ref) => (
+              <div {...props} ref={ref} role="listitem" />
+            )),
           }}
           itemContent={(_, item) => <ThreadItemView item={item} />}
         />
@@ -1004,6 +1073,19 @@ function buildThreadItems(events: SessionEvent[]): ThreadItem[] {
   }
 
   return items;
+}
+
+function mergeEvents(prev: SessionEvent[], incoming: SessionEvent[]): SessionEvent[] {
+  const map = new Map<string, SessionEvent>();
+  for (const ev of prev) {
+    const key = idToString(ev.id) || `${ev.created_at}-${ev.event_type}`;
+    map.set(key, ev);
+  }
+  for (const ev of incoming) {
+    const key = idToString(ev.id) || `${ev.created_at}-${ev.event_type}`;
+    map.set(key, ev);
+  }
+  return [...map.values()].sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
 }
 
 type AuthMethodOption = { id: string; name: string };

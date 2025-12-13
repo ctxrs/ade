@@ -681,13 +681,60 @@ async fn get_workspace(
 async fn create_workspace(
     State(state): State<Arc<AppState>>,
     Json(req): Json<CreateWorkspaceReq>,
-) -> Result<Json<Workspace>, StatusCode> {
-    assert_git_repo(&req.root_path)
-        .await
-        .map_err(|_| StatusCode::BAD_REQUEST)?;
+) -> Result<Json<Workspace>, (StatusCode, Json<ApiErrorResp>)> {
+    let raw = req.root_path.trim();
+    if raw.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "root_path is required".to_string(),
+            }),
+        ));
+    }
+
+    let expanded = if raw == "~" || raw.starts_with("~/") {
+        let base = directories::BaseDirs::new().ok_or_else(|| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: "could not resolve home directory to expand '~'".to_string(),
+                }),
+            )
+        })?;
+        let home = base.home_dir();
+        if raw == "~" {
+            home.to_path_buf()
+        } else {
+            home.join(raw.trim_start_matches("~/"))
+        }
+    } else {
+        PathBuf::from(raw)
+    };
+
+    let root_path = tokio::fs::canonicalize(&expanded).await.map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: format!(
+                    "invalid root_path '{}': {}",
+                    expanded.to_string_lossy(),
+                    e
+                ),
+            }),
+        )
+    })?;
+
+    assert_git_repo(&root_path).await.map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp { error: e.to_string() }),
+        )
+    })?;
+
+    let root_path_str = root_path.to_string_lossy().to_string();
 
     let name = req.name.unwrap_or_else(|| {
-        PathBuf::from(&req.root_path)
+        root_path
             .file_name()
             .and_then(|s| s.to_str())
             .unwrap_or("workspace")
@@ -695,10 +742,17 @@ async fn create_workspace(
     });
     state
         .store
-        .create_workspace(name, req.root_path)
+        .create_workspace(name, root_path_str)
         .await
         .map(Json)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: e.to_string(),
+                }),
+            )
+        })
 }
 
 async fn delete_workspace(

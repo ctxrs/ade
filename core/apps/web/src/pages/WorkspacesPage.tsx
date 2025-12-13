@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { createWorkspace, listProviders, listWorkspaces, ProviderStatus, Workspace } from "../api/client";
+import { createWorkspace, idToString, listProviders, listWorkspaces, ProviderStatus, Workspace } from "../api/client";
 
 export default function WorkspacesPage() {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
@@ -48,19 +48,34 @@ export default function WorkspacesPage() {
       <form onSubmit={onCreate} className="card">
         <label>
           Root path
-          <input value={rootPath} onChange={(e) => setRootPath(e.target.value)} />
+          <input
+            value={rootPath}
+            onChange={(e) => setRootPath(e.target.value)}
+          />
+          <div className="muted" style={{ marginTop: 6 }}>
+            Must be a git repo root (contains <code>.git</code>). Tilde (<code>~</code>) is supported.
+          </div>
         </label>
         <label>
           Name (optional)
           <input value={name} onChange={(e) => setName(e.target.value)} />
         </label>
         <button type="submit">Add workspace</button>
-        {error && <div className="error">{error}</div>}
+        {error && (
+          <div className="error">
+            <div>{error}</div>
+            {(error === "400 Bad Request" || error.startsWith("400 ")) && (
+              <div className="muted" style={{ marginTop: 6 }}>
+                Tip: use an absolute path (no <code>~</code>) and ensure the daemon is rebuilt/restarted.
+              </div>
+            )}
+          </div>
+        )}
       </form>
 
       <ul className="list">
         {workspaces.map((ws) => {
-          const id = (ws as any).id?.["0"] ?? (ws as any).id;
+          const id = idToString((ws as any).id);
           return (
             <li key={id}>
               <Link to={`/workspaces/${id}`}>{ws.name}</Link>

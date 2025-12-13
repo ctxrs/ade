@@ -123,6 +123,14 @@ export type Diagnostics = {
   managed_installs: any;
 };
 
+export type Health = {
+  version: string;
+  pid: number;
+  data_root: string;
+  daemon_url: string;
+  auth_required: boolean;
+};
+
 export type UpdateCheck = {
   channel: string;
   base_url: string;
@@ -311,6 +319,8 @@ export const installStreamUrl = (installId: string): string => {
 };
 
 export const getDiagnostics = () => api<Diagnostics>(`/api/diagnostics`);
+
+export const getHealth = () => api<Health>(`/api/health`);
 
 export const openLogsFolder = () => api(`/api/logs/open`, { method: "POST" });
 
