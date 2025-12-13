@@ -45,3 +45,36 @@ create table if not exists public.download_daily_agg (
   primary key (day, channel, version, platform, artifact)
 );
 
+-- Security: these are telemetry tables; lock them down.
+alter table public.download_event enable row level security;
+alter table public.update_check_event enable row level security;
+alter table public.download_daily_agg enable row level security;
+
+revoke all on table public.download_event from anon, authenticated, public;
+revoke all on table public.update_check_event from anon, authenticated, public;
+revoke all on table public.download_daily_agg from anon, authenticated, public;
+
+grant all on table public.download_event to service_role;
+grant all on table public.update_check_event to service_role;
+grant all on table public.download_daily_agg to service_role;
+
+drop policy if exists service_role_access on public.download_event;
+create policy service_role_access on public.download_event
+  for all
+  to service_role
+  using (true)
+  with check (true);
+
+drop policy if exists service_role_access on public.update_check_event;
+create policy service_role_access on public.update_check_event
+  for all
+  to service_role
+  using (true)
+  with check (true);
+
+drop policy if exists service_role_access on public.download_daily_agg;
+create policy service_role_access on public.download_daily_agg
+  for all
+  to service_role
+  using (true)
+  with check (true);
