@@ -14,6 +14,7 @@ use futures::{Stream, StreamExt};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tower_http::services::{ServeDir, ServeFile};
+use std::time::Instant;
 
 use context_core::ids::*;
 use context_core::models::*;
@@ -952,11 +953,28 @@ async fn get_session(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<Json<Session>, StatusCode> {
+    let perf = std::env::var_os("CONTEXT_PERF").is_some();
+    let t0 = Instant::now();
     let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    match state.store.get_session(session_id).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)? {
-        Some(session) => Ok(Json(session)),
-        None => Err(StatusCode::NOT_FOUND),
+    let out =
+        match state
+            .store
+            .get_session(session_id)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        {
+            Some(session) => Ok(Json(session)),
+            None => Err(StatusCode::NOT_FOUND),
+        };
+    if perf {
+        tracing::info!(
+            target: "context_perf",
+            endpoint = "get_session",
+            session_id = %session_id.0,
+            ms = %t0.elapsed().as_millis(),
+        );
     }
+    out
 }
 
 async fn list_sessions_for_track(
@@ -989,26 +1007,48 @@ async fn list_queue(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<Json<Vec<Message>>, StatusCode> {
+    let perf = std::env::var_os("CONTEXT_PERF").is_some();
+    let t0 = Instant::now();
     let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    state
+    let out = state
         .store
         .list_queued_messages_for_session(session_id)
         .await
         .map(Json)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR);
+    if perf {
+        tracing::info!(
+            target: "context_perf",
+            endpoint = "list_queue",
+            session_id = %session_id.0,
+            ms = %t0.elapsed().as_millis(),
+        );
+    }
+    out
 }
 
 async fn list_session_events(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<Json<Vec<SessionEvent>>, StatusCode> {
+    let perf = std::env::var_os("CONTEXT_PERF").is_some();
+    let t0 = Instant::now();
     let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    state
+    let out = state
         .store
         .list_session_events(session_id)
         .await
         .map(Json)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR);
+    if perf {
+        tracing::info!(
+            target: "context_perf",
+            endpoint = "list_session_events",
+            session_id = %session_id.0,
+            ms = %t0.elapsed().as_millis(),
+        );
+    }
+    out
 }
 
 async fn delete_message(
@@ -1477,6 +1517,8 @@ async fn track_diff(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<Json<DiffResponse>, StatusCode> {
+    let perf = std::env::var_os("CONTEXT_PERF").is_some();
+    let t0 = Instant::now();
     let track_id = TrackId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
     let track = state
         .store
@@ -1494,6 +1536,15 @@ async fn track_diff(
     let diff = context_fs::worktrees::diff_worktree(&worktree.root_path, &worktree.base_commit_sha)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if perf {
+        tracing::info!(
+            target: "context_perf",
+            endpoint = "track_diff",
+            track_id = %track_id.0,
+            ms = %t0.elapsed().as_millis(),
+            bytes = diff.len(),
+        );
+    }
     Ok(Json(DiffResponse { diff }))
 }
 
@@ -1508,6 +1559,8 @@ async fn track_diff_apply(
     Path(id): Path<String>,
     Json(req): Json<TrackDiffApplyReq>,
 ) -> Result<Json<DiffResponse>, (StatusCode, Json<ApiErrorResp>)> {
+    let perf = std::env::var_os("CONTEXT_PERF").is_some();
+    let t0 = Instant::now();
     let track_id = TrackId(uuid::Uuid::parse_str(&id).map_err(|_| {
         (
             StatusCode::BAD_REQUEST,
@@ -1636,6 +1689,17 @@ async fn track_diff_apply(
                     }),
                 )
             })?;
+    if perf {
+        tracing::info!(
+            target: "context_perf",
+            endpoint = "track_diff_apply",
+            action = %action,
+            track_id = %track_id.0,
+            ms = %t0.elapsed().as_millis(),
+            patch_bytes = patch.len(),
+            diff_bytes = diff.len(),
+        );
+    }
 
     Ok(Json(DiffResponse { diff }))
 }

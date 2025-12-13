@@ -69,6 +69,15 @@ export default function SessionPage() {
       return false;
     }
   }, [id]);
+  const perfEnabled = useMemo(() => {
+    try {
+      return new URLSearchParams(window.location.search).get("perf") === "1";
+    } catch {
+      return false;
+    }
+  }, [id]);
+  const perfStartRef = useRef<number>(0);
+  const perfMarksRef = useRef<Array<{ name: string; ms: number }>>([]);
   const [session, setSession] = useState<Session | null>(null);
   const [events, setEvents] = useState<SessionEvent[]>([]);
   const [queue, setQueue] = useState<Message[]>([]);
@@ -90,13 +99,20 @@ export default function SessionPage() {
 
   const refreshAll = async () => {
     if (!id) return;
-    const s = await getSession(id);
+    if (perfEnabled) {
+      perfStartRef.current = performance.now();
+      perfMarksRef.current = [];
+    }
+    const s = await perfWrap("getSession", () => getSession(id), perfEnabled, perfMarksRef);
     setSession(s);
-    setEvents(await listSessionEvents(id));
-    setQueue(await listQueue(id));
+    setEvents(await perfWrap("listSessionEvents", () => listSessionEvents(id), perfEnabled, perfMarksRef));
+    setQueue(await perfWrap("listQueue", () => listQueue(id), perfEnabled, perfMarksRef));
     const trackId = idToString(s.track_id);
-    const d = await trackDiff(trackId);
+    const d = await perfWrap("trackDiff", () => trackDiff(trackId), perfEnabled, perfMarksRef);
     setDiff(d.diff);
+    if (perfEnabled) {
+      reportPerf("refreshAll", perfStartRef.current, perfMarksRef.current);
+    }
   };
 
   const refreshQueue = async () => {
@@ -201,7 +217,14 @@ export default function SessionPage() {
     };
   }, [id, streamConnected, session]);
 
-  const threadView = useMemo(() => buildThreadViewModel(events), [events]);
+  const threadView = useMemo(() => {
+    if (!perfEnabled) return buildThreadViewModel(events);
+    const t0 = performance.now();
+    const out = buildThreadViewModel(events);
+    const ms = performance.now() - t0;
+    perfMarksRef.current.push({ name: "buildThreadViewModel", ms });
+    return out;
+  }, [events, perfEnabled]);
   const threadItems = threadView.items;
 
   useEffect(() => {
@@ -209,6 +232,11 @@ export default function SessionPage() {
     if (threadItems.length === 0) return;
     virtuosoRef.current?.scrollToIndex({ index: threadItems.length - 1, align: "end" });
     didInitialScrollRef.current = true;
+    if (perfEnabled && perfStartRef.current) {
+      const ms = performance.now() - perfStartRef.current;
+      perfMarksRef.current.push({ name: "firstThreadRender", ms });
+      reportPerf("firstThreadRender", perfStartRef.current, perfMarksRef.current);
+    }
   }, [threadItems.length]);
 
   const contextIndicator = useMemo(() => {
@@ -381,6 +409,15 @@ export default function SessionPage() {
                 ) : (
                   <a className="muted" href={`${window.location.pathname}?debug=1`}>
                     Debug
+                  </a>
+                )}
+                {perfEnabled ? (
+                  <a className="muted" href={window.location.pathname}>
+                    Perf off
+                  </a>
+                ) : (
+                  <a className="muted" href={`${window.location.pathname}?perf=1`}>
+                    Perf
                   </a>
                 )}
                 {threadItems.length > 0 && (
@@ -1121,12 +1158,27 @@ function DiffReviewPane({
   trackId: string;
   onDiffUpdated: (diff: string) => void;
 }) {
+  const perfEnabled = useMemo(() => {
+    try {
+      return new URLSearchParams(window.location.search).get("perf") === "1";
+    } catch {
+      return false;
+    }
+  }, [trackId]);
   const [showRaw, setShowRaw] = useState(false);
   const [expandedFiles, setExpandedFiles] = useState<Record<string, boolean>>({});
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const files = useMemo(() => parseUnifiedDiff(diff), [diff]);
+  const files = useMemo(() => {
+    if (!perfEnabled) return parseUnifiedDiff(diff);
+    const t0 = performance.now();
+    const out = parseUnifiedDiff(diff);
+    const ms = performance.now() - t0;
+    // eslint-disable-next-line no-console
+    console.log(`[perf] parseUnifiedDiff: ${ms.toFixed(1)}ms (files=${out.length}, bytes=${diff.length})`);
+    return out;
+  }, [diff, perfEnabled]);
 
   const doApply = async (key: string, action: "accept" | "reject", patch: string) => {
     if (!trackId) return;
@@ -1628,6 +1680,36 @@ function looksLikeMarkdown(text: string): boolean {
   if (/^\s*[-*]\s+/m.test(t)) return true;
   if (/\[[^\]]+\]\([^)]+\)/.test(t)) return true;
   return false;
+}
+
+async function perfWrap<T>(
+  name: string,
+  fn: () => Promise<T>,
+  enabled: boolean,
+  sinkRef: React.MutableRefObject<Array<{ name: string; ms: number }>>,
+): Promise<T> {
+  if (!enabled) return fn();
+  const t0 = performance.now();
+  try {
+    return await fn();
+  } finally {
+    const ms = performance.now() - t0;
+    sinkRef.current.push({ name, ms });
+  }
+}
+
+function reportPerf(label: string, startAt: number, marks: Array<{ name: string; ms: number }>) {
+  const total = startAt ? performance.now() - startAt : undefined;
+  const rows = marks.map((m) => ({ step: m.name, ms: Number(m.ms.toFixed(1)) }));
+  const sum = marks.reduce((acc, m) => acc + m.ms, 0);
+  // eslint-disable-next-line no-console
+  console.log(
+    `[perf] ${label}: total=${total ? total.toFixed(1) : "?"}ms, sum(steps)=${sum.toFixed(1)}ms`,
+  );
+  // eslint-disable-next-line no-console
+  console.log(`[perf] ${label}: marks=${JSON.stringify(rows)}`);
+  // eslint-disable-next-line no-console
+  console.table(rows);
 }
 
 function mergeEvents(prev: SessionEvent[], incoming: SessionEvent[]): SessionEvent[] {
