@@ -56,7 +56,13 @@ pub async fn diff_worktree(
     base_commit_sha: &str,
 ) -> Result<String> {
     let root = worktree_path.as_ref();
-    let mut out = git::git_diff(root, base_commit_sha).await?;
+    // For edit review parity with Zed, treat the git index as the "accepted baseline":
+    // - Unstaged changes are pending review.
+    // - Staging a hunk/file marks it as accepted (and removes it from this diff).
+    //
+    // The base commit is still used for worktree creation, but not for the review diff.
+    let _ = base_commit_sha;
+    let mut out = git::git_diff_unstaged(root).await?;
 
     // `git diff <base>` does not include untracked files, but we want the UI to show newly created
     // files even before they are staged.

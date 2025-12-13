@@ -4,6 +4,12 @@ use std::process::Stdio;
 use anyhow::{bail, Context, Result};
 use tokio::process::Command;
 
+#[derive(Debug, Clone, Copy)]
+pub enum ApplyPatchTarget {
+    Worktree,
+    Index,
+}
+
 pub async fn assert_git_repo(root_path: impl AsRef<Path>) -> Result<()> {
     let root = root_path.as_ref();
     if !root.join(".git").exists() {
@@ -43,6 +49,26 @@ pub async fn git_diff(root_path: impl AsRef<Path>, base_commit_sha: &str) -> Res
         .output()
         .await
         .context("running git diff")?;
+    if !output.status.success() {
+        bail!(
+            "git diff failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+pub async fn git_diff_unstaged(root_path: impl AsRef<Path>) -> Result<String> {
+    // Shows worktree changes relative to the index (used for edit review; staging acts as "accept").
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root_path.as_ref())
+        .arg("diff")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .await
+        .context("running git diff (unstaged)")?;
     if !output.status.success() {
         bail!(
             "git diff failed: {}",
@@ -108,4 +134,64 @@ pub async fn git_diff_untracked_file(
         );
     }
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+pub async fn git_apply_patch(
+    root_path: impl AsRef<Path>,
+    patch: &str,
+    target: ApplyPatchTarget,
+    reverse: bool,
+) -> Result<()> {
+    let mut cmd = Command::new("git");
+    cmd.arg("-C").arg(root_path.as_ref()).arg("apply");
+    if matches!(target, ApplyPatchTarget::Index) {
+        cmd.arg("--cached");
+    }
+    if reverse {
+        cmd.arg("--reverse");
+    }
+    cmd.arg("--whitespace=nowarn").arg("-");
+
+    let mut child = cmd
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .context("spawning git apply")?;
+
+    if let Some(mut stdin) = child.stdin.take() {
+        use tokio::io::AsyncWriteExt;
+        stdin
+            .write_all(patch.as_bytes())
+            .await
+            .context("writing patch to git apply stdin")?;
+    }
+
+    let output = child.wait_with_output().await.context("waiting for git apply")?;
+    if !output.status.success() {
+        bail!(
+            "git apply failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    Ok(())
+}
+
+pub async fn git_apply_patch_allow_noop(
+    root_path: impl AsRef<Path>,
+    patch: &str,
+    target: ApplyPatchTarget,
+    reverse: bool,
+) -> Result<()> {
+    match git_apply_patch(root_path, patch, target, reverse).await {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            // Best-effort for index updates: it's fine if nothing was staged.
+            let msg = e.to_string().to_lowercase();
+            if msg.contains("patch does not apply") || msg.contains("did not match any files") {
+                return Ok(());
+            }
+            Err(e)
+        }
+    }
 }

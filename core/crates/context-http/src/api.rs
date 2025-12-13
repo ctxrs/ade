@@ -105,6 +105,7 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
         .route("/api/sessions/:id/interrupt", post(interrupt_session))
         .route("/api/sessions/:id/authenticate", post(authenticate_session))
         .route("/api/tracks/:id/diff", get(track_diff))
+        .route("/api/tracks/:id/diff/apply", post(track_diff_apply))
         .route("/api/sessions/:id/stream", get(session_stream_ws))
         .layer(middleware::from_fn_with_state(auth_state, auth_middleware))
         .with_state(state)
@@ -1493,6 +1494,149 @@ async fn track_diff(
     let diff = context_fs::worktrees::diff_worktree(&worktree.root_path, &worktree.base_commit_sha)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(DiffResponse { diff }))
+}
+
+#[derive(Debug, Deserialize)]
+struct TrackDiffApplyReq {
+    action: String, // "accept" | "reject"
+    patch: String,
+}
+
+async fn track_diff_apply(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(req): Json<TrackDiffApplyReq>,
+) -> Result<Json<DiffResponse>, (StatusCode, Json<ApiErrorResp>)> {
+    let track_id = TrackId(uuid::Uuid::parse_str(&id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid track id".to_string(),
+            }),
+        )
+    })?);
+    let track = state
+        .store
+        .get_track(track_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: e.to_string(),
+                }),
+            )
+        })?
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "track not found".to_string(),
+            }),
+        ))?;
+    let worktree = state
+        .store
+        .get_worktree(track.worktree_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: e.to_string(),
+                }),
+            )
+        })?
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "worktree not found".to_string(),
+            }),
+        ))?;
+
+    let action = req.action.trim().to_lowercase();
+    let patch = req.patch;
+    if patch.trim().is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "patch is empty".to_string(),
+            }),
+        ));
+    }
+
+    match action.as_str() {
+        "accept" => {
+            context_fs::git::git_apply_patch(
+                &worktree.root_path,
+                &patch,
+                context_fs::git::ApplyPatchTarget::Index,
+                false,
+            )
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(ApiErrorResp {
+                        error: e.to_string(),
+                    }),
+                )
+            })?;
+        }
+        "reject" => {
+            // First revert in worktree, then best-effort unstage.
+            context_fs::git::git_apply_patch(
+                &worktree.root_path,
+                &patch,
+                context_fs::git::ApplyPatchTarget::Worktree,
+                true,
+            )
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(ApiErrorResp {
+                        error: e.to_string(),
+                    }),
+                )
+            })?;
+            context_fs::git::git_apply_patch_allow_noop(
+                &worktree.root_path,
+                &patch,
+                context_fs::git::ApplyPatchTarget::Index,
+                true,
+            )
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(ApiErrorResp {
+                        error: e.to_string(),
+                    }),
+                )
+            })?;
+        }
+        _ => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: "action must be accept or reject".to_string(),
+                }),
+            ));
+        }
+    }
+
+    let diff =
+        context_fs::worktrees::diff_worktree(&worktree.root_path, &worktree.base_commit_sha)
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiErrorResp {
+                        error: e.to_string(),
+                    }),
+                )
+            })?;
+
     Ok(Json(DiffResponse { diff }))
 }
 

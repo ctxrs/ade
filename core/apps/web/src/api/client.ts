@@ -290,6 +290,12 @@ export const authenticateSession = (sessionId: string, method_id?: string) =>
 export const trackDiff = (trackId: string) =>
   api<{ diff: string }>(`/api/tracks/${trackId}/diff`);
 
+export const applyTrackDiffPatch = (trackId: string, action: "accept" | "reject", patch: string) =>
+  api<{ diff: string }>(`/api/tracks/${trackId}/diff/apply`, {
+    method: "POST",
+    body: JSON.stringify({ action, patch }),
+  });
+
 export const listQueue = (sessionId: string) =>
   api<Message[]>(`/api/sessions/${sessionId}/queue`);
 
