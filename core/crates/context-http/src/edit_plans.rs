@@ -6,6 +6,7 @@ use chrono::{DateTime, Utc};
 use context_core::ids::{SessionId, TrackId};
 use lsp_types::{TextEdit, Uri, WorkspaceEdit};
 use serde::{Deserialize, Serialize};
+use sha2::Digest;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct EditPlanId(pub uuid::Uuid);
@@ -16,7 +17,7 @@ impl EditPlanId {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EditPlanSummary {
     pub id: EditPlanId,
     pub title: String,
@@ -26,7 +27,7 @@ pub struct EditPlanSummary {
     pub diff: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EditPlan {
     pub id: EditPlanId,
     pub session_id: SessionId,
@@ -37,16 +38,18 @@ pub struct EditPlan {
     pub files: Vec<PlanFile>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlanFile {
     pub key: String,
     pub old_path: String,
     pub new_path: String,
+    /// SHA256 of the file contents used as the base when the plan was created.
+    pub base_sha256: String,
     pub header_lines: Vec<String>,
     pub hunks: Vec<PlanHunk>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlanHunk {
     pub header_line: String,
     pub lines: Vec<String>,
@@ -164,6 +167,7 @@ pub fn parse_unified_diff(diff_text: &str) -> Vec<PlanFile> {
                 key: format!("{old_path}=>{new_path}:{i}"),
                 old_path,
                 new_path,
+                base_sha256: String::new(),
                 header_lines: vec![line.to_string()],
                 hunks: Vec::new(),
             });
@@ -213,6 +217,7 @@ pub fn workspace_edit_to_plan(
     for (rel, edits) in file_edits {
         let abs = worktree_root.join(&rel);
         let old = std::fs::read_to_string(&abs).unwrap_or_default();
+        let base_sha256 = sha256_hex(&old);
         let new = apply_text_edits_utf16(&old, &edits)
             .with_context(|| format!("applying edits for {}", rel))?;
         if old == new {
@@ -225,6 +230,7 @@ pub fn workspace_edit_to_plan(
             if pf.header_lines.is_empty() {
                 pf.header_lines.push(format!("diff --git a/{rel} b/{rel}"));
             }
+            pf.base_sha256 = base_sha256;
             files.push(pf);
         }
     }
@@ -250,6 +256,7 @@ pub fn text_edits_to_plan(
 ) -> Result<EditPlan> {
     let abs = worktree_root.join(&rel_path);
     let old = std::fs::read_to_string(&abs).unwrap_or_default();
+    let base_sha256 = sha256_hex(&old);
     let new = apply_text_edits_utf16(&old, &edits)
         .with_context(|| format!("applying edits for {}", rel_path))?;
     if old == new {
@@ -264,6 +271,10 @@ pub fn text_edits_to_plan(
         });
     }
     let patch = git_unified_diff(&rel_path, &old, &new);
+    let mut files = parse_unified_diff(&patch);
+    for f in &mut files {
+        f.base_sha256 = base_sha256.clone();
+    }
     Ok(EditPlan {
         id: EditPlanId::new(),
         session_id,
@@ -271,7 +282,7 @@ pub fn text_edits_to_plan(
         title,
         created_at: Utc::now(),
         worktree_root: worktree_root.to_path_buf(),
-        files: parse_unified_diff(&patch),
+        files,
     })
 }
 
@@ -370,4 +381,10 @@ fn pos_to_byte_offset_utf16(text: &str, pos: lsp_types::Position) -> Result<usiz
         byte += ch.len_utf8();
     }
     Ok(std::cmp::min(offset + byte, text.len()))
+}
+
+fn sha256_hex(text: &str) -> String {
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(text.as_bytes());
+    hex::encode(hasher.finalize())
 }

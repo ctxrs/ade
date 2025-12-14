@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import {
   EditPlanSummary,
+  LspStatus,
   ProviderOptions,
   ProviderStatus,
   Task,
@@ -12,6 +13,7 @@ import {
   createSession,
   createTask,
   createTrack,
+  getLspStatus,
   getProviderOptions,
   getWorkspace,
   idToString,
@@ -112,6 +114,7 @@ export default function WorkbenchPage() {
   const [reviewTab, setReviewTab] = useState<"git" | "lsp">("git");
   const [editPlans, setEditPlans] = useState<EditPlanSummary[]>([]);
   const [activeEditPlanId, setActiveEditPlanId] = useState<string | null>(null);
+  const [lspStatus, setLspStatus] = useState<LspStatus | null>(null);
 
   const refreshTasks = async () => {
     if (!workspaceId) return;
@@ -138,6 +141,7 @@ export default function WorkbenchPage() {
     getWorkspace(workspaceId).then(setWorkspace).catch(() => setWorkspace(null));
     refreshTasks().catch(() => {});
     listProviders().then(setProviders).catch(() => setProviders([]));
+    getLspStatus().then(setLspStatus).catch(() => setLspStatus(null));
   }, [workspaceId]);
 
   useEffect(() => {
@@ -337,6 +341,11 @@ export default function WorkbenchPage() {
     if (!activeEditPlanId) return null;
     return editPlans.find((p) => idToString(p.id) === activeEditPlanId) ?? null;
   }, [activeEditPlanId, editPlans]);
+
+  const lspMissing = useMemo(() => {
+    const servers = lspStatus?.servers ?? [];
+    return servers.filter((s) => !s.found);
+  }, [lspStatus]);
 
   useEffect(() => {
     if (!activeEditPlanId) {
@@ -749,6 +758,28 @@ export default function WorkbenchPage() {
 
                   {reviewTab === "lsp" && hasEditPlans && (
                     <div className="wb-editplans">
+                      {lspStatus && (!lspStatus.enabled || !lspStatus.edit_plans_enabled || lspMissing.length > 0) && (
+                        <div className="banner" style={{ margin: "12px 12px 0" }}>
+                          {!lspStatus.enabled && (
+                            <div>
+                              LSP is disabled (set <code>CONTEXT_LSP_ENABLED=1</code>).
+                            </div>
+                          )}
+                          {lspStatus.enabled && !lspStatus.edit_plans_enabled && (
+                            <div>
+                              LSP edit plans are disabled (set{" "}
+                              <code>CONTEXT_LSP_EDITPLANS_ENABLED=1</code>).
+                            </div>
+                          )}
+                          {lspMissing.length > 0 && (
+                            <div>
+                              Missing language servers:{" "}
+                              <span className="muted">{lspMissing.map((s) => s.language).join(", ")}</span>. See{" "}
+                              <Link to="/diagnostics">Diagnostics</Link> for install hints.
+                            </div>
+                          )}
+                        </div>
+                      )}
                       <div className="wb-editplans-list">
                         {editPlans.map((p) => {
                           const pid = idToString(p.id);

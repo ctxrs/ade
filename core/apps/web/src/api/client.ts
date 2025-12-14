@@ -152,6 +152,22 @@ export type ApplyAppImageUpdateResp = {
   message: string;
 };
 
+export type LspServerStatus = {
+  language: string;
+  command: string;
+  args: string[];
+  found: boolean;
+  resolved_path?: string | null;
+  version?: string | null;
+  install_hints: string[];
+};
+
+export type LspStatus = {
+  enabled: boolean;
+  edit_plans_enabled: boolean;
+  servers: LspServerStatus[];
+};
+
 export type EditPlanSummary = {
   id: { 0: string } | string;
   title: string;
@@ -408,6 +424,8 @@ export const installStreamUrl = (installId: string): string => {
 export const getDiagnostics = () => api<Diagnostics>(`/api/diagnostics`);
 
 export const getHealth = () => api<Health>(`/api/health`);
+
+export const getLspStatus = () => api<LspStatus>(`/api/lsp/status`);
 
 export const openLogsFolder = () => api(`/api/logs/open`, { method: "POST" });
 

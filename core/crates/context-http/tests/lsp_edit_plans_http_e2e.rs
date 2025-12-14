@@ -157,6 +157,144 @@ async fn setup_state_and_app(
 }
 
 #[tokio::test]
+async fn edit_plan_persists_across_restart_and_discards() {
+    let (data_dir, state, app) = setup_state_and_app(true).await;
+    let repo = setup_git_repo().await;
+
+    let (track, session, _wt_root) = create_workspace_task_session(&app, &state, repo.path()).await;
+
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/lsp/rename/plan")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "session_id": session.id.0.to_string(),
+                "path": "src/lib.rs",
+                "line": 0,
+                "character": 0,
+                "new_name": "better"
+            })
+            .to_string(),
+        ))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let summary: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let plan_id = summary
+        .get("id")
+        .and_then(|v| v.as_str().or_else(|| v.get("0").and_then(|x| x.as_str())))
+        .unwrap()
+        .to_string();
+
+    let plan_path = data_dir.path().join("edit_plans").join(format!("{plan_id}.json"));
+    assert!(
+        plan_path.exists(),
+        "expected plan persisted at {}, but it does not exist",
+        plan_path.to_string_lossy()
+    );
+
+    // "Restart" daemon by creating a new AppState against the same data_root.
+    drop(app);
+    drop(state);
+
+    let db_path = data_dir.path().join("db").join("db.sqlite");
+    let store = Store::open(&db_path).await.unwrap();
+    let lsp_server = env!("CARGO_BIN_EXE_context-http-lsp-test-server").to_string();
+    let state2 = Arc::new(AppState::new_with_lsp_config_and_flags(
+        data_dir.path().to_path_buf(),
+        store,
+        HashMap::new(),
+        "http://127.0.0.1:4399".to_string(),
+        None,
+        LspManagerConfig {
+            enabled: true,
+            rust_command: lsp_server,
+            rust_args: vec![],
+            diagnostics_wait: Duration::from_secs(2),
+            ..Default::default()
+        },
+        true,
+    ));
+    let app2 = api::router(state2.clone());
+
+    let req = Request::builder()
+        .method("GET")
+        .uri(format!("/api/tracks/{}/edit_plans", track.id.0))
+        .body(Body::empty())
+        .unwrap();
+    let res = app2.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let plans: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
+    assert_eq!(plans.len(), 1);
+    assert_eq!(
+        plans[0]
+            .get("id")
+            .and_then(|v| v.as_str().or_else(|| v.get("0").and_then(|x| x.as_str()))),
+        Some(plan_id.as_str())
+    );
+
+    // Discard.
+    let req = Request::builder()
+        .method("POST")
+        .uri(format!("/api/edit_plans/{}/discard", plan_id))
+        .body(Body::from("{}"))
+        .unwrap();
+    let res = app2.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::NO_CONTENT);
+    assert!(!plan_path.exists(), "expected plan file deleted");
+}
+
+#[tokio::test]
+async fn stale_plan_is_rejected_on_apply() {
+    let (_data_dir, state, app) = setup_state_and_app(true).await;
+    let repo = setup_git_repo().await;
+
+    let (_track, session, wt_root) = create_workspace_task_session(&app, &state, repo.path()).await;
+
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/lsp/rename/plan")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "session_id": session.id.0.to_string(),
+                "path": "src/lib.rs",
+                "line": 0,
+                "character": 0,
+                "new_name": "better"
+            })
+            .to_string(),
+        ))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let summary: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let plan_id = summary
+        .get("id")
+        .and_then(|v| v.as_str().or_else(|| v.get("0").and_then(|x| x.as_str())))
+        .unwrap();
+    let diff = summary.get("diff").and_then(|v| v.as_str()).unwrap();
+
+    // Mutate the file out-of-band to make the plan stale.
+    tokio::fs::write(wt_root.join("src/lib.rs"), "pub fn changed() {}\n")
+        .await
+        .unwrap();
+
+    let req = Request::builder()
+        .method("POST")
+        .uri(format!("/api/edit_plans/{}/apply", plan_id))
+        .header("content-type", "application/json")
+        .body(Body::from(json!({"action":"accept","patch": diff}).to_string()))
+        .unwrap();
+    let res = app.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::CONFLICT);
+}
+
+#[tokio::test]
 async fn lsp_rename_plan_create_and_apply() {
     let (_data_dir, state, app) = setup_state_and_app(true).await;
     let repo = setup_git_repo().await;
