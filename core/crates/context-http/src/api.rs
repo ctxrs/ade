@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path as StdPath, PathBuf};
 use std::sync::Arc;
 
 use axum::extract::ws::{Message as WsMessage, WebSocket, WebSocketUpgrade};
@@ -12,6 +12,8 @@ use axum::routing::{delete, get, post};
 use axum::Json;
 use futures::{Stream, StreamExt};
 use serde::{Deserialize, Serialize};
+use sha2::Digest;
+use tokio::process::Command;
 use tokio::sync::mpsc;
 use tower_http::services::{ServeDir, ServeFile};
 use std::time::Instant;
@@ -84,6 +86,7 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
             "/api/providers/install/:install_id/stream",
             get(install_stream_sse),
         )
+        .route("/api/lsp/status", get(lsp_status))
         .route("/api/lsp/diagnostics", post(lsp_diagnostics))
         .route("/api/lsp/definition", post(lsp_definition))
         .route("/api/lsp/references", post(lsp_references))
@@ -230,6 +233,151 @@ struct LspFileReq {
     root_path: Option<String>,
     /// File path to analyze (absolute or relative to resolved root).
     path: String,
+}
+
+#[derive(Debug, Serialize)]
+struct LspServerStatus {
+    language: String,
+    command: String,
+    args: Vec<String>,
+    found: bool,
+    resolved_path: Option<String>,
+    version: Option<String>,
+    install_hints: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct LspStatusResp {
+    enabled: bool,
+    edit_plans_enabled: bool,
+    servers: Vec<LspServerStatus>,
+}
+
+async fn lsp_status(State(state): State<Arc<AppState>>) -> Result<Json<LspStatusResp>, StatusCode> {
+    let cfg = &state.lsp_cfg;
+    let enabled = cfg.enabled;
+    let edit_plans_enabled = state.lsp_edit_plans_enabled;
+
+    let servers = vec![
+        ("rust", cfg.rust_command.clone(), cfg.rust_args.clone()),
+        ("typescript", cfg.ts_command.clone(), cfg.ts_args.clone()),
+        ("python", cfg.py_command.clone(), cfg.py_args.clone()),
+        ("go", cfg.go_command.clone(), cfg.go_args.clone()),
+    ];
+
+    let mut out = Vec::with_capacity(servers.len());
+    for (language, command, args) in servers {
+        let (found, resolved_path) = resolve_command(&command);
+        let version = if found {
+            get_command_version(&command, &resolved_path, &args).await
+        } else {
+            None
+        };
+        out.push(LspServerStatus {
+            language: language.to_string(),
+            command,
+            args,
+            found,
+            resolved_path: resolved_path.map(|p| p.to_string_lossy().to_string()),
+            version,
+            install_hints: install_hints_for(language),
+        });
+    }
+
+    Ok(Json(LspStatusResp {
+        enabled,
+        edit_plans_enabled,
+        servers: out,
+    }))
+}
+
+fn resolve_command(command: &str) -> (bool, Option<PathBuf>) {
+    if command.trim().is_empty() {
+        return (false, None);
+    }
+    let path = PathBuf::from(command);
+    if path.components().count() > 1 {
+        return (path.exists(), Some(path));
+    }
+    let Some(paths) = std::env::var_os("PATH") else {
+        return (false, None);
+    };
+    for dir in std::env::split_paths(&paths) {
+        let candidate = dir.join(command);
+        if candidate.exists() {
+            return (true, Some(candidate));
+        }
+    }
+    (false, None)
+}
+
+async fn get_command_version(
+    command: &str,
+    resolved: &Option<PathBuf>,
+    _args: &[String],
+) -> Option<String> {
+    let exe = resolved
+        .as_ref()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|| command.to_string());
+    let base = StdPath::new(&exe)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let candidates: Vec<Vec<&'static str>> = if base.contains("gopls") {
+        vec![vec!["version"], vec!["--version"]]
+    } else {
+        vec![vec!["--version"], vec!["version"]]
+    };
+
+    for args in candidates {
+        let fut = Command::new(&exe).args(args.iter()).output();
+        if let Ok(Ok(output)) = tokio::time::timeout(std::time::Duration::from_secs(2), fut).await {
+            if output.status.success() {
+                let s = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                let s = if s.is_empty() {
+                    String::from_utf8_lossy(&output.stderr).trim().to_string()
+                } else {
+                    s
+                };
+                if !s.is_empty() {
+                    return Some(s.lines().next().unwrap_or("").trim().to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+fn install_hints_for(language: &str) -> Vec<String> {
+    let os = std::env::consts::OS;
+    match (language, os) {
+        ("rust", "darwin") => vec![
+            "brew install rust-analyzer".to_string(),
+            "or: rustup component add rust-analyzer (if available)".to_string(),
+        ],
+        ("rust", "linux") => vec![
+            "rustup component add rust-analyzer (if available)".to_string(),
+            "or: install rust-analyzer from your distro/package manager".to_string(),
+        ],
+        ("typescript", _) => vec!["npm i -g typescript typescript-language-server".to_string()],
+        ("python", _) => vec!["npm i -g pyright".to_string()],
+        ("go", _) => vec!["go install golang.org/x/tools/gopls@latest".to_string()],
+        _ => vec![],
+    }
+}
+
+fn sha256_hex(text: &str) -> String {
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(text.as_bytes());
+    hex::encode(hasher.finalize())
+}
+
+fn plan_paths_match(a_old: &str, a_new: &str, b_old: &str, b_new: &str) -> bool {
+    (a_old == b_old && a_new == b_new)
+        || (a_new == b_new && !a_new.is_empty())
+        || (a_old == b_old && !a_old.is_empty())
 }
 
 async fn lsp_diagnostics(
@@ -604,6 +752,7 @@ async fn lsp_rename_plan(
     })?;
 
     let summary = plan.to_summary();
+    state.persist_edit_plan(&plan);
     state.edit_plans.lock().await.insert(plan.id, plan);
     Ok(Json(summary))
 }
@@ -712,6 +861,7 @@ async fn lsp_format_plan(
         )
     })?;
     let summary = plan.to_summary();
+    state.persist_edit_plan(&plan);
     state.edit_plans.lock().await.insert(plan.id, plan);
     Ok(Json(summary))
 }
@@ -819,6 +969,7 @@ async fn lsp_code_actions_plan(
         )
     })?;
     let summary = plan.to_summary();
+    state.persist_edit_plan(&plan);
     state.edit_plans.lock().await.insert(plan.id, plan);
     Ok(Json(summary))
 }
@@ -963,6 +1114,7 @@ async fn lsp_organize_imports_plan(
         )
     })?;
     let summary = plan.to_summary();
+    state.persist_edit_plan(&plan);
     state.edit_plans.lock().await.insert(plan.id, plan);
     Ok(Json(summary))
 }
@@ -1029,6 +1181,48 @@ async fn apply_edit_plan_patch(
 
     match action.as_str() {
         "accept" => {
+            let parsed = crate::edit_plans::parse_unified_diff(&patch);
+
+            let (worktree_root, plan_files) = {
+                let map = state.edit_plans.lock().await;
+                let Some(plan) = map.get(&pid) else {
+                    return Err((
+                        StatusCode::NOT_FOUND,
+                        Json(ApiErrorResp {
+                            error: "edit plan not found".to_string(),
+                        }),
+                    ));
+                };
+                (plan.worktree_root.clone(), plan.files.clone())
+            };
+
+            // Stale-plan check: ensure files match the base used to create the plan.
+            for pf in &parsed {
+                let rel = if !pf.new_path.is_empty() { &pf.new_path } else { &pf.old_path };
+                let Some(base) = plan_files.iter().find(|f| {
+                    plan_paths_match(&pf.old_path, &pf.new_path, &f.old_path, &f.new_path)
+                }).map(|f| f.base_sha256.clone()) else {
+                    continue;
+                };
+                if base.trim().is_empty() {
+                    continue;
+                }
+                let abs = worktree_root.join(rel);
+                let current = tokio::fs::read_to_string(&abs).await.unwrap_or_default();
+                let current_sha = sha256_hex(&current);
+                if current_sha != base {
+                    return Err((
+                        StatusCode::CONFLICT,
+                        Json(ApiErrorResp {
+                            error: format!(
+                                "edit plan is stale for {}; regenerate the plan",
+                                rel
+                            ),
+                        }),
+                    ));
+                }
+            }
+
             let worktree_root = {
                 let map = state.edit_plans.lock().await;
                 let Some(plan) = map.get(&pid) else {
@@ -1058,36 +1252,73 @@ async fn apply_edit_plan_patch(
                 )
             })?;
 
-            let mut map = state.edit_plans.lock().await;
-            if let Some(plan) = map.get_mut(&pid) {
+            // After applying, update base hashes for affected files so subsequent partial applies don't always look stale.
+            let mut updated_bases: Vec<(String, String)> = Vec::new();
+            for pf in &parsed {
+                let rel = if !pf.new_path.is_empty() { pf.new_path.clone() } else { pf.old_path.clone() };
+                let abs = worktree_root.join(&rel);
+                let current = tokio::fs::read_to_string(&abs).await.unwrap_or_default();
+                updated_bases.push((rel, sha256_hex(&current)));
+            }
+
+            let (summary, to_persist, removed) = {
+                let mut map = state.edit_plans.lock().await;
+                let Some(plan) = map.get_mut(&pid) else {
+                    return Err((
+                        StatusCode::NOT_FOUND,
+                        Json(ApiErrorResp {
+                            error: "edit plan not found".to_string(),
+                        }),
+                    ));
+                };
                 plan.remove_patch(&patch);
+                for (rel, sha) in &updated_bases {
+                    for f in &mut plan.files {
+                        let f_rel = if !f.new_path.is_empty() { &f.new_path } else { &f.old_path };
+                        if f_rel == rel {
+                            f.base_sha256 = sha.clone();
+                        }
+                    }
+                }
                 let summary = plan.to_summary();
-                if plan.files.is_empty() {
+                let removed = plan.files.is_empty();
+                let to_persist = if removed { None } else { Some(plan.clone()) };
+                if removed {
                     map.remove(&pid);
                 }
-                return Ok(Json(summary));
+                (summary, to_persist, removed)
+            };
+            if let Some(plan) = to_persist {
+                state.persist_edit_plan(&plan);
+            } else if removed {
+                state.delete_edit_plan_file(pid);
             }
-            return Err((
-                StatusCode::NOT_FOUND,
-                Json(ApiErrorResp {
-                    error: "edit plan not found".to_string(),
-                }),
-            ));
+            return Ok(Json(summary));
         }
         "reject" => {
-            let mut map = state.edit_plans.lock().await;
-            let Some(plan) = map.get_mut(&pid) else {
-                return Err((
-                    StatusCode::NOT_FOUND,
-                    Json(ApiErrorResp {
-                        error: "edit plan not found".to_string(),
-                    }),
-                ));
+            let (summary, to_persist, removed) = {
+                let mut map = state.edit_plans.lock().await;
+                let Some(plan) = map.get_mut(&pid) else {
+                    return Err((
+                        StatusCode::NOT_FOUND,
+                        Json(ApiErrorResp {
+                            error: "edit plan not found".to_string(),
+                        }),
+                    ));
+                };
+                plan.remove_patch(&patch);
+                let summary = plan.to_summary();
+                let removed = plan.files.is_empty();
+                let to_persist = if removed { None } else { Some(plan.clone()) };
+                if removed {
+                    map.remove(&pid);
+                }
+                (summary, to_persist, removed)
             };
-            plan.remove_patch(&patch);
-            let summary = plan.to_summary();
-            if plan.files.is_empty() {
-                map.remove(&pid);
+            if let Some(plan) = to_persist {
+                state.persist_edit_plan(&plan);
+            } else if removed {
+                state.delete_edit_plan_file(pid);
             }
             return Ok(Json(summary));
         }
@@ -1108,6 +1339,7 @@ async fn discard_edit_plan(
 ) -> Result<StatusCode, StatusCode> {
     let pid = crate::edit_plans::EditPlanId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
     state.edit_plans.lock().await.remove(&pid);
+    state.delete_edit_plan_file(pid);
     Ok(StatusCode::NO_CONTENT)
 }
 

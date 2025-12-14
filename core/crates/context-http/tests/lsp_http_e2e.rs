@@ -175,3 +175,57 @@ async fn lsp_diagnostics_endpoint_returns_diagnostics() {
         String::from_utf8_lossy(&body)
     );
 }
+
+#[tokio::test]
+async fn lsp_status_endpoint_returns_expected_shape() {
+    let data_dir = tempfile::tempdir().unwrap();
+    let db_dir = data_dir.path().join("db");
+    tokio::fs::create_dir_all(&db_dir).await.unwrap();
+    let db_path = db_dir.join("db.sqlite");
+    let store = Store::open(&db_path).await.unwrap();
+
+    let lsp_server = env!("CARGO_BIN_EXE_context-http-lsp-test-server").to_string();
+    let state = Arc::new(AppState::new_with_lsp_config_and_flags(
+        data_dir.path().to_path_buf(),
+        store.clone(),
+        HashMap::new(),
+        "http://127.0.0.1:4399".to_string(),
+        None,
+        LspManagerConfig {
+            enabled: true,
+            rust_command: lsp_server.clone(),
+            rust_args: vec![],
+            ts_command: lsp_server.clone(),
+            ts_args: vec![],
+            py_command: lsp_server.clone(),
+            py_args: vec![],
+            go_command: lsp_server.clone(),
+            go_args: vec![],
+            diagnostics_wait: Duration::from_secs(2),
+        },
+        true,
+    ));
+    let app = api::router(state);
+
+    let req = Request::builder()
+        .method("GET")
+        .uri("/api/lsp/status")
+        .body(Body::empty())
+        .unwrap();
+    let res = app.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v.get("enabled").and_then(|x| x.as_bool()), Some(true));
+    assert_eq!(
+        v.get("edit_plans_enabled").and_then(|x| x.as_bool()),
+        Some(true)
+    );
+    let servers = v.get("servers").and_then(|x| x.as_array()).cloned().unwrap_or_default();
+    assert_eq!(servers.len(), 4);
+    for s in servers {
+        assert!(s.get("language").and_then(|x| x.as_str()).unwrap_or("").len() > 0);
+        assert!(s.get("command").and_then(|x| x.as_str()).unwrap_or("").len() > 0);
+        assert!(s.get("found").and_then(|x| x.as_bool()).is_some());
+    }
+}

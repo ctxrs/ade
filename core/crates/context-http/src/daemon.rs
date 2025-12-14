@@ -1,5 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -33,6 +33,7 @@ pub struct AppState {
     pub provider_options_cache: Mutex<HashMap<String, CachedProviderOptions>>,
     pub daemon_url: String,
     pub auth_token: Option<String>,
+    pub lsp_cfg: LspManagerConfig,
     pub lsp: Arc<LspManager>,
     pub lsp_edit_plans_enabled: bool,
     pub shutdown_tx: broadcast::Sender<()>,
@@ -98,9 +99,18 @@ impl AppState {
         lsp_cfg: LspManagerConfig,
         lsp_edit_plans_enabled: bool,
     ) -> Self {
+        let edit_plans_dir = edit_plans_dir(&data_root);
+        if let Err(e) = std::fs::create_dir_all(&edit_plans_dir) {
+            tracing::warn!(
+                "failed to create edit plans dir {}: {e}",
+                edit_plans_dir.to_string_lossy()
+            );
+        }
+        let edit_plans = load_edit_plans_from_disk(&data_root);
+
         let (shutdown_tx, _) = broadcast::channel(8);
         let (global_broadcaster, _) = broadcast::channel(2048);
-        let lsp = Arc::new(LspManager::new(lsp_cfg));
+        let lsp = Arc::new(LspManager::new(lsp_cfg.clone()));
         Self {
             data_root,
             store,
@@ -109,6 +119,7 @@ impl AppState {
             provider_options_cache: Mutex::new(HashMap::new()),
             daemon_url,
             auth_token,
+            lsp_cfg,
             lsp,
             lsp_edit_plans_enabled,
             shutdown_tx,
@@ -117,7 +128,23 @@ impl AppState {
             global_broadcaster,
             running_sessions: Mutex::new(HashSet::new()),
             installs: Mutex::new(HashMap::new()),
-            edit_plans: Mutex::new(HashMap::new()),
+            edit_plans: Mutex::new(edit_plans),
+        }
+    }
+
+    pub fn edit_plans_dir(&self) -> PathBuf {
+        edit_plans_dir(&self.data_root)
+    }
+
+    pub fn persist_edit_plan(&self, plan: &EditPlan) {
+        if let Err(e) = persist_edit_plan_to_disk(&self.data_root, plan) {
+            tracing::warn!("failed to persist edit plan {}: {e}", plan.id.0);
+        }
+    }
+
+    pub fn delete_edit_plan_file(&self, plan_id: EditPlanId) {
+        if let Err(e) = delete_edit_plan_file(&self.data_root, plan_id) {
+            tracing::warn!("failed to delete edit plan {} file: {e}", plan_id.0);
         }
     }
 
@@ -249,6 +276,60 @@ impl AppState {
         st.finished_at = Some(Utc::now());
     }
 
+}
+
+fn edit_plans_dir(data_root: &Path) -> PathBuf {
+    data_root.join("edit_plans")
+}
+
+fn edit_plan_path(data_root: &Path, plan_id: EditPlanId) -> PathBuf {
+    edit_plans_dir(data_root).join(format!("{}.json", plan_id.0))
+}
+
+fn load_edit_plans_from_disk(data_root: &Path) -> HashMap<EditPlanId, EditPlan> {
+    let mut out = HashMap::new();
+    let dir = edit_plans_dir(data_root);
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(e) => e,
+        Err(_) => return out,
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("json") {
+            continue;
+        }
+        let bytes = match std::fs::read(&path) {
+            Ok(b) => b,
+            Err(e) => {
+                tracing::warn!("failed to read edit plan file {}: {e}", path.to_string_lossy());
+                continue;
+            }
+        };
+        match serde_json::from_slice::<EditPlan>(&bytes) {
+            Ok(plan) => {
+                out.insert(plan.id, plan);
+            }
+            Err(e) => {
+                tracing::warn!("failed to parse edit plan file {}: {e}", path.to_string_lossy());
+            }
+        }
+    }
+    out
+}
+
+fn persist_edit_plan_to_disk(data_root: &Path, plan: &EditPlan) -> anyhow::Result<()> {
+    let path = edit_plan_path(data_root, plan.id);
+    let tmp = path.with_extension("json.tmp");
+    let bytes = serde_json::to_vec_pretty(plan)?;
+    std::fs::write(&tmp, bytes)?;
+    std::fs::rename(&tmp, &path)?;
+    Ok(())
+}
+
+fn delete_edit_plan_file(data_root: &Path, plan_id: EditPlanId) -> anyhow::Result<()> {
+    let path = edit_plan_path(data_root, plan_id);
+    let _ = std::fs::remove_file(&path);
+    Ok(())
 }
 
 pub async fn serve(

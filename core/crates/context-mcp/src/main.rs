@@ -90,6 +90,12 @@ async fn main() -> Result<()> {
                             "inputSchema": { "type": "object", "additionalProperties": false }
                         },
                         {
+                            "name": "context.lsp_status",
+                            "title": "LSP Status",
+                            "description": "Returns the daemon LSP configuration and server availability (installed/missing).",
+                            "inputSchema": { "type": "object", "additionalProperties": false }
+                        },
+                        {
                             "name": "context.lsp_diagnostics",
                             "title": "LSP Diagnostics",
                             "description": "Returns language-server diagnostics for a file in the current session worktree (requires daemon LSP enabled).",
@@ -335,6 +341,13 @@ async fn main() -> Result<()> {
                             ),
                         }
                     }
+                    "context.lsp_status" => {
+                        let _ = arguments;
+                        match lsp_status(&client, &daemon_url).await {
+                            Ok(val) => ok(id.unwrap(), tool_ok(val)),
+                            Err(e) => ok(id.unwrap(), tool_err(e)),
+                        }
+                    }
                     "context.lsp_diagnostics" => {
                         let path = arguments
                             .get("path")
@@ -518,6 +531,10 @@ async fn daemon_post_json(
 
 async fn list_workspaces(client: &reqwest::Client, daemon_url: &str) -> Result<Value> {
     daemon_get_json(client, daemon_url, "/api/workspaces").await
+}
+
+async fn lsp_status(client: &reqwest::Client, daemon_url: &str) -> Result<Value> {
+    daemon_get_json(client, daemon_url, "/api/lsp/status").await
 }
 
 async fn lsp_diagnostics(
