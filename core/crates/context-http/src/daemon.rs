@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Instant;
 
 use anyhow::{Context, Result};
 use axum::Router;
@@ -27,6 +28,7 @@ pub struct AppState {
     pub store: Store,
     pub providers: Mutex<HashMap<String, Arc<dyn ProviderAdapter>>>,
     pub provider_statuses: Mutex<HashMap<String, ProviderStatus>>,
+    pub provider_options_cache: Mutex<HashMap<String, CachedProviderOptions>>,
     pub daemon_url: String,
     pub auth_token: Option<String>,
     pub shutdown_tx: broadcast::Sender<()>,
@@ -35,6 +37,11 @@ pub struct AppState {
     global_broadcaster: broadcast::Sender<SessionEvent>,
     running_sessions: Mutex<HashSet<SessionId>>,
     installs: Mutex<HashMap<InstallId, InstallState>>,
+}
+
+pub struct CachedProviderOptions {
+    pub cached_at: Instant,
+    pub value: serde_json::Value,
 }
 
 impl AppState {
@@ -52,6 +59,7 @@ impl AppState {
             store,
             providers: Mutex::new(providers),
             provider_statuses: Mutex::new(HashMap::new()),
+            provider_options_cache: Mutex::new(HashMap::new()),
             daemon_url,
             auth_token,
             shutdown_tx,

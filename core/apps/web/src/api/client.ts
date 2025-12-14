@@ -222,10 +222,20 @@ export const getWorkspace = (id: string) =>
 export const listTasks = (workspaceId: string) =>
   api<Task[]>(`/api/workspaces/${workspaceId}/tasks`);
 
-export const createTask = (workspaceId: string, title: string, description?: string) =>
+export const createTask = (
+  workspaceId: string,
+  title: string,
+  description?: string,
+  opts?: { create_default_track?: boolean; default_track_label?: string },
+) =>
   api<Task>(`/api/workspaces/${workspaceId}/tasks`, {
     method: "POST",
-    body: JSON.stringify({ title, description }),
+    body: JSON.stringify({
+      title,
+      description,
+      ...(opts?.create_default_track === undefined ? {} : { create_default_track: opts.create_default_track }),
+      ...(opts?.default_track_label === undefined ? {} : { default_track_label: opts.default_track_label }),
+    }),
   });
 
 export const getTask = (taskId: string) =>
@@ -233,6 +243,12 @@ export const getTask = (taskId: string) =>
 
 export const listTracks = (taskId: string) =>
   api<Track[]>(`/api/tasks/${taskId}/tracks`);
+
+export const createTrack = (taskId: string, label?: string) =>
+  api<Track>(`/api/tasks/${taskId}/tracks`, {
+    method: "POST",
+    body: JSON.stringify({ label }),
+  });
 
 export const createSession = (trackId: string, provider_id: string, model_id: string) =>
   api<Session>(`/api/tracks/${trackId}/sessions`, {
@@ -312,6 +328,21 @@ export const deleteMessage = (messageId: string) =>
 
 export const listProviders = () =>
   api<ProviderStatus[]>(`/api/providers`);
+
+export type ProviderOptions = {
+  provider_id: string;
+  workspace_id: string;
+  supports_load: boolean;
+  auth_required: boolean;
+  auth_methods?: any;
+  modes?: any;
+  models?: any;
+  acp_error?: any;
+  probed_at: string;
+};
+
+export const getProviderOptions = (workspaceId: string, providerId: string) =>
+  api<ProviderOptions>(`/api/workspaces/${workspaceId}/providers/${providerId}/options`);
 
 export const installProvider = (providerId: string) =>
   api<InstallStartResponse>(`/api/providers/${providerId}/install`, { method: "POST" });

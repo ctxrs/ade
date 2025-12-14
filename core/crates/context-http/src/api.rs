@@ -29,6 +29,7 @@ use crate::scheduler::SchedulerCommand;
 use crate::updates;
 use context_providers::adapters::ProviderStatus;
 use context_providers::events::NormalizedEvent;
+use context_providers::{acp::probe_provider_options, acp::AcpAgentConfig, acp::AcpClientConfig};
 
 fn is_sensitive_key(key: &str) -> bool {
     let key = key.to_ascii_lowercase();
@@ -86,11 +87,15 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
         .route("/api/workspaces", get(list_workspaces).post(create_workspace))
         .route("/api/workspaces/:id", delete(delete_workspace).get(get_workspace))
         .route(
+            "/api/workspaces/:id/providers/:provider_id/options",
+            get(get_provider_options),
+        )
+        .route(
             "/api/workspaces/:id/tasks",
             get(list_tasks).post(create_task),
         )
         .route("/api/tasks/:id", get(get_task))
-        .route("/api/tasks/:id/tracks", get(list_tracks))
+        .route("/api/tasks/:id/tracks", get(list_tracks).post(create_track))
         .route(
             "/api/tracks/:id/sessions",
             get(list_sessions_for_track).post(create_session_for_track),
@@ -550,6 +555,130 @@ struct InstallStartResponse {
     install_id: InstallId,
 }
 
+fn default_agent_server_command(provider_id: &str) -> Option<(String, Vec<String>)> {
+    match provider_id {
+        "codex" => Some(("codex-acp".to_string(), vec![])),
+        "claude" => Some(("claude-code-acp".to_string(), vec![])),
+        "gemini" => Some(("gemini".to_string(), vec!["--experimental-acp".to_string()])),
+        _ => None,
+    }
+}
+
+async fn get_provider_options(
+    State(state): State<Arc<AppState>>,
+    Path((ws_id, provider_id)): Path<(String, String)>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiErrorResp>)> {
+    const CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(30);
+
+    let ws_id = WorkspaceId(uuid::Uuid::parse_str(&ws_id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid workspace id".to_string(),
+            }),
+        )
+    })?);
+
+    let cache_key = format!("{}/{}", ws_id.0, provider_id);
+    if let Some(cached) = state.provider_options_cache.lock().await.get(&cache_key) {
+        if cached.cached_at.elapsed() < CACHE_TTL {
+            return Ok(Json(cached.value.clone()));
+        }
+    }
+
+    let ws = state
+        .store
+        .get_workspace(ws_id)
+        .await
+        .map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: "failed to load workspace".to_string(),
+                }),
+            )
+        })?
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "workspace not found".to_string(),
+            }),
+        ))?;
+
+    let cfg = installer::load_agent_server_config(&state.data_root)
+        .await
+        .unwrap_or_default();
+
+    let (command, args) = cfg
+        .providers
+        .get(&provider_id)
+        .map(|c| (c.command.clone(), c.args.clone()))
+        .or_else(|| default_agent_server_command(&provider_id))
+        .ok_or((
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "unknown provider id".to_string(),
+            }),
+        ))?;
+
+    let agent = AcpAgentConfig {
+        provider_id: provider_id.clone(),
+        command,
+        args,
+    };
+    let client = AcpClientConfig {
+        client_name: "context".to_string(),
+        client_title: "Context".to_string(),
+        client_version: env!("CARGO_PKG_VERSION").to_string(),
+        client_capabilities: serde_json::json!({}),
+        mcp_servers: vec![],
+    };
+
+    let mut env = std::collections::HashMap::new();
+    env.insert("CONTEXT_DAEMON_URL".to_string(), state.daemon_url.clone());
+    if let Some(token) = state.auth_token.as_ref() {
+        env.insert("CONTEXT_AUTH_TOKEN".to_string(), token.clone());
+    }
+
+    let probe = probe_provider_options(agent, client, PathBuf::from(&ws.root_path), env)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
+
+    let resp = serde_json::json!({
+        "provider_id": provider_id,
+        "workspace_id": ws_id.0,
+        "supports_load": probe.supports_load,
+        "auth_required": probe.auth_required,
+        "auth_methods": probe.auth_methods,
+        "modes": probe.modes,
+        "models": probe.models,
+        "acp_error": probe.acp_error,
+        "probed_at": chrono::Utc::now().to_rfc3339(),
+    });
+    let resp = redact_json_value(resp);
+
+    state
+        .provider_options_cache
+        .lock()
+        .await
+        .insert(
+            cache_key,
+            crate::daemon::CachedProviderOptions {
+                cached_at: std::time::Instant::now(),
+                value: resp.clone(),
+            },
+        );
+
+    Ok(Json(resp))
+}
+
 async fn install_provider(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
@@ -775,6 +904,14 @@ async fn delete_workspace(
 struct CreateTaskReq {
     title: String,
     description: Option<String>,
+    #[serde(default = "default_true")]
+    create_default_track: bool,
+    #[serde(default)]
+    default_track_label: Option<String>,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 async fn list_tasks(
@@ -827,6 +964,10 @@ async fn create_task(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
+    if !req.create_default_track {
+        return Ok(Json(task));
+    }
+
     let worktree_id = WorktreeId::new();
     let wt_path = managed_worktree_path(&state.data_root, ws_id, worktree_id);
     if let Some(parent) = wt_path.parent() {
@@ -853,9 +994,12 @@ async fn create_task(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
+    let label = req
+        .default_track_label
+        .unwrap_or_else(|| "default".to_string());
     let _track = state
         .store
-        .create_track(task.id, ws_id, worktree_id, "default".into())
+        .create_track(task.id, ws_id, worktree_id, label)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
@@ -873,6 +1017,143 @@ async fn list_tracks(
         .await
         .map(Json)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+#[derive(Debug, Deserialize)]
+struct CreateTrackReq {
+    #[serde(default)]
+    label: Option<String>,
+}
+
+async fn create_track(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(req): Json<CreateTrackReq>,
+) -> Result<Json<Track>, (StatusCode, Json<ApiErrorResp>)> {
+    let task_id = TaskId(uuid::Uuid::parse_str(&id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid task id".to_string(),
+            }),
+        )
+    })?);
+
+    let task = state
+        .store
+        .get_task(task_id)
+        .await
+        .map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: "failed to load task".to_string(),
+                }),
+            )
+        })?
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "task not found".to_string(),
+            }),
+        ))?;
+
+    let ws = state
+        .store
+        .get_workspace(task.workspace_id)
+        .await
+        .map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: "failed to load workspace".to_string(),
+                }),
+            )
+        })?
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "workspace not found".to_string(),
+            }),
+        ))?;
+
+    assert_git_repo(&ws.root_path).await.map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&e.to_string()),
+            }),
+        )
+    })?;
+    let base_commit_sha = rev_parse_head(&ws.root_path).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&e.to_string()),
+            }),
+        )
+    })?;
+
+    let worktree_id = WorktreeId::new();
+    let wt_path = managed_worktree_path(&state.data_root, task.workspace_id, worktree_id);
+    if let Some(parent) = wt_path.parent() {
+        tokio::fs::create_dir_all(parent).await.map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
+    }
+    let branch_name = format!("context/{}/{}", task.id.0, worktree_id.0);
+    create_worktree(&ws.root_path, &wt_path, &base_commit_sha, &branch_name)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
+
+    let worktree = Worktree {
+        id: worktree_id,
+        workspace_id: task.workspace_id,
+        root_path: wt_path.to_string_lossy().to_string(),
+        base_commit_sha,
+        git_branch: Some(branch_name),
+        created_at: chrono::Utc::now(),
+    };
+    state
+        .store
+        .insert_worktree(worktree)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
+
+    let label = req.label.unwrap_or_else(|| "track".to_string());
+    let track = state
+        .store
+        .create_track(task_id, task.workspace_id, worktree_id, label)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
+
+    Ok(Json(track))
 }
 
 #[derive(Debug, Deserialize)]

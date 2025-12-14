@@ -3,6 +3,7 @@ import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { appendDesktopLog } from "./api/client";
 import WorkspacesPage from "./pages/WorkspacesPage";
 import WorkspacePage from "./pages/WorkspacePage";
+import WorkbenchPage from "./pages/WorkbenchPage";
 import TaskPage from "./pages/TaskPage";
 import SessionPage from "./pages/SessionPage";
 import ProvidersPage from "./pages/ProvidersPage";
@@ -35,7 +36,8 @@ export default function App() {
           <Route path="/" element={<WorkspacesPage />} />
           <Route path="/providers" element={<ProvidersPage />} />
           <Route path="/diagnostics" element={<DiagnosticsPage />} />
-          <Route path="/workspaces/:id" element={<WorkspacePage />} />
+          <Route path="/workspaces/:id" element={<WorkbenchPage />} />
+          <Route path="/workspaces/:id/legacy" element={<WorkspacePage />} />
           <Route path="/tasks/:id" element={<TaskPage />} />
           <Route path="/sessions/:id" element={<SessionPage />} />
         </Routes>
