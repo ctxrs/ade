@@ -86,6 +86,8 @@ export default function WorkbenchPage() {
     { key: "t1", label: "", providerId: "codex", modelId: "" },
   ]);
   const [execTarget, setExecTarget] = useState<"local" | "worktree" | "container">("worktree");
+  const [startBusy, setStartBusy] = useState(false);
+  const [startError, setStartError] = useState<string | null>(null);
 
   const [harnessPickerOpen, setHarnessPickerOpen] = useState(false);
   const [contextMenuOpen, setContextMenuOpen] = useState(false);
@@ -172,33 +174,45 @@ export default function WorkbenchPage() {
     if (!workspaceId) return;
     const prompt = draftPrompt.trim();
     if (!prompt) return;
+    if (startBusy) return;
+    setStartBusy(true);
+    setStartError(null);
 
-    const title = deriveTaskTitle(prompt);
-    const task = await createTask(workspaceId, title, undefined, { create_default_track: false });
-    const taskId = idToString(task.id);
+    try {
+      const title = deriveTaskTitle(prompt);
+      const task = await createTask(workspaceId, title, undefined, { create_default_track: false });
+      const taskId = idToString(task.id);
 
-    const toStart = draftTracks.length > 0 ? draftTracks : [{ key: "t1", label: "", providerId: "codex", modelId: "" }];
+      const toStart =
+        draftTracks.length > 0
+          ? draftTracks
+          : [{ key: "t1", label: "", providerId: "codex", modelId: "" }];
 
-    for (let i = 0; i < toStart.length; i++) {
-      const dt = toStart[i];
-      const label = workbenchLabelForTrack(dt);
-      const tr = await createTrack(taskId, label);
-      const trackId = idToString(tr.id);
-      const opts = await ensureProviderOptions(dt.providerId).catch(() => undefined);
-      const modelIds = modelIdsFromOptions(opts ?? providerOptions[dt.providerId]);
-      const defaultModel = dt.modelId || modelIds[0] || (dt.providerId === "fake" ? "fake-model" : "default");
-      const session = await createSession(trackId, dt.providerId, defaultModel);
-      const sessionId = idToString(session.id);
-      supervisor.openSession(sessionId, { watchDiff: true });
-      supervisor.refreshSession(sessionId, { watchDiff: true });
-      supervisor.refreshQueue(sessionId);
-      await postMessage(sessionId, prompt, "immediate");
+      for (let i = 0; i < toStart.length; i++) {
+        const dt = toStart[i];
+        const label = workbenchLabelForTrack(dt);
+        const tr = await createTrack(taskId, label);
+        const trackId = idToString(tr.id);
+        const opts = await ensureProviderOptions(dt.providerId).catch(() => undefined);
+        const modelIds = modelIdsFromOptions(opts ?? providerOptions[dt.providerId]);
+        const defaultModel = dt.modelId || modelIds[0] || (dt.providerId === "fake" ? "fake-model" : "default");
+        const session = await createSession(trackId, dt.providerId, defaultModel);
+        const sessionId = idToString(session.id);
+        supervisor.openSession(sessionId, { watchDiff: true });
+        supervisor.refreshSession(sessionId, { watchDiff: true });
+        supervisor.refreshQueue(sessionId);
+        await postMessage(sessionId, prompt, "immediate");
+      }
+
+      await refreshTasks();
+      setActiveTaskId(taskId);
+      setDraftPrompt("");
+      setHarnessPickerOpen(false);
+    } catch (e: any) {
+      setStartError(e?.message ?? String(e));
+    } finally {
+      setStartBusy(false);
     }
-
-    await refreshTasks();
-    setActiveTaskId(taskId);
-    setDraftPrompt("");
-    setHarnessPickerOpen(false);
   };
 
   const approveAll = async () => {
@@ -241,12 +255,7 @@ export default function WorkbenchPage() {
     <div className="wb-root">
       <div className="wb-sidebar">
         <div className="wb-sidebar-top">
-          <div className="wb-sidebar-tabs">
-            <div className="wb-tab wb-tab-active">Agents</div>
-            <div className="wb-tab wb-tab-disabled" title="Coming soon">
-              Editor
-            </div>
-          </div>
+          <div className="wb-sidebar-title">Agents</div>
           <input
             className="wb-search"
             placeholder="Search Agents…"
@@ -498,9 +507,16 @@ export default function WorkbenchPage() {
                 </div>
               )}
 
+              {startError && <div className="wb-banner">{startError}</div>}
+
               <div className="wb-composer-actions">
-                <button type="button" className="wb-primary" onClick={startNewTask}>
-                  Start
+                <button
+                  type="button"
+                  className="wb-primary"
+                  onClick={startNewTask}
+                  disabled={startBusy || draftPrompt.trim().length === 0}
+                >
+                  {startBusy ? "Starting…" : "Start"}
                 </button>
               </div>
               <div className="wb-under-row">
