@@ -1,5 +1,6 @@
 pub mod api;
 pub mod daemon;
+pub mod edit_plans;
 pub mod installs;
 pub mod installer;
 pub mod logs;

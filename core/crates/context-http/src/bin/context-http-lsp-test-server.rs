@@ -22,7 +22,18 @@ fn main() {
                     json!({
                         "jsonrpc":"2.0",
                         "id": id,
-                        "result": { "capabilities": { "textDocumentSync": 1 } }
+                        "result": {
+                            "capabilities": {
+                                "textDocumentSync": 1,
+                                "definitionProvider": true,
+                                "referencesProvider": true,
+                                "documentSymbolProvider": true,
+                                "workspaceSymbolProvider": true,
+                                "renameProvider": true,
+                                "documentFormattingProvider": true,
+                                "codeActionProvider": true
+                            }
+                        }
                     }),
                 );
             }
@@ -64,6 +75,208 @@ fn main() {
                 "version": null
             });
             write_response(&mut output, json!({"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params": params}));
+            continue;
+        }
+
+        if msg.get("method").and_then(|v| v.as_str()) == Some("textDocument/definition") {
+            if let Some(id) = msg.get("id").cloned() {
+                let uri = msg
+                    .get("params")
+                    .and_then(|p| p.get("textDocument"))
+                    .and_then(|d| d.get("uri"))
+                    .and_then(|u| u.as_str())
+                    .unwrap_or("file:///unknown.rs");
+                write_response(
+                    &mut output,
+                    json!({
+                        "jsonrpc":"2.0",
+                        "id": id,
+                        "result": {
+                            "uri": uri,
+                            "range": {
+                                "start": {"line": 0, "character": 0},
+                                "end": {"line": 0, "character": 1}
+                            }
+                        }
+                    }),
+                );
+            }
+            continue;
+        }
+
+        if msg.get("method").and_then(|v| v.as_str()) == Some("textDocument/references") {
+            if let Some(id) = msg.get("id").cloned() {
+                let uri = msg
+                    .get("params")
+                    .and_then(|p| p.get("textDocument"))
+                    .and_then(|d| d.get("uri"))
+                    .and_then(|u| u.as_str())
+                    .unwrap_or("file:///unknown.rs");
+                write_response(
+                    &mut output,
+                    json!({
+                        "jsonrpc":"2.0",
+                        "id": id,
+                        "result": [{
+                            "uri": uri,
+                            "range": {
+                                "start": {"line": 0, "character": 0},
+                                "end": {"line": 0, "character": 1}
+                            }
+                        }]
+                    }),
+                );
+            }
+            continue;
+        }
+
+        if msg.get("method").and_then(|v| v.as_str()) == Some("textDocument/documentSymbol") {
+            if let Some(id) = msg.get("id").cloned() {
+                write_response(
+                    &mut output,
+                    json!({"jsonrpc":"2.0","id": id,"result": []}),
+                );
+            }
+            continue;
+        }
+
+        if msg.get("method").and_then(|v| v.as_str()) == Some("workspace/symbol") {
+            if let Some(id) = msg.get("id").cloned() {
+                write_response(
+                    &mut output,
+                    json!({
+                        "jsonrpc":"2.0",
+                        "id": id,
+                        "result": [{
+                            "name": "TestSymbol",
+                            "kind": 12,
+                            "location": {
+                                "uri": "file:///unknown.rs",
+                                "range": {
+                                    "start": {"line": 0, "character": 0},
+                                    "end": {"line": 0, "character": 1}
+                                }
+                            }
+                        }]
+                    }),
+                );
+            }
+            continue;
+        }
+
+        if msg.get("method").and_then(|v| v.as_str()) == Some("textDocument/rename") {
+            if let Some(id) = msg.get("id").cloned() {
+                let uri = msg
+                    .get("params")
+                    .and_then(|p| p.get("textDocument"))
+                    .and_then(|d| d.get("uri"))
+                    .and_then(|u| u.as_str())
+                    .unwrap_or("file:///unknown.rs");
+                let new_name = msg
+                    .get("params")
+                    .and_then(|p| p.get("newName"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("renamed");
+                write_response(
+                    &mut output,
+                    json!({
+                        "jsonrpc":"2.0",
+                        "id": id,
+                        "result": {
+                            "changes": {
+                                uri: [{
+                                    "range": {
+                                        "start": {"line": 0, "character": 0},
+                                        "end": {"line": 0, "character": 0}
+                                    },
+                                    "newText": format!("// rename: {new_name}\\n")
+                                }]
+                            }
+                        }
+                    }),
+                );
+            }
+            continue;
+        }
+
+        if msg.get("method").and_then(|v| v.as_str()) == Some("textDocument/formatting") {
+            if let Some(id) = msg.get("id").cloned() {
+                write_response(
+                    &mut output,
+                    json!({
+                        "jsonrpc":"2.0",
+                        "id": id,
+                        "result": [{
+                            "range": {
+                                "start": {"line": 0, "character": 0},
+                                "end": {"line": 0, "character": 0}
+                            },
+                            "newText": "/* formatted */\\n"
+                        }]
+                    }),
+                );
+            }
+            continue;
+        }
+
+        if msg.get("method").and_then(|v| v.as_str()) == Some("textDocument/codeAction") {
+            if let Some(id) = msg.get("id").cloned() {
+                let uri = msg
+                    .get("params")
+                    .and_then(|p| p.get("textDocument"))
+                    .and_then(|d| d.get("uri"))
+                    .and_then(|u| u.as_str())
+                    .unwrap_or("file:///unknown.rs");
+                let only = msg
+                    .get("params")
+                    .and_then(|p| p.get("context"))
+                    .and_then(|c| c.get("only"))
+                    .and_then(|v| v.as_array())
+                    .cloned()
+                    .unwrap_or_default();
+                let wants_org = only.iter().any(|v| v.as_str() == Some("source.organizeImports"));
+                let result = if wants_org {
+                    json!([{
+                        "title": "Organize imports",
+                        "kind": "source.organizeImports",
+                        "edit": {
+                            "changes": {
+                                uri: [{
+                                    "range": {
+                                        "start": {"line": 0, "character": 0},
+                                        "end": {"line": 0, "character": 0}
+                                    },
+                                    "newText": "/* organize imports */\\n"
+                                }]
+                            }
+                        }
+                    }])
+                } else {
+                    json!([{
+                        "title": "Insert TODO",
+                        "kind": "quickfix",
+                        "edit": {
+                            "changes": {
+                                uri: [{
+                                    "range": {
+                                        "start": {"line": 0, "character": 0},
+                                        "end": {"line": 0, "character": 0}
+                                    },
+                                    "newText": "// TODO\\n"
+                                }]
+                            }
+                        }
+                    }])
+                };
+                write_response(
+                    &mut output,
+                    json!({
+                        "jsonrpc":"2.0",
+                        "id": id,
+                        "result": result
+                    }),
+                );
+            }
             continue;
         }
 

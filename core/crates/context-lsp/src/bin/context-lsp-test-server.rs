@@ -1,6 +1,9 @@
 use std::io::{Read, Write};
 
-use lsp_types::{Diagnostic, DiagnosticSeverity, NumberOrString, Position, PublishDiagnosticsParams, Range};
+use lsp_types::{
+    CodeAction, CodeActionKind, Command, Diagnostic, DiagnosticSeverity, Location, NumberOrString,
+    Position, PublishDiagnosticsParams, Range, TextEdit, WorkspaceEdit,
+};
 use serde_json::{Value, json};
 
 fn main() {
@@ -25,7 +28,14 @@ fn main() {
                         "id": id,
                         "result": {
                             "capabilities": {
-                                "textDocumentSync": 1
+                                "textDocumentSync": 1,
+                                "definitionProvider": true,
+                                "referencesProvider": true,
+                                "documentSymbolProvider": true,
+                                "workspaceSymbolProvider": true,
+                                "renameProvider": true,
+                                "documentFormattingProvider": true,
+                                "codeActionProvider": true
                             }
                         }
                     }),
@@ -83,18 +93,138 @@ fn main() {
             continue;
         }
 
-        // Ignore all other notifications/requests.
-        if let Some(id) = msg.get("id").cloned() {
+        let method = msg.get("method").and_then(|v| v.as_str()).unwrap_or("");
+        let id = msg.get("id").cloned();
+
+        // Handle core request methods used by tests.
+        if let Some(id) = id {
+            let result = match method {
+                "textDocument/definition" => {
+                    let uri: lsp_types::Uri = uri_from_params(&msg)
+                        .unwrap_or_else(|| "file:///unknown.rs".parse().unwrap());
+                    let loc = Location {
+                        uri,
+                        range: Range {
+                            start: Position { line: 0, character: 0 },
+                            end: Position { line: 0, character: 1 },
+                        },
+                    };
+                    json!([loc])
+                }
+                "textDocument/references" => {
+                    let uri: lsp_types::Uri = uri_from_params(&msg)
+                        .unwrap_or_else(|| "file:///unknown.rs".parse().unwrap());
+                    let loc = Location {
+                        uri,
+                        range: Range {
+                            start: Position { line: 1, character: 0 },
+                            end: Position { line: 1, character: 1 },
+                        },
+                    };
+                    json!([loc])
+                }
+                "textDocument/documentSymbol" => json!([]),
+                "workspace/symbol" => json!([]),
+                "textDocument/rename" => {
+                    let uri: lsp_types::Uri = uri_from_params(&msg)
+                        .unwrap_or_else(|| "file:///unknown.rs".parse().unwrap());
+                    let edit = WorkspaceEdit {
+                        changes: Some(
+                            std::iter::once((
+                                uri,
+                                vec![TextEdit {
+                                    range: Range {
+                                        start: Position { line: 0, character: 0 },
+                                        end: Position { line: 0, character: 0 },
+                                    },
+                                    new_text: "RENAMED_".to_string(),
+                                }],
+                            ))
+                            .collect(),
+                        ),
+                        document_changes: None,
+                        change_annotations: None,
+                    };
+                    json!(edit)
+                }
+                "textDocument/formatting" => json!([
+                    TextEdit {
+                        range: Range {
+                            start: Position { line: 0, character: 0 },
+                            end: Position { line: 0, character: 0 },
+                        },
+                        new_text: "// formatted\n".to_string(),
+                    }
+                ]),
+                "textDocument/codeAction" => {
+                    let uri: lsp_types::Uri = uri_from_params(&msg)
+                        .unwrap_or_else(|| "file:///unknown.rs".parse().unwrap());
+                    let edit = WorkspaceEdit {
+                        changes: Some(
+                            std::iter::once((
+                                uri,
+                                vec![TextEdit {
+                                    range: Range {
+                                        start: Position { line: 0, character: 0 },
+                                        end: Position { line: 0, character: 0 },
+                                    },
+                                    new_text: "// fix\n".to_string(),
+                                }],
+                            ))
+                            .collect(),
+                        ),
+                        document_changes: None,
+                        change_annotations: None,
+                    };
+                    let ca = CodeAction {
+                        title: "Apply quick fix".to_string(),
+                        kind: Some(CodeActionKind::QUICKFIX),
+                        diagnostics: None,
+                        edit: Some(edit),
+                        command: Some(Command {
+                            title: "noop".to_string(),
+                            command: "noop".to_string(),
+                            arguments: None,
+                        }),
+                        is_preferred: Some(true),
+                        disabled: None,
+                        data: None,
+                    };
+                    json!([ca])
+                }
+                _ => Value::Null,
+            };
+
             write_response(
                 &mut output,
                 json!({
                     "jsonrpc":"2.0",
                     "id": id,
-                    "result": null
+                    "result": result
                 }),
             );
         }
     }
+}
+
+fn uri_from_params(msg: &Value) -> Option<lsp_types::Uri> {
+    msg.get("params")
+        .and_then(|p| {
+            p.get("textDocument")
+                .and_then(|td| td.get("uri"))
+                .or_else(|| {
+                    p.get("textDocumentPosition")
+                        .and_then(|tdp| tdp.get("textDocument"))
+                        .and_then(|td| td.get("uri"))
+                })
+                .or_else(|| {
+                    p.get("textDocumentPosition")
+                        .and_then(|tdp| tdp.get("textDocument"))
+                        .and_then(|td| td.get("uri"))
+                })
+        })
+        .and_then(|v| v.as_str())
+        .and_then(|s| s.parse().ok())
 }
 
 fn write_response(out: &mut impl Write, msg: Value) {
@@ -131,4 +261,3 @@ fn read_lsp_message(input: &mut impl Read) -> anyhow::Result<Value> {
     input.read_exact(&mut body)?;
     Ok(serde_json::from_slice(&body)?)
 }
-

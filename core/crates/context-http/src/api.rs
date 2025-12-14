@@ -85,6 +85,19 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
             get(install_stream_sse),
         )
         .route("/api/lsp/diagnostics", post(lsp_diagnostics))
+        .route("/api/lsp/definition", post(lsp_definition))
+        .route("/api/lsp/references", post(lsp_references))
+        .route("/api/lsp/document_symbols", post(lsp_document_symbols))
+        .route("/api/lsp/workspace_symbols", post(lsp_workspace_symbols))
+        .route("/api/lsp/code_actions", post(lsp_code_actions))
+        .route("/api/lsp/rename/plan", post(lsp_rename_plan))
+        .route("/api/lsp/format/plan", post(lsp_format_plan))
+        .route("/api/lsp/organize_imports/plan", post(lsp_organize_imports_plan))
+        .route("/api/lsp/code_actions/plan", post(lsp_code_actions_plan))
+        .route("/api/tracks/:id/edit_plans", get(list_edit_plans_for_track))
+        .route("/api/edit_plans/:id", get(get_edit_plan))
+        .route("/api/edit_plans/:id/apply", post(apply_edit_plan_patch))
+        .route("/api/edit_plans/:id/discard", post(discard_edit_plan))
         .route("/api/workspaces", get(list_workspaces).post(create_workspace))
         .route("/api/workspaces/:id", delete(delete_workspace).get(get_workspace))
         .route(
@@ -210,7 +223,7 @@ async fn diagnostics(State(state): State<Arc<AppState>>) -> Result<Json<Diagnost
 }
 
 #[derive(Debug, Deserialize)]
-struct LspDiagnosticsReq {
+struct LspFileReq {
     /// Optional session scope; when present, `path` is resolved within the session worktree.
     session_id: Option<String>,
     /// Optional explicit root path; used only when `session_id` is absent.
@@ -221,7 +234,7 @@ struct LspDiagnosticsReq {
 
 async fn lsp_diagnostics(
     State(state): State<Arc<AppState>>,
-    Json(req): Json<LspDiagnosticsReq>,
+    Json(req): Json<LspFileReq>,
 ) -> Result<Json<Vec<serde_json::Value>>, StatusCode> {
     if !state.lsp.enabled() {
         return Err(StatusCode::CONFLICT);
@@ -243,7 +256,7 @@ async fn lsp_diagnostics(
 
 async fn resolve_lsp_target(
     state: &Arc<AppState>,
-    req: LspDiagnosticsReq,
+    req: LspFileReq,
 ) -> Result<(PathBuf, PathBuf), StatusCode> {
     let root = if let Some(session_id) = req.session_id.as_deref() {
         let sid = SessionId(
@@ -279,6 +292,823 @@ async fn resolve_lsp_target(
         return Err(StatusCode::BAD_REQUEST);
     }
     Ok((root, file))
+}
+
+#[derive(Debug, Deserialize)]
+struct LspPosReq {
+    #[serde(flatten)]
+    file: LspFileReq,
+    line: u32,
+    character: u32,
+}
+
+#[derive(Debug, Deserialize)]
+struct LspRefsReq {
+    #[serde(flatten)]
+    pos: LspPosReq,
+    include_declaration: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+struct LspWorkspaceSymbolsReq {
+    session_id: Option<String>,
+    root_path: Option<String>,
+    query: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct LspCodeActionsReq {
+    #[serde(flatten)]
+    file: LspFileReq,
+    start_line: u32,
+    start_character: u32,
+    end_line: u32,
+    end_character: u32,
+}
+
+#[derive(Debug, Deserialize)]
+struct LspRenamePlanReq {
+    session_id: String,
+    path: String,
+    line: u32,
+    character: u32,
+    new_name: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct LspFormatPlanReq {
+    session_id: String,
+    path: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct LspOrganizeImportsPlanReq {
+    session_id: String,
+    path: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct LspCodeActionPlanReq {
+    session_id: String,
+    action: serde_json::Value,
+}
+
+#[derive(Debug, Deserialize)]
+struct EditPlanApplyReq {
+    action: String, // "accept" | "reject"
+    patch: String,
+}
+
+async fn lsp_definition(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<LspPosReq>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    if !state.lsp.enabled() {
+        return Err(StatusCode::CONFLICT);
+    }
+    let (root, file) = resolve_lsp_target(&state, req.file).await?;
+    let v = state
+        .lsp
+        .definition(
+            &root,
+            &file,
+            lsp_types::Position {
+                line: req.line,
+                character: req.character,
+            },
+        )
+        .await
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    Ok(Json(v))
+}
+
+async fn lsp_references(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<LspRefsReq>,
+) -> Result<Json<Vec<serde_json::Value>>, StatusCode> {
+    if !state.lsp.enabled() {
+        return Err(StatusCode::CONFLICT);
+    }
+    let (root, file) = resolve_lsp_target(&state, req.pos.file).await?;
+    let out = state
+        .lsp
+        .references(
+            &root,
+            &file,
+            lsp_types::Position {
+                line: req.pos.line,
+                character: req.pos.character,
+            },
+            req.include_declaration.unwrap_or(true),
+        )
+        .await
+        .map_err(|_| StatusCode::BAD_REQUEST)?
+        .into_iter()
+        .filter_map(|l| serde_json::to_value(l).ok())
+        .collect::<Vec<_>>();
+    Ok(Json(out))
+}
+
+async fn lsp_document_symbols(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<LspFileReq>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    if !state.lsp.enabled() {
+        return Err(StatusCode::CONFLICT);
+    }
+    let (root, file) = resolve_lsp_target(&state, req).await?;
+    let v = state
+        .lsp
+        .document_symbols(&root, &file)
+        .await
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    Ok(Json(v))
+}
+
+async fn lsp_workspace_symbols(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<LspWorkspaceSymbolsReq>,
+) -> Result<Json<Vec<serde_json::Value>>, StatusCode> {
+    if !state.lsp.enabled() {
+        return Err(StatusCode::CONFLICT);
+    }
+
+    let root = if let Some(session_id) = req.session_id.as_deref() {
+        let sid = SessionId(uuid::Uuid::parse_str(session_id).map_err(|_| StatusCode::BAD_REQUEST)?);
+        let session = state
+            .store
+            .get_session(sid)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+            .ok_or(StatusCode::NOT_FOUND)?;
+        let wt = state
+            .store
+            .get_worktree(session.worktree_id)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+            .ok_or(StatusCode::NOT_FOUND)?;
+        PathBuf::from(wt.root_path)
+    } else if let Some(root_path) = req.root_path.as_deref() {
+        PathBuf::from(root_path)
+    } else {
+        return Err(StatusCode::BAD_REQUEST);
+    };
+    let root = root.canonicalize().map_err(|_| StatusCode::BAD_REQUEST)?;
+
+    let out = state
+        .lsp
+        .workspace_symbols(&root, req.query)
+        .await
+        .map_err(|_| StatusCode::BAD_REQUEST)?
+        .into_iter()
+        .filter_map(|s| serde_json::to_value(s).ok())
+        .collect::<Vec<_>>();
+    Ok(Json(out))
+}
+
+async fn lsp_code_actions(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<LspCodeActionsReq>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    if !state.lsp.enabled() {
+        return Err(StatusCode::CONFLICT);
+    }
+    let (root, file) = resolve_lsp_target(&state, req.file).await?;
+    let v = state
+        .lsp
+        .code_actions(
+            &root,
+            &file,
+            lsp_types::Range {
+                start: lsp_types::Position {
+                    line: req.start_line,
+                    character: req.start_character,
+                },
+                end: lsp_types::Position {
+                    line: req.end_line,
+                    character: req.end_character,
+                },
+            },
+            vec![],
+        )
+        .await
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    Ok(Json(v))
+}
+
+async fn lsp_rename_plan(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<LspRenamePlanReq>,
+) -> Result<Json<crate::edit_plans::EditPlanSummary>, (StatusCode, Json<ApiErrorResp>)> {
+    if !state.lsp.enabled() || !state.lsp_edit_plans_enabled {
+        return Err((
+            StatusCode::CONFLICT,
+            Json(ApiErrorResp {
+                error: "LSP edit plans disabled".to_string(),
+            }),
+        ));
+    }
+
+    let sid = SessionId(uuid::Uuid::parse_str(&req.session_id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid session_id".to_string(),
+            }),
+        )
+    })?);
+    let session = state
+        .store
+        .get_session(sid)
+        .await
+        .map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: "failed to load session".to_string(),
+                }),
+            )
+        })?
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "session not found".to_string(),
+            }),
+        ))?;
+    let track_id = session.track_id;
+    let wt = state
+        .store
+        .get_worktree(session.worktree_id)
+        .await
+        .map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: "failed to load worktree".to_string(),
+                }),
+            )
+        })?
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "worktree not found".to_string(),
+            }),
+        ))?;
+    let root = PathBuf::from(wt.root_path)
+        .canonicalize()
+        .map_err(|_| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: "invalid worktree root".to_string(),
+                }),
+            )
+        })?;
+    let file = root.join(&req.path);
+    let edit = state
+        .lsp
+        .rename(
+            &root,
+            &file,
+            lsp_types::Position {
+                line: req.line,
+                character: req.character,
+            },
+            req.new_name,
+        )
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
+
+    let plan = crate::edit_plans::workspace_edit_to_plan(
+        &root,
+        &root,
+        sid,
+        track_id,
+        "Rename".to_string(),
+        edit,
+    )
+    .map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&e.to_string()),
+            }),
+        )
+    })?;
+
+    let summary = plan.to_summary();
+    state.edit_plans.lock().await.insert(plan.id, plan);
+    Ok(Json(summary))
+}
+
+async fn lsp_format_plan(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<LspFormatPlanReq>,
+) -> Result<Json<crate::edit_plans::EditPlanSummary>, (StatusCode, Json<ApiErrorResp>)> {
+    if !state.lsp.enabled() || !state.lsp_edit_plans_enabled {
+        return Err((
+            StatusCode::CONFLICT,
+            Json(ApiErrorResp {
+                error: "LSP edit plans disabled".to_string(),
+            }),
+        ));
+    }
+
+    let sid = SessionId(uuid::Uuid::parse_str(&req.session_id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid session_id".to_string(),
+            }),
+        )
+    })?);
+    let session = state
+        .store
+        .get_session(sid)
+        .await
+        .map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: "failed to load session".to_string(),
+                }),
+            )
+        })?
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "session not found".to_string(),
+            }),
+        ))?;
+    let track_id = session.track_id;
+    let wt = state
+        .store
+        .get_worktree(session.worktree_id)
+        .await
+        .map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: "failed to load worktree".to_string(),
+                }),
+            )
+        })?
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "worktree not found".to_string(),
+            }),
+        ))?;
+    let root = PathBuf::from(wt.root_path)
+        .canonicalize()
+        .map_err(|_| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: "invalid worktree root".to_string(),
+                }),
+            )
+        })?;
+    let file = root.join(&req.path);
+    let edits = state
+        .lsp
+        .format_document(&root, &file)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
+
+    let rel = file
+        .strip_prefix(&root)
+        .unwrap_or(&file)
+        .to_string_lossy()
+        .to_string();
+    let plan = crate::edit_plans::text_edits_to_plan(
+        &root,
+        sid,
+        track_id,
+        "Format document".to_string(),
+        rel,
+        edits,
+    )
+    .map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&e.to_string()),
+            }),
+        )
+    })?;
+    let summary = plan.to_summary();
+    state.edit_plans.lock().await.insert(plan.id, plan);
+    Ok(Json(summary))
+}
+
+async fn lsp_code_actions_plan(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<LspCodeActionPlanReq>,
+) -> Result<Json<crate::edit_plans::EditPlanSummary>, (StatusCode, Json<ApiErrorResp>)> {
+    if !state.lsp.enabled() || !state.lsp_edit_plans_enabled {
+        return Err((
+            StatusCode::CONFLICT,
+            Json(ApiErrorResp {
+                error: "LSP edit plans disabled".to_string(),
+            }),
+        ));
+    }
+
+    let sid = SessionId(uuid::Uuid::parse_str(&req.session_id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid session_id".to_string(),
+            }),
+        )
+    })?);
+    let session = state
+        .store
+        .get_session(sid)
+        .await
+        .map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: "failed to load session".to_string(),
+                }),
+            )
+        })?
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "session not found".to_string(),
+            }),
+        ))?;
+    let track_id = session.track_id;
+    let wt = state
+        .store
+        .get_worktree(session.worktree_id)
+        .await
+        .map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: "failed to load worktree".to_string(),
+                }),
+            )
+        })?
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "worktree not found".to_string(),
+            }),
+        ))?;
+    let root = PathBuf::from(wt.root_path)
+        .canonicalize()
+        .map_err(|_| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: "invalid worktree root".to_string(),
+                }),
+            )
+        })?;
+
+    let ca: lsp_types::CodeAction = serde_json::from_value(req.action.clone()).map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&e.to_string()),
+            }),
+        )
+    })?;
+    let Some(edit) = ca.edit else {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "code action has no edit".to_string(),
+            }),
+        ));
+    };
+
+    let plan = crate::edit_plans::workspace_edit_to_plan(
+        &root,
+        &root,
+        sid,
+        track_id,
+        ca.title.clone(),
+        edit,
+    )
+    .map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&e.to_string()),
+            }),
+        )
+    })?;
+    let summary = plan.to_summary();
+    state.edit_plans.lock().await.insert(plan.id, plan);
+    Ok(Json(summary))
+}
+
+async fn lsp_organize_imports_plan(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<LspOrganizeImportsPlanReq>,
+) -> Result<Json<crate::edit_plans::EditPlanSummary>, (StatusCode, Json<ApiErrorResp>)> {
+    if !state.lsp.enabled() || !state.lsp_edit_plans_enabled {
+        return Err((
+            StatusCode::CONFLICT,
+            Json(ApiErrorResp {
+                error: "LSP edit plans disabled".to_string(),
+            }),
+        ));
+    }
+
+    let sid = SessionId(uuid::Uuid::parse_str(&req.session_id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid session_id".to_string(),
+            }),
+        )
+    })?);
+    let session = state
+        .store
+        .get_session(sid)
+        .await
+        .map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: "failed to load session".to_string(),
+                }),
+            )
+        })?
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "session not found".to_string(),
+            }),
+        ))?;
+    let track_id = session.track_id;
+    let wt = state
+        .store
+        .get_worktree(session.worktree_id)
+        .await
+        .map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: "failed to load worktree".to_string(),
+                }),
+            )
+        })?
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "worktree not found".to_string(),
+            }),
+        ))?;
+    let root = PathBuf::from(wt.root_path)
+        .canonicalize()
+        .map_err(|_| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: "invalid worktree root".to_string(),
+                }),
+            )
+        })?;
+    let file = root.join(&req.path);
+
+    let text = tokio::fs::read_to_string(&file).await.map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&e.to_string()),
+            }),
+        )
+    })?;
+    let (end_line, end_character) = text
+        .split('\n')
+        .enumerate()
+        .fold((0u32, 0u32), |(_l, _c), (i, line)| {
+            (i as u32, line.chars().count() as u32)
+        });
+
+    let actions = state
+        .lsp
+        .code_actions_typed(
+            &root,
+            &file,
+            lsp_types::Range {
+                start: lsp_types::Position { line: 0, character: 0 },
+                end: lsp_types::Position {
+                    line: end_line,
+                    character: end_character,
+                },
+            },
+            vec![],
+            Some(vec![lsp_types::CodeActionKind::SOURCE_ORGANIZE_IMPORTS]),
+        )
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
+
+    let edit = actions.into_iter().find_map(|a| match a {
+        lsp_types::CodeActionOrCommand::CodeAction(ca) => ca.edit,
+        lsp_types::CodeActionOrCommand::Command(_cmd) => None,
+    });
+    let Some(edit) = edit else {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "no organize-imports edit returned".to_string(),
+            }),
+        ));
+    };
+
+    let plan = crate::edit_plans::workspace_edit_to_plan(
+        &root,
+        &root,
+        sid,
+        track_id,
+        "Organize imports".to_string(),
+        edit,
+    )
+    .map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&e.to_string()),
+            }),
+        )
+    })?;
+    let summary = plan.to_summary();
+    state.edit_plans.lock().await.insert(plan.id, plan);
+    Ok(Json(summary))
+}
+
+async fn list_edit_plans_for_track(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<Vec<crate::edit_plans::EditPlanSummary>>, StatusCode> {
+    let track_id = TrackId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
+    let map = state.edit_plans.lock().await;
+    let mut out = map
+        .values()
+        .filter(|p| p.track_id == track_id)
+        .map(|p| p.to_summary())
+        .collect::<Vec<_>>();
+    out.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    Ok(Json(out))
+}
+
+async fn get_edit_plan(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<crate::edit_plans::EditPlanSummary>, StatusCode> {
+    let pid = crate::edit_plans::EditPlanId(
+        uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?,
+    );
+    let map = state.edit_plans.lock().await;
+    let Some(plan) = map.get(&pid) else { return Err(StatusCode::NOT_FOUND) };
+    Ok(Json(plan.to_summary()))
+}
+
+async fn apply_edit_plan_patch(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(req): Json<EditPlanApplyReq>,
+) -> Result<Json<crate::edit_plans::EditPlanSummary>, (StatusCode, Json<ApiErrorResp>)> {
+    if !state.lsp_edit_plans_enabled {
+        return Err((
+            StatusCode::CONFLICT,
+            Json(ApiErrorResp {
+                error: "LSP edit plans disabled".to_string(),
+            }),
+        ));
+    }
+    let pid = crate::edit_plans::EditPlanId(uuid::Uuid::parse_str(&id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid edit plan id".to_string(),
+            }),
+        )
+    })?);
+    if req.patch.trim().is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "patch is empty".to_string(),
+            }),
+        ));
+    }
+
+    let action = req.action.trim().to_lowercase();
+    let patch = req.patch;
+
+    match action.as_str() {
+        "accept" => {
+            let worktree_root = {
+                let map = state.edit_plans.lock().await;
+                let Some(plan) = map.get(&pid) else {
+                    return Err((
+                        StatusCode::NOT_FOUND,
+                        Json(ApiErrorResp {
+                            error: "edit plan not found".to_string(),
+                        }),
+                    ));
+                };
+                plan.worktree_root.clone()
+            };
+
+            context_fs::git::git_apply_patch(
+                worktree_root.to_string_lossy().as_ref(),
+                &patch,
+                context_fs::git::ApplyPatchTarget::Worktree,
+                false,
+            )
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(ApiErrorResp {
+                        error: logs::redact_sensitive(&e.to_string()),
+                    }),
+                )
+            })?;
+
+            let mut map = state.edit_plans.lock().await;
+            if let Some(plan) = map.get_mut(&pid) {
+                plan.remove_patch(&patch);
+                let summary = plan.to_summary();
+                if plan.files.is_empty() {
+                    map.remove(&pid);
+                }
+                return Ok(Json(summary));
+            }
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(ApiErrorResp {
+                    error: "edit plan not found".to_string(),
+                }),
+            ));
+        }
+        "reject" => {
+            let mut map = state.edit_plans.lock().await;
+            let Some(plan) = map.get_mut(&pid) else {
+                return Err((
+                    StatusCode::NOT_FOUND,
+                    Json(ApiErrorResp {
+                        error: "edit plan not found".to_string(),
+                    }),
+                ));
+            };
+            plan.remove_patch(&patch);
+            let summary = plan.to_summary();
+            if plan.files.is_empty() {
+                map.remove(&pid);
+            }
+            return Ok(Json(summary));
+        }
+        _ => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: "action must be accept or reject".to_string(),
+                }),
+            ));
+        }
+    }
+}
+
+async fn discard_edit_plan(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<StatusCode, StatusCode> {
+    let pid = crate::edit_plans::EditPlanId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
+    state.edit_plans.lock().await.remove(&pid);
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn open_logs_folder(

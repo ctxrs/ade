@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import {
+  EditPlanSummary,
   ProviderOptions,
   ProviderStatus,
   Task,
   Track,
   Workspace,
   applyTrackDiffPatch,
+  discardEditPlan,
   createSession,
   createTask,
   createTrack,
@@ -14,6 +16,7 @@ import {
   getWorkspace,
   idToString,
   listProviders,
+  listEditPlansForTrack,
   listSessionsForTrack,
   listTasks,
   listTracks,
@@ -21,6 +24,7 @@ import {
 } from "../api/client";
 import { useSessionEntry, useSessionSupervisor } from "../state/sessionSupervisor";
 import { DiffReviewPane } from "../components/DiffReviewPane";
+import { EditPlanReviewPane } from "../components/EditPlanReviewPane";
 import { SessionView } from "./SessionPage";
 
 type DraftTrack = {
@@ -93,6 +97,9 @@ export default function WorkbenchPage() {
   const [contextMenuOpen, setContextMenuOpen] = useState(false);
 
   const [diffWidth, setDiffWidth] = useState(480);
+  const [reviewTab, setReviewTab] = useState<"git" | "lsp">("git");
+  const [editPlans, setEditPlans] = useState<EditPlanSummary[]>([]);
+  const [activeEditPlanId, setActiveEditPlanId] = useState<string | null>(null);
 
   const refreshTasks = async () => {
     if (!workspaceId) return;
@@ -126,10 +133,30 @@ export default function WorkbenchPage() {
       setTracks([]);
       setSessionsByTrack({});
       setActiveTrackId(null);
+      setEditPlans([]);
+      setActiveEditPlanId(null);
       return;
     }
     refreshTaskDetail(activeTaskId).catch(() => {});
   }, [activeTaskId]);
+
+  useEffect(() => {
+    if (!activeTrackId) {
+      setEditPlans([]);
+      setActiveEditPlanId(null);
+      return;
+    }
+    listEditPlansForTrack(activeTrackId)
+      .then((plans) => {
+        setEditPlans(plans);
+        const first = plans[0] ? idToString(plans[0].id) : null;
+        setActiveEditPlanId((prev) => (prev && plans.some((p) => idToString(p.id) === prev) ? prev : first));
+      })
+      .catch(() => {
+        setEditPlans([]);
+        setActiveEditPlanId(null);
+      });
+  }, [activeTrackId]);
 
   const filteredTasks = useMemo(() => {
     const q = taskQuery.trim().toLowerCase();
@@ -149,11 +176,21 @@ export default function WorkbenchPage() {
   const activeTrackIdFromSession = activeEntry?.session ? idToString(activeEntry.session.track_id) : "";
 
   const hasDiff = activeTrackDiff.trim().length > 0;
+  const hasEditPlans = editPlans.some((p) => (p.diff ?? "").trim().length > 0);
+  const showReviewPane = hasDiff || hasEditPlans;
   const diffFileCount = useMemo(() => {
     if (!hasDiff) return 0;
     const m = activeTrackDiff.match(/^diff --git /gm);
     return m ? m.length : 1;
   }, [activeTrackDiff, hasDiff]);
+
+  useEffect(() => {
+    setReviewTab((prev) => {
+      if (prev === "git" && !hasDiff && hasEditPlans) return "lsp";
+      if (prev === "lsp" && !hasEditPlans && hasDiff) return "git";
+      return prev;
+    });
+  }, [hasDiff, hasEditPlans]);
 
   const ensureProviderOptions = async (providerId: string): Promise<ProviderOptions | undefined> => {
     if (!workspaceId) return;
@@ -252,6 +289,38 @@ export default function WorkbenchPage() {
   };
 
   const activeTask = activeTaskId ? tasks.find((t) => idToString(t.id) === activeTaskId) : null;
+  const activeEditPlan = useMemo(() => {
+    if (!activeEditPlanId) return null;
+    return editPlans.find((p) => idToString(p.id) === activeEditPlanId) ?? null;
+  }, [activeEditPlanId, editPlans]);
+
+  useEffect(() => {
+    if (!activeEditPlanId) {
+      setActiveEditPlanId(editPlans[0] ? idToString(editPlans[0].id) : null);
+      return;
+    }
+    if (!editPlans.some((p) => idToString(p.id) === activeEditPlanId)) {
+      setActiveEditPlanId(editPlans[0] ? idToString(editPlans[0].id) : null);
+    }
+  }, [activeEditPlanId, editPlans]);
+
+  const onEditPlanUpdated = (updated: EditPlanSummary) => {
+    const pid = idToString(updated.id);
+    setEditPlans((prev) => {
+      const has = prev.some((p) => idToString(p.id) === pid);
+      const next = (has ? prev.map((p) => (idToString(p.id) === pid ? updated : p)) : [updated, ...prev]).filter(
+        (p) => (p.diff ?? "").trim().length > 0,
+      );
+      return next;
+    });
+  };
+
+  const discardActiveEditPlan = async () => {
+    if (!activeEditPlan) return;
+    const pid = idToString(activeEditPlan.id);
+    await discardEditPlan(pid);
+    setEditPlans((prev) => prev.filter((p) => idToString(p.id) !== pid));
+  };
 
   return (
     <div className="wb-root">
@@ -565,39 +634,113 @@ export default function WorkbenchPage() {
               </div>
             </div>
 
-            {hasDiff && (
+            {showReviewPane && (
               <>
                 <div className="wb-splitter" onMouseDown={onSplitterMouseDown} />
                 <div className="wb-diff" style={{ width: diffWidth }}>
                   <div className="wb-diff-top">
                     <div className="wb-diff-tabs">
-                      <div className="wb-diff-tab">All Changes</div>
-                      <div className="wb-diff-pill">
-                        {diffFileCount} Pending Change{diffFileCount === 1 ? "" : "s"}
-                      </div>
+                      {hasDiff && (
+                        <button
+                          type="button"
+                          className={`wb-diff-tab wb-diff-tab-button ${reviewTab === "git" ? "wb-diff-tab-active" : ""}`}
+                          onClick={() => setReviewTab("git")}
+                        >
+                          All Changes
+                        </button>
+                      )}
+                      {hasEditPlans && (
+                        <button
+                          type="button"
+                          className={`wb-diff-tab wb-diff-tab-button ${reviewTab === "lsp" ? "wb-diff-tab-active" : ""}`}
+                          onClick={() => setReviewTab("lsp")}
+                        >
+                          LSP Plans
+                        </button>
+                      )}
+                      {reviewTab === "git" && hasDiff && (
+                        <div className="wb-diff-pill">
+                          {diffFileCount} Pending Change{diffFileCount === 1 ? "" : "s"}
+                        </div>
+                      )}
+                      {reviewTab === "lsp" && hasEditPlans && (
+                        <div className="wb-diff-pill">
+                          {editPlans.length} Plan{editPlans.length === 1 ? "" : "s"}
+                        </div>
+                      )}
                     </div>
                     <div className="wb-diff-actions">
-                      <button type="button" className="wb-primary" onClick={approveAll}>
-                        Approve
-                      </button>
-                      <button type="button" className="wb-small" onClick={rejectAll}>
-                        Reject
-                      </button>
+                      {reviewTab === "git" && hasDiff && (
+                        <>
+                          <button type="button" className="wb-primary" onClick={approveAll}>
+                            Approve
+                          </button>
+                          <button type="button" className="wb-small" onClick={rejectAll}>
+                            Reject
+                          </button>
+                        </>
+                      )}
+                      {reviewTab === "lsp" && hasEditPlans && activeEditPlan && (
+                        <button type="button" className="wb-small" onClick={discardActiveEditPlan}>
+                          Discard Plan
+                        </button>
+                      )}
                     </div>
                   </div>
 
-                  <DiffReviewPane
-                    diff={activeTrackDiff}
-                    trackId={activeTrackIdFromSession}
-                    onDiffUpdated={(d) => activeSessionId && supervisor.setDiff(activeSessionId, d)}
-                    labels={{
-                      title: "Pending Changes",
-                      acceptAll: "Approve all",
-                      rejectAll: "Reject all",
-                      accept: "Approve",
-                      reject: "Reject",
-                    }}
-                  />
+                  {reviewTab === "git" && hasDiff && (
+                    <DiffReviewPane
+                      diff={activeTrackDiff}
+                      trackId={activeTrackIdFromSession}
+                      onDiffUpdated={(d) => activeSessionId && supervisor.setDiff(activeSessionId, d)}
+                      labels={{
+                        title: "Pending Changes",
+                        acceptAll: "Approve all",
+                        rejectAll: "Reject all",
+                        accept: "Approve",
+                        reject: "Reject",
+                      }}
+                    />
+                  )}
+
+                  {reviewTab === "lsp" && hasEditPlans && (
+                    <div className="wb-editplans">
+                      <div className="wb-editplans-list">
+                        {editPlans.map((p) => {
+                          const pid = idToString(p.id);
+                          const selected = pid === activeEditPlanId;
+                          return (
+                            <button
+                              key={pid}
+                              type="button"
+                              className={`wb-editplan-item ${selected ? "wb-editplan-item-active" : ""}`}
+                              onClick={() => setActiveEditPlanId(pid)}
+                            >
+                              <div className="wb-editplan-title">{p.title}</div>
+                              <div className="wb-editplan-sub">{p.remaining_hunks} hunk(s)</div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                      {activeEditPlan ? (
+                        <EditPlanReviewPane
+                          plan={activeEditPlan}
+                          onPlanUpdated={onEditPlanUpdated}
+                          labels={{
+                            title: activeEditPlan.title || "Pending LSP Changes",
+                            acceptAll: "Approve all",
+                            rejectAll: "Reject all",
+                            accept: "Approve",
+                            reject: "Reject",
+                          }}
+                        />
+                      ) : (
+                        <div className="wb-muted" style={{ padding: 12 }}>
+                          No pending LSP changes.
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               </>
             )}

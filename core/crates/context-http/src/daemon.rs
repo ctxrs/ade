@@ -18,6 +18,7 @@ use context_providers::fake::FakeProviderAdapter;
 use context_providers::tier1::Tier1AcpAdapter;
 use context_store::Store;
 use context_lsp::{LspManager, LspManagerConfig};
+use crate::edit_plans::{EditPlan, EditPlanId};
 
 use crate::api;
 use crate::installs::{InstallId, InstallProgressEvent, InstallState, InstallStateKind};
@@ -33,12 +34,14 @@ pub struct AppState {
     pub daemon_url: String,
     pub auth_token: Option<String>,
     pub lsp: Arc<LspManager>,
+    pub lsp_edit_plans_enabled: bool,
     pub shutdown_tx: broadcast::Sender<()>,
     schedulers: Mutex<HashMap<SessionId, mpsc::Sender<SchedulerCommand>>>,
     broadcasters: Mutex<HashMap<SessionId, broadcast::Sender<SessionEvent>>>,
     global_broadcaster: broadcast::Sender<SessionEvent>,
     running_sessions: Mutex<HashSet<SessionId>>,
     installs: Mutex<HashMap<InstallId, InstallState>>,
+    pub edit_plans: Mutex<HashMap<EditPlanId, EditPlan>>,
 }
 
 pub struct CachedProviderOptions {
@@ -72,6 +75,29 @@ impl AppState {
         auth_token: Option<String>,
         lsp_cfg: LspManagerConfig,
     ) -> Self {
+        let lsp_edit_plans_enabled = std::env::var("CONTEXT_LSP_EDITPLANS_ENABLED")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+        Self::new_with_lsp_config_and_flags(
+            data_root,
+            store,
+            providers,
+            daemon_url,
+            auth_token,
+            lsp_cfg,
+            lsp_edit_plans_enabled,
+        )
+    }
+
+    pub fn new_with_lsp_config_and_flags(
+        data_root: PathBuf,
+        store: Store,
+        providers: HashMap<String, Arc<dyn ProviderAdapter>>,
+        daemon_url: String,
+        auth_token: Option<String>,
+        lsp_cfg: LspManagerConfig,
+        lsp_edit_plans_enabled: bool,
+    ) -> Self {
         let (shutdown_tx, _) = broadcast::channel(8);
         let (global_broadcaster, _) = broadcast::channel(2048);
         let lsp = Arc::new(LspManager::new(lsp_cfg));
@@ -84,12 +110,14 @@ impl AppState {
             daemon_url,
             auth_token,
             lsp,
+            lsp_edit_plans_enabled,
             shutdown_tx,
             schedulers: Mutex::new(HashMap::new()),
             broadcasters: Mutex::new(HashMap::new()),
             global_broadcaster,
             running_sessions: Mutex::new(HashSet::new()),
             installs: Mutex::new(HashMap::new()),
+            edit_plans: Mutex::new(HashMap::new()),
         }
     }
 
