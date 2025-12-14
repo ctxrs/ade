@@ -1051,43 +1051,108 @@ async fn create_task(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
     Json(req): Json<CreateTaskReq>,
-) -> Result<Json<Task>, StatusCode> {
-    let ws_id = WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
+) -> Result<Json<Task>, (StatusCode, Json<ApiErrorResp>)> {
+    let ws_id = WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid workspace id".to_string(),
+            }),
+        )
+    })?);
     let ws = state
         .store
         .get_workspace(ws_id)
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::NOT_FOUND)?;
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "workspace not found".to_string(),
+            }),
+        ))?;
 
-    assert_git_repo(&ws.root_path)
-        .await
-        .map_err(|_| StatusCode::BAD_REQUEST)?;
-    let base_commit_sha = rev_parse_head(&ws.root_path)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let want_default_track = req.create_default_track;
+    if want_default_track {
+        assert_git_repo(&ws.root_path).await.map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
+    }
 
     let task = state
         .store
         .create_task(ws_id, req.title, req.description)
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
 
     if !req.create_default_track {
         return Ok(Json(task));
     }
+
+    let base_commit_sha = rev_parse_head(&ws.root_path).await.map_err(|e| {
+        let msg = e.to_string().to_lowercase();
+        if msg.contains("ambiguous argument 'head'")
+            || msg.contains("unknown revision or path not in the working tree")
+        {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: "git repo has no commits; create an initial commit before creating a worktree track".to_string(),
+                }),
+            );
+        }
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&e.to_string()),
+            }),
+        )
+    })?;
 
     let worktree_id = WorktreeId::new();
     let wt_path = managed_worktree_path(&state.data_root, ws_id, worktree_id);
     if let Some(parent) = wt_path.parent() {
         tokio::fs::create_dir_all(parent)
             .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiErrorResp {
+                        error: logs::redact_sensitive(&e.to_string()),
+                    }),
+                )
+            })?;
     }
     let branch_name = format!("context/{}/{}", task.id.0, worktree_id.0);
     create_worktree(&ws.root_path, &wt_path, &base_commit_sha, &branch_name)
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
 
     let worktree = Worktree {
         id: worktree_id,
@@ -1101,7 +1166,14 @@ async fn create_task(
         .store
         .insert_worktree(worktree)
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
 
     let label = req
         .default_track_label
@@ -1110,7 +1182,14 @@ async fn create_task(
         .store
         .create_track(task.id, ws_id, worktree_id, label)
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
 
     Ok(Json(task))
 }
@@ -1195,6 +1274,17 @@ async fn create_track(
         )
     })?;
     let base_commit_sha = rev_parse_head(&ws.root_path).await.map_err(|e| {
+        let msg = e.to_string().to_lowercase();
+        if msg.contains("ambiguous argument 'head'")
+            || msg.contains("unknown revision or path not in the working tree")
+        {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: "git repo has no commits; create an initial commit before creating a worktree track".to_string(),
+                }),
+            );
+        }
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ApiErrorResp {

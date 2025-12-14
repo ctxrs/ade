@@ -186,6 +186,18 @@ const api = async <T>(path: string, init?: RequestInit): Promise<T> => {
   });
   if (!res.ok) {
     const text = await res.text();
+    const lowered = String(text || "").toLowerCase();
+    if (
+      res.status >= 500 &&
+      (lowered.includes("econnrefused") ||
+        lowered.includes("proxy error") ||
+        lowered.includes("connect econnrefused") ||
+        lowered.includes("socket hang up"))
+    ) {
+      throw new Error(
+        "Cannot reach the Context daemon via /api. If you're running the web dev server, start the daemon (default http://127.0.0.1:4399) or set CONTEXT_DAEMON_URL before `pnpm dev`.",
+      );
+    }
     try {
       const parsed = text ? JSON.parse(text) : null;
       const msg = parsed?.error ?? parsed?.message;
