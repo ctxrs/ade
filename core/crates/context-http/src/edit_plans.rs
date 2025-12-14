@@ -44,6 +44,7 @@ pub struct PlanFile {
     pub old_path: String,
     pub new_path: String,
     /// SHA256 of the file contents used as the base when the plan was created.
+    #[serde(default)]
     pub base_sha256: String,
     pub header_lines: Vec<String>,
     pub hunks: Vec<PlanHunk>,
@@ -211,10 +212,70 @@ pub fn workspace_edit_to_plan(
     title: String,
     edit: WorkspaceEdit,
 ) -> Result<EditPlan> {
-    let file_edits = collect_workspace_edit_file_edits(root, &edit)?;
+    let (mut file_edits, ops) = collect_workspace_edit(root, &edit)?;
     let mut files = Vec::new();
 
-    for (rel, edits) in file_edits {
+    // Apply operations first (create/rename/delete).
+    for op in ops {
+        match op {
+            LspFileOp::Create { path } => {
+                let edits = file_edits.remove(&path).unwrap_or_default();
+                let old = String::new();
+                let base_sha256 = sha256_hex(&old);
+                let new = apply_text_edits_utf16(&old, &edits)
+                    .with_context(|| format!("applying edits for {}", path))?;
+                let patch = git_unified_diff_create(&path, &new);
+                for mut pf in parse_unified_diff(&patch) {
+                    pf.base_sha256 = base_sha256.clone();
+                    files.push(pf);
+                }
+            }
+            LspFileOp::Delete { path } => {
+                let abs = worktree_root.join(&path);
+                let old = std::fs::read_to_string(&abs).unwrap_or_default();
+                let base_sha256 = sha256_hex(&old);
+                let patch = git_unified_diff_delete(&path, &old);
+                for mut pf in parse_unified_diff(&patch) {
+                    pf.base_sha256 = base_sha256.clone();
+                    files.push(pf);
+                }
+                // Any edits targeting deleted file are ignored.
+                file_edits.remove(&path);
+            }
+            LspFileOp::Rename { old_path, new_path } => {
+                let abs = worktree_root.join(&old_path);
+                let old = std::fs::read_to_string(&abs).unwrap_or_default();
+                let base_sha256 = sha256_hex(&old);
+
+                let mut new_text = old.clone();
+                if let Some(edits) = file_edits.remove(&old_path) {
+                    new_text = apply_text_edits_utf16(&new_text, &edits)
+                        .with_context(|| format!("applying edits for {}", old_path))?;
+                }
+                if let Some(edits) = file_edits.remove(&new_path) {
+                    new_text = apply_text_edits_utf16(&new_text, &edits)
+                        .with_context(|| format!("applying edits for {}", new_path))?;
+                }
+
+                let patch_del = git_unified_diff_delete(&old_path, &old);
+                for mut pf in parse_unified_diff(&patch_del) {
+                    pf.base_sha256 = base_sha256.clone();
+                    files.push(pf);
+                }
+
+                let patch_add = git_unified_diff_create(&new_path, &new_text);
+                for mut pf in parse_unified_diff(&patch_add) {
+                    pf.base_sha256 = sha256_hex("");
+                    files.push(pf);
+                }
+            }
+        }
+    }
+
+    // Now apply remaining edits as modifications (stable order for deterministic diffs).
+    let mut remaining = file_edits.into_iter().collect::<Vec<_>>();
+    remaining.sort_by(|(a, _), (b, _)| a.cmp(b));
+    for (rel, edits) in remaining {
         let abs = worktree_root.join(&rel);
         let old = std::fs::read_to_string(&abs).unwrap_or_default();
         let base_sha256 = sha256_hex(&old);
@@ -223,14 +284,9 @@ pub fn workspace_edit_to_plan(
         if old == new {
             continue;
         }
-        let patch = git_unified_diff(&rel, &old, &new);
-        let mut parsed = parse_unified_diff(&patch);
-        if let Some(mut pf) = parsed.pop() {
-            // Ensure header includes diff --git and the unified header lines.
-            if pf.header_lines.is_empty() {
-                pf.header_lines.push(format!("diff --git a/{rel} b/{rel}"));
-            }
-            pf.base_sha256 = base_sha256;
+        let patch = git_unified_diff_modify(&rel, &old, &new);
+        for mut pf in parse_unified_diff(&patch) {
+            pf.base_sha256 = base_sha256.clone();
             files.push(pf);
         }
     }
@@ -270,7 +326,7 @@ pub fn text_edits_to_plan(
             files: vec![],
         });
     }
-    let patch = git_unified_diff(&rel_path, &old, &new);
+    let patch = git_unified_diff_modify(&rel_path, &old, &new);
     let mut files = parse_unified_diff(&patch);
     for f in &mut files {
         f.base_sha256 = base_sha256.clone();
@@ -286,11 +342,19 @@ pub fn text_edits_to_plan(
     })
 }
 
-fn collect_workspace_edit_file_edits(
+#[derive(Debug, Clone)]
+enum LspFileOp {
+    Create { path: String },
+    Delete { path: String },
+    Rename { old_path: String, new_path: String },
+}
+
+fn collect_workspace_edit(
     root: &Path,
     edit: &WorkspaceEdit,
-) -> Result<HashMap<String, Vec<TextEdit>>> {
+) -> Result<(HashMap<String, Vec<TextEdit>>, Vec<LspFileOp>)> {
     let mut out: HashMap<String, Vec<TextEdit>> = HashMap::new();
+    let mut ops: Vec<LspFileOp> = Vec::new();
 
     if let Some(changes) = &edit.changes {
         for (uri, edits) in changes {
@@ -310,13 +374,41 @@ fn collect_workspace_edit_file_edits(
                     }));
                 }
             }
-            lsp_types::DocumentChanges::Operations(_ops) => {
-                // TODO(v2): support create/rename/delete file operations.
+            lsp_types::DocumentChanges::Operations(changes) => {
+                for ch in changes {
+                    match ch {
+                        lsp_types::DocumentChangeOperation::Edit(edit) => {
+                            let rel = uri_to_relpath(root, &edit.text_document.uri)?;
+                            out.entry(rel).or_default().extend(edit.edits.iter().cloned().map(|x| match x {
+                                lsp_types::OneOf::Left(te) => te,
+                                lsp_types::OneOf::Right(annot) => annot.text_edit,
+                            }));
+                        }
+                        lsp_types::DocumentChangeOperation::Op(op) => match op {
+                            lsp_types::ResourceOp::Create(cf) => {
+                                let rel = uri_to_relpath(root, &cf.uri)?;
+                                ops.push(LspFileOp::Create { path: rel });
+                            }
+                            lsp_types::ResourceOp::Rename(rf) => {
+                                let old_rel = uri_to_relpath(root, &rf.old_uri)?;
+                                let new_rel = uri_to_relpath(root, &rf.new_uri)?;
+                                ops.push(LspFileOp::Rename {
+                                    old_path: old_rel,
+                                    new_path: new_rel,
+                                });
+                            }
+                            lsp_types::ResourceOp::Delete(df) => {
+                                let rel = uri_to_relpath(root, &df.uri)?;
+                                ops.push(LspFileOp::Delete { path: rel });
+                            }
+                        },
+                    }
+                }
             }
         }
     }
 
-    Ok(out)
+    Ok((out, ops))
 }
 
 fn uri_to_relpath(root: &Path, uri: &Uri) -> Result<String> {
@@ -333,12 +425,38 @@ fn uri_to_relpath(root: &Path, uri: &Uri) -> Result<String> {
     Ok(rel.to_string_lossy().trim_start_matches(std::path::MAIN_SEPARATOR).to_string())
 }
 
-fn git_unified_diff(path: &str, old: &str, new: &str) -> String {
+fn git_unified_diff_modify(path: &str, old: &str, new: &str) -> String {
     let a = format!("a/{}", path);
     let b = format!("b/{}", path);
     let diff = similar::TextDiff::from_lines(old, new);
     let body = diff.unified_diff().header(&a, &b).to_string();
     format!("diff --git {a} {b}\n{body}")
+}
+
+fn git_unified_diff_create(path: &str, new: &str) -> String {
+    let a = format!("a/{}", path);
+    let b = format!("b/{}", path);
+    if new.is_empty() {
+        return format!(
+            "diff --git {a} {b}\nnew file mode 100644\n--- /dev/null\n+++ {b}\n@@ -0,0 +0,0 @@\n"
+        );
+    }
+    let diff = similar::TextDiff::from_lines("", new);
+    let body = diff.unified_diff().header("/dev/null", &b).to_string();
+    format!("diff --git {a} {b}\nnew file mode 100644\n{body}")
+}
+
+fn git_unified_diff_delete(path: &str, old: &str) -> String {
+    let a = format!("a/{}", path);
+    let b = format!("b/{}", path);
+    if old.is_empty() {
+        return format!(
+            "diff --git {a} {b}\ndeleted file mode 100644\n--- {a}\n+++ /dev/null\n@@ -0,0 +0,0 @@\n"
+        );
+    }
+    let diff = similar::TextDiff::from_lines(old, "");
+    let body = diff.unified_diff().header(&a, "/dev/null").to_string();
+    format!("diff --git {a} {b}\ndeleted file mode 100644\n{body}")
 }
 
 fn apply_text_edits_utf16(text: &str, edits: &[TextEdit]) -> Result<String> {

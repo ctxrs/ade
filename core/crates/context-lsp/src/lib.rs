@@ -5,11 +5,12 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow};
 use lsp_types::{
-    CodeActionContext, CodeActionKind, CodeActionOrCommand, CodeActionParams, Diagnostic, DidChangeTextDocumentParams,
-    DidOpenTextDocumentParams, DocumentFormattingParams, DocumentSymbolParams, InitializeParams,
+    CodeActionContext, CodeActionKind, CodeActionOrCommand, CodeActionParams, CompletionParams, Diagnostic,
+    DidChangeTextDocumentParams, DidOpenTextDocumentParams, DocumentFormattingParams, DocumentSymbolParams, HoverParams,
+    InitializeParams,
     InitializedParams, Location, Position, PublishDiagnosticsParams, Range,
     ReferenceContext, ReferenceParams, RenameParams, SymbolInformation, TextDocumentContentChangeEvent,
-    TextDocumentIdentifier, TextDocumentItem, TextDocumentPositionParams, TextEdit, Uri,
+    SignatureHelpParams, TextDocumentIdentifier, TextDocumentItem, TextDocumentPositionParams, TextEdit, Uri,
     VersionedTextDocumentIdentifier, WorkspaceFolder, WorkspaceEdit, WorkspaceSymbolParams,
 };
 use serde_json::{Value, json};
@@ -150,6 +151,38 @@ impl LspManager {
         .await
     }
 
+    pub async fn type_definition(
+        &self,
+        root: &Path,
+        file: &Path,
+        position: Position,
+    ) -> Result<Value> {
+        self.with_open_doc(root, file, |session, doc| async move {
+            let params = TextDocumentPositionParams {
+                text_document: TextDocumentIdentifier { uri: doc.uri },
+                position,
+            };
+            session.request("textDocument/typeDefinition", &params).await
+        })
+        .await
+    }
+
+    pub async fn implementation(
+        &self,
+        root: &Path,
+        file: &Path,
+        position: Position,
+    ) -> Result<Value> {
+        self.with_open_doc(root, file, |session, doc| async move {
+            let params = TextDocumentPositionParams {
+                text_document: TextDocumentIdentifier { uri: doc.uri },
+                position,
+            };
+            session.request("textDocument/implementation", &params).await
+        })
+        .await
+    }
+
     pub async fn references(
         &self,
         root: &Path,
@@ -168,6 +201,66 @@ impl LspManager {
                 partial_result_params: Default::default(),
             };
             session.request_typed("textDocument/references", &params).await
+        })
+        .await
+    }
+
+    pub async fn hover(
+        &self,
+        root: &Path,
+        file: &Path,
+        position: Position,
+    ) -> Result<Value> {
+        self.with_open_doc(root, file, |session, doc| async move {
+            let params = HoverParams {
+                text_document_position_params: TextDocumentPositionParams {
+                    text_document: TextDocumentIdentifier { uri: doc.uri },
+                    position,
+                },
+                work_done_progress_params: Default::default(),
+            };
+            session.request("textDocument/hover", &params).await
+        })
+        .await
+    }
+
+    pub async fn signature_help(
+        &self,
+        root: &Path,
+        file: &Path,
+        position: Position,
+    ) -> Result<Value> {
+        self.with_open_doc(root, file, |session, doc| async move {
+            let params = SignatureHelpParams {
+                text_document_position_params: TextDocumentPositionParams {
+                    text_document: TextDocumentIdentifier { uri: doc.uri },
+                    position,
+                },
+                context: None,
+                work_done_progress_params: Default::default(),
+            };
+            session.request("textDocument/signatureHelp", &params).await
+        })
+        .await
+    }
+
+    pub async fn completion(
+        &self,
+        root: &Path,
+        file: &Path,
+        position: Position,
+    ) -> Result<Value> {
+        self.with_open_doc(root, file, |session, doc| async move {
+            let params = CompletionParams {
+                text_document_position: TextDocumentPositionParams {
+                    text_document: TextDocumentIdentifier { uri: doc.uri },
+                    position,
+                },
+                context: None,
+                work_done_progress_params: Default::default(),
+                partial_result_params: Default::default(),
+            };
+            session.request("textDocument/completion", &params).await
         })
         .await
     }
