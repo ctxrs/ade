@@ -29,6 +29,7 @@ use crate::installer;
 use crate::logs;
 use crate::scheduler::SchedulerCommand;
 use crate::updates;
+use crate::buffers::{BufferCloseReq, BufferConflictResp, BufferId, BufferOpenReq, BufferOpenResp, BufferUpdateReq, BufferUpdateResp};
 use context_providers::adapters::ProviderStatus;
 use context_providers::events::NormalizedEvent;
 use context_providers::{acp::probe_provider_options, acp::AcpAgentConfig, acp::AcpClientConfig};
@@ -95,9 +96,29 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
         .route("/api/lsp/hover", post(lsp_hover))
         .route("/api/lsp/signature_help", post(lsp_signature_help))
         .route("/api/lsp/completion", post(lsp_completion))
+        .route("/api/lsp/completion/resolve", post(lsp_completion_resolve))
+        .route("/api/lsp/code_action/resolve", post(lsp_code_action_resolve))
+        .route("/api/lsp/inlay_hints", post(lsp_inlay_hints))
+        .route("/api/lsp/document_highlight", post(lsp_document_highlight))
+        .route("/api/lsp/selection_ranges", post(lsp_selection_ranges))
+        .route("/api/lsp/call_hierarchy/prepare", post(lsp_call_hierarchy_prepare))
+        .route("/api/lsp/call_hierarchy/incoming", post(lsp_call_hierarchy_incoming))
+        .route("/api/lsp/call_hierarchy/outgoing", post(lsp_call_hierarchy_outgoing))
+        .route("/api/lsp/code_lens", post(lsp_code_lens))
+        .route("/api/lsp/code_lens/resolve", post(lsp_code_lens_resolve))
+        .route("/api/lsp/prepare_rename", post(lsp_prepare_rename))
+        .route("/api/lsp/document_links", post(lsp_document_links))
+        .route("/api/lsp/document_links/resolve", post(lsp_document_link_resolve))
+        .route("/api/lsp/semantic_tokens/full", post(lsp_semantic_tokens_full))
+        .route("/api/lsp/type_hierarchy/prepare", post(lsp_type_hierarchy_prepare))
+        .route("/api/lsp/type_hierarchy/supertypes", post(lsp_type_hierarchy_supertypes))
+        .route("/api/lsp/type_hierarchy/subtypes", post(lsp_type_hierarchy_subtypes))
+        .route("/api/lsp/execute_command", post(lsp_execute_command))
+        .route("/api/lsp/execute_command/plan", post(lsp_execute_command_plan))
         .route("/api/lsp/document_symbols", post(lsp_document_symbols))
         .route("/api/lsp/workspace_symbols", post(lsp_workspace_symbols))
         .route("/api/lsp/code_actions", post(lsp_code_actions))
+        .route("/api/lsp/code_actions/by_diagnostic/plan", post(lsp_code_actions_by_diagnostic_plan))
         .route("/api/lsp/rename/plan", post(lsp_rename_plan))
         .route("/api/lsp/format/plan", post(lsp_format_plan))
         .route("/api/lsp/organize_imports/plan", post(lsp_organize_imports_plan))
@@ -106,6 +127,9 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
         .route("/api/edit_plans/:id", get(get_edit_plan))
         .route("/api/edit_plans/:id/apply", post(apply_edit_plan_patch))
         .route("/api/edit_plans/:id/discard", post(discard_edit_plan))
+        .route("/api/buffers/open", post(open_buffer))
+        .route("/api/buffers/update", post(update_buffer))
+        .route("/api/buffers/close", post(close_buffer))
         .route("/api/workspaces", get(list_workspaces).post(create_workspace))
         .route("/api/workspaces/:id", delete(delete_workspace).get(get_workspace))
         .route(
@@ -447,6 +471,168 @@ async fn resolve_lsp_target(
     Ok((root, file))
 }
 
+async fn resolve_session_root_and_file(
+    state: &Arc<AppState>,
+    session_id: &str,
+    path: &str,
+) -> Result<(SessionId, WorktreeId, PathBuf, PathBuf), StatusCode> {
+    let sid = SessionId(uuid::Uuid::parse_str(session_id).map_err(|_| StatusCode::BAD_REQUEST)?);
+    let session = state
+        .store
+        .get_session(sid)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    let wt = state
+        .store
+        .get_worktree(session.worktree_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    let root = PathBuf::from(wt.root_path)
+        .canonicalize()
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    let file =
+        crate::buffers::BufferStore::resolve_path(&root, path).await.map_err(|_| StatusCode::BAD_REQUEST)?;
+    Ok((sid, session.worktree_id, root, file))
+}
+
+async fn open_buffer(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<BufferOpenReq>,
+) -> Result<Json<BufferOpenResp>, StatusCode> {
+    let (sid, worktree_id, root, file) =
+        resolve_session_root_and_file(&state, &req.session_id, &req.path).await?;
+    let text = tokio::fs::read_to_string(&file)
+        .await
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    let disk_sha = sha256_hex(&text);
+    let st = state
+        .buffers
+        .open_or_reuse(sid, worktree_id, root.clone(), file.clone(), text.clone(), disk_sha.clone())
+        .await;
+    if state.lsp.enabled() {
+        if let Some(lang) = context_lsp::Language::detect(&file) {
+            state.ensure_lsp_diagnostics_forwarder(root.clone(), lang).await;
+        }
+        let _ = state.lsp.sync_document_text(&root, &file, st.text.clone()).await;
+    }
+    Ok(Json(BufferOpenResp {
+        buffer_id: st.id.0.to_string(),
+        path: req.path,
+        version: st.version,
+        text: st.text,
+        last_disk_sha256: st.last_disk_sha256,
+    }))
+}
+
+async fn update_buffer(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<BufferUpdateReq>,
+) -> Result<impl IntoResponse, (StatusCode, Json<BufferConflictResp>)> {
+    let bid = BufferId(uuid::Uuid::parse_str(&req.buffer_id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(BufferConflictResp {
+                error: "invalid buffer_id".to_string(),
+                disk_sha256: "".to_string(),
+                disk_text: "".to_string(),
+            }),
+        )
+    })?);
+    let current = state.buffers.get(bid).await.ok_or((
+        StatusCode::NOT_FOUND,
+        Json(BufferConflictResp {
+            error: "buffer not found".to_string(),
+            disk_sha256: "".to_string(),
+            disk_text: "".to_string(),
+        }),
+    ))?;
+
+    let new_sha = if req.persist {
+        // Detect external changes on disk.
+        let disk_text = tokio::fs::read_to_string(&current.path).await.map_err(|_| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(BufferConflictResp {
+                    error: "failed to read file".to_string(),
+                    disk_sha256: "".to_string(),
+                    disk_text: "".to_string(),
+                }),
+            )
+        })?;
+        let disk_sha = sha256_hex(&disk_text);
+        if !req.force && disk_sha != current.last_disk_sha256 {
+            return Err((
+                StatusCode::CONFLICT,
+                Json(BufferConflictResp {
+                    error: "file changed on disk while buffer was open".to_string(),
+                    disk_sha256: disk_sha,
+                    disk_text,
+                }),
+            ));
+        }
+
+        // Write to disk (autosave).
+        tokio::fs::write(&current.path, req.text.as_bytes())
+            .await
+            .map_err(|_| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(BufferConflictResp {
+                        error: "failed to write file".to_string(),
+                        disk_sha256: "".to_string(),
+                        disk_text: "".to_string(),
+                    }),
+                )
+            })?;
+        Some(sha256_hex(&req.text))
+    } else {
+        None
+    };
+    let st = state
+        .buffers
+        .update(bid, req.version, req.text, new_sha.clone())
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(BufferConflictResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                    disk_sha256: "".to_string(),
+                    disk_text: "".to_string(),
+                }),
+            )
+        })?;
+
+    if state.lsp.enabled() {
+        if let Some(lang) = context_lsp::Language::detect(&st.path) {
+            state.ensure_lsp_diagnostics_forwarder(st.root.clone(), lang).await;
+        }
+        let _ = state
+            .lsp
+            .sync_document_text(&st.root, &st.path, st.text.clone())
+            .await;
+    }
+
+    Ok(Json(BufferUpdateResp {
+        buffer_id: st.id.0.to_string(),
+        version: st.version,
+        last_disk_sha256: st.last_disk_sha256,
+    }))
+}
+
+async fn close_buffer(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<BufferCloseReq>,
+) -> Result<StatusCode, StatusCode> {
+    let bid = BufferId(uuid::Uuid::parse_str(&req.buffer_id).map_err(|_| StatusCode::BAD_REQUEST)?);
+    let sid = SessionId(uuid::Uuid::parse_str(&req.session_id).map_err(|_| StatusCode::BAD_REQUEST)?);
+    state.buffers.close(bid, sid).await;
+    Ok(StatusCode::OK)
+}
+
 #[derive(Debug, Deserialize)]
 struct LspPosReq {
     #[serde(flatten)]
@@ -477,6 +663,51 @@ struct LspCodeActionsReq {
     start_character: u32,
     end_line: u32,
     end_character: u32,
+}
+
+#[derive(Debug, Deserialize)]
+struct LspRangeReq {
+    #[serde(flatten)]
+    file: LspFileReq,
+    start_line: u32,
+    start_character: u32,
+    end_line: u32,
+    end_character: u32,
+}
+
+#[derive(Debug, Deserialize)]
+struct LspResolveReq {
+    #[serde(flatten)]
+    file: LspFileReq,
+    item: serde_json::Value,
+}
+
+#[derive(Debug, Deserialize)]
+struct LspLineChar {
+    line: u32,
+    character: u32,
+}
+
+#[derive(Debug, Deserialize)]
+struct LspSelectionRangesReq {
+    #[serde(flatten)]
+    file: LspFileReq,
+    positions: Vec<LspLineChar>,
+}
+
+#[derive(Debug, Deserialize)]
+struct LspExecuteCommandReq {
+    #[serde(flatten)]
+    file: LspFileReq,
+    command: String,
+    arguments: Option<Vec<serde_json::Value>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct LspCodeActionsByDiagnosticPlanReq {
+    session_id: String,
+    path: String,
+    diagnostic: serde_json::Value,
 }
 
 #[derive(Debug, Deserialize)]
@@ -675,6 +906,596 @@ async fn lsp_completion(
         .await
         .map_err(|_| StatusCode::BAD_REQUEST)?;
     Ok(Json(v))
+}
+
+async fn lsp_completion_resolve(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<LspResolveReq>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    if !state.lsp.enabled() {
+        return Err(StatusCode::CONFLICT);
+    }
+    let (root, file) = resolve_lsp_target(&state, req.file).await?;
+    let v = state
+        .lsp
+        .completion_resolve(&root, &file, req.item)
+        .await
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    Ok(Json(v))
+}
+
+async fn lsp_code_action_resolve(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<LspResolveReq>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    if !state.lsp.enabled() {
+        return Err(StatusCode::CONFLICT);
+    }
+    let (root, file) = resolve_lsp_target(&state, req.file).await?;
+    let v = state
+        .lsp
+        .code_action_resolve(&root, &file, req.item)
+        .await
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    Ok(Json(v))
+}
+
+async fn lsp_inlay_hints(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<LspRangeReq>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    if !state.lsp.enabled() {
+        return Err(StatusCode::CONFLICT);
+    }
+    let (root, file) = resolve_lsp_target(&state, req.file).await?;
+    let v = state
+        .lsp
+        .inlay_hints(
+            &root,
+            &file,
+            lsp_types::Range {
+                start: lsp_types::Position {
+                    line: req.start_line,
+                    character: req.start_character,
+                },
+                end: lsp_types::Position {
+                    line: req.end_line,
+                    character: req.end_character,
+                },
+            },
+        )
+        .await
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    Ok(Json(v))
+}
+
+async fn lsp_document_highlight(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<LspPosReq>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    if !state.lsp.enabled() {
+        return Err(StatusCode::CONFLICT);
+    }
+    let (root, file) = resolve_lsp_target(&state, req.file).await?;
+    let v = state
+        .lsp
+        .document_highlight(
+            &root,
+            &file,
+            lsp_types::Position {
+                line: req.line,
+                character: req.character,
+            },
+        )
+        .await
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    Ok(Json(v))
+}
+
+async fn lsp_selection_ranges(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<LspSelectionRangesReq>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    if !state.lsp.enabled() {
+        return Err(StatusCode::CONFLICT);
+    }
+    let (root, file) = resolve_lsp_target(&state, req.file).await?;
+    let positions = req
+        .positions
+        .into_iter()
+        .map(|p| lsp_types::Position {
+            line: p.line,
+            character: p.character,
+        })
+        .collect::<Vec<_>>();
+    let v = state
+        .lsp
+        .selection_ranges(&root, &file, positions)
+        .await
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    Ok(Json(v))
+}
+
+async fn lsp_call_hierarchy_prepare(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<LspPosReq>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    if !state.lsp.enabled() {
+        return Err(StatusCode::CONFLICT);
+    }
+    let (root, file) = resolve_lsp_target(&state, req.file).await?;
+    let v = state
+        .lsp
+        .call_hierarchy_prepare(
+            &root,
+            &file,
+            lsp_types::Position {
+                line: req.line,
+                character: req.character,
+            },
+        )
+        .await
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    Ok(Json(v))
+}
+
+async fn lsp_call_hierarchy_incoming(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<LspResolveReq>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    if !state.lsp.enabled() {
+        return Err(StatusCode::CONFLICT);
+    }
+    let (root, file) = resolve_lsp_target(&state, req.file).await?;
+    let v = state
+        .lsp
+        .call_hierarchy_incoming(&root, &file, req.item)
+        .await
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    Ok(Json(v))
+}
+
+async fn lsp_call_hierarchy_outgoing(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<LspResolveReq>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    if !state.lsp.enabled() {
+        return Err(StatusCode::CONFLICT);
+    }
+    let (root, file) = resolve_lsp_target(&state, req.file).await?;
+    let v = state
+        .lsp
+        .call_hierarchy_outgoing(&root, &file, req.item)
+        .await
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    Ok(Json(v))
+}
+
+async fn lsp_code_lens(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<LspFileReq>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    if !state.lsp.enabled() {
+        return Err(StatusCode::CONFLICT);
+    }
+    let (root, file) = resolve_lsp_target(&state, req).await?;
+    let v = state
+        .lsp
+        .code_lens(&root, &file)
+        .await
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    Ok(Json(v))
+}
+
+async fn lsp_code_lens_resolve(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<LspResolveReq>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    if !state.lsp.enabled() {
+        return Err(StatusCode::CONFLICT);
+    }
+    let (root, file) = resolve_lsp_target(&state, req.file).await?;
+    let v = state
+        .lsp
+        .code_lens_resolve(&root, &file, req.item)
+        .await
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    Ok(Json(v))
+}
+
+async fn lsp_prepare_rename(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<LspPosReq>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    if !state.lsp.enabled() {
+        return Err(StatusCode::CONFLICT);
+    }
+    let (root, file) = resolve_lsp_target(&state, req.file).await?;
+    let v = state
+        .lsp
+        .prepare_rename(
+            &root,
+            &file,
+            lsp_types::Position {
+                line: req.line,
+                character: req.character,
+            },
+        )
+        .await
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    Ok(Json(v))
+}
+
+async fn lsp_document_links(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<LspFileReq>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    if !state.lsp.enabled() {
+        return Err(StatusCode::CONFLICT);
+    }
+    let (root, file) = resolve_lsp_target(&state, req).await?;
+    let v = state
+        .lsp
+        .document_links(&root, &file)
+        .await
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    Ok(Json(v))
+}
+
+async fn lsp_document_link_resolve(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<LspResolveReq>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    if !state.lsp.enabled() {
+        return Err(StatusCode::CONFLICT);
+    }
+    let (root, file) = resolve_lsp_target(&state, req.file).await?;
+    let v = state
+        .lsp
+        .document_link_resolve(&root, &file, req.item)
+        .await
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    Ok(Json(v))
+}
+
+async fn lsp_semantic_tokens_full(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<LspFileReq>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    if !state.lsp.enabled() {
+        return Err(StatusCode::CONFLICT);
+    }
+    let (root, file) = resolve_lsp_target(&state, req).await?;
+    let v = state
+        .lsp
+        .semantic_tokens_full(&root, &file)
+        .await
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    Ok(Json(v))
+}
+
+async fn lsp_type_hierarchy_prepare(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<LspPosReq>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    if !state.lsp.enabled() {
+        return Err(StatusCode::CONFLICT);
+    }
+    let (root, file) = resolve_lsp_target(&state, req.file).await?;
+    let v = state
+        .lsp
+        .type_hierarchy_prepare(
+            &root,
+            &file,
+            lsp_types::Position {
+                line: req.line,
+                character: req.character,
+            },
+        )
+        .await
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    Ok(Json(v))
+}
+
+async fn lsp_type_hierarchy_supertypes(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<LspResolveReq>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    if !state.lsp.enabled() {
+        return Err(StatusCode::CONFLICT);
+    }
+    let (root, file) = resolve_lsp_target(&state, req.file).await?;
+    let v = state
+        .lsp
+        .type_hierarchy_supertypes(&root, &file, req.item)
+        .await
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    Ok(Json(v))
+}
+
+async fn lsp_type_hierarchy_subtypes(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<LspResolveReq>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    if !state.lsp.enabled() {
+        return Err(StatusCode::CONFLICT);
+    }
+    let (root, file) = resolve_lsp_target(&state, req.file).await?;
+    let v = state
+        .lsp
+        .type_hierarchy_subtypes(&root, &file, req.item)
+        .await
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    Ok(Json(v))
+}
+
+async fn lsp_code_actions_by_diagnostic_plan(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<LspCodeActionsByDiagnosticPlanReq>,
+) -> Result<Json<Vec<crate::edit_plans::EditPlanSummary>>, (StatusCode, Json<ApiErrorResp>)> {
+    if !state.lsp.enabled() || !state.lsp_edit_plans_enabled {
+        return Err((
+            StatusCode::CONFLICT,
+            Json(ApiErrorResp {
+                error: "LSP edit plans disabled".to_string(),
+            }),
+        ));
+    }
+
+    let sid = SessionId(uuid::Uuid::parse_str(&req.session_id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid session_id".to_string(),
+            }),
+        )
+    })?);
+    let session = state
+        .store
+        .get_session(sid)
+        .await
+        .map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: "failed to load session".to_string(),
+                }),
+            )
+        })?
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "session not found".to_string(),
+            }),
+        ))?;
+    let track_id = session.track_id;
+    let wt = state
+        .store
+        .get_worktree(session.worktree_id)
+        .await
+        .map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: "failed to load worktree".to_string(),
+                }),
+            )
+        })?
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "worktree not found".to_string(),
+            }),
+        ))?;
+    let root = PathBuf::from(wt.root_path).canonicalize().map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid worktree root".to_string(),
+            }),
+        )
+    })?;
+    let file = crate::buffers::BufferStore::resolve_path(&root, &req.path)
+        .await
+        .map_err(|_| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: "invalid path".to_string(),
+                }),
+            )
+        })?;
+
+    let diag: lsp_types::Diagnostic = serde_json::from_value(req.diagnostic.clone()).map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&e.to_string()),
+            }),
+        )
+    })?;
+
+    let actions = state
+        .lsp
+        .code_actions_typed(
+            &root,
+            &file,
+            diag.range,
+            vec![diag.clone()],
+            Some(vec![lsp_types::CodeActionKind::QUICKFIX]),
+        )
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
+
+    let mut plans: Vec<crate::edit_plans::EditPlanSummary> = Vec::new();
+    for action in actions {
+        let (title, edit, preferred) = match action {
+            lsp_types::CodeActionOrCommand::CodeAction(ca) => {
+                let edit = ca
+                    .edit
+                    .or_else(|| ca.command.as_ref().and_then(extract_workspace_edit_from_command));
+                (ca.title, edit, ca.is_preferred.unwrap_or(false))
+            }
+            lsp_types::CodeActionOrCommand::Command(cmd) => {
+                let edit = extract_workspace_edit_from_command(&cmd);
+                (cmd.title, edit, false)
+            }
+        };
+        let Some(edit) = edit else { continue };
+        let plan = crate::edit_plans::workspace_edit_to_plan(
+            &root,
+            &root,
+            sid,
+            track_id,
+            title,
+            edit,
+        )
+        .map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
+        let summary = plan.to_summary();
+        state.persist_edit_plan(&plan);
+        state.edit_plans.lock().await.insert(plan.id, plan);
+        if preferred {
+            plans.insert(0, summary);
+        } else {
+            plans.push(summary);
+        }
+    }
+
+    Ok(Json(plans))
+}
+async fn lsp_execute_command(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<LspExecuteCommandReq>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    if !state.lsp.enabled() {
+        return Err(StatusCode::CONFLICT);
+    }
+    let (root, file) = resolve_lsp_target(&state, req.file).await?;
+    let (result, edit) = state
+        .lsp
+        .execute_command_for_file(&root, &file, req.command, req.arguments.unwrap_or_default())
+        .await
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    let edit = edit
+        .and_then(|e| serde_json::to_value(e).ok())
+        .unwrap_or(serde_json::Value::Null);
+    Ok(Json(serde_json::json!({
+        "result": result,
+        "workspace_edit": edit
+    })))
+}
+
+async fn lsp_execute_command_plan(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<LspExecuteCommandReq>,
+) -> Result<Json<crate::edit_plans::EditPlanSummary>, (StatusCode, Json<ApiErrorResp>)> {
+    if !state.lsp.enabled() || !state.lsp_edit_plans_enabled {
+        return Err((
+            StatusCode::CONFLICT,
+            Json(ApiErrorResp {
+                error: "LSP edit plans disabled".to_string(),
+            }),
+        ));
+    }
+
+    let session_id = req.file.session_id.clone().ok_or((
+        StatusCode::BAD_REQUEST,
+        Json(ApiErrorResp {
+            error: "session_id required".to_string(),
+        }),
+    ))?;
+    let sid = SessionId(uuid::Uuid::parse_str(&session_id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid session_id".to_string(),
+            }),
+        )
+    })?);
+    let session = state
+        .store
+        .get_session(sid)
+        .await
+        .map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: "failed to load session".to_string(),
+                }),
+            )
+        })?
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "session not found".to_string(),
+            }),
+        ))?;
+    let track_id = session.track_id;
+
+    let (root, file) = resolve_lsp_target(&state, req.file).await.map_err(|sc| {
+        (
+            sc,
+            Json(ApiErrorResp {
+                error: "invalid LSP target".to_string(),
+            }),
+        )
+    })?;
+
+    let (result, edit) = state
+        .lsp
+        .execute_command_for_file(&root, &file, req.command.clone(), req.arguments.unwrap_or_default())
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
+    let Some(edit) = edit else {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: format!("execute_command returned no WorkspaceEdit (result={})", result),
+            }),
+        ));
+    };
+
+    let plan = crate::edit_plans::workspace_edit_to_plan(
+        &root,
+        &root,
+        sid,
+        track_id,
+        format!("Execute command: {}", req.command),
+        edit,
+    )
+    .map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&e.to_string()),
+            }),
+        )
+    })?;
+    let summary = plan.to_summary();
+    state.persist_edit_plan(&plan);
+    state.edit_plans.lock().await.insert(plan.id, plan);
+    Ok(Json(summary))
 }
 
 async fn lsp_document_symbols(
@@ -3465,6 +4286,7 @@ async fn handle_global_ws(mut socket: WebSocket, state: Arc<AppState>) {
     use tokio::select;
 
     let mut rx = state.global_broadcaster().subscribe();
+    let mut diag_rx = state.lsp_diag_broadcaster().subscribe();
     let mut subscribed: std::collections::HashSet<SessionId> = std::collections::HashSet::new();
 
     loop {
@@ -3507,6 +4329,18 @@ async fn handle_global_ws(mut socket: WebSocket, state: Arc<AppState>) {
                 if subscribed.is_empty() { continue; }
                 if !subscribed.contains(&event.session_id) { continue; }
                 if let Ok(text) = serde_json::to_string(&event) {
+                    if socket.send(WsMessage::Text(text)).await.is_err() {
+                        break;
+                    }
+                }
+            }
+            dev = diag_rx.recv() => {
+                let Ok(msg) = dev else { continue };
+                if subscribed.is_empty() { continue; }
+                let sid = msg.get("session_id").and_then(|v| v.as_str()).and_then(|s| uuid::Uuid::parse_str(s).ok()).map(SessionId);
+                let Some(sid) = sid else { continue };
+                if !subscribed.contains(&sid) { continue; }
+                if let Ok(text) = serde_json::to_string(&msg) {
                     if socket.send(WsMessage::Text(text)).await.is_err() {
                         break;
                     }

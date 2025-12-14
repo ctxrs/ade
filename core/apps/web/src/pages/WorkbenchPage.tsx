@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import {
   EditPlanSummary,
@@ -23,6 +23,7 @@ import {
   listTasks,
   listTracks,
   postMessage,
+  trackDiff,
 } from "../api/client";
 import { useSessionEntry, useSessionSupervisor } from "../state/sessionSupervisor";
 import { DiffReviewPane } from "../components/DiffReviewPane";
@@ -323,6 +324,12 @@ export default function WorkbenchPage() {
     const resp = await applyTrackDiffPatch(activeTrackIdFromSession, "reject", activeTrackDiff);
     if (activeSessionId) supervisor.setDiff(activeSessionId, resp.diff ?? "");
   };
+
+  const refreshActiveDiff = useCallback(async () => {
+    if (!activeTrackIdFromSession || !activeSessionId) return;
+    const d = await trackDiff(activeTrackIdFromSession);
+    supervisor.setDiff(activeSessionId, d.diff ?? "");
+  }, [activeTrackIdFromSession, activeSessionId, supervisor]);
 
   const onSplitterMouseDown = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -784,7 +791,9 @@ export default function WorkbenchPage() {
                     <DiffReviewPane
                       diff={activeTrackDiff}
                       trackId={activeTrackIdFromSession}
+                      sessionId={activeSessionId || undefined}
                       onDiffUpdated={(d) => activeSessionId && supervisor.setDiff(activeSessionId, d)}
+                      onFileSaved={refreshActiveDiff}
                       labels={{
                         title: "Pending Changes",
                         acceptAll: "Approve all",
@@ -839,7 +848,9 @@ export default function WorkbenchPage() {
                       {activeEditPlan ? (
                         <EditPlanReviewPane
                           plan={activeEditPlan}
+                          sessionId={activeSessionId || undefined}
                           onPlanUpdated={onEditPlanUpdated}
+                          onFileSaved={refreshActiveDiff}
                           labels={{
                             title: activeEditPlan.title || "Pending LSP Changes",
                             acceptAll: "Approve all",

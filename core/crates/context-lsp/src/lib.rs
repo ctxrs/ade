@@ -5,18 +5,20 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow};
 use lsp_types::{
-    CodeActionContext, CodeActionKind, CodeActionOrCommand, CodeActionParams, CompletionParams, Diagnostic,
-    DidChangeTextDocumentParams, DidOpenTextDocumentParams, DocumentFormattingParams, DocumentSymbolParams, HoverParams,
-    InitializeParams,
-    InitializedParams, Location, Position, PublishDiagnosticsParams, Range,
-    ReferenceContext, ReferenceParams, RenameParams, SymbolInformation, TextDocumentContentChangeEvent,
-    SignatureHelpParams, TextDocumentIdentifier, TextDocumentItem, TextDocumentPositionParams, TextEdit, Uri,
-    VersionedTextDocumentIdentifier, WorkspaceFolder, WorkspaceEdit, WorkspaceSymbolParams,
+    ApplyWorkspaceEditParams, ApplyWorkspaceEditResponse, CallHierarchyPrepareParams, CodeActionContext, CodeActionKind,
+    CodeActionOrCommand, CodeActionParams, CodeLensParams, CompletionParams, Diagnostic, DidChangeTextDocumentParams,
+    DidOpenTextDocumentParams, DocumentFormattingParams, DocumentHighlightParams, DocumentSymbolParams, ExecuteCommandParams,
+    HoverParams, InlayHintParams, InitializeParams, InitializedParams, Location, Position, PublishDiagnosticsParams, Range,
+    ReferenceContext, ReferenceParams, RenameParams, SelectionRangeParams, SignatureHelpParams, SymbolInformation,
+    DocumentLinkParams, SemanticTokensParams, TextDocumentContentChangeEvent, TextDocumentIdentifier, TextDocumentItem,
+    TextDocumentPositionParams, TextEdit, TypeHierarchyPrepareParams, TypeHierarchySubtypesParams,
+    TypeHierarchySupertypesParams, Uri, VersionedTextDocumentIdentifier, WorkspaceEdit, WorkspaceFolder,
+    WorkspaceSymbolParams,
 };
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
-use tokio::sync::{Mutex, Notify, mpsc, oneshot};
+use tokio::sync::{Mutex, Notify, broadcast, mpsc, oneshot};
 
 #[derive(Debug, Clone)]
 pub struct LspManagerConfig {
@@ -30,6 +32,9 @@ pub struct LspManagerConfig {
     pub go_command: String,
     pub go_args: Vec<String>,
     pub diagnostics_wait: Duration,
+    pub execute_commands_enabled: bool,
+    pub execute_command_allowlist: Vec<String>,
+    pub request_timeout: Duration,
 }
 
 impl Default for LspManagerConfig {
@@ -61,6 +66,26 @@ impl Default for LspManagerConfig {
                 .unwrap_or(6),
         );
 
+        let execute_commands_enabled = std::env::var("CONTEXT_LSP_EXECUTE_COMMANDS_ENABLED")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+        let execute_command_allowlist = std::env::var("CONTEXT_LSP_EXECUTE_COMMAND_ALLOWLIST")
+            .ok()
+            .map(|v| {
+                v.split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+
+        let request_timeout = Duration::from_secs(
+            std::env::var("CONTEXT_LSP_REQUEST_TIMEOUT_SECS")
+                .ok()
+                .and_then(|v| v.parse::<u64>().ok())
+                .unwrap_or(10),
+        );
+
         Self {
             enabled,
             rust_command,
@@ -72,6 +97,9 @@ impl Default for LspManagerConfig {
             go_command,
             go_args,
             diagnostics_wait,
+            execute_commands_enabled,
+            execute_command_allowlist,
+            request_timeout,
         }
     }
 }
@@ -112,6 +140,12 @@ impl Language {
 pub struct LspManager {
     cfg: LspManagerConfig,
     sessions: Arc<Mutex<HashMap<(PathBuf, Language), Arc<LspSession>>>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DiagnosticsUpdate {
+    pub uri: Uri,
+    pub diagnostics: Vec<Diagnostic>,
 }
 
 impl LspManager {
@@ -263,6 +297,338 @@ impl LspManager {
             session.request("textDocument/completion", &params).await
         })
         .await
+    }
+
+    pub async fn completion_resolve(
+        &self,
+        root: &Path,
+        file: &Path,
+        completion_item: Value,
+    ) -> Result<Value> {
+        self.with_open_doc(root, file, |session, _doc| async move {
+            session
+                .request("completionItem/resolve", &completion_item)
+                .await
+        })
+        .await
+    }
+
+    pub async fn code_action_resolve(
+        &self,
+        root: &Path,
+        file: &Path,
+        code_action: Value,
+    ) -> Result<Value> {
+        self.with_open_doc(root, file, |session, _doc| async move {
+            session.request("codeAction/resolve", &code_action).await
+        })
+        .await
+    }
+
+    pub async fn inlay_hints(
+        &self,
+        root: &Path,
+        file: &Path,
+        range: Range,
+    ) -> Result<Value> {
+        self.with_open_doc(root, file, |session, doc| async move {
+            let params = InlayHintParams {
+                work_done_progress_params: Default::default(),
+                text_document: TextDocumentIdentifier { uri: doc.uri },
+                range,
+            };
+            session.request("textDocument/inlayHint", &params).await
+        })
+        .await
+    }
+
+    pub async fn document_highlight(
+        &self,
+        root: &Path,
+        file: &Path,
+        position: Position,
+    ) -> Result<Value> {
+        self.with_open_doc(root, file, |session, doc| async move {
+            let params = DocumentHighlightParams {
+                text_document_position_params: TextDocumentPositionParams {
+                    text_document: TextDocumentIdentifier { uri: doc.uri },
+                    position,
+                },
+                work_done_progress_params: Default::default(),
+                partial_result_params: Default::default(),
+            };
+            session
+                .request("textDocument/documentHighlight", &params)
+                .await
+        })
+        .await
+    }
+
+    pub async fn selection_ranges(
+        &self,
+        root: &Path,
+        file: &Path,
+        positions: Vec<Position>,
+    ) -> Result<Value> {
+        self.with_open_doc(root, file, |session, doc| async move {
+            let params = SelectionRangeParams {
+                text_document: TextDocumentIdentifier { uri: doc.uri },
+                positions,
+                work_done_progress_params: Default::default(),
+                partial_result_params: Default::default(),
+            };
+            session.request("textDocument/selectionRange", &params).await
+        })
+        .await
+    }
+
+    pub async fn call_hierarchy_prepare(
+        &self,
+        root: &Path,
+        file: &Path,
+        position: Position,
+    ) -> Result<Value> {
+        self.with_open_doc(root, file, |session, doc| async move {
+            let params = CallHierarchyPrepareParams {
+                text_document_position_params: TextDocumentPositionParams {
+                    text_document: TextDocumentIdentifier { uri: doc.uri },
+                    position,
+                },
+                work_done_progress_params: Default::default(),
+            };
+            session
+                .request("textDocument/prepareCallHierarchy", &params)
+                .await
+        })
+        .await
+    }
+
+    pub async fn call_hierarchy_incoming(
+        &self,
+        root: &Path,
+        file: &Path,
+        item: Value,
+    ) -> Result<Value> {
+        self.with_open_doc(root, file, |session, _doc| async move {
+            let params = json!({ "item": item });
+            session.request("callHierarchy/incomingCalls", &params).await
+        })
+        .await
+    }
+
+    pub async fn call_hierarchy_outgoing(
+        &self,
+        root: &Path,
+        file: &Path,
+        item: Value,
+    ) -> Result<Value> {
+        self.with_open_doc(root, file, |session, _doc| async move {
+            let params = json!({ "item": item });
+            session.request("callHierarchy/outgoingCalls", &params).await
+        })
+        .await
+    }
+
+    pub async fn code_lens(
+        &self,
+        root: &Path,
+        file: &Path,
+    ) -> Result<Value> {
+        self.with_open_doc(root, file, |session, doc| async move {
+            let params = CodeLensParams {
+                text_document: TextDocumentIdentifier { uri: doc.uri },
+                work_done_progress_params: Default::default(),
+                partial_result_params: Default::default(),
+            };
+            session.request("textDocument/codeLens", &params).await
+        })
+        .await
+    }
+
+    pub async fn code_lens_resolve(
+        &self,
+        root: &Path,
+        file: &Path,
+        code_lens: Value,
+    ) -> Result<Value> {
+        self.with_open_doc(root, file, |session, _doc| async move {
+            session.request("codeLens/resolve", &code_lens).await
+        })
+        .await
+    }
+
+    pub async fn prepare_rename(
+        &self,
+        root: &Path,
+        file: &Path,
+        position: Position,
+    ) -> Result<Value> {
+        self.with_open_doc(root, file, |session, doc| async move {
+            let params = TextDocumentPositionParams {
+                text_document: TextDocumentIdentifier { uri: doc.uri },
+                position,
+            };
+            session.request("textDocument/prepareRename", &params).await
+        })
+        .await
+    }
+
+    pub async fn document_links(&self, root: &Path, file: &Path) -> Result<Value> {
+        self.with_open_doc(root, file, |session, doc| async move {
+            let params = DocumentLinkParams {
+                text_document: TextDocumentIdentifier { uri: doc.uri },
+                work_done_progress_params: Default::default(),
+                partial_result_params: Default::default(),
+            };
+            session.request("textDocument/documentLink", &params).await
+        })
+        .await
+    }
+
+    pub async fn document_link_resolve(
+        &self,
+        root: &Path,
+        file: &Path,
+        link: Value,
+    ) -> Result<Value> {
+        self.with_open_doc(root, file, |session, _doc| async move {
+            session.request("documentLink/resolve", &link).await
+        })
+        .await
+    }
+
+    pub async fn semantic_tokens_full(&self, root: &Path, file: &Path) -> Result<Value> {
+        self.with_open_doc(root, file, |session, doc| async move {
+            let params = SemanticTokensParams {
+                work_done_progress_params: Default::default(),
+                partial_result_params: Default::default(),
+                text_document: TextDocumentIdentifier { uri: doc.uri },
+            };
+            session
+                .request("textDocument/semanticTokens/full", &params)
+                .await
+        })
+        .await
+    }
+
+    pub async fn type_hierarchy_prepare(
+        &self,
+        root: &Path,
+        file: &Path,
+        position: Position,
+    ) -> Result<Value> {
+        self.with_open_doc(root, file, |session, doc| async move {
+            let params = TypeHierarchyPrepareParams {
+                text_document_position_params: TextDocumentPositionParams {
+                    text_document: TextDocumentIdentifier { uri: doc.uri },
+                    position,
+                },
+                work_done_progress_params: Default::default(),
+            };
+            session
+                .request("textDocument/prepareTypeHierarchy", &params)
+                .await
+        })
+        .await
+    }
+
+    pub async fn type_hierarchy_supertypes(
+        &self,
+        root: &Path,
+        file: &Path,
+        item: Value,
+    ) -> Result<Value> {
+        self.with_open_doc(root, file, |session, _doc| async move {
+            let params = TypeHierarchySupertypesParams {
+                item: serde_json::from_value(item)?,
+                work_done_progress_params: Default::default(),
+                partial_result_params: Default::default(),
+            };
+            session.request("typeHierarchy/supertypes", &params).await
+        })
+        .await
+    }
+
+    pub async fn type_hierarchy_subtypes(
+        &self,
+        root: &Path,
+        file: &Path,
+        item: Value,
+    ) -> Result<Value> {
+        self.with_open_doc(root, file, |session, _doc| async move {
+            let params = TypeHierarchySubtypesParams {
+                item: serde_json::from_value(item)?,
+                work_done_progress_params: Default::default(),
+                partial_result_params: Default::default(),
+            };
+            session.request("typeHierarchy/subtypes", &params).await
+        })
+        .await
+    }
+
+    pub async fn execute_command_for_file(
+        &self,
+        root: &Path,
+        file: &Path,
+        command: String,
+        arguments: Vec<Value>,
+    ) -> Result<(Value, Option<WorkspaceEdit>)> {
+        if !self.cfg.enabled {
+            anyhow::bail!("LSP disabled (set CONTEXT_LSP_ENABLED=1)");
+        }
+        if !self.cfg.execute_commands_enabled {
+            anyhow::bail!("LSP executeCommand disabled (set CONTEXT_LSP_EXECUTE_COMMANDS_ENABLED=1)");
+        }
+        if self.cfg.execute_command_allowlist.is_empty()
+            || !self.cfg.execute_command_allowlist.iter().any(|c| c == &command)
+        {
+            anyhow::bail!("executeCommand not allowlisted: {command}");
+        }
+
+        self.with_open_doc(root, file, |session, _doc| async move {
+            let params = ExecuteCommandParams {
+                command,
+                arguments,
+                work_done_progress_params: Default::default(),
+            };
+            session.execute_command_capture_edit(&params).await
+        })
+        .await
+    }
+
+    pub async fn sync_document_text(&self, root: &Path, file: &Path, text: String) -> Result<()> {
+        if !self.cfg.enabled {
+            anyhow::bail!("LSP disabled (set CONTEXT_LSP_ENABLED=1)");
+        }
+        let lang = Language::detect(file).ok_or_else(|| anyhow!("no LSP language for file"))?;
+        let session = self.get_or_spawn(root, lang).await?;
+        let _ = session.open_doc_with_text(file, text).await?;
+        Ok(())
+    }
+
+    pub async fn subscribe_diagnostics_for_file(
+        &self,
+        root: &Path,
+        file: &Path,
+    ) -> Result<broadcast::Receiver<DiagnosticsUpdate>> {
+        if !self.cfg.enabled {
+            anyhow::bail!("LSP disabled (set CONTEXT_LSP_ENABLED=1)");
+        }
+        let lang = Language::detect(file).ok_or_else(|| anyhow!("no LSP language for file"))?;
+        let session = self.get_or_spawn(root, lang).await?;
+        Ok(session.subscribe_diagnostics())
+    }
+
+    pub async fn subscribe_diagnostics_for_language(
+        &self,
+        root: &Path,
+        lang: Language,
+    ) -> Result<broadcast::Receiver<DiagnosticsUpdate>> {
+        if !self.cfg.enabled {
+            anyhow::bail!("LSP disabled (set CONTEXT_LSP_ENABLED=1)");
+        }
+        let session = self.get_or_spawn(root, lang).await?;
+        Ok(session.subscribe_diagnostics())
     }
 
     pub async fn document_symbols(
@@ -474,6 +840,9 @@ struct LspSession {
     open_docs: Arc<Mutex<HashMap<Uri, i32>>>,
     diagnostics: Arc<Mutex<HashMap<Uri, Vec<Diagnostic>>>>,
     notify: Arc<Notify>,
+    diag_tx: broadcast::Sender<DiagnosticsUpdate>,
+    apply_edit_capture: Arc<Mutex<Option<oneshot::Sender<WorkspaceEdit>>>>,
+    request_timeout: Duration,
     _child: Mutex<Child>,
 }
 
@@ -488,7 +857,10 @@ impl LspSession {
         let diagnostics: Arc<Mutex<HashMap<Uri, Vec<Diagnostic>>>> =
             Arc::new(Mutex::new(HashMap::new()));
         let notify = Arc::new(Notify::new());
+        let (diag_tx, _) = broadcast::channel(512);
         let next_id = Arc::new(std::sync::atomic::AtomicI64::new(1));
+        let apply_edit_capture: Arc<Mutex<Option<oneshot::Sender<WorkspaceEdit>>>> =
+            Arc::new(Mutex::new(None));
 
         // Writer task
         let pending_w = pending.clone();
@@ -519,6 +891,9 @@ impl LspSession {
         let pending_r = pending.clone();
         let diagnostics_r = diagnostics.clone();
         let notify_r = notify.clone();
+        let diag_tx_r = diag_tx.clone();
+        let tx_r = tx.clone();
+        let apply_edit_capture_r = apply_edit_capture.clone();
         let mut reader = BufReader::new(stdout);
         tokio::spawn(async move {
             loop {
@@ -530,18 +905,57 @@ impl LspSession {
                     }
                 };
                 let id = msg.get("id").and_then(|v| v.as_i64());
+                let method = msg.get("method").and_then(|v| v.as_str()).unwrap_or("");
+
+                // Server -> client request (has both id and method).
                 if let Some(id) = id {
+                    if !method.is_empty() {
+                        if method == "workspace/applyEdit" {
+                            if let Some(params) = msg.get("params") {
+                                if let Ok(p) =
+                                    serde_json::from_value::<ApplyWorkspaceEditParams>(params.clone())
+                                {
+                                    if let Some(tx) = apply_edit_capture_r.lock().await.take() {
+                                        let _ = tx.send(p.edit);
+                                    }
+                                }
+                            }
+                            let _ = tx_r
+                                .send(json!({
+                                    "jsonrpc": "2.0",
+                                    "id": id,
+                                    "result": ApplyWorkspaceEditResponse { applied: true, failure_reason: None, failed_change: None }
+                                }))
+                                .await;
+                        } else {
+                            let _ = tx_r
+                                .send(json!({
+                                    "jsonrpc": "2.0",
+                                    "id": id,
+                                    "result": Value::Null
+                                }))
+                                .await;
+                        }
+                        continue;
+                    }
+
+                    // Regular response (id but no method).
                     if let Some(tx) = pending_r.lock().await.remove(&id) {
                         let _ = tx.send(msg);
                     }
                     continue;
                 }
 
-                let method = msg.get("method").and_then(|v| v.as_str()).unwrap_or("");
                 if method == "textDocument/publishDiagnostics" {
                     if let Some(params) = msg.get("params") {
                         if let Ok(pd) = serde_json::from_value::<PublishDiagnosticsParams>(params.clone()) {
-                            diagnostics_r.lock().await.insert(pd.uri, pd.diagnostics);
+                            let uri = pd.uri;
+                            let diagnostics = pd.diagnostics;
+                            diagnostics_r
+                                .lock()
+                                .await
+                                .insert(uri.clone(), diagnostics.clone());
+                            let _ = diag_tx_r.send(DiagnosticsUpdate { uri, diagnostics });
                             notify_r.notify_waiters();
                         }
                     }
@@ -558,6 +972,9 @@ impl LspSession {
             open_docs,
             diagnostics,
             notify,
+            diag_tx,
+            apply_edit_capture,
+            request_timeout: cfg.request_timeout,
             _child: Mutex::new(child),
         };
         session.initialize().await?;
@@ -585,6 +1002,10 @@ impl LspSession {
         let _ = self.request("initialize", &params).await?;
         self.notify("initialized", &InitializedParams {}).await?;
         Ok(())
+    }
+
+    fn subscribe_diagnostics(&self) -> broadcast::Receiver<DiagnosticsUpdate> {
+        self.diag_tx.subscribe()
     }
 
     async fn diagnostics_for_file(&self, file: &Path, wait: Duration) -> Result<Vec<Diagnostic>> {
@@ -615,9 +1036,43 @@ impl LspSession {
         let url = url::Url::from_file_path(&abs).map_err(|_| anyhow!("invalid file path for URL"))?;
         let uri: Uri = url.as_str().parse().map_err(|_| anyhow!("invalid file URI"))?;
 
+        // If the document is already open, do not overwrite server state with a disk read.
+        // Buffer-backed callers keep the doc in sync via `open_doc_with_text`.
+        if self.open_docs.lock().await.contains_key(&uri) {
+            return Ok(OpenDoc { uri });
+        }
+
         let text = tokio::fs::read_to_string(&abs)
             .await
             .with_context(|| format!("reading {}", abs.to_string_lossy()))?;
+
+        // First open: didOpen with disk text.
+        let mut open_docs = self.open_docs.lock().await;
+        if open_docs.contains_key(&uri) {
+            return Ok(OpenDoc { uri });
+        }
+        open_docs.insert(uri.clone(), 1);
+        drop(open_docs);
+        let params = DidOpenTextDocumentParams {
+            text_document: TextDocumentItem {
+                uri: uri.clone(),
+                language_id: self.lang.id().to_string(),
+                version: 1,
+                text,
+            },
+        };
+        self.notify("textDocument/didOpen", &params).await?;
+
+        Ok(OpenDoc { uri })
+    }
+
+    async fn open_doc_with_text(&self, file: &Path, text: String) -> Result<OpenDoc> {
+        let abs = file.canonicalize().unwrap_or_else(|_| file.to_path_buf());
+        if !abs.starts_with(&self.root) {
+            anyhow::bail!("file outside LSP root");
+        }
+        let url = url::Url::from_file_path(&abs).map_err(|_| anyhow!("invalid file path for URL"))?;
+        let uri: Uri = url.as_str().parse().map_err(|_| anyhow!("invalid file URI"))?;
 
         let mut open_docs = self.open_docs.lock().await;
         if let Some(v) = open_docs.get_mut(&uri) {
@@ -667,7 +1122,7 @@ impl LspSession {
             }))
             .await
             .context("sending LSP request")?;
-        let msg = tokio::time::timeout(Duration::from_secs(10), rx)
+        let msg = tokio::time::timeout(self.request_timeout, rx)
             .await
             .context("timeout waiting for LSP response")?
             .context("waiting for LSP response")?;
@@ -684,6 +1139,34 @@ impl LspSession {
     {
         let v = self.request(method, params).await?;
         Ok(serde_json::from_value(v)?)
+    }
+
+    async fn execute_command_capture_edit(
+        &self,
+        params: &ExecuteCommandParams,
+    ) -> Result<(Value, Option<WorkspaceEdit>)> {
+        let (tx, rx) = oneshot::channel::<WorkspaceEdit>();
+        {
+            let mut cap = self.apply_edit_capture.lock().await;
+            if cap.is_some() {
+                anyhow::bail!("executeCommand already in progress");
+            }
+            *cap = Some(tx);
+        }
+
+        let request_fut = self.request("workspace/executeCommand", params);
+        let capture_fut = tokio::time::timeout(self.request_timeout, rx);
+        let (result, captured) = tokio::join!(request_fut, capture_fut);
+
+        // Always clear capture.
+        *self.apply_edit_capture.lock().await = None;
+
+        let result = result?;
+        let captured = match captured {
+            Ok(Ok(edit)) => Some(edit),
+            _ => None,
+        };
+        Ok((result, captured))
     }
 
     async fn notify<T: serde::Serialize>(&self, method: &str, params: &T) -> Result<()> {

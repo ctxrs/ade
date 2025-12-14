@@ -152,6 +152,8 @@ async fn setup_state_and_app(
             rust_command: lsp_server,
             rust_args: vec![],
             diagnostics_wait: Duration::from_secs(2),
+            execute_commands_enabled: true,
+            execute_command_allowlist: vec!["context.test.fixAll".to_string()],
             ..Default::default()
         },
         lsp_edit_plans_enabled,
@@ -217,6 +219,8 @@ async fn edit_plan_persists_across_restart_and_discards() {
             rust_command: lsp_server,
             rust_args: vec![],
             diagnostics_wait: Duration::from_secs(2),
+            execute_commands_enabled: true,
+            execute_command_allowlist: vec!["context.test.fixAll".to_string()],
             ..Default::default()
         },
         true,
@@ -668,5 +672,103 @@ async fn lsp_organize_imports_plan_create_and_apply() {
     assert!(
         updated.contains("organize imports"),
         "file not updated:\n{updated}"
+    );
+}
+
+#[tokio::test]
+async fn lsp_execute_command_plan_create_and_apply() {
+    let (_data_dir, state, app) = setup_state_and_app(true).await;
+    let repo = setup_git_repo().await;
+    let (_track, session, wt_root) = create_workspace_task_session(&app, &state, repo.path()).await;
+
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/lsp/execute_command/plan")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "session_id": session.id.0.to_string(),
+                "path": "src/lib.rs",
+                "command": "context.test.fixAll",
+                "arguments": []
+            })
+            .to_string(),
+        ))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let summary: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let plan_id = summary
+        .get("id")
+        .and_then(|v| v.as_str().or_else(|| v.get("0").and_then(|x| x.as_str())))
+        .unwrap();
+    let diff = summary.get("diff").and_then(|v| v.as_str()).unwrap();
+    assert!(diff.contains("execCommand"), "unexpected diff:\n{diff}");
+
+    let req = Request::builder()
+        .method("POST")
+        .uri(format!("/api/edit_plans/{}/apply", plan_id))
+        .header("content-type", "application/json")
+        .body(Body::from(json!({"action":"accept","patch": diff}).to_string()))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let updated = tokio::fs::read_to_string(wt_root.join("src/lib.rs")).await.unwrap();
+    assert!(
+        updated.contains("execCommand"),
+        "file not updated:\n{updated}"
+    );
+}
+
+#[tokio::test]
+async fn lsp_code_actions_by_diagnostic_plan_creates_plans() {
+    let (_data_dir, state, app) = setup_state_and_app(true).await;
+    let repo = setup_git_repo().await;
+
+    let (_track, session, _wt_root) = create_workspace_task_session(&app, &state, repo.path()).await;
+
+    // Fetch diagnostics, pick the first one.
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/lsp/diagnostics")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "session_id": session.id.0.to_string(),
+                "path": "src/lib.rs"
+            })
+            .to_string(),
+        ))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let diags: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
+    let diag = diags.first().cloned().expect("expected a diagnostic");
+
+    // Request ranked quick-fix plans for that diagnostic.
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/lsp/code_actions/by_diagnostic/plan")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "session_id": session.id.0.to_string(),
+                "path": "src/lib.rs",
+                "diagnostic": diag
+            })
+            .to_string(),
+        ))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let plans: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
+    assert!(!plans.is_empty(), "expected at least one plan");
+    assert!(
+        plans[0].get("diff").and_then(|v| v.as_str()).unwrap_or("").contains("diff --git"),
+        "expected plan diff"
     );
 }
