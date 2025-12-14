@@ -157,6 +157,8 @@ export default function WorkbenchPage() {
 
   const ensureProviderOptions = async (providerId: string): Promise<ProviderOptions | undefined> => {
     if (!workspaceId) return;
+    const installed = providers.find((p) => p.provider_id === providerId)?.installed ?? true;
+    if (!installed) return;
     if (providerOptions[providerId]) return providerOptions[providerId];
     const opts = await getProviderOptions(workspaceId, providerId);
     setProviderOptions((prev) => ({ ...prev, [providerId]: opts }));

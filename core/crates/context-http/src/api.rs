@@ -659,6 +659,40 @@ async fn get_provider_options(
         }
     }
 
+    let provider_status = state
+        .provider_statuses
+        .lock()
+        .await
+        .get(&provider_id)
+        .cloned();
+
+    if let Some(st) = provider_status.as_ref() {
+        if !st.installed || !matches!(st.health, context_providers::adapters::ProviderHealth::Ok) {
+            let resp = redact_json_value(serde_json::json!({
+                "provider_id": provider_id,
+                "workspace_id": ws_id.0,
+                "installed": st.installed,
+                "health": st.health,
+                "diagnostics": st.diagnostics,
+                "probe_ok": false,
+                "probe_error": "provider not installed or unhealthy",
+                "probed_at": chrono::Utc::now().to_rfc3339(),
+            }));
+            state
+                .provider_options_cache
+                .lock()
+                .await
+                .insert(
+                    cache_key,
+                    crate::daemon::CachedProviderOptions {
+                        cached_at: std::time::Instant::now(),
+                        value: resp.clone(),
+                    },
+                );
+            return Ok(Json(resp));
+        }
+    }
+
     let ws = state
         .store
         .get_workspace(ws_id)
@@ -713,29 +747,31 @@ async fn get_provider_options(
         env.insert("CONTEXT_AUTH_TOKEN".to_string(), token.clone());
     }
 
-    let probe = probe_provider_options(agent, client, PathBuf::from(&ws.root_path), env)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::BAD_REQUEST,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&e.to_string()),
-                }),
-            )
-        })?;
+    let probe = probe_provider_options(agent, client, PathBuf::from(&ws.root_path), env).await;
 
-    let resp = serde_json::json!({
-        "provider_id": provider_id,
-        "workspace_id": ws_id.0,
-        "supports_load": probe.supports_load,
-        "auth_required": probe.auth_required,
-        "auth_methods": probe.auth_methods,
-        "modes": probe.modes,
-        "models": probe.models,
-        "acp_error": probe.acp_error,
-        "probed_at": chrono::Utc::now().to_rfc3339(),
-    });
-    let resp = redact_json_value(resp);
+    let resp = match probe {
+        Ok(probe) => redact_json_value(serde_json::json!({
+            "provider_id": provider_id,
+            "workspace_id": ws_id.0,
+            "installed": provider_status.as_ref().map(|s| s.installed).unwrap_or(true),
+            "probe_ok": true,
+            "supports_load": probe.supports_load,
+            "auth_required": probe.auth_required,
+            "auth_methods": probe.auth_methods,
+            "modes": probe.modes,
+            "models": probe.models,
+            "acp_error": probe.acp_error,
+            "probed_at": chrono::Utc::now().to_rfc3339(),
+        })),
+        Err(e) => redact_json_value(serde_json::json!({
+            "provider_id": provider_id,
+            "workspace_id": ws_id.0,
+            "installed": provider_status.as_ref().map(|s| s.installed).unwrap_or(false),
+            "probe_ok": false,
+            "probe_error": logs::redact_sensitive(&e.to_string()),
+            "probed_at": chrono::Utc::now().to_rfc3339(),
+        })),
+    };
 
     state
         .provider_options_cache

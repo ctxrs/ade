@@ -332,6 +332,9 @@ export const listProviders = () =>
 export type ProviderOptions = {
   provider_id: string;
   workspace_id: string;
+  installed?: boolean;
+  probe_ok?: boolean;
+  probe_error?: string;
   supports_load: boolean;
   auth_required: boolean;
   auth_methods?: any;
