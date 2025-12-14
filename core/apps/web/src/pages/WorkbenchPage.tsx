@@ -72,6 +72,18 @@ export default function WorkbenchPage() {
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [providers, setProviders] = useState<ProviderStatus[]>([]);
   const [providerOptions, setProviderOptions] = useState<Record<string, ProviderOptions>>({});
+  const providersById = useMemo(
+    () => Object.fromEntries(providers.map((p) => [p.provider_id, p])),
+    [providers],
+  );
+  const defaultProviderId = useMemo(() => {
+    const installed = providers.filter((p) => p.installed).map((p) => p.provider_id);
+    if (installed.includes("codex")) return "codex";
+    if (installed.includes("claude")) return "claude";
+    if (installed.includes("fake")) return "fake";
+    if (installed.includes("gemini")) return "gemini";
+    return installed[0] ?? "codex";
+  }, [providers]);
 
   const [tasks, setTasks] = useState<Task[]>([]);
   const [taskQuery, setTaskQuery] = useState("");
@@ -120,6 +132,18 @@ export default function WorkbenchPage() {
     refreshTasks().catch(() => {});
     listProviders().then(setProviders).catch(() => setProviders([]));
   }, [workspaceId]);
+
+  useEffect(() => {
+    if (!providers.length) return;
+    const codexInstalled = providersById["codex"]?.installed ?? true;
+    if (codexInstalled) return;
+    if (defaultProviderId === "codex") return;
+    setDraftTracks((prev) => {
+      const isDefault = prev.every((t) => t.providerId === "codex" && !t.label.trim() && !t.modelId.trim());
+      if (!isDefault) return prev;
+      return prev.map((t) => ({ ...t, providerId: defaultProviderId }));
+    });
+  }, [providers.length, providersById, defaultProviderId]);
 
   useEffect(() => {
     if (!activeTaskId) {
@@ -172,11 +196,26 @@ export default function WorkbenchPage() {
     return parts.length > 0 ? parts.join(", ") : "Pick harnesses";
   };
 
+  const startBlockedReason = useMemo(() => {
+    if (draftPrompt.trim().length === 0) return "Enter a prompt to start.";
+    if (startBusy) return "Starting…";
+    const missing = draftTracks.find((t) => (providersById[t.providerId]?.installed ?? true) === false);
+    if (missing) {
+      const diag = providersById[missing.providerId]?.diagnostics?.[0];
+      return diag ? `Harness “${missing.providerId}” not installed: ${diag}` : `Harness “${missing.providerId}” not installed.`;
+    }
+    return null;
+  }, [draftPrompt, startBusy, draftTracks, providersById]);
+
   const startNewTask = async () => {
     if (!workspaceId) return;
     const prompt = draftPrompt.trim();
     if (!prompt) return;
     if (startBusy) return;
+    if (startBlockedReason && !startBlockedReason.startsWith("Starting")) {
+      setStartError(startBlockedReason);
+      return;
+    }
     setStartBusy(true);
     setStartError(null);
 
@@ -192,6 +231,11 @@ export default function WorkbenchPage() {
 
       for (let i = 0; i < toStart.length; i++) {
         const dt = toStart[i];
+        const installed = providersById[dt.providerId]?.installed ?? true;
+        if (!installed) {
+          const diag = providersById[dt.providerId]?.diagnostics?.[0];
+          throw new Error(diag ? `Harness “${dt.providerId}” not installed: ${diag}` : `Harness “${dt.providerId}” not installed.`);
+        }
         const label = workbenchLabelForTrack(dt);
         const tr = await createTrack(taskId, label);
         const trackId = idToString(tr.id);
@@ -516,7 +560,7 @@ export default function WorkbenchPage() {
                   type="button"
                   className="wb-primary"
                   onClick={startNewTask}
-                  disabled={startBusy || draftPrompt.trim().length === 0}
+                  disabled={!!startBlockedReason}
                 >
                   {startBusy ? "Starting…" : "Start"}
                 </button>

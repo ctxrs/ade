@@ -1144,6 +1144,27 @@ function buildThreadViewModel(events: SessionEvent[]): {
         });
         break;
       }
+      case "error": {
+        const message = String(ev.payload_json?.message ?? "Error");
+        const provider = String(ev.payload_json?.provider ?? "").trim();
+        const output = provider ? `${message}\nprovider: ${provider}` : message;
+        items.push({
+          kind: "tool",
+          id: `error-${id}`,
+          tool_call_id: `error-${id}`,
+          created_at: ev.created_at,
+          updated_at: ev.created_at,
+          tool_kind: "error",
+          title: "Error",
+          status: "failed",
+          locations: [],
+          input: ev.payload_json ?? null,
+          output_text: output,
+          raw: ev,
+          updates_seen: 1,
+        });
+        break;
+      }
       case "assistant_chunk": {
         const fragment = String(ev.payload_json?.content_fragment ?? "");
         if (!fragment) break;
@@ -1208,7 +1229,6 @@ function buildThreadViewModel(events: SessionEvent[]): {
         break;
       case "init":
       case "notice":
-      case "error":
       case "auth_required":
       case "done":
       case "interrupt_requested":
@@ -1283,6 +1303,7 @@ function humanToolKind(kind: string): string {
   if (k === "edit" || k === "write") return "Edit File";
   if (k === "fetch") return "Fetch";
   if (k === "think") return "Think";
+  if (k === "error") return "Error";
   return kind || "Tool";
 }
 
@@ -1294,6 +1315,7 @@ function toolKindIcon(kind: string): string {
   if (k === "edit" || k === "write") return "✎";
   if (k === "fetch") return "⇣";
   if (k === "think") return "…";
+  if (k === "error") return "!";
   return "▦";
 }
 
