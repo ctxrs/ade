@@ -19,6 +19,8 @@ use context_providers::tier1::Tier1AcpAdapter;
 use context_store::Store;
 use context_lsp::{LspManager, LspManagerConfig};
 use crate::edit_plans::{EditPlan, EditPlanId};
+use crate::buffers::BufferStore;
+use context_lsp::Language as LspLanguage;
 
 use crate::api;
 use crate::installs::{InstallId, InstallProgressEvent, InstallState, InstallStateKind};
@@ -36,10 +38,13 @@ pub struct AppState {
     pub lsp_cfg: LspManagerConfig,
     pub lsp: Arc<LspManager>,
     pub lsp_edit_plans_enabled: bool,
+    pub buffers: BufferStore,
     pub shutdown_tx: broadcast::Sender<()>,
     schedulers: Mutex<HashMap<SessionId, mpsc::Sender<SchedulerCommand>>>,
     broadcasters: Mutex<HashMap<SessionId, broadcast::Sender<SessionEvent>>>,
     global_broadcaster: broadcast::Sender<SessionEvent>,
+    lsp_diag_broadcaster: broadcast::Sender<serde_json::Value>,
+    lsp_diag_forwarders: Mutex<HashSet<String>>,
     running_sessions: Mutex<HashSet<SessionId>>,
     installs: Mutex<HashMap<InstallId, InstallState>>,
     pub edit_plans: Mutex<HashMap<EditPlanId, EditPlan>>,
@@ -110,6 +115,7 @@ impl AppState {
 
         let (shutdown_tx, _) = broadcast::channel(8);
         let (global_broadcaster, _) = broadcast::channel(2048);
+        let (lsp_diag_broadcaster, _) = broadcast::channel(2048);
         let lsp = Arc::new(LspManager::new(lsp_cfg.clone()));
         Self {
             data_root,
@@ -122,10 +128,13 @@ impl AppState {
             lsp_cfg,
             lsp,
             lsp_edit_plans_enabled,
+            buffers: BufferStore::default(),
             shutdown_tx,
             schedulers: Mutex::new(HashMap::new()),
             broadcasters: Mutex::new(HashMap::new()),
             global_broadcaster,
+            lsp_diag_broadcaster,
+            lsp_diag_forwarders: Mutex::new(HashSet::new()),
             running_sessions: Mutex::new(HashSet::new()),
             installs: Mutex::new(HashMap::new()),
             edit_plans: Mutex::new(edit_plans),
@@ -162,10 +171,70 @@ impl AppState {
         self.global_broadcaster.clone()
     }
 
+    pub fn lsp_diag_broadcaster(&self) -> broadcast::Sender<serde_json::Value> {
+        self.lsp_diag_broadcaster.clone()
+    }
+
     pub async fn publish_event(&self, event: SessionEvent) {
         let tx = self.get_broadcaster(event.session_id).await;
         let _ = tx.send(event.clone());
         let _ = self.global_broadcaster.send(event);
+    }
+
+    pub async fn ensure_lsp_diagnostics_forwarder(self: &Arc<Self>, root: PathBuf, lang: LspLanguage) {
+        if !self.lsp.enabled() {
+            return;
+        }
+        let key = format!("{}:{}", root.to_string_lossy(), lang.id());
+        {
+            let mut set = self.lsp_diag_forwarders.lock().await;
+            if set.contains(&key) {
+                return;
+            }
+            set.insert(key);
+        }
+
+        let state = self.clone();
+        tokio::spawn(async move {
+            let mut rx = match state.lsp.subscribe_diagnostics_for_language(&root, lang).await {
+                Ok(v) => v,
+                Err(_) => return,
+            };
+            loop {
+                let update = match rx.recv().await {
+                    Ok(u) => u,
+                    Err(_) => break,
+                };
+                let url = match url::Url::parse(&update.uri.to_string()) {
+                    Ok(u) => u,
+                    Err(_) => continue,
+                };
+                if url.scheme() != "file" {
+                    continue;
+                }
+                let Ok(abs_path) = url.to_file_path() else { continue };
+
+                let watchers = state.buffers.watchers_for_abs_path(&abs_path).await;
+                if watchers.is_empty() {
+                    continue;
+                }
+
+                let diagnostics_json = match serde_json::to_value(&update.diagnostics) {
+                    Ok(v) => v,
+                    Err(_) => continue,
+                };
+
+                for (sid, rel) in watchers {
+                    let msg = serde_json::json!({
+                        "type": "lsp_diagnostics",
+                        "session_id": sid.0.to_string(),
+                        "path": rel.to_string_lossy(),
+                        "diagnostics": diagnostics_json,
+                    });
+                    let _ = state.lsp_diag_broadcaster.send(msg);
+                }
+            }
+        });
     }
 
     pub async fn ensure_scheduler(

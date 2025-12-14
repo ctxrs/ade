@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { applyTrackDiffPatch } from "../api/client";
+import { FileBufferEditor } from "./FileBufferEditor";
 
 type DiffFile = {
   key: string;
@@ -19,12 +20,16 @@ type DiffHunk = {
 export function DiffReviewPane({
   diff,
   trackId,
+  sessionId,
   onDiffUpdated,
+  onFileSaved,
   labels,
 }: {
   diff: string;
   trackId: string;
+  sessionId?: string;
   onDiffUpdated: (diff: string) => void;
+  onFileSaved?: () => void;
   labels?: Partial<{
     title: string;
     rawToggleShow: string;
@@ -37,6 +42,7 @@ export function DiffReviewPane({
   }>;
 }) {
   const [showRaw, setShowRaw] = useState(false);
+  const [editingPath, setEditingPath] = useState<string | null>(null);
   const [expandedFiles, setExpandedFiles] = useState<Record<string, boolean>>({});
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -62,6 +68,21 @@ export function DiffReviewPane({
 
   const hasChanges = diff.trim().length > 0;
 
+  if (editingPath && sessionId) {
+    return (
+      <div className="diff-pane">
+        <div style={{ padding: 12 }}>
+          <FileBufferEditor
+            sessionId={sessionId}
+            path={editingPath}
+            onClose={() => setEditingPath(null)}
+            onSaved={onFileSaved}
+          />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="diff-pane">
       <div className="diff-header">
@@ -86,6 +107,7 @@ export function DiffReviewPane({
             const fileLabel = f.newPath || f.oldPath || "(unknown)";
             const filePatch = f.sectionLines.join("\n") + "\n";
             const fileBusy = busyKey === `file:${f.key}`;
+            const canEdit = Boolean(sessionId) && fileLabel !== "(unknown)";
 
             return (
               <div key={f.key} className="diff-file">
@@ -113,6 +135,11 @@ export function DiffReviewPane({
                       >
                         {fileBusy ? "Working…" : labels?.rejectAll ?? "Reject all"}
                       </button>
+                      {canEdit && (
+                        <button type="button" className="wb-small" onClick={() => setEditingPath(fileLabel)}>
+                          Edit
+                        </button>
+                      )}
                     </div>
 
                     {f.hunks.length > 0 ? (
@@ -240,4 +267,3 @@ function HunkPreview({ lines }: { lines: string[] }) {
     </div>
   );
 }
-

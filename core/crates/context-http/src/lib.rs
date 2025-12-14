@@ -1,4 +1,5 @@
 pub mod api;
+pub mod buffers;
 pub mod daemon;
 pub mod edit_plans;
 pub mod installs;

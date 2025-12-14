@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use context_lsp::{LspManager, LspManagerConfig};
 use lsp_types::{Position, Range};
+use serde_json::Value;
 
 async fn write_file(path: &Path, contents: &str) {
     if let Some(parent) = path.parent() {
@@ -118,4 +119,168 @@ async fn test_server_supports_semantic_actions() {
         .await
         .unwrap();
     assert!(actions.is_array());
+}
+
+#[tokio::test]
+async fn test_server_supports_agent_text_only_extensions() {
+    let bin = env!("CARGO_BIN_EXE_context-lsp-test-server");
+
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let file = root.join("src/lib.rs");
+    write_file(&file, "pub fn x() { }\n").await;
+
+    let mgr = LspManager::new(LspManagerConfig {
+        enabled: true,
+        rust_command: bin.to_string(),
+        rust_args: vec![],
+        diagnostics_wait: Duration::from_secs(1),
+        execute_commands_enabled: true,
+        execute_command_allowlist: vec!["context.test.fixAll".to_string()],
+        ..Default::default()
+    });
+
+    // Streaming diagnostics subscription (broadcast).
+    let mut diag_rx = mgr
+        .subscribe_diagnostics_for_file(root, &file)
+        .await
+        .unwrap();
+    mgr.sync_document_text(root, &file, "pub fn x() { }\n".to_string())
+        .await
+        .unwrap();
+    let diag = tokio::time::timeout(std::time::Duration::from_secs(1), diag_rx.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        diag.diagnostics
+            .first()
+            .map(|d| d.message.contains("Intentional diagnostic"))
+            .unwrap_or(false)
+    );
+
+    let comp = mgr
+        .completion(root, &file, Position { line: 0, character: 0 })
+        .await
+        .unwrap();
+    let item = comp
+        .get("items")
+        .and_then(|v| v.as_array())
+        .and_then(|a| a.first())
+        .cloned()
+        .unwrap_or(Value::Null);
+    let resolved = mgr
+        .completion_resolve(root, &file, item)
+        .await
+        .unwrap();
+    assert!(resolved.is_object());
+
+    let actions = mgr
+        .code_actions(
+            root,
+            &file,
+            Range {
+                start: Position { line: 0, character: 0 },
+                end: Position { line: 0, character: 1 },
+            },
+            vec![],
+        )
+        .await
+        .unwrap();
+    let action = actions
+        .as_array()
+        .and_then(|a| a.first())
+        .cloned()
+        .unwrap_or(Value::Null);
+    let resolved_action = mgr
+        .code_action_resolve(root, &file, action)
+        .await
+        .unwrap();
+    assert!(resolved_action.is_object());
+
+    let inlays = mgr
+        .inlay_hints(
+            root,
+            &file,
+            Range {
+                start: Position { line: 0, character: 0 },
+                end: Position { line: 0, character: 1 },
+            },
+        )
+        .await
+        .unwrap();
+    assert!(inlays.is_array());
+
+    let highlights = mgr
+        .document_highlight(root, &file, Position { line: 0, character: 0 })
+        .await
+        .unwrap();
+    assert!(highlights.is_array());
+
+    let sel = mgr
+        .selection_ranges(root, &file, vec![Position { line: 0, character: 0 }])
+        .await
+        .unwrap();
+    assert!(sel.is_array());
+
+    let ch = mgr
+        .call_hierarchy_prepare(root, &file, Position { line: 0, character: 0 })
+        .await
+        .unwrap();
+    let item = ch.as_array().and_then(|a| a.first()).cloned().unwrap_or(Value::Null);
+    let incoming = mgr
+        .call_hierarchy_incoming(root, &file, item.clone())
+        .await
+        .unwrap();
+    assert!(incoming.is_array());
+    let outgoing = mgr
+        .call_hierarchy_outgoing(root, &file, item)
+        .await
+        .unwrap();
+    assert!(outgoing.is_array());
+
+    let lenses = mgr.code_lens(root, &file).await.unwrap();
+    let lens = lenses.as_array().and_then(|a| a.first()).cloned().unwrap_or(Value::Null);
+    let resolved_lens = mgr.code_lens_resolve(root, &file, lens).await.unwrap();
+    assert!(resolved_lens.is_object());
+
+    let (_result, edit) = mgr
+        .execute_command_for_file(root, &file, "context.test.fixAll".into(), vec![])
+        .await
+        .unwrap();
+    assert!(edit.is_some(), "expected applyEdit captured");
+
+    let prep = mgr
+        .prepare_rename(root, &file, Position { line: 0, character: 0 })
+        .await
+        .unwrap();
+    assert!(prep.is_object() || prep.is_null());
+
+    let links = mgr.document_links(root, &file).await.unwrap();
+    assert!(links.is_array());
+    let link = links.as_array().and_then(|a| a.first()).cloned().unwrap_or(Value::Null);
+    let resolved_link = mgr
+        .document_link_resolve(root, &file, link)
+        .await
+        .unwrap();
+    assert!(resolved_link.is_object());
+
+    let tokens = mgr.semantic_tokens_full(root, &file).await.unwrap();
+    assert!(tokens.is_object());
+
+    let th = mgr
+        .type_hierarchy_prepare(root, &file, Position { line: 0, character: 0 })
+        .await
+        .unwrap();
+    let item = th.as_array().and_then(|a| a.first()).cloned().unwrap_or(Value::Null);
+    let sups = mgr
+        .type_hierarchy_supertypes(root, &file, item.clone())
+        .await
+        .unwrap();
+    assert!(sups.is_array());
+    let subs = mgr
+        .type_hierarchy_subtypes(root, &file, item)
+        .await
+        .unwrap();
+    assert!(subs.is_array());
 }

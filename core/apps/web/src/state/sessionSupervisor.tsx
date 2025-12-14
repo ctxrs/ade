@@ -26,6 +26,7 @@ export type SessionCacheEntry = {
   events: SessionEvent[];
   queue: Message[];
   diff?: string;
+  diagnosticsByPath?: Record<string, any[]>;
   lastEventId?: string;
   loading: boolean;
   error?: string;
@@ -43,6 +44,7 @@ type InternalEntry = SessionCacheEntry & {
   warmUntilMs: number;
   eventIdSet: Set<string>;
   trackId?: string;
+  diagnosticsByPath: Record<string, any[]>;
   fetching: {
     session: boolean;
     events: boolean;
@@ -141,6 +143,7 @@ class SessionSupervisor {
         events: e.events,
         queue: e.queue,
         diff: e.diff,
+        diagnosticsByPath: e.diagnosticsByPath,
         lastEventId: e.lastEventId,
         loading: e.loading,
         error: e.error,
@@ -174,6 +177,7 @@ class SessionSupervisor {
       events: [],
       queue: [],
       diff: undefined,
+      diagnosticsByPath: {},
       lastEventId: undefined,
       loading: true,
       error: undefined,
@@ -366,6 +370,15 @@ class SessionSupervisor {
           if (!sid) return;
           const entry = this.entries.get(sid);
           if (!entry) return;
+          if (String(data.type || "") === "lsp_diagnostics") {
+            const path = String(data.path || "");
+            if (path) {
+              entry.diagnosticsByPath[path] = Array.isArray(data.diagnostics) ? data.diagnostics : [];
+            }
+            entry.updatedAtMs = Date.now();
+            this.publish();
+            return;
+          }
           this.upsertEvents(entry, [data as SessionEvent]);
           entry.updatedAtMs = Date.now();
           // Keep hot sessions warm when they are producing events.

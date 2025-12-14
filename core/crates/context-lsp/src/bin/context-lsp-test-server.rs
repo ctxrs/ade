@@ -2,7 +2,7 @@ use std::io::{Read, Write};
 
 use lsp_types::{
     CodeAction, CodeActionKind, Command, Diagnostic, DiagnosticSeverity, Location, NumberOrString,
-    Position, PublishDiagnosticsParams, Range, TextEdit, WorkspaceEdit,
+    Position, PublishDiagnosticsParams, Range, SymbolKind, TextEdit, TypeHierarchyItem, Uri, WorkspaceEdit,
 };
 use serde_json::{Value, json};
 
@@ -12,6 +12,7 @@ fn main() {
     let mut input = stdin.lock();
     let stdout = std::io::stdout();
     let mut output = stdout.lock();
+    let mut last_opened_uri: Option<String> = None;
 
     loop {
         let msg = match read_lsp_message(&mut input) {
@@ -20,34 +21,43 @@ fn main() {
         };
 
         if msg.get("method").and_then(|v| v.as_str()) == Some("initialize") {
-            if let Some(id) = msg.get("id").cloned() {
-                write_response(
-                    &mut output,
-                    json!({
+	            if let Some(id) = msg.get("id").cloned() {
+	                write_response(
+	                    &mut output,
+	                    json!({
                         "jsonrpc":"2.0",
                         "id": id,
                         "result": {
-                            "capabilities": {
-                                "textDocumentSync": 1,
-                                "definitionProvider": true,
-                                "typeDefinitionProvider": true,
-                                "implementationProvider": true,
-                                "referencesProvider": true,
-                                "hoverProvider": true,
-                                "signatureHelpProvider": true,
-                                "completionProvider": true,
-                                "documentSymbolProvider": true,
-                                "workspaceSymbolProvider": true,
-                                "renameProvider": true,
-                                "documentFormattingProvider": true,
-                                "codeActionProvider": true
-                            }
-                        }
-                    }),
-                );
-            }
-            continue;
-        }
+	                            "capabilities": {
+	                                "textDocumentSync": 1,
+	                                "definitionProvider": true,
+	                                "typeDefinitionProvider": true,
+	                                "implementationProvider": true,
+	                                "referencesProvider": true,
+	                                "hoverProvider": true,
+	                                "signatureHelpProvider": true,
+	                                "completionProvider": true,
+	                                "documentLinkProvider": { "resolveProvider": true },
+	                                "inlayHintProvider": true,
+	                                "documentHighlightProvider": true,
+	                                "selectionRangeProvider": true,
+	                                "callHierarchyProvider": true,
+	                                "typeHierarchyProvider": true,
+	                                "semanticTokensProvider": { "full": true, "legend": { "tokenTypes": [], "tokenModifiers": [] } },
+	                                "codeLensProvider": { "resolveProvider": true },
+	                                "executeCommandProvider": { "commands": ["context.test.fixAll"] },
+	                                "documentSymbolProvider": true,
+	                                "workspaceSymbolProvider": true,
+	                                "renameProvider": { "prepareProvider": true },
+	                                "documentFormattingProvider": true,
+	                                "codeActionProvider": true
+	                            }
+	                        }
+	                    }),
+	                );
+	            }
+	            continue;
+	        }
 
         if msg.get("method").and_then(|v| v.as_str()) == Some("shutdown") {
             if let Some(id) = msg.get("id").cloned() {
@@ -70,6 +80,7 @@ fn main() {
                 .and_then(|d| d.get("uri"))
                 .cloned()
                 .unwrap_or(json!("file:///unknown.rs"));
+            last_opened_uri = uri.as_str().map(|s| s.to_string());
 
             let diag = Diagnostic {
                 range: Range {
@@ -103,6 +114,42 @@ fn main() {
 
         // Handle core request methods used by tests.
         if let Some(id) = id {
+            if method == "workspace/executeCommand" {
+                let uri = last_opened_uri
+                    .clone()
+                    .unwrap_or_else(|| "file:///unknown.rs".to_string());
+                // Emit a server->client applyEdit request and wait for its response.
+                write_response(
+                    &mut output,
+                    json!({
+                        "jsonrpc":"2.0",
+                        "id": 9999,
+                        "method":"workspace/applyEdit",
+                        "params": {
+                            "label": "Test executeCommand",
+                            "edit": {
+                                "changes": {
+                                    (uri): [{
+                                        "range": {
+                                            "start": {"line": 0, "character": 0},
+                                            "end": {"line": 0, "character": 0}
+                                        },
+                                        "newText": "// execCommand\n"
+                                    }]
+                                }
+                            }
+                        }
+                    }),
+                );
+                let _ = read_lsp_message(&mut input);
+
+                write_response(
+                    &mut output,
+                    json!({"jsonrpc":"2.0","id": id,"result": {"ok": true}}),
+                );
+                continue;
+            }
+
             let result = match method {
                 "textDocument/definition" => {
                     let uri: lsp_types::Uri = uri_from_params(&msg)
@@ -179,6 +226,91 @@ fn main() {
                         }]
                     })
                 }
+                "completionItem/resolve" => {
+                    let mut item = msg.get("params").cloned().unwrap_or(json!({}));
+                    if let Some(obj) = item.as_object_mut() {
+                        obj.insert("detail".to_string(), json!("resolved"));
+                    }
+                    item
+                }
+                "codeAction/resolve" => {
+                    let uri: lsp_types::Uri = last_opened_uri
+                        .as_deref()
+                        .unwrap_or("file:///unknown.rs")
+                        .parse()
+                        .unwrap();
+                    let edit = WorkspaceEdit {
+                        changes: Some(
+                            std::iter::once((
+                                uri,
+                                vec![TextEdit {
+                                    range: Range {
+                                        start: Position { line: 0, character: 0 },
+                                        end: Position { line: 0, character: 0 },
+                                    },
+                                    new_text: "// resolved code action\n".to_string(),
+                                }],
+                            ))
+                            .collect(),
+                        ),
+                        document_changes: None,
+                        change_annotations: None,
+                    };
+                    let mut ca = msg.get("params").cloned().unwrap_or(json!({}));
+                    if let Some(obj) = ca.as_object_mut() {
+                        obj.insert("edit".to_string(), json!(edit));
+                    }
+                    ca
+                }
+                "textDocument/inlayHint" => json!([
+                    { "position": { "line": 0, "character": 0 }, "label": "hint" }
+                ]),
+                "textDocument/documentHighlight" => json!([
+                    { "range": { "start": { "line": 0, "character": 0 }, "end": { "line": 0, "character": 1 } }, "kind": 1 }
+                ]),
+                "textDocument/selectionRange" => json!([
+                    { "range": { "start": { "line": 0, "character": 0 }, "end": { "line": 0, "character": 3 } }, "parent": null }
+                ]),
+                "textDocument/prepareCallHierarchy" => {
+                    let uri: lsp_types::Uri = last_opened_uri
+                        .as_deref()
+                        .unwrap_or("file:///unknown.rs")
+                        .parse()
+                        .unwrap();
+                    json!([{
+                        "name": "f",
+                        "kind": 12,
+                        "uri": uri,
+                        "range": { "start": { "line": 0, "character": 0 }, "end": { "line": 0, "character": 1 } },
+                        "selectionRange": { "start": { "line": 0, "character": 0 }, "end": { "line": 0, "character": 1 } }
+                    }])
+                }
+                "callHierarchy/incomingCalls" => json!([
+                    {
+                        "from": msg.get("params").and_then(|p| p.get("item")).cloned().unwrap_or(json!({})),
+                        "fromRanges": [{ "start": { "line": 0, "character": 0 }, "end": { "line": 0, "character": 1 } }]
+                    }
+                ]),
+                "callHierarchy/outgoingCalls" => json!([
+                    {
+                        "to": msg.get("params").and_then(|p| p.get("item")).cloned().unwrap_or(json!({})),
+                        "fromRanges": [{ "start": { "line": 0, "character": 0 }, "end": { "line": 0, "character": 1 } }]
+                    }
+                ]),
+                "textDocument/codeLens" => json!([
+                    {
+                        "range": { "start": { "line": 0, "character": 0 }, "end": { "line": 0, "character": 1 } },
+                        "command": { "title": "Run", "command": "run" },
+                        "data": { "k": "v" }
+                    }
+                ]),
+                "codeLens/resolve" => {
+                    let mut lens = msg.get("params").cloned().unwrap_or(json!({}));
+                    if let Some(obj) = lens.as_object_mut() {
+                        obj.insert("command".to_string(), json!({ "title": "Run (resolved)", "command": "run" }));
+                    }
+                    lens
+                }
                 "textDocument/documentSymbol" => json!([]),
                 "workspace/symbol" => json!([]),
                 "textDocument/rename" => {
@@ -247,6 +379,60 @@ fn main() {
                         data: None,
                     };
                     json!([ca])
+                }
+                "textDocument/prepareRename" => json!({
+                    "start": { "line": 0, "character": 0 },
+                    "end": { "line": 0, "character": 3 }
+                }),
+                "textDocument/documentLink" => json!([
+                    {
+                        "range": { "start": { "line": 0, "character": 0 }, "end": { "line": 0, "character": 5 } },
+                        "target": null,
+                        "data": { "k": "v" }
+                    }
+                ]),
+                "documentLink/resolve" => {
+                    let mut link = msg.get("params").cloned().unwrap_or(json!({}));
+                    if let Some(obj) = link.as_object_mut() {
+                        obj.insert("target".to_string(), json!("file:///resolved"));
+                    }
+                    link
+                }
+                "textDocument/semanticTokens/full" => json!({
+                    "resultId": "1",
+                    "data": [0,0,5,0,0]
+                }),
+                "textDocument/prepareTypeHierarchy" => {
+                    let uri: Uri = last_opened_uri
+                        .as_deref()
+                        .unwrap_or("file:///unknown.rs")
+                        .parse()
+                        .unwrap();
+                    let item = TypeHierarchyItem {
+                        name: "T".to_string(),
+                        kind: SymbolKind::STRUCT,
+                        tags: None,
+                        detail: None,
+                        uri,
+                        range: Range {
+                            start: Position { line: 0, character: 0 },
+                            end: Position { line: 0, character: 1 },
+                        },
+                        selection_range: Range {
+                            start: Position { line: 0, character: 0 },
+                            end: Position { line: 0, character: 1 },
+                        },
+                        data: None,
+                    };
+                    json!([item])
+                }
+                "typeHierarchy/supertypes" => {
+                    let item = msg.get("params").and_then(|p| p.get("item")).cloned().unwrap_or(json!({}));
+                    json!([item])
+                }
+                "typeHierarchy/subtypes" => {
+                    let item = msg.get("params").and_then(|p| p.get("item")).cloned().unwrap_or(json!({}));
+                    json!([item])
                 }
                 _ => Value::Null,
             };

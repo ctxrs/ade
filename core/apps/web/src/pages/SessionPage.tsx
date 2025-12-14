@@ -802,7 +802,9 @@ export function SessionView({
           <DiffReviewPane
             diff={diff}
             trackId={session ? idToString(session.track_id) : ""}
+            sessionId={id || undefined}
             onDiffUpdated={(d) => id && supervisor.setDiff(id, d)}
+            onFileSaved={() => id && supervisor.refreshSession(id, { watchDiff: true })}
           />
         </div>
       )}
