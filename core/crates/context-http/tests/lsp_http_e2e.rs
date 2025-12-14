@@ -61,7 +61,7 @@ async fn lsp_diagnostics_endpoint_returns_diagnostics() {
     let store = Store::open(&db_path).await.unwrap();
 
     let lsp_server = env!("CARGO_BIN_EXE_context-http-lsp-test-server").to_string();
-    let state = Arc::new(AppState::new_with_lsp_config(
+    let state = Arc::new(AppState::new_with_lsp_config_and_flags(
         data_dir.path().to_path_buf(),
         store.clone(),
         HashMap::new(),
@@ -72,7 +72,9 @@ async fn lsp_diagnostics_endpoint_returns_diagnostics() {
             rust_command: lsp_server,
             rust_args: vec![],
             diagnostics_wait: Duration::from_secs(2),
+            ..Default::default()
         },
+        false,
     ));
     let app = api::router(state.clone());
 

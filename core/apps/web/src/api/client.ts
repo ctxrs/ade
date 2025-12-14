@@ -152,6 +152,15 @@ export type ApplyAppImageUpdateResp = {
   message: string;
 };
 
+export type EditPlanSummary = {
+  id: { 0: string } | string;
+  title: string;
+  created_at: string;
+  remaining_files: number;
+  remaining_hunks: number;
+  diff: string;
+};
+
 const authToken = (): string | null => {
   try {
     return sessionStorage.getItem("contextAuthToken");
@@ -330,6 +339,24 @@ export const applyTrackDiffPatch = (trackId: string, action: "accept" | "reject"
   api<{ diff: string }>(`/api/tracks/${trackId}/diff/apply`, {
     method: "POST",
     body: JSON.stringify({ action, patch }),
+  });
+
+export const listEditPlansForTrack = (trackId: string) =>
+  api<EditPlanSummary[]>(`/api/tracks/${trackId}/edit_plans`);
+
+export const getEditPlan = (planId: string) =>
+  api<EditPlanSummary>(`/api/edit_plans/${planId}`);
+
+export const applyEditPlanPatch = (planId: string, action: "accept" | "reject", patch: string) =>
+  api<EditPlanSummary>(`/api/edit_plans/${planId}/apply`, {
+    method: "POST",
+    body: JSON.stringify({ action, patch }),
+  });
+
+export const discardEditPlan = (planId: string) =>
+  api<void>(`/api/edit_plans/${planId}/discard`, {
+    method: "POST",
+    body: JSON.stringify({}),
   });
 
 export const listQueue = (sessionId: string) =>

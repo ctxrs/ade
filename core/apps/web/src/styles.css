@@ -1256,6 +1256,22 @@ button {
   border: 1px solid transparent;
 }
 
+.wb-diff-tab-button {
+  background: transparent;
+  border: 1px solid transparent;
+  padding: 4px 8px;
+}
+
+.wb-diff-tab-button:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.wb-diff-tab-active {
+  color: var(--text);
+  border-color: var(--border);
+  background: rgba(255, 255, 255, 0.03);
+}
+
 .wb-diff-pill {
   font-size: 12px;
   padding: 4px 10px;
@@ -1274,4 +1290,48 @@ button {
 .wb-diff .diff-pane {
   padding: 12px;
   overflow: auto;
+}
+
+.wb-editplans {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.wb-editplans-list {
+  display: flex;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+}
+
+.wb-editplan-item {
+  text-align: left;
+  min-width: 180px;
+  padding: 10px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.wb-editplan-item:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.wb-editplan-item-active {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border) 60%);
+  background: color-mix(in srgb, var(--accent) 10%, rgba(255, 255, 255, 0.02) 90%);
+}
+
+.wb-editplan-title {
+  font-size: 12px;
+  color: var(--text);
+  line-height: 1.2;
+}
+
+.wb-editplan-sub {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 4px;
 }
