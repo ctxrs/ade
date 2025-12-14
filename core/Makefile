@@ -1,12 +1,11 @@
 .PHONY: test dev web
 
 test:
-\tcargo test -q
-\tpnpm -C apps/web test
+	cargo test -q
+	pnpm -C apps/web test
 
 dev:
-\tcargo run -p context-http -- serve
+	cargo run -p context-http --bin context -- serve
 
 web:
-\tpnpm -C apps/web dev
-
+	pnpm -C apps/web dev

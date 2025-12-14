@@ -24,6 +24,10 @@ body {
   font-size: 13px;
 }
 
+.wb-no-scroll {
+  overflow: hidden;
+}
+
 .page {
   padding: 16px;
   max-width: 960px;
@@ -1251,6 +1255,241 @@ button {
   min-height: 0;
   padding: 12px;
   gap: 8px;
+}
+
+.wb-turn-header {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  border: none;
+  background: var(--bg);
+  padding: 6px 0 8px 0;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+}
+
+.wb-turn-header-bubble {
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.02);
+  padding: 8px 10px;
+}
+
+.wb-turn-header-content {
+  line-height: 1.45;
+  color: var(--text);
+}
+
+.wb-turn-header-content :is(p, pre, ul, ol) {
+  margin: 0;
+}
+
+.wb-turn-header-content code {
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.wb-turn-header-collapsed .wb-turn-header-content {
+  max-height: calc(1.45em * 3.5);
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(#000 75%, transparent);
+  mask-image: linear-gradient(#000 75%, transparent);
+}
+
+.wb-event-row {
+  width: 100%;
+  border: none;
+  background: transparent;
+  padding: 1px 2px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  text-align: left;
+  cursor: default;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.wb-event-row[aria-expanded] {
+  cursor: pointer;
+}
+
+.wb-event-row:hover {
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: 8px;
+}
+
+.wb-event-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wb-tool-row {
+  display: grid;
+  gap: 4px;
+}
+
+.wb-tool-details {
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.02);
+  padding: 8px 10px;
+  display: grid;
+  gap: 10px;
+}
+
+.wb-tool-section-title {
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.wb-tool-pre {
+  margin: 0;
+  padding: 8px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.2);
+  overflow: auto;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text);
+  white-space: pre-wrap;
+}
+
+.wb-tool-markdown :is(p, ul, ol, pre) {
+  margin: 0;
+}
+
+.wb-thought {
+  display: grid;
+  gap: 6px;
+}
+
+.wb-thought-body {
+  margin: 0;
+  padding: 8px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.22);
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--muted);
+  white-space: pre-wrap;
+  overflow: auto;
+  max-height: 240px;
+}
+
+.wb-assistant-entry {
+  display: grid;
+  gap: 6px;
+  padding: 0 2px 4px 2px;
+}
+
+.wb-assistant-body :is(p, ul, ol, pre) {
+  margin: 0;
+}
+
+.wb-composer {
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.03);
+  padding: 10px 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.wb-composer-input {
+  width: 100%;
+  resize: none;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text);
+  padding: 0;
+  min-height: 28px;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.wb-composer-attachments {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.wb-attach-chip {
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.03);
+  padding: 4px 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.wb-composer-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.wb-composer-left {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+  flex: 1;
+}
+
+.wb-composer-right {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.wb-composer-pill {
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.03);
+  padding: 2px 8px;
+  color: var(--text);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.wb-composer-select {
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text);
+  font: inherit;
+  max-width: 260px;
+}
+
+.wb-composer-icon {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.03);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+}
+
+.wb-composer-icon:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.05);
 }
 
 .wb-session-left {

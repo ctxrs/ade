@@ -117,6 +117,13 @@ export default function WorkbenchPage() {
   const [activeEditPlanId, setActiveEditPlanId] = useState<string | null>(null);
   const [lspStatus, setLspStatus] = useState<LspStatus | null>(null);
 
+  useEffect(() => {
+    document.body.classList.add("wb-no-scroll");
+    return () => {
+      document.body.classList.remove("wb-no-scroll");
+    };
+  }, []);
+
   const refreshTasks = async () => {
     if (!workspaceId) return;
     setTasks(await listTasks(workspaceId));

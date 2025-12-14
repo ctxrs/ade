@@ -1,4 +1,4 @@
-import { defineConfig } from "@playwright/test";
+import { defineConfig } from "playwright/test";
 
 export default defineConfig({
   testDir: "./e2e",
@@ -9,10 +9,9 @@ export default defineConfig({
   },
   webServer: {
     command:
-      'bash -lc "pnpm -C apps/web build && cargo run -p context-http -- serve --bind 127.0.0.1:4399 --data-dir /tmp/context-e2e"',
+      'bash -lc "pnpm -C apps/web build && cargo run -p context-http --bin context -- serve --bind 127.0.0.1:4399 --data-dir /tmp/context-e2e"',
     cwd: "../..",
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,
   },
 });
-

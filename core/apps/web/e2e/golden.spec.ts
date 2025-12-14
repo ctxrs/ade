@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "playwright/test";
 import { mkdtempSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import path from "path";
@@ -31,4 +31,3 @@ test("golden path: workspace → task → session → message", async ({ page })
 
   await expect(page.getByText("hello")).toBeVisible();
 });
-
