@@ -111,6 +111,9 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
         .route("/api/lsp/document_links", post(lsp_document_links))
         .route("/api/lsp/document_links/resolve", post(lsp_document_link_resolve))
         .route("/api/lsp/semantic_tokens/full", post(lsp_semantic_tokens_full))
+        .route("/api/lsp/semantic_tokens/delta", post(lsp_semantic_tokens_delta))
+        .route("/api/lsp/folding_ranges", post(lsp_folding_ranges))
+        .route("/api/lsp/linked_editing_range", post(lsp_linked_editing_range))
         .route("/api/lsp/type_hierarchy/prepare", post(lsp_type_hierarchy_prepare))
         .route("/api/lsp/type_hierarchy/supertypes", post(lsp_type_hierarchy_supertypes))
         .route("/api/lsp/type_hierarchy/subtypes", post(lsp_type_hierarchy_subtypes))
@@ -118,6 +121,7 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
         .route("/api/lsp/execute_command/plan", post(lsp_execute_command_plan))
         .route("/api/lsp/document_symbols", post(lsp_document_symbols))
         .route("/api/lsp/workspace_symbols", post(lsp_workspace_symbols))
+        .route("/api/lsp/workspace_symbols/resolve", post(lsp_workspace_symbol_resolve))
         .route("/api/lsp/code_actions", post(lsp_code_actions))
         .route("/api/lsp/code_actions/by_diagnostic/plan", post(lsp_code_actions_by_diagnostic_plan))
         .route("/api/lsp/rename/plan", post(lsp_rename_plan))
@@ -299,9 +303,13 @@ async fn lsp_status(State(state): State<Arc<AppState>>) -> Result<Json<LspStatus
         ("yaml", cfg.yaml_command.clone(), cfg.yaml_args.clone()),
         ("bash", cfg.bash_command.clone(), cfg.bash_args.clone()),
         ("dockerfile", cfg.dockerfile_command.clone(), cfg.dockerfile_args.clone()),
+        ("cpp", cfg.clangd_command.clone(), cfg.clangd_args.clone()),
+        ("lua", cfg.lua_command.clone(), cfg.lua_args.clone()),
+        ("toml", cfg.toml_command.clone(), cfg.toml_args.clone()),
+        ("markdown", cfg.markdown_command.clone(), cfg.markdown_args.clone()),
     ];
 
-    let mut out = Vec::with_capacity(servers.len());
+    let mut out = Vec::new();
     for (language, command, args) in servers {
         let (found, resolved_path) = resolve_command(&command);
         let version = if found {
@@ -317,6 +325,30 @@ async fn lsp_status(State(state): State<Arc<AppState>>) -> Result<Json<LspStatus
             resolved_path: resolved_path.map(|p| p.to_string_lossy().to_string()),
             version,
             install_hints: install_hints_for(language),
+        });
+    }
+
+    // Add BYO servers not already represented by built-ins.
+    for (language, (command, args)) in cfg.custom_servers.iter() {
+        if out.iter().any(|s| s.language == *language) {
+            continue;
+        }
+        let (found, resolved_path) = resolve_command(command);
+        let version = if found {
+            get_command_version(command, &resolved_path, args).await
+        } else {
+            None
+        };
+        out.push(LspServerStatus {
+            language: language.clone(),
+            command: command.clone(),
+            args: args.clone(),
+            found,
+            resolved_path: resolved_path.map(|p| p.to_string_lossy().to_string()),
+            version,
+            install_hints: vec![
+                "Configured via data_root/lsp/user_servers.json (restart daemon after edits).".to_string(),
+            ],
         });
     }
 
@@ -422,6 +454,14 @@ fn install_hints_for(language: &str) -> Vec<String> {
             "managed: POST /api/lsp/servers/dockerfile/install (restart daemon after install)".to_string(),
             "or: npm i -g dockerfile-language-server-nodejs".to_string(),
         ],
+        ("cpp", "darwin") => vec!["brew install llvm (clangd)".to_string()],
+        ("cpp", "linux") => vec!["sudo apt-get install clangd (or distro equivalent)".to_string()],
+        ("lua", "darwin") => vec!["brew install lua-language-server".to_string()],
+        ("lua", "linux") => vec!["install lua-language-server via your distro/package manager".to_string()],
+        ("toml", "darwin") => vec!["brew install taplo".to_string()],
+        ("toml", "linux") => vec!["cargo install taplo-cli --locked".to_string()],
+        ("markdown", "darwin") => vec!["brew install marksman".to_string()],
+        ("markdown", "linux") => vec!["install marksman via your distro/package manager".to_string()],
         _ => vec![],
     }
 }
@@ -542,7 +582,7 @@ async fn open_buffer(
         .open_or_reuse(sid, worktree_id, root.clone(), file.clone(), text.clone(), disk_sha.clone())
         .await;
     if state.lsp.enabled() {
-        if let Some(lang) = context_lsp::Language::detect(&file) {
+        if let Some(lang) = context_lsp::Language::detect(&file, &state.lsp_cfg) {
             state.ensure_lsp_diagnostics_forwarder(root.clone(), lang).await;
         }
         let _ = state.lsp.sync_document_text(&root, &file, st.text.clone()).await;
@@ -636,7 +676,7 @@ async fn update_buffer(
         })?;
 
     if state.lsp.enabled() {
-        if let Some(lang) = context_lsp::Language::detect(&st.path) {
+        if let Some(lang) = context_lsp::Language::detect(&st.path, &state.lsp_cfg) {
             state.ensure_lsp_diagnostics_forwarder(st.root.clone(), lang).await;
         }
         let _ = state
@@ -722,6 +762,20 @@ struct LspSelectionRangesReq {
     #[serde(flatten)]
     file: LspFileReq,
     positions: Vec<LspLineChar>,
+}
+
+#[derive(Debug, Deserialize)]
+struct LspSemanticTokensDeltaReq {
+    #[serde(flatten)]
+    file: LspFileReq,
+    previous_result_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct LspWorkspaceSymbolResolveReq {
+    session_id: Option<String>,
+    root_path: Option<String>,
+    item: serde_json::Value,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1203,6 +1257,61 @@ async fn lsp_semantic_tokens_full(
     Ok(Json(v))
 }
 
+async fn lsp_semantic_tokens_delta(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<LspSemanticTokensDeltaReq>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    if !state.lsp.enabled() {
+        return Err(StatusCode::CONFLICT);
+    }
+    let (root, file) = resolve_lsp_target(&state, req.file).await?;
+    let v = state
+        .lsp
+        .semantic_tokens_delta(&root, &file, req.previous_result_id)
+        .await
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    Ok(Json(v))
+}
+
+async fn lsp_folding_ranges(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<LspFileReq>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    if !state.lsp.enabled() {
+        return Err(StatusCode::CONFLICT);
+    }
+    let (root, file) = resolve_lsp_target(&state, req).await?;
+    let v = state
+        .lsp
+        .folding_ranges(&root, &file)
+        .await
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    Ok(Json(v))
+}
+
+async fn lsp_linked_editing_range(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<LspPosReq>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    if !state.lsp.enabled() {
+        return Err(StatusCode::CONFLICT);
+    }
+    let (root, file) = resolve_lsp_target(&state, req.file).await?;
+    let v = state
+        .lsp
+        .linked_editing_range(
+            &root,
+            &file,
+            lsp_types::Position {
+                line: req.line,
+                character: req.character,
+            },
+        )
+        .await
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    Ok(Json(v))
+}
+
 async fn lsp_type_hierarchy_prepare(
     State(state): State<Arc<AppState>>,
     Json(req): Json<LspPosReq>,
@@ -1581,6 +1690,44 @@ async fn lsp_workspace_symbols(
         .into_iter()
         .filter_map(|s| serde_json::to_value(s).ok())
         .collect::<Vec<_>>();
+    Ok(Json(out))
+}
+
+async fn lsp_workspace_symbol_resolve(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<LspWorkspaceSymbolResolveReq>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    if !state.lsp.enabled() {
+        return Err(StatusCode::CONFLICT);
+    }
+
+    let root = if let Some(session_id) = req.session_id.as_deref() {
+        let sid = SessionId(uuid::Uuid::parse_str(session_id).map_err(|_| StatusCode::BAD_REQUEST)?);
+        let session = state
+            .store
+            .get_session(sid)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+            .ok_or(StatusCode::NOT_FOUND)?;
+        let wt = state
+            .store
+            .get_worktree(session.worktree_id)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+            .ok_or(StatusCode::NOT_FOUND)?;
+        PathBuf::from(wt.root_path)
+    } else if let Some(root_path) = req.root_path.as_deref() {
+        PathBuf::from(root_path)
+    } else {
+        return Err(StatusCode::BAD_REQUEST);
+    };
+    let root = root.canonicalize().map_err(|_| StatusCode::BAD_REQUEST)?;
+
+    let out = state
+        .lsp
+        .workspace_symbol_resolve(&root, req.item)
+        .await
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
     Ok(Json(out))
 }
 

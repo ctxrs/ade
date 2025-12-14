@@ -468,21 +468,69 @@ async fn main() -> Result<()> {
 	                                "additionalProperties": false
 	                            }
 	                        },
-	                        {
-	                            "name": "context.lsp_semantic_tokens_full",
-	                            "title": "LSP Semantic Tokens (Full)",
-	                            "description": "Returns semantic tokens for a file (intended for agent consumption; server-dependent).",
-	                            "inputSchema": {
-	                                "type": "object",
-	                                "properties": {
-	                                    "session_id": { "type": "string", "description": "Optional Context session id (defaults to $CONTEXT_SESSION_ID)." },
-	                                    "path": { "type": "string" },
-	                                    "root_path": { "type": "string" }
-	                                },
-	                                "required": ["path"],
-	                                "additionalProperties": false
-	                            }
-	                        },
+                        {
+                            "name": "context.lsp_semantic_tokens_full",
+                            "title": "LSP Semantic Tokens (Full)",
+                            "description": "Returns semantic tokens for a file (intended for agent consumption; server-dependent).",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "session_id": { "type": "string", "description": "Optional Context session id (defaults to $CONTEXT_SESSION_ID)." },
+                                    "path": { "type": "string" },
+                                    "root_path": { "type": "string" }
+                                },
+                                "required": ["path"],
+                                "additionalProperties": false
+                            }
+                        },
+                        {
+                            "name": "context.lsp_semantic_tokens_delta",
+                            "title": "LSP Semantic Tokens (Delta)",
+                            "description": "Returns semantic tokens delta for a file given a previous result id (server-dependent).",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "session_id": { "type": "string", "description": "Optional Context session id (defaults to $CONTEXT_SESSION_ID)." },
+                                    "path": { "type": "string" },
+                                    "root_path": { "type": "string" },
+                                    "previous_result_id": { "type": "string" }
+                                },
+                                "required": ["path", "previous_result_id"],
+                                "additionalProperties": false
+                            }
+                        },
+                        {
+                            "name": "context.lsp_folding_ranges",
+                            "title": "LSP Folding Ranges",
+                            "description": "Returns folding ranges for a file (server-dependent).",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "session_id": { "type": "string", "description": "Optional Context session id (defaults to $CONTEXT_SESSION_ID)." },
+                                    "path": { "type": "string" },
+                                    "root_path": { "type": "string" }
+                                },
+                                "required": ["path"],
+                                "additionalProperties": false
+                            }
+                        },
+                        {
+                            "name": "context.lsp_linked_editing_range",
+                            "title": "LSP Linked Editing Range",
+                            "description": "Returns linked editing ranges at a position (server-dependent).",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "session_id": { "type": "string", "description": "Optional Context session id (defaults to $CONTEXT_SESSION_ID)." },
+                                    "path": { "type": "string" },
+                                    "root_path": { "type": "string" },
+                                    "line": { "type": "integer", "minimum": 0 },
+                                    "character": { "type": "integer", "minimum": 0 }
+                                },
+                                "required": ["path", "line", "character"],
+                                "additionalProperties": false
+                            }
+                        },
 	                        {
 	                            "name": "context.lsp_type_hierarchy_prepare",
 	                            "title": "LSP Type Hierarchy Prepare",
@@ -607,6 +655,21 @@ async fn main() -> Result<()> {
                                     "query": { "type": "string" }
                                 },
                                 "required": ["query"],
+                                "additionalProperties": false
+                            }
+                        },
+                        {
+                            "name": "context.lsp_workspace_symbol_resolve",
+                            "title": "LSP Workspace Symbol Resolve",
+                            "description": "Resolves a workspace symbol item into a fully detailed representation (server-dependent).",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "session_id": { "type": "string", "description": "Optional Context session id (defaults to $CONTEXT_SESSION_ID)." },
+                                    "root_path": { "type": "string" },
+                                    "item": { "type": "object" }
+                                },
+                                "required": ["item"],
                                 "additionalProperties": false
                             }
                         },
@@ -971,6 +1034,24 @@ async fn main() -> Result<()> {
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
+                    "context.lsp_semantic_tokens_delta" => {
+                        match lsp_semantic_tokens_delta_call(&client, &daemon_url, &arguments).await {
+                            Ok(val) => ok(id.unwrap(), tool_ok(val)),
+                            Err(e) => ok(id.unwrap(), tool_err(e)),
+                        }
+                    }
+                    "context.lsp_folding_ranges" => {
+                        match lsp_file_call(&client, &daemon_url, "/api/lsp/folding_ranges", &arguments).await {
+                            Ok(val) => ok(id.unwrap(), tool_ok(val)),
+                            Err(e) => ok(id.unwrap(), tool_err(e)),
+                        }
+                    }
+                    "context.lsp_linked_editing_range" => {
+                        match lsp_pos_call(&client, &daemon_url, "/api/lsp/linked_editing_range", &arguments).await {
+                            Ok(val) => ok(id.unwrap(), tool_ok(val)),
+                            Err(e) => ok(id.unwrap(), tool_err(e)),
+                        }
+                    }
                     "context.lsp_type_hierarchy_prepare" => {
                         match lsp_pos_call(&client, &daemon_url, "/api/lsp/type_hierarchy/prepare", &arguments).await {
                             Ok(val) => ok(id.unwrap(), tool_ok(val)),
@@ -1015,6 +1096,12 @@ async fn main() -> Result<()> {
                     }
                     "context.lsp_workspace_symbols" => {
                         match lsp_workspace_symbols_call(&client, &daemon_url, &arguments).await {
+                            Ok(val) => ok(id.unwrap(), tool_ok(val)),
+                            Err(e) => ok(id.unwrap(), tool_err(e)),
+                        }
+                    }
+                    "context.lsp_workspace_symbol_resolve" => {
+                        match lsp_workspace_symbol_resolve_call(&client, &daemon_url, &arguments).await {
                             Ok(val) => ok(id.unwrap(), tool_ok(val)),
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
@@ -1367,6 +1454,46 @@ async fn lsp_workspace_symbols_call(
         "query": query
     });
     daemon_post_json(client, daemon_url, "/api/lsp/workspace_symbols", &body).await
+}
+
+async fn lsp_workspace_symbol_resolve_call(
+    client: &reqwest::Client,
+    daemon_url: &str,
+    arguments: &Value,
+) -> Result<Value> {
+    let session_id = arguments
+        .get("session_id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .or_else(|| std::env::var("CONTEXT_SESSION_ID").ok());
+    let root_path = arguments
+        .get("root_path")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let item = arguments.get("item").cloned().context("missing item")?;
+    let body = json!({
+        "session_id": session_id,
+        "root_path": root_path,
+        "item": item,
+    });
+    daemon_post_json(client, daemon_url, "/api/lsp/workspace_symbols/resolve", &body).await
+}
+
+async fn lsp_semantic_tokens_delta_call(
+    client: &reqwest::Client,
+    daemon_url: &str,
+    arguments: &Value,
+) -> Result<Value> {
+    let previous_result_id = arguments
+        .get("previous_result_id")
+        .and_then(|v| v.as_str())
+        .context("missing previous_result_id")?
+        .to_string();
+    let mut body = lsp_file_call_body(arguments)?;
+    if let Some(obj) = body.as_object_mut() {
+        obj.insert("previous_result_id".into(), json!(previous_result_id));
+    }
+    daemon_post_json(client, daemon_url, "/api/lsp/semantic_tokens/delta", &body).await
 }
 
 async fn lsp_code_actions_call(

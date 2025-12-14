@@ -402,6 +402,27 @@ fn main() {
                     "resultId": "1",
                     "data": [0,0,5,0,0]
                 }),
+                "textDocument/semanticTokens/full/delta" => json!({
+                    "resultId": "2",
+                    "edits": []
+                }),
+                "textDocument/foldingRange" => json!([
+                    { "startLine": 0, "endLine": 1 }
+                ]),
+                "textDocument/linkedEditingRange" => json!({
+                    "ranges": [
+                        { "start": { "line": 0, "character": 1 }, "end": { "line": 0, "character": 4 } },
+                        { "start": { "line": 0, "character": 8 }, "end": { "line": 0, "character": 11 } }
+                    ],
+                    "wordPattern": null
+                }),
+                "workspace/symbol/resolve" => {
+                    let mut item = msg.get("params").cloned().unwrap_or(json!({}));
+                    if let Some(obj) = item.as_object_mut() {
+                        obj.insert("containerName".to_string(), json!("resolved_container"));
+                    }
+                    item
+                }
                 "textDocument/prepareTypeHierarchy" => {
                     let uri: Uri = last_opened_uri
                         .as_deref()

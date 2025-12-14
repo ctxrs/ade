@@ -119,6 +119,30 @@ async fn test_server_supports_semantic_actions() {
         .await
         .unwrap();
     assert!(actions.is_array());
+
+    let folds = mgr.folding_ranges(root, &file).await.unwrap();
+    assert!(folds.is_array());
+
+    let linked = mgr
+        .linked_editing_range(root, &file, Position { line: 0, character: 0 })
+        .await
+        .unwrap();
+    assert!(linked.is_object());
+
+    let sem = mgr.semantic_tokens_full(root, &file).await.unwrap();
+    assert!(sem.is_object());
+
+    let sem_delta = mgr
+        .semantic_tokens_delta(root, &file, "1".to_string())
+        .await
+        .unwrap();
+    assert!(sem_delta.is_object());
+
+    let resolved = mgr
+        .workspace_symbol_resolve(root, Value::Object(Default::default()))
+        .await
+        .unwrap();
+    assert!(resolved.is_object());
 }
 
 #[tokio::test]

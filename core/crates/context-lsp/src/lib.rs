@@ -43,6 +43,20 @@ pub struct LspManagerConfig {
     pub bash_args: Vec<String>,
     pub dockerfile_command: String,
     pub dockerfile_args: Vec<String>,
+    pub clangd_command: String,
+    pub clangd_args: Vec<String>,
+    pub lua_command: String,
+    pub lua_args: Vec<String>,
+    pub toml_command: String,
+    pub toml_args: Vec<String>,
+    pub markdown_command: String,
+    pub markdown_args: Vec<String>,
+    /// User-provided servers keyed by language id (BYO LSP).
+    pub custom_servers: HashMap<String, (String, Vec<String>)>,
+    /// Extension -> language id mapping for BYO LSP (no dot, lowercased).
+    pub custom_extension_map: HashMap<String, String>,
+    /// Filename -> language id mapping for BYO LSP (exact match).
+    pub custom_filename_map: HashMap<String, String>,
     pub diagnostics_wait: Duration,
     pub execute_commands_enabled: bool,
     pub execute_command_allowlist: Vec<String>,
@@ -95,6 +109,21 @@ impl Default for LspManagerConfig {
             .unwrap_or_else(|_| "docker-langserver".to_string());
         let dockerfile_args = vec!["--stdio".to_string()];
 
+        let clangd_command =
+            std::env::var("CONTEXT_LSP_CLANGD_COMMAND").unwrap_or_else(|_| "clangd".to_string());
+        let clangd_args = vec!["--stdio".to_string()];
+
+        let lua_command =
+            std::env::var("CONTEXT_LSP_LUA_COMMAND").unwrap_or_else(|_| "lua-language-server".to_string());
+        let lua_args = vec![];
+
+        let toml_command = std::env::var("CONTEXT_LSP_TOML_COMMAND").unwrap_or_else(|_| "taplo".to_string());
+        let toml_args = vec!["lsp".to_string(), "stdio".to_string()];
+
+        let markdown_command =
+            std::env::var("CONTEXT_LSP_MARKDOWN_COMMAND").unwrap_or_else(|_| "marksman".to_string());
+        let markdown_args = vec!["server".to_string()];
+
         let diagnostics_wait = Duration::from_secs(
             std::env::var("CONTEXT_LSP_DIAGNOSTICS_WAIT_SECS")
                 .ok()
@@ -144,6 +173,17 @@ impl Default for LspManagerConfig {
             bash_args,
             dockerfile_command,
             dockerfile_args,
+            clangd_command,
+            clangd_args,
+            lua_command,
+            lua_args,
+            toml_command,
+            toml_args,
+            markdown_command,
+            markdown_args,
+            custom_servers: HashMap::new(),
+            custom_extension_map: HashMap::new(),
+            custom_filename_map: HashMap::new(),
             diagnostics_wait,
             execute_commands_enabled,
             execute_command_allowlist,
@@ -152,7 +192,7 @@ impl Default for LspManagerConfig {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Language {
     Rust,
     TypeScript,
@@ -165,14 +205,60 @@ pub enum Language {
     Yaml,
     Bash,
     Dockerfile,
+    CCpp,
+    Lua,
+    Toml,
+    Markdown,
+    Custom(String),
 }
 
 impl Language {
-    pub fn detect(path: &Path) -> Option<Self> {
+    pub fn from_id(id: &str) -> Option<Self> {
+        match id {
+            "rust" => Some(Language::Rust),
+            "typescript" => Some(Language::TypeScript),
+            "javascript" => Some(Language::JavaScript),
+            "python" => Some(Language::Python),
+            "go" => Some(Language::Go),
+            "html" => Some(Language::Html),
+            "css" => Some(Language::Css),
+            "json" => Some(Language::Json),
+            "yaml" => Some(Language::Yaml),
+            "bash" => Some(Language::Bash),
+            "dockerfile" => Some(Language::Dockerfile),
+            "cpp" | "c" | "ccpp" => Some(Language::CCpp),
+            "lua" => Some(Language::Lua),
+            "toml" => Some(Language::Toml),
+            "markdown" => Some(Language::Markdown),
+            _ => None,
+        }
+    }
+
+    pub fn detect(path: &Path, cfg: &LspManagerConfig) -> Option<Self> {
+        if let Some(name) = path.file_name().and_then(|s| s.to_str()) {
+            if name == "Dockerfile" {
+                return Some(Language::Dockerfile);
+            }
+            if let Some(lang) = cfg.custom_filename_map.get(name) {
+                return Language::from_id(lang).or_else(|| Some(Language::Custom(lang.clone())));
+            }
+        }
+
+        let ext = path
+            .extension()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        if !ext.is_empty() {
+            if let Some(lang) = cfg.custom_extension_map.get(&ext) {
+                return Language::from_id(lang).or_else(|| Some(Language::Custom(lang.clone())));
+            }
+        }
+
         if path.file_name().and_then(|s| s.to_str()) == Some("Dockerfile") {
             return Some(Language::Dockerfile);
         }
-        match path.extension().and_then(|s| s.to_str()).unwrap_or("") {
+        match ext.as_str() {
             "rs" => Some(Language::Rust),
             "ts" | "tsx" => Some(Language::TypeScript),
             "js" | "jsx" | "mjs" | "cjs" => Some(Language::JavaScript),
@@ -183,11 +269,15 @@ impl Language {
             "json" | "jsonc" => Some(Language::Json),
             "yml" | "yaml" => Some(Language::Yaml),
             "sh" | "bash" | "zsh" => Some(Language::Bash),
+            "c" | "h" | "cc" | "cpp" | "cxx" | "hpp" | "hh" | "hxx" => Some(Language::CCpp),
+            "lua" => Some(Language::Lua),
+            "toml" => Some(Language::Toml),
+            "md" | "mdx" => Some(Language::Markdown),
             _ => None,
         }
     }
 
-    pub fn id(&self) -> &'static str {
+    pub fn id(&self) -> &str {
         match self {
             Language::Rust => "rust",
             Language::TypeScript => "typescript",
@@ -200,6 +290,11 @@ impl Language {
             Language::Yaml => "yaml",
             Language::Bash => "bash",
             Language::Dockerfile => "dockerfile",
+            Language::CCpp => "cpp",
+            Language::Lua => "lua",
+            Language::Toml => "toml",
+            Language::Markdown => "markdown",
+            Language::Custom(id) => id.as_str(),
         }
     }
 }
@@ -232,7 +327,7 @@ impl LspManager {
         if !self.cfg.enabled {
             anyhow::bail!("LSP disabled (set CONTEXT_LSP_ENABLED=1)");
         }
-        let lang = Language::detect(file).ok_or_else(|| anyhow!("no LSP language for file"))?;
+        let lang = Language::detect(file, &self.cfg).ok_or_else(|| anyhow!("no LSP language for file"))?;
         let session = self.get_or_spawn(root, lang).await?;
         session.diagnostics_for_file(file, self.cfg.diagnostics_wait).await
     }
@@ -579,6 +674,52 @@ impl LspManager {
         .await
     }
 
+    pub async fn semantic_tokens_delta(
+        &self,
+        root: &Path,
+        file: &Path,
+        previous_result_id: String,
+    ) -> Result<Value> {
+        self.with_open_doc(root, file, |session, doc| async move {
+            let params = json!({
+                "textDocument": { "uri": doc.uri },
+                "previousResultId": previous_result_id,
+            });
+            session
+                .request("textDocument/semanticTokens/full/delta", &params)
+                .await
+        })
+        .await
+    }
+
+    pub async fn folding_ranges(&self, root: &Path, file: &Path) -> Result<Value> {
+        self.with_open_doc(root, file, |session, doc| async move {
+            let params = json!({
+                "textDocument": { "uri": doc.uri },
+            });
+            session.request("textDocument/foldingRange", &params).await
+        })
+        .await
+    }
+
+    pub async fn linked_editing_range(
+        &self,
+        root: &Path,
+        file: &Path,
+        position: Position,
+    ) -> Result<Value> {
+        self.with_open_doc(root, file, |session, doc| async move {
+            let params = json!({
+                "textDocument": { "uri": doc.uri },
+                "position": position,
+            });
+            session
+                .request("textDocument/linkedEditingRange", &params)
+                .await
+        })
+        .await
+    }
+
     pub async fn type_hierarchy_prepare(
         &self,
         root: &Path,
@@ -668,7 +809,7 @@ impl LspManager {
         if !self.cfg.enabled {
             anyhow::bail!("LSP disabled (set CONTEXT_LSP_ENABLED=1)");
         }
-        let lang = Language::detect(file).ok_or_else(|| anyhow!("no LSP language for file"))?;
+        let lang = Language::detect(file, &self.cfg).ok_or_else(|| anyhow!("no LSP language for file"))?;
         let session = self.get_or_spawn(root, lang).await?;
         let _ = session.open_doc_with_text(file, text).await?;
         Ok(())
@@ -682,7 +823,7 @@ impl LspManager {
         if !self.cfg.enabled {
             anyhow::bail!("LSP disabled (set CONTEXT_LSP_ENABLED=1)");
         }
-        let lang = Language::detect(file).ok_or_else(|| anyhow!("no LSP language for file"))?;
+        let lang = Language::detect(file, &self.cfg).ok_or_else(|| anyhow!("no LSP language for file"))?;
         let session = self.get_or_spawn(root, lang).await?;
         Ok(session.subscribe_diagnostics())
     }
@@ -723,7 +864,7 @@ impl LspManager {
         if !self.cfg.enabled {
             anyhow::bail!("LSP disabled (set CONTEXT_LSP_ENABLED=1)");
         }
-        let candidates = detect_workspace_languages(root);
+        let candidates = detect_workspace_languages(root, &self.cfg);
         let params = WorkspaceSymbolParams {
             query,
             work_done_progress_params: Default::default(),
@@ -734,6 +875,29 @@ impl LspManager {
         for lang in candidates {
             match self.get_or_spawn(root, lang).await {
                 Ok(session) => match session.request_typed("workspace/symbol", &params).await {
+                    Ok(v) => return Ok(v),
+                    Err(e) => last_err = Some(e),
+                },
+                Err(e) => last_err = Some(e),
+            }
+        }
+        Err(last_err.unwrap_or_else(|| anyhow!("no LSP language for workspace")))
+    }
+
+    pub async fn workspace_symbol_resolve(
+        &self,
+        root: &Path,
+        item: Value,
+    ) -> Result<Value> {
+        if !self.cfg.enabled {
+            anyhow::bail!("LSP disabled (set CONTEXT_LSP_ENABLED=1)");
+        }
+        let candidates = detect_workspace_languages(root, &self.cfg);
+
+        let mut last_err: Option<anyhow::Error> = None;
+        for lang in candidates {
+            match self.get_or_spawn(root, lang).await {
+                Ok(session) => match session.request("workspace/symbol/resolve", &item).await {
                     Ok(v) => return Ok(v),
                     Err(e) => last_err = Some(e),
                 },
@@ -834,7 +998,7 @@ impl LspManager {
     }
 
     async fn get_or_spawn(&self, root: &Path, lang: Language) -> Result<Arc<LspSession>> {
-        let key = (root.to_path_buf(), lang);
+        let key = (root.to_path_buf(), lang.clone());
         let mut map = self.sessions.lock().await;
         if let Some(s) = map.get(&key) {
             return Ok(s.clone());
@@ -857,14 +1021,14 @@ impl LspManager {
         if !self.cfg.enabled {
             anyhow::bail!("LSP disabled (set CONTEXT_LSP_ENABLED=1)");
         }
-        let lang = Language::detect(file).ok_or_else(|| anyhow!("no LSP language for file"))?;
+        let lang = Language::detect(file, &self.cfg).ok_or_else(|| anyhow!("no LSP language for file"))?;
         let session = self.get_or_spawn(root, lang).await?;
         let doc = session.open_doc(file).await?;
         f(session, doc).await
     }
 }
 
-fn detect_workspace_languages(root: &Path) -> Vec<Language> {
+fn detect_workspace_languages(root: &Path, cfg: &LspManagerConfig) -> Vec<Language> {
     let mut langs: Vec<Language> = Vec::new();
     let push_unique = |langs: &mut Vec<Language>, l: Language| {
         if !langs.contains(&l) {
@@ -889,6 +1053,19 @@ fn detect_workspace_languages(root: &Path) -> Vec<Language> {
     }
     if root.join("Dockerfile").exists() {
         push_unique(&mut langs, Language::Dockerfile);
+    }
+    if root.join("compile_commands.json").exists() {
+        push_unique(&mut langs, Language::CCpp);
+    }
+    if root.join(".luarc.json").exists() {
+        push_unique(&mut langs, Language::Lua);
+    }
+    if root.join("README.md").exists() {
+        push_unique(&mut langs, Language::Markdown);
+    }
+
+    for id in cfg.custom_servers.keys() {
+        push_unique(&mut langs, Language::Custom(id.clone()));
     }
 
     if langs.is_empty() {
@@ -919,7 +1096,7 @@ struct LspSession {
 
 impl LspSession {
     async fn spawn(cfg: &LspManagerConfig, root: PathBuf, lang: Language) -> Result<Self> {
-        let (child, stdin, stdout) = spawn_server(cfg, lang, &root).await?;
+        let (child, stdin, stdout) = spawn_server(cfg, lang.clone(), &root).await?;
 
         let (tx, mut rx) = mpsc::channel::<Value>(256);
         let pending: Arc<Mutex<HashMap<i64, oneshot::Sender<Value>>>> =
@@ -1258,7 +1435,7 @@ async fn spawn_server(
     lang: Language,
     root: &Path,
 ) -> Result<(Child, tokio::process::ChildStdin, tokio::process::ChildStdout)> {
-    let (cmd, args) = match lang {
+    let (cmd, args) = match &lang {
         Language::Rust => (cfg.rust_command.clone(), cfg.rust_args.clone()),
         Language::TypeScript | Language::JavaScript => (cfg.ts_command.clone(), cfg.ts_args.clone()),
         Language::Python => (cfg.py_command.clone(), cfg.py_args.clone()),
@@ -1269,6 +1446,15 @@ async fn spawn_server(
         Language::Yaml => (cfg.yaml_command.clone(), cfg.yaml_args.clone()),
         Language::Bash => (cfg.bash_command.clone(), cfg.bash_args.clone()),
         Language::Dockerfile => (cfg.dockerfile_command.clone(), cfg.dockerfile_args.clone()),
+        Language::CCpp => (cfg.clangd_command.clone(), cfg.clangd_args.clone()),
+        Language::Lua => (cfg.lua_command.clone(), cfg.lua_args.clone()),
+        Language::Toml => (cfg.toml_command.clone(), cfg.toml_args.clone()),
+        Language::Markdown => (cfg.markdown_command.clone(), cfg.markdown_args.clone()),
+        Language::Custom(id) => cfg
+            .custom_servers
+            .get(id)
+            .cloned()
+            .ok_or_else(|| anyhow!("no command configured for custom language: {id}"))?,
     };
 
     let mut c = Command::new(&cmd);

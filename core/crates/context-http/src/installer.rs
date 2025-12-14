@@ -649,6 +649,131 @@ pub async fn apply_managed_lsp_server_config(
     Ok(())
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserLspServerSpec {
+    /// Language id used for `textDocument/didOpen` (and to key the server).
+    pub language_id: String,
+    pub command: String,
+    #[serde(default)]
+    pub args: Vec<String>,
+    /// File extensions (no leading dot) that map to this language server.
+    #[serde(default)]
+    pub extensions: Vec<String>,
+    /// Exact filenames (e.g. "Dockerfile") that map to this language server.
+    #[serde(default)]
+    pub filenames: Vec<String>,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub struct UserLspConfigFile {
+    #[serde(default)]
+    pub servers: Vec<UserLspServerSpec>,
+}
+
+fn user_lsp_config_path(data_root: &Path) -> PathBuf {
+    data_root.join("lsp").join("user_servers.json")
+}
+
+pub async fn load_user_lsp_config(data_root: &Path) -> Result<UserLspConfigFile> {
+    let path = user_lsp_config_path(data_root);
+    if !path.exists() {
+        return Ok(UserLspConfigFile::default());
+    }
+    let txt = tokio::fs::read_to_string(&path).await?;
+    Ok(serde_json::from_str(&txt).context("parsing user lsp server config")?)
+}
+
+pub async fn apply_user_lsp_server_config(
+    data_root: &Path,
+    cfg: &mut LspManagerConfig,
+) -> Result<()> {
+    let user = load_user_lsp_config(data_root).await.unwrap_or_default();
+    for server in user.servers {
+        let language_id = server.language_id.trim().to_string();
+        if language_id.is_empty() || server.command.trim().is_empty() {
+            continue;
+        }
+
+        // Allow overriding known servers by language id.
+        match language_id.as_str() {
+            "rust" => {
+                cfg.rust_command = server.command;
+                cfg.rust_args = server.args;
+            }
+            "typescript" | "javascript" => {
+                cfg.ts_command = server.command;
+                cfg.ts_args = server.args;
+            }
+            "python" => {
+                cfg.py_command = server.command;
+                cfg.py_args = server.args;
+            }
+            "go" => {
+                cfg.go_command = server.command;
+                cfg.go_args = server.args;
+            }
+            "html" => {
+                cfg.html_command = server.command;
+                cfg.html_args = server.args;
+            }
+            "css" => {
+                cfg.css_command = server.command;
+                cfg.css_args = server.args;
+            }
+            "json" => {
+                cfg.json_command = server.command;
+                cfg.json_args = server.args;
+            }
+            "yaml" => {
+                cfg.yaml_command = server.command;
+                cfg.yaml_args = server.args;
+            }
+            "bash" => {
+                cfg.bash_command = server.command;
+                cfg.bash_args = server.args;
+            }
+            "dockerfile" => {
+                cfg.dockerfile_command = server.command;
+                cfg.dockerfile_args = server.args;
+            }
+            "cpp" | "c" => {
+                cfg.clangd_command = server.command;
+                cfg.clangd_args = server.args;
+            }
+            "lua" => {
+                cfg.lua_command = server.command;
+                cfg.lua_args = server.args;
+            }
+            "toml" => {
+                cfg.toml_command = server.command;
+                cfg.toml_args = server.args;
+            }
+            "markdown" => {
+                cfg.markdown_command = server.command;
+                cfg.markdown_args = server.args;
+            }
+            other => {
+                cfg.custom_servers
+                    .insert(other.to_string(), (server.command, server.args));
+            }
+        }
+
+        for ext in server.extensions {
+            let ext = ext.trim().trim_start_matches('.').to_ascii_lowercase();
+            if !ext.is_empty() {
+                cfg.custom_extension_map.insert(ext, language_id.clone());
+            }
+        }
+        for name in server.filenames {
+            let name = name.trim().to_string();
+            if !name.is_empty() {
+                cfg.custom_filename_map.insert(name, language_id.clone());
+            }
+        }
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone)]
 pub struct NodeRuntime {
     pub node_root: PathBuf,

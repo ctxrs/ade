@@ -479,6 +479,7 @@ pub async fn serve(
 
     let mut lsp_cfg = LspManagerConfig::default();
     let _ = installer::apply_managed_lsp_server_config(&data_root, &mut lsp_cfg).await;
+    let _ = installer::apply_user_lsp_server_config(&data_root, &mut lsp_cfg).await;
     let state = Arc::new(AppState::new_with_lsp_config(
         data_root,
         store,
