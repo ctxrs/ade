@@ -1175,6 +1175,8 @@ function buildThreadViewModel(events: SessionEvent[]): {
       case "assistant_complete": {
         const full = String(ev.payload_json?.full_content ?? ev.payload_json?.content ?? "");
         const item = upsertAssistant(turnId, ev.created_at);
+        // Place completed assistant responses after any preceding tool activity.
+        item.created_at = ev.created_at;
         if (full) item.content = full;
         item.is_complete = true;
         break;
@@ -1240,6 +1242,22 @@ function buildThreadViewModel(events: SessionEvent[]): {
         break;
     }
   }
+
+  const itemRank = (it: ThreadItem): number => {
+    if (it.kind === "message") return 0;
+    if (it.kind === "tool") return 1;
+    return 2; // assistant
+  };
+
+  items.sort((a, b) => {
+    const ta = a.created_at;
+    const tb = b.created_at;
+    const tcmp = String(ta).localeCompare(String(tb));
+    if (tcmp !== 0) return tcmp;
+    const rcmp = itemRank(a) - itemRank(b);
+    if (rcmp !== 0) return rcmp;
+    return String(a.id).localeCompare(String(b.id));
+  });
 
   return { items, debugEvents };
 }

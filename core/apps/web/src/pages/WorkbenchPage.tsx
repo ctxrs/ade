@@ -73,6 +73,7 @@ export default function WorkbenchPage() {
   const { id: workspaceId } = useParams<{ id: string }>();
   const supervisor = useSessionSupervisor();
 
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [providers, setProviders] = useState<ProviderStatus[]>([]);
   const [providerOptions, setProviderOptions] = useState<Record<string, ProviderOptions>>({});
@@ -182,11 +183,20 @@ export default function WorkbenchPage() {
       });
   }, [activeTrackId]);
 
+  const sortedTasks = useMemo(() => {
+    return [...tasks].sort((a, b) => {
+      const ta = Date.parse(a.updated_at);
+      const tb = Date.parse(b.updated_at);
+      if (Number.isFinite(ta) && Number.isFinite(tb)) return tb - ta;
+      return String(b.updated_at).localeCompare(String(a.updated_at));
+    });
+  }, [tasks]);
+
   const filteredTasks = useMemo(() => {
     const q = taskQuery.trim().toLowerCase();
-    if (!q) return tasks;
-    return tasks.filter((t) => (t.title ?? "").toLowerCase().includes(q));
-  }, [tasks, taskQuery]);
+    if (!q) return sortedTasks;
+    return sortedTasks.filter((t) => (t.title ?? "").toLowerCase().includes(q));
+  }, [sortedTasks, taskQuery]);
 
   const activeSessionId = useMemo(() => {
     if (!activeTrackId) return null;
@@ -367,43 +377,72 @@ export default function WorkbenchPage() {
   };
 
   return (
-    <div className="wb-root">
-      <div className="wb-sidebar">
+    <div className={`wb-root ${sidebarCollapsed ? "wb-root-collapsed" : ""}`}>
+      <div className={`wb-sidebar ${sidebarCollapsed ? "wb-sidebar-collapsed" : ""}`}>
         <div className="wb-sidebar-top">
-          <div className="wb-sidebar-title">Agents</div>
-          <input
-            className="wb-search"
-            placeholder="Search Agents…"
-            value={taskQuery}
-            onChange={(e) => setTaskQuery(e.target.value)}
-          />
-          <button type="button" className="wb-new-agent" onClick={() => setActiveTaskId(null)}>
-            New Agent
-          </button>
+          <div className="wb-sidebar-header">
+            {!sidebarCollapsed && <div className="wb-sidebar-title">Agents</div>}
+            <button
+              type="button"
+              className="wb-sidebar-collapse"
+              aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+              title={sidebarCollapsed ? "Expand" : "Collapse"}
+              onClick={() => setSidebarCollapsed((v) => !v)}
+            >
+              {sidebarCollapsed ? "›" : "‹"}
+            </button>
+          </div>
+
+          {!sidebarCollapsed && (
+            <>
+              <input
+                className="wb-search"
+                placeholder="Search Agents…"
+                value={taskQuery}
+                onChange={(e) => setTaskQuery(e.target.value)}
+              />
+              <button type="button" className="wb-new-agent" onClick={() => setActiveTaskId(null)}>
+                New Agent
+              </button>
+            </>
+          )}
         </div>
 
-        <div className="wb-sidebar-section">
-          <div className="wb-section-title">Pinned</div>
-          <div className="wb-muted">No pinned agents yet.</div>
-        </div>
+        {!sidebarCollapsed && (
+          <div className="wb-sidebar-section">
+            <div className="wb-section-title">Pinned</div>
+            <div className="wb-muted">No pinned agents yet.</div>
+          </div>
+        )}
 
         <div className="wb-sidebar-section wb-sidebar-grow">
-          <div className="wb-section-title">Agents</div>
+          {!sidebarCollapsed && <div className="wb-section-title">Agents</div>}
           <div className="wb-task-list">
             {filteredTasks.map((t) => {
               const tid = idToString(t.id);
               const selected = tid === activeTaskId;
+              const title = t.title ?? "New conversation";
+              const icon = title.trim().slice(0, 1).toUpperCase() || "•";
               return (
                 <button
                   key={tid}
                   type="button"
-                  className={`wb-task ${selected ? "wb-task-active" : ""}`}
+                  className={`wb-task ${selected ? "wb-task-active" : ""} ${
+                    sidebarCollapsed ? "wb-task-collapsed" : ""
+                  }`}
                   onClick={() => setActiveTaskId(tid)}
+                  title={title}
                 >
-                  <div className="wb-task-title">{t.title}</div>
-                  <div className="wb-task-sub">
-                    {new Date(t.updated_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                  </div>
+                  {sidebarCollapsed ? (
+                    <div className="wb-task-icon">{icon}</div>
+                  ) : (
+                    <>
+                      <div className="wb-task-title">{title}</div>
+                      <div className="wb-task-sub">
+                        {new Date(t.updated_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                      </div>
+                    </>
+                  )}
                 </button>
               );
             })}
@@ -412,11 +451,11 @@ export default function WorkbenchPage() {
         </div>
 
         <div className="wb-sidebar-bottom">
-          <Link className="wb-link" to="/providers">
-            Providers
+          <Link className="wb-link" to="/providers" title="Providers">
+            {sidebarCollapsed ? "P" : "Providers"}
           </Link>
-          <Link className="wb-link" to="/diagnostics">
-            Diagnostics
+          <Link className="wb-link" to="/diagnostics" title="Diagnostics">
+            {sidebarCollapsed ? "D" : "Diagnostics"}
           </Link>
         </div>
       </div>
