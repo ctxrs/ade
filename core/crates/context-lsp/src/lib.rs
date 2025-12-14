@@ -31,6 +31,18 @@ pub struct LspManagerConfig {
     pub py_args: Vec<String>,
     pub go_command: String,
     pub go_args: Vec<String>,
+    pub html_command: String,
+    pub html_args: Vec<String>,
+    pub css_command: String,
+    pub css_args: Vec<String>,
+    pub json_command: String,
+    pub json_args: Vec<String>,
+    pub yaml_command: String,
+    pub yaml_args: Vec<String>,
+    pub bash_command: String,
+    pub bash_args: Vec<String>,
+    pub dockerfile_command: String,
+    pub dockerfile_args: Vec<String>,
     pub diagnostics_wait: Duration,
     pub execute_commands_enabled: bool,
     pub execute_command_allowlist: Vec<String>,
@@ -58,6 +70,30 @@ impl Default for LspManagerConfig {
         let go_command =
             std::env::var("CONTEXT_LSP_GO_COMMAND").unwrap_or_else(|_| "gopls".to_string());
         let go_args = vec!["-mode=stdio".to_string()];
+
+        let html_command = std::env::var("CONTEXT_LSP_HTML_COMMAND")
+            .unwrap_or_else(|_| "vscode-html-language-server".to_string());
+        let html_args = vec!["--stdio".to_string()];
+
+        let css_command = std::env::var("CONTEXT_LSP_CSS_COMMAND")
+            .unwrap_or_else(|_| "vscode-css-language-server".to_string());
+        let css_args = vec!["--stdio".to_string()];
+
+        let json_command = std::env::var("CONTEXT_LSP_JSON_COMMAND")
+            .unwrap_or_else(|_| "vscode-json-language-server".to_string());
+        let json_args = vec!["--stdio".to_string()];
+
+        let yaml_command = std::env::var("CONTEXT_LSP_YAML_COMMAND")
+            .unwrap_or_else(|_| "yaml-language-server".to_string());
+        let yaml_args = vec!["--stdio".to_string()];
+
+        let bash_command = std::env::var("CONTEXT_LSP_BASH_COMMAND")
+            .unwrap_or_else(|_| "bash-language-server".to_string());
+        let bash_args = vec!["start".to_string(), "--stdio".to_string()];
+
+        let dockerfile_command = std::env::var("CONTEXT_LSP_DOCKERFILE_COMMAND")
+            .unwrap_or_else(|_| "docker-langserver".to_string());
+        let dockerfile_args = vec!["--stdio".to_string()];
 
         let diagnostics_wait = Duration::from_secs(
             std::env::var("CONTEXT_LSP_DIAGNOSTICS_WAIT_SECS")
@@ -96,6 +132,18 @@ impl Default for LspManagerConfig {
             py_args,
             go_command,
             go_args,
+            html_command,
+            html_args,
+            css_command,
+            css_args,
+            json_command,
+            json_args,
+            yaml_command,
+            yaml_args,
+            bash_command,
+            bash_args,
+            dockerfile_command,
+            dockerfile_args,
             diagnostics_wait,
             execute_commands_enabled,
             execute_command_allowlist,
@@ -111,16 +159,30 @@ pub enum Language {
     JavaScript,
     Python,
     Go,
+    Html,
+    Css,
+    Json,
+    Yaml,
+    Bash,
+    Dockerfile,
 }
 
 impl Language {
     pub fn detect(path: &Path) -> Option<Self> {
+        if path.file_name().and_then(|s| s.to_str()) == Some("Dockerfile") {
+            return Some(Language::Dockerfile);
+        }
         match path.extension().and_then(|s| s.to_str()).unwrap_or("") {
             "rs" => Some(Language::Rust),
             "ts" | "tsx" => Some(Language::TypeScript),
             "js" | "jsx" | "mjs" | "cjs" => Some(Language::JavaScript),
             "py" => Some(Language::Python),
             "go" => Some(Language::Go),
+            "html" | "htm" => Some(Language::Html),
+            "css" | "scss" | "less" => Some(Language::Css),
+            "json" | "jsonc" => Some(Language::Json),
+            "yml" | "yaml" => Some(Language::Yaml),
+            "sh" | "bash" | "zsh" => Some(Language::Bash),
             _ => None,
         }
     }
@@ -132,6 +194,12 @@ impl Language {
             Language::JavaScript => "javascript",
             Language::Python => "python",
             Language::Go => "go",
+            Language::Html => "html",
+            Language::Css => "css",
+            Language::Json => "json",
+            Language::Yaml => "yaml",
+            Language::Bash => "bash",
+            Language::Dockerfile => "dockerfile",
         }
     }
 }
@@ -819,6 +887,9 @@ fn detect_workspace_languages(root: &Path) -> Vec<Language> {
     if root.join("go.mod").exists() {
         push_unique(&mut langs, Language::Go);
     }
+    if root.join("Dockerfile").exists() {
+        push_unique(&mut langs, Language::Dockerfile);
+    }
 
     if langs.is_empty() {
         push_unique(&mut langs, Language::Rust);
@@ -1192,6 +1263,12 @@ async fn spawn_server(
         Language::TypeScript | Language::JavaScript => (cfg.ts_command.clone(), cfg.ts_args.clone()),
         Language::Python => (cfg.py_command.clone(), cfg.py_args.clone()),
         Language::Go => (cfg.go_command.clone(), cfg.go_args.clone()),
+        Language::Html => (cfg.html_command.clone(), cfg.html_args.clone()),
+        Language::Css => (cfg.css_command.clone(), cfg.css_args.clone()),
+        Language::Json => (cfg.json_command.clone(), cfg.json_args.clone()),
+        Language::Yaml => (cfg.yaml_command.clone(), cfg.yaml_args.clone()),
+        Language::Bash => (cfg.bash_command.clone(), cfg.bash_args.clone()),
+        Language::Dockerfile => (cfg.dockerfile_command.clone(), cfg.dockerfile_args.clone()),
     };
 
     let mut c = Command::new(&cmd);

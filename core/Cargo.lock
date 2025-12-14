@@ -458,6 +458,7 @@ dependencies = [
  "tower",
  "tracing",
  "tracing-subscriber",
+ "urlencoding",
 ]
 
 [[package]]

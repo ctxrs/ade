@@ -226,10 +226,6 @@ button {
   margin-bottom: 8px;
 }
 
-.new-activity {
-  margin: 8px 0;
-}
-
 .banner {
   background: var(--panel-2);
   background: color-mix(in srgb, var(--warning) 18%, var(--panel) 82%);

@@ -88,6 +88,7 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
             get(install_stream_sse),
         )
         .route("/api/lsp/status", get(lsp_status))
+        .route("/api/lsp/servers/:id/install", post(install_lsp_server))
         .route("/api/lsp/diagnostics", post(lsp_diagnostics))
         .route("/api/lsp/definition", post(lsp_definition))
         .route("/api/lsp/type_definition", post(lsp_type_definition))
@@ -292,6 +293,12 @@ async fn lsp_status(State(state): State<Arc<AppState>>) -> Result<Json<LspStatus
         ("typescript", cfg.ts_command.clone(), cfg.ts_args.clone()),
         ("python", cfg.py_command.clone(), cfg.py_args.clone()),
         ("go", cfg.go_command.clone(), cfg.go_args.clone()),
+        ("html", cfg.html_command.clone(), cfg.html_args.clone()),
+        ("css", cfg.css_command.clone(), cfg.css_args.clone()),
+        ("json", cfg.json_command.clone(), cfg.json_args.clone()),
+        ("yaml", cfg.yaml_command.clone(), cfg.yaml_args.clone()),
+        ("bash", cfg.bash_command.clone(), cfg.bash_args.clone()),
+        ("dockerfile", cfg.dockerfile_command.clone(), cfg.dockerfile_args.clone()),
     ];
 
     let mut out = Vec::with_capacity(servers.len());
@@ -390,9 +397,31 @@ fn install_hints_for(language: &str) -> Vec<String> {
             "rustup component add rust-analyzer (if available)".to_string(),
             "or: install rust-analyzer from your distro/package manager".to_string(),
         ],
-        ("typescript", _) => vec!["npm i -g typescript typescript-language-server".to_string()],
-        ("python", _) => vec!["npm i -g pyright".to_string()],
+        ("typescript", _) => vec![
+            "managed: POST /api/lsp/servers/typescript/install (restart daemon after install)".to_string(),
+            "or: npm i -g typescript typescript-language-server".to_string(),
+        ],
+        ("python", _) => vec![
+            "managed: POST /api/lsp/servers/python/install (restart daemon after install)".to_string(),
+            "or: npm i -g pyright".to_string(),
+        ],
         ("go", _) => vec!["go install golang.org/x/tools/gopls@latest".to_string()],
+        ("html" | "css" | "json", _) => vec![
+            "managed: POST /api/lsp/servers/html/install (installs html+css+json; restart daemon after install)".to_string(),
+            "or: npm i -g vscode-langservers-extracted".to_string(),
+        ],
+        ("yaml", _) => vec![
+            "managed: POST /api/lsp/servers/yaml/install (restart daemon after install)".to_string(),
+            "or: npm i -g yaml-language-server".to_string(),
+        ],
+        ("bash", _) => vec![
+            "managed: POST /api/lsp/servers/bash/install (restart daemon after install)".to_string(),
+            "or: npm i -g bash-language-server".to_string(),
+        ],
+        ("dockerfile", _) => vec![
+            "managed: POST /api/lsp/servers/dockerfile/install (restart daemon after install)".to_string(),
+            "or: npm i -g dockerfile-language-server-nodejs".to_string(),
+        ],
         _ => vec![],
     }
 }
@@ -2862,6 +2891,40 @@ async fn install_provider(
 
     Ok(Json(InstallStartResponse {
         provider_id: id,
+        install_id,
+    }))
+}
+
+#[derive(Debug, Serialize)]
+struct LspInstallStartResponse {
+    server_id: String,
+    install_id: InstallId,
+}
+
+async fn install_lsp_server(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<LspInstallStartResponse>, StatusCode> {
+    if !installer::is_supported_managed_lsp_server(&id) {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
+    let install_key = format!("lsp:{id}");
+    let (install_id, started_new) = state.start_install(install_key).await;
+    if started_new {
+        let state2 = state.clone();
+        let server_id = id.clone();
+        tokio::spawn(async move {
+            if let Err(e) =
+                installer::install_lsp_server_with_progress(state2.clone(), install_id, server_id.clone()).await
+            {
+                tracing::error!("lsp install failed ({server_id}): {e:#}");
+            }
+        });
+    }
+
+    Ok(Json(LspInstallStartResponse {
+        server_id: id,
         install_id,
     }))
 }

@@ -98,6 +98,19 @@ async fn main() -> Result<()> {
                             "inputSchema": { "type": "object", "additionalProperties": false }
                         },
                         {
+                            "name": "context.lsp_install_server",
+                            "title": "Install LSP Server (Managed)",
+                            "description": "Triggers a managed install of an LSP server into the daemon data dir (may require restarting the daemon to take effect).",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "server_id": { "type": "string", "description": "One of: typescript, python, html, css, json, yaml, bash, dockerfile." }
+                                },
+                                "required": ["server_id"],
+                                "additionalProperties": false
+                            }
+                        },
+                        {
                             "name": "context.lsp_diagnostics",
                             "title": "LSP Diagnostics",
                             "description": "Returns language-server diagnostics for a file in the current session worktree (requires daemon LSP enabled).",
@@ -770,6 +783,26 @@ async fn main() -> Result<()> {
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
+                    "context.lsp_install_server" => {
+                        let server_id = arguments
+                            .get("server_id")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        if server_id.is_empty() {
+                            error(
+                                id.unwrap(),
+                                -32602,
+                                "Invalid params",
+                                Some(json!({"missing":"server_id"})),
+                            )
+                        } else {
+                            match lsp_install_server(&client, &daemon_url, &server_id).await {
+                                Ok(val) => ok(id.unwrap(), tool_ok(val)),
+                                Err(e) => ok(id.unwrap(), tool_err(e)),
+                            }
+                        }
+                    }
                     "context.lsp_diagnostics" => {
                         let path = arguments
                             .get("path")
@@ -1107,6 +1140,16 @@ async fn list_workspaces(client: &reqwest::Client, daemon_url: &str) -> Result<V
 
 async fn lsp_status(client: &reqwest::Client, daemon_url: &str) -> Result<Value> {
     daemon_get_json(client, daemon_url, "/api/lsp/status").await
+}
+
+async fn lsp_install_server(
+    client: &reqwest::Client,
+    daemon_url: &str,
+    server_id: &str,
+) -> Result<Value> {
+    let server_id = urlencoding::encode(server_id);
+    let path = format!("/api/lsp/servers/{server_id}/install");
+    daemon_post_json(client, daemon_url, &path, &json!({})).await
 }
 
 async fn lsp_diagnostics(

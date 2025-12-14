@@ -222,8 +222,19 @@ async fn lsp_status_endpoint_returns_expected_shape() {
         v.get("edit_plans_enabled").and_then(|x| x.as_bool()),
         Some(true)
     );
-    let servers = v.get("servers").and_then(|x| x.as_array()).cloned().unwrap_or_default();
-    assert_eq!(servers.len(), 4);
+    let servers = v
+        .get("servers")
+        .and_then(|x| x.as_array())
+        .cloned()
+        .unwrap_or_default();
+    assert!(servers.len() >= 4);
+    let langs: std::collections::HashSet<String> = servers
+        .iter()
+        .filter_map(|s| s.get("language").and_then(|x| x.as_str()).map(|s| s.to_string()))
+        .collect();
+    for required in ["rust", "typescript", "python", "go"] {
+        assert!(langs.contains(required), "missing {required}");
+    }
     for s in servers {
         assert!(s.get("language").and_then(|x| x.as_str()).unwrap_or("").len() > 0);
         assert!(s.get("command").and_then(|x| x.as_str()).unwrap_or("").len() > 0);

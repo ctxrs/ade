@@ -322,7 +322,10 @@ export function SessionView({
   }, [session?.provider_id]);
 
   const showCommandSuggestions = input.trimStart().startsWith("/");
-  const virtuosoStyle = variant === "workbench" ? ({ flex: 1 } as const) : ({ height: "70vh" } as const);
+  const threadStackStyle =
+    variant === "workbench"
+      ? ({ flex: 1, minHeight: 0, position: "relative" } as const)
+      : ({ height: "70vh", position: "relative" } as const);
 
   const wrapperClass = variant === "workbench" ? "wb-session-view" : "page split";
   const leftClass = variant === "workbench" ? "wb-session-left" : "left";
@@ -575,79 +578,83 @@ export function SessionView({
           <DebugPanel events={debugEvents} />
         )}
 
-        {variant === "workbench" ? (
-          <GroupedVirtuoso
-            style={virtuosoStyle}
-            data={wbFlatItems}
-            groupCounts={wbGroupCounts}
-            ref={groupedVirtuosoRef}
-            followOutput="auto"
-            atBottomStateChange={(b) => {
-              setAtBottom(b);
-              if (b) setHasNewActivity(false);
-            }}
-            components={{
-              List: forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>((props, ref) => (
-                <div {...props} ref={ref} role="list" />
-              )),
-              Item: forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>((props, ref) => (
-                <div {...props} ref={ref} role="listitem" />
-              )),
-            }}
-            groupContent={(groupIndex) => {
-              const header = wbGroups[groupIndex]?.header ?? null;
-              if (!header) return <div style={{ height: 0 }} />;
-              const isLong = header.content.split("\n").length > 4 || header.content.length > 280;
-              const expanded = expandedTurnHeaders[header.id] ?? !isLong;
-              return (
-                <WorkbenchTurnHeaderView
-                  header={header}
-                  expanded={expanded}
-                  onToggle={() =>
-                    setExpandedTurnHeaders((prev) => ({ ...prev, [header.id]: !expanded }))
-                  }
-                />
-              );
-            }}
-            itemContent={(_index, _groupIndex, item) => renderThreadItem(item)}
-          />
-        ) : (
-          <Virtuoso
-            style={virtuosoStyle}
-            data={threadItems}
-            ref={virtuosoRef}
-            followOutput="auto"
-            atBottomStateChange={(b) => {
-              setAtBottom(b);
-              if (b) setHasNewActivity(false);
-            }}
-            components={{
-              List: forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>((props, ref) => (
-                <div {...props} ref={ref} role="list" />
-              )),
-              Item: forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>((props, ref) => (
-                <div {...props} ref={ref} role="listitem" />
-              )),
-            }}
-            itemContent={(_, item) => renderThreadItem(item)}
-          />
-        )}
+        <div className="thread-stack" style={threadStackStyle}>
+          {variant === "workbench" ? (
+            <GroupedVirtuoso
+              style={{ height: "100%" }}
+              data={wbFlatItems}
+              groupCounts={wbGroupCounts}
+              ref={groupedVirtuosoRef}
+              followOutput="auto"
+              atBottomStateChange={(b) => {
+                setAtBottom(b);
+                if (b) setHasNewActivity(false);
+              }}
+              components={{
+                List: forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>((props, ref) => (
+                  <div {...props} ref={ref} role="list" />
+                )),
+                Item: forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>((props, ref) => (
+                  <div {...props} ref={ref} role="listitem" />
+                )),
+              }}
+              groupContent={(groupIndex) => {
+                const header = wbGroups[groupIndex]?.header ?? null;
+                if (!header) return <div style={{ height: 0 }} />;
+                const isLong = header.content.split("\n").length > 4 || header.content.length > 280;
+                const expanded = expandedTurnHeaders[header.id] ?? !isLong;
+                return (
+                  <WorkbenchTurnHeaderView
+                    header={header}
+                    expanded={expanded}
+                    onToggle={() =>
+                      setExpandedTurnHeaders((prev) => ({ ...prev, [header.id]: !expanded }))
+                    }
+                  />
+                );
+              }}
+              itemContent={(_index, _groupIndex, item) => renderThreadItem(item)}
+            />
+          ) : (
+            <Virtuoso
+              style={{ height: "100%" }}
+              data={threadItems}
+              ref={virtuosoRef}
+              followOutput="auto"
+              atBottomStateChange={(b) => {
+                setAtBottom(b);
+                if (b) setHasNewActivity(false);
+              }}
+              components={{
+                List: forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>((props, ref) => (
+                  <div {...props} ref={ref} role="list" />
+                )),
+                Item: forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>((props, ref) => (
+                  <div {...props} ref={ref} role="listitem" />
+                )),
+              }}
+              itemContent={(_, item) => renderThreadItem(item)}
+            />
+          )}
 
-        {hasNewActivity && (
-          <button
-            type="button"
-            className="new-activity"
-            onClick={() => {
-              if (variant === "workbench") {
-                groupedVirtuosoRef.current?.scrollToIndex({ index: "LAST", align: "end" });
-              } else if (threadItems.length > 0) {
-                virtuosoRef.current?.scrollToIndex({ index: threadItems.length - 1 });
-              }
-            }}
-          >
-            New activity ↓
-          </button>
-        )}
+          {hasNewActivity && (
+            <button
+              type="button"
+              className="new-activity-overlay"
+              aria-label="Jump to latest"
+              title="Jump to latest"
+              onClick={() => {
+                if (variant === "workbench") {
+                  groupedVirtuosoRef.current?.scrollToIndex({ index: "LAST", align: "end" });
+                } else if (threadItems.length > 0) {
+                  virtuosoRef.current?.scrollToIndex({ index: threadItems.length - 1 });
+                }
+              }}
+            >
+              ↓
+            </button>
+          )}
+        </div>
 
         {variant === "legacy" && <ActivityBar planEntries={planEntries} diffText={diff} />}
 
