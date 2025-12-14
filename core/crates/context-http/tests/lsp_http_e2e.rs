@@ -229,3 +229,128 @@ async fn lsp_status_endpoint_returns_expected_shape() {
         assert!(s.get("found").and_then(|x| x.as_bool()).is_some());
     }
 }
+
+#[tokio::test]
+async fn lsp_semantic_endpoints_return_payloads() {
+    let data_dir = tempfile::tempdir().unwrap();
+    let db_dir = data_dir.path().join("db");
+    tokio::fs::create_dir_all(&db_dir).await.unwrap();
+    let db_path = db_dir.join("db.sqlite");
+    let store = Store::open(&db_path).await.unwrap();
+
+    let lsp_server = env!("CARGO_BIN_EXE_context-http-lsp-test-server").to_string();
+    let state = Arc::new(AppState::new_with_lsp_config_and_flags(
+        data_dir.path().to_path_buf(),
+        store.clone(),
+        HashMap::new(),
+        "http://127.0.0.1:4399".to_string(),
+        None,
+        LspManagerConfig {
+            enabled: true,
+            rust_command: lsp_server,
+            rust_args: vec![],
+            diagnostics_wait: Duration::from_secs(2),
+            ..Default::default()
+        },
+        false,
+    ));
+    let app = api::router(state.clone());
+
+    let repo = setup_git_repo().await;
+
+    // create workspace
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/workspaces")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "root_path": repo.path().to_string_lossy(),
+                "name": "ws"
+            })
+            .to_string(),
+        ))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let ws: context_core::models::Workspace = serde_json::from_slice(&body).unwrap();
+
+    // create task (auto track + worktree)
+    let req = Request::builder()
+        .method("POST")
+        .uri(format!("/api/workspaces/{}/tasks", ws.id.0))
+        .header("content-type", "application/json")
+        .body(Body::from(json!({"title":"t1"}).to_string()))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let task: context_core::models::Task = serde_json::from_slice(&body).unwrap();
+
+    // list tracks
+    let req = Request::builder()
+        .method("GET")
+        .uri(format!("/api/tasks/{}/tracks", task.id.0))
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let tracks: Vec<context_core::models::Track> = serde_json::from_slice(&body).unwrap();
+    assert_eq!(tracks.len(), 1);
+    let track = &tracks[0];
+
+    // create session
+    let req = Request::builder()
+        .method("POST")
+        .uri(format!("/api/tracks/{}/sessions", track.id.0))
+        .header("content-type", "application/json")
+        .body(Body::from(json!({"provider_id":"fake","model_id":"fake"}).to_string()))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let session: context_core::models::Session = serde_json::from_slice(&body).unwrap();
+
+    let wt = state
+        .store
+        .get_worktree(session.worktree_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let wt_root = std::path::PathBuf::from(wt.root_path);
+    tokio::fs::create_dir_all(wt_root.join("src")).await.unwrap();
+    tokio::fs::write(wt_root.join("src/lib.rs"), "pub fn ok() {}\n")
+        .await
+        .unwrap();
+
+    let pos_req = |path: &str| {
+        json!({
+            "session_id": session.id.0.to_string(),
+            "path": path,
+            "line": 0,
+            "character": 0
+        })
+    };
+
+    for endpoint in [
+        "/api/lsp/hover",
+        "/api/lsp/signature_help",
+        "/api/lsp/completion",
+        "/api/lsp/type_definition",
+        "/api/lsp/implementation",
+    ] {
+        let req = Request::builder()
+            .method("POST")
+            .uri(endpoint)
+            .header("content-type", "application/json")
+            .body(Body::from(pos_req("src/lib.rs").to_string()))
+            .unwrap();
+        let res = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK, "endpoint {endpoint} failed");
+        let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert!(v != serde_json::Value::Null, "endpoint {endpoint} returned null");
+    }
+}

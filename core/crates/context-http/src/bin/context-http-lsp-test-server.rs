@@ -17,16 +17,21 @@ fn main() {
 
         if msg.get("method").and_then(|v| v.as_str()) == Some("initialize") {
             if let Some(id) = msg.get("id").cloned() {
-                write_response(
-                    &mut output,
-                    json!({
-                        "jsonrpc":"2.0",
+	                write_response(
+	                    &mut output,
+	                    json!({
+	                        "jsonrpc":"2.0",
                         "id": id,
                         "result": {
                             "capabilities": {
                                 "textDocumentSync": 1,
                                 "definitionProvider": true,
+                                "typeDefinitionProvider": true,
+                                "implementationProvider": true,
                                 "referencesProvider": true,
+                                "hoverProvider": true,
+                                "signatureHelpProvider": true,
+                                "completionProvider": true,
                                 "documentSymbolProvider": true,
                                 "workspaceSymbolProvider": true,
                                 "renameProvider": true,
@@ -104,6 +109,58 @@ fn main() {
             continue;
         }
 
+        if msg.get("method").and_then(|v| v.as_str()) == Some("textDocument/typeDefinition") {
+            if let Some(id) = msg.get("id").cloned() {
+                let uri = msg
+                    .get("params")
+                    .and_then(|p| p.get("textDocument"))
+                    .and_then(|d| d.get("uri"))
+                    .and_then(|u| u.as_str())
+                    .unwrap_or("file:///unknown.rs");
+                write_response(
+                    &mut output,
+                    json!({
+                        "jsonrpc":"2.0",
+                        "id": id,
+                        "result": [{
+                            "uri": uri,
+                            "range": {
+                                "start": {"line": 0, "character": 0},
+                                "end": {"line": 0, "character": 1}
+                            }
+                        }]
+                    }),
+                );
+            }
+            continue;
+        }
+
+        if msg.get("method").and_then(|v| v.as_str()) == Some("textDocument/implementation") {
+            if let Some(id) = msg.get("id").cloned() {
+                let uri = msg
+                    .get("params")
+                    .and_then(|p| p.get("textDocument"))
+                    .and_then(|d| d.get("uri"))
+                    .and_then(|u| u.as_str())
+                    .unwrap_or("file:///unknown.rs");
+                write_response(
+                    &mut output,
+                    json!({
+                        "jsonrpc":"2.0",
+                        "id": id,
+                        "result": [{
+                            "uri": uri,
+                            "range": {
+                                "start": {"line": 0, "character": 0},
+                                "end": {"line": 0, "character": 1}
+                            }
+                        }]
+                    }),
+                );
+            }
+            continue;
+        }
+
         if msg.get("method").and_then(|v| v.as_str()) == Some("textDocument/references") {
             if let Some(id) = msg.get("id").cloned() {
                 let uri = msg
@@ -124,6 +181,60 @@ fn main() {
                                 "end": {"line": 0, "character": 1}
                             }
                         }]
+                    }),
+                );
+            }
+            continue;
+        }
+
+        if msg.get("method").and_then(|v| v.as_str()) == Some("textDocument/hover") {
+            if let Some(id) = msg.get("id").cloned() {
+                write_response(
+                    &mut output,
+                    json!({
+                        "jsonrpc":"2.0",
+                        "id": id,
+                        "result": {
+                            "contents": { "kind": "markdown", "value": "Test hover (http)" }
+                        }
+                    }),
+                );
+            }
+            continue;
+        }
+
+        if msg.get("method").and_then(|v| v.as_str()) == Some("textDocument/signatureHelp") {
+            if let Some(id) = msg.get("id").cloned() {
+                write_response(
+                    &mut output,
+                    json!({
+                        "jsonrpc":"2.0",
+                        "id": id,
+                        "result": {
+                            "signatures": [{
+                                "label": "f(x: i32) -> i32",
+                                "documentation": { "kind": "markdown", "value": "Test signature (http)" }
+                            }],
+                            "activeSignature": 0,
+                            "activeParameter": 0
+                        }
+                    }),
+                );
+            }
+            continue;
+        }
+
+        if msg.get("method").and_then(|v| v.as_str()) == Some("textDocument/completion") {
+            if let Some(id) = msg.get("id").cloned() {
+                write_response(
+                    &mut output,
+                    json!({
+                        "jsonrpc":"2.0",
+                        "id": id,
+                        "result": {
+                            "isIncomplete": false,
+                            "items": [{ "label": "completion_item", "kind": 6 }]
+                        }
                     }),
                 );
             }
@@ -183,18 +294,18 @@ fn main() {
                         "jsonrpc":"2.0",
                         "id": id,
                         "result": {
-                            "changes": {
-                                uri: [{
-                                    "range": {
-                                        "start": {"line": 0, "character": 0},
-                                        "end": {"line": 0, "character": 0}
-                                    },
-                                    "newText": format!("// rename: {new_name}\\n")
-                                }]
-                            }
-                        }
-                    }),
-                );
+	                            "changes": {
+	                                uri: [{
+	                                    "range": {
+	                                        "start": {"line": 0, "character": 0},
+	                                        "end": {"line": 0, "character": 0}
+	                                    },
+	                                    "newText": format!("// rename: {new_name}\n")
+	                                }]
+	                            }
+	                        }
+	                    }),
+	                );
             }
             continue;
         }
@@ -203,18 +314,18 @@ fn main() {
             if let Some(id) = msg.get("id").cloned() {
                 write_response(
                     &mut output,
-                    json!({
-                        "jsonrpc":"2.0",
-                        "id": id,
-                        "result": [{
+	                    json!({
+	                        "jsonrpc":"2.0",
+	                        "id": id,
+	                        "result": [{
                             "range": {
                                 "start": {"line": 0, "character": 0},
                                 "end": {"line": 0, "character": 0}
-                            },
-                            "newText": "/* formatted */\\n"
-                        }]
-                    }),
-                );
+	                            },
+	                            "newText": "/* formatted */\n"
+	                        }]
+	                    }),
+	                );
             }
             continue;
         }
@@ -235,39 +346,45 @@ fn main() {
                     .cloned()
                     .unwrap_or_default();
                 let wants_org = only.iter().any(|v| v.as_str() == Some("source.organizeImports"));
-                let result = if wants_org {
-                    json!([{
-                        "title": "Organize imports",
-                        "kind": "source.organizeImports",
-                        "edit": {
-                            "changes": {
-                                uri: [{
-                                    "range": {
-                                        "start": {"line": 0, "character": 0},
-                                        "end": {"line": 0, "character": 0}
-                                    },
-                                    "newText": "/* organize imports */\\n"
-                                }]
-                            }
-                        }
-                    }])
-                } else {
-                    json!([{
-                        "title": "Insert TODO",
-                        "kind": "quickfix",
-                        "edit": {
-                            "changes": {
-                                uri: [{
-                                    "range": {
-                                        "start": {"line": 0, "character": 0},
-                                        "end": {"line": 0, "character": 0}
-                                    },
-                                    "newText": "// TODO\\n"
-                                }]
-                            }
-                        }
-                    }])
-                };
+	                let result = if wants_org {
+	                    json!([{
+	                        "title": "Organize imports",
+	                        "kind": "source.organizeImports",
+                        "command": {
+                            "title": "Organize imports",
+                            "command": "context.test.organizeImports",
+                            "arguments": [{
+                                "edit": {
+	                                    "changes": {
+	                                        uri: [{
+	                                            "range": {
+	                                                "start": {"line": 0, "character": 0},
+	                                                "end": {"line": 0, "character": 0}
+	                                            },
+	                                            "newText": "/* organize imports */\n"
+	                                        }]
+	                                    }
+	                                }
+	                            }]
+	                        }
+	                    }])
+	                } else {
+	                    json!([{
+	                        "title": "Insert TODO",
+	                        "kind": "quickfix",
+	                        "edit": {
+	                            "changes": {
+	                                uri: [{
+	                                    "range": {
+	                                        "start": {"line": 0, "character": 0},
+	                                        "end": {"line": 0, "character": 0}
+	                                    },
+	                                    "newText": "// TODO\n"
+	                                }]
+	                            }
+	                        }
+	                    }])
+	                };
                 write_response(
                     &mut output,
                     json!({

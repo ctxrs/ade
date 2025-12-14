@@ -128,6 +128,40 @@ async fn main() -> Result<()> {
                             }
                         },
                         {
+                            "name": "context.lsp_type_definition",
+                            "title": "LSP Type Definition",
+                            "description": "Returns the type definition location at a position in a file.",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "session_id": { "type": "string", "description": "Optional Context session id (defaults to $CONTEXT_SESSION_ID)." },
+                                    "path": { "type": "string" },
+                                    "root_path": { "type": "string" },
+                                    "line": { "type": "integer", "minimum": 0 },
+                                    "character": { "type": "integer", "minimum": 0 }
+                                },
+                                "required": ["path", "line", "character"],
+                                "additionalProperties": false
+                            }
+                        },
+                        {
+                            "name": "context.lsp_implementation",
+                            "title": "LSP Implementation",
+                            "description": "Returns implementations at a position in a file.",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "session_id": { "type": "string", "description": "Optional Context session id (defaults to $CONTEXT_SESSION_ID)." },
+                                    "path": { "type": "string" },
+                                    "root_path": { "type": "string" },
+                                    "line": { "type": "integer", "minimum": 0 },
+                                    "character": { "type": "integer", "minimum": 0 }
+                                },
+                                "required": ["path", "line", "character"],
+                                "additionalProperties": false
+                            }
+                        },
+                        {
                             "name": "context.lsp_references",
                             "title": "LSP References",
                             "description": "Returns references at a position in a file.",
@@ -140,6 +174,57 @@ async fn main() -> Result<()> {
                                     "line": { "type": "integer", "minimum": 0 },
                                     "character": { "type": "integer", "minimum": 0 },
                                     "include_declaration": { "type": "boolean" }
+                                },
+                                "required": ["path", "line", "character"],
+                                "additionalProperties": false
+                            }
+                        },
+                        {
+                            "name": "context.lsp_hover",
+                            "title": "LSP Hover",
+                            "description": "Returns hover information at a position in a file.",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "session_id": { "type": "string", "description": "Optional Context session id (defaults to $CONTEXT_SESSION_ID)." },
+                                    "path": { "type": "string" },
+                                    "root_path": { "type": "string" },
+                                    "line": { "type": "integer", "minimum": 0 },
+                                    "character": { "type": "integer", "minimum": 0 }
+                                },
+                                "required": ["path", "line", "character"],
+                                "additionalProperties": false
+                            }
+                        },
+                        {
+                            "name": "context.lsp_signature_help",
+                            "title": "LSP Signature Help",
+                            "description": "Returns signature help at a position in a file.",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "session_id": { "type": "string", "description": "Optional Context session id (defaults to $CONTEXT_SESSION_ID)." },
+                                    "path": { "type": "string" },
+                                    "root_path": { "type": "string" },
+                                    "line": { "type": "integer", "minimum": 0 },
+                                    "character": { "type": "integer", "minimum": 0 }
+                                },
+                                "required": ["path", "line", "character"],
+                                "additionalProperties": false
+                            }
+                        },
+                        {
+                            "name": "context.lsp_completion",
+                            "title": "LSP Completion",
+                            "description": "Returns completion items at a position in a file.",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "session_id": { "type": "string", "description": "Optional Context session id (defaults to $CONTEXT_SESSION_ID)." },
+                                    "path": { "type": "string" },
+                                    "root_path": { "type": "string" },
+                                    "line": { "type": "integer", "minimum": 0 },
+                                    "character": { "type": "integer", "minimum": 0 }
                                 },
                                 "required": ["path", "line", "character"],
                                 "additionalProperties": false
@@ -396,8 +481,38 @@ async fn main() -> Result<()> {
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
+                    "context.lsp_type_definition" => {
+                        match lsp_pos_call(&client, &daemon_url, "/api/lsp/type_definition", &arguments).await {
+                            Ok(val) => ok(id.unwrap(), tool_ok(val)),
+                            Err(e) => ok(id.unwrap(), tool_err(e)),
+                        }
+                    }
+                    "context.lsp_implementation" => {
+                        match lsp_pos_call(&client, &daemon_url, "/api/lsp/implementation", &arguments).await {
+                            Ok(val) => ok(id.unwrap(), tool_ok(val)),
+                            Err(e) => ok(id.unwrap(), tool_err(e)),
+                        }
+                    }
                     "context.lsp_references" => {
                         match lsp_pos_call(&client, &daemon_url, "/api/lsp/references", &arguments).await {
+                            Ok(val) => ok(id.unwrap(), tool_ok(val)),
+                            Err(e) => ok(id.unwrap(), tool_err(e)),
+                        }
+                    }
+                    "context.lsp_hover" => {
+                        match lsp_pos_call(&client, &daemon_url, "/api/lsp/hover", &arguments).await {
+                            Ok(val) => ok(id.unwrap(), tool_ok(val)),
+                            Err(e) => ok(id.unwrap(), tool_err(e)),
+                        }
+                    }
+                    "context.lsp_signature_help" => {
+                        match lsp_pos_call(&client, &daemon_url, "/api/lsp/signature_help", &arguments).await {
+                            Ok(val) => ok(id.unwrap(), tool_ok(val)),
+                            Err(e) => ok(id.unwrap(), tool_err(e)),
+                        }
+                    }
+                    "context.lsp_completion" => {
+                        match lsp_pos_call(&client, &daemon_url, "/api/lsp/completion", &arguments).await {
                             Ok(val) => ok(id.unwrap(), tool_ok(val)),
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }

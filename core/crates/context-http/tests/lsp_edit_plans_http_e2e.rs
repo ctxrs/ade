@@ -14,6 +14,10 @@ use context_http::daemon::AppState;
 use context_lsp::LspManagerConfig;
 use context_store::Store;
 
+fn file_uri(path: &Path) -> String {
+    url::Url::from_file_path(path).unwrap().to_string()
+}
+
 async fn run_git(root: &Path, args: &[&str]) {
     let output = Command::new("git")
         .arg("-C")
@@ -335,7 +339,17 @@ async fn lsp_rename_plan_create_and_apply() {
         .body(Body::from(json!({"action":"accept","patch": diff}).to_string()))
         .unwrap();
     let res = app.clone().oneshot(req).await.unwrap();
-    assert_eq!(res.status(), StatusCode::OK);
+    if res.status() != StatusCode::OK {
+        let status = res.status();
+        let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        let patch_snippet = &diff[..std::cmp::min(diff.len(), 2000)];
+        panic!(
+            "apply failed with {}: {}\npatch:\n{}",
+            status,
+            String::from_utf8_lossy(&body),
+            patch_snippet
+        );
+    }
 
     let updated = tokio::fs::read_to_string(wt_root.join("src/lib.rs")).await.unwrap();
     assert!(updated.contains("rename: better"), "file not updated:\n{updated}");
@@ -414,10 +428,202 @@ async fn lsp_code_action_plan_create_and_apply() {
         .body(Body::from(json!({"action":"accept","patch": diff}).to_string()))
         .unwrap();
     let res = app.clone().oneshot(req).await.unwrap();
-    assert_eq!(res.status(), StatusCode::OK);
+    if res.status() != StatusCode::OK {
+        let status = res.status();
+        let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        let patch_snippet = &diff[..std::cmp::min(diff.len(), 2000)];
+        panic!(
+            "apply failed with {}: {}\npatch:\n{}",
+            status,
+            String::from_utf8_lossy(&body),
+            patch_snippet
+        );
+    }
 
     let updated = tokio::fs::read_to_string(wt_root.join("src/lib.rs")).await.unwrap();
     assert!(updated.contains("// TODO"), "file not updated:\n{updated}");
+}
+
+#[tokio::test]
+async fn lsp_code_action_plan_supports_command_only_embedded_edit() {
+    let (_data_dir, state, app) = setup_state_and_app(true).await;
+    let repo = setup_git_repo().await;
+    let (_track, session, wt_root) = create_workspace_task_session(&app, &state, repo.path()).await;
+
+    let file = wt_root.join("src/lib.rs");
+    let uri = file_uri(&file);
+    let action = json!({
+        "title": "Insert CMD",
+        "kind": "quickfix",
+        "command": {
+            "title": "Insert CMD",
+            "command": "context.test.insertCmd",
+            "arguments": [{
+                "edit": {
+                    "changes": {
+                        uri: [{
+                            "range": {
+                                "start": {"line": 0, "character": 0},
+                                "end": {"line": 0, "character": 0}
+                            },
+                            "newText": "// CMD\n"
+                        }]
+                    }
+                }
+            }]
+        }
+    });
+
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/lsp/code_actions/plan")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "session_id": session.id.0.to_string(),
+                "action": action
+            })
+            .to_string(),
+        ))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let summary: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let plan_id = summary
+        .get("id")
+        .and_then(|v| v.as_str().or_else(|| v.get("0").and_then(|x| x.as_str())))
+        .unwrap();
+    let diff = summary.get("diff").and_then(|v| v.as_str()).unwrap();
+    assert!(diff.contains("// CMD"), "unexpected diff:\n{diff}");
+
+    let req = Request::builder()
+        .method("POST")
+        .uri(format!("/api/edit_plans/{}/apply", plan_id))
+        .header("content-type", "application/json")
+        .body(Body::from(json!({"action":"accept","patch": diff}).to_string()))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    if res.status() != StatusCode::OK {
+        let status = res.status();
+        let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        let patch_snippet = &diff[..std::cmp::min(diff.len(), 2000)];
+        panic!(
+            "apply failed with {}: {}\npatch:\n{}",
+            status,
+            String::from_utf8_lossy(&body),
+            patch_snippet
+        );
+    }
+
+    let updated = tokio::fs::read_to_string(wt_root.join("src/lib.rs")).await.unwrap();
+    assert!(updated.contains("// CMD"), "file not updated:\n{updated}");
+}
+
+#[tokio::test]
+async fn lsp_code_action_plan_supports_workspace_edit_file_ops() {
+    let (_data_dir, state, app) = setup_state_and_app(true).await;
+    let repo = setup_git_repo().await;
+    let (_track, session, wt_root) = create_workspace_task_session(&app, &state, repo.path()).await;
+
+    let create_path = wt_root.join("src/created.rs");
+    let rename_from = wt_root.join("src/rename_from.rs");
+    let rename_to = wt_root.join("src/rename_to.rs");
+    let delete_path = wt_root.join("src/delete_me.rs");
+    tokio::fs::write(&rename_from, "fn from() {}\n").await.unwrap();
+    tokio::fs::write(&delete_path, "fn delete_me() {}\n").await.unwrap();
+
+    let create_uri = file_uri(&create_path);
+    let rename_from_uri = file_uri(&rename_from);
+    let rename_to_uri = file_uri(&rename_to);
+    let delete_uri = file_uri(&delete_path);
+
+    let action = json!({
+        "title": "File ops",
+        "kind": "quickfix",
+        "edit": {
+            "documentChanges": [
+                { "kind": "create", "uri": create_uri },
+                {
+                    "textDocument": { "uri": create_uri, "version": null },
+                    "edits": [{
+                        "range": {
+                            "start": {"line": 0, "character": 0},
+                            "end": {"line": 0, "character": 0}
+                        },
+                        "newText": "fn created() {}\n"
+                    }]
+                },
+                { "kind": "rename", "oldUri": rename_from_uri, "newUri": rename_to_uri },
+                {
+                    "textDocument": { "uri": rename_to_uri, "version": null },
+                    "edits": [{
+                        "range": {
+                            "start": {"line": 0, "character": 0},
+                            "end": {"line": 0, "character": 0}
+                        },
+                        "newText": "// renamed\n"
+                    }]
+                },
+                { "kind": "delete", "uri": delete_uri }
+            ]
+        }
+    });
+
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/lsp/code_actions/plan")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "session_id": session.id.0.to_string(),
+                "action": action
+            })
+            .to_string(),
+        ))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let summary: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let plan_id = summary
+        .get("id")
+        .and_then(|v| v.as_str().or_else(|| v.get("0").and_then(|x| x.as_str())))
+        .unwrap();
+    let diff = summary.get("diff").and_then(|v| v.as_str()).unwrap();
+    assert!(diff.contains("created.rs"), "unexpected diff:\n{diff}");
+    assert!(diff.contains("rename_to.rs"), "unexpected diff:\n{diff}");
+    assert!(diff.contains("delete_me.rs"), "unexpected diff:\n{diff}");
+
+    let req = Request::builder()
+        .method("POST")
+        .uri(format!("/api/edit_plans/{}/apply", plan_id))
+        .header("content-type", "application/json")
+        .body(Body::from(json!({"action":"accept","patch": diff}).to_string()))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    if res.status() != StatusCode::OK {
+        let status = res.status();
+        let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        let patch_snippet = &diff[..std::cmp::min(diff.len(), 2000)];
+        panic!(
+            "apply failed with {}: {}\npatch:\n{}",
+            status,
+            String::from_utf8_lossy(&body),
+            patch_snippet
+        );
+    }
+
+    assert!(!rename_from.exists(), "expected {} removed", rename_from.display());
+    assert!(!delete_path.exists(), "expected {} removed", delete_path.display());
+    assert!(create_path.exists(), "expected {} created", create_path.display());
+    assert!(rename_to.exists(), "expected {} created", rename_to.display());
+
+    let created = tokio::fs::read_to_string(&create_path).await.unwrap();
+    assert!(created.contains("fn created()"), "unexpected create contents:\n{created}");
+    let renamed = tokio::fs::read_to_string(&rename_to).await.unwrap();
+    assert!(renamed.contains("// renamed"), "unexpected rename contents:\n{renamed}");
+    assert!(renamed.contains("fn from"), "unexpected rename contents:\n{renamed}");
 }
 
 #[tokio::test]

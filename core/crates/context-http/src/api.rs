@@ -89,7 +89,12 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
         .route("/api/lsp/status", get(lsp_status))
         .route("/api/lsp/diagnostics", post(lsp_diagnostics))
         .route("/api/lsp/definition", post(lsp_definition))
+        .route("/api/lsp/type_definition", post(lsp_type_definition))
+        .route("/api/lsp/implementation", post(lsp_implementation))
         .route("/api/lsp/references", post(lsp_references))
+        .route("/api/lsp/hover", post(lsp_hover))
+        .route("/api/lsp/signature_help", post(lsp_signature_help))
+        .route("/api/lsp/completion", post(lsp_completion))
         .route("/api/lsp/document_symbols", post(lsp_document_symbols))
         .route("/api/lsp/workspace_symbols", post(lsp_workspace_symbols))
         .route("/api/lsp/code_actions", post(lsp_code_actions))
@@ -530,6 +535,52 @@ async fn lsp_definition(
     Ok(Json(v))
 }
 
+async fn lsp_type_definition(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<LspPosReq>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    if !state.lsp.enabled() {
+        return Err(StatusCode::CONFLICT);
+    }
+    let (root, file) = resolve_lsp_target(&state, req.file).await?;
+    let v = state
+        .lsp
+        .type_definition(
+            &root,
+            &file,
+            lsp_types::Position {
+                line: req.line,
+                character: req.character,
+            },
+        )
+        .await
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    Ok(Json(v))
+}
+
+async fn lsp_implementation(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<LspPosReq>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    if !state.lsp.enabled() {
+        return Err(StatusCode::CONFLICT);
+    }
+    let (root, file) = resolve_lsp_target(&state, req.file).await?;
+    let v = state
+        .lsp
+        .implementation(
+            &root,
+            &file,
+            lsp_types::Position {
+                line: req.line,
+                character: req.character,
+            },
+        )
+        .await
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    Ok(Json(v))
+}
+
 async fn lsp_references(
     State(state): State<Arc<AppState>>,
     Json(req): Json<LspRefsReq>,
@@ -555,6 +606,75 @@ async fn lsp_references(
         .filter_map(|l| serde_json::to_value(l).ok())
         .collect::<Vec<_>>();
     Ok(Json(out))
+}
+
+async fn lsp_hover(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<LspPosReq>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    if !state.lsp.enabled() {
+        return Err(StatusCode::CONFLICT);
+    }
+    let (root, file) = resolve_lsp_target(&state, req.file).await?;
+    let v = state
+        .lsp
+        .hover(
+            &root,
+            &file,
+            lsp_types::Position {
+                line: req.line,
+                character: req.character,
+            },
+        )
+        .await
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    Ok(Json(v))
+}
+
+async fn lsp_signature_help(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<LspPosReq>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    if !state.lsp.enabled() {
+        return Err(StatusCode::CONFLICT);
+    }
+    let (root, file) = resolve_lsp_target(&state, req.file).await?;
+    let v = state
+        .lsp
+        .signature_help(
+            &root,
+            &file,
+            lsp_types::Position {
+                line: req.line,
+                character: req.character,
+            },
+        )
+        .await
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    Ok(Json(v))
+}
+
+async fn lsp_completion(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<LspPosReq>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    if !state.lsp.enabled() {
+        return Err(StatusCode::CONFLICT);
+    }
+    let (root, file) = resolve_lsp_target(&state, req.file).await?;
+    let v = state
+        .lsp
+        .completion(
+            &root,
+            &file,
+            lsp_types::Position {
+                line: req.line,
+                character: req.character,
+            },
+        )
+        .await
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    Ok(Json(v))
 }
 
 async fn lsp_document_symbols(
@@ -866,6 +986,42 @@ async fn lsp_format_plan(
     Ok(Json(summary))
 }
 
+fn extract_workspace_edit_from_command(cmd: &lsp_types::Command) -> Option<lsp_types::WorkspaceEdit> {
+    let args = cmd.arguments.as_ref()?;
+    for arg in args {
+        if let Ok(edit) = serde_json::from_value::<lsp_types::WorkspaceEdit>(arg.clone()) {
+            let has_edits = edit
+                .changes
+                .as_ref()
+                .map(|m| !m.is_empty())
+                .unwrap_or(false)
+                || edit.document_changes.is_some();
+            if has_edits {
+                return Some(edit);
+            }
+        }
+        if let Some(obj) = arg.as_object() {
+            for key in ["edit", "workspaceEdit"] {
+                if let Some(val) = obj.get(key) {
+                    if let Ok(edit) = serde_json::from_value::<lsp_types::WorkspaceEdit>(val.clone()) {
+                        let has_edits = edit
+                            .changes
+                            .as_ref()
+                            .map(|m| !m.is_empty())
+                            .unwrap_or(false)
+                            || edit.document_changes.is_some();
+                        if !has_edits {
+                            continue;
+                        }
+                        return Some(edit);
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
 async fn lsp_code_actions_plan(
     State(state): State<Arc<AppState>>,
     Json(req): Json<LspCodeActionPlanReq>,
@@ -935,7 +1091,7 @@ async fn lsp_code_actions_plan(
             )
         })?;
 
-    let ca: lsp_types::CodeAction = serde_json::from_value(req.action.clone()).map_err(|e| {
+    let action: lsp_types::CodeActionOrCommand = serde_json::from_value(req.action.clone()).map_err(|e| {
         (
             StatusCode::BAD_REQUEST,
             Json(ApiErrorResp {
@@ -943,7 +1099,19 @@ async fn lsp_code_actions_plan(
             }),
         )
     })?;
-    let Some(edit) = ca.edit else {
+    let (title, edit) = match action {
+        lsp_types::CodeActionOrCommand::CodeAction(ca) => {
+            let edit = ca
+                .edit
+                .or_else(|| ca.command.as_ref().and_then(extract_workspace_edit_from_command));
+            (ca.title, edit)
+        }
+        lsp_types::CodeActionOrCommand::Command(cmd) => {
+            let edit = extract_workspace_edit_from_command(&cmd);
+            (cmd.title, edit)
+        }
+    };
+    let Some(edit) = edit else {
         return Err((
             StatusCode::BAD_REQUEST,
             Json(ApiErrorResp {
@@ -957,7 +1125,7 @@ async fn lsp_code_actions_plan(
         &root,
         sid,
         track_id,
-        ca.title.clone(),
+        title,
         edit,
     )
     .map_err(|e| {
@@ -1085,8 +1253,10 @@ async fn lsp_organize_imports_plan(
         })?;
 
     let edit = actions.into_iter().find_map(|a| match a {
-        lsp_types::CodeActionOrCommand::CodeAction(ca) => ca.edit,
-        lsp_types::CodeActionOrCommand::Command(_cmd) => None,
+        lsp_types::CodeActionOrCommand::CodeAction(ca) => ca
+            .edit
+            .or_else(|| ca.command.as_ref().and_then(extract_workspace_edit_from_command)),
+        lsp_types::CodeActionOrCommand::Command(cmd) => extract_workspace_edit_from_command(&cmd),
     });
     let Some(edit) = edit else {
         return Err((

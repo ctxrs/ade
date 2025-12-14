@@ -60,11 +60,41 @@ async fn test_server_supports_semantic_actions() {
         .unwrap();
     assert!(def.is_array());
 
+    let tdef = mgr
+        .type_definition(root, &file, Position { line: 0, character: 0 })
+        .await
+        .unwrap();
+    assert!(tdef.is_array());
+
+    let impls = mgr
+        .implementation(root, &file, Position { line: 0, character: 0 })
+        .await
+        .unwrap();
+    assert!(impls.is_array());
+
     let refs = mgr
         .references(root, &file, Position { line: 0, character: 0 }, true)
         .await
         .unwrap();
     assert_eq!(refs.len(), 1);
+
+    let hover = mgr
+        .hover(root, &file, Position { line: 0, character: 0 })
+        .await
+        .unwrap();
+    assert!(hover.is_object());
+
+    let sig = mgr
+        .signature_help(root, &file, Position { line: 0, character: 0 })
+        .await
+        .unwrap();
+    assert!(sig.is_object());
+
+    let comp = mgr
+        .completion(root, &file, Position { line: 0, character: 0 })
+        .await
+        .unwrap();
+    assert!(comp.is_object());
 
     let edit = mgr
         .rename(root, &file, Position { line: 0, character: 0 }, "new".into())

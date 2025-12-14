@@ -30,7 +30,12 @@ fn main() {
                             "capabilities": {
                                 "textDocumentSync": 1,
                                 "definitionProvider": true,
+                                "typeDefinitionProvider": true,
+                                "implementationProvider": true,
                                 "referencesProvider": true,
+                                "hoverProvider": true,
+                                "signatureHelpProvider": true,
+                                "completionProvider": true,
                                 "documentSymbolProvider": true,
                                 "workspaceSymbolProvider": true,
                                 "renameProvider": true,
@@ -111,6 +116,30 @@ fn main() {
                     };
                     json!([loc])
                 }
+                "textDocument/typeDefinition" => {
+                    let uri: lsp_types::Uri = uri_from_params(&msg)
+                        .unwrap_or_else(|| "file:///unknown.rs".parse().unwrap());
+                    let loc = Location {
+                        uri,
+                        range: Range {
+                            start: Position { line: 0, character: 0 },
+                            end: Position { line: 0, character: 1 },
+                        },
+                    };
+                    json!([loc])
+                }
+                "textDocument/implementation" => {
+                    let uri: lsp_types::Uri = uri_from_params(&msg)
+                        .unwrap_or_else(|| "file:///unknown.rs".parse().unwrap());
+                    let loc = Location {
+                        uri,
+                        range: Range {
+                            start: Position { line: 0, character: 0 },
+                            end: Position { line: 0, character: 1 },
+                        },
+                    };
+                    json!([loc])
+                }
                 "textDocument/references" => {
                     let uri: lsp_types::Uri = uri_from_params(&msg)
                         .unwrap_or_else(|| "file:///unknown.rs".parse().unwrap());
@@ -122,6 +151,33 @@ fn main() {
                         },
                     };
                     json!([loc])
+                }
+                "textDocument/hover" => {
+                    json!({
+                        "contents": {
+                            "kind": "markdown",
+                            "value": "Test hover"
+                        }
+                    })
+                }
+                "textDocument/signatureHelp" => {
+                    json!({
+                        "signatures": [{
+                            "label": "f(x: i32) -> i32",
+                            "documentation": { "kind": "markdown", "value": "Test signature" }
+                        }],
+                        "activeSignature": 0,
+                        "activeParameter": 0
+                    })
+                }
+                "textDocument/completion" => {
+                    json!({
+                        "isIncomplete": false,
+                        "items": [{
+                            "label": "completion_item",
+                            "kind": 6
+                        }]
+                    })
                 }
                 "textDocument/documentSymbol" => json!([]),
                 "workspace/symbol" => json!([]),
