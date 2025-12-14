@@ -16,6 +16,7 @@ use context_providers::adapters::ProviderStatus;
 use context_providers::fake::FakeProviderAdapter;
 use context_providers::tier1::Tier1AcpAdapter;
 use context_store::Store;
+use context_lsp::{LspManager, LspManagerConfig};
 
 use crate::api;
 use crate::installs::{InstallId, InstallProgressEvent, InstallState, InstallStateKind};
@@ -29,6 +30,7 @@ pub struct AppState {
     pub provider_statuses: Mutex<HashMap<String, ProviderStatus>>,
     pub daemon_url: String,
     pub auth_token: Option<String>,
+    pub lsp: Arc<LspManager>,
     pub shutdown_tx: broadcast::Sender<()>,
     schedulers: Mutex<HashMap<SessionId, mpsc::Sender<SchedulerCommand>>>,
     broadcasters: Mutex<HashMap<SessionId, broadcast::Sender<SessionEvent>>>,
@@ -45,8 +47,27 @@ impl AppState {
         daemon_url: String,
         auth_token: Option<String>,
     ) -> Self {
+        Self::new_with_lsp_config(
+            data_root,
+            store,
+            providers,
+            daemon_url,
+            auth_token,
+            LspManagerConfig::default(),
+        )
+    }
+
+    pub fn new_with_lsp_config(
+        data_root: PathBuf,
+        store: Store,
+        providers: HashMap<String, Arc<dyn ProviderAdapter>>,
+        daemon_url: String,
+        auth_token: Option<String>,
+        lsp_cfg: LspManagerConfig,
+    ) -> Self {
         let (shutdown_tx, _) = broadcast::channel(8);
         let (global_broadcaster, _) = broadcast::channel(2048);
+        let lsp = Arc::new(LspManager::new(lsp_cfg));
         Self {
             data_root,
             store,
@@ -54,6 +75,7 @@ impl AppState {
             provider_statuses: Mutex::new(HashMap::new()),
             daemon_url,
             auth_token,
+            lsp,
             shutdown_tx,
             schedulers: Mutex::new(HashMap::new()),
             broadcasters: Mutex::new(HashMap::new()),

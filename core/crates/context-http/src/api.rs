@@ -83,6 +83,7 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
             "/api/providers/install/:install_id/stream",
             get(install_stream_sse),
         )
+        .route("/api/lsp/diagnostics", post(lsp_diagnostics))
         .route("/api/workspaces", get(list_workspaces).post(create_workspace))
         .route("/api/workspaces/:id", delete(delete_workspace).get(get_workspace))
         .route(
@@ -201,6 +202,78 @@ async fn diagnostics(State(state): State<Arc<AppState>>) -> Result<Json<Diagnost
         providers,
         managed_installs,
     }))
+}
+
+#[derive(Debug, Deserialize)]
+struct LspDiagnosticsReq {
+    /// Optional session scope; when present, `path` is resolved within the session worktree.
+    session_id: Option<String>,
+    /// Optional explicit root path; used only when `session_id` is absent.
+    root_path: Option<String>,
+    /// File path to analyze (absolute or relative to resolved root).
+    path: String,
+}
+
+async fn lsp_diagnostics(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<LspDiagnosticsReq>,
+) -> Result<Json<Vec<serde_json::Value>>, StatusCode> {
+    if !state.lsp.enabled() {
+        return Err(StatusCode::CONFLICT);
+    }
+
+    let (root, file) = resolve_lsp_target(&state, req).await?;
+    let diags = state
+        .lsp
+        .diagnostics_for_file(&root, &file)
+        .await
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+
+    let out = diags
+        .into_iter()
+        .filter_map(|d| serde_json::to_value(d).ok())
+        .collect::<Vec<_>>();
+    Ok(Json(out))
+}
+
+async fn resolve_lsp_target(
+    state: &Arc<AppState>,
+    req: LspDiagnosticsReq,
+) -> Result<(PathBuf, PathBuf), StatusCode> {
+    let root = if let Some(session_id) = req.session_id.as_deref() {
+        let sid = SessionId(
+            uuid::Uuid::parse_str(session_id).map_err(|_| StatusCode::BAD_REQUEST)?,
+        );
+        let session = state
+            .store
+            .get_session(sid)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+            .ok_or(StatusCode::NOT_FOUND)?;
+        let wt = state
+            .store
+            .get_worktree(session.worktree_id)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+            .ok_or(StatusCode::NOT_FOUND)?;
+        PathBuf::from(wt.root_path)
+    } else if let Some(root_path) = req.root_path.as_deref() {
+        PathBuf::from(root_path)
+    } else {
+        return Err(StatusCode::BAD_REQUEST);
+    };
+
+    let root = root.canonicalize().map_err(|_| StatusCode::BAD_REQUEST)?;
+    let candidate = if PathBuf::from(&req.path).is_absolute() {
+        PathBuf::from(&req.path)
+    } else {
+        root.join(&req.path)
+    };
+    let file = candidate.canonicalize().map_err(|_| StatusCode::BAD_REQUEST)?;
+    if !file.starts_with(&root) {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    Ok((root, file))
 }
 
 async fn open_logs_folder(

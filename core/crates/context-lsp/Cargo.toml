@@ -1,22 +1,17 @@
 [package]
-name = "context-mcp"
+name = "context-lsp"
 version = "0.1.0"
 edition.workspace = true
 
-[[bin]]
-name = "context-mcp"
-path = "src/main.rs"
-
 [dependencies]
 anyhow.workspace = true
-clap.workspace = true
-reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 tracing.workspace = true
-tracing-subscriber.workspace = true
+
+lsp-types = { version = "0.97", features = ["proposed"] }
+url = "2"
 
 [dev-dependencies]
-axum.workspace = true
-tower = "0.5"
+tempfile = "3"

@@ -12,6 +12,7 @@ context-core = { path = "../context-core" }
 context-events = { path = "../context-events" }
 context-fs = { path = "../context-fs" }
 context-providers = { path = "../context-providers" }
+context-lsp = { path = "../context-lsp" }
 context-store = { path = "../context-store" }
 directories.workspace = true
 futures.workspace = true

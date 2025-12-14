@@ -8,6 +8,7 @@ use serde_json::json;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::{mpsc, oneshot, Mutex};
+use tokio::time::timeout;
 
 use context_core::models::SessionEventType;
 
@@ -1112,6 +1113,192 @@ fn normalize_session_update(msg: &serde_json::Value, state: &mut StreamState) ->
             payload_json: json!({"acp_update": update}),
         }],
         _ => vec![],
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct AcpProviderOptionsProbe {
+    pub supports_load: bool,
+    pub auth_methods: Option<serde_json::Value>,
+    pub modes: Option<serde_json::Value>,
+    pub models: Option<serde_json::Value>,
+    pub auth_required: bool,
+    pub acp_error: Option<serde_json::Value>,
+}
+
+/// Best-effort probe for ACP providers that only expose model/mode lists on `session/new`.
+///
+/// This intentionally does **not** prompt; it runs `initialize` + `session/new`, extracts
+/// `modes/models` from the response, then terminates the child process.
+pub async fn probe_provider_options(
+    agent: AcpAgentConfig,
+    client: AcpClientConfig,
+    workdir: PathBuf,
+    env: HashMap<String, String>,
+) -> Result<AcpProviderOptionsProbe> {
+    const PROBE_TIMEOUT: Duration = Duration::from_secs(20);
+
+    timeout(PROBE_TIMEOUT, async move {
+        let mut cmd = Command::new(&agent.command);
+        cmd.args(&agent.args);
+        cmd.current_dir(&workdir);
+        cmd.stdin(std::process::Stdio::piped());
+        cmd.stdout(std::process::Stdio::piped());
+        cmd.stderr(std::process::Stdio::piped());
+        for (k, v) in env {
+            cmd.env(k, v);
+        }
+
+        let mut child = cmd
+            .spawn()
+            .with_context(|| format!("spawning ACP agent {} ({})", agent.provider_id, agent.command))?;
+
+        let stdin = child.stdin.take().context("capturing agent stdin")?;
+        let stdout = child.stdout.take().context("capturing agent stdout")?;
+
+        let mut stdin = tokio::io::BufWriter::new(stdin);
+        let mut stdout_reader = BufReader::new(stdout).lines();
+
+        let mut next_id: u64 = 1;
+
+        let init_resp = acp_probe_request(
+            &mut stdin,
+            &mut stdout_reader,
+            &agent.provider_id,
+            &mut next_id,
+            "initialize",
+            json!({
+                "protocolVersion": 1,
+                "clientCapabilities": client.client_capabilities,
+                "clientInfo": {
+                    "name": client.client_name,
+                    "title": client.client_title,
+                    "version": client.client_version,
+                }
+            }),
+        )
+        .await?;
+        if let Some(err) = init_resp.get("error") {
+            anyhow::bail!("ACP initialize error: {err}");
+        }
+
+        let supports_load = init_resp
+            .get("result")
+            .and_then(|v| v.get("capabilities").or_else(|| v.get("agentCapabilities")))
+            .and_then(|v| v.get("loadSession"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        let auth_methods = init_resp
+            .get("result")
+            .and_then(|v| v.get("authMethods").or_else(|| v.get("auth_methods")))
+            .cloned();
+
+        let cwd = workdir
+            .canonicalize()
+            .unwrap_or_else(|_| workdir.clone())
+            .to_string_lossy()
+            .to_string();
+        let mcp_servers = client
+            .mcp_servers
+            .iter()
+            .map(|s| {
+                json!({
+                    "name": s.name,
+                    "command": s.command,
+                    "args": s.args,
+                    "env": s.env.iter().map(|(name, value)| json!({"name": name, "value": value})).collect::<Vec<_>>(),
+                })
+            })
+            .collect::<Vec<_>>();
+
+        let new_resp = acp_probe_request(
+            &mut stdin,
+            &mut stdout_reader,
+            &agent.provider_id,
+            &mut next_id,
+            "session/new",
+            json!({"cwd": cwd, "mcpServers": mcp_servers}),
+        )
+        .await?;
+        if let Some(err) = new_resp.get("error") {
+            let auth_required = is_auth_required_error(err);
+            let _ = child.kill().await;
+            return Ok(AcpProviderOptionsProbe {
+                supports_load,
+                auth_methods,
+                modes: None,
+                models: None,
+                auth_required,
+                acp_error: Some(err.clone()),
+            });
+        }
+
+        let modes = new_resp.get("result").and_then(|v| v.get("modes")).cloned();
+        let models = new_resp.get("result").and_then(|v| v.get("models")).cloned();
+
+        let _ = child.kill().await;
+
+        Ok(AcpProviderOptionsProbe {
+            supports_load,
+            auth_methods,
+            modes,
+            models,
+            auth_required: false,
+            acp_error: None,
+        })
+    })
+    .await
+    .context("ACP probe timed out")?
+}
+
+async fn acp_probe_request(
+    stdin: &mut tokio::io::BufWriter<tokio::process::ChildStdin>,
+    stdout_reader: &mut tokio::io::Lines<BufReader<tokio::process::ChildStdout>>,
+    provider_id: &str,
+    next_id: &mut u64,
+    method: &str,
+    params: serde_json::Value,
+) -> Result<serde_json::Value> {
+    let id = *next_id;
+    *next_id += 1;
+    let msg = json!({"jsonrpc":"2.0","id": id, "method": method, "params": params});
+    let line = serde_json::to_string(&msg).context("serializing ACP request")?;
+    stdin
+        .write_all(line.as_bytes())
+        .await
+        .context("writing ACP request")?;
+    stdin.write_all(b"\n").await.ok();
+    stdin.flush().await.ok();
+
+    loop {
+        let line = stdout_reader
+            .next_line()
+            .await
+            .context("reading ACP response line")?;
+        let Some(line) = line else {
+            anyhow::bail!("ACP agent exited during probe");
+        };
+        let parsed: serde_json::Value = match serde_json::from_str(&line) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+
+        if let Some(mid) = parsed.get("id").and_then(|v| v.as_u64()) {
+            if mid == id {
+                return Ok(parsed);
+            }
+            continue;
+        }
+
+        if parsed.get("method").and_then(|v| v.as_str()) == Some("session/request_permission") {
+            if let Some(resp) = build_request_permission_response(provider_id, &parsed)? {
+                stdin.write_all(resp.as_bytes()).await.ok();
+                stdin.write_all(b"\n").await.ok();
+                stdin.flush().await.ok();
+            }
+            continue;
+        }
     }
 }
 

@@ -5,6 +5,7 @@ members = [
   "crates/context-fs",
   "crates/context-events",
   "crates/context-providers",
+  "crates/context-lsp",
   "crates/context-mcp",
   "crates/context-http",
 ]
