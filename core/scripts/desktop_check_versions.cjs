@@ -11,11 +11,28 @@ const readJson = (p) => JSON.parse(fs.readFileSync(p, "utf8"));
 
 const readCargoVersion = (p) => {
   const text = fs.readFileSync(p, "utf8");
-  const match = text.match(/^version\\s*=\\s*\"([^\"]+)\"\\s*$/m);
-  if (!match) {
-    throw new Error(`failed to find Cargo.toml version in ${p}`);
+
+  // Prefer `[package]` -> `version = "..."` to avoid matching unrelated version fields.
+  const lines = text.split(/\n/);
+  let inPackage = false;
+  for (const rawLine of lines) {
+    const line = rawLine.replace(/^\uFEFF/, "");
+    const section = line.match(/^\s*\[([^\]]+)\]\s*$/);
+    if (section) {
+      inPackage = section[1].trim() === "package";
+      continue;
+    }
+    if (!inPackage) continue;
+
+    const match = text.match(/^\\s*version\\s*=\\s*\"([^\"]+)\"\\s*(?:#.*)?$/m);
+    if (match) return match[1];
   }
-  return match[1];
+
+  // Fall back to a looser scan in case formatting is unusual.
+  const match = text.match(/^\s*version\s*=\s*"([^"]+)"\s*(?:#.*)?$/m);
+  if (match) return match[1];
+
+  throw new Error(`failed to find Cargo.toml version in ${p}`);
 };
 
 const main = () => {
@@ -50,4 +67,3 @@ const main = () => {
 };
 
 main();
-

@@ -45,3 +45,5 @@ test-results/
 *.sqlite3
 *.db
 *.db-journal
+
+**/__pycache__/
