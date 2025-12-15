@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useParams } from "react-router-dom";
 import {
   EditPlanSummary,
@@ -40,6 +40,7 @@ type DraftTrack = {
 };
 
 type DraftModeId = "default" | "research" | "plan" | "review";
+type OpenMenuId = "mode" | "harness" | "model" | "exec";
 
 function deriveTaskTitle(prompt: string): string {
   const line = prompt.trim().split("\n")[0] ?? "";
@@ -50,13 +51,19 @@ function deriveTaskTitle(prompt: string): string {
 function modelIdsFromOptions(opts?: ProviderOptions): string[] {
   const raw = opts?.models;
   if (!raw) return [];
-  const arr = Array.isArray(raw) ? raw : raw?.models;
+  // Providers may return different shapes (ACP servers often use `{ availableModels, currentModelId }`).
+  const arr = Array.isArray(raw) ? raw : raw?.models ?? raw?.availableModels ?? raw?.available_models;
   if (!Array.isArray(arr)) return [];
   const ids: string[] = [];
   for (const it of arr) {
     if (typeof it === "string") ids.push(it);
     else if (it && typeof it === "object") {
-      const id = (it as any).id ?? (it as any).modelId ?? (it as any).model_id;
+      const id =
+        (it as any).id ??
+        (it as any).modelId ??
+        (it as any).model_id ??
+        (it as any).name ??
+        (it as any).model;
       if (typeof id === "string") ids.push(id);
     }
   }
@@ -222,6 +229,12 @@ export default function WorkbenchPage() {
   const [modelSearch, setModelSearch] = useState("");
 
   const newComposerRef = useRef<HTMLDivElement | null>(null);
+  const activeMenuRef = useRef<HTMLDivElement | null>(null);
+  const modeTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const harnessTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const modelTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const execTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const [menuStyle, setMenuStyle] = useState<React.CSSProperties | null>(null);
 
   const [diffWidth, setDiffWidth] = useState(480);
   const [reviewTab, setReviewTab] = useState<"git" | "lsp">("git");
@@ -262,6 +275,124 @@ export default function WorkbenchPage() {
     document.addEventListener("pointerdown", onPointerDown);
     return () => document.removeEventListener("pointerdown", onPointerDown);
   }, [openMenu, contextMenuOpen]);
+
+  const getTriggerForMenu = useCallback(
+    (id: OpenMenuId): HTMLButtonElement | null => {
+      if (id === "mode") return modeTriggerRef.current;
+      if (id === "harness") return harnessTriggerRef.current;
+      if (id === "model") return modelTriggerRef.current;
+      return execTriggerRef.current;
+    },
+    [],
+  );
+
+  const recomputeMenuPosition = useCallback(() => {
+    if (!openMenu) return;
+    const menuEl = activeMenuRef.current;
+    const triggerEl = getTriggerForMenu(openMenu);
+    if (!menuEl || !triggerEl) return;
+
+    const margin = 10;
+    const viewportW = window.innerWidth;
+    const viewportH = window.innerHeight;
+
+    const triggerRect = triggerEl.getBoundingClientRect();
+
+    // Measure the menu at its natural size. (During first render we set `visibility: hidden` and no maxHeight.)
+    const menuRect = menuEl.getBoundingClientRect();
+    const menuW = Math.max(160, menuRect.width);
+    const menuH = Math.max(40, menuRect.height);
+
+    let left = triggerRect.left;
+    let top = triggerRect.bottom + 8;
+    let maxHeight: number | null = null;
+    let overflowY: React.CSSProperties["overflowY"] = "visible";
+
+    if (openMenu === "harness") {
+      // Prefer opening to the right and vertically centered (uses space both up and down).
+      left = triggerRect.right + 10;
+      top = triggerRect.top + triggerRect.height / 2 - menuH / 2;
+
+      if (left + menuW > viewportW - margin) {
+        // If it doesn’t fit on the right, clamp inside the viewport (still prefer right over left).
+        left = Math.max(margin, viewportW - margin - menuW);
+      }
+      top = Math.max(margin, Math.min(top, viewportH - margin - menuH));
+
+      const maxH = viewportH - margin * 2;
+      if (menuH > maxH) {
+        top = margin;
+        maxHeight = maxH;
+        overflowY = "auto";
+      }
+    } else {
+      const downTop = triggerRect.bottom + 8;
+      const upTop = triggerRect.top - 8 - menuH;
+      const availableDown = viewportH - margin - downTop;
+      const availableUp = triggerRect.top - margin - 8;
+
+      const shouldOpenUp = availableDown < menuH && availableUp > availableDown;
+      if (shouldOpenUp) {
+        const maxH = Math.max(120, availableUp);
+        const usedH = Math.min(menuH, maxH);
+        top = triggerRect.top - 8 - usedH;
+        maxHeight = menuH > maxH ? maxH : null;
+        overflowY = menuH > maxH ? "auto" : "visible";
+      } else {
+        top = downTop;
+        const maxH = Math.max(120, availableDown);
+        maxHeight = menuH > maxH ? maxH : null;
+        overflowY = menuH > maxH ? "auto" : "visible";
+      }
+
+      // Horizontal clamp (menus should never leave the viewport).
+      if (left + menuW > viewportW - margin) left = viewportW - margin - menuW;
+      if (left < margin) left = margin;
+      // Vertical clamp for safety.
+      if (top < margin) top = margin;
+      if (top + menuH > viewportH - margin && maxHeight === null) {
+        top = Math.max(margin, viewportH - margin - menuH);
+      }
+    }
+
+    setMenuStyle({
+      position: "fixed",
+      left,
+      top,
+      maxHeight: maxHeight ?? undefined,
+      overflowY,
+      visibility: "visible",
+    });
+  }, [getTriggerForMenu, openMenu]);
+
+  useLayoutEffect(() => {
+    if (!openMenu) {
+      setMenuStyle(null);
+      return;
+    }
+    // First render: hide and let it size itself without constraints.
+    setMenuStyle({
+      position: "fixed",
+      left: 0,
+      top: 0,
+      maxHeight: undefined,
+      overflowY: "visible",
+      visibility: "hidden",
+    });
+
+    const raf = window.requestAnimationFrame(() => {
+      recomputeMenuPosition();
+    });
+
+    window.addEventListener("resize", recomputeMenuPosition);
+    // capture scroll on any container
+    window.addEventListener("scroll", recomputeMenuPosition, true);
+    return () => {
+      window.cancelAnimationFrame(raf);
+      window.removeEventListener("resize", recomputeMenuPosition);
+      window.removeEventListener("scroll", recomputeMenuPosition, true);
+    };
+  }, [openMenu, recomputeMenuPosition]);
 
   useEffect(() => {
     if (useMultipleAgents) return;
@@ -630,7 +761,11 @@ export default function WorkbenchPage() {
       <div className={`wb-sidebar ${sidebarCollapsed ? "wb-sidebar-collapsed" : ""}`}>
         <div className="wb-sidebar-top">
           <div className="wb-sidebar-header">
-            {!sidebarCollapsed && <div className="wb-sidebar-title">Agents</div>}
+            {!sidebarCollapsed && (
+              <button type="button" className="wb-new-agent" onClick={() => setActiveTaskId(null)}>
+                New Task
+              </button>
+            )}
             <button
               type="button"
               className="wb-sidebar-collapse"
@@ -646,13 +781,10 @@ export default function WorkbenchPage() {
             <>
               <input
                 className="wb-search"
-                placeholder="Search Agents…"
+                placeholder="Search Tasks"
                 value={taskQuery}
                 onChange={(e) => setTaskQuery(e.target.value)}
               />
-              <button type="button" className="wb-new-agent" onClick={() => setActiveTaskId(null)}>
-                New Agent
-              </button>
             </>
           )}
         </div>
@@ -660,12 +792,12 @@ export default function WorkbenchPage() {
         {!sidebarCollapsed && (
           <div className="wb-sidebar-section">
             <div className="wb-section-title">Pinned</div>
-            <div className="wb-muted">No pinned agents yet.</div>
+            <div className="wb-muted">No pinned tasks.</div>
           </div>
         )}
 
         <div className="wb-sidebar-section wb-sidebar-grow">
-          {!sidebarCollapsed && <div className="wb-section-title">Agents</div>}
+          {!sidebarCollapsed && <div className="wb-section-title">TASKS</div>}
           <div className="wb-task-list">
             {filteredTasks.map((t) => {
               const tid = idToString(t.id);
@@ -695,7 +827,7 @@ export default function WorkbenchPage() {
                 </button>
               );
             })}
-            {filteredTasks.length === 0 && <div className="wb-muted">No agents yet.</div>}
+            {filteredTasks.length === 0 && <div className="wb-muted">No tasks yet.</div>}
           </div>
         </div>
 
@@ -760,6 +892,7 @@ export default function WorkbenchPage() {
                       <button
                         type="button"
                         className="wb-switcher wb-menu-trigger"
+                        ref={modeTriggerRef}
                         onClick={() => {
                           setContextMenuOpen(false);
                           setExpandedHarnessId(null);
@@ -782,7 +915,7 @@ export default function WorkbenchPage() {
                         <IconChevronDown size={14} />
                       </button>
                       {openMenu === "mode" && (
-                        <div className="wb-menu" role="menu">
+                        <div className="wb-menu" role="menu" ref={activeMenuRef} style={menuStyle ?? undefined}>
                           {(["default", "research", "plan", "review"] as DraftModeId[]).map((m) => (
                             <button
                               key={m}
@@ -811,6 +944,7 @@ export default function WorkbenchPage() {
                       <button
                         type="button"
                         className="wb-switcher wb-menu-trigger"
+                        ref={harnessTriggerRef}
                         onClick={() => {
                           setContextMenuOpen(false);
                           setExpandedHarnessId(null);
@@ -837,7 +971,12 @@ export default function WorkbenchPage() {
                       </button>
 
                       {openMenu === "harness" && (
-                        <div className="wb-menu wb-harness-menu" role="menu">
+                        <div
+                          className="wb-menu wb-harness-menu"
+                          role="menu"
+                          ref={activeMenuRef}
+                          style={menuStyle ?? undefined}
+                        >
                           <div className="wb-menu-top">
                             <input
                               className="wb-menu-search"
@@ -999,6 +1138,7 @@ export default function WorkbenchPage() {
                         <button
                           type="button"
                           className="wb-switcher wb-menu-trigger"
+                          ref={modelTriggerRef}
                           onClick={() => {
                             setContextMenuOpen(false);
                             setExpandedHarnessId(null);
@@ -1016,7 +1156,12 @@ export default function WorkbenchPage() {
                           <IconChevronDown size={14} />
                         </button>
                         {openMenu === "model" && (
-                          <div className="wb-menu wb-model-menu" role="menu">
+                          <div
+                            className="wb-menu wb-model-menu"
+                            role="menu"
+                            ref={activeMenuRef}
+                            style={menuStyle ?? undefined}
+                          >
                             <div className="wb-menu-top">
                               <input
                                 className="wb-menu-search"
@@ -1123,6 +1268,7 @@ export default function WorkbenchPage() {
                   <button
                     type="button"
                     className="wb-exec-switcher wb-menu-trigger"
+                    ref={execTriggerRef}
                     onClick={() => {
                       setContextMenuOpen(false);
                       setExpandedHarnessId(null);
@@ -1138,7 +1284,12 @@ export default function WorkbenchPage() {
                     <IconChevronDown size={14} />
                   </button>
                   {openMenu === "exec" && (
-                    <div className="wb-menu wb-exec-menu" role="menu">
+                    <div
+                      className="wb-menu wb-exec-menu"
+                      role="menu"
+                      ref={activeMenuRef}
+                      style={menuStyle ?? undefined}
+                    >
                       <button
                         type="button"
                         className={`wb-menu-item ${execTarget === "worktree" ? "wb-menu-item-active" : ""}`}

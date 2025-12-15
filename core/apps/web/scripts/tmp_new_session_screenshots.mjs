@@ -40,8 +40,15 @@ try {
 
   // Open model menu (only if present)
   if (await switchers.nth(2).isVisible().catch(() => false)) {
+    const waitOpts = page
+      .waitForResponse((r) => r.url().includes("/providers/") && r.url().includes("/options") && r.status() === 200, {
+        timeout: 3000,
+      })
+      .catch(() => null);
     await switchers.nth(2).click();
-    await page.waitForTimeout(150);
+    await waitOpts;
+    // If the provider already had options cached, the response might not happen; wait a bit for UI to populate.
+    await page.waitForTimeout(250);
     await page.screenshot({ path: path.join(outDir, "tmp-ui-new-session-model-menu.png"), fullPage: true });
   }
 } finally {

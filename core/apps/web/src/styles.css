@@ -912,7 +912,8 @@ button {
   display: grid;
   gap: 6px;
   min-height: 0;
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
   padding-right: 4px;
 }
 
@@ -1121,15 +1122,15 @@ button {
 }
 
 .wb-switcher {
-  height: 26px;
-  border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(255, 255, 255, 0.03);
-  padding: 0 9px;
+  height: 22px;
+  border-radius: 8px;
+  border: none;
+  background: transparent;
+  padding: 0 6px;
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  color: var(--text);
+  gap: 6px;
+  color: rgba(255, 255, 255, 0.86);
   font-size: 12px;
   cursor: pointer;
   max-width: 360px;
@@ -1137,16 +1138,20 @@ button {
 
 .wb-switcher:hover {
   background: rgba(255, 255, 255, 0.06);
-  border-color: rgba(255, 255, 255, 0.14);
 }
 
 .wb-switcher:active {
-  background: rgba(255, 255, 255, 0.03);
+  background: rgba(255, 255, 255, 0.04);
 }
 
 .wb-switcher:disabled {
   opacity: 0.55;
   cursor: not-allowed;
+}
+
+.wb-switcher:focus-visible {
+  outline: 2px solid rgba(55, 148, 255, 0.45);
+  outline-offset: 2px;
 }
 
 .wb-switcher-icon {
@@ -1240,11 +1245,11 @@ button {
 }
 
 .wb-icon {
-  width: 26px;
-  height: 26px;
-  border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(255, 255, 255, 0.03);
+  width: 22px;
+  height: 22px;
+  border-radius: 8px;
+  border: none;
+  background: transparent;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1252,13 +1257,17 @@ button {
   color: rgba(255, 255, 255, 0.85);
 }
 
+.wb-icon:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.06);
+}
+
 .wb-icon:disabled {
   opacity: 0.55;
 }
 
 .wb-send {
-  width: 28px;
-  height: 28px;
+  width: 24px;
+  height: 24px;
   border-radius: 999px;
   border: 1px solid rgba(78, 163, 255, 0.55);
   background: rgba(78, 163, 255, 0.20);
@@ -1280,10 +1289,8 @@ button {
 }
 
 .wb-menu {
-  position: absolute;
+  position: fixed;
   z-index: 40;
-  top: calc(100% + 8px);
-  left: 0;
   min-width: 220px;
   max-width: min(440px, 78vw);
   border-radius: 12px;
@@ -1400,8 +1407,6 @@ button {
 
 .wb-harness-menu {
   width: 320px;
-  max-height: min(560px, 70vh);
-  overflow: auto;
 }
 
 .wb-harness-row {
@@ -1498,15 +1503,19 @@ button {
 }
 
 .wb-harness-expand {
-  width: 26px;
-  height: 26px;
-  border-radius: 9px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  background: rgba(255, 255, 255, 0.04);
+  width: 22px;
+  height: 22px;
+  border-radius: 8px;
+  border: none;
+  background: transparent;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   color: rgba(255, 255, 255, 0.85);
+}
+
+.wb-harness-expand:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.06);
 }
 
 .wb-harness-expand:disabled {
@@ -1586,8 +1595,6 @@ button {
 .wb-model-menu {
   width: 320px;
   max-width: min(420px, 78vw);
-  max-height: min(520px, 70vh);
-  overflow: auto;
 }
 
 .wb-popover {
@@ -1727,11 +1734,11 @@ button {
 }
 
 .wb-exec-switcher {
-  height: 26px;
-  border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.10);
-  background: rgba(255, 255, 255, 0.03);
-  padding: 0 10px;
+  height: 22px;
+  border-radius: 8px;
+  border: none;
+  background: transparent;
+  padding: 0 6px;
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -1742,7 +1749,6 @@ button {
 
 .wb-exec-switcher:hover {
   background: rgba(255, 255, 255, 0.06);
-  border-color: rgba(255, 255, 255, 0.14);
 }
 
 .wb-exec-label {
