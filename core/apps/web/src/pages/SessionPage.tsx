@@ -23,6 +23,7 @@ import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { DiffReviewPane } from "../components/DiffReviewPane";
 import { ComposerAutocompleteMenu } from "../components/ComposerAutocompleteMenu";
 import { useComposerAutocomplete, type SlashCommandDescriptor } from "../state/useComposerAutocomplete";
+import { shouldSendOnEnter } from "../utils/keyboard";
 
 type ThreadItem =
   | {
@@ -838,7 +839,7 @@ export function SessionView({
               placeholder="Send a message… (/ commands, @ file refs)"
               onKeyDown={(e) => {
                 if (composerAutocomplete.onKeyDown(e)) return;
-                if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+                if (shouldSendOnEnter(e)) {
                   e.preventDefault();
                   sendNow();
                 }
@@ -1015,12 +1016,7 @@ function WorkbenchComposer({
         placeholder="Ask follow-ups in the worktree"
         onKeyDown={(e) => {
           if (autocomplete.onKeyDown(e)) return;
-          if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
-            e.preventDefault();
-            onSend();
-            return;
-          }
-          if (e.key === "Enter" && !e.shiftKey) {
+          if (shouldSendOnEnter(e)) {
             e.preventDefault();
             onSend();
           }

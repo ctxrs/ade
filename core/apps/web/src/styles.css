@@ -1044,8 +1044,16 @@ button {
   padding: 24px;
 }
 
+.wb-new-composer-stack {
+  width: min(825px, 96%);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  position: relative;
+}
+
 .wb-composer-card {
-  width: min(860px, 96%);
+  width: 100%;
   border-radius: 12px;
   border: 1px solid var(--border);
   background: rgba(255, 255, 255, 0.03);
@@ -1054,22 +1062,136 @@ button {
   gap: 10px;
 }
 
+.wb-new-composer-card {
+  border-radius: 18px;
+  border-color: rgba(255, 255, 255, 0.10);
+  background: rgba(255, 255, 255, 0.030);
+  padding: 12px;
+  gap: 10px;
+  box-shadow:
+    0 12px 40px rgba(0, 0, 0, 0.25),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  height: 150px;
+  grid-template-rows: 1fr auto;
+}
+
 .wb-composer-textarea {
   width: 100%;
-  min-height: 160px;
-  resize: vertical;
+  min-height: 0;
+  height: 100%;
+  resize: none;
   background: transparent;
   border: 1px solid transparent;
   outline: none;
   color: var(--text);
-  font-size: 14px;
-  line-height: 1.5;
+  font-size: 13px;
+  line-height: 1.45;
+  padding: 2px 2px;
+}
+
+.wb-composer-textarea::placeholder {
+  color: rgba(255, 255, 255, 0.35);
 }
 
 .wb-composer-row {
   display: flex;
   justify-content: space-between;
   gap: 12px;
+  align-items: center;
+}
+
+.wb-composer-bottom {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+  padding-top: 6px;
+}
+
+.wb-switcher-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.wb-switcher-wrap {
+  position: relative;
+}
+
+.wb-switcher {
+  height: 26px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+  padding: 0 9px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+  max-width: 360px;
+}
+
+.wb-switcher:hover {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.14);
+}
+
+.wb-switcher:active {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.wb-switcher:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.wb-switcher-icon {
+  width: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 12px;
+}
+
+.wb-switcher-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wb-switcher-logo {
+  width: 16px;
+  height: 16px;
+  border-radius: 5px;
+  display: block;
+  object-fit: contain;
+}
+
+.wb-switcher-logo-fallback {
+  width: 16px;
+  height: 16px;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.08);
+  display: block;
+}
+
+.wb-invert {
+  filter: invert(1) hue-rotate(180deg) saturate(1.1);
+}
+
+.wb-mono {
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.wb-action-row {
+  display: flex;
+  gap: 8px;
   align-items: center;
 }
 
@@ -1118,15 +1240,354 @@ button {
 }
 
 .wb-icon {
-  width: 30px;
-  height: 30px;
+  width: 26px;
+  height: 26px;
   border-radius: 999px;
-  border: 1px solid var(--border);
+  border: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(255, 255, 255, 0.03);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   padding: 0;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.wb-icon:disabled {
+  opacity: 0.55;
+}
+
+.wb-send {
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  border: 1px solid rgba(78, 163, 255, 0.55);
+  background: rgba(78, 163, 255, 0.20);
+  color: rgba(225, 242, 255, 0.98);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.wb-send:hover:not(:disabled) {
+  background: rgba(78, 163, 255, 0.26);
+  border-color: rgba(78, 163, 255, 0.70);
+}
+
+.wb-send:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.wb-menu {
+  position: absolute;
+  z-index: 40;
+  top: calc(100% + 8px);
+  left: 0;
+  min-width: 220px;
+  max-width: min(440px, 78vw);
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  background: rgba(34, 34, 34, 0.92);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55);
+  padding: 6px;
+}
+
+.wb-menu-top {
+  padding: 4px 4px 8px 4px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  margin-bottom: 6px;
+  display: grid;
+  gap: 8px;
+}
+
+.wb-menu-search {
+  width: 100%;
+  height: 28px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.92);
+  padding: 0 10px;
+  font: inherit;
+  outline: none;
+}
+
+.wb-menu-search::placeholder {
+  color: rgba(255, 255, 255, 0.42);
+}
+
+.wb-menu-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.85);
+  user-select: none;
+  position: relative;
+}
+
+.wb-menu-toggle input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.wb-toggle {
+  width: 30px;
+  height: 16px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.10);
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.wb-toggle::after {
+  content: "";
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.85);
+  left: 2px;
+  top: 1px;
+  transition: transform 120ms ease;
+}
+
+.wb-menu-toggle input:checked + .wb-toggle {
+  background: rgba(92, 207, 119, 0.30);
+  border-color: rgba(92, 207, 119, 0.55);
+}
+
+.wb-menu-toggle input:checked + .wb-toggle::after {
+  transform: translateX(14px);
+}
+
+.wb-menu-item {
+  width: 100%;
+  text-align: left;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.92);
+  padding: 6px 8px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.wb-menu-item:hover {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+.wb-menu-item-active {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.wb-menu-item:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.wb-menu-empty {
+  color: rgba(255, 255, 255, 0.75);
+  padding: 10px 12px;
+  font-size: 12px;
+}
+
+.wb-harness-menu {
+  width: 320px;
+  max-height: min(560px, 70vh);
+  overflow: auto;
+}
+
+.wb-harness-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  padding: 4px 0;
+}
+
+.wb-harness-row-main {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  background: transparent;
+  padding: 6px 6px;
+  cursor: pointer;
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.wb-harness-row-main:hover {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+.wb-harness-row.wb-disabled .wb-harness-row-main {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.wb-harness-row.wb-disabled .wb-harness-row-main:hover {
+  background: transparent;
+  border-color: transparent;
+}
+
+.wb-check {
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.95);
+  flex: 0 0 auto;
+}
+
+.wb-check-on {
+  background: rgba(255, 255, 255, 0.16);
+  border-color: rgba(255, 255, 255, 0.65);
+}
+
+.wb-harness-logo {
+  width: 16px;
+  height: 16px;
+  border-radius: 6px;
+  display: block;
+  object-fit: contain;
+  flex: 0 0 auto;
+}
+
+.wb-harness-logo-fallback {
+  width: 16px;
+  height: 16px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  flex: 0 0 auto;
+}
+
+.wb-harness-name {
+  font-size: 12px;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wb-harness-right {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.wb-harness-count {
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.wb-harness-expand {
+  width: 26px;
+  height: 26px;
+  border-radius: 9px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.wb-harness-expand:disabled {
+  opacity: 0.4;
+}
+
+.wb-harness-note {
+  grid-column: 1 / -1;
+  margin-left: 44px;
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 12px;
+}
+
+.wb-harness-config {
+  grid-column: 1 / -1;
+  margin-left: 30px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  background: rgba(255, 255, 255, 0.03);
+  padding: 8px;
+  display: grid;
+  gap: 8px;
+}
+
+.wb-harness-track {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+
+.wb-harness-track-left {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.wb-harness-track-title {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.65);
+}
+
+.wb-harness-model-select,
+.wb-harness-model-input {
+  width: 100%;
+  max-width: 440px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(0, 0, 0, 0.18);
+  color: rgba(255, 255, 255, 0.92);
+  padding: 8px 10px;
+  font: inherit;
+}
+
+.wb-harness-track-right {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex: 0 0 auto;
+}
+
+.wb-harness-mini {
+  width: 26px;
+  height: 26px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.90);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.wb-model-menu {
+  width: 320px;
+  max-width: min(420px, 78vw);
+  max-height: min(520px, 70vh);
+  overflow: auto;
 }
 
 .wb-popover {
@@ -1215,9 +1676,9 @@ button {
 
 .wb-context-popover {
   position: absolute;
-  z-index: 20;
-  right: 18px;
-  top: 58%;
+  z-index: 30;
+  right: 20px;
+  bottom: 70px;
   width: 360px;
   border-radius: 12px;
   border: 1px solid var(--border-strong);
@@ -1255,6 +1716,55 @@ button {
 .wb-composer-actions {
   display: flex;
   justify-content: flex-end;
+}
+
+.wb-exec-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: rgba(255, 255, 255, 0.78);
+  padding-left: 8px;
+}
+
+.wb-exec-switcher {
+  height: 26px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  background: rgba(255, 255, 255, 0.03);
+  padding: 0 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: rgba(255, 255, 255, 0.86);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.wb-exec-switcher:hover {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.14);
+}
+
+.wb-exec-label {
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.wb-exec-menu {
+  min-width: 200px;
+}
+
+.wb-exec-select {
+  background: transparent;
+  border: none;
+  outline: none;
+  color: rgba(255, 255, 255, 0.86);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.wb-exec-select:disabled {
+  opacity: 0.65;
 }
 
 .wb-under-row {
