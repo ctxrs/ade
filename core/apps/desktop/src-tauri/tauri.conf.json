@@ -20,20 +20,12 @@
     "bundle": {
       "active": true,
       "identifier": "rs.context.desktop",
-      "resources": ["bin/*", "web/dist/**"],
+      "resources": ["bin/*", "web/dist/*", "web/dist/**"],
       "externalBin": ["bin/context", "bin/context-mcp"],
       "targets": "all"
     },
     "security": {
       "csp": null
-    },
-    "windows": [
-      {
-        "label": "main",
-        "title": "Context",
-        "width": 1200,
-        "height": 780
-      }
-    ]
+    }
   }
 }
