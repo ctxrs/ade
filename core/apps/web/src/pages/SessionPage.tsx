@@ -21,6 +21,8 @@ import { useOpenSession, useSessionCacheSnapshot, useSessionEntry, useSessionSup
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { DiffReviewPane } from "../components/DiffReviewPane";
+import { ComposerAutocompleteMenu } from "../components/ComposerAutocompleteMenu";
+import { useComposerAutocomplete, type SlashCommandDescriptor } from "../state/useComposerAutocomplete";
 
 type ThreadItem =
   | {
@@ -132,6 +134,7 @@ export function SessionView({
   const entry = useSessionEntry(id ?? "");
   const session: Session | null = entry?.session ?? null;
   const events: SessionEvent[] = entry?.events ?? [];
+  const messages: Message[] = entry?.messages ?? [];
   const queue: Message[] = entry?.queue ?? [];
   const diff = entry?.diff ?? "";
   const eventsKey = `${entry?.lastEventId ?? ""}:${events.length}`;
@@ -161,7 +164,12 @@ export function SessionView({
   }, [perfEnabled, entry?.loading, entry?.events.length, entry?.diff]);
 
   const legacyThreadView = useMemo(() => buildThreadViewModel(events), [eventsKey]);
-  const workbenchThreadView = useMemo(() => buildWorkbenchThreadViewModel(events), [eventsKey]);
+  const workbenchThreadView = useMemo(
+    () => buildWorkbenchThreadViewModel(events, messages),
+    // messages are canonical for turn headers; include in memo key
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [eventsKey, messages.length],
+  );
 
   const debugEvents = variant === "workbench" ? workbenchThreadView.debugEvents : legacyThreadView.debugEvents;
   const threadItems = variant === "workbench" ? [] : legacyThreadView.items;
@@ -308,25 +316,59 @@ export function SessionView({
       el.focus();
       const cursor = start + text.length;
       el.setSelectionRange(cursor, cursor);
+      requestAnimationFrame(() => composerAutocomplete.syncFromDom());
     });
   };
 
-  const commandSuggestions = useMemo(() => {
+  const acpAvailableCommands = useMemo<SlashCommandDescriptor[]>(() => {
+    const last = [...events].reverse().find((e) => {
+      const update = e.payload_json?.acp_update;
+      return update?.sessionUpdate === "available_commands_update";
+    });
+    const update = last?.payload_json?.acp_update ?? {};
+    const list = update.availableCommands ?? update.available_commands ?? [];
+    if (!Array.isArray(list)) return [];
+    return list
+      .map((c: any) => ({
+        name: String(c?.name ?? "").replace(/^\//, ""),
+        description: typeof c?.description === "string" ? c.description : undefined,
+      }))
+      .filter((c: any) => typeof c.name === "string" && c.name.length > 0);
+  }, [eventsKey]);
+
+  const fallbackSlashCommands = useMemo<SlashCommandDescriptor[]>(() => {
     const provider = session?.provider_id;
-    const common = ["/compact"];
     if (provider === "codex") {
-      return ["/review", "/review-branch", "/review-commit", "/init", "/compact", "/logout"];
+      return [
+        { name: "review", description: "Review my current changes and find issues" },
+        { name: "review-branch", description: "Review a branch" },
+        { name: "review-commit", description: "Review a commit" },
+        { name: "init", description: "Create an AGENTS.md file" },
+        { name: "compact", description: "Summarize conversation to save context" },
+        { name: "logout", description: "Log out" },
+      ];
     }
     if (provider === "claude") {
-      return ["/login", "/logout", "/compact", "/help"];
+      return [
+        { name: "login", description: "Log in" },
+        { name: "logout", description: "Log out" },
+        { name: "compact", description: "Summarize conversation to save context" },
+        { name: "help", description: "Show help" },
+      ];
     }
-    if (provider === "gemini") {
-      return common;
-    }
-    return common;
+    return [{ name: "compact", description: "Summarize conversation to save context" }];
   }, [session?.provider_id]);
 
-  const showCommandSuggestions = input.trimStart().startsWith("/");
+  const slashCommands = acpAvailableCommands.length > 0 ? acpAvailableCommands : fallbackSlashCommands;
+
+  const composerAutocomplete = useComposerAutocomplete({
+    sessionId: id ?? null,
+    value: input,
+    setValue: setInput,
+    textareaRef,
+    slashCommands,
+  });
+
   const virtuosoStyle =
     variant === "workbench" ? ({ flex: 1, minHeight: 0 } as const) : ({ height: "70vh" } as const);
 
@@ -600,7 +642,6 @@ export function SessionView({
               <div className="thread-stack">
                 <GroupedVirtuoso
                   style={virtuosoStyle}
-                  data={wbFlatItems}
                   groupCounts={wbGroupCounts}
                   ref={groupedVirtuosoRef}
                   followOutput="auto"
@@ -631,7 +672,11 @@ export function SessionView({
                       />
                     );
                   }}
-                  itemContent={(_index, _groupIndex, item) => renderThreadItem(item)}
+                  itemContent={(index, groupIndex) => {
+                    const item = wbGroups[groupIndex]?.items[index];
+                    if (!item) return <div style={{ height: 1 }} />;
+                    return renderThreadItem(item);
+                  }}
                 />
 
                 {hasNewActivity && (
@@ -650,7 +695,7 @@ export function SessionView({
           }
 
           return (
-            <>
+            <div className="thread-stack">
               <Virtuoso
                 style={virtuosoStyle}
                 data={threadItems}
@@ -672,11 +717,17 @@ export function SessionView({
               />
 
               {hasNewActivity && (
-                <button type="button" className="new-activity" onClick={jumpToLatest}>
-                  New activity ↓
+                <button
+                  type="button"
+                  className="new-activity-overlay"
+                  aria-label="Jump to latest"
+                  title="Jump to latest"
+                  onClick={jumpToLatest}
+                >
+                  ↓
                 </button>
               )}
-            </>
+            </div>
           );
         })()}
 
@@ -688,6 +739,7 @@ export function SessionView({
             modelOptions={modelOptions}
             effortOptions={effortOptions}
             currentModelId={currentModelId}
+            autocomplete={composerAutocomplete}
             onSetModel={async (next) => {
               if (!id) return;
               const updated = await setSessionModel(id, next);
@@ -705,11 +757,7 @@ export function SessionView({
             setInput={setInput}
             onSend={sendNow}
             onInterrupt={() => id && interruptSession(id)}
-            onInsertAtFile={() => {
-              const p = window.prompt("Insert @ file path (relative to repo):");
-              if (!p) return;
-              insertIntoComposer(`@${p} `);
-            }}
+            onInsertAtFile={() => insertIntoComposer("@")}
             onInsertSlash={() => insertIntoComposer("/")}
             attachments={draftAttachments}
             setAttachments={setDraftAttachments}
@@ -720,9 +768,7 @@ export function SessionView({
               <button
                 type="button"
                 onClick={() => {
-                  const p = window.prompt("Insert @ file path (relative to repo):");
-                  if (!p) return;
-                  insertIntoComposer(`@${p} `);
+                  insertIntoComposer("@");
                 }}
               >
                 @ File
@@ -786,31 +832,26 @@ export function SessionView({
               onChange={(e) => setInput(e.target.value)}
               placeholder="Send a message… (/ commands, @ file refs)"
               onKeyDown={(e) => {
+                if (composerAutocomplete.onKeyDown(e)) return;
                 if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
                   e.preventDefault();
                   sendNow();
                 }
               }}
+              onKeyUp={() => composerAutocomplete.syncFromDom()}
+              onClick={() => composerAutocomplete.syncFromDom()}
+              onSelect={() => composerAutocomplete.syncFromDom()}
             />
-            {showCommandSuggestions && (
-              <div className="card">
-                <div className="muted">Commands</div>
-                <div className="row" style={{ flexWrap: "wrap" }}>
-                  {commandSuggestions.map((c) => (
-                    <button
-                      key={c}
-                      type="button"
-                      onClick={() => {
-                        setInput(c + " ");
-                        requestAnimationFrame(() => textareaRef.current?.focus());
-                      }}
-                    >
-                      {c}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
+            <ComposerAutocompleteMenu
+              open={composerAutocomplete.open}
+              loading={composerAutocomplete.loading}
+              items={composerAutocomplete.items}
+              activeIndex={composerAutocomplete.activeIndex}
+              onPick={composerAutocomplete.pick}
+              onHoverIndex={(i) => composerAutocomplete.setActiveIndex(i)}
+              anchorRect={composerAutocomplete.anchorRect}
+              inlineFallback={composerAutocomplete.inlineFallback}
+            />
             <div className="row">
               <button type="submit">Send</button>
               <button type="button" onClick={() => id && cancelSession(id)}>
@@ -892,6 +933,7 @@ function WorkbenchComposer({
   modelOptions,
   effortOptions,
   currentModelId,
+  autocomplete,
   onSetModel,
   onSetEffort,
   textareaRef,
@@ -908,6 +950,7 @@ function WorkbenchComposer({
   modelOptions: Array<{ id: string; name: string }>;
   effortOptions: string[];
   currentModelId: string;
+  autocomplete: ReturnType<typeof useComposerAutocomplete>;
   onSetModel: (modelId: string) => Promise<void>;
   onSetEffort: (effort: string) => Promise<void>;
   textareaRef: { current: HTMLTextAreaElement | null };
@@ -966,6 +1009,7 @@ function WorkbenchComposer({
         onChange={(e) => setInput(e.target.value)}
         placeholder="Ask follow-ups in the worktree"
         onKeyDown={(e) => {
+          if (autocomplete.onKeyDown(e)) return;
           if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
             e.preventDefault();
             onSend();
@@ -976,6 +1020,20 @@ function WorkbenchComposer({
             onSend();
           }
         }}
+        onKeyUp={() => autocomplete.syncFromDom()}
+        onClick={() => autocomplete.syncFromDom()}
+        onSelect={() => autocomplete.syncFromDom()}
+      />
+
+      <ComposerAutocompleteMenu
+        open={autocomplete.open}
+        loading={autocomplete.loading}
+        items={autocomplete.items}
+        activeIndex={autocomplete.activeIndex}
+        onPick={autocomplete.pick}
+        onHoverIndex={(i) => autocomplete.setActiveIndex(i)}
+        anchorRect={autocomplete.anchorRect}
+        inlineFallback={autocomplete.inlineFallback}
       />
 
       <div className="wb-composer-footer">
@@ -1621,18 +1679,53 @@ function remarkNormalizeCursorMarkdown() {
   return (tree: MdastNode) => {
     const walk = (node: MdastNode) => {
       if (node?.type === "listItem" && Array.isArray(node.children)) {
-        if (node.children.length === 1 && node.children[0]?.type === "code") {
-          const code = node.children[0] as MdastNode;
-          const lang = typeof code.lang === "string" ? code.lang : undefined;
-          const raw = typeof code.value === "string" ? code.value : "";
-          const trimmed = raw.replace(/\n+$/, "");
-          if ((!lang || lang === "code") && trimmed.length > 0 && !trimmed.includes("\n")) {
+        const maybeInlineFromCode = (codeNode: MdastNode): string | null => {
+          if (codeNode?.type !== "code") return null;
+          const lang = typeof codeNode.lang === "string" ? codeNode.lang : undefined;
+          const raw = typeof codeNode.value === "string" ? codeNode.value : "";
+          const trimmed = raw.replace(/[\r\n]+$/, "");
+          if ((!lang || lang === "code") && trimmed.length > 0 && !trimmed.includes("\n")) return trimmed;
+          return null;
+        };
+
+        // Cursor sometimes emits list items that are a single one-line fenced code block.
+        if (node.children.length === 1) {
+          const trimmed = maybeInlineFromCode(node.children[0] as MdastNode);
+          if (trimmed) {
             node.children = [
               {
                 type: "paragraph",
                 children: [{ type: "inlineCode", value: trimmed }],
               },
             ];
+          }
+        }
+
+        // Some models emit list items as:
+        //   - code
+        //     ```code
+        //     .github/
+        //     ```
+        // Normalize that to a single inlineCode row.
+        if (node.children.length === 2) {
+          const [p, codeNode] = node.children as MdastNode[];
+          if (p?.type === "paragraph" && Array.isArray((p as any).children)) {
+            const kids = (p as any).children as MdastNode[];
+            if (
+              kids.length === 1 &&
+              kids[0]?.type === "text" &&
+              String((kids[0] as any).value ?? "").trim().toLowerCase() === "code"
+            ) {
+              const trimmed = maybeInlineFromCode(codeNode);
+              if (trimmed) {
+                node.children = [
+                  {
+                    type: "paragraph",
+                    children: [{ type: "inlineCode", value: trimmed }],
+                  },
+                ];
+              }
+            }
           }
         }
       }
@@ -1657,7 +1750,7 @@ function Markdown({ content }: { content: string }) {
           const match = /language-([A-Za-z0-9_-]+)/.exec(className || "");
           const rawLang = match?.[1];
           const lang = rawLang && rawLang !== "code" ? rawLang : undefined;
-          const codeString = String(children ?? "").replace(/\n$/, "");
+          const codeString = String(children ?? "").replace(/[\r\n]+$/, "");
           if (inline) {
             return <code className={className}>{children}</code>;
           }
@@ -1690,13 +1783,14 @@ function Markdown({ content }: { content: string }) {
   );
 }
 
-function buildWorkbenchThreadViewModel(events: SessionEvent[]): WorkbenchThreadView {
-  type InternalGroup = {
+function buildWorkbenchThreadViewModel(events: SessionEvent[], messages: Message[]): WorkbenchThreadView {
+  type ToolItem = Extract<ThreadItem, { kind: "tool" }>;
+  type TurnGroup = {
     key: string;
     header: WorkbenchTurnHeader | null;
     first_at: string;
-    toolItems: Array<Extract<ThreadItem, { kind: "tool" }>>;
-    toolById: Map<string, Extract<ThreadItem, { kind: "tool" }>>;
+    toolItems: ToolItem[];
+    toolById: Map<string, ToolItem>;
     assistant: Extract<ThreadItem, { kind: "assistant" }> | null;
     thought_first_at: string | null;
     thought_last_at: string | null;
@@ -1705,48 +1799,21 @@ function buildWorkbenchThreadViewModel(events: SessionEvent[]): WorkbenchThreadV
   };
 
   const debugEvents: SessionEvent[] = [];
-  const groupsInOrder: InternalGroup[] = [];
-  const groupsByKey = new Map<string, InternalGroup>();
 
-  let currentTurnKey: string | null = null;
+  const userMessages = messages
+    .filter((m) => m.role === "user")
+    .slice()
+    .sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
 
-  const ensureGroup = (key: string, createdAt: string): InternalGroup => {
-    const existing = groupsByKey.get(key);
-    if (existing) return existing;
-    const g: InternalGroup = {
-      key,
-      header: null,
-      first_at: createdAt,
-      toolItems: [],
-      toolById: new Map(),
-      assistant: null,
-      thought_first_at: null,
-      thought_last_at: null,
-      assistant_first_at: null,
-      assistant_complete_at: null,
-    };
-    groupsByKey.set(key, g);
-    groupsInOrder.push(g);
-    return g;
-  };
+  const assistantMessages = messages
+    .filter((m) => m.role === "assistant")
+    .slice()
+    .sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
 
-  const ensureAssistant = (g: InternalGroup, createdAt: string) => {
-    if (g.assistant) return g.assistant;
-    g.assistant = {
-      kind: "assistant",
-      id: `assistant-${g.key}`,
-      created_at: createdAt,
-      content: "",
-      thought: "",
-      is_complete: false,
-    };
-    return g.assistant;
-  };
-
-  const ensureTool = (g: InternalGroup, toolCallId: string, createdAt: string) => {
+  const ensureTool = (g: TurnGroup, toolCallId: string, createdAt: string) => {
     const existing = g.toolById.get(toolCallId);
     if (existing) return existing;
-    const t: Extract<ThreadItem, { kind: "tool" }> = {
+    const t: ToolItem = {
       kind: "tool",
       id: `tool-${toolCallId}`,
       tool_call_id: toolCallId,
@@ -1766,166 +1833,238 @@ function buildWorkbenchThreadViewModel(events: SessionEvent[]): WorkbenchThreadV
     return t;
   };
 
-  const groupKeyForEvent = (ev: SessionEvent) => {
-    const rawTurnId = idToString((ev as any).turn_id) || "";
-    if (rawTurnId) {
-      currentTurnKey = rawTurnId;
-      return rawTurnId;
-    }
-    return currentTurnKey ?? "no-turn";
+  const eventsInRange = (startIso: string, endIso: string | null) => {
+    const start = Date.parse(startIso);
+    const end = endIso ? Date.parse(endIso) : Number.POSITIVE_INFINITY;
+    return events.filter((e) => {
+      const t = Date.parse(String(e.created_at));
+      return Number.isFinite(t) && t >= start && t <= end;
+    });
   };
 
-  for (const ev of events) {
-    const eventId = idToString(ev.id) || `${ev.created_at}`;
-    const turnKey = groupKeyForEvent(ev);
-    const g = ensureGroup(turnKey, ev.created_at);
-    if (ev.created_at < g.first_at) g.first_at = ev.created_at;
+  const groups: WorkbenchThreadView["groups"] = [];
 
-    switch (ev.event_type) {
-      case "user_message": {
-        // If we ever see multiple user messages for the same turn id, split them into separate groups.
-        if (g.header && g.header.id !== eventId) {
-          const splitKey = `${turnKey}-u${eventId}`;
-          currentTurnKey = splitKey;
-          const g2 = ensureGroup(splitKey, ev.created_at);
-          g2.header = {
-            id: eventId,
-            content: ev.payload_json?.content ?? "",
-            attachments: Array.isArray(ev.payload_json?.attachments)
-              ? (ev.payload_json.attachments as MessageAttachment[])
-              : [],
-            created_at: ev.created_at,
-          };
+  for (let i = 0; i < userMessages.length; i++) {
+    const u = userMessages[i];
+    const nextUser = userMessages[i + 1] ?? null;
+
+    const mid = idToString(u.id) || `msg-${u.created_at}`;
+    const g: TurnGroup = {
+      key: `m-${mid}`,
+      header: {
+        id: mid,
+        content: u.content ?? "",
+        attachments: Array.isArray((u as any).attachments) ? ((u as any).attachments as MessageAttachment[]) : [],
+        created_at: u.created_at,
+      },
+      first_at: u.created_at,
+      toolItems: [],
+      toolById: new Map(),
+      assistant: null,
+      thought_first_at: null,
+      thought_last_at: null,
+      assistant_first_at: null,
+      assistant_complete_at: null,
+    };
+
+    const assistant = assistantMessages.find((a) => {
+      const ta = Date.parse(String(a.created_at));
+      const tu = Date.parse(String(u.created_at));
+      if (!Number.isFinite(ta) || !Number.isFinite(tu) || ta <= tu) return false;
+      if (!nextUser) return true;
+      const tn = Date.parse(String(nextUser.created_at));
+      return !Number.isFinite(tn) || ta < tn;
+    });
+
+    const endAt = assistant?.created_at ?? nextUser?.created_at ?? null;
+    const evs = eventsInRange(u.created_at, endAt);
+
+    for (const ev of evs) {
+      const eventId = idToString(ev.id) || `${ev.created_at}`;
+      if (ev.created_at < g.first_at) g.first_at = ev.created_at;
+
+      switch (ev.event_type) {
+        case "error": {
+          const message = String(ev.payload_json?.message ?? "Error");
+          const provider = String(ev.payload_json?.provider ?? "").trim();
+          const output = provider ? `${message}\nprovider: ${provider}` : message;
+          const tool = ensureTool(g, `error-${eventId}`, ev.created_at);
+          tool.tool_kind = "error";
+          tool.title = "Error";
+          tool.status = "failed";
+          tool.updated_at = ev.created_at;
+          tool.updates_seen += 1;
+          tool.input = ev.payload_json ?? null;
+          tool.output_text = output;
+          tool.raw = ev;
           break;
         }
-        g.header = {
-          id: eventId,
-          content: ev.payload_json?.content ?? "",
-          attachments: Array.isArray(ev.payload_json?.attachments)
-            ? (ev.payload_json.attachments as MessageAttachment[])
-            : [],
-          created_at: ev.created_at,
-        };
-        break;
-      }
-      case "error": {
-        const message = String(ev.payload_json?.message ?? "Error");
-        const provider = String(ev.payload_json?.provider ?? "").trim();
-        const output = provider ? `${message}\nprovider: ${provider}` : message;
-        const tool = ensureTool(g, `error-${eventId}`, ev.created_at);
-        tool.tool_kind = "error";
-        tool.title = "Error";
-        tool.status = "failed";
-        tool.updated_at = ev.created_at;
-        tool.updates_seen += 1;
-        tool.input = ev.payload_json ?? null;
-        tool.output_text = output;
-        tool.raw = ev;
-        break;
-      }
-      case "assistant_chunk": {
-        const fragment = String(ev.payload_json?.content_fragment ?? "");
-        if (!fragment) break;
-        const a = ensureAssistant(g, ev.created_at);
-        g.assistant_first_at = g.assistant_first_at ?? ev.created_at;
-        a.content += fragment;
-        break;
-      }
-      case "assistant_complete": {
-        const full = String(ev.payload_json?.full_content ?? ev.payload_json?.content ?? "");
-        const a = ensureAssistant(g, ev.created_at);
-        g.assistant_complete_at = ev.created_at;
-        if (full) a.content = full;
-        a.is_complete = true;
-        break;
-      }
-      case "thought_chunk": {
-        const fragment = String(ev.payload_json?.content_fragment ?? "");
-        if (!fragment) break;
-        const a = ensureAssistant(g, ev.created_at);
-        g.thought_first_at = g.thought_first_at ?? ev.created_at;
-        g.thought_last_at = ev.created_at;
-        a.thought += fragment;
-        break;
-      }
-      case "tool_call":
-      case "tool_call_update":
-      case "tool_result": {
-        const update = ev.payload_json?.acp_update ?? ev.payload_json ?? {};
-        const toolCallId =
-          String(ev.payload_json?.tool_call_id ?? update?.toolCallId ?? update?.rawInput?.call_id ?? "").trim();
-        if (!toolCallId) {
-          debugEvents.push(ev);
+        case "assistant_chunk": {
+          const fragment = String(ev.payload_json?.content_fragment ?? "");
+          if (!fragment) break;
+          if (!g.assistant) {
+            g.assistant = {
+              kind: "assistant",
+              id: `assistant-${g.key}`,
+              created_at: ev.created_at,
+              content: "",
+              thought: "",
+              is_complete: false,
+            };
+          }
+          g.assistant_first_at = g.assistant_first_at ?? ev.created_at;
+          g.assistant.content += fragment;
           break;
         }
-        const tool = ensureTool(g, toolCallId, ev.created_at);
-        tool.updated_at = ev.created_at;
-        tool.updates_seen += 1;
-        tool.raw = ev.payload_json;
+        case "assistant_complete": {
+          const full = String(ev.payload_json?.full_content ?? ev.payload_json?.content ?? "");
+          if (!g.assistant) {
+            g.assistant = {
+              kind: "assistant",
+              id: `assistant-${g.key}`,
+              created_at: ev.created_at,
+              content: "",
+              thought: "",
+              is_complete: false,
+            };
+          }
+          g.assistant_complete_at = ev.created_at;
+          if (full) g.assistant.content = full;
+          g.assistant.is_complete = true;
+          break;
+        }
+        case "thought_chunk": {
+          const fragment = String(ev.payload_json?.content_fragment ?? "");
+          if (!fragment) break;
+          if (!g.assistant) {
+            g.assistant = {
+              kind: "assistant",
+              id: `assistant-${g.key}`,
+              created_at: ev.created_at,
+              content: "",
+              thought: "",
+              is_complete: false,
+            };
+          }
+          g.thought_first_at = g.thought_first_at ?? ev.created_at;
+          g.thought_last_at = ev.created_at;
+          g.assistant.thought += fragment;
+          break;
+        }
+        case "tool_call":
+        case "tool_call_update":
+        case "tool_result": {
+          const update = ev.payload_json?.acp_update ?? ev.payload_json ?? {};
+          const toolCallId =
+            String(ev.payload_json?.tool_call_id ?? update?.toolCallId ?? update?.rawInput?.call_id ?? "").trim();
+          if (!toolCallId) {
+            debugEvents.push(ev);
+            break;
+          }
+          const tool = ensureTool(g, toolCallId, ev.created_at);
+          tool.updated_at = ev.created_at;
+          tool.updates_seen += 1;
+          tool.raw = ev.payload_json;
 
-        const nextKind = String(update?.kind ?? update?.toolCall?.kind ?? "").trim();
-        if (nextKind) tool.tool_kind = nextKind;
+          const nextKind = String(update?.kind ?? update?.toolCall?.kind ?? "").trim();
+          if (nextKind) tool.tool_kind = nextKind;
 
-        const nextTitle = String(update?.title ?? update?.toolCall?.title ?? update?.toolCall?.name ?? "").trim();
-        if (nextTitle) tool.title = nextTitle;
-        else if (tool.tool_kind && tool.title === "Tool") tool.title = humanToolKind(tool.tool_kind);
+          const nextTitle = String(update?.title ?? update?.toolCall?.title ?? update?.toolCall?.name ?? "").trim();
+          if (nextTitle) tool.title = nextTitle;
+          else if (tool.tool_kind && tool.title === "Tool") tool.title = humanToolKind(tool.tool_kind);
 
-        const nextStatus = String(update?.status ?? update?.toolCall?.status ?? "").trim();
-        if (nextStatus) tool.status = normalizeToolStatus(nextStatus, ev.event_type);
-        else if (ev.event_type === "tool_result") tool.status = "completed";
+          const nextStatus = String(update?.status ?? update?.toolCall?.status ?? "").trim();
+          if (nextStatus) tool.status = normalizeToolStatus(nextStatus, ev.event_type);
+          else if (ev.event_type === "tool_result") tool.status = "completed";
 
-        const locs = Array.isArray(update?.locations) ? update.locations : [];
-        tool.locations = locs.map((l: any) => ({ path: l?.path, range: l?.range }));
+          const locs = Array.isArray(update?.locations) ? update.locations : [];
+          tool.locations = locs.map((l: any) => ({ path: l?.path, range: l?.range }));
 
-        const rawInput = update?.rawInput ?? update?.toolCall?.rawInput ?? update?.toolCall?.input ?? update?.input ?? null;
-        if (rawInput != null) tool.input = rawInput;
+          const rawInput =
+            update?.rawInput ?? update?.toolCall?.rawInput ?? update?.toolCall?.input ?? update?.input ?? null;
+          if (rawInput != null) tool.input = rawInput;
 
-        const output =
-          update?.outputText ??
-          update?.output_text ??
-          update?.toolCall?.outputText ??
-          update?.toolCall?.output_text ??
-          update?.result ??
-          null;
-        if (typeof output === "string") tool.output_text = output;
+          const output =
+            update?.outputText ??
+            update?.output_text ??
+            update?.toolCall?.outputText ??
+            update?.toolCall?.output_text ??
+            update?.result ??
+            null;
+          if (typeof output === "string") tool.output_text = output;
 
-        break;
-      }
-      default: {
-        // Non-thread display events still belong to the current group for ordering, but are not rendered.
-        break;
+          break;
+        }
+        default: {
+          break;
+        }
       }
     }
+
+    if (!g.assistant && assistant) {
+      g.assistant = {
+        kind: "assistant",
+        id: `assistant-${g.key}`,
+        created_at: assistant.created_at,
+        content: assistant.content ?? "",
+        thought: "",
+        is_complete: true,
+      };
+      g.assistant_complete_at = assistant.created_at;
+    } else if (g.assistant && assistant && !g.assistant.content) {
+      g.assistant.content = assistant.content ?? "";
+      g.assistant.is_complete = true;
+      g.assistant_complete_at = assistant.created_at;
+    }
+
+    const items: ThreadItem[] = [];
+    items.push(...g.toolItems);
+    if (g.assistant) {
+      items.push({
+        ...g.assistant,
+        thought_seconds: (() => {
+          if (!g.thought_first_at) return undefined;
+          const start = Date.parse(g.thought_first_at);
+          const endRaw = g.assistant_first_at ?? g.assistant_complete_at ?? g.thought_last_at;
+          if (!endRaw) return undefined;
+          const end = Date.parse(endRaw);
+          if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return 1;
+          return Math.max(1, Math.round((end - start) / 1000));
+        })(),
+      });
+    }
+    if (items.length === 0) {
+      items.push({ kind: "spacer", id: `spacer-${g.key}`, created_at: g.first_at });
+    }
+
+    groups.push({ key: g.key, header: g.header, items });
   }
 
-  const groups = groupsInOrder.map((g) => ({
-    key: g.key,
-    header: g.header,
-    items: (() => {
-      const items: ThreadItem[] = [];
-      items.push(...g.toolItems);
-      if (g.assistant) {
-        items.push({
-          ...g.assistant,
-          thought_seconds: (() => {
-            if (!g.thought_first_at) return undefined;
-            const start = Date.parse(g.thought_first_at);
-            const endRaw = g.assistant_first_at ?? g.assistant_complete_at ?? g.thought_last_at;
-            if (!endRaw) return undefined;
-            const end = Date.parse(endRaw);
-            if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return 1;
-            return Math.max(1, Math.round((end - start) / 1000));
-          })(),
-        });
-      }
-      // GroupedVirtuoso does not reliably render group headers for empty groups.
-      // Ensure groups that only have a user header (no tool/assistant yet) are still visible.
-      if (items.length === 0) {
-        items.push({ kind: "spacer", id: `spacer-${g.key}`, created_at: g.first_at });
-      }
-      return items;
-    })(),
-  }));
+  // If there are no user messages (should be rare), fall back to an event-only group.
+  if (groups.length === 0) {
+    const g: TurnGroup = {
+      key: "no-user-messages",
+      header: null,
+      first_at: events[0]?.created_at ?? new Date().toISOString(),
+      toolItems: [],
+      toolById: new Map(),
+      assistant: null,
+      thought_first_at: null,
+      thought_last_at: null,
+      assistant_first_at: null,
+      assistant_complete_at: null,
+    };
+    for (const ev of events) {
+      const update = ev.payload_json?.acp_update ?? ev.payload_json ?? {};
+      const toolCallId =
+        String(ev.payload_json?.tool_call_id ?? update?.toolCallId ?? update?.rawInput?.call_id ?? "").trim();
+      if (!toolCallId) continue;
+      ensureTool(g, toolCallId, ev.created_at);
+    }
+    const items: ThreadItem[] = [...g.toolItems];
+    if (items.length === 0) items.push({ kind: "spacer", id: `spacer-${g.key}`, created_at: g.first_at });
+    groups.push({ key: g.key, header: g.header, items });
+  }
 
   return { groups, debugEvents };
 }

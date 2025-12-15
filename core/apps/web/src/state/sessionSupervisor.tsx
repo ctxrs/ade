@@ -4,6 +4,7 @@ import {
   getSession,
   idToString,
   listQueue,
+  listMessages,
   listSessionEvents,
   listSessionEventsPage,
   Session,
@@ -24,6 +25,7 @@ export type SessionCacheEntry = {
   sessionId: string;
   session?: Session;
   events: SessionEvent[];
+  messages: Message[];
   queue: Message[];
   diff?: string;
   diagnosticsByPath?: Record<string, any[]>;
@@ -43,11 +45,13 @@ type InternalEntry = SessionCacheEntry & {
   wantDiffCount: number;
   warmUntilMs: number;
   eventIdSet: Set<string>;
+  eventsHydrated: boolean;
   trackId?: string;
   diagnosticsByPath: Record<string, any[]>;
   fetching: {
     session: boolean;
     events: boolean;
+    messages: boolean;
     queue: boolean;
     diff: boolean;
   };
@@ -141,6 +145,7 @@ class SessionSupervisor {
         sessionId: e.sessionId,
         session: e.session,
         events: e.events,
+        messages: e.messages,
         queue: e.queue,
         diff: e.diff,
         diagnosticsByPath: e.diagnosticsByPath,
@@ -175,6 +180,7 @@ class SessionSupervisor {
       sessionId: id,
       session: undefined,
       events: [],
+      messages: [],
       queue: [],
       diff: undefined,
       diagnosticsByPath: {},
@@ -187,8 +193,9 @@ class SessionSupervisor {
       wantDiffCount: 0,
       warmUntilMs: Date.now() + WARM_TTL_MS,
       eventIdSet: new Set(),
+      eventsHydrated: false,
       trackId: undefined,
-      fetching: { session: false, events: false, queue: false, diff: false },
+      fetching: { session: false, events: false, messages: false, queue: false, diff: false },
     };
     this.entries.set(id, entry);
     this.publish();
@@ -224,7 +231,11 @@ class SessionSupervisor {
     const entry = this.ensureEntry(sessionId);
 
     const needSession = !entry.session && !entry.fetching.session;
-    const needEvents = entry.events.length === 0 && !entry.fetching.events;
+    // Always hydrate events at least once via the full events endpoint.
+    // WebSocket/backfill can race and populate a partial event list that may miss prior user_message events,
+    // which would make the conversation header appear to “skip” a user turn.
+    const needEvents = !entry.eventsHydrated && !entry.fetching.events;
+    const needMessages = entry.messages.length === 0 && !entry.fetching.messages;
     const needQueue = entry.queue.length === 0 && !entry.fetching.queue;
     const needDiff = (opts?.watchDiff ?? false) && !entry.fetching.diff && entry.wantDiffCount > 0;
 
@@ -248,7 +259,14 @@ class SessionSupervisor {
         entry.fetching.events = true;
         const evs = await listSessionEvents(sessionId);
         this.upsertEvents(entry, evs);
+        entry.eventsHydrated = true;
         entry.fetching.events = false;
+      }
+
+      if (needMessages) {
+        entry.fetching.messages = true;
+        entry.messages = await listMessages(sessionId);
+        entry.fetching.messages = false;
       }
 
       if (needQueue) {
@@ -433,6 +451,7 @@ class SessionSupervisor {
 
   private async refreshQueueAndDiff(entry: InternalEntry) {
     const sid = entry.sessionId;
+    entry.messages = await listMessages(sid);
     entry.queue = await listQueue(sid);
     if (entry.wantDiffCount > 0 && entry.trackId) {
       const d = await trackDiff(entry.trackId);
