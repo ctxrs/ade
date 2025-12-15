@@ -2,19 +2,24 @@ use std::path::{Path as StdPath, PathBuf};
 use std::sync::Arc;
 
 use axum::extract::ws::{Message as WsMessage, WebSocket, WebSocketUpgrade};
-use axum::extract::{Path, Query, State};
+use axum::extract::{Multipart, Path, Query, State};
+use axum::body::{Body, Bytes};
+use axum::http::header;
 use axum::http::Request;
 use axum::http::StatusCode;
 use axum::middleware::{self, Next};
 use axum::response::sse::{Event as SseEvent, KeepAlive, Sse};
 use axum::response::IntoResponse;
+use axum::response::Response;
 use axum::routing::{delete, get, post};
 use axum::Json;
 use futures::{Stream, StreamExt};
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
+use base64::Engine;
 use tokio::process::Command;
 use tokio::sync::mpsc;
+use tokio_util::io::ReaderStream;
 use tower_http::services::{ServeDir, ServeFile};
 use std::time::Instant;
 
@@ -70,6 +75,8 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
     let api = axum::Router::new()
         .route("/api/health", get(health))
         .route("/api/diagnostics", get(diagnostics))
+        .route("/api/blobs", post(upload_blob))
+        .route("/api/blobs/:id", get(get_blob))
         .route("/api/logs/open", post(open_logs_folder))
         .route("/api/desktop/log", post(append_desktop_log))
         .route("/api/updates/check", get(check_updates))
@@ -194,6 +201,16 @@ struct ApiErrorResp {
     error: String,
 }
 
+#[derive(Debug, Serialize)]
+struct BlobUploadResp {
+    blob_id: String,
+    sha256: String,
+    bytes: i64,
+    mime_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
+}
+
 async fn health(State(state): State<Arc<AppState>>) -> Result<Json<HealthResp>, StatusCode> {
     Ok(Json(HealthResp {
         version: env!("CARGO_PKG_VERSION").to_string(),
@@ -202,6 +219,130 @@ async fn health(State(state): State<Arc<AppState>>) -> Result<Json<HealthResp>, 
         daemon_url: state.daemon_url.clone(),
         auth_required: state.auth_token.is_some(),
     }))
+}
+
+fn blobs_dir(data_root: &StdPath) -> PathBuf {
+    data_root.join("blobs")
+}
+
+async fn persist_blob_bytes(
+    state: &AppState,
+    bytes: &[u8],
+    mime_type: &str,
+    name: Option<&str>,
+) -> Result<BlobUploadResp, StatusCode> {
+    const MAX_BLOB_BYTES: usize = 25 * 1024 * 1024;
+    if bytes.len() > MAX_BLOB_BYTES {
+        return Err(StatusCode::PAYLOAD_TOO_LARGE);
+    }
+    if !mime_type.starts_with("image/") {
+        return Err(StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    }
+
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(bytes);
+    let sha256 = hex::encode(hasher.finalize());
+
+    let blob_id = uuid::Uuid::new_v4().to_string();
+
+    let dir = blobs_dir(&state.data_root);
+    tokio::fs::create_dir_all(&dir)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let path = dir.join(&blob_id);
+    let tmp = dir.join(format!("{blob_id}.tmp"));
+
+    tokio::fs::write(&tmp, bytes)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    tokio::fs::rename(&tmp, &path)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    state
+        .store
+        .insert_blob(
+            &blob_id,
+            &sha256,
+            bytes.len() as i64,
+            mime_type,
+            name,
+            chrono::Utc::now(),
+        )
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    Ok(BlobUploadResp {
+        blob_id,
+        sha256,
+        bytes: bytes.len() as i64,
+        mime_type: mime_type.to_string(),
+        name: name.map(|s| s.to_string()),
+    })
+}
+
+async fn upload_blob(
+    State(state): State<Arc<AppState>>,
+    mut multipart: Multipart,
+) -> Result<Json<BlobUploadResp>, StatusCode> {
+    let mut file_name: Option<String> = None;
+    let mut mime_type: Option<String> = None;
+    let mut bytes: Option<Bytes> = None;
+
+    while let Ok(Some(field)) = multipart.next_field().await {
+        let name = field.name().map(|s| s.to_string()).unwrap_or_default();
+        if name != "file" {
+            continue;
+        }
+        file_name = field.file_name().map(|s| s.to_string());
+        mime_type = field.content_type().map(|s| s.to_string());
+        let b = field.bytes().await.map_err(|_| StatusCode::BAD_REQUEST)?;
+        bytes = Some(b);
+        break;
+    }
+
+    let Some(bytes) = bytes else {
+        return Err(StatusCode::BAD_REQUEST);
+    };
+    let mime_type = mime_type.unwrap_or_else(|| "application/octet-stream".to_string());
+    let resp =
+        persist_blob_bytes(&state, &bytes, &mime_type, file_name.as_deref()).await?;
+    Ok(Json(resp))
+}
+
+async fn get_blob(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Response, StatusCode> {
+    let Some((_sha256, mime_type, _bytes, name, _created_at)) = state
+        .store
+        .get_blob(&id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    else {
+        return Err(StatusCode::NOT_FOUND);
+    };
+
+    let path = blobs_dir(&state.data_root).join(&id);
+    let file = tokio::fs::File::open(&path)
+        .await
+        .map_err(|_| StatusCode::NOT_FOUND)?;
+
+    let stream = ReaderStream::new(file);
+    let mut resp = Response::new(Body::from_stream(stream));
+    resp.headers_mut().insert(
+        header::CONTENT_TYPE,
+        mime_type
+            .parse()
+            .unwrap_or_else(|_| header::HeaderValue::from_static("application/octet-stream")),
+    );
+    if let Some(name) = name {
+        let value = format!("inline; filename=\"{}\"", name.replace('"', ""));
+        if let Ok(v) = value.parse() {
+            resp.headers_mut().insert(header::CONTENT_DISPOSITION, v);
+        }
+    }
+    Ok(resp)
 }
 
 #[derive(Debug, Serialize)]
@@ -4075,6 +4216,54 @@ struct PostMessageReq {
     attachments: Vec<MessageAttachment>,
 }
 
+async fn normalize_message_attachments(
+    state: &Arc<AppState>,
+    attachments: Vec<MessageAttachment>,
+) -> Result<Vec<MessageAttachment>, StatusCode> {
+    let mut out = Vec::with_capacity(attachments.len());
+    for att in attachments {
+        match att {
+            MessageAttachment::Image {
+                mime_type,
+                data_base64,
+                name,
+            } => {
+                let bytes = base64::engine::general_purpose::STANDARD
+                    .decode(data_base64.as_bytes())
+                    .map_err(|_| StatusCode::BAD_REQUEST)?;
+                let saved = persist_blob_bytes(state.as_ref(), &bytes, &mime_type, name.as_deref())
+                    .await?;
+                out.push(MessageAttachment::ImageRef {
+                    blob_id: saved.blob_id,
+                    mime_type,
+                    name,
+                });
+            }
+            MessageAttachment::ImageRef {
+                blob_id,
+                mime_type,
+                name,
+            } => {
+                let exists = state
+                    .store
+                    .get_blob(&blob_id)
+                    .await
+                    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+                    .is_some();
+                if !exists {
+                    return Err(StatusCode::BAD_REQUEST);
+                }
+                out.push(MessageAttachment::ImageRef {
+                    blob_id,
+                    mime_type,
+                    name,
+                });
+            }
+        }
+    }
+    Ok(out)
+}
+
 async fn post_message(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
@@ -4099,6 +4288,8 @@ async fn post_message(
         }
     };
 
+    let attachments = normalize_message_attachments(&state, req.attachments).await?;
+
     let run_id = RunId::new();
     let turn_id = TurnId::new();
     let msg = Message {
@@ -4110,7 +4301,7 @@ async fn post_message(
         turn_id: Some(turn_id),
         role: MessageRole::User,
         content: req.content,
-        attachments: req.attachments,
+        attachments,
         delivery,
         delivered_at: None,
         created_at: chrono::Utc::now(),

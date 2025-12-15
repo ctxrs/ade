@@ -52,7 +52,21 @@ export type MessageAttachment =
       mime_type: string;
       data_base64: string;
       name?: string | null;
+    }
+  | {
+      kind: "image_ref";
+      blob_id: string;
+      mime_type: string;
+      name?: string | null;
     };
+
+export type BlobUploadResp = {
+  blob_id: string;
+  sha256: string;
+  bytes: number;
+  mime_type: string;
+  name?: string | null;
+};
 
 export type SessionEvent = {
   id: { 0: string } | string;
@@ -336,6 +350,25 @@ export const postMessage = (
     method: "POST",
     body: JSON.stringify({ content, delivery, attachments: attachments ?? [] }),
   });
+
+export const uploadBlob = async (file: File): Promise<BlobUploadResp> => {
+  const token = authToken();
+  const form = new FormData();
+  form.append("file", file, file.name);
+  const res = await fetch("/api/blobs", {
+    method: "POST",
+    headers: {
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
+    },
+    body: form,
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || `${res.status} ${res.statusText}`);
+  }
+  const text = await res.text();
+  return (text ? JSON.parse(text) : undefined) as BlobUploadResp;
+};
 
 export const cancelSession = (sessionId: string) =>
   api(`/api/sessions/${sessionId}/cancel`, { method: "POST" });

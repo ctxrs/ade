@@ -168,6 +168,10 @@ async fn start_turn(
 
     let mut provider_env = std::collections::HashMap::new();
     provider_env.insert("CONTEXT_DAEMON_URL".to_string(), state.daemon_url.clone());
+    provider_env.insert(
+        "CONTEXT_DATA_ROOT".to_string(),
+        state.data_root.to_string_lossy().to_string(),
+    );
     if let Some(token) = state.auth_token.clone() {
         provider_env.insert("CONTEXT_AUTH_TOKEN".to_string(), token);
     }

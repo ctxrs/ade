@@ -16,6 +16,7 @@ import {
   authenticateSession,
   idToString,
   interruptSession,
+  uploadBlob,
 } from "../api/client";
 import { useOpenSession, useSessionCacheSnapshot, useSessionEntry, useSessionSupervisor } from "../state/sessionSupervisor";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
@@ -797,14 +798,12 @@ export function SessionView({
                     const files = Array.from(e.target.files ?? []);
                     const next: MessageAttachment[] = [];
                     for (const f of files) {
-                      const dataUrl = await readFileAsDataUrl(f);
-                      const idx = dataUrl.indexOf("base64,");
-                      if (idx === -1) continue;
+                      const uploaded = await uploadBlob(f);
                       next.push({
-                        kind: "image",
-                        mime_type: f.type || "image/*",
-                        data_base64: dataUrl.slice(idx + "base64,".length),
-                        name: f.name,
+                        kind: "image_ref",
+                        blob_id: uploaded.blob_id,
+                        mime_type: uploaded.mime_type,
+                        name: uploaded.name ?? f.name,
                       });
                     }
                     setDraftAttachments((prev) => [...prev, ...next]);
@@ -818,8 +817,11 @@ export function SessionView({
                 <div className="muted">Attachments</div>
                 <div className="row" style={{ flexWrap: "wrap" }}>
                   {draftAttachments.map((a, idx) => {
-                    if (a.kind !== "image") return null;
-                    const src = `data:${a.mime_type};base64,${a.data_base64}`;
+                    if (a.kind !== "image" && a.kind !== "image_ref") return null;
+                    const src =
+                      a.kind === "image_ref"
+                        ? `/api/blobs/${a.blob_id}`
+                        : `data:${a.mime_type};base64,${a.data_base64}`;
                     return (
                       <div key={idx} className="thumb">
                         <img src={src} alt={a.name ?? `image-${idx}`} />
@@ -852,6 +854,23 @@ export function SessionView({
               onKeyUp={() => composerAutocomplete.syncFromDom()}
               onClick={() => composerAutocomplete.syncFromDom()}
               onSelect={() => composerAutocomplete.syncFromDom()}
+              onPaste={async (e) => {
+                const files = Array.from(e.clipboardData?.files ?? []);
+                const images = files.filter((f) => (f.type || "").startsWith("image/"));
+                if (images.length === 0) return;
+                e.preventDefault();
+                const next: MessageAttachment[] = [];
+                for (const f of images) {
+                  const uploaded = await uploadBlob(f);
+                  next.push({
+                    kind: "image_ref",
+                    blob_id: uploaded.blob_id,
+                    mime_type: uploaded.mime_type,
+                    name: uploaded.name ?? f.name,
+                  });
+                }
+                setDraftAttachments((prev) => [...prev, ...next]);
+              }}
             />
             <ComposerAutocompleteMenu
               open={composerAutocomplete.open}
@@ -1007,7 +1026,7 @@ function WorkbenchComposer({
               onClick={() => setAttachments((prev) => prev.filter((_, i) => i !== idx))}
               title="Remove attachment"
             >
-              {a.kind === "image" ? (a.name ?? "image") : "attachment"} ×
+              {a.kind === "image" || a.kind === "image_ref" ? (a.name ?? "image") : "attachment"} ×
             </button>
           ))}
         </div>
@@ -1029,6 +1048,23 @@ function WorkbenchComposer({
         onKeyUp={() => autocomplete.syncFromDom()}
         onClick={() => autocomplete.syncFromDom()}
         onSelect={() => autocomplete.syncFromDom()}
+        onPaste={async (e) => {
+          const files = Array.from(e.clipboardData?.files ?? []);
+          const images = files.filter((f) => (f.type || "").startsWith("image/"));
+          if (images.length === 0) return;
+          e.preventDefault();
+          const next: MessageAttachment[] = [];
+          for (const f of images) {
+            const uploaded = await uploadBlob(f);
+            next.push({
+              kind: "image_ref",
+              blob_id: uploaded.blob_id,
+              mime_type: uploaded.mime_type,
+              name: uploaded.name ?? f.name,
+            });
+          }
+          setAttachments((prev) => [...prev, ...next]);
+        }}
       />
 
       <ComposerAutocompleteMenu
@@ -1109,14 +1145,12 @@ function WorkbenchComposer({
               const files = Array.from(e.target.files ?? []);
               const next: MessageAttachment[] = [];
               for (const f of files) {
-                const dataUrl = await readFileAsDataUrl(f);
-                const idx = dataUrl.indexOf("base64,");
-                if (idx === -1) continue;
+                const uploaded = await uploadBlob(f);
                 next.push({
-                  kind: "image",
-                  mime_type: f.type || "image/*",
-                  data_base64: dataUrl.slice(idx + "base64,".length),
-                  name: f.name,
+                  kind: "image_ref",
+                  blob_id: uploaded.blob_id,
+                  mime_type: uploaded.mime_type,
+                  name: uploaded.name ?? f.name,
                 });
               }
               setAttachments((prev) => [...prev, ...next]);
@@ -1156,8 +1190,11 @@ function CollapsibleMessage({
       {attachments?.length > 0 && (
         <div className="attachments">
           {attachments.map((a, idx) => {
-            if (a.kind !== "image") return null;
-            const src = `data:${a.mime_type};base64,${a.data_base64}`;
+            if (a.kind !== "image" && a.kind !== "image_ref") return null;
+            const src =
+              a.kind === "image_ref"
+                ? `/api/blobs/${a.blob_id}`
+                : `data:${a.mime_type};base64,${a.data_base64}`;
             return (
               <img
                 key={idx}
@@ -2690,13 +2727,4 @@ function deriveAuthUi(events: SessionEvent[]): AuthUi {
   }
 
   return { status, provider, message, methods };
-}
-
-function readFileAsDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error("Failed to read file"));
-    reader.onload = () => resolve(String(reader.result ?? ""));
-    reader.readAsDataURL(file);
-  });
 }
