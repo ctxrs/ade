@@ -812,7 +812,7 @@ button {
 }
 
 .wb-root.wb-root-collapsed {
-  grid-template-columns: 56px 1fr;
+  grid-template-columns: 1fr;
 }
 
 .wb-sidebar {
@@ -823,6 +823,10 @@ button {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+}
+
+.wb-root.wb-root-collapsed .wb-sidebar {
+  display: none;
 }
 
 .wb-sidebar-top {
@@ -849,19 +853,6 @@ button {
   justify-content: center;
   padding: 0;
   color: var(--text);
-}
-
-.wb-sidebar.wb-sidebar-collapsed .wb-sidebar-top {
-  width: 100%;
-  padding: 10px 8px;
-}
-
-.wb-sidebar.wb-sidebar-collapsed .wb-sidebar-header {
-  justify-content: center;
-}
-
-.wb-sidebar.wb-sidebar-collapsed .wb-sidebar-bottom {
-  justify-content: center;
 }
 
 .wb-sidebar-title {
@@ -1007,6 +998,19 @@ button {
   background: rgba(255, 255, 255, 0.02);
 }
 
+.wb-topbar-expand {
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.03);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  color: var(--text);
+}
+
 .wb-topbar-title {
   font-weight: 600;
 }
@@ -1130,7 +1134,7 @@ button {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  color: rgba(255, 255, 255, 0.86);
+  color: rgba(255, 255, 255, 0.72);
   font-size: 12px;
   cursor: pointer;
   max-width: 360px;
@@ -1138,6 +1142,7 @@ button {
 
 .wb-switcher:hover {
   background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.90);
 }
 
 .wb-switcher:active {
@@ -1159,7 +1164,7 @@ button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  color: rgba(255, 255, 255, 0.85);
+  color: currentColor;
   font-size: 12px;
 }
 
@@ -1723,37 +1728,6 @@ button {
 .wb-composer-actions {
   display: flex;
   justify-content: flex-end;
-}
-
-.wb-exec-row {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  color: rgba(255, 255, 255, 0.78);
-  padding-left: 8px;
-}
-
-.wb-exec-switcher {
-  height: 22px;
-  border-radius: 8px;
-  border: none;
-  background: transparent;
-  padding: 0 6px;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  color: rgba(255, 255, 255, 0.86);
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.wb-exec-switcher:hover {
-  background: rgba(255, 255, 255, 0.06);
-}
-
-.wb-exec-label {
-  min-width: 0;
-  white-space: nowrap;
 }
 
 .wb-exec-menu {
