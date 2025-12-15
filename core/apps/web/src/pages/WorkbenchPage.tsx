@@ -758,73 +758,71 @@ export default function WorkbenchPage() {
 
   return (
     <div className={`wb-root ${sidebarCollapsed ? "wb-root-collapsed" : ""}`}>
-      {!sidebarCollapsed && (
-        <div className="wb-sidebar">
-          <div className="wb-sidebar-top">
-            <div className="wb-sidebar-header">
-              <button type="button" className="wb-new-agent" onClick={() => setActiveTaskId(null)}>
-                New Task
-              </button>
-              <button
-                type="button"
-                className="wb-sidebar-collapse"
-                aria-label="Collapse sidebar"
-                title="Collapse"
-                onClick={() => setSidebarCollapsed(true)}
-              >
-                ‹
-              </button>
-            </div>
-
-            <input
-              className="wb-search"
-              placeholder="Search Tasks"
-              value={taskQuery}
-              onChange={(e) => setTaskQuery(e.target.value)}
-            />
+      <div className="wb-sidebar" aria-hidden={sidebarCollapsed}>
+        <div className="wb-sidebar-top">
+          <div className="wb-sidebar-header">
+            <button type="button" className="wb-new-agent" onClick={() => setActiveTaskId(null)}>
+              New Task
+            </button>
+            <button
+              type="button"
+              className="wb-sidebar-collapse"
+              aria-label="Collapse sidebar"
+              title="Collapse"
+              onClick={() => setSidebarCollapsed(true)}
+            >
+              ‹
+            </button>
           </div>
 
-          <div className="wb-sidebar-section">
-            <div className="wb-section-title">Pinned</div>
-            <div className="wb-muted">No pinned tasks.</div>
-          </div>
+          <input
+            className="wb-search"
+            placeholder="Search Tasks"
+            value={taskQuery}
+            onChange={(e) => setTaskQuery(e.target.value)}
+          />
+        </div>
 
-          <div className="wb-sidebar-section wb-sidebar-grow">
-            <div className="wb-section-title">TASKS</div>
-            <div className="wb-task-list">
-              {filteredTasks.map((t) => {
-                const tid = idToString(t.id);
-                const selected = tid === activeTaskId;
-                const title = t.title ?? "New conversation";
-                return (
-                  <button
-                    key={tid}
-                    type="button"
-                    className={`wb-task ${selected ? "wb-task-active" : ""}`}
-                    onClick={() => setActiveTaskId(tid)}
-                    title={title}
-                  >
-                    <div className="wb-task-title">{title}</div>
-                    <div className="wb-task-sub">
-                      {new Date(t.updated_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                    </div>
-                  </button>
-                );
-              })}
-              {filteredTasks.length === 0 && <div className="wb-muted">No tasks yet.</div>}
-            </div>
-          </div>
+        <div className="wb-sidebar-section">
+          <div className="wb-section-title">Pinned</div>
+          <div className="wb-muted">No pinned tasks.</div>
+        </div>
 
-          <div className="wb-sidebar-bottom">
-            <Link className="wb-link" to="/providers" title="Providers">
-              Providers
-            </Link>
-            <Link className="wb-link" to="/diagnostics" title="Diagnostics">
-              Diagnostics
-            </Link>
+        <div className="wb-sidebar-section wb-sidebar-grow">
+          <div className="wb-section-title">TASKS</div>
+          <div className="wb-task-list">
+            {filteredTasks.map((t) => {
+              const tid = idToString(t.id);
+              const selected = tid === activeTaskId;
+              const title = t.title ?? "New conversation";
+              return (
+                <button
+                  key={tid}
+                  type="button"
+                  className={`wb-task ${selected ? "wb-task-active" : ""}`}
+                  onClick={() => setActiveTaskId(tid)}
+                  title={title}
+                >
+                  <div className="wb-task-title">{title}</div>
+                  <div className="wb-task-sub">
+                    {new Date(t.updated_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                  </div>
+                </button>
+              );
+            })}
+            {filteredTasks.length === 0 && <div className="wb-muted">No tasks yet.</div>}
           </div>
         </div>
-      )}
+
+        <div className="wb-sidebar-bottom">
+          <Link className="wb-link" to="/providers" title="Providers">
+            Providers
+          </Link>
+          <Link className="wb-link" to="/diagnostics" title="Diagnostics">
+            Diagnostics
+          </Link>
+        </div>
+      </div>
 
       <div className="wb-main">
         <div className="wb-topbar">
