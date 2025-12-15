@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useLocation, useParams } from "react-router-dom";
 import {
   EditPlanSummary,
   LspStatus,
@@ -74,6 +74,7 @@ function workbenchLabelForTrack(d: DraftTrack): string {
 
 export default function WorkbenchPage() {
   const { id: workspaceId } = useParams<{ id: string }>();
+  const location = useLocation();
   const supervisor = useSessionSupervisor();
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -119,9 +120,11 @@ export default function WorkbenchPage() {
   const [lspStatus, setLspStatus] = useState<LspStatus | null>(null);
 
   useEffect(() => {
+    document.documentElement.classList.add("wb-no-scroll");
     document.body.classList.add("wb-no-scroll");
     return () => {
       document.body.classList.remove("wb-no-scroll");
+      document.documentElement.classList.remove("wb-no-scroll");
     };
   }, []);
 
@@ -216,6 +219,29 @@ export default function WorkbenchPage() {
     const s = ss[0];
     return s ? idToString((s as any).id) : null;
   }, [activeTrackId, sessionsByTrack]);
+
+  const showDebugIds = useMemo(() => {
+    const params = new URLSearchParams(location.search);
+    const ids = params.get("ids");
+    const debug = params.get("debug");
+    if (ids === "1" || debug === "1") {
+      localStorage.setItem("contextDebugIds", "1");
+      return true;
+    }
+    if (ids === "0" || debug === "0") {
+      localStorage.removeItem("contextDebugIds");
+      return false;
+    }
+    return localStorage.getItem("contextDebugIds") === "1";
+  }, [location.search]);
+
+  const debugIdLabel = useMemo(() => {
+    const short = (v: string | null) => {
+      const s = String(v ?? "");
+      return s ? s.slice(0, 8) : "-";
+    };
+    return `task:${short(activeTaskId)} track:${short(activeTrackId)} session:${short(activeSessionId)}`;
+  }, [activeTaskId, activeTrackId, activeSessionId]);
 
   const activeEntry = useSessionEntry(activeSessionId ?? "");
   const activeTrackDiff = activeEntry?.diff ?? "";
@@ -487,6 +513,29 @@ export default function WorkbenchPage() {
         <div className="wb-topbar">
           <div className="wb-topbar-title">{workspace?.name ?? "Workspace"}</div>
           {activeTask && <div className="wb-topbar-sub">{activeTask.title}</div>}
+          {showDebugIds && (
+            <button
+              type="button"
+              className="wb-topbar-ids"
+              title="Click to copy workspace/task/track/session IDs"
+              onClick={() =>
+                navigator.clipboard.writeText(
+                  JSON.stringify(
+                    {
+                      workspaceId,
+                      taskId: activeTaskId,
+                      trackId: activeTrackId,
+                      sessionId: activeSessionId,
+                    },
+                    null,
+                    2,
+                  ),
+                )
+              }
+            >
+              {debugIdLabel}
+            </button>
+          )}
         </div>
 
         {!activeTaskId && (

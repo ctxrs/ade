@@ -33,6 +33,11 @@ type ThreadItem =
       delivery?: "immediate" | "queued";
     }
   | {
+      kind: "spacer";
+      id: string;
+      created_at: string;
+    }
+  | {
       kind: "assistant";
       id: string;
       created_at: string;
@@ -322,12 +327,16 @@ export function SessionView({
   }, [session?.provider_id]);
 
   const showCommandSuggestions = input.trimStart().startsWith("/");
-  const virtuosoStyle = variant === "workbench" ? ({ flex: 1 } as const) : ({ height: "70vh" } as const);
+  const virtuosoStyle =
+    variant === "workbench" ? ({ flex: 1, minHeight: 0 } as const) : ({ height: "70vh" } as const);
 
   const wrapperClass = variant === "workbench" ? "wb-session-view" : "page split";
   const leftClass = variant === "workbench" ? "wb-session-left" : "left";
 
   const renderThreadItem = (item: ThreadItem) => {
+    if (item.kind === "spacer") {
+      return <div style={{ height: 1 }} />;
+    }
     if (item.kind === "assistant") {
       const thoughtExpanded = expandedThoughtByAssistantId[item.id] ?? false;
       return (
@@ -575,79 +584,101 @@ export function SessionView({
           <DebugPanel events={debugEvents} />
         )}
 
-        {variant === "workbench" ? (
-          <GroupedVirtuoso
-            style={virtuosoStyle}
-            data={wbFlatItems}
-            groupCounts={wbGroupCounts}
-            ref={groupedVirtuosoRef}
-            followOutput="auto"
-            atBottomStateChange={(b) => {
-              setAtBottom(b);
-              if (b) setHasNewActivity(false);
-            }}
-            components={{
-              List: forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>((props, ref) => (
-                <div {...props} ref={ref} role="list" />
-              )),
-              Item: forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>((props, ref) => (
-                <div {...props} ref={ref} role="listitem" />
-              )),
-            }}
-            groupContent={(groupIndex) => {
-              const header = wbGroups[groupIndex]?.header ?? null;
-              if (!header) return <div style={{ height: 0 }} />;
-              const isLong = header.content.split("\n").length > 4 || header.content.length > 280;
-              const expanded = expandedTurnHeaders[header.id] ?? !isLong;
-              return (
-                <WorkbenchTurnHeaderView
-                  header={header}
-                  expanded={expanded}
-                  onToggle={() =>
-                    setExpandedTurnHeaders((prev) => ({ ...prev, [header.id]: !expanded }))
-                  }
-                />
-              );
-            }}
-            itemContent={(_index, _groupIndex, item) => renderThreadItem(item)}
-          />
-        ) : (
-          <Virtuoso
-            style={virtuosoStyle}
-            data={threadItems}
-            ref={virtuosoRef}
-            followOutput="auto"
-            atBottomStateChange={(b) => {
-              setAtBottom(b);
-              if (b) setHasNewActivity(false);
-            }}
-            components={{
-              List: forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>((props, ref) => (
-                <div {...props} ref={ref} role="list" />
-              )),
-              Item: forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>((props, ref) => (
-                <div {...props} ref={ref} role="listitem" />
-              )),
-            }}
-            itemContent={(_, item) => renderThreadItem(item)}
-          />
-        )}
+        {(() => {
+          const jumpToLatest = () => {
+            if (variant === "workbench") {
+              groupedVirtuosoRef.current?.scrollToIndex({ index: "LAST", align: "end" });
+              return;
+            }
+            if (threadItems.length > 0) {
+              virtuosoRef.current?.scrollToIndex({ index: threadItems.length - 1, align: "end" });
+            }
+          };
 
-        {hasNewActivity && (
-          <button
-            type="button"
-            className="new-activity"
-            onClick={() => {
-              if (variant === "workbench") {
-                groupedVirtuosoRef.current?.scrollToIndex({ index: "LAST", align: "end" });
-              } else if (threadItems.length > 0) {
-                virtuosoRef.current?.scrollToIndex({ index: threadItems.length - 1 });
-              }
-            }}
-          >
-            New activity ↓
-          </button>
-        )}
+          if (variant === "workbench") {
+            return (
+              <div className="thread-stack">
+                <GroupedVirtuoso
+                  style={virtuosoStyle}
+                  data={wbFlatItems}
+                  groupCounts={wbGroupCounts}
+                  ref={groupedVirtuosoRef}
+                  followOutput="auto"
+                  atBottomStateChange={(b) => {
+                    setAtBottom(b);
+                    if (b) setHasNewActivity(false);
+                  }}
+                  components={{
+                    List: forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>((props, ref) => (
+                      <div {...props} ref={ref} role="list" />
+                    )),
+                    Item: forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>((props, ref) => (
+                      <div {...props} ref={ref} role="listitem" />
+                    )),
+                  }}
+                  groupContent={(groupIndex) => {
+                    const header = wbGroups[groupIndex]?.header ?? null;
+                    if (!header) return <div style={{ height: 0 }} />;
+                    const isLong = header.content.split("\n").length > 4 || header.content.length > 280;
+                    const expanded = expandedTurnHeaders[header.id] ?? !isLong;
+                    return (
+                      <WorkbenchTurnHeaderView
+                        header={header}
+                        expanded={expanded}
+                        onToggle={() =>
+                          setExpandedTurnHeaders((prev) => ({ ...prev, [header.id]: !expanded }))
+                        }
+                      />
+                    );
+                  }}
+                  itemContent={(_index, _groupIndex, item) => renderThreadItem(item)}
+                />
+
+                {hasNewActivity && (
+                  <button
+                    type="button"
+                    className="new-activity-overlay"
+                    aria-label="Jump to latest"
+                    title="Jump to latest"
+                    onClick={jumpToLatest}
+                  >
+                    ↓
+                  </button>
+                )}
+              </div>
+            );
+          }
+
+          return (
+            <>
+              <Virtuoso
+                style={virtuosoStyle}
+                data={threadItems}
+                ref={virtuosoRef}
+                followOutput="auto"
+                atBottomStateChange={(b) => {
+                  setAtBottom(b);
+                  if (b) setHasNewActivity(false);
+                }}
+                components={{
+                  List: forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>((props, ref) => (
+                    <div {...props} ref={ref} role="list" />
+                  )),
+                  Item: forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>((props, ref) => (
+                    <div {...props} ref={ref} role="listitem" />
+                  )),
+                }}
+                itemContent={(_, item) => renderThreadItem(item)}
+              />
+
+              {hasNewActivity && (
+                <button type="button" className="new-activity" onClick={jumpToLatest}>
+                  New activity ↓
+                </button>
+              )}
+            </>
+          );
+        })()}
 
         {variant === "legacy" && <ActivityBar planEntries={planEntries} diffText={diff} />}
 
@@ -1580,29 +1611,73 @@ function extractEditedFiles(diffText: string): string[] {
   return [...files].slice(0, 200);
 }
 
+type MdastNode = {
+  type?: string;
+  children?: MdastNode[];
+  [key: string]: unknown;
+};
+
+function remarkNormalizeCursorMarkdown() {
+  return (tree: MdastNode) => {
+    const walk = (node: MdastNode) => {
+      if (node?.type === "listItem" && Array.isArray(node.children)) {
+        if (node.children.length === 1 && node.children[0]?.type === "code") {
+          const code = node.children[0] as MdastNode;
+          const lang = typeof code.lang === "string" ? code.lang : undefined;
+          const raw = typeof code.value === "string" ? code.value : "";
+          const trimmed = raw.replace(/\n+$/, "");
+          if ((!lang || lang === "code") && trimmed.length > 0 && !trimmed.includes("\n")) {
+            node.children = [
+              {
+                type: "paragraph",
+                children: [{ type: "inlineCode", value: trimmed }],
+              },
+            ];
+          }
+        }
+      }
+
+      if (!Array.isArray(node.children)) return;
+      for (const child of node.children) walk(child);
+    };
+
+    walk(tree);
+  };
+}
+
 function Markdown({ content }: { content: string }) {
   return (
     <ReactMarkdown
-      remarkPlugins={[remarkGfm]}
+      remarkPlugins={[remarkGfm, remarkNormalizeCursorMarkdown]}
       components={{
+        pre({ children }) {
+          return <>{children}</>;
+        },
         code({ inline, className, children }) {
-          const match = /language-(\w+)/.exec(className || "");
-          const codeString = String(children).replace(/\n$/, "");
+          const match = /language-([A-Za-z0-9_-]+)/.exec(className || "");
+          const rawLang = match?.[1];
+          const lang = rawLang && rawLang !== "code" ? rawLang : undefined;
+          const codeString = String(children ?? "").replace(/\n$/, "");
           if (inline) {
             return <code className={className}>{children}</code>;
           }
+
+          if (!lang && !codeString.includes("\n") && codeString.length <= 120) {
+            return <code className={className}>{codeString}</code>;
+          }
+
           return (
             <div className="codeblock">
-              <div className="row code-header">
-                <span className="muted">{match?.[1] ?? "code"}</span>
-                <button
-                  type="button"
-                  onClick={() => navigator.clipboard.writeText(codeString)}
-                >
-                  Copy
-                </button>
-              </div>
-              <SyntaxHighlighter style={oneDark} language={match?.[1]} PreTag="div">
+              <button
+                type="button"
+                className="codeblock-copy"
+                aria-label="Copy code"
+                title="Copy"
+                onClick={() => navigator.clipboard.writeText(codeString)}
+              >
+                ⧉
+              </button>
+              <SyntaxHighlighter style={oneDark} language={lang} PreTag="div">
                 {codeString}
               </SyntaxHighlighter>
             </div>
@@ -1826,25 +1901,30 @@ function buildWorkbenchThreadViewModel(events: SessionEvent[]): WorkbenchThreadV
   const groups = groupsInOrder.map((g) => ({
     key: g.key,
     header: g.header,
-    items: [
-      ...g.toolItems,
-      ...(g.assistant
-        ? [
-            {
-              ...g.assistant,
-              thought_seconds: (() => {
-                if (!g.thought_first_at) return undefined;
-                const start = Date.parse(g.thought_first_at);
-                const endRaw = g.assistant_first_at ?? g.assistant_complete_at ?? g.thought_last_at;
-                if (!endRaw) return undefined;
-                const end = Date.parse(endRaw);
-                if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return 1;
-                return Math.max(1, Math.round((end - start) / 1000));
-              })(),
-            } satisfies Extract<ThreadItem, { kind: "assistant" }>,
-          ]
-        : []),
-    ],
+    items: (() => {
+      const items: ThreadItem[] = [];
+      items.push(...g.toolItems);
+      if (g.assistant) {
+        items.push({
+          ...g.assistant,
+          thought_seconds: (() => {
+            if (!g.thought_first_at) return undefined;
+            const start = Date.parse(g.thought_first_at);
+            const endRaw = g.assistant_first_at ?? g.assistant_complete_at ?? g.thought_last_at;
+            if (!endRaw) return undefined;
+            const end = Date.parse(endRaw);
+            if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return 1;
+            return Math.max(1, Math.round((end - start) / 1000));
+          })(),
+        });
+      }
+      // GroupedVirtuoso does not reliably render group headers for empty groups.
+      // Ensure groups that only have a user header (no tool/assistant yet) are still visible.
+      if (items.length === 0) {
+        items.push({ kind: "spacer", id: `spacer-${g.key}`, created_at: g.first_at });
+      }
+      return items;
+    })(),
   }));
 
   return { groups, debugEvents };

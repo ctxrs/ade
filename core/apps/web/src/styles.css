@@ -16,12 +16,24 @@
     "Courier New", monospace;
 }
 
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
 body {
   margin: 0;
   font-family: system-ui, sans-serif;
   background: var(--bg);
   color: var(--text);
   font-size: 13px;
+}
+
+html,
+body,
+#root {
+  height: 100%;
 }
 
 .wb-no-scroll {
@@ -230,6 +242,37 @@ button {
   margin: 8px 0;
 }
 
+.thread-stack {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.new-activity-overlay {
+  position: absolute;
+  left: 50%;
+  bottom: 10px;
+  transform: translateX(-50%);
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 20;
+}
+
+.new-activity-overlay:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
 .banner {
   background: var(--panel-2);
   background: color-mix(in srgb, var(--warning) 18%, var(--panel) 82%);
@@ -244,13 +287,29 @@ button {
   background: #111;
   border-radius: 6px;
   margin: 8px 0;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  position: relative;
 }
 
-.code-header {
-  justify-content: space-between;
-  padding: 6px 8px;
-  background: #1b1b1b;
-  border-bottom: 1px solid #333;
+.codeblock-copy {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.codeblock-copy:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.05);
 }
 
 .sr-only {
@@ -747,7 +806,9 @@ button {
   height: 100vh;
   display: grid;
   grid-template-columns: 260px 1fr;
+  grid-template-rows: 1fr;
   background: var(--bg);
+  overflow: hidden;
 }
 
 .wb-root.wb-root-collapsed {
@@ -760,6 +821,8 @@ button {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .wb-sidebar-top {
@@ -929,6 +992,8 @@ button {
   min-width: 0;
   display: flex;
   flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .wb-topbar {
@@ -951,6 +1016,23 @@ button {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.wb-topbar-ids {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 999px;
+  padding: 4px 8px;
+  cursor: pointer;
+}
+
+.wb-topbar-ids:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.03);
 }
 
 .wb-center {
