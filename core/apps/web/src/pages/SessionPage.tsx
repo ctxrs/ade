@@ -30,6 +30,7 @@ import { shouldSendOnEnter } from "../utils/keyboard";
 import { HARNESS_CATALOG } from "../utils/harnessCatalog";
 import { WorkbenchComposer as UnifiedWorkbenchComposer, type WorkbenchModeId } from "../components/WorkbenchComposer";
 import { startMicPcmStream } from "../utils/micPcmStream";
+import { parseWsJson } from "../utils/wsJson";
 
 type ThreadItem =
   | {
@@ -278,8 +279,8 @@ export function SessionView({
     });
 
     ws.addEventListener("message", (ev) => {
-      try {
-        const data = JSON.parse(String(ev.data ?? "{}"));
+      void parseWsJson((ev as MessageEvent).data).then((data) => {
+        if (!data) return;
         const t = String(data.type ?? "");
         if (t === "ready") {
           dictationReadyRef.current = true;
@@ -292,10 +293,7 @@ export function SessionView({
           dictationInterimRef.current = String(data.text ?? "");
         } else if (t === "final") {
           dictationTranscriptMsgsRef.current += 1;
-          dictationCommittedRef.current = appendSegment(
-            dictationCommittedRef.current,
-            String(data.text ?? ""),
-          );
+          dictationCommittedRef.current = appendSegment(dictationCommittedRef.current, String(data.text ?? ""));
           dictationInterimRef.current = "";
         } else if (t === "done") {
           try {
@@ -314,9 +312,7 @@ export function SessionView({
         const committed = dictationCommittedRef.current;
         const interim = dictationInterimRef.current;
         setInput(appendSegment(appendSegment(base, committed), interim));
-      } catch {
-        // ignore
-      }
+      });
     });
 
     ws.addEventListener("close", () => {

@@ -37,6 +37,7 @@ import { WorkbenchComposer, type DraftTrack, type WorkbenchEnvTarget, type Workb
 import type { SlashCommandDescriptor } from "../state/useComposerAutocomplete";
 import { IconGear } from "../components/workbenchIcons";
 import { startMicPcmStream } from "../utils/micPcmStream";
+import { parseWsJson } from "../utils/wsJson";
 
 function deriveTaskTitle(prompt: string): string {
   const line = prompt.trim().split("\n")[0] ?? "";
@@ -406,8 +407,8 @@ export default function WorkbenchPage() {
     });
 
     ws.addEventListener("message", (ev) => {
-      try {
-        const data = JSON.parse(String(ev.data ?? "{}"));
+      void parseWsJson((ev as MessageEvent).data).then((data) => {
+        if (!data) return;
         const t = String(data.type ?? "");
         if (t === "ready") {
           dictationReadyRef.current = true;
@@ -420,10 +421,7 @@ export default function WorkbenchPage() {
           dictationInterimRef.current = String(data.text ?? "");
         } else if (t === "final") {
           dictationTranscriptMsgsRef.current += 1;
-          dictationCommittedRef.current = appendSegment(
-            dictationCommittedRef.current,
-            String(data.text ?? ""),
-          );
+          dictationCommittedRef.current = appendSegment(dictationCommittedRef.current, String(data.text ?? ""));
           dictationInterimRef.current = "";
         } else if (t === "done") {
           try {
@@ -442,9 +440,7 @@ export default function WorkbenchPage() {
         const committed = dictationCommittedRef.current;
         const interim = dictationInterimRef.current;
         setDraftPrompt(appendSegment(appendSegment(base, committed), interim));
-      } catch {
-        // ignore
-      }
+      });
     });
 
     ws.addEventListener("close", () => {
