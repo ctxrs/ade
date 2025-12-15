@@ -40,8 +40,9 @@ echo "Syncing universal sidecars + web dist into desktop resources..."
 node core/scripts/desktop_sync_resources_universal_macos.cjs --profile release
 
 echo "Building per-arch Tauri bundles..."
-pnpm -C core/apps/desktop build -- --target "$ARM_TARGET"
-pnpm -C core/apps/desktop build -- --target "$INTEL_TARGET"
+# Use `pnpm exec` so `--target` is passed to the Tauri CLI (not as Cargo args after `--`).
+pnpm -C core/apps/desktop exec tauri build --target "$ARM_TARGET"
+pnpm -C core/apps/desktop exec tauri build --target "$INTEL_TARGET"
 
 ARM_APP="core/apps/desktop/src-tauri/target/$ARM_TARGET/release/bundle/macos/$PRODUCT_NAME.app"
 INTEL_APP="core/apps/desktop/src-tauri/target/$INTEL_TARGET/release/bundle/macos/$PRODUCT_NAME.app"
