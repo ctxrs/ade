@@ -65,6 +65,12 @@ impl Tier1AcpAdapter {
     pub fn gemini() -> Self {
         Self::new("gemini", "gemini", vec!["--experimental-acp".into()])
     }
+
+    pub async fn prewarm(&self, workdir: PathBuf, env: HashMap<String, String>) -> Result<()> {
+        let client = build_acp_client_config(&env);
+        let (tx, _rx) = mpsc::channel::<NormalizedEvent>(8);
+        self.pool.prewarm(client, workdir, env, tx).await
+    }
 }
 
 #[async_trait]

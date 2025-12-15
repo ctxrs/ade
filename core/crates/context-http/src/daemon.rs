@@ -438,36 +438,31 @@ pub async fn serve(
 
     let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
     providers.insert("fake".into(), Arc::new(FakeProviderAdapter::new()));
-    providers.insert(
-        "codex".into(),
-        Arc::new(
-            agent_cfg
-                .providers
-                .get("codex")
-                .map(|c| Tier1AcpAdapter::from_raw("codex", c.command.clone(), c.args.clone()))
-                .unwrap_or_else(Tier1AcpAdapter::codex),
-        ),
+    let codex_adapter: Arc<Tier1AcpAdapter> = Arc::new(
+        agent_cfg
+            .providers
+            .get("codex")
+            .map(|c| Tier1AcpAdapter::from_raw("codex", c.command.clone(), c.args.clone()))
+            .unwrap_or_else(Tier1AcpAdapter::codex),
     );
-    providers.insert(
-        "claude".into(),
-        Arc::new(
-            agent_cfg
-                .providers
-                .get("claude")
-                .map(|c| Tier1AcpAdapter::from_raw("claude", c.command.clone(), c.args.clone()))
-                .unwrap_or_else(Tier1AcpAdapter::claude),
-        ),
+    let claude_adapter: Arc<Tier1AcpAdapter> = Arc::new(
+        agent_cfg
+            .providers
+            .get("claude")
+            .map(|c| Tier1AcpAdapter::from_raw("claude", c.command.clone(), c.args.clone()))
+            .unwrap_or_else(Tier1AcpAdapter::claude),
     );
-    providers.insert(
-        "gemini".into(),
-        Arc::new(
-            agent_cfg
-                .providers
-                .get("gemini")
-                .map(|c| Tier1AcpAdapter::from_raw("gemini", c.command.clone(), c.args.clone()))
-                .unwrap_or_else(Tier1AcpAdapter::gemini),
-        ),
+    let gemini_adapter: Arc<Tier1AcpAdapter> = Arc::new(
+        agent_cfg
+            .providers
+            .get("gemini")
+            .map(|c| Tier1AcpAdapter::from_raw("gemini", c.command.clone(), c.args.clone()))
+            .unwrap_or_else(Tier1AcpAdapter::gemini),
     );
+
+    providers.insert("codex".into(), codex_adapter.clone());
+    providers.insert("claude".into(), claude_adapter.clone());
+    providers.insert("gemini".into(), gemini_adapter.clone());
 
     let listener = tokio::net::TcpListener::bind(&bind).await?;
     let local_addr = listener.local_addr()?;
@@ -483,6 +478,8 @@ pub async fn serve(
     } else {
         auth_token.or_else(|| std::env::var("CONTEXT_DESKTOP_TOKEN").ok())
     };
+    let auth_token_for_env = auth_token.clone();
+    let prewarm_workdir = data_root.clone();
 
     let mut lsp_cfg = LspManagerConfig::default();
     let _ = installer::apply_managed_lsp_server_config(&data_root, &mut lsp_cfg).await;
@@ -521,6 +518,48 @@ pub async fn serve(
             }
         }
         *state.provider_statuses.lock().await = statuses;
+    }
+
+    // Pinned ACP provider warming:
+    // - Always keep these providers warm today: codex, gemini, claude
+    // - For future providers, they start on first use and remain alive for daemon lifetime.
+    let prewarm_ids: std::collections::HashSet<String> = std::env::var("CONTEXT_ACP_PREWARM_PROVIDERS")
+        .unwrap_or_else(|_| "codex,gemini,claude".to_string())
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    if !prewarm_ids.is_empty() {
+        let mut base_env = HashMap::<String, String>::new();
+        base_env.insert("CONTEXT_DAEMON_URL".to_string(), daemon_url.clone());
+        if let Some(token) = auth_token_for_env.clone() {
+            base_env.insert("CONTEXT_AUTH_TOKEN".to_string(), token);
+        }
+
+        for (id, adapter) in [
+            ("codex", codex_adapter.clone()),
+            ("gemini", gemini_adapter.clone()),
+            ("claude", claude_adapter.clone()),
+        ] {
+            if !prewarm_ids.contains(id) {
+                continue;
+            }
+            let workdir = prewarm_workdir.clone();
+            let env = base_env.clone();
+            tokio::spawn(async move {
+                let status = adapter.inspect().await;
+                let ok = status
+                    .as_ref()
+                    .is_ok_and(|s| s.installed && matches!(s.health, context_providers::adapters::ProviderHealth::Ok));
+                if !ok {
+                    return;
+                }
+                if let Err(e) = adapter.prewarm(workdir, env).await {
+                    tracing::warn!("failed to prewarm provider {id}: {e:#}");
+                }
+            });
+        }
     }
     let mut shutdown_rx = state.shutdown_tx.subscribe();
     let app: Router = api::router(state);
