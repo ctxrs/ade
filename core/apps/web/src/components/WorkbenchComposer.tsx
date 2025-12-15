@@ -1,0 +1,979 @@
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import type React from "react";
+import type { MessageAttachment, ProviderOptions, ProviderStatus } from "../api/client";
+import { shouldSendOnEnter } from "../utils/keyboard";
+import { buildModelCatalog, composeModelId, parseModelId, type KnownEffort } from "../utils/modelEffort";
+import { ComposerAutocompleteMenu } from "./ComposerAutocompleteMenu";
+import { useComposerAutocomplete, type SlashCommandDescriptor } from "../state/useComposerAutocomplete";
+import {
+  IconArrowUp,
+  IconAt,
+  IconChevronDown,
+  IconImage,
+  IconLaptop,
+  IconMic,
+  IconSlash,
+  IconStop,
+} from "./workbenchIcons";
+import type { HarnessCatalogEntry } from "../utils/harnessCatalog";
+
+export type WorkbenchModeId = "default" | "research" | "plan" | "review";
+export type WorkbenchEnvTarget = "local" | "worktree" | "container";
+
+export type DraftTrack = {
+  key: string;
+  label: string;
+  providerId: string;
+  modelId: string;
+};
+
+type OpenMenuId = "harness" | "model" | "effort" | "mode" | "env";
+
+type SharedProps = {
+  variant: "newSession" | "activeSession";
+
+  value: string;
+  setValue: (next: string) => void;
+  placeholder: string;
+
+  sessionIdForAutocomplete: string | null;
+  slashCommands: SlashCommandDescriptor[];
+
+  attachments: MessageAttachment[];
+  setAttachments: React.Dispatch<React.SetStateAction<MessageAttachment[]>>;
+
+  onSend: () => void;
+  sendDisabledReason?: string | null;
+  sendDisabled?: boolean;
+
+  onInterrupt?: (() => void) | null;
+
+  modeId: WorkbenchModeId;
+  setModeId: (next: WorkbenchModeId) => void;
+};
+
+type NewSessionProps = SharedProps & {
+  variant: "newSession";
+  harnessCatalog: HarnessCatalogEntry[];
+  providersById: Record<string, ProviderStatus>;
+  providerOptions: Record<string, ProviderOptions | undefined>;
+  ensureProviderOptions: (providerId: string) => Promise<ProviderOptions | undefined>;
+
+  draftTracks: DraftTrack[];
+  setDraftTracks: React.Dispatch<React.SetStateAction<DraftTrack[]>>;
+  defaultProviderId: string;
+  useMultipleAgents: boolean;
+  setUseMultipleAgents: (next: boolean) => void;
+
+  envTarget: WorkbenchEnvTarget;
+  setEnvTarget: (next: WorkbenchEnvTarget) => void;
+};
+
+type ActiveSessionProps = SharedProps & {
+  variant: "activeSession";
+  harnessLabel: string;
+  harnessLogoSrc?: string;
+  harnessLogoInvert?: boolean;
+
+  envLabel: string;
+
+  availableModels: Array<{ id: string; name?: string }>;
+  currentModelId: string;
+  onSetModelId: (next: string) => void;
+};
+
+export type WorkbenchComposerProps = NewSessionProps | ActiveSessionProps;
+
+function insertTextAtCursor(value: string, insert: string, el: HTMLTextAreaElement | null) {
+  if (!el) return { nextText: value + insert, nextCursor: (value + insert).length };
+  const start = el.selectionStart ?? value.length;
+  const end = el.selectionEnd ?? value.length;
+  const nextText = value.slice(0, start) + insert + value.slice(end);
+  const nextCursor = start + insert.length;
+  return { nextText, nextCursor };
+}
+
+function labelForMode(mode: WorkbenchModeId): string {
+  if (mode === "default") return "Default";
+  if (mode === "research") return "Research";
+  if (mode === "plan") return "Plan";
+  return "Review";
+}
+
+function buildModelsFromProviderOptions(opts?: ProviderOptions): Array<{ id: string; name?: string }> {
+  const raw = opts?.models;
+  if (!raw) return [];
+  const list = (raw as any)?.availableModels ?? (raw as any)?.available_models ?? (raw as any)?.models ?? raw;
+  if (!Array.isArray(list)) return [];
+  return list
+    .map((m: any) => ({
+      id: String(m?.modelId ?? m?.model_id ?? m?.id ?? m?.name ?? "").trim(),
+      name: typeof m?.name === "string" ? m.name : undefined,
+    }))
+    .filter((m) => m.id.length > 0);
+}
+
+function pickDefaultEffort(efforts: KnownEffort[]): KnownEffort | null {
+  if (efforts.includes("medium")) return "medium";
+  return efforts[0] ?? null;
+}
+
+function deriveFullModelIdForBase(
+  catalog: ReturnType<typeof buildModelCatalog>,
+  base: string,
+  preferredEffort: KnownEffort | null,
+): string {
+  const efforts = catalog.effortsByBase[base] ?? [];
+  if (efforts.length === 0) return base;
+  const eff = preferredEffort && efforts.includes(preferredEffort) ? preferredEffort : pickDefaultEffort(efforts);
+  if (!eff) return base;
+  const mapped = catalog.fullIdByBaseEffort[base]?.[eff];
+  return mapped ?? composeModelId(base, eff);
+}
+
+export function WorkbenchComposer(props: WorkbenchComposerProps) {
+  const {
+    variant,
+    value,
+    setValue,
+    placeholder,
+    attachments,
+    setAttachments,
+    onSend,
+    sendDisabled,
+    sendDisabledReason,
+    onInterrupt,
+    modeId,
+    setModeId,
+    sessionIdForAutocomplete,
+    slashCommands,
+  } = props;
+
+  const [openMenu, setOpenMenu] = useState<OpenMenuId | null>(null);
+  const [menuStyle, setMenuStyle] = useState<React.CSSProperties | null>(null);
+
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  const harnessTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const modelTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const effortTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const modeTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const envTriggerRef = useRef<HTMLButtonElement | null>(null);
+
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const autocomplete = useComposerAutocomplete({
+    sessionId: sessionIdForAutocomplete,
+    value,
+    setValue,
+    textareaRef,
+    slashCommands,
+  });
+
+  useEffect(() => {
+    if (variant !== "activeSession") return;
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = "0px";
+    const next = Math.min(220, Math.max(28, el.scrollHeight));
+    el.style.height = `${next}px`;
+  }, [variant, value]);
+
+  useEffect(() => {
+    if (!openMenu) return;
+    const onPointerDown = (e: PointerEvent) => {
+      const root = rootRef.current;
+      if (!root) return;
+      const target = e.target as Node;
+      if (!root.contains(target)) {
+        setOpenMenu(null);
+        return;
+      }
+      const el = e.target as Element | null;
+      if (el && (el.closest(".wb-menu") || el.closest(".wb-menu-trigger"))) return;
+      setOpenMenu(null);
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, [openMenu]);
+
+  const getTriggerForMenu = useCallback(
+    (id: OpenMenuId): HTMLButtonElement | null => {
+      if (id === "harness") return harnessTriggerRef.current;
+      if (id === "model") return modelTriggerRef.current;
+      if (id === "effort") return effortTriggerRef.current;
+      if (id === "mode") return modeTriggerRef.current;
+      return envTriggerRef.current;
+    },
+    [],
+  );
+
+  const recomputeMenuPosition = useCallback(() => {
+    if (!openMenu) return;
+    const menuEl = menuRef.current;
+    const triggerEl = getTriggerForMenu(openMenu);
+    if (!menuEl || !triggerEl) return;
+
+    const margin = 10;
+    const viewportW = window.innerWidth;
+    const viewportH = window.innerHeight;
+
+    const triggerRect = triggerEl.getBoundingClientRect();
+    const menuRect = menuEl.getBoundingClientRect();
+    const menuW = Math.max(160, menuRect.width);
+    const menuH = Math.max(40, menuRect.height);
+
+    let left = triggerRect.left;
+    let top = triggerRect.bottom + 8;
+    let maxHeight: number | null = null;
+    let overflowY: React.CSSProperties["overflowY"] = "visible";
+
+    if (openMenu === "harness") {
+      left = triggerRect.right + 10;
+      top = triggerRect.top + triggerRect.height / 2 - menuH / 2;
+
+      if (left + menuW > viewportW - margin) {
+        left = Math.max(margin, viewportW - margin - menuW);
+      }
+      top = Math.max(margin, Math.min(top, viewportH - margin - menuH));
+
+      const maxH = viewportH - margin * 2;
+      if (menuH > maxH) {
+        top = margin;
+        maxHeight = maxH;
+        overflowY = "auto";
+      }
+    } else {
+      const downTop = triggerRect.bottom + 8;
+      const upTop = triggerRect.top - 8 - menuH;
+      const availableDown = viewportH - margin - downTop;
+      const availableUp = triggerRect.top - margin - 8;
+
+      const shouldOpenUp = availableDown < menuH && availableUp > availableDown;
+      if (shouldOpenUp) {
+        const maxH = Math.max(120, availableUp);
+        const usedH = Math.min(menuH, maxH);
+        top = triggerRect.top - 8 - usedH;
+        maxHeight = menuH > maxH ? maxH : null;
+        overflowY = menuH > maxH ? "auto" : "visible";
+      } else {
+        top = downTop;
+        const maxH = Math.max(120, availableDown);
+        maxHeight = menuH > maxH ? maxH : null;
+        overflowY = menuH > maxH ? "auto" : "visible";
+      }
+
+      if (left + menuW > viewportW - margin) left = viewportW - margin - menuW;
+      if (left < margin) left = margin;
+      if (top < margin) top = margin;
+    }
+
+    setMenuStyle({
+      position: "fixed",
+      left,
+      top,
+      maxHeight: maxHeight ?? undefined,
+      overflowY,
+      visibility: "visible",
+    });
+  }, [getTriggerForMenu, openMenu]);
+
+  useLayoutEffect(() => {
+    if (!openMenu) {
+      setMenuStyle(null);
+      return;
+    }
+    setMenuStyle({
+      position: "fixed",
+      left: 0,
+      top: 0,
+      maxHeight: undefined,
+      overflowY: "visible",
+      visibility: "hidden",
+    });
+
+    const raf = window.requestAnimationFrame(() => {
+      recomputeMenuPosition();
+    });
+
+    window.addEventListener("resize", recomputeMenuPosition);
+    window.addEventListener("scroll", recomputeMenuPosition, true);
+    return () => {
+      window.cancelAnimationFrame(raf);
+      window.removeEventListener("resize", recomputeMenuPosition);
+      window.removeEventListener("scroll", recomputeMenuPosition, true);
+    };
+  }, [openMenu, recomputeMenuPosition]);
+
+  const onInsert = useCallback(
+    (text: string) => {
+      const el = textareaRef.current;
+      const out = insertTextAtCursor(value, text, el);
+      setValue(out.nextText);
+      requestAnimationFrame(() => {
+        if (!el) return;
+        el.focus();
+        el.setSelectionRange(out.nextCursor, out.nextCursor);
+        requestAnimationFrame(() => autocomplete.syncFromDom());
+      });
+    },
+    [autocomplete, setValue, value],
+  );
+
+  const modeMenu = (
+    <div className="wb-menu" role="menu" ref={menuRef} style={menuStyle ?? undefined}>
+      {(["default", "research", "plan", "review"] as WorkbenchModeId[]).map((m) => (
+        <button
+          key={m}
+          type="button"
+          className={`wb-menu-item ${modeId === m ? "wb-menu-item-active" : ""}`}
+          onClick={() => {
+            setModeId(m);
+            setOpenMenu(null);
+          }}
+          role="menuitem"
+        >
+          {labelForMode(m)}
+        </button>
+      ))}
+    </div>
+  );
+
+  const activeModelData = useMemo(() => {
+    if (variant === "activeSession") {
+      const models = (props as ActiveSessionProps).availableModels;
+      const catalog = buildModelCatalog(models);
+      const parsed = parseModelId((props as ActiveSessionProps).currentModelId);
+      return { models, catalog, parsed, loading: false, fromProviderOptions: false };
+    }
+
+    const ns = props as NewSessionProps;
+    const primary = ns.draftTracks[0] ?? null;
+    if (!primary) return { models: [], catalog: buildModelCatalog([]), parsed: parseModelId(""), loading: false, fromProviderOptions: true };
+    const opts = ns.providerOptions[primary.providerId];
+    const models = buildModelsFromProviderOptions(opts);
+    const catalog = buildModelCatalog(models);
+    const parsed = parseModelId(primary.modelId);
+    const loading = !opts;
+    return { models, catalog, parsed, loading, fromProviderOptions: true };
+  }, [props, variant]);
+
+  const showModelEffort = useMemo(() => {
+    if (variant === "newSession") {
+      const ns = props as NewSessionProps;
+      return ns.draftTracks.length === 1;
+    }
+    return true;
+  }, [props, variant]);
+
+  const currentBase = activeModelData.parsed.base || activeModelData.catalog.baseIds[0] || "";
+  const currentEffort = activeModelData.parsed.effort;
+  const effortOptions = activeModelData.catalog.effortsByBase[currentBase] ?? [];
+
+  const setActiveModelId = useCallback(
+    (nextFullId: string) => {
+      if (variant === "activeSession") {
+        (props as ActiveSessionProps).onSetModelId(nextFullId);
+        return;
+      }
+      const ns = props as NewSessionProps;
+      ns.setDraftTracks((prev) => prev.map((t, idx) => (idx === 0 ? { ...t, modelId: nextFullId } : t)));
+    },
+    [props, variant],
+  );
+
+  const modelMenu = (
+    <div className="wb-menu wb-model-menu" role="menu" ref={menuRef} style={menuStyle ?? undefined}>
+      <div className="wb-menu-top">
+        <input
+          className="wb-menu-search"
+          value={variant === "activeSession" ? "" : ""}
+          onChange={() => {}}
+          placeholder={activeModelData.loading ? "Loading models…" : "Search models"}
+          aria-label="Search models"
+          disabled
+        />
+      </div>
+
+      {activeModelData.catalog.baseIds.length > 0 ? (
+        activeModelData.catalog.baseIds.map((b) => (
+          <button
+            key={b}
+            type="button"
+            className={`wb-menu-item ${b === currentBase ? "wb-menu-item-active" : ""}`}
+            onClick={() => {
+              const next = deriveFullModelIdForBase(activeModelData.catalog, b, currentEffort);
+              setActiveModelId(next);
+              setOpenMenu(null);
+            }}
+          >
+            {activeModelData.catalog.displayNameByBase[b] ?? b}
+          </button>
+        ))
+      ) : (
+        <div className="wb-menu-empty">
+          <div style={{ marginBottom: 6 }}>{activeModelData.loading ? "Loading models…" : "Enter model id"}</div>
+          <input
+            className="wb-menu-search"
+            value={activeModelData.parsed.full}
+            onChange={(e) => setActiveModelId(e.target.value)}
+            placeholder="model_id"
+            aria-label="Model id"
+          />
+        </div>
+      )}
+    </div>
+  );
+
+  const effortMenu = (
+    <div className="wb-menu" role="menu" ref={menuRef} style={menuStyle ?? undefined}>
+      {effortOptions.map((eff) => (
+        <button
+          key={eff}
+          type="button"
+          className={`wb-menu-item ${eff === currentEffort ? "wb-menu-item-active" : ""}`}
+          onClick={() => {
+            const nextFull = deriveFullModelIdForBase(activeModelData.catalog, currentBase, eff);
+            setActiveModelId(nextFull);
+            setOpenMenu(null);
+          }}
+        >
+          {eff}
+        </button>
+      ))}
+    </div>
+  );
+
+  const envControl = useMemo(() => {
+    if (variant === "activeSession") {
+      return { label: (props as ActiveSessionProps).envLabel, locked: true };
+    }
+    const ns = props as NewSessionProps;
+    const label = ns.envTarget === "worktree" ? "Worktree" : ns.envTarget === "local" ? "Local" : "Container";
+    return { label, locked: false };
+  }, [props, variant]);
+
+  const envMenu =
+    variant === "newSession" ? (
+      <div className="wb-menu wb-exec-menu" role="menu" ref={menuRef} style={menuStyle ?? undefined}>
+        <button
+          type="button"
+          className={`wb-menu-item ${(props as NewSessionProps).envTarget === "worktree" ? "wb-menu-item-active" : ""}`}
+          onClick={() => {
+            (props as NewSessionProps).setEnvTarget("worktree");
+            setOpenMenu(null);
+          }}
+        >
+          Worktree
+        </button>
+        <button type="button" className="wb-menu-item" disabled>
+          Local (disabled)
+        </button>
+        <button type="button" className="wb-menu-item" disabled>
+          Container (soon)
+        </button>
+      </div>
+    ) : null;
+
+  const harnessControl = useMemo(() => {
+    if (variant === "activeSession") {
+      const as = props as ActiveSessionProps;
+      return {
+        label: as.harnessLabel,
+        logoSrc: as.harnessLogoSrc,
+        invert: as.harnessLogoInvert,
+        locked: true,
+      };
+    }
+
+    const ns = props as NewSessionProps;
+    const primary = ns.draftTracks[0] ?? null;
+    const providerId = primary?.providerId ?? ns.defaultProviderId;
+    const info = ns.harnessCatalog.find((h) => h.id === providerId);
+    const label = ns.draftTracks.length === 1 ? (info?.label ?? providerId) : `${ns.draftTracks.length} tracks`;
+    return { label, logoSrc: info?.logoSrc, invert: info?.invertInDark, locked: false };
+  }, [props, variant]);
+
+  const [harnessSearch, setHarnessSearch] = useState("");
+  const [expandedHarnessId, setExpandedHarnessId] = useState<string | null>(null);
+
+  const toggleHarness = useCallback(
+    (providerId: string) => {
+      if (variant !== "newSession") return;
+      const ns = props as NewSessionProps;
+      const installed = ns.providersById[providerId]?.installed ?? false;
+      if (!installed) return;
+      ns.setDraftTracks((prev) => {
+        const has = prev.some((t) => t.providerId === providerId);
+        if (!ns.useMultipleAgents) {
+          if (has) return prev;
+          return [{ key: `t${Date.now()}`, label: "", providerId, modelId: "" }];
+        }
+        if (has) {
+          const next = prev.filter((t) => t.providerId !== providerId);
+          return next.length > 0
+            ? next
+            : [{ key: `t${Date.now()}`, label: "", providerId: ns.defaultProviderId, modelId: "" }];
+        }
+        return [...prev, { key: `t${Date.now()}`, label: "", providerId, modelId: "" }];
+      });
+      ns.ensureProviderOptions(providerId).catch(() => {});
+      if (!ns.useMultipleAgents) {
+        setOpenMenu(null);
+        setExpandedHarnessId(null);
+      }
+    },
+    [props, variant],
+  );
+
+  const updateTrackModel = useCallback(
+    (key: string, nextFull: string) => {
+      if (variant !== "newSession") return;
+      const ns = props as NewSessionProps;
+      ns.setDraftTracks((prev) => prev.map((t) => (t.key === key ? { ...t, modelId: nextFull } : t)));
+    },
+    [props, variant],
+  );
+
+  const addTrackForProvider = useCallback(
+    (providerId: string) => {
+      if (variant !== "newSession") return;
+      const ns = props as NewSessionProps;
+      ns.setDraftTracks((prev) => [...prev, { key: `t${Date.now()}`, label: "", providerId, modelId: "" }]);
+    },
+    [props, variant],
+  );
+
+  const removeTrackByKey = useCallback(
+    (key: string) => {
+      if (variant !== "newSession") return;
+      const ns = props as NewSessionProps;
+      ns.setDraftTracks((prev) => {
+        const next = prev.filter((t) => t.key !== key);
+        return next.length > 0 ? next : prev;
+      });
+    },
+    [props, variant],
+  );
+
+  const harnessMenu =
+    variant === "newSession" ? (
+      <div className="wb-menu wb-harness-menu" role="menu" ref={menuRef} style={menuStyle ?? undefined}>
+        <div className="wb-menu-top">
+          <input
+            className="wb-menu-search"
+            value={harnessSearch}
+            onChange={(e) => setHarnessSearch(e.target.value)}
+            placeholder="Search agents"
+            aria-label="Search agents"
+            autoFocus
+          />
+          <label className="wb-menu-toggle">
+            <span>Use Multiple Agents</span>
+            <input
+              type="checkbox"
+              checked={(props as NewSessionProps).useMultipleAgents}
+              onChange={(e) => {
+                setExpandedHarnessId(null);
+                (props as NewSessionProps).setUseMultipleAgents(e.target.checked);
+              }}
+            />
+            <span className="wb-toggle" aria-hidden="true" />
+          </label>
+        </div>
+
+        {(() => {
+          const ns = props as NewSessionProps;
+          const q = harnessSearch.trim().toLowerCase();
+          const all = ns.harnessCatalog.concat(ns.providersById["fake"] ? ([{ id: "fake", label: "Fake" }] as any) : []);
+          const filtered = q
+            ? all.filter((h: any) => String(h.id).toLowerCase().includes(q) || String(h.label).toLowerCase().includes(q))
+            : all;
+          if (filtered.length === 0) return <div className="wb-menu-empty">No matching agents.</div>;
+
+          const counts: Record<string, number> = {};
+          for (const t of ns.draftTracks) counts[t.providerId] = (counts[t.providerId] ?? 0) + 1;
+
+          return filtered.map((h: any) => {
+            const id = String(h.id);
+            const label = String(h.label ?? id);
+            const installed = ns.providersById[id]?.installed ?? false;
+            const count = counts[id] ?? 0;
+            const checked = count > 0;
+            const expanded = expandedHarnessId === id;
+            const canConfigureModels = ns.useMultipleAgents && ns.draftTracks.length > 1 && checked;
+            const rows = ns.draftTracks.filter((t) => t.providerId === id);
+
+            const opts = ns.providerOptions[id];
+            const models = buildModelsFromProviderOptions(opts);
+            const catalog = buildModelCatalog(models);
+
+            return (
+              <div key={id} className={`wb-harness-row ${installed ? "" : "wb-disabled"}`}>
+                <button type="button" className="wb-harness-row-main" onClick={() => toggleHarness(id)} disabled={!installed}>
+                  <span className={`wb-check ${checked ? "wb-check-on" : ""}`} aria-hidden="true">
+                    {checked ? "✓" : ""}
+                  </span>
+                  {h.logoSrc ? (
+                    <img className={`wb-harness-logo ${h.invertInDark ? "wb-invert" : ""}`} src={h.logoSrc} alt="" />
+                  ) : (
+                    <span className="wb-harness-logo-fallback" aria-hidden="true" />
+                  )}
+                  <span className="wb-harness-name">{label}</span>
+                  <span className="wb-harness-right">
+                    <span className="wb-harness-count">{count > 0 ? `${count}x` : ""}</span>
+                  </span>
+                </button>
+
+                {checked && (
+                  <button
+                    type="button"
+                    className="wb-harness-expand wb-menu-trigger"
+                    onClick={() => {
+                      if (!canConfigureModels) return;
+                      setExpandedHarnessId((prev) => (prev === id ? null : id));
+                      ns.ensureProviderOptions(id).catch(() => {});
+                    }}
+                    disabled={!canConfigureModels}
+                    title={canConfigureModels ? "Configure models" : "Enable multi-agent to configure"}
+                  >
+                    <IconChevronDown size={14} />
+                  </button>
+                )}
+
+                {expanded && canConfigureModels && (
+                  <div className="wb-harness-config">
+                    {rows.map((t) => {
+                      const parsed = parseModelId(t.modelId);
+                      const base = parsed.base || catalog.baseIds[0] || "";
+                      const efforts = catalog.effortsByBase[base] ?? [];
+                      const eff = parsed.effort;
+                      return (
+                        <div key={t.key} className="wb-harness-track">
+                          <div className="wb-harness-track-left">
+                            <div className="wb-harness-track-title">Track</div>
+                            {catalog.baseIds.length > 0 ? (
+                              <>
+                                <select
+                                  className="wb-harness-model-select"
+                                  value={base}
+                                  onFocus={() => ns.ensureProviderOptions(id).catch(() => {})}
+                                  onChange={(e) => {
+                                    const nextBase = e.target.value;
+                                    const next = deriveFullModelIdForBase(catalog, nextBase, eff);
+                                    updateTrackModel(t.key, next);
+                                  }}
+                                >
+                                  {catalog.baseIds.map((b) => (
+                                    <option key={b} value={b}>
+                                      {catalog.displayNameByBase[b] ?? b}
+                                    </option>
+                                  ))}
+                                </select>
+                                {efforts.length > 0 && (
+                                  <select
+                                    className="wb-harness-model-select"
+                                    value={eff ?? pickDefaultEffort(efforts) ?? ""}
+                                    onChange={(e) => {
+                                      const nextEff = (e.target.value || "") as any;
+                                      const next = deriveFullModelIdForBase(catalog, base, nextEff || null);
+                                      updateTrackModel(t.key, next);
+                                    }}
+                                  >
+                                    {efforts.map((x) => (
+                                      <option key={x} value={x}>
+                                        {x}
+                                      </option>
+                                    ))}
+                                  </select>
+                                )}
+                              </>
+                            ) : (
+                              <input
+                                className="wb-harness-model-input"
+                                value={t.modelId}
+                                placeholder={opts ? "model_id" : "Loading models…"}
+                                onFocus={() => ns.ensureProviderOptions(id).catch(() => {})}
+                                onChange={(e) => updateTrackModel(t.key, e.target.value)}
+                              />
+                            )}
+                          </div>
+                          <div className="wb-harness-track-right">
+                            <button type="button" className="wb-harness-mini" onClick={() => addTrackForProvider(id)} title="Add another track">
+                              +
+                            </button>
+                            <button
+                              type="button"
+                              className="wb-harness-mini"
+                              onClick={() => removeTrackByKey(t.key)}
+                              title="Remove track"
+                              disabled={rows.length <= 1}
+                            >
+                              −
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {!installed && <div className="wb-harness-note">Not installed</div>}
+              </div>
+            );
+          });
+        })()}
+      </div>
+    ) : null;
+
+  return (
+    <div
+      ref={rootRef}
+      className={variant === "newSession" ? "wb-composer-card wb-new-composer-card" : "wb-composer wb-active-composer"}
+    >
+      {attachments.length > 0 && (
+        <div className="wb-composer-attachments">
+          {attachments.map((a, idx) => (
+            <button
+              key={idx}
+              type="button"
+              className="wb-attach-chip"
+              onClick={() => setAttachments((prev) => prev.filter((_, i) => i !== idx))}
+              title="Remove attachment"
+            >
+              {a.kind === "image" ? (a.name ?? "image") : "attachment"} ×
+            </button>
+          ))}
+        </div>
+      )}
+
+      <textarea
+        ref={textareaRef}
+        className={variant === "newSession" ? "wb-composer-textarea" : "wb-composer-textarea wb-active-textarea"}
+        placeholder={placeholder}
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        onKeyDown={(e) => {
+          if (autocomplete.onKeyDown(e)) return;
+          if (shouldSendOnEnter(e)) {
+            e.preventDefault();
+            onSend();
+          }
+        }}
+        onKeyUp={() => autocomplete.syncFromDom()}
+        onClick={() => autocomplete.syncFromDom()}
+        onSelect={() => autocomplete.syncFromDom()}
+      />
+
+      <ComposerAutocompleteMenu
+        open={autocomplete.open}
+        loading={autocomplete.loading}
+        items={autocomplete.items}
+        activeIndex={autocomplete.activeIndex}
+        onPick={autocomplete.pick}
+        onHoverIndex={(i) => autocomplete.setActiveIndex(i)}
+        anchorRect={autocomplete.anchorRect}
+        inlineFallback={autocomplete.inlineFallback}
+      />
+
+      <div className="wb-composer-bottom">
+        <div className="wb-switcher-row">
+          {/* Harness */}
+          <div className="wb-switcher-wrap">
+            <button
+              type="button"
+              className="wb-switcher wb-menu-trigger"
+              ref={harnessTriggerRef}
+              onClick={() => {
+                if (variant !== "newSession") return;
+                setOpenMenu((v) => (v === "harness" ? null : "harness"));
+                setHarnessSearch("");
+                setExpandedHarnessId(null);
+              }}
+              aria-haspopup={variant === "newSession" ? "menu" : undefined}
+              aria-expanded={openMenu === "harness"}
+              disabled={variant !== "newSession"}
+              title="Harness"
+            >
+              {harnessControl.logoSrc ? (
+                <img
+                  className={`wb-switcher-logo ${harnessControl.invert ? "wb-invert" : ""}`}
+                  src={harnessControl.logoSrc}
+                  alt=""
+                />
+              ) : (
+                <span className="wb-switcher-logo-fallback" />
+              )}
+              <span className="wb-switcher-label">{harnessControl.label}</span>
+              {variant === "newSession" && <IconChevronDown size={14} />}
+            </button>
+            {openMenu === "harness" && harnessMenu}
+          </div>
+
+          {/* Model */}
+          {showModelEffort && (
+            <div className="wb-switcher-wrap">
+              <button
+                type="button"
+                className="wb-switcher wb-menu-trigger"
+                ref={modelTriggerRef}
+                onClick={() => setOpenMenu((v) => (v === "model" ? null : "model"))}
+                aria-haspopup="menu"
+                aria-expanded={openMenu === "model"}
+                title="Model"
+              >
+                <span className="wb-switcher-label wb-mono">{currentBase || "Model"}</span>
+                <IconChevronDown size={14} />
+              </button>
+              {openMenu === "model" && modelMenu}
+            </div>
+          )}
+
+          {/* Effort (conditional) */}
+          {showModelEffort && effortOptions.length > 0 && (
+            <div className="wb-switcher-wrap">
+              <button
+                type="button"
+                className="wb-switcher wb-menu-trigger"
+                ref={effortTriggerRef}
+                onClick={() => setOpenMenu((v) => (v === "effort" ? null : "effort"))}
+                aria-haspopup="menu"
+                aria-expanded={openMenu === "effort"}
+                title="Effort"
+              >
+                <span className="wb-switcher-label wb-mono">{currentEffort ?? pickDefaultEffort(effortOptions) ?? "Effort"}</span>
+                <IconChevronDown size={14} />
+              </button>
+              {openMenu === "effort" && effortMenu}
+            </div>
+          )}
+
+          {/* Mode */}
+          <div className="wb-switcher-wrap">
+            <button
+              type="button"
+              className="wb-switcher wb-menu-trigger"
+              ref={modeTriggerRef}
+              onClick={() => setOpenMenu((v) => (v === "mode" ? null : "mode"))}
+              aria-haspopup="menu"
+              aria-expanded={openMenu === "mode"}
+              title="Mode"
+            >
+              <span className="wb-switcher-label">{labelForMode(modeId)}</span>
+              <IconChevronDown size={14} />
+            </button>
+            {openMenu === "mode" && modeMenu}
+          </div>
+
+          {/* Environment */}
+          <div className="wb-switcher-wrap">
+            <button
+              type="button"
+              className="wb-switcher wb-menu-trigger"
+              ref={envTriggerRef}
+              onClick={() => {
+                if (envControl.locked) return;
+                setOpenMenu((v) => (v === "env" ? null : "env"));
+              }}
+              aria-haspopup={!envControl.locked ? "menu" : undefined}
+              aria-expanded={openMenu === "env"}
+              disabled={envControl.locked}
+              title="Environment"
+            >
+              <span className="wb-switcher-icon">
+                <IconLaptop size={14} />
+              </span>
+              <span className="wb-switcher-label">{envControl.label}</span>
+              {!envControl.locked && <IconChevronDown size={14} />}
+            </button>
+            {openMenu === "env" && envMenu}
+          </div>
+        </div>
+
+        <div className="wb-action-row">
+          {onInterrupt ? (
+            <button type="button" className="wb-icon wb-menu-trigger" onClick={onInterrupt} aria-label="Interrupt" title="Interrupt">
+              <IconStop size={14} />
+            </button>
+          ) : null}
+
+          <button
+            type="button"
+            className="wb-icon wb-menu-trigger"
+            onClick={() => onInsert("@")}
+            aria-label="Insert @"
+            title="Insert @"
+          >
+            <IconAt size={14} />
+          </button>
+          <button
+            type="button"
+            className="wb-icon wb-menu-trigger"
+            onClick={() => onInsert("/")}
+            aria-label="Insert /"
+            title="Insert /"
+          >
+            <IconSlash size={14} />
+          </button>
+
+          <button
+            type="button"
+            className="wb-icon"
+            onClick={() => fileInputRef.current?.click()}
+            title="Attach image"
+            aria-label="Attach image"
+          >
+            <IconImage size={14} />
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            multiple
+            style={{ display: "none" }}
+            onChange={async (e) => {
+              const files = Array.from(e.target.files ?? []);
+              const next: MessageAttachment[] = [];
+              for (const f of files) {
+                const dataUrl = await new Promise<string>((resolve, reject) => {
+                  const reader = new FileReader();
+                  reader.onerror = () => reject(new Error("file read failed"));
+                  reader.onload = () => resolve(String(reader.result ?? ""));
+                  reader.readAsDataURL(f);
+                });
+                const idx = dataUrl.indexOf("base64,");
+                if (idx === -1) continue;
+                next.push({
+                  kind: "image",
+                  mime_type: f.type || "image/*",
+                  data_base64: dataUrl.slice(idx + "base64,".length),
+                  name: f.name,
+                });
+              }
+              setAttachments((prev) => [...prev, ...next]);
+              e.target.value = "";
+            }}
+          />
+
+          <button type="button" className="wb-icon" title="Record (coming soon)" disabled aria-label="Record">
+            <IconMic size={14} />
+          </button>
+
+          <button
+            type="button"
+            className="wb-send"
+            onClick={onSend}
+            disabled={!!sendDisabled || !!sendDisabledReason}
+            title={sendDisabledReason ?? "Send"}
+            aria-label="Send"
+          >
+            <IconArrowUp size={14} />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+

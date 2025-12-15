@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useParams } from "react-router-dom";
 import {
   EditPlanSummary,
   LspStatus,
+  MessageAttachment,
   ProviderOptions,
   ProviderStatus,
   Task,
@@ -29,18 +30,9 @@ import { useSessionEntry, useSessionSupervisor } from "../state/sessionSuperviso
 import { DiffReviewPane } from "../components/DiffReviewPane";
 import { EditPlanReviewPane } from "../components/EditPlanReviewPane";
 import { SessionView } from "./SessionPage";
-import { shouldSendOnEnter } from "../utils/keyboard";
 import { HARNESS_CATALOG } from "../utils/harnessCatalog";
-
-type DraftTrack = {
-  key: string;
-  label: string;
-  providerId: string;
-  modelId: string;
-};
-
-type DraftModeId = "default" | "research" | "plan" | "review";
-type OpenMenuId = "mode" | "harness" | "model" | "exec";
+import { WorkbenchComposer, type DraftTrack, type WorkbenchEnvTarget, type WorkbenchModeId } from "../components/WorkbenchComposer";
+import type { SlashCommandDescriptor } from "../state/useComposerAutocomplete";
 
 function deriveTaskTitle(prompt: string): string {
   const line = prompt.trim().split("\n")[0] ?? "";
@@ -51,146 +43,28 @@ function deriveTaskTitle(prompt: string): string {
 function modelIdsFromOptions(opts?: ProviderOptions): string[] {
   const raw = opts?.models;
   if (!raw) return [];
-  // Providers may return different shapes (ACP servers often use `{ availableModels, currentModelId }`).
-  const arr = Array.isArray(raw) ? raw : raw?.models ?? raw?.availableModels ?? raw?.available_models;
-  if (!Array.isArray(arr)) return [];
-  const ids: string[] = [];
-  for (const it of arr) {
-    if (typeof it === "string") ids.push(it);
-    else if (it && typeof it === "object") {
-      const id =
-        (it as any).id ??
-        (it as any).modelId ??
-        (it as any).model_id ??
-        (it as any).name ??
-        (it as any).model;
-      if (typeof id === "string") ids.push(id);
-    }
-  }
-  return [...new Set(ids)].slice(0, 200);
+  const list = (raw as any)?.availableModels ?? (raw as any)?.available_models ?? (raw as any)?.models ?? raw;
+  if (!Array.isArray(list)) return [];
+  return list
+    .map((m: any) => String(m?.modelId ?? m?.model_id ?? m?.id ?? "").trim())
+    .filter((s: string) => s.length > 0);
 }
 
-function workbenchLabelForTrack(d: DraftTrack): string {
-  if (d.label.trim().length > 0) return d.label.trim();
-  return `${d.providerId} · ${d.modelId}`;
-}
-
-function IconChevronDown({ size = 16 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
-function IconArrowUp({ size = 16 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path d="M12 19V5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-      <path d="M5 12l7-7 7 7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
-function IconAt({ size = 16 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path
-        d="M16.5 12a4.5 4.5 0 10-1.3 3.2"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-      />
-      <path
-        d="M16.5 12V9.5a2.5 2.5 0 015 0V12a9.5 9.5 0 11-3.2-7.1"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-      />
-    </svg>
-  );
-}
-
-function IconImage({ size = 16 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path
-        d="M4 5a2 2 0 012-2h12a2 2 0 012 2v14a2 2 0 01-2 2H6a2 2 0 01-2-2V5z"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinejoin="round"
-      />
-      <path
-        d="M8 11a2 2 0 100-4 2 2 0 000 4z"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinejoin="round"
-      />
-      <path
-        d="M21 16l-5-5-4 4-2-2-5 5"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinejoin="round"
-        strokeLinecap="round"
-      />
-    </svg>
-  );
-}
-
-function IconMic({ size = 16 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path
-        d="M12 14a3 3 0 003-3V7a3 3 0 10-6 0v4a3 3 0 003 3z"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <path
-        d="M19 11a7 7 0 01-14 0"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-      />
-      <path
-        d="M12 21v-3"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-      />
-    </svg>
-  );
-}
-
-function IconLaptop({ size = 16 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path
-        d="M4 5h16v10H4V5z"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinejoin="round"
-      />
-      <path
-        d="M2 19h20"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-      />
-    </svg>
-  );
+function workbenchLabelForTrack(dt: DraftTrack): string {
+  const name = dt.providerId;
+  return dt.label?.trim() ? `${name} — ${dt.label.trim()}` : name;
 }
 
 export default function WorkbenchPage() {
   const { id: workspaceId } = useParams<{ id: string }>();
   const location = useLocation();
   const supervisor = useSessionSupervisor();
+  const newComposerRef = useRef<HTMLDivElement | null>(null);
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [providers, setProviders] = useState<ProviderStatus[]>([]);
-  const [providerOptions, setProviderOptions] = useState<Record<string, ProviderOptions>>({});
+  const [providerOptions, setProviderOptions] = useState<Record<string, ProviderOptions | undefined>>({});
   const providersById = useMemo(
     () => Object.fromEntries(providers.map((p) => [p.provider_id, p])),
     [providers],
@@ -216,25 +90,12 @@ export default function WorkbenchPage() {
   const [draftTracks, setDraftTracks] = useState<DraftTrack[]>([
     { key: "t1", label: "", providerId: "codex", modelId: "" },
   ]);
-  const [draftMode, setDraftMode] = useState<DraftModeId>("default");
-  const [execTarget, setExecTarget] = useState<"local" | "worktree" | "container">("worktree");
+  const [draftMode, setDraftMode] = useState<WorkbenchModeId>("default");
+  const [execTarget, setExecTarget] = useState<WorkbenchEnvTarget>("worktree");
   const [startBusy, setStartBusy] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
-
-  const [openMenu, setOpenMenu] = useState<null | "mode" | "harness" | "model" | "exec">(null);
-  const [expandedHarnessId, setExpandedHarnessId] = useState<string | null>(null);
-  const [contextMenuOpen, setContextMenuOpen] = useState(false);
   const [useMultipleAgents, setUseMultipleAgents] = useState(false);
-  const [harnessSearch, setHarnessSearch] = useState("");
-  const [modelSearch, setModelSearch] = useState("");
-
-  const newComposerRef = useRef<HTMLDivElement | null>(null);
-  const activeMenuRef = useRef<HTMLDivElement | null>(null);
-  const modeTriggerRef = useRef<HTMLButtonElement | null>(null);
-  const harnessTriggerRef = useRef<HTMLButtonElement | null>(null);
-  const modelTriggerRef = useRef<HTMLButtonElement | null>(null);
-  const execTriggerRef = useRef<HTMLButtonElement | null>(null);
-  const [menuStyle, setMenuStyle] = useState<React.CSSProperties | null>(null);
+  const [draftAttachments, setDraftAttachments] = useState<MessageAttachment[]>([]);
 
   const [diffWidth, setDiffWidth] = useState(480);
   const [reviewTab, setReviewTab] = useState<"git" | "lsp">("git");
@@ -251,154 +112,11 @@ export default function WorkbenchPage() {
     };
   }, []);
 
-  useEffect(() => {
-    if (!openMenu && !contextMenuOpen) return;
-    const onPointerDown = (e: PointerEvent) => {
-      const root = newComposerRef.current;
-      if (!root) return;
-      const target = e.target as Node;
-      if (!root.contains(target)) {
-        setOpenMenu(null);
-        setExpandedHarnessId(null);
-        setContextMenuOpen(false);
-        return;
-      }
-      // Click within the composer but outside any open popover should close popovers (Cursor-style).
-      const el = e.target as Element | null;
-      if (el && (el.closest(".wb-menu") || el.closest(".wb-context-popover") || el.closest(".wb-menu-trigger"))) {
-        return;
-      }
-      setOpenMenu(null);
-      setExpandedHarnessId(null);
-      setContextMenuOpen(false);
-    };
-    document.addEventListener("pointerdown", onPointerDown);
-    return () => document.removeEventListener("pointerdown", onPointerDown);
-  }, [openMenu, contextMenuOpen]);
-
-  const getTriggerForMenu = useCallback(
-    (id: OpenMenuId): HTMLButtonElement | null => {
-      if (id === "mode") return modeTriggerRef.current;
-      if (id === "harness") return harnessTriggerRef.current;
-      if (id === "model") return modelTriggerRef.current;
-      return execTriggerRef.current;
-    },
-    [],
-  );
-
-  const recomputeMenuPosition = useCallback(() => {
-    if (!openMenu) return;
-    const menuEl = activeMenuRef.current;
-    const triggerEl = getTriggerForMenu(openMenu);
-    if (!menuEl || !triggerEl) return;
-
-    const margin = 10;
-    const viewportW = window.innerWidth;
-    const viewportH = window.innerHeight;
-
-    const triggerRect = triggerEl.getBoundingClientRect();
-
-    // Measure the menu at its natural size. (During first render we set `visibility: hidden` and no maxHeight.)
-    const menuRect = menuEl.getBoundingClientRect();
-    const menuW = Math.max(160, menuRect.width);
-    const menuH = Math.max(40, menuRect.height);
-
-    let left = triggerRect.left;
-    let top = triggerRect.bottom + 8;
-    let maxHeight: number | null = null;
-    let overflowY: React.CSSProperties["overflowY"] = "visible";
-
-    if (openMenu === "harness") {
-      // Prefer opening to the right and vertically centered (uses space both up and down).
-      left = triggerRect.right + 10;
-      top = triggerRect.top + triggerRect.height / 2 - menuH / 2;
-
-      if (left + menuW > viewportW - margin) {
-        // If it doesn’t fit on the right, clamp inside the viewport (still prefer right over left).
-        left = Math.max(margin, viewportW - margin - menuW);
-      }
-      top = Math.max(margin, Math.min(top, viewportH - margin - menuH));
-
-      const maxH = viewportH - margin * 2;
-      if (menuH > maxH) {
-        top = margin;
-        maxHeight = maxH;
-        overflowY = "auto";
-      }
-    } else {
-      const downTop = triggerRect.bottom + 8;
-      const upTop = triggerRect.top - 8 - menuH;
-      const availableDown = viewportH - margin - downTop;
-      const availableUp = triggerRect.top - margin - 8;
-
-      const shouldOpenUp = availableDown < menuH && availableUp > availableDown;
-      if (shouldOpenUp) {
-        const maxH = Math.max(120, availableUp);
-        const usedH = Math.min(menuH, maxH);
-        top = triggerRect.top - 8 - usedH;
-        maxHeight = menuH > maxH ? maxH : null;
-        overflowY = menuH > maxH ? "auto" : "visible";
-      } else {
-        top = downTop;
-        const maxH = Math.max(120, availableDown);
-        maxHeight = menuH > maxH ? maxH : null;
-        overflowY = menuH > maxH ? "auto" : "visible";
-      }
-
-      // Horizontal clamp (menus should never leave the viewport).
-      if (left + menuW > viewportW - margin) left = viewportW - margin - menuW;
-      if (left < margin) left = margin;
-      // Vertical clamp for safety.
-      if (top < margin) top = margin;
-      if (top + menuH > viewportH - margin && maxHeight === null) {
-        top = Math.max(margin, viewportH - margin - menuH);
-      }
-    }
-
-    setMenuStyle({
-      position: "fixed",
-      left,
-      top,
-      maxHeight: maxHeight ?? undefined,
-      overflowY,
-      visibility: "visible",
-    });
-  }, [getTriggerForMenu, openMenu]);
-
-  useLayoutEffect(() => {
-    if (!openMenu) {
-      setMenuStyle(null);
-      return;
-    }
-    // First render: hide and let it size itself without constraints.
-    setMenuStyle({
-      position: "fixed",
-      left: 0,
-      top: 0,
-      maxHeight: undefined,
-      overflowY: "visible",
-      visibility: "hidden",
-    });
-
-    const raf = window.requestAnimationFrame(() => {
-      recomputeMenuPosition();
-    });
-
-    window.addEventListener("resize", recomputeMenuPosition);
-    // capture scroll on any container
-    window.addEventListener("scroll", recomputeMenuPosition, true);
-    return () => {
-      window.cancelAnimationFrame(raf);
-      window.removeEventListener("resize", recomputeMenuPosition);
-      window.removeEventListener("scroll", recomputeMenuPosition, true);
-    };
-  }, [openMenu, recomputeMenuPosition]);
 
   useEffect(() => {
     if (useMultipleAgents) return;
     if (draftTracks.length <= 1) return;
     setDraftTracks((prev) => (prev.length > 0 ? [prev[0]] : prev));
-    setExpandedHarnessId(null);
   }, [useMultipleAgents, draftTracks.length]);
 
   const refreshTasks = async () => {
@@ -547,29 +265,18 @@ export default function WorkbenchPage() {
     return opts;
   };
 
-  const harnessInfoById = useMemo(() => {
-    const map: Record<string, { label: string; logoSrc?: string; invertInDark?: boolean }> = {};
-    for (const h of HARNESS_CATALOG) {
-      map[h.id] = { label: h.label, logoSrc: h.logoSrc, invertInDark: h.invertInDark };
-    }
-    // Development/CI provider (not in Emdash list)
-    if (!map["fake"]) {
-      map["fake"] = { label: "Fake" };
-    }
-    return map;
+  const slashCommands = useMemo<SlashCommandDescriptor[]>(() => {
+    // New sessions don't have ACP "available_commands_update" yet, so use a safe fallback.
+    return [
+      { name: "review", description: "Review my current changes and find issues" },
+      { name: "review-branch", description: "Review a branch" },
+      { name: "review-commit", description: "Review a commit" },
+      { name: "init", description: "Create an AGENTS.md file" },
+      { name: "compact", description: "Summarize conversation to save context" },
+      { name: "logout", description: "Log out" },
+      { name: "help", description: "Show help" },
+    ];
   }, []);
-
-  const harnessCounts = useMemo(() => {
-    const out: Record<string, number> = {};
-    for (const t of draftTracks) {
-      out[t.providerId] = (out[t.providerId] ?? 0) + 1;
-    }
-    return out;
-  }, [draftTracks]);
-
-  const primaryTrack = draftTracks[0] ?? null;
-  const primaryHarnessId = primaryTrack?.providerId ?? "codex";
-  const primaryHarnessLabel = harnessInfoById[primaryHarnessId]?.label ?? primaryHarnessId;
 
   const startBlockedReason = useMemo(() => {
     if (draftPrompt.trim().length === 0) return "Enter a prompt to start.";
@@ -616,13 +323,13 @@ export default function WorkbenchPage() {
         const trackId = idToString(tr.id);
         const opts = await ensureProviderOptions(dt.providerId).catch(() => undefined);
         const modelIds = modelIdsFromOptions(opts ?? providerOptions[dt.providerId]);
-        const defaultModel = dt.modelId || modelIds[0] || (dt.providerId === "fake" ? "fake-model" : "default");
-        const session = await createSession(trackId, dt.providerId, defaultModel);
+        const modelId = dt.modelId || modelIds[0] || (dt.providerId === "fake" ? "fake-model" : "default");
+        const session = await createSession(trackId, dt.providerId, modelId);
         const sessionId = idToString(session.id);
         supervisor.openSession(sessionId, { watchDiff: true });
         supervisor.refreshSession(sessionId, { watchDiff: true });
         supervisor.refreshQueue(sessionId);
-        await postMessage(sessionId, prompt, "immediate");
+        await postMessage(sessionId, prompt, "immediate", draftAttachments);
         // Ensure the workbench view can render the just-posted user message (and any streamed events)
         // without waiting for a `done` event to trigger a refresh.
         supervisor.refreshQueue(sessionId);
@@ -632,54 +339,12 @@ export default function WorkbenchPage() {
       await refreshTasks();
       setActiveTaskId(taskId);
       setDraftPrompt("");
-      setOpenMenu(null);
-      setExpandedHarnessId(null);
-      setContextMenuOpen(false);
+      setDraftAttachments([]);
     } catch (e: any) {
       setStartError(e?.message ?? String(e));
     } finally {
       setStartBusy(false);
     }
-  };
-
-  const toggleHarness = (providerId: string) => {
-    const installed = providersById[providerId]?.installed ?? false;
-    // Don’t allow selecting unknown/uninstalled harnesses yet (UI-only list mirrors Emdash).
-    if (!installed) return;
-    setDraftTracks((prev) => {
-      const has = prev.some((t) => t.providerId === providerId);
-      if (!useMultipleAgents) {
-        if (has) return prev;
-        return [{ key: `t${Date.now()}`, label: "", providerId, modelId: "" }];
-      }
-      if (has) {
-        const next = prev.filter((t) => t.providerId !== providerId);
-        return next.length > 0
-          ? next
-          : [{ key: `t${Date.now()}`, label: "", providerId: defaultProviderId, modelId: "" }];
-      }
-      return [...prev, { key: `t${Date.now()}`, label: "", providerId, modelId: "" }];
-    });
-    ensureProviderOptions(providerId).catch(() => {});
-    if (!useMultipleAgents) {
-      setOpenMenu(null);
-      setExpandedHarnessId(null);
-    }
-  };
-
-  const updateTrackModel = (key: string, modelId: string) => {
-    setDraftTracks((prev) => prev.map((t) => (t.key === key ? { ...t, modelId } : t)));
-  };
-
-  const addTrackForProvider = (providerId: string) => {
-    setDraftTracks((prev) => [...prev, { key: `t${Date.now()}`, label: "", providerId, modelId: "" }]);
-  };
-
-  const removeTrackByKey = (key: string) => {
-    setDraftTracks((prev) => {
-      const next = prev.filter((t) => t.key !== key);
-      return next.length > 0 ? next : prev;
-    });
   };
 
   const approveAll = async () => {

@@ -1,6 +1,5 @@
 const fs = require("fs");
 const path = require("path");
-const childProcess = require("child_process");
 
 const args = process.argv.slice(2);
 const profileIdx = args.indexOf("--profile");
@@ -40,23 +39,18 @@ const ensureExecutable = (filePath) => {
   }
 };
 
-const lipoSidecar = (name) => {
-  const [armTarget, intelTarget] = targets;
-  const armSrc = path.join(coreRoot, "target", armTarget, profile, name);
-  const intelSrc = path.join(coreRoot, "target", intelTarget, profile, name);
-  const dest = path.join(destBinDir, name);
+const copyTargetSidecar = (name, target) => {
+  const src = path.join(coreRoot, "target", target, profile, name);
 
-  if (!fs.existsSync(armSrc)) {
-    throw new Error(`missing sidecar for ${armTarget}: ${armSrc} (did you build --target ${armTarget}?)`);
-  }
-  if (!fs.existsSync(intelSrc)) {
-    throw new Error(`missing sidecar for ${intelTarget}: ${intelSrc} (did you build --target ${intelTarget}?)`);
+  // Tauri expects `externalBin` sidecars to be named `bin/<name>-<target>` when building with `--target`.
+  const dest = path.join(destBinDir, `${name}-${target}`);
+
+  if (!fs.existsSync(src)) {
+    throw new Error(`missing sidecar for ${target}: ${src} (did you build --target ${target}?)`);
   }
 
   fs.mkdirSync(destBinDir, { recursive: true });
-  childProcess.execFileSync("lipo", ["-create", armSrc, intelSrc, "-output", dest], {
-    stdio: "inherit",
-  });
+  fs.copyFileSync(src, dest);
   ensureExecutable(dest);
   return dest;
 };
@@ -90,8 +84,10 @@ const main = () => {
   }
 
   const copied = {
-    context: lipoSidecar("context"),
-    contextMcp: lipoSidecar("context-mcp"),
+    sidecars: {
+      context: Object.fromEntries(targets.map((t) => [t, copyTargetSidecar("context", t)])),
+      contextMcp: Object.fromEntries(targets.map((t) => [t, copyTargetSidecar("context-mcp", t)])),
+    },
     webDist: copyWebDist(),
   };
 
@@ -99,4 +95,3 @@ const main = () => {
 };
 
 main();
-
