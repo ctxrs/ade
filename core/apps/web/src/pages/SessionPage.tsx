@@ -589,6 +589,7 @@ export function SessionView({
 
   const composerAutocomplete = useComposerAutocomplete({
     sessionId: id ?? null,
+    workspaceId: null,
     value: input,
     setValue: setInput,
     textareaRef,
@@ -1111,6 +1112,7 @@ export function SessionView({
               onPick={composerAutocomplete.pick}
               onHoverIndex={(i) => composerAutocomplete.setActiveIndex(i)}
               anchorRect={composerAutocomplete.anchorRect}
+              anchorInputRect={composerAutocomplete.anchorInputRect}
               inlineFallback={composerAutocomplete.inlineFallback}
             />
             <div className="row">
@@ -1316,6 +1318,7 @@ function WorkbenchComposer({
         onPick={autocomplete.pick}
         onHoverIndex={(i) => autocomplete.setActiveIndex(i)}
         anchorRect={autocomplete.anchorRect}
+        anchorInputRect={autocomplete.anchorInputRect}
         inlineFallback={autocomplete.inlineFallback}
       />
 

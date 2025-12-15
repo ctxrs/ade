@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type React from "react";
-import { listSessionFileCompletions } from "../api/client";
+import { listSessionFileCompletions, listWorkspaceFileCompletions } from "../api/client";
 import {
   applyComposerAutocompleteCompletion,
   detectComposerAutocompleteToken,
@@ -16,19 +16,24 @@ export type SlashCommandDescriptor = {
 
 export function useComposerAutocomplete({
   sessionId,
+  workspaceId,
   value,
   setValue,
   textareaRef,
   slashCommands,
 }: {
   sessionId: string | null;
+  workspaceId: string | null;
   value: string;
   setValue: (next: string) => void;
   textareaRef: { current: HTMLTextAreaElement | null };
   slashCommands: SlashCommandDescriptor[];
 }) {
+  const FILE_RESULTS_LIMIT = 10;
+
   const [token, setToken] = useState<ComposerAutocompleteToken | null>(null);
   const [anchorRect, setAnchorRect] = useState<DOMRect | null>(null);
+  const [anchorInputRect, setAnchorInputRect] = useState<DOMRect | null>(null);
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
 
@@ -39,12 +44,25 @@ export function useComposerAutocomplete({
   const abortRef = useRef<AbortController | null>(null);
   const debounceTimerRef = useRef<number | null>(null);
 
+  const sameToken = (a: ComposerAutocompleteToken | null, b: ComposerAutocompleteToken | null) => {
+    if (!a || !b) return false;
+    return (
+      a.kind === b.kind &&
+      a.start === b.start &&
+      a.end === b.end &&
+      a.query === b.query
+    );
+  };
+
   const syncFromDom = useCallback(() => {
     const el = textareaRef.current;
     if (!el) return;
 
     const cursor = el.selectionStart ?? value.length;
     const next = detectComposerAutocompleteToken(value, cursor);
+    if (sameToken(token, next) && open === !!next) {
+      return;
+    }
     if (
       next &&
       dismissedRef.current &&
@@ -60,11 +78,14 @@ export function useComposerAutocomplete({
     setToken(next);
     setOpen(!!next);
     if (next) {
-      setAnchorRect(getTextareaCaretRect(el));
+      const inputRect = el.getBoundingClientRect();
+      setAnchorInputRect(inputRect);
+      setAnchorRect(getTextareaCaretRect(el) ?? inputRect);
     } else {
       setAnchorRect(null);
+      setAnchorInputRect(null);
     }
-  }, [textareaRef, value]);
+  }, [open, textareaRef, token, value]);
 
   useEffect(() => {
     const el = textareaRef.current;
@@ -82,7 +103,7 @@ export function useComposerAutocomplete({
       const full = `/${name}`;
       return name.startsWith(q) || name.includes(q) || full.includes(q);
     });
-    return filtered.map((c) => ({
+    return filtered.slice(0, 10).map((c) => ({
       key: `slash:${c.name}`,
       label: `/${c.name}`,
       insertText: `/${c.name}`,
@@ -106,9 +127,11 @@ export function useComposerAutocomplete({
       return;
     }
     if (!sessionId) {
-      setFileItems([]);
-      setLoadingFiles(false);
-      return;
+      if (!workspaceId) {
+        setFileItems([]);
+        setLoadingFiles(false);
+        return;
+      }
     }
 
     if (debounceTimerRef.current) {
@@ -126,13 +149,17 @@ export function useComposerAutocomplete({
     const query = token.query;
 
     debounceTimerRef.current = window.setTimeout(() => {
-      listSessionFileCompletions(sessionId, query, 50, controller.signal)
+      const req = sessionId
+        ? listSessionFileCompletions(sessionId, query, FILE_RESULTS_LIMIT, controller.signal)
+        : listWorkspaceFileCompletions(workspaceId!, query, FILE_RESULTS_LIMIT, controller.signal);
+      req
         .then((paths) => {
           const items = (paths ?? []).map((p) => ({
             key: `file:${p}`,
-            label: `@${p}`,
+            label: String(p).split(/[\\/]/).pop() || String(p),
             insertText: `@${p}`,
             kind: "file" as const,
+            path: p,
           }));
           setFileItems(items);
         })
@@ -144,7 +171,7 @@ export function useComposerAutocomplete({
           setLoadingFiles(false);
         });
     }, 120);
-  }, [sessionId, token]);
+  }, [FILE_RESULTS_LIMIT, sessionId, token, workspaceId]);
 
   const items = token?.kind === "slash" ? slashItems : token?.kind === "at" ? fileItems : [];
   const loading = token?.kind === "at" ? loadingFiles : false;
@@ -231,6 +258,7 @@ export function useComposerAutocomplete({
     items,
     activeIndex,
     anchorRect,
+    anchorInputRect,
     inlineFallback,
     setActiveIndex,
     pick,

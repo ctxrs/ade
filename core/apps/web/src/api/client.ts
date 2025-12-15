@@ -401,6 +401,19 @@ export const listSessionFileCompletions = (
   return api<string[]>(`/api/sessions/${sessionId}/completions/files${suffix}`, { signal });
 };
 
+export const listWorkspaceFileCompletions = (
+  workspaceId: string,
+  query: string,
+  limit?: number,
+  signal?: AbortSignal,
+) => {
+  const qs = new URLSearchParams();
+  qs.set("query", query);
+  if (limit) qs.set("limit", String(limit));
+  const suffix = qs.toString() ? `?${qs.toString()}` : "";
+  return api<string[]>(`/api/workspaces/${workspaceId}/completions/files${suffix}`, { signal });
+};
+
 export const postMessage = (
   sessionId: string,
   content: string,

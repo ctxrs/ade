@@ -15,6 +15,7 @@ function TestHarness({
   const ref = useRef<HTMLTextAreaElement | null>(null);
   const ac = useComposerAutocomplete({
     sessionId: null,
+    workspaceId: null,
     value,
     setValue,
     textareaRef: ref,

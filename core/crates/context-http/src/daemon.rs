@@ -10,7 +10,7 @@ use directories::BaseDirs;
 use serde_json::json;
 use tokio::sync::{broadcast, mpsc, Mutex};
 
-use context_core::ids::{SessionId, WorktreeId};
+use context_core::ids::{SessionId, WorkspaceId, WorktreeId};
 use context_core::models::{Session, SessionEvent};
 use context_providers::adapters::ProviderAdapter;
 use context_providers::adapters::ProviderStatus;
@@ -34,6 +34,7 @@ pub struct AppState {
     pub provider_statuses: Mutex<HashMap<String, ProviderStatus>>,
     pub provider_options_cache: Mutex<HashMap<String, CachedProviderOptions>>,
     pub file_completions_cache: Mutex<HashMap<WorktreeId, CachedFileCompletions>>,
+    pub workspace_file_completions_cache: Mutex<HashMap<WorkspaceId, CachedFileCompletions>>,
     pub daemon_url: String,
     pub auth_token: Option<String>,
     pub lsp_cfg: LspManagerConfig,
@@ -130,6 +131,7 @@ impl AppState {
             provider_statuses: Mutex::new(HashMap::new()),
             provider_options_cache: Mutex::new(HashMap::new()),
             file_completions_cache: Mutex::new(HashMap::new()),
+            workspace_file_completions_cache: Mutex::new(HashMap::new()),
             daemon_url,
             auth_token,
             lsp_cfg,

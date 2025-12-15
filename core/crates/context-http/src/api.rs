@@ -151,6 +151,10 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
         .route("/api/workspaces", get(list_workspaces).post(create_workspace))
         .route("/api/workspaces/:id", delete(delete_workspace).get(get_workspace))
         .route(
+            "/api/workspaces/:id/completions/files",
+            get(workspace_file_completions),
+        )
+        .route(
             "/api/workspaces/:id/providers/:provider_id/options",
             get(get_provider_options),
         )
@@ -4117,7 +4121,7 @@ struct ListSessionEventsQuery {
 }
 
 #[derive(Debug, Deserialize, Default)]
-struct SessionFileCompletionsQuery {
+struct FileCompletionsQuery {
     query: Option<String>,
     limit: Option<u32>,
 }
@@ -4125,7 +4129,7 @@ struct SessionFileCompletionsQuery {
 async fn session_file_completions(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
-    Query(q): Query<SessionFileCompletionsQuery>,
+    Query(q): Query<FileCompletionsQuery>,
 ) -> Result<Json<Vec<String>>, StatusCode> {
     const DEFAULT_LIMIT: u32 = 20;
     const MAX_LIMIT: u32 = 200;
@@ -4170,6 +4174,53 @@ async fn session_file_completions(
     Ok(Json(completions::filter_and_rank_paths(&files, &query, limit)))
 }
 
+async fn workspace_file_completions(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Query(q): Query<FileCompletionsQuery>,
+) -> Result<Json<Vec<String>>, StatusCode> {
+    const DEFAULT_LIMIT: u32 = 20;
+    const MAX_LIMIT: u32 = 200;
+    const CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(10);
+
+    let ws_id = WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
+    let ws = state
+        .store
+        .get_workspace(ws_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    let root = PathBuf::from(&ws.root_path);
+    if assert_git_repo(&root).await.is_err() {
+        return Ok(Json(Vec::new()));
+    }
+
+    let query = q.query.unwrap_or_default();
+    let limit = q
+        .limit
+        .unwrap_or(DEFAULT_LIMIT)
+        .clamp(1, MAX_LIMIT) as usize;
+
+    let files = {
+        let now = Instant::now();
+        let cache = state.workspace_file_completions_cache.lock().await;
+        if let Some(entry) = cache.get(&ws_id) {
+            if now.duration_since(entry.cached_at) <= CACHE_TTL {
+                entry.files.clone()
+            } else {
+                drop(cache);
+                load_and_cache_workspace_files(&state, ws_id, &root, now).await?
+            }
+        } else {
+            drop(cache);
+            load_and_cache_workspace_files(&state, ws_id, &root, now).await?
+        }
+    };
+
+    Ok(Json(completions::filter_and_rank_paths(&files, &query, limit)))
+}
+
 async fn load_and_cache_worktree_files(
     state: &Arc<AppState>,
     worktree: &Worktree,
@@ -4196,6 +4247,40 @@ async fn load_and_cache_worktree_files(
     let mut cache = state.file_completions_cache.lock().await;
     cache.insert(
         worktree.id,
+        crate::daemon::CachedFileCompletions {
+            cached_at: now,
+            files: files.clone(),
+        },
+    );
+    Ok(files)
+}
+
+async fn load_and_cache_workspace_files(
+    state: &Arc<AppState>,
+    ws_id: WorkspaceId,
+    root: &PathBuf,
+    now: Instant,
+) -> Result<Arc<Vec<String>>, StatusCode> {
+    let mut files = list_tracked_files(root)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let untracked = list_untracked_files(root)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if !untracked.is_empty() {
+        let mut seen: std::collections::HashSet<String> = files.iter().cloned().collect();
+        for p in untracked {
+            if seen.insert(p.clone()) {
+                files.push(p);
+            }
+        }
+    }
+    files.sort();
+    let files = Arc::new(files);
+
+    let mut cache = state.workspace_file_completions_cache.lock().await;
+    cache.insert(
+        ws_id,
         crate::daemon::CachedFileCompletions {
             cached_at: now,
             files: files.clone(),

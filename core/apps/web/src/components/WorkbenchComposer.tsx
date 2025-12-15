@@ -48,6 +48,7 @@ type SharedProps = {
   inputDisabled?: boolean;
 
   sessionIdForAutocomplete: string | null;
+  workspaceIdForAutocomplete?: string | null;
   slashCommands: SlashCommandDescriptor[];
 
   attachments: MessageAttachment[];
@@ -178,6 +179,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
     modeId,
     setModeId,
     sessionIdForAutocomplete,
+    workspaceIdForAutocomplete,
     slashCommands,
     recording,
     recordDisabledReason,
@@ -201,6 +203,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
 
   const autocomplete = useComposerAutocomplete({
     sessionId: sessionIdForAutocomplete,
+    workspaceId: workspaceIdForAutocomplete ?? null,
     value,
     setValue,
     textareaRef,
@@ -819,6 +822,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
         onPick={autocomplete.pick}
         onHoverIndex={(i) => autocomplete.setActiveIndex(i)}
         anchorRect={autocomplete.anchorRect}
+        anchorInputRect={autocomplete.anchorInputRect}
         inlineFallback={autocomplete.inlineFallback}
       />
 

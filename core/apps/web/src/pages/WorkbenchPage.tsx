@@ -758,6 +758,7 @@ export default function WorkbenchPage() {
                   else startDictation().catch(() => {});
                 }}
                 sessionIdForAutocomplete={null}
+                workspaceIdForAutocomplete={workspaceId}
                 slashCommands={slashCommands}
                 attachments={draftAttachments}
                 setAttachments={setDraftAttachments}
