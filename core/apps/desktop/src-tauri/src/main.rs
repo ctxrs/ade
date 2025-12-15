@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use tauri::Manager;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct DesktopTokenFile {
@@ -109,7 +110,6 @@ fn start_supervisor_thread(
     initial_child: Option<Child>,
 ) {
     std::thread::spawn(move || {
-        let mut rx = rx;
         let mut url = initial_url;
         let mut child = initial_child;
         let mut consecutive_unhealthy = 0u32;
