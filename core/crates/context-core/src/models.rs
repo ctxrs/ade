@@ -114,6 +114,12 @@ pub enum MessageAttachment {
         #[serde(default)]
         name: Option<String>,
     },
+    ImageRef {
+        blob_id: String,
+        mime_type: String,
+        #[serde(default)]
+        name: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

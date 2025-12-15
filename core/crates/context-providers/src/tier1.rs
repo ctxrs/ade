@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use async_trait::async_trait;
+use base64::Engine;
 use serde_json::json;
 use tokio::sync::{mpsc, oneshot};
 
@@ -158,6 +159,7 @@ impl ProviderAdapter for Tier1AcpAdapter {
                 prompt.extend(input.context_blocks);
             }
 
+            let data_root = env.get("CONTEXT_DATA_ROOT").cloned();
             for att in input.attachments.iter() {
                 match att {
                     context_core::models::MessageAttachment::Image {
@@ -165,6 +167,51 @@ impl ProviderAdapter for Tier1AcpAdapter {
                         data_base64,
                         ..
                     } => {
+                        prompt.push(json!({"type":"image","data": data_base64, "mimeType": mime_type}));
+                    }
+                    context_core::models::MessageAttachment::ImageRef {
+                        blob_id,
+                        mime_type,
+                        ..
+                    } => {
+                        let Some(data_root) = data_root.as_deref() else {
+                            let _ = event_sink
+                                .send(NormalizedEvent {
+                                    event_type: SessionEventType::Error,
+                                    payload_json: json!({"provider": provider_id, "message": "missing CONTEXT_DATA_ROOT for image attachment"}),
+                                })
+                                .await;
+                            let _ = event_sink
+                                .send(NormalizedEvent {
+                                    event_type: SessionEventType::Done,
+                                    payload_json: json!({"provider": provider_id, "status": "error"}),
+                                })
+                                .await;
+                            return;
+                        };
+
+                        let path = std::path::Path::new(data_root).join("blobs").join(blob_id);
+                        let bytes = match tokio::fs::read(&path).await {
+                            Ok(b) => b,
+                            Err(e) => {
+                                let _ = event_sink
+                                    .send(NormalizedEvent {
+                                        event_type: SessionEventType::Error,
+                                        payload_json: json!({"provider": provider_id, "message": format!("failed to read image blob {blob_id}: {e}")}),
+                                    })
+                                    .await;
+                                let _ = event_sink
+                                    .send(NormalizedEvent {
+                                        event_type: SessionEventType::Done,
+                                        payload_json: json!({"provider": provider_id, "status": "error"}),
+                                    })
+                                    .await;
+                                return;
+                            }
+                        };
+
+                        let data_base64 =
+                            base64::engine::general_purpose::STANDARD.encode(bytes);
                         prompt.push(json!({"type":"image","data": data_base64, "mimeType": mime_type}));
                     }
                 }

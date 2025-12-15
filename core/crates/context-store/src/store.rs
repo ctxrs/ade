@@ -736,6 +736,54 @@ impl Store {
         Ok(())
     }
 
+    // Blob APIs
+    pub async fn insert_blob(
+        &self,
+        id: &str,
+        sha256: &str,
+        bytes: i64,
+        mime_type: &str,
+        name: Option<&str>,
+        created_at: DateTime<Utc>,
+    ) -> Result<()> {
+        sqlx::query(
+            r#"INSERT INTO blobs (id, sha256, bytes, mime_type, name, created_at)
+               VALUES (?, ?, ?, ?, ?, ?)"#,
+        )
+        .bind(id)
+        .bind(sha256)
+        .bind(bytes)
+        .bind(mime_type)
+        .bind(name)
+        .bind(created_at.to_rfc3339())
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn get_blob(
+        &self,
+        id: &str,
+    ) -> Result<Option<(String, String, i64, Option<String>, DateTime<Utc>)>> {
+        let row = sqlx::query(
+            r#"SELECT sha256, mime_type, bytes, name, created_at
+               FROM blobs WHERE id = ?"#,
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.map(|r| {
+            let sha256: String = r.try_get("sha256").unwrap_or_default();
+            let mime_type: String = r.try_get("mime_type").unwrap_or_default();
+            let bytes: i64 = r.try_get("bytes").unwrap_or_default();
+            let name: Option<String> = r.try_get("name").ok();
+            let created_at: String = r.try_get("created_at").unwrap_or_default();
+            let created_at = parse_dt(&created_at).unwrap_or_else(|_| Utc::now());
+            (sha256, mime_type, bytes, name, created_at)
+        }))
+    }
+
     // Session event APIs
     pub async fn append_session_event(
         &self,
