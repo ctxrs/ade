@@ -54,7 +54,6 @@ pub struct AcpSessionPool {
 #[derive(Debug, Clone)]
 struct AcpContextSession {
     acp_session_id: String,
-    last_used: std::time::Instant,
 }
 
 #[derive(Debug, Clone)]
@@ -71,7 +70,7 @@ impl AcpSessionPool {
         }
     }
 
-    pub fn with_idle_ttl(mut self, ttl: Duration) -> Self {
+    pub fn with_idle_ttl(self, ttl: Duration) -> Self {
         // No-op for now: the current “warming” runtime keeps provider processes alive.
         //
         // Follow-up: implement TTL/LRU eviction for both provider processes and per-Context-session
@@ -268,7 +267,6 @@ impl AcpSessionPool {
             session_key.to_string(),
             AcpContextSession {
                 acp_session_id: created.session_id.clone(),
-                last_used: std::time::Instant::now(),
             },
         );
         Ok(created.session_id)
@@ -277,10 +275,8 @@ impl AcpSessionPool {
 
 struct AcpProcess {
     agent: AcpAgentConfig,
-    workdir: PathBuf,
     child: Child,
     write_tx: mpsc::UnboundedSender<String>,
-    writer: tokio::task::JoinHandle<()>,
     stdout_reader: tokio::io::Lines<BufReader<tokio::process::ChildStdout>>,
     stderr_reader: tokio::io::Lines<BufReader<tokio::process::ChildStderr>>,
     next_id: u64,
@@ -322,7 +318,7 @@ impl AcpProcess {
         let stderr_reader = BufReader::new(stderr).lines();
 
         let (write_tx, mut write_rx) = mpsc::unbounded_channel::<String>();
-        let writer = tokio::spawn(async move {
+        let _writer = tokio::spawn(async move {
             while let Some(line) = write_rx.recv().await {
                 if stdin.write_all(line.as_bytes()).await.is_err() {
                     break;
@@ -336,10 +332,8 @@ impl AcpProcess {
 
         let mut session = Self {
             agent,
-            workdir: workdir.clone(),
             child,
             write_tx,
-            writer,
             stdout_reader,
             stderr_reader,
             next_id: 1,
@@ -863,11 +857,11 @@ impl AcpProcess {
     async fn is_alive(&mut self) -> Result<bool> {
         Ok(self.child.try_wait()?.is_none())
     }
+}
 
-    async fn shutdown(&mut self) -> Result<()> {
-        let _ = self.child.kill().await;
-        self.writer.abort();
-        Ok(())
+impl Drop for AcpProcess {
+    fn drop(&mut self) {
+        let _ = self.child.start_kill();
     }
 }
 
