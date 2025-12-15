@@ -45,40 +45,37 @@ function floatTo16BitPCM(float32: Float32Array): Int16Array {
 export async function startMicPcmStream(opts: StartMicPcmStreamOpts): Promise<MicPcmStream> {
   const chunkSamples = opts.chunkSamples ?? 320; // 20ms @ 16kHz
 
-  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  const stream = await navigator.mediaDevices.getUserMedia({
+    audio: {
+      channelCount: 1,
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true,
+    },
+  });
 
   const audioContext = new AudioContext({ sampleRate: DEFAULT_TARGET_SAMPLE_RATE });
   const source = audioContext.createMediaStreamSource(stream);
+  const sink = audioContext.createGain();
+  sink.gain.value = 0;
+  sink.connect(audioContext.destination);
 
-  const workletCode = `
-    class MicProcessor extends AudioWorkletProcessor {
-      process(inputs) {
-        const input = inputs[0];
-        if (input && input[0] && input[0].length) {
-          this.port.postMessage(input[0]);
-        }
-        return true;
-      }
+  // Some browsers create the context in a suspended state until a user gesture occurs.
+  // (This is called from a click handler, but we still resume defensively.)
+  try {
+    if (audioContext.state === "suspended") {
+      await audioContext.resume();
     }
-    registerProcessor('mic-processor', MicProcessor);
-  `;
-  const blob = new Blob([workletCode], { type: "application/javascript" });
-  const url = URL.createObjectURL(blob);
+  } catch {}
 
-  await audioContext.audioWorklet.addModule(url);
-  URL.revokeObjectURL(url);
-
-  const node = new AudioWorkletNode(audioContext, "mic-processor");
-  source.connect(node);
-  // Not connecting to destination avoids audible feedback.
+  let disconnectGraph: (() => void) | null = null;
+  let detachHandler: (() => void) | null = null;
 
   let pcmCarry = new Int16Array(0);
+  let gotAnySamples = false;
 
-  const onMessage = (ev: MessageEvent) => {
+  const onFloats = (input: Float32Array) => {
     try {
-      const input = ev.data as Float32Array;
-      if (!(input instanceof Float32Array)) return;
-
       const sr = audioContext.sampleRate;
       const down = downsampleBuffer(input, sr, DEFAULT_TARGET_SAMPLE_RATE);
       const pcm = floatTo16BitPCM(down);
@@ -94,21 +91,95 @@ export async function startMicPcmStream(opts: StartMicPcmStreamOpts): Promise<Mi
         offset += chunkSamples;
       }
       pcmCarry = combined.slice(offset);
+      gotAnySamples = true;
     } catch (e: any) {
       opts.onError?.(e instanceof Error ? e : new Error(String(e)));
     }
   };
 
-  node.port.addEventListener("message", onMessage);
-  node.port.start();
+  if (audioContext.audioWorklet?.addModule) {
+    const workletCode = `
+      class MicProcessor extends AudioWorkletProcessor {
+        process(inputs) {
+          const input = inputs[0];
+          if (input && input[0] && input[0].length) {
+            const copy = input[0].slice(0);
+            this.port.postMessage(copy);
+          }
+          return true;
+        }
+      }
+      registerProcessor('mic-processor', MicProcessor);
+    `;
+    const blob = new Blob([workletCode], { type: "application/javascript" });
+    const url = URL.createObjectURL(blob);
+
+    await audioContext.audioWorklet.addModule(url);
+    URL.revokeObjectURL(url);
+
+    const node = new AudioWorkletNode(audioContext, "mic-processor");
+    source.connect(node);
+    node.connect(sink);
+    disconnectGraph = () => {
+      try {
+        node.disconnect();
+      } catch {}
+      try {
+        source.disconnect();
+      } catch {}
+    };
+
+    const onMessage = (ev: MessageEvent) => {
+      const data = ev.data;
+      if (data instanceof Float32Array) {
+        onFloats(data);
+      } else if (data instanceof ArrayBuffer) {
+        onFloats(new Float32Array(data));
+      }
+    };
+    node.port.addEventListener("message", onMessage);
+    node.port.start();
+    detachHandler = () => node.port.removeEventListener("message", onMessage);
+  } else {
+    // Fallback for browsers without AudioWorklet support.
+    const processor = audioContext.createScriptProcessor(2048, 1, 1);
+    processor.onaudioprocess = (e) => {
+      const input = e.inputBuffer.getChannelData(0);
+      onFloats(new Float32Array(input));
+    };
+    source.connect(processor);
+    processor.connect(sink);
+    disconnectGraph = () => {
+      try {
+        processor.disconnect();
+      } catch {}
+      try {
+        source.disconnect();
+      } catch {}
+    };
+    detachHandler = () => {
+      processor.onaudioprocess = null;
+    };
+  }
+
+  const noAudioTimeout = window.setTimeout(() => {
+    if (!gotAnySamples) {
+      opts.onError?.(
+        new Error(
+          "Microphone started but no audio samples were captured. If you're on Safari, try enabling AudioWorklet support or switch to Chrome.",
+        ),
+      );
+    }
+  }, 1500);
 
   const stop = async () => {
-    node.port.removeEventListener("message", onMessage);
+    window.clearTimeout(noAudioTimeout);
+    detachHandler?.();
     try {
-      node.disconnect();
+      disconnectGraph?.();
     } catch {}
     try {
-      source.disconnect();
+      sink.disconnect();
     } catch {}
     try {
       stream.getTracks().forEach((t) => t.stop());
@@ -120,4 +191,3 @@ export async function startMicPcmStream(opts: StartMicPcmStreamOpts): Promise<Mi
 
   return { stop };
 }
-
