@@ -242,8 +242,30 @@ const api = async <T>(path: string, init?: RequestInit): Promise<T> => {
     },
     ...init,
   });
+
+  const looksLikeHtml = (text: string): boolean => {
+    const t = String(text || "").trimStart().toLowerCase();
+    return t.startsWith("<!doctype html") || t.startsWith("<html");
+  };
+
+  const trimForError = (text: string): string => {
+    const s = String(text || "").trim();
+    if (s.length <= 800) return s;
+    return `${s.slice(0, 800)}…`;
+  };
+
   if (!res.ok) {
     const text = await res.text();
+    const contentType = res.headers.get("content-type") ?? "";
+
+    if ((contentType.includes("text/html") || looksLikeHtml(text)) && path.startsWith("/api/")) {
+      // This usually means the web UI server served its SPA fallback for an /api route.
+      // Most commonly: the daemon is old and doesn't implement the endpoint, or the dev proxy isn't pointing at the daemon.
+      throw new Error(
+        `The daemon returned HTML for ${path} (${res.status}). Restart/update the daemon (and ensure Vite is proxying /api to it).`,
+      );
+    }
+
     const lowered = String(text || "").toLowerCase();
     if (
       res.status >= 500 &&
@@ -265,13 +287,24 @@ const api = async <T>(path: string, init?: RequestInit): Promise<T> => {
     } catch {
       // ignore
     }
-    throw new Error(text || `${res.status} ${res.statusText}`);
+    throw new Error(trimForError(text) || `${res.status} ${res.statusText}`);
   }
   if (res.status === 204) {
     return undefined as T;
   }
   const text = await res.text();
-  return (text ? JSON.parse(text) : undefined) as T;
+  if (!text) return undefined as T;
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    const contentType = res.headers.get("content-type") ?? "";
+    if ((contentType.includes("text/html") || looksLikeHtml(text)) && path.startsWith("/api/")) {
+      throw new Error(
+        `The daemon returned HTML for ${path}. Restart/update the daemon (and ensure Vite is proxying /api to it).`,
+      );
+    }
+    throw new Error(`Unexpected non-JSON response from ${path}.`);
+  }
 };
 
 const idToString = (id: any): string =>
