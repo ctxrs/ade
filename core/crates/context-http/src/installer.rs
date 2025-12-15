@@ -12,6 +12,7 @@ use tokio::time::timeout;
 
 use crate::daemon::AppState;
 use crate::installs::{truncate_for_storage, InstallEventLevel, InstallId, InstallProgressEvent};
+use crate::lsp_catalog::{LspCatalogArchive, LspCatalogInstall};
 use context_providers::tier1::Tier1AcpAdapter;
 use context_lsp::LspManagerConfig;
 
@@ -83,6 +84,9 @@ pub struct AgentServerConfigFile {
 pub struct LspServerConfigFile {
     #[serde(default)]
     pub servers: HashMap<String, AgentServerCommand>,
+    /// Extra language servers (including non-builtin language ids) plus extension/filename mappings.
+    #[serde(default)]
+    pub extra_servers: Vec<UserLspServerSpec>,
     #[serde(default)]
     pub managed_installs: HashMap<String, ManagedInstallMetadata>,
 }
@@ -165,6 +169,442 @@ pub async fn install_provider_with_progress(
         }
     }
     res
+}
+
+fn resolve_command_path(command: &str) -> (bool, Option<PathBuf>) {
+    if command.contains(std::path::MAIN_SEPARATOR) || command.contains('/') || command.contains('\\') {
+        let p = PathBuf::from(command);
+        if p.exists() {
+            return (true, Some(p));
+        }
+        return (false, None);
+    }
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    for dir in std::env::split_paths(&path) {
+        let candidate = dir.join(command);
+        if candidate.exists() {
+            return (true, Some(candidate));
+        }
+    }
+    (false, None)
+}
+
+fn catalog_target_key() -> &'static str {
+    match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("linux", "x86_64") => "linux-x64",
+        ("linux", "aarch64") => "linux-arm64",
+        ("macos", "x86_64") => "darwin-x64",
+        ("macos", "aarch64") => "darwin-arm64",
+        _ => "unknown",
+    }
+}
+
+fn ensure_executable(path: &Path) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(path)
+            .with_context(|| format!("stat {}", path.display()))?
+            .permissions();
+        perms.set_mode(perms.mode() | 0o111);
+        std::fs::set_permissions(path, perms)
+            .with_context(|| format!("chmod {}", path.display()))?;
+    }
+    Ok(())
+}
+
+fn find_unique_path_ending_with(root: &Path, suffix: &str) -> Result<PathBuf> {
+    let suffix = suffix.replace('\\', "/");
+    let mut matches = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(&dir).with_context(|| format!("read_dir {}", dir.display()))? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            let rel = path.strip_prefix(root).unwrap_or(&path);
+            if rel.to_string_lossy().replace('\\', "/").ends_with(&suffix) {
+                matches.push(path);
+            }
+        }
+    }
+    if matches.len() == 1 {
+        return Ok(matches.remove(0));
+    }
+    if matches.is_empty() {
+        anyhow::bail!("could not find extracted binary ending with {suffix}");
+    }
+    anyhow::bail!("multiple extracted binaries match {suffix}");
+}
+
+fn extract_zip_to_dir(zip_path: &Path, out_dir: &Path) -> Result<()> {
+    let file = std::fs::File::open(zip_path).with_context(|| format!("open {}", zip_path.display()))?;
+    let mut archive = zip::ZipArchive::new(file).context("parsing zip")?;
+    for i in 0..archive.len() {
+        let mut f = archive.by_index(i).context("zip entry")?;
+        let name = f.name().to_string();
+        if name.ends_with('/') {
+            continue;
+        }
+        let dest = out_dir.join(name);
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent).ok();
+        }
+        let mut out = std::fs::File::create(&dest)
+            .with_context(|| format!("create {}", dest.display()))?;
+        std::io::copy(&mut f, &mut out).context("extract zip entry")?;
+    }
+    Ok(())
+}
+
+async fn install_url_binary(
+    state: &AppState,
+    install_id: Option<InstallId>,
+    provider_id: &str,
+    server_id: &str,
+    version: &str,
+    url: &str,
+    archive: LspCatalogArchive,
+    bin_path: &str,
+) -> Result<PathBuf> {
+    let data_root = &state.data_root;
+    let install_dir = data_root
+        .join("lsp")
+        .join("binaries")
+        .join(server_id)
+        .join(version);
+    tokio::fs::create_dir_all(&install_dir).await.ok();
+
+    let tmp_dir = data_root.join("lsp").join("tmp");
+    tokio::fs::create_dir_all(&tmp_dir).await.ok();
+    let tmp = tmp_dir.join(format!("{server_id}-{version}.download"));
+
+    download_to_file(state, install_id, provider_id, "download", url, &tmp).await?;
+
+    emit_install(
+        state,
+        install_id,
+        provider_id,
+        InstallEventLevel::Info,
+        "extract",
+        "Extracting…".to_string(),
+        None,
+        None,
+        None,
+    )
+    .await;
+
+    match archive {
+        LspCatalogArchive::None => {
+            let dest = install_dir.join(bin_path);
+            if let Some(parent) = dest.parent() {
+                tokio::fs::create_dir_all(parent).await.ok();
+            }
+            tokio::fs::rename(&tmp, &dest).await.ok();
+            ensure_executable(&dest)?;
+            Ok(dest)
+        }
+        LspCatalogArchive::Gz => {
+            let gz = std::fs::File::open(&tmp).with_context(|| format!("open {}", tmp.display()))?;
+            let mut dec = flate2::read::GzDecoder::new(gz);
+            let dest = install_dir.join(bin_path);
+            if let Some(parent) = dest.parent() {
+                std::fs::create_dir_all(parent).ok();
+            }
+            let mut out = std::fs::File::create(&dest).with_context(|| format!("create {}", dest.display()))?;
+            std::io::copy(&mut dec, &mut out).context("decompress gz")?;
+            ensure_executable(&dest)?;
+            Ok(dest)
+        }
+        LspCatalogArchive::TarGz => {
+            let tar_gz = std::fs::File::open(&tmp).with_context(|| format!("open {}", tmp.display()))?;
+            let dec = flate2::read::GzDecoder::new(tar_gz);
+            let mut archive = tar::Archive::new(dec);
+            archive.unpack(&install_dir).context("extract tar.gz")?;
+            let direct = install_dir.join(bin_path);
+            let resolved = if direct.exists() {
+                direct
+            } else {
+                find_unique_path_ending_with(&install_dir, bin_path)?
+            };
+            ensure_executable(&resolved)?;
+            Ok(resolved)
+        }
+        LspCatalogArchive::Zip => {
+            extract_zip_to_dir(&tmp, &install_dir)?;
+            let direct = install_dir.join(bin_path);
+            let resolved = if direct.exists() {
+                direct
+            } else {
+                find_unique_path_ending_with(&install_dir, bin_path)?
+            };
+            ensure_executable(&resolved)?;
+            Ok(resolved)
+        }
+    }
+}
+
+async fn enable_managed_lsp_server(
+    data_root: &Path,
+    language_id: &str,
+    command: &str,
+    args: Vec<String>,
+    managed_meta_key: &str,
+    meta: ManagedInstallMetadata,
+) -> Result<()> {
+    let mut cfg = load_lsp_server_config(data_root).await.unwrap_or_default();
+    cfg.managed_installs
+        .insert(managed_meta_key.to_string(), meta.clone());
+    cfg.servers.insert(
+        language_id.to_string(),
+        AgentServerCommand {
+            command: command.to_string(),
+            args,
+            managed: Some(meta),
+        },
+    );
+    save_lsp_server_config(data_root, &cfg).await?;
+    Ok(())
+}
+
+async fn upsert_managed_extra_server(data_root: &Path, spec: UserLspServerSpec) -> Result<()> {
+    let mut cfg = load_lsp_server_config(data_root).await.unwrap_or_default();
+    if let Some(id) = spec.id.as_deref() {
+        cfg.extra_servers.retain(|s| s.id.as_deref() != Some(id));
+    }
+    cfg.extra_servers.push(spec);
+    save_lsp_server_config(data_root, &cfg).await?;
+    Ok(())
+}
+
+pub async fn install_lsp_catalog_server_with_progress(
+    state: std::sync::Arc<AppState>,
+    install_id: InstallId,
+    catalog_id: String,
+) -> Result<()> {
+    let res =
+        install_lsp_catalog_server_impl(state.as_ref(), &catalog_id, Some(install_id)).await;
+    match &res {
+        Ok(()) => state.finish_install(install_id, true, None).await,
+        Err(e) => {
+            state
+                .finish_install(
+                    install_id,
+                    false,
+                    Some(truncate_for_storage(&format!("{e:#}"), 12_000)),
+                )
+                .await
+        }
+    }
+    res
+}
+
+async fn install_lsp_catalog_server_impl(
+    state: &AppState,
+    catalog_id: &str,
+    install_id: Option<InstallId>,
+) -> Result<()> {
+    let data_root = state.data_root.clone();
+    let provider_id = format!("lsp:{catalog_id}");
+    let entry = crate::lsp_catalog::get_entry(&data_root, catalog_id).await?;
+    let extra_id = entry.id.clone();
+    let extra_language_id = entry.language_id.clone();
+    let extra_args = entry.args.clone();
+    let extra_extensions = entry.extensions.clone();
+    let extra_filenames = entry.filenames.clone();
+
+    emit_install(
+        state,
+        install_id,
+        &provider_id,
+        InstallEventLevel::Info,
+        "start",
+        format!("Installing LSP server: {}", entry.title),
+        None,
+        None,
+        None,
+    )
+    .await;
+
+    match entry.install.clone() {
+        LspCatalogInstall::ManagedNode { server_id } => {
+            install_lsp_server_impl(state, &server_id, install_id).await?;
+            return Ok(());
+        }
+        LspCatalogInstall::System { command } => {
+            let (found, resolved) = resolve_command_path(&command);
+            if !found {
+                anyhow::bail!("system command not found on PATH: {command}");
+            }
+            let cmd = resolved
+                .as_ref()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or(command);
+            let meta = ManagedInstallMetadata {
+                package: Some("system".to_string()),
+                version: None,
+                install_dir_rel: None,
+                last_success_at: Some(Utc::now().to_rfc3339()),
+                last_error: None,
+            };
+            enable_managed_lsp_server(
+                &data_root,
+                &entry.language_id,
+                &cmd,
+                entry.args.clone(),
+                &entry.id,
+                meta,
+            )
+            .await?;
+            upsert_managed_extra_server(
+                &data_root,
+                UserLspServerSpec {
+                    id: Some(extra_id.clone()),
+                    language_id: extra_language_id.clone(),
+                    command: cmd,
+                    args: extra_args.clone(),
+                    extensions: extra_extensions.clone(),
+                    filenames: extra_filenames.clone(),
+                },
+            )
+            .await?;
+        }
+        LspCatalogInstall::GoInstall {
+            module,
+            version,
+            binary,
+        } => {
+            let install_dir = data_root
+                .join("lsp")
+                .join("go")
+                .join(&entry.id)
+                .join(&version)
+                .join("bin");
+            tokio::fs::create_dir_all(&install_dir).await.ok();
+            emit_install(
+                state,
+                install_id,
+                &provider_id,
+                InstallEventLevel::Info,
+                "go_install",
+                format!("go install {module}@{version}"),
+                None,
+                None,
+                None,
+            )
+            .await;
+            let status = Command::new("go")
+                .arg("install")
+                .arg(format!("{module}@{version}"))
+                .env("GOBIN", &install_dir)
+                .status()
+                .await
+                .context("running go install")?;
+            if !status.success() {
+                anyhow::bail!("go install failed");
+            }
+            let bin = install_dir.join(&binary);
+            if !bin.exists() {
+                anyhow::bail!("go install completed but binary missing: {}", bin.display());
+            }
+            ensure_executable(&bin)?;
+            let meta = ManagedInstallMetadata {
+                package: Some(module),
+                version: Some(version.clone()),
+                install_dir_rel: Some(install_dir_rel(&data_root, &install_dir)),
+                last_success_at: Some(Utc::now().to_rfc3339()),
+                last_error: None,
+            };
+            let cmd = bin.to_string_lossy().to_string();
+            enable_managed_lsp_server(
+                &data_root,
+                &entry.language_id,
+                &cmd,
+                entry.args.clone(),
+                &entry.id,
+                meta,
+            )
+            .await?;
+            upsert_managed_extra_server(
+                &data_root,
+                UserLspServerSpec {
+                    id: Some(extra_id.clone()),
+                    language_id: extra_language_id.clone(),
+                    command: cmd,
+                    args: extra_args.clone(),
+                    extensions: extra_extensions.clone(),
+                    filenames: extra_filenames.clone(),
+                },
+            )
+            .await?;
+        }
+        LspCatalogInstall::UrlBinary { version, targets } => {
+            let target_key = catalog_target_key();
+            let t = targets
+                .get(target_key)
+                .ok_or_else(|| anyhow::anyhow!("no catalog target for {target_key}"))?;
+            let bin = install_url_binary(
+                state,
+                install_id,
+                &provider_id,
+                &entry.id,
+                &version,
+                &t.url,
+                t.archive,
+                &t.bin_path,
+            )
+            .await?;
+            let meta = ManagedInstallMetadata {
+                package: Some(t.url.clone()),
+                version: Some(version.clone()),
+                install_dir_rel: Some(install_dir_rel(
+                    &data_root,
+                    bin.parent().unwrap_or(&bin),
+                )),
+                last_success_at: Some(Utc::now().to_rfc3339()),
+                last_error: None,
+            };
+            let cmd = bin.to_string_lossy().to_string();
+            enable_managed_lsp_server(
+                &data_root,
+                &entry.language_id,
+                &cmd,
+                entry.args.clone(),
+                &entry.id,
+                meta,
+            )
+            .await?;
+            upsert_managed_extra_server(
+                &data_root,
+                UserLspServerSpec {
+                    id: Some(extra_id.clone()),
+                    language_id: extra_language_id.clone(),
+                    command: cmd,
+                    args: extra_args.clone(),
+                    extensions: extra_extensions.clone(),
+                    filenames: extra_filenames.clone(),
+                },
+            )
+            .await?;
+        }
+    }
+
+    emit_install(
+        state,
+        install_id,
+        &provider_id,
+        InstallEventLevel::Success,
+        "done",
+        "Install complete (restart daemon to apply)".to_string(),
+        None,
+        None,
+        None,
+    )
+    .await;
+    Ok(())
 }
 
 pub async fn install_lsp_server_with_progress(
@@ -614,6 +1054,10 @@ pub async fn apply_managed_lsp_server_config(
     cfg: &mut LspManagerConfig,
 ) -> Result<()> {
     let installed = load_lsp_server_config(data_root).await.unwrap_or_default();
+    if let Some(cmd) = installed.servers.get("rust") {
+        cfg.rust_command = cmd.command.clone();
+        cfg.rust_args = cmd.args.clone();
+    }
     if let Some(cmd) = installed.servers.get("typescript") {
         cfg.ts_command = cmd.command.clone();
         cfg.ts_args = cmd.args.clone();
@@ -621,6 +1065,10 @@ pub async fn apply_managed_lsp_server_config(
     if let Some(cmd) = installed.servers.get("python") {
         cfg.py_command = cmd.command.clone();
         cfg.py_args = cmd.args.clone();
+    }
+    if let Some(cmd) = installed.servers.get("go") {
+        cfg.go_command = cmd.command.clone();
+        cfg.go_args = cmd.args.clone();
     }
     if let Some(cmd) = installed.servers.get("html") {
         cfg.html_command = cmd.command.clone();
@@ -646,11 +1094,114 @@ pub async fn apply_managed_lsp_server_config(
         cfg.dockerfile_command = cmd.command.clone();
         cfg.dockerfile_args = cmd.args.clone();
     }
+    if let Some(cmd) = installed.servers.get("cpp") {
+        cfg.clangd_command = cmd.command.clone();
+        cfg.clangd_args = cmd.args.clone();
+    }
+    if let Some(cmd) = installed.servers.get("lua") {
+        cfg.lua_command = cmd.command.clone();
+        cfg.lua_args = cmd.args.clone();
+    }
+    if let Some(cmd) = installed.servers.get("toml") {
+        cfg.toml_command = cmd.command.clone();
+        cfg.toml_args = cmd.args.clone();
+    }
+    if let Some(cmd) = installed.servers.get("markdown") {
+        cfg.markdown_command = cmd.command.clone();
+        cfg.markdown_args = cmd.args.clone();
+    }
+
+    // Apply extra managed servers with extension/filename mappings.
+    for server in installed.extra_servers {
+        let language_id = server.language_id.trim().to_string();
+        if language_id.is_empty() || server.command.trim().is_empty() {
+            continue;
+        }
+
+        match language_id.as_str() {
+            "rust" => {
+                cfg.rust_command = server.command;
+                cfg.rust_args = server.args;
+            }
+            "typescript" | "javascript" => {
+                cfg.ts_command = server.command;
+                cfg.ts_args = server.args;
+            }
+            "python" => {
+                cfg.py_command = server.command;
+                cfg.py_args = server.args;
+            }
+            "go" => {
+                cfg.go_command = server.command;
+                cfg.go_args = server.args;
+            }
+            "html" => {
+                cfg.html_command = server.command;
+                cfg.html_args = server.args;
+            }
+            "css" => {
+                cfg.css_command = server.command;
+                cfg.css_args = server.args;
+            }
+            "json" => {
+                cfg.json_command = server.command;
+                cfg.json_args = server.args;
+            }
+            "yaml" => {
+                cfg.yaml_command = server.command;
+                cfg.yaml_args = server.args;
+            }
+            "bash" => {
+                cfg.bash_command = server.command;
+                cfg.bash_args = server.args;
+            }
+            "dockerfile" => {
+                cfg.dockerfile_command = server.command;
+                cfg.dockerfile_args = server.args;
+            }
+            "cpp" | "c" => {
+                cfg.clangd_command = server.command;
+                cfg.clangd_args = server.args;
+            }
+            "lua" => {
+                cfg.lua_command = server.command;
+                cfg.lua_args = server.args;
+            }
+            "toml" => {
+                cfg.toml_command = server.command;
+                cfg.toml_args = server.args;
+            }
+            "markdown" => {
+                cfg.markdown_command = server.command;
+                cfg.markdown_args = server.args;
+            }
+            other => {
+                cfg.custom_servers
+                    .insert(other.to_string(), (server.command, server.args));
+            }
+        }
+
+        for ext in server.extensions {
+            let ext = ext.trim().trim_start_matches('.').to_ascii_lowercase();
+            if !ext.is_empty() {
+                cfg.custom_extension_map.insert(ext, language_id.clone());
+            }
+        }
+        for name in server.filenames {
+            let name = name.trim().to_string();
+            if !name.is_empty() {
+                cfg.custom_filename_map.insert(name, language_id.clone());
+            }
+        }
+    }
     Ok(())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserLspServerSpec {
+    /// Optional stable identifier (used by managed installs / catalog entries).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
     /// Language id used for `textDocument/didOpen` (and to key the server).
     pub language_id: String,
     pub command: String,
@@ -1077,60 +1628,71 @@ async fn download_to_file(
     path: &Path,
 ) -> Result<()> {
     for attempt in 1..=RETRY_COUNT {
-        let client = reqwest::Client::builder()
-            .connect_timeout(Duration::from_secs(15))
-            .timeout(DOWNLOAD_TIMEOUT)
-            .build()
-            .context("building http client")?;
-
         let attempt_res: Result<()> = async {
-            let resp = client.get(url).send().await.context("sending request")?;
-            let resp = resp.error_for_status().context("http error")?;
-
-            let total = resp.content_length();
-            let mut stream = resp.bytes_stream();
             if let Some(parent) = path.parent() {
                 tokio::fs::create_dir_all(parent).await.ok();
             }
-            let mut file = tokio::fs::File::create(path)
-                .await
-                .with_context(|| format!("creating download target: {}", path.display()))?;
-            use futures::StreamExt;
-            use tokio::io::AsyncWriteExt;
 
-            let mut downloaded: u64 = 0;
-            while let Some(chunk) = stream.next().await {
-                let bytes = chunk.context("streaming download")?;
-                downloaded += bytes.len() as u64;
-                file.write_all(&bytes)
+            if url.starts_with("file://") {
+                let u = url::Url::parse(url).context("parsing file:// url")?;
+                let src = u
+                    .to_file_path()
+                    .map_err(|_| anyhow::anyhow!("invalid file url: {url}"))?;
+                tokio::fs::copy(&src, path)
                     .await
-                    .context("writing download")?;
+                    .with_context(|| format!("copying {} -> {}", src.display(), path.display()))?;
+            } else {
+                let client = reqwest::Client::builder()
+                    .connect_timeout(Duration::from_secs(15))
+                    .timeout(DOWNLOAD_TIMEOUT)
+                    .build()
+                    .context("building http client")?;
+
+                let resp = client.get(url).send().await.context("sending request")?;
+                let resp = resp.error_for_status().context("http error")?;
+
+                let total = resp.content_length();
+                let mut stream = resp.bytes_stream();
+                let mut file = tokio::fs::File::create(path)
+                    .await
+                    .with_context(|| format!("creating download target: {}", path.display()))?;
+                use futures::StreamExt;
+                use tokio::io::AsyncWriteExt;
+
+                let mut downloaded: u64 = 0;
+                while let Some(chunk) = stream.next().await {
+                    let bytes = chunk.context("streaming download")?;
+                    downloaded += bytes.len() as u64;
+                    file.write_all(&bytes)
+                        .await
+                        .context("writing download")?;
+                    emit_install(
+                        state,
+                        install_id,
+                        provider_id,
+                        InstallEventLevel::Info,
+                        stage,
+                        "downloading…".to_string(),
+                        Some(downloaded),
+                        total,
+                        Some(attempt),
+                    )
+                    .await;
+                }
+                file.flush().await.context("flushing download")?;
                 emit_install(
                     state,
                     install_id,
                     provider_id,
-                    InstallEventLevel::Info,
+                    InstallEventLevel::Success,
                     stage,
-                    "downloading…".to_string(),
+                    "download complete".to_string(),
                     Some(downloaded),
                     total,
                     Some(attempt),
                 )
                 .await;
             }
-            file.flush().await.context("flushing download")?;
-            emit_install(
-                state,
-                install_id,
-                provider_id,
-                InstallEventLevel::Success,
-                stage,
-                "download complete".to_string(),
-                Some(downloaded),
-                total,
-                Some(attempt),
-            )
-            .await;
             Ok(())
         }
         .await;

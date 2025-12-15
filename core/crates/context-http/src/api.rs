@@ -88,6 +88,8 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
             get(install_stream_sse),
         )
         .route("/api/lsp/status", get(lsp_status))
+        .route("/api/lsp/catalog", get(lsp_catalog_list))
+        .route("/api/lsp/catalog/:id/install", post(install_lsp_catalog_server))
         .route("/api/lsp/servers/:id/install", post(install_lsp_server))
         .route("/api/lsp/diagnostics", post(lsp_diagnostics))
         .route("/api/lsp/definition", post(lsp_definition))
@@ -356,6 +358,108 @@ async fn lsp_status(State(state): State<Arc<AppState>>) -> Result<Json<LspStatus
         enabled,
         edit_plans_enabled,
         servers: out,
+    }))
+}
+
+#[derive(Debug, Serialize)]
+struct LspCatalogEntryStatusResp {
+    id: String,
+    title: String,
+    language_id: String,
+    install_kind: String,
+    installed: bool,
+    installed_version: Option<String>,
+    enabled: bool,
+    enabled_command: Option<String>,
+}
+
+async fn lsp_catalog_list(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<LspCatalogEntryStatusResp>>, StatusCode> {
+    let catalog = crate::lsp_catalog::load_catalog(&state.data_root)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let installed = installer::load_lsp_server_config(&state.data_root)
+        .await
+        .unwrap_or_default();
+
+    let mut out = Vec::new();
+    for entry in catalog.servers {
+        let (install_kind, installed_key) = match &entry.install {
+            crate::lsp_catalog::LspCatalogInstall::ManagedNode { server_id } => {
+                ("managed_node".to_string(), server_id.clone())
+            }
+            crate::lsp_catalog::LspCatalogInstall::UrlBinary { .. } => {
+                ("url_binary".to_string(), entry.id.clone())
+            }
+            crate::lsp_catalog::LspCatalogInstall::GoInstall { .. } => {
+                ("go_install".to_string(), entry.id.clone())
+            }
+            crate::lsp_catalog::LspCatalogInstall::System { .. } => {
+                ("system".to_string(), entry.id.clone())
+            }
+        };
+
+        let meta = installed.managed_installs.get(&installed_key);
+        let installed_version = meta.and_then(|m| m.version.clone());
+        let enabled_cmd = installed
+            .servers
+            .get(&entry.language_id)
+            .map(|c| c.command.clone());
+        out.push(LspCatalogEntryStatusResp {
+            id: entry.id,
+            title: entry.title,
+            language_id: entry.language_id,
+            install_kind,
+            installed: meta.is_some(),
+            installed_version,
+            enabled: enabled_cmd.is_some(),
+            enabled_command: enabled_cmd,
+        });
+    }
+
+    Ok(Json(out))
+}
+
+#[derive(Debug, Serialize)]
+struct LspCatalogInstallStartResponse {
+    catalog_id: String,
+    install_id: InstallId,
+}
+
+async fn install_lsp_catalog_server(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<LspCatalogInstallStartResponse>, StatusCode> {
+    // Validate id exists.
+    if crate::lsp_catalog::get_entry(&state.data_root, &id)
+        .await
+        .is_err()
+    {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
+    let install_key = format!("lsp:{id}");
+    let (install_id, started_new) = state.start_install(install_key).await;
+    if started_new {
+        let state2 = state.clone();
+        let catalog_id = id.clone();
+        tokio::spawn(async move {
+            if let Err(e) = installer::install_lsp_catalog_server_with_progress(
+                state2.clone(),
+                install_id,
+                catalog_id.clone(),
+            )
+            .await
+            {
+                tracing::error!("lsp catalog install failed ({catalog_id}): {e:#}");
+            }
+        });
+    }
+
+    Ok(Json(LspCatalogInstallStartResponse {
+        catalog_id: id,
+        install_id,
     }))
 }
 

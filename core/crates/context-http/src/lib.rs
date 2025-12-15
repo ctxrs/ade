@@ -4,6 +4,7 @@ pub mod daemon;
 pub mod edit_plans;
 pub mod installs;
 pub mod installer;
+pub mod lsp_catalog;
 pub mod logs;
 pub mod scheduler;
 pub mod updates;

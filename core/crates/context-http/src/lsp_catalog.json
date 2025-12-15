@@ -1,0 +1,194 @@
+{
+  "version": 1,
+  "servers": [
+    {
+      "id": "typescript",
+      "title": "TypeScript / JavaScript (typescript-language-server)",
+      "language_id": "typescript",
+      "args": ["--stdio"],
+      "extensions": ["ts", "tsx", "js", "jsx", "mjs", "cjs"],
+      "install": { "kind": "managed_node", "server_id": "typescript" }
+    },
+    {
+      "id": "python",
+      "title": "Python (pyright)",
+      "language_id": "python",
+      "args": ["--stdio"],
+      "extensions": ["py"],
+      "install": { "kind": "managed_node", "server_id": "python" }
+    },
+    {
+      "id": "yaml",
+      "title": "YAML (yaml-language-server)",
+      "language_id": "yaml",
+      "args": ["--stdio"],
+      "extensions": ["yaml", "yml"],
+      "install": { "kind": "managed_node", "server_id": "yaml" }
+    },
+    {
+      "id": "bash",
+      "title": "Bash (bash-language-server)",
+      "language_id": "bash",
+      "args": ["start", "--stdio"],
+      "extensions": ["sh", "bash"],
+      "install": { "kind": "managed_node", "server_id": "bash" }
+    },
+    {
+      "id": "dockerfile",
+      "title": "Dockerfile (dockerfile-language-server)",
+      "language_id": "dockerfile",
+      "args": ["--stdio"],
+      "filenames": ["Dockerfile"],
+      "install": { "kind": "managed_node", "server_id": "dockerfile" }
+    },
+    {
+      "id": "rust-analyzer",
+      "title": "Rust (rust-analyzer)",
+      "language_id": "rust",
+      "args": ["--stdio"],
+      "extensions": ["rs"],
+      "install": {
+        "kind": "url_binary",
+        "version": "nightly",
+        "targets": {
+          "linux-x64": {
+            "url": "https://github.com/rust-lang/rust-analyzer/releases/latest/download/rust-analyzer-x86_64-unknown-linux-gnu.gz",
+            "archive": "gz",
+            "bin_path": "rust-analyzer"
+          },
+          "linux-arm64": {
+            "url": "https://github.com/rust-lang/rust-analyzer/releases/latest/download/rust-analyzer-aarch64-unknown-linux-gnu.gz",
+            "archive": "gz",
+            "bin_path": "rust-analyzer"
+          },
+          "darwin-x64": {
+            "url": "https://github.com/rust-lang/rust-analyzer/releases/latest/download/rust-analyzer-x86_64-apple-darwin.gz",
+            "archive": "gz",
+            "bin_path": "rust-analyzer"
+          },
+          "darwin-arm64": {
+            "url": "https://github.com/rust-lang/rust-analyzer/releases/latest/download/rust-analyzer-aarch64-apple-darwin.gz",
+            "archive": "gz",
+            "bin_path": "rust-analyzer"
+          }
+        }
+      }
+    },
+    {
+      "id": "gopls",
+      "title": "Go (gopls)",
+      "language_id": "go",
+      "args": [],
+      "extensions": ["go"],
+      "install": { "kind": "go_install", "module": "golang.org/x/tools/gopls", "version": "latest", "binary": "gopls" }
+    },
+    {
+      "id": "clangd",
+      "title": "C/C++ (clangd)",
+      "language_id": "cpp",
+      "args": ["--stdio"],
+      "extensions": ["c", "cc", "cpp", "cxx", "h", "hpp"],
+      "install": { "kind": "system", "command": "clangd" }
+    },
+    {
+      "id": "lua-language-server",
+      "title": "Lua (lua-language-server)",
+      "language_id": "lua",
+      "args": [],
+      "extensions": ["lua"],
+      "install": {
+        "kind": "url_binary",
+        "version": "3.13.6",
+        "targets": {
+          "linux-x64": {
+            "url": "https://github.com/LuaLS/lua-language-server/releases/download/3.13.6/lua-language-server-3.13.6-linux-x64.tar.gz",
+            "archive": "tar_gz",
+            "bin_path": "bin/lua-language-server"
+          },
+          "linux-arm64": {
+            "url": "https://github.com/LuaLS/lua-language-server/releases/download/3.13.6/lua-language-server-3.13.6-linux-arm64.tar.gz",
+            "archive": "tar_gz",
+            "bin_path": "bin/lua-language-server"
+          },
+          "darwin-x64": {
+            "url": "https://github.com/LuaLS/lua-language-server/releases/download/3.13.6/lua-language-server-3.13.6-darwin-x64.tar.gz",
+            "archive": "tar_gz",
+            "bin_path": "bin/lua-language-server"
+          },
+          "darwin-arm64": {
+            "url": "https://github.com/LuaLS/lua-language-server/releases/download/3.13.6/lua-language-server-3.13.6-darwin-arm64.tar.gz",
+            "archive": "tar_gz",
+            "bin_path": "bin/lua-language-server"
+          }
+        }
+      }
+    },
+    {
+      "id": "taplo",
+      "title": "TOML (taplo)",
+      "language_id": "toml",
+      "args": ["lsp", "stdio"],
+      "extensions": ["toml"],
+      "install": {
+        "kind": "url_binary",
+        "version": "0.10.1",
+        "targets": {
+          "linux-x64": {
+            "url": "https://github.com/tamasfe/taplo/releases/download/0.10.1/taplo-full-linux-x86_64.gz",
+            "archive": "gz",
+            "bin_path": "taplo"
+          },
+          "linux-arm64": {
+            "url": "https://github.com/tamasfe/taplo/releases/download/0.10.1/taplo-full-linux-aarch64.gz",
+            "archive": "gz",
+            "bin_path": "taplo"
+          },
+          "darwin-x64": {
+            "url": "https://github.com/tamasfe/taplo/releases/download/0.10.1/taplo-full-darwin-x86_64.gz",
+            "archive": "gz",
+            "bin_path": "taplo"
+          },
+          "darwin-arm64": {
+            "url": "https://github.com/tamasfe/taplo/releases/download/0.10.1/taplo-full-darwin-aarch64.gz",
+            "archive": "gz",
+            "bin_path": "taplo"
+          }
+        }
+      }
+    },
+    {
+      "id": "marksman",
+      "title": "Markdown (marksman)",
+      "language_id": "markdown",
+      "args": ["server"],
+      "extensions": ["md", "mdx"],
+      "install": {
+        "kind": "url_binary",
+        "version": "2024-12-18",
+        "targets": {
+          "linux-x64": {
+            "url": "https://github.com/artempyanykh/marksman/releases/download/2024-12-18/marksman-linux-x64.tar.gz",
+            "archive": "tar_gz",
+            "bin_path": "marksman"
+          },
+          "linux-arm64": {
+            "url": "https://github.com/artempyanykh/marksman/releases/download/2024-12-18/marksman-linux-arm64.tar.gz",
+            "archive": "tar_gz",
+            "bin_path": "marksman"
+          },
+          "darwin-x64": {
+            "url": "https://github.com/artempyanykh/marksman/releases/download/2024-12-18/marksman-macos-x64.tar.gz",
+            "archive": "tar_gz",
+            "bin_path": "marksman"
+          },
+          "darwin-arm64": {
+            "url": "https://github.com/artempyanykh/marksman/releases/download/2024-12-18/marksman-macos-arm64.tar.gz",
+            "archive": "tar_gz",
+            "bin_path": "marksman"
+          }
+        }
+      }
+    }
+  ]
+}
+

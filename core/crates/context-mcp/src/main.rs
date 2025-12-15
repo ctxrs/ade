@@ -111,6 +111,25 @@ async fn main() -> Result<()> {
                             }
                         },
                         {
+                            "name": "context.lsp_catalog_list",
+                            "title": "List LSP Catalog",
+                            "description": "Lists curated LSP servers known to the daemon (installable/enabled without UI).",
+                            "inputSchema": { "type": "object", "additionalProperties": false }
+                        },
+                        {
+                            "name": "context.lsp_catalog_install",
+                            "title": "Install LSP Server (Catalog)",
+                            "description": "Installs and enables an LSP server from the daemon catalog (may require restarting the daemon to take effect).",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "catalog_id": { "type": "string", "description": "Catalog entry id (e.g. rust-analyzer, gopls, taplo, marksman)." }
+                                },
+                                "required": ["catalog_id"],
+                                "additionalProperties": false
+                            }
+                        },
+                        {
                             "name": "context.lsp_diagnostics",
                             "title": "LSP Diagnostics",
                             "description": "Returns language-server diagnostics for a file in the current session worktree (requires daemon LSP enabled).",
@@ -866,6 +885,33 @@ async fn main() -> Result<()> {
                             }
                         }
                     }
+                    "context.lsp_catalog_list" => {
+                        let _ = arguments;
+                        match lsp_catalog_list(&client, &daemon_url).await {
+                            Ok(val) => ok(id.unwrap(), tool_ok(val)),
+                            Err(e) => ok(id.unwrap(), tool_err(e)),
+                        }
+                    }
+                    "context.lsp_catalog_install" => {
+                        let catalog_id = arguments
+                            .get("catalog_id")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        if catalog_id.is_empty() {
+                            error(
+                                id.unwrap(),
+                                -32602,
+                                "Invalid params",
+                                Some(json!({"missing":"catalog_id"})),
+                            )
+                        } else {
+                            match lsp_catalog_install(&client, &daemon_url, &catalog_id).await {
+                                Ok(val) => ok(id.unwrap(), tool_ok(val)),
+                                Err(e) => ok(id.unwrap(), tool_err(e)),
+                            }
+                        }
+                    }
                     "context.lsp_diagnostics" => {
                         let path = arguments
                             .get("path")
@@ -1236,6 +1282,20 @@ async fn lsp_install_server(
 ) -> Result<Value> {
     let server_id = urlencoding::encode(server_id);
     let path = format!("/api/lsp/servers/{server_id}/install");
+    daemon_post_json(client, daemon_url, &path, &json!({})).await
+}
+
+async fn lsp_catalog_list(client: &reqwest::Client, daemon_url: &str) -> Result<Value> {
+    daemon_get_json(client, daemon_url, "/api/lsp/catalog").await
+}
+
+async fn lsp_catalog_install(
+    client: &reqwest::Client,
+    daemon_url: &str,
+    catalog_id: &str,
+) -> Result<Value> {
+    let catalog_id = urlencoding::encode(catalog_id);
+    let path = format!("/api/lsp/catalog/{catalog_id}/install");
     daemon_post_json(client, daemon_url, &path, &json!({})).await
 }
 
