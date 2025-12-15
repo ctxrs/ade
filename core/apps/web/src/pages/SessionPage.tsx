@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useMemo, useRef, useState } from "react";
+import { forwardRef, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { GroupedVirtuoso, GroupedVirtuosoHandle, Virtuoso, VirtuosoHandle } from "react-virtuoso";
@@ -6,6 +6,7 @@ import { Link, useParams } from "react-router-dom";
 import {
   cancelSession,
   deleteMessage,
+  DictationSettings,
   Message,
   MessageAttachment,
   postMessage,
@@ -14,6 +15,7 @@ import {
   setSessionMode,
   setSessionModel,
   authenticateSession,
+  getSettings,
   idToString,
   interruptSession,
   uploadBlob,
@@ -27,6 +29,7 @@ import { useComposerAutocomplete, type SlashCommandDescriptor } from "../state/u
 import { shouldSendOnEnter } from "../utils/keyboard";
 import { HARNESS_CATALOG } from "../utils/harnessCatalog";
 import { WorkbenchComposer as UnifiedWorkbenchComposer, type WorkbenchModeId } from "../components/WorkbenchComposer";
+import { startMicPcmStream } from "../utils/micPcmStream";
 
 type ThreadItem =
   | {
@@ -83,6 +86,14 @@ function attachmentDisplayName(name?: string | null) {
   const n = String(name ?? "").trim();
   if (!n) return "image";
   return n.split(/[\\/]/).pop() || "image";
+}
+
+function appendSegment(base: string, addition: string): string {
+  const trimmed = addition.trim();
+  if (!trimmed) return base;
+  if (!base) return trimmed;
+  const needsSpace = /\S$/.test(base) && !/^[,.;!?]/.test(trimmed);
+  return `${base}${needsSpace ? " " : ""}${trimmed}`;
 }
 
 type WorkbenchThreadView = {
@@ -146,6 +157,15 @@ export function SessionView({
   const didInitialScrollRef = useRef(false);
   useOpenSession(id ?? "", { watchDiff: true });
 
+  const [dictationSettings, setDictationSettings] = useState<DictationSettings | null>(null);
+  const [dictationRecording, setDictationRecording] = useState(false);
+  const [dictationError, setDictationError] = useState<string | null>(null);
+  const dictationWsRef = useRef<WebSocket | null>(null);
+  const dictationMicRef = useRef<{ stop: () => Promise<void> } | null>(null);
+  const dictationBaseRef = useRef<string>("");
+  const dictationCommittedRef = useRef<string>("");
+  const dictationInterimRef = useRef<string>("");
+
   const entry = useSessionEntry(id ?? "");
   const session: Session | null = entry?.session ?? null;
   const events: SessionEvent[] = entry?.events ?? [];
@@ -160,6 +180,149 @@ export function SessionView({
     if (!last) return null;
     return `Interrupted at ${new Date(last.created_at).toLocaleTimeString()}.`;
   }, [eventsKey]);
+
+  useEffect(() => {
+    let cancelled = false;
+    getSettings()
+      .then((s) => {
+        if (cancelled) return;
+        setDictationSettings(s.dictation ?? null);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const stopDictation = useCallback(async (): Promise<string> => {
+    setDictationRecording(false);
+
+    const ws = dictationWsRef.current;
+
+    const mic = dictationMicRef.current;
+    dictationMicRef.current = null;
+
+    try {
+      await mic?.stop();
+    } catch {}
+
+    try {
+      ws?.send(JSON.stringify({ type: "stop" }));
+    } catch {}
+
+    const base = dictationBaseRef.current;
+    const committed = dictationCommittedRef.current;
+    const interim = dictationInterimRef.current;
+    const next = appendSegment(appendSegment(base, committed), interim);
+    setInput(next);
+    dictationInterimRef.current = "";
+
+    return next;
+  }, []);
+
+  const startDictation = useCallback(async () => {
+    setDictationError(null);
+
+    const enabled =
+      Boolean(dictationSettings?.enabled) && dictationSettings?.provider === "livekit_inference";
+    if (!enabled) {
+      setDictationError("Dictation is disabled. Configure it in Settings.");
+      return;
+    }
+    const existing = dictationWsRef.current;
+    if (existing && existing.readyState !== WebSocket.CLOSED) return;
+    if (dictationRecording) return;
+
+    const token = (() => {
+      try {
+        return sessionStorage.getItem("contextAuthToken");
+      } catch {
+        return null;
+      }
+    })();
+    const wsUrl = new URL("/api/dictation/livekit/stream", window.location.href);
+    if (token) wsUrl.searchParams.set("token", token);
+    wsUrl.protocol = wsUrl.protocol === "https:" ? "wss:" : "ws:";
+
+    const ws = new WebSocket(wsUrl.toString());
+    ws.binaryType = "arraybuffer";
+    dictationWsRef.current = ws;
+
+    dictationBaseRef.current = input;
+    dictationCommittedRef.current = "";
+    dictationInterimRef.current = "";
+
+    const openPromise = new Promise<void>((resolve, reject) => {
+      ws.addEventListener("open", () => resolve(), { once: true });
+      ws.addEventListener("error", () => reject(new Error("Failed to connect to dictation stream.")), { once: true });
+    });
+
+    ws.addEventListener("message", (ev) => {
+      try {
+        const data = JSON.parse(String(ev.data ?? "{}"));
+        const t = String(data.type ?? "");
+        if (t === "interim") {
+          dictationInterimRef.current = String(data.text ?? "");
+        } else if (t === "final") {
+          dictationCommittedRef.current = appendSegment(
+            dictationCommittedRef.current,
+            String(data.text ?? ""),
+          );
+          dictationInterimRef.current = "";
+        } else if (t === "done") {
+          try {
+            ws.close();
+          } catch {}
+          return;
+        } else if (t === "error") {
+          setDictationError(String(data.message ?? "Dictation error"));
+          stopDictation().catch(() => {});
+          return;
+        } else {
+          return;
+        }
+
+        const base = dictationBaseRef.current;
+        const committed = dictationCommittedRef.current;
+        const interim = dictationInterimRef.current;
+        setInput(appendSegment(appendSegment(base, committed), interim));
+      } catch {
+        // ignore
+      }
+    });
+
+    ws.addEventListener("close", () => {
+      dictationWsRef.current = null;
+      setDictationRecording(false);
+    });
+
+    try {
+      await openPromise;
+      setDictationRecording(true);
+      dictationMicRef.current = await startMicPcmStream({
+        onPcmChunk: (pcm16) => {
+          if (ws.readyState === WebSocket.OPEN) ws.send(pcm16);
+        },
+        onError: (err) => {
+          setDictationError(err.message);
+          stopDictation().catch(() => {});
+        },
+      });
+    } catch (e: any) {
+      setDictationError(e?.message ?? String(e));
+      try {
+        ws.close();
+      } catch {}
+      dictationWsRef.current = null;
+      setDictationRecording(false);
+    }
+  }, [dictationSettings, dictationRecording, input, stopDictation]);
+
+  useEffect(() => {
+    return () => {
+      stopDictation().catch(() => {});
+    };
+  }, [stopDictation]);
 
   useEffect(() => {
     if (!perfEnabled) return;
@@ -299,8 +462,10 @@ export function SessionView({
   }, [threadActivityCount, atBottom]);
 
   const sendNow = async () => {
-    if (!id || !input.trim()) return;
-    await postMessage(id, input.trim(), undefined, draftAttachments);
+    if (!id) return;
+    const text = (dictationRecording ? await stopDictation() : input).trim();
+    if (!text) return;
+    await postMessage(id, text, undefined, draftAttachments);
     setInput("");
     setDraftAttachments([]);
     supervisor.refreshQueue(id);
@@ -754,36 +919,45 @@ export function SessionView({
         {variant === "legacy" && <ActivityBar planEntries={planEntries} diffText={diff} />}
 
         {variant === "workbench" ? (
-          <UnifiedWorkbenchComposer
-            variant="activeSession"
-            value={input}
-            setValue={setInput}
-            placeholder="Message, @ for context, / for commands"
-            sessionIdForAutocomplete={id ?? null}
-            slashCommands={slashCommands}
-            attachments={draftAttachments}
-            setAttachments={setDraftAttachments}
-            onSend={sendNow}
-            sendDisabled={!input.trim()}
-            sendDisabledReason={!input.trim() ? "Enter a message." : null}
-            onInterrupt={id ? () => interruptSession(id) : null}
-            modeId={workbenchMode}
-            setModeId={setWorkbenchMode}
-            harnessLabel={
-              HARNESS_CATALOG.find((h) => h.id === (session?.provider_id ?? ""))?.label ??
-              (session?.provider_id ?? "Provider")
-            }
-            harnessLogoSrc={HARNESS_CATALOG.find((h) => h.id === (session?.provider_id ?? ""))?.logoSrc}
-            harnessLogoInvert={HARNESS_CATALOG.find((h) => h.id === (session?.provider_id ?? ""))?.invertInDark}
-            envLabel="Worktree"
-            availableModels={modelOptions}
-            currentModelId={currentModelId}
-            onSetModelId={async (next) => {
-              if (!id) return;
-              const updated = await setSessionModel(id, next);
-              supervisor.setSession(updated);
-            }}
-          />
+          <>
+            <UnifiedWorkbenchComposer
+              variant="activeSession"
+              value={input}
+              setValue={setInput}
+              placeholder="Message, @ for context, / for commands"
+              inputDisabled={dictationRecording}
+              sessionIdForAutocomplete={id ?? null}
+              slashCommands={slashCommands}
+              attachments={draftAttachments}
+              setAttachments={setDraftAttachments}
+              onSend={sendNow}
+              sendDisabled={!input.trim()}
+              sendDisabledReason={!input.trim() ? "Enter a message." : null}
+              onInterrupt={id ? () => interruptSession(id) : null}
+              modeId={workbenchMode}
+              setModeId={setWorkbenchMode}
+              recording={dictationRecording}
+              onToggleRecording={() => {
+                if (dictationRecording) stopDictation().catch(() => {});
+                else startDictation().catch(() => {});
+              }}
+              harnessLabel={
+                HARNESS_CATALOG.find((h) => h.id === (session?.provider_id ?? ""))?.label ??
+                (session?.provider_id ?? "Provider")
+              }
+              harnessLogoSrc={HARNESS_CATALOG.find((h) => h.id === (session?.provider_id ?? ""))?.logoSrc}
+              harnessLogoInvert={HARNESS_CATALOG.find((h) => h.id === (session?.provider_id ?? ""))?.invertInDark}
+              envLabel="Worktree"
+              availableModels={modelOptions}
+              currentModelId={currentModelId}
+              onSetModelId={async (next) => {
+                if (!id) return;
+                const updated = await setSessionModel(id, next);
+                supervisor.setSession(updated);
+              }}
+            />
+            {dictationError && <div className="wb-banner">{dictationError}</div>}
+          </>
         ) : (
           <form onSubmit={onSend} className="composer">
             <div className="row">
