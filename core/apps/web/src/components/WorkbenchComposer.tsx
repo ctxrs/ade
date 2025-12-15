@@ -163,6 +163,18 @@ function deriveFullModelIdForBase(
   return mapped ?? composeModelId(base, eff);
 }
 
+function modelIdFromProviderOptions(opts?: ProviderOptions): string | null {
+  const raw = opts?.models as any;
+  if (!raw || typeof raw !== "object") return null;
+  const current = raw.currentModelId ?? raw.current_model_id;
+  if (typeof current === "string" && current.trim().length > 0) return current.trim();
+  const list = raw.availableModels ?? raw.available_models ?? raw.models ?? [];
+  if (!Array.isArray(list) || list.length === 0) return null;
+  const first = list[0] as any;
+  const id = first?.modelId ?? first?.model_id ?? first?.id ?? first?.name;
+  return typeof id === "string" && id.trim().length > 0 ? id.trim() : null;
+}
+
 export function WorkbenchComposer(props: WorkbenchComposerProps) {
   const {
     variant,
@@ -185,6 +197,8 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
     recordDisabledReason,
     onToggleRecording,
   } = props;
+
+  const newSession = variant === "newSession" ? (props as NewSessionProps) : null;
 
   const [openMenu, setOpenMenu] = useState<OpenMenuId | null>(null);
   const [menuStyle, setMenuStyle] = useState<React.CSSProperties | null>(null);
@@ -387,24 +401,56 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
       return { models, catalog, parsed, loading: false, fromProviderOptions: false };
     }
 
-    const ns = props as NewSessionProps;
-    const primary = ns.draftTracks[0] ?? null;
+    const ns = newSession;
+    const primary = ns?.draftTracks[0] ?? null;
     if (!primary) return { models: [], catalog: buildModelCatalog([]), parsed: parseModelId(""), loading: false, fromProviderOptions: true };
-    const opts = ns.providerOptions[primary.providerId];
+    const opts = ns?.providerOptions[primary.providerId];
     const models = buildModelsForProvider(primary.providerId, opts);
     const catalog = buildModelCatalog(models);
     const parsed = parseModelId(primary.modelId);
     const loading = !opts;
     return { models, catalog, parsed, loading, fromProviderOptions: true };
-  }, [props, variant]);
+  }, [newSession, props, variant]);
+
+  const providerIdsToEnsure = useMemo(() => {
+    if (!newSession) return [];
+    if (newSession.useMultipleAgents) {
+      return [...new Set(newSession.draftTracks.map((t) => t.providerId).filter(Boolean))];
+    }
+    return [newSession.draftTracks[0]?.providerId ?? newSession.defaultProviderId].filter(Boolean);
+  }, [newSession?.defaultProviderId, newSession?.draftTracks, newSession?.useMultipleAgents]);
+
+  // Proactively probe provider options so the model list (and effort variants) populate
+  // without requiring the user to manually focus/expand a config panel.
+  useEffect(() => {
+    if (!newSession) return;
+    for (const providerId of providerIdsToEnsure) {
+      if (newSession.providerOptions[providerId]) continue;
+      if (!(newSession.providersById[providerId]?.installed ?? false)) continue;
+      newSession.ensureProviderOptions(providerId).catch(() => {});
+    }
+  }, [newSession?.ensureProviderOptions, newSession?.providerOptions, newSession?.providersById, providerIdsToEnsure]);
+
+  // Seed the primary draft model from provider-advertised defaults (when available),
+  // so the UI shows the current model + effort (e.g. `gpt-5.2/xhigh`) immediately.
+  useEffect(() => {
+    if (!newSession) return;
+    const primary = newSession.draftTracks[0] ?? null;
+    if (!primary) return;
+    if (newSession.draftTracks.length !== 1) return;
+    if (primary.modelId.trim().length > 0) return;
+    const opts = newSession.providerOptions[primary.providerId];
+    const next = modelIdFromProviderOptions(opts);
+    if (!next) return;
+    newSession.setDraftTracks((prev) => prev.map((t, idx) => (idx === 0 ? { ...t, modelId: next } : t)));
+  }, [newSession?.draftTracks, newSession?.providerOptions, newSession?.setDraftTracks]);
 
   const showModelEffort = useMemo(() => {
     if (variant === "newSession") {
-      const ns = props as NewSessionProps;
-      return ns.draftTracks.length === 1;
+      return (newSession?.draftTracks.length ?? 0) === 1;
     }
     return true;
-  }, [props, variant]);
+  }, [newSession?.draftTracks.length, variant]);
 
   const currentBase = activeModelData.parsed.base || activeModelData.catalog.baseIds[0] || "";
   const currentEffort = activeModelData.parsed.effort;
@@ -872,7 +918,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
                 aria-expanded={openMenu === "model"}
                 title="Model"
               >
-                <span className="wb-switcher-label wb-mono">
+                <span className="wb-switcher-label">
                   {(currentBase && (activeModelData.catalog.displayNameByBase[currentBase] ?? currentBase)) || "Model"}
                 </span>
                 <IconChevronDown size={14} />
@@ -893,7 +939,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
                 aria-expanded={openMenu === "effort"}
                 title="Effort"
               >
-                <span className="wb-switcher-label wb-mono">{currentEffort ?? pickDefaultEffort(effortOptions) ?? "Effort"}</span>
+                <span className="wb-switcher-label">{currentEffort ?? pickDefaultEffort(effortOptions) ?? "Effort"}</span>
                 <IconChevronDown size={14} />
               </button>
               {openMenu === "effort" && effortMenu}

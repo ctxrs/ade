@@ -28,7 +28,7 @@ import {
   postMessage,
   trackDiff,
 } from "../api/client";
-import { useSessionEntry, useSessionSupervisor } from "../state/sessionSupervisor";
+import { useSessionCacheSnapshot, useSessionEntry, useSessionSupervisor } from "../state/sessionSupervisor";
 import { DiffReviewPane } from "../components/DiffReviewPane";
 import { EditPlanReviewPane } from "../components/EditPlanReviewPane";
 import { SessionView } from "./SessionPage";
@@ -281,6 +281,7 @@ export default function WorkbenchPage() {
     return `task:${short(activeTaskId)} track:${short(activeTrackId)} session:${short(activeSessionId)}`;
   }, [activeTaskId, activeTrackId, activeSessionId]);
 
+  const sessionCache = useSessionCacheSnapshot();
   const activeEntry = useSessionEntry(activeSessionId ?? "");
   const activeTrackDiff = activeEntry?.diff ?? "";
   const activeTrackIdFromSession = activeEntry?.session ? idToString(activeEntry.session.track_id) : "";
@@ -302,15 +303,32 @@ export default function WorkbenchPage() {
     });
   }, [hasDiff, hasEditPlans]);
 
-  const ensureProviderOptions = async (providerId: string): Promise<ProviderOptions | undefined> => {
-    if (!workspaceId) return;
-    const installed = providersById[providerId]?.installed ?? false;
-    if (!installed) return;
-    if (providerOptions[providerId]) return providerOptions[providerId];
-    const opts = await getProviderOptions(workspaceId, providerId);
-    setProviderOptions((prev) => ({ ...prev, [providerId]: opts }));
-    return opts;
-  };
+  const providerOptionsInFlightRef = useRef<Record<string, Promise<ProviderOptions | undefined>>>({});
+
+  const ensureProviderOptions = useCallback(
+    async (providerId: string): Promise<ProviderOptions | undefined> => {
+      if (!workspaceId) return;
+      const installed = providersById[providerId]?.installed ?? false;
+      if (!installed) return;
+      if (providerOptions[providerId]) return providerOptions[providerId];
+
+      const existing = providerOptionsInFlightRef.current[providerId];
+      if (existing) return existing;
+
+      const p = getProviderOptions(workspaceId, providerId)
+        .then((opts) => {
+          setProviderOptions((prev) => ({ ...prev, [providerId]: opts }));
+          return opts;
+        })
+        .finally(() => {
+          delete providerOptionsInFlightRef.current[providerId];
+        });
+
+      providerOptionsInFlightRef.current[providerId] = p;
+      return p;
+    },
+    [providerOptions, providersById, workspaceId],
+  );
 
   const slashCommands = useMemo<SlashCommandDescriptor[]>(() => {
     // New sessions don't have ACP "available_commands_update" yet, so use a safe fallback.
@@ -1056,7 +1074,7 @@ export default function WorkbenchPage() {
                           aria-expanded={openMenu === "model"}
                           title="Model"
                         >
-                          <span className="wb-switcher-label wb-mono">
+                          <span className="wb-switcher-label">
                             {(primaryTrack?.modelId ?? "").trim() || "Model"}
                           </span>
                           <IconChevronDown size={14} />
@@ -1234,7 +1252,10 @@ export default function WorkbenchPage() {
                   const selected = trid === activeTrackId;
                   const sessions = sessionsByTrack[trid] ?? [];
                   const s = sessions[0] as any;
-                  const model = s ? `${s.provider_id} ${s.model_id}` : "No session";
+                  const sessionId = s ? idToString((s as any).id) : "";
+                  const liveSession = sessionId ? sessionCache.sessions[sessionId]?.session : null;
+                  const displaySession = (liveSession ?? s) as any;
+                  const model = displaySession ? `${displaySession.provider_id} ${displaySession.model_id}` : "No session";
                   const status = tr.status === "running" ? "Running…" : tr.status === "completed" ? "Task completed" : tr.status;
                   return (
                     <button
