@@ -92,8 +92,82 @@ merge_machos_in_dir() {
       continue
     fi
 
-    lipo -create "$arm_file" "$intel_file" -output "$out_file"
+    # `lipo -create` fails if inputs contain the same arch. Extract only the
+    # missing slices from the intel binary and merge those into the arm binary.
+    local -a arm_archs
+    local -a intel_archs
+    read -r -a arm_archs <<<"$(lipo -archs "$arm_file" 2>/dev/null || true)"
+    read -r -a intel_archs <<<"$(lipo -archs "$intel_file" 2>/dev/null || true)"
+    if [[ ${#arm_archs[@]} -eq 0 || ${#intel_archs[@]} -eq 0 ]]; then
+      continue
+    fi
+
+    has_arch() {
+      local needle="$1"
+      shift
+      local arch
+      for arch in "$@"; do
+        if [[ "$arch" == "$needle" ]]; then
+          return 0
+        fi
+      done
+      return 1
+    }
+
+    local -a missing
+    local arch
+    for arch in "${intel_archs[@]}"; do
+      if ! has_arch "$arch" "${arm_archs[@]}"; then
+        missing+=("$arch")
+      fi
+    done
+    if [[ ${#missing[@]} -eq 0 ]]; then
+      continue
+    fi
+
+    local -a inputs
+    local -a tmp_files
+    inputs=("$arm_file")
+    tmp_files=()
+
+    if [[ ${#intel_archs[@]} -eq 1 ]]; then
+      # Thin binaries can't be `lipo -extract`'d; use the file directly.
+      inputs+=("$intel_file")
+    else
+      local tmp
+      for arch in "${missing[@]}"; do
+        tmp="$(mktemp "/tmp/context-lipo.${arch}.XXXXXX")"
+        tmp_files+=("$tmp")
+        inputs+=("$tmp")
+        lipo -extract "$arch" "$intel_file" -output "$tmp"
+      done
+    fi
+
+    lipo -create "${inputs[@]}" -output "$out_file"
+    if [[ ${#tmp_files[@]} -gt 0 ]]; then
+      rm -f "${tmp_files[@]}"
+    fi
   done < <(find "$arm_dir" -type f -print0)
+}
+
+copy_missing_files_in_dir() {
+  local rel_dir="$1"
+  local src_dir="$INTEL_APP/$rel_dir"
+  local out_dir="$OUT_APP/$rel_dir"
+
+  if [[ ! -d "$src_dir" || ! -d "$out_dir" ]]; then
+    return 0
+  fi
+
+  while IFS= read -r -d '' src_file; do
+    local rel="${src_file#$src_dir/}"
+    local out_file="$out_dir/$rel"
+    if [[ -f "$out_file" ]]; then
+      continue
+    fi
+    mkdir -p "$(dirname "$out_file")"
+    cp "$src_file" "$out_file"
+  done < <(find "$src_dir" -type f -print0)
 }
 
 # Main app binary/binaries.
@@ -101,6 +175,8 @@ merge_machos_in_dir "Contents/MacOS"
 
 # Sidecars and other embedded binaries packaged as resources.
 merge_machos_in_dir "Contents/Resources/bin"
+copy_missing_files_in_dir "Contents/Resources/bin"
+copy_missing_files_in_dir "Contents/Resources"
 
 echo "Building a simple universal DMG..."
 STAGE="$(mktemp -d /tmp/context-universal-dmg-stage.XXXXXX)"

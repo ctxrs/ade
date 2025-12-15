@@ -36,8 +36,11 @@ fn main() {
                 if desc.data_dir == data_dir.to_string_lossy()
                     && daemon_healthy(&desc.url)
                     && daemon_authed(&desc.url, &token)
+                    && daemon_serves_ui(&desc.url)
                 {
                     url = Some(desc.url);
+                } else {
+                    try_terminate_pid(desc.pid);
                 }
             }
 
@@ -179,6 +182,9 @@ fn start_supervisor_thread(
 }
 
 fn open_main_window(app: &tauri::AppHandle, daemon_url: &str, token: &str) -> Result<()> {
+    if app.get_window("main").is_some() {
+        return navigate_main_window(app, daemon_url, token);
+    }
     let url = format!(
         "{}/?desktop=1&token={}",
         daemon_url.trim_end_matches('/'),
@@ -290,15 +296,81 @@ fn daemon_authed(url: &str, token: &str) -> bool {
         .is_some()
 }
 
+fn daemon_serves_ui(url: &str) -> bool {
+    let client = reqwest::blocking::Client::new();
+    client
+        .get(format!("{}/", url.trim_end_matches('/')))
+        .send()
+        .ok()
+        .map(|r| r.status().is_success())
+        .unwrap_or(false)
+}
+
+fn try_terminate_pid(pid: u32) {
+    #[cfg(unix)]
+    {
+        let _ = Command::new("kill")
+            .arg("-TERM")
+            .arg(pid.to_string())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+    #[cfg(windows)]
+    {
+        let _ = Command::new("taskkill")
+            .arg("/PID")
+            .arg(pid.to_string())
+            .arg("/T")
+            .arg("/F")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+}
+
+fn current_arch_token() -> &'static str {
+    if cfg!(target_arch = "aarch64") {
+        "aarch64"
+    } else if cfg!(target_arch = "x86_64") {
+        "x86_64"
+    } else {
+        std::env::consts::ARCH
+    }
+}
+
 fn resource_bin(app: &tauri::AppHandle, name: &str) -> Option<PathBuf> {
     let mut candidates = Vec::new();
     if let Some(res) = app.path_resolver().resource_dir() {
-        candidates.push(res.join("bin").join(name));
-        candidates.push(res.join(name));
-        #[cfg(target_os = "windows")]
-        {
-            candidates.push(res.join("bin").join(format!("{name}.exe")));
-            candidates.push(res.join(format!("{name}.exe")));
+        let bin_ext = if cfg!(target_os = "windows") { ".exe" } else { "" };
+        candidates.push(res.join("bin").join(format!("{name}{bin_ext}")));
+        candidates.push(res.join(format!("{name}{bin_ext}")));
+
+        let arch = current_arch_token();
+        let prefix = format!("{name}-{arch}");
+        for base in [res.join("bin"), res.clone()] {
+            let Ok(entries) = std::fs::read_dir(&base) else {
+                continue;
+            };
+            let mut paths: Vec<PathBuf> = entries.filter_map(|e| e.ok().map(|e| e.path())).collect();
+            paths.sort();
+            for p in paths {
+                if !p.is_file() {
+                    continue;
+                }
+                let Some(file_name) = p.file_name().and_then(|s| s.to_str()) else {
+                    continue;
+                };
+                if !file_name.starts_with(&prefix) {
+                    continue;
+                }
+                if !bin_ext.is_empty() && !file_name.ends_with(bin_ext) {
+                    continue;
+                }
+                candidates.push(p);
+            }
         }
     }
 
