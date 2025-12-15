@@ -168,6 +168,25 @@ export type LspStatus = {
   servers: LspServerStatus[];
 };
 
+export type LiveKitDictationSettings = {
+  base_url: string;
+  api_key: string;
+  api_secret?: string | null;
+  api_secret_set?: boolean;
+  model?: string | null;
+  language?: string | null;
+};
+
+export type DictationSettings = {
+  enabled: boolean;
+  provider: "disabled" | "livekit_inference";
+  livekit?: LiveKitDictationSettings | null;
+};
+
+export type Settings = {
+  dictation?: DictationSettings | null;
+};
+
 export type EditPlanSummary = {
   id: { 0: string } | string;
   title: string;
@@ -246,6 +265,15 @@ const idToString = (id: any): string =>
 
 export const listWorkspaces = () =>
   api<Workspace[]>("/api/workspaces");
+
+export const getSettings = () =>
+  api<Settings>("/api/settings");
+
+export const updateSettings = (settings: Settings) =>
+  api<Settings>("/api/settings", {
+    method: "POST",
+    body: JSON.stringify(settings),
+  });
 
 export const createWorkspace = (root_path: string, name?: string) =>
   api<Workspace>("/api/workspaces", {

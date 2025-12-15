@@ -2,12 +2,14 @@ pub mod api;
 pub mod buffers;
 pub mod completions;
 pub mod daemon;
+pub mod dictation_livekit;
 pub mod edit_plans;
 pub mod installs;
 pub mod installer;
 pub mod lsp_catalog;
 pub mod logs;
 pub mod scheduler;
+pub mod settings;
 pub mod updates;
 
 #[cfg(test)]
