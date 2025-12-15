@@ -1061,9 +1061,13 @@ pub async fn probe_provider_options(
     workdir: PathBuf,
     env: HashMap<String, String>,
 ) -> Result<AcpProviderOptionsProbe> {
-    const PROBE_TIMEOUT: Duration = Duration::from_secs(20);
+    let probe_timeout = if agent.provider_id == "gemini" {
+        Duration::from_secs(60)
+    } else {
+        Duration::from_secs(20)
+    };
 
-    timeout(PROBE_TIMEOUT, async move {
+    timeout(probe_timeout, async move {
         let mut cmd = Command::new(&agent.command);
         cmd.args(&agent.args);
         cmd.current_dir(&workdir);

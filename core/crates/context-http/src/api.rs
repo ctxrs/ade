@@ -2988,11 +2988,27 @@ async fn get_provider_options(
     })?);
 
     let cache_key = format!("{}/{}", ws_id.0, provider_id);
-    if let Some(cached) = state.provider_options_cache.lock().await.get(&cache_key) {
-        if cached.cached_at.elapsed() < CACHE_TTL {
-            return Ok(Json(cached.value.clone()));
+    let cached_entry: Option<(std::time::Instant, serde_json::Value)> = state
+        .provider_options_cache
+        .lock()
+        .await
+        .get(&cache_key)
+        .map(|c| (c.cached_at, c.value.clone()));
+    if let Some((cached_at, cached_value)) = cached_entry.as_ref() {
+        if cached_at.elapsed() < CACHE_TTL {
+            return Ok(Json(cached_value.clone()));
         }
     }
+    let cached_models = cached_entry
+        .as_ref()
+        .and_then(|(_, value)| value.get("models"))
+        .cloned()
+        .filter(|v| !v.is_null());
+    let cached_modes = cached_entry
+        .as_ref()
+        .and_then(|(_, value)| value.get("modes"))
+        .cloned()
+        .filter(|v| !v.is_null());
 
     let provider_status = state
         .provider_statuses
@@ -3084,8 +3100,8 @@ async fn get_provider_options(
 
     let probe = probe_provider_options(agent, client, PathBuf::from(&ws.root_path), env).await;
 
-    let resp = match probe {
-        Ok(probe) => redact_json_value(serde_json::json!({
+    let mut raw_resp = match probe {
+        Ok(probe) => serde_json::json!({
             "provider_id": provider_id,
             "workspace_id": ws_id.0,
             "installed": provider_status.as_ref().map(|s| s.installed).unwrap_or(true),
@@ -3097,16 +3113,31 @@ async fn get_provider_options(
             "models": probe.models,
             "acp_error": probe.acp_error,
             "probed_at": chrono::Utc::now().to_rfc3339(),
-        })),
-        Err(e) => redact_json_value(serde_json::json!({
+        }),
+        Err(e) => serde_json::json!({
             "provider_id": provider_id,
             "workspace_id": ws_id.0,
             "installed": provider_status.as_ref().map(|s| s.installed).unwrap_or(false),
             "probe_ok": false,
             "probe_error": logs::redact_sensitive(&e.to_string()),
             "probed_at": chrono::Utc::now().to_rfc3339(),
-        })),
+        }),
     };
+
+    // If probing fails (or returns null lists), keep the last successfully probed models/modes so
+    // the UI can stay populated.
+    if raw_resp.get("models").is_none() || raw_resp.get("models").is_some_and(|v| v.is_null()) {
+        if let Some(models) = cached_models {
+            raw_resp["models"] = models;
+        }
+    }
+    if raw_resp.get("modes").is_none() || raw_resp.get("modes").is_some_and(|v| v.is_null()) {
+        if let Some(modes) = cached_modes {
+            raw_resp["modes"] = modes;
+        }
+    }
+
+    let resp = redact_json_value(raw_resp);
 
     state
         .provider_options_cache
