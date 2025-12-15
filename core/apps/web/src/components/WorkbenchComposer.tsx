@@ -113,6 +113,22 @@ function buildModelsFromProviderOptions(opts?: ProviderOptions): Array<{ id: str
     .filter((m) => m.id.length > 0);
 }
 
+const FALLBACK_MODELS_BY_PROVIDER: Record<string, Array<{ id: string; name?: string }>> = {
+  gemini: [
+    { id: "gemini-2.0-flash", name: "Gemini 2.0 Flash" },
+    { id: "gemini-2.0-flash-lite", name: "Gemini 2.0 Flash Lite" },
+    { id: "gemini-2.5-pro", name: "Gemini 2.5 Pro" },
+    { id: "gemini-1.5-pro", name: "Gemini 1.5 Pro" },
+    { id: "gemini-1.5-flash", name: "Gemini 1.5 Flash" },
+  ],
+};
+
+function buildModelsForProvider(providerId: string, opts?: ProviderOptions): Array<{ id: string; name?: string }> {
+  const models = buildModelsFromProviderOptions(opts);
+  if (models.length > 0) return models;
+  return FALLBACK_MODELS_BY_PROVIDER[providerId] ?? [];
+}
+
 function pickDefaultEffort(efforts: KnownEffort[]): KnownEffort | null {
   if (efforts.includes("medium")) return "medium";
   return efforts[0] ?? null;
@@ -353,7 +369,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
     const primary = ns.draftTracks[0] ?? null;
     if (!primary) return { models: [], catalog: buildModelCatalog([]), parsed: parseModelId(""), loading: false, fromProviderOptions: true };
     const opts = ns.providerOptions[primary.providerId];
-    const models = buildModelsFromProviderOptions(opts);
+    const models = buildModelsForProvider(primary.providerId, opts);
     const catalog = buildModelCatalog(models);
     const parsed = parseModelId(primary.modelId);
     const loading = !opts;
@@ -607,7 +623,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
             const rows = ns.draftTracks.filter((t) => t.providerId === id);
 
             const opts = ns.providerOptions[id];
-            const models = buildModelsFromProviderOptions(opts);
+            const models = buildModelsForProvider(id, opts);
             const catalog = buildModelCatalog(models);
 
             return (
@@ -824,7 +840,9 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
                 aria-expanded={openMenu === "model"}
                 title="Model"
               >
-                <span className="wb-switcher-label wb-mono">{currentBase || "Model"}</span>
+                <span className="wb-switcher-label wb-mono">
+                  {(currentBase && (activeModelData.catalog.displayNameByBase[currentBase] ?? currentBase)) || "Model"}
+                </span>
                 <IconChevronDown size={14} />
               </button>
               {openMenu === "model" && modelMenu}
@@ -976,4 +994,3 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
     </div>
   );
 }
-

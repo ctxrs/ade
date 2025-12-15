@@ -24,6 +24,8 @@ import { DiffReviewPane } from "../components/DiffReviewPane";
 import { ComposerAutocompleteMenu } from "../components/ComposerAutocompleteMenu";
 import { useComposerAutocomplete, type SlashCommandDescriptor } from "../state/useComposerAutocomplete";
 import { shouldSendOnEnter } from "../utils/keyboard";
+import { HARNESS_CATALOG } from "../utils/harnessCatalog";
+import { WorkbenchComposer as UnifiedWorkbenchComposer, type WorkbenchModeId } from "../components/WorkbenchComposer";
 
 type ThreadItem =
   | {
@@ -118,6 +120,7 @@ export function SessionView({
   const perfStartRef = useRef<number>(0);
   const [input, setInput] = useState("");
   const [draftAttachments, setDraftAttachments] = useState<MessageAttachment[]>([]);
+  const [workbenchMode, setWorkbenchMode] = useState<WorkbenchModeId>("default");
   const [atBottom, setAtBottom] = useState(true);
   const [hasNewActivity, setHasNewActivity] = useState(false);
   const [authMethodId, setAuthMethodId] = useState<string>("");
@@ -740,33 +743,35 @@ export function SessionView({
         {variant === "legacy" && <ActivityBar planEntries={planEntries} diffText={diff} />}
 
         {variant === "workbench" ? (
-          <WorkbenchComposer
-            session={session}
-            modelOptions={modelOptions}
-            effortOptions={effortOptions}
-            currentModelId={currentModelId}
-            autocomplete={composerAutocomplete}
-            onSetModel={async (next) => {
-              if (!id) return;
-              const updated = await setSessionModel(id, next);
-              supervisor.setSession(updated);
-            }}
-            onSetEffort={async (effort) => {
-              if (!id) return;
-              const base = String(currentModelId).split("/")[0];
-              const next = `${base}/${effort}`;
-              const updated = await setSessionModel(id, next);
-              supervisor.setSession(updated);
-            }}
-            textareaRef={textareaRef}
-            input={input}
-            setInput={setInput}
-            onSend={sendNow}
-            onInterrupt={() => id && interruptSession(id)}
-            onInsertAtFile={() => insertIntoComposer("@")}
-            onInsertSlash={() => insertIntoComposer("/")}
+          <UnifiedWorkbenchComposer
+            variant="activeSession"
+            value={input}
+            setValue={setInput}
+            placeholder="Message, @ for context, / for commands"
+            sessionIdForAutocomplete={id ?? null}
+            slashCommands={slashCommands}
             attachments={draftAttachments}
             setAttachments={setDraftAttachments}
+            onSend={sendNow}
+            sendDisabled={!input.trim()}
+            sendDisabledReason={!input.trim() ? "Enter a message." : null}
+            onInterrupt={id ? () => interruptSession(id) : null}
+            modeId={workbenchMode}
+            setModeId={setWorkbenchMode}
+            harnessLabel={
+              HARNESS_CATALOG.find((h) => h.id === (session?.provider_id ?? ""))?.label ??
+              (session?.provider_id ?? "Provider")
+            }
+            harnessLogoSrc={HARNESS_CATALOG.find((h) => h.id === (session?.provider_id ?? ""))?.logoSrc}
+            harnessLogoInvert={HARNESS_CATALOG.find((h) => h.id === (session?.provider_id ?? ""))?.invertInDark}
+            envLabel="Worktree"
+            availableModels={modelOptions}
+            currentModelId={currentModelId}
+            onSetModelId={async (next) => {
+              if (!id) return;
+              const updated = await setSessionModel(id, next);
+              supervisor.setSession(updated);
+            }}
           />
         ) : (
           <form onSubmit={onSend} className="composer">

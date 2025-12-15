@@ -532,6 +532,36 @@ export default function WorkbenchPage() {
         {!activeTaskId ? (
           <div className="wb-center">
             <div className="wb-new-composer-stack" ref={newComposerRef}>
+              <WorkbenchComposer
+                variant="newSession"
+                value={draftPrompt}
+                setValue={setDraftPrompt}
+                placeholder="Plan, @ for context, / for commands"
+                sessionIdForAutocomplete={null}
+                slashCommands={slashCommands}
+                attachments={draftAttachments}
+                setAttachments={setDraftAttachments}
+                onSend={startNewTask}
+                sendDisabled={!!startBlockedReason}
+                sendDisabledReason={startBlockedReason}
+                onInterrupt={null}
+                modeId={draftMode}
+                setModeId={setDraftMode}
+                harnessCatalog={HARNESS_CATALOG}
+                providersById={providersById}
+                providerOptions={providerOptions}
+                ensureProviderOptions={ensureProviderOptions}
+                draftTracks={draftTracks}
+                setDraftTracks={setDraftTracks}
+                defaultProviderId={defaultProviderId}
+                useMultipleAgents={useMultipleAgents}
+                setUseMultipleAgents={setUseMultipleAgents}
+                envTarget={execTarget}
+                setEnvTarget={setExecTarget}
+              />
+
+              {false && (
+                <>
               <div className="wb-composer-card wb-new-composer-card">
                 <textarea
                   className="wb-composer-textarea"
@@ -969,6 +999,8 @@ export default function WorkbenchPage() {
                 </div>
               )}
 
+              </>
+              )}
               {startError && <div className="wb-banner">{startError}</div>}
             </div>
           </div>
