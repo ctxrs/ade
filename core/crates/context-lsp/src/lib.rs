@@ -1156,27 +1156,57 @@ impl LspSession {
                 let method = msg.get("method").and_then(|v| v.as_str()).unwrap_or("");
 
                 // Server -> client request (has both id and method).
-                if let Some(id) = id {
-                    if !method.is_empty() {
-                        if method == "workspace/applyEdit" {
-                            if let Some(params) = msg.get("params") {
-                                if let Ok(p) =
-                                    serde_json::from_value::<ApplyWorkspaceEditParams>(params.clone())
-                                {
-                                    if let Some(tx) = apply_edit_capture_r.lock().await.take() {
-                                        let _ = tx.send(p.edit);
-                                    }
-                                }
-                            }
-                            let _ = tx_r
-                                .send(json!({
-                                    "jsonrpc": "2.0",
-                                    "id": id,
-                                    "result": ApplyWorkspaceEditResponse { applied: true, failure_reason: None, failed_change: None }
-                                }))
-                                .await;
-                        } else {
-                            let _ = tx_r
+	                if let Some(id) = id {
+	                    if !method.is_empty() {
+	                        if method == "workspace/applyEdit" {
+	                            let mut applied = false;
+	                            let mut failure_reason: Option<String> = None;
+	                            if let Some(params) = msg.get("params") {
+	                                match serde_json::from_value::<ApplyWorkspaceEditParams>(params.clone()) {
+	                                    Ok(p) => {
+	                                        if let Some(tx) = apply_edit_capture_r.lock().await.take() {
+	                                            match tx.send(p.edit) {
+	                                                Ok(()) => {
+	                                                    applied = true;
+	                                                }
+	                                                Err(_) => {
+	                                                    failure_reason = Some(
+	                                                        "failed to deliver WorkspaceEdit to capture consumer"
+	                                                            .to_string(),
+	                                                    );
+	                                                }
+	                                            }
+	                                        } else {
+	                                            failure_reason = Some(
+	                                                "Context does not apply workspace edits automatically"
+	                                                    .to_string(),
+	                                            );
+	                                        }
+	                                    }
+	                                    Err(e) => {
+	                                        failure_reason = Some(format!(
+	                                            "invalid workspace/applyEdit params: {e}"
+	                                        ));
+	                                    }
+	                                }
+	                            } else {
+	                                failure_reason = Some("missing workspace/applyEdit params".to_string());
+	                            }
+	                            if !applied {
+	                                tracing::warn!(
+	                                    target: "context_lsp",
+	                                    "received workspace/applyEdit with no consumer; refusing to apply automatically"
+	                                );
+	                            }
+	                            let _ = tx_r
+	                                .send(json!({
+	                                    "jsonrpc": "2.0",
+	                                    "id": id,
+	                                    "result": ApplyWorkspaceEditResponse { applied, failure_reason, failed_change: None }
+	                                }))
+	                                .await;
+	                        } else {
+	                            let _ = tx_r
                                 .send(json!({
                                     "jsonrpc": "2.0",
                                     "id": id,
