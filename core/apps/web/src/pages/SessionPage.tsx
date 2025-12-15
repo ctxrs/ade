@@ -75,6 +75,16 @@ type WorkbenchTurnHeader = {
   created_at: string;
 };
 
+function imageAttachmentSrc(a: MessageAttachment): string {
+  return a.kind === "image_ref" ? `/api/blobs/${a.blob_id}` : `data:${a.mime_type};base64,${a.data_base64}`;
+}
+
+function attachmentDisplayName(name?: string | null) {
+  const n = String(name ?? "").trim();
+  if (!n) return "image";
+  return n.split(/[\\/]/).pop() || "image";
+}
+
 type WorkbenchThreadView = {
   groups: Array<{
     key: string;
@@ -953,6 +963,16 @@ function WorkbenchTurnHeaderView({
         <div className="wb-turn-header-content">
           <Markdown content={header.content} />
         </div>
+        {header.attachments.length > 0 && (
+          <div className="wb-turn-header-attachments" aria-label="Attachments">
+            {header.attachments.map((a, idx) => {
+              if (a.kind !== "image" && a.kind !== "image_ref") return null;
+              const src = imageAttachmentSrc(a);
+              const name = attachmentDisplayName(a.name);
+              return <img key={idx} className="wb-turn-header-attachment-img" src={src} alt={name} title={name} />;
+            })}
+          </div>
+        )}
       </div>
     </button>
   );

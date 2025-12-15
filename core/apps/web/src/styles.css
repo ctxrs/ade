@@ -1898,6 +1898,21 @@ button {
   color: var(--text);
 }
 
+.wb-turn-header-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.wb-turn-header-attachment-img {
+  width: 44px;
+  height: 44px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+}
+
 .wb-turn-header-content :is(p, pre, ul, ol) {
   margin: 0;
 }
@@ -2037,6 +2052,43 @@ button {
   display: flex;
   gap: 6px;
   flex-wrap: wrap;
+}
+
+.wb-attach-thumb {
+  position: relative;
+  width: 44px;
+  height: 44px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.wb-attach-thumb-img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+}
+
+.wb-attach-thumb-remove {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(0, 0, 0, 0.5);
+  color: rgba(255, 255, 255, 0.92);
+  font-size: 14px;
+  line-height: 16px;
+  padding: 0;
+  cursor: pointer;
+}
+
+.wb-attach-thumb-remove:hover {
+  background: rgba(0, 0, 0, 0.65);
 }
 
 .wb-attach-chip {
