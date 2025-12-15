@@ -1574,6 +1574,64 @@ button {
   background: rgba(255, 255, 255, 0.05);
 }
 
+.composer-ac-popover {
+  position: fixed;
+  z-index: 1000;
+  width: 320px;
+  max-width: calc(100vw - 16px);
+}
+
+.composer-ac-inline {
+  margin-top: 6px;
+}
+
+.composer-ac {
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: rgba(16, 16, 18, 0.96);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  max-height: 240px;
+  overflow: auto;
+}
+
+.composer-ac-item {
+  padding: 8px 10px;
+  cursor: pointer;
+}
+
+.composer-ac-item-active {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.composer-ac-item-main {
+  display: flex;
+  gap: 10px;
+  min-width: 0;
+  align-items: baseline;
+}
+
+.composer-ac-item-label {
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--text);
+}
+
+.composer-ac-item-desc {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+}
+
+.composer-ac-loading,
+.composer-ac-empty {
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
 .wb-session-left {
   display: flex;
   flex-direction: column;
