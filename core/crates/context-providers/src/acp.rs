@@ -1108,6 +1108,10 @@ fn normalize_session_update(msg: &serde_json::Value, state: &mut StreamState) ->
             event_type: SessionEventType::Plan,
             payload_json: json!({"acp_update": update}),
         }],
+        "available_commands_update" => vec![NormalizedEvent {
+            event_type: SessionEventType::Notice,
+            payload_json: json!({"acp_update": update}),
+        }],
         "error" => vec![NormalizedEvent {
             event_type: SessionEventType::Error,
             payload_json: json!({"acp_update": update}),
@@ -1423,6 +1427,37 @@ mod tests {
         assert_eq!(ev2.len(), 2);
         assert!(matches!(ev2[0].event_type, SessionEventType::ToolCallUpdate));
         assert!(matches!(ev2[1].event_type, SessionEventType::ToolResult));
+    }
+
+    #[test]
+    fn normalizes_available_commands_update_as_notice() {
+        let mut state = StreamState::default();
+        let msg = json!({
+            "jsonrpc": "2.0",
+            "method": "session/update",
+            "params": {
+                "sessionId": "sess_1",
+                "update": {
+                    "sessionUpdate": "available_commands_update",
+                    "availableCommands": [
+                        { "name": "review", "description": "Review changes" }
+                    ]
+                }
+            }
+        });
+
+        let events = normalize_session_update(&msg, &mut state);
+        assert_eq!(events.len(), 1);
+        assert!(matches!(events[0].event_type, SessionEventType::Notice));
+        assert_eq!(
+            events[0]
+                .payload_json
+                .get("acp_update")
+                .and_then(|v| v.get("sessionUpdate"))
+                .and_then(|v| v.as_str()),
+            Some("available_commands_update")
+        );
+        assert_eq!(state.assistant_buf, "");
     }
 
     #[test]

@@ -108,6 +108,34 @@ pub async fn list_untracked_files(root_path: impl AsRef<Path>) -> Result<Vec<Str
     Ok(out)
 }
 
+pub async fn list_tracked_files(root_path: impl AsRef<Path>) -> Result<Vec<String>> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root_path.as_ref())
+        .arg("ls-files")
+        .arg("-z")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .await
+        .context("running git ls-files")?;
+    if !output.status.success() {
+        bail!(
+            "git ls-files failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let bytes = output.stdout;
+    let mut out = Vec::new();
+    for part in bytes.split(|b| *b == 0) {
+        if part.is_empty() {
+            continue;
+        }
+        out.push(String::from_utf8_lossy(part).to_string());
+    }
+    Ok(out)
+}
+
 pub async fn git_diff_untracked_file(
     root_path: impl AsRef<Path>,
     rel_path: &str,

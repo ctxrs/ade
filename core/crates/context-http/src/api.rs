@@ -20,9 +20,10 @@ use std::time::Instant;
 
 use context_core::ids::*;
 use context_core::models::*;
-use context_fs::git::{assert_git_repo, rev_parse_head};
+use context_fs::git::{assert_git_repo, list_tracked_files, list_untracked_files, rev_parse_head};
 use context_fs::worktrees::{create_worktree, managed_worktree_path};
 
+use crate::completions;
 use crate::daemon::AppState;
 use crate::installs::{InstallId, InstallInfo, InstallProgressEvent};
 use crate::installer;
@@ -151,6 +152,7 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
         .route("/api/sessions/:id/model", post(set_session_model))
         .route("/api/sessions/:id/mode", post(set_session_mode))
         .route("/api/sessions/:id/events", get(list_session_events))
+        .route("/api/sessions/:id/completions/files", get(session_file_completions))
         .route("/api/sessions/:id/queue", get(list_queue))
         .route("/api/messages/:id", delete(delete_message))
         .route("/api/sessions/:id/cancel", post(cancel_session))
@@ -3603,6 +3605,94 @@ async fn list_session_events(
 struct ListSessionEventsQuery {
     after: Option<String>,
     limit: Option<u32>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct SessionFileCompletionsQuery {
+    query: Option<String>,
+    limit: Option<u32>,
+}
+
+async fn session_file_completions(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Query(q): Query<SessionFileCompletionsQuery>,
+) -> Result<Json<Vec<String>>, StatusCode> {
+    const DEFAULT_LIMIT: u32 = 20;
+    const MAX_LIMIT: u32 = 200;
+    const CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(10);
+
+    let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
+    let session = state
+        .store
+        .get_session(session_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    let worktree = state
+        .store
+        .get_worktree(session.worktree_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    let query = q.query.unwrap_or_default();
+    let limit = q
+        .limit
+        .unwrap_or(DEFAULT_LIMIT)
+        .clamp(1, MAX_LIMIT) as usize;
+
+    let files = {
+        let now = Instant::now();
+        let cache = state.file_completions_cache.lock().await;
+        if let Some(entry) = cache.get(&worktree.id) {
+            if now.duration_since(entry.cached_at) <= CACHE_TTL {
+                entry.files.clone()
+            } else {
+                drop(cache);
+                load_and_cache_worktree_files(&state, &worktree, now).await?
+            }
+        } else {
+            drop(cache);
+            load_and_cache_worktree_files(&state, &worktree, now).await?
+        }
+    };
+
+    Ok(Json(completions::filter_and_rank_paths(&files, &query, limit)))
+}
+
+async fn load_and_cache_worktree_files(
+    state: &Arc<AppState>,
+    worktree: &Worktree,
+    now: Instant,
+) -> Result<Arc<Vec<String>>, StatusCode> {
+    let root = PathBuf::from(&worktree.root_path);
+    let mut files = list_tracked_files(&root)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let untracked = list_untracked_files(&root)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if !untracked.is_empty() {
+        let mut seen: std::collections::HashSet<String> = files.iter().cloned().collect();
+        for p in untracked {
+            if seen.insert(p.clone()) {
+                files.push(p);
+            }
+        }
+    }
+    files.sort();
+    let files = Arc::new(files);
+
+    let mut cache = state.file_completions_cache.lock().await;
+    cache.insert(
+        worktree.id,
+        crate::daemon::CachedFileCompletions {
+            cached_at: now,
+            files: files.clone(),
+        },
+    );
+    Ok(files)
 }
 
 async fn delete_message(

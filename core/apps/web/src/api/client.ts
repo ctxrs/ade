@@ -313,6 +313,19 @@ export const listSessionEventsPage = (sessionId: string, after?: string, limit?:
   return api<SessionEvent[]>(`/api/sessions/${sessionId}/events${suffix}`);
 };
 
+export const listSessionFileCompletions = (
+  sessionId: string,
+  query: string,
+  limit?: number,
+  signal?: AbortSignal,
+) => {
+  const qs = new URLSearchParams();
+  qs.set("query", query);
+  if (limit) qs.set("limit", String(limit));
+  const suffix = qs.toString() ? `?${qs.toString()}` : "";
+  return api<string[]>(`/api/sessions/${sessionId}/completions/files${suffix}`, { signal });
+};
+
 export const postMessage = (
   sessionId: string,
   content: string,

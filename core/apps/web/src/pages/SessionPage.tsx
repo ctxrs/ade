@@ -419,6 +419,11 @@ export function SessionView({
           </div>
         )}
         {entry?.loading && !entry?.error && <div className="banner">Loading…</div>}
+        {showDebug && variant === "workbench" && (
+          <div className="wb-muted" style={{ fontFamily: "var(--mono)" }}>
+            debug: events={events.length} messages={messages.length} userMessages={messages.filter((m) => m.role === "user").length} groups={wbGroups.length} headers={wbGroups.filter((g) => !!g.header).length} items={wbFlatItems.length}
+          </div>
+        )}
         {session && variant === "legacy" && (
           <div className="header">
             <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>

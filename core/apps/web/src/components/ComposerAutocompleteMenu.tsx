@@ -32,7 +32,9 @@ export function ComposerAutocompleteMenu({
   const body = (
     <div className="composer-ac">
       {loading && <div className="composer-ac-loading">Searching…</div>}
-      {!loading && items.length === 0 && <div className="composer-ac-empty">No matches</div>}
+      {!loading && items.length === 0 && (
+        <div className="composer-ac-empty">No matches</div>
+      )}
       {items.map((it, idx) => (
         <div
           key={it.key}

@@ -23,14 +23,18 @@ const nextWhitespaceIndex = (text: string, cursor: number): number => {
   return text.length;
 };
 
-export function detectComposerAutocompleteToken(text: string, cursor: number): ComposerAutocompleteToken | null {
+export function detectComposerAutocompleteToken(
+  text: string,
+  cursor: number,
+): ComposerAutocompleteToken | null {
   const safeCursor = Math.max(0, Math.min(cursor, text.length));
   const prevWs = prevWhitespaceIndex(text, safeCursor);
   const tokenStart = prevWs + 1;
   if (tokenStart < 0 || tokenStart >= text.length) return null;
 
   const trigger = text[tokenStart];
-  const kind: ComposerAutocompleteKind | null = trigger === "/" ? "slash" : trigger === "@" ? "at" : null;
+  const kind: ComposerAutocompleteKind | null =
+    trigger === "/" ? "slash" : trigger === "@" ? "at" : null;
   if (!kind) return null;
 
   if (tokenStart > 0 && !isWhitespace(text[tokenStart - 1] ?? "")) {

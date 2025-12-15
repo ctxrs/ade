@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type React from "react";
+import { listSessionFileCompletions } from "../api/client";
 import {
   applyComposerAutocompleteCompletion,
   detectComposerAutocompleteToken,
@@ -35,6 +36,7 @@ export function useComposerAutocomplete({
   const [loadingFiles, setLoadingFiles] = useState(false);
 
   const dismissedRef = useRef<{ start: number; end: number; text: string } | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
   const debounceTimerRef = useRef<number | null>(null);
 
   const syncFromDom = useCallback(() => {
@@ -67,6 +69,7 @@ export function useComposerAutocomplete({
   useEffect(() => {
     const el = textareaRef.current;
     if (!el) return;
+    // Wait a frame so selectionStart reflects any programmatic cursor moves.
     requestAnimationFrame(() => syncFromDom());
   }, [value, textareaRef, syncFromDom]);
 
@@ -89,8 +92,6 @@ export function useComposerAutocomplete({
   }, [slashCommands, token]);
 
   useEffect(() => {
-    // File completion is optional and not wired up in this UI yet.
-    // Keep the hook functional for slash completion without requiring daemon support.
     if (!token || token.kind !== "at") {
       setFileItems([]);
       setLoadingFiles(false);
@@ -98,11 +99,52 @@ export function useComposerAutocomplete({
         window.clearTimeout(debounceTimerRef.current);
         debounceTimerRef.current = null;
       }
+      if (abortRef.current) {
+        abortRef.current.abort();
+        abortRef.current = null;
+      }
       return;
     }
-    setFileItems([]);
-    setLoadingFiles(false);
-  }, [token]);
+    if (!sessionId) {
+      setFileItems([]);
+      setLoadingFiles(false);
+      return;
+    }
+
+    if (debounceTimerRef.current) {
+      window.clearTimeout(debounceTimerRef.current);
+      debounceTimerRef.current = null;
+    }
+    if (abortRef.current) {
+      abortRef.current.abort();
+      abortRef.current = null;
+    }
+
+    setLoadingFiles(true);
+    const controller = new AbortController();
+    abortRef.current = controller;
+    const query = token.query;
+
+    debounceTimerRef.current = window.setTimeout(() => {
+      listSessionFileCompletions(sessionId, query, 50, controller.signal)
+        .then((paths) => {
+          const items = (paths ?? []).map((p) => ({
+            key: `file:${p}`,
+            label: `@${p}`,
+            insertText: `@${p}`,
+            kind: "file" as const,
+          }));
+          setFileItems(items);
+        })
+        .catch((err) => {
+          if (String(err?.name || "") === "AbortError") return;
+          setFileItems([]);
+        })
+        .finally(() => {
+          setLoadingFiles(false);
+        });
+    }, 120);
+  }, [sessionId, token]);
 
   const items = token?.kind === "slash" ? slashItems : token?.kind === "at" ? fileItems : [];
   const loading = token?.kind === "at" ? loadingFiles : false;
@@ -158,11 +200,16 @@ export function useComposerAutocomplete({
       }
       if (e.key === "ArrowUp") {
         e.preventDefault();
-        setActiveIndex((prev) => (items.length === 0 ? 0 : (prev - 1 + items.length) % items.length));
+        setActiveIndex((prev) =>
+          items.length === 0 ? 0 : (prev - 1 + items.length) % items.length,
+        );
         return true;
       }
       if (e.key === "Tab" || e.key === "Enter") {
-        if (e.key === "Enter" && (e.shiftKey || e.metaKey || e.ctrlKey || e.altKey)) {
+        if (
+          e.key === "Enter" &&
+          (e.shiftKey || e.metaKey || e.ctrlKey || e.altKey)
+        ) {
           return false;
         }
         if (items.length > 0) {
