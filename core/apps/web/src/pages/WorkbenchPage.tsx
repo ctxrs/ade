@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useParams } from "react-router-dom";
 import {
+  DictationSettings,
   EditPlanSummary,
   LspStatus,
   MessageAttachment,
@@ -16,6 +17,7 @@ import {
   createTrack,
   getLspStatus,
   getProviderOptions,
+  getSettings,
   getWorkspace,
   idToString,
   listProviders,
@@ -33,6 +35,8 @@ import { SessionView } from "./SessionPage";
 import { HARNESS_CATALOG } from "../utils/harnessCatalog";
 import { WorkbenchComposer, type DraftTrack, type WorkbenchEnvTarget, type WorkbenchModeId } from "../components/WorkbenchComposer";
 import type { SlashCommandDescriptor } from "../state/useComposerAutocomplete";
+import { IconGear } from "../components/workbenchIcons";
+import { startMicPcmStream } from "../utils/micPcmStream";
 
 function deriveTaskTitle(prompt: string): string {
   const line = prompt.trim().split("\n")[0] ?? "";
@@ -53,6 +57,14 @@ function modelIdsFromOptions(opts?: ProviderOptions): string[] {
 function workbenchLabelForTrack(dt: DraftTrack): string {
   const name = dt.providerId;
   return dt.label?.trim() ? `${name} — ${dt.label.trim()}` : name;
+}
+
+function appendSegment(base: string, addition: string): string {
+  const trimmed = addition.trim();
+  if (!trimmed) return base;
+  if (!base) return trimmed;
+  const needsSpace = /\S$/.test(base) && !/^[,.;!?]/.test(trimmed);
+  return `${base}${needsSpace ? " " : ""}${trimmed}`;
 }
 
 export default function WorkbenchPage() {
@@ -97,6 +109,15 @@ export default function WorkbenchPage() {
   const [useMultipleAgents, setUseMultipleAgents] = useState(false);
   const [draftAttachments, setDraftAttachments] = useState<MessageAttachment[]>([]);
 
+  const [dictationSettings, setDictationSettings] = useState<DictationSettings | null>(null);
+  const [dictationRecording, setDictationRecording] = useState(false);
+  const [dictationError, setDictationError] = useState<string | null>(null);
+  const dictationWsRef = useRef<WebSocket | null>(null);
+  const dictationMicRef = useRef<{ stop: () => Promise<void> } | null>(null);
+  const dictationBaseRef = useRef<string>("");
+  const dictationCommittedRef = useRef<string>("");
+  const dictationInterimRef = useRef<string>("");
+
   const [diffWidth, setDiffWidth] = useState(480);
   const [reviewTab, setReviewTab] = useState<"git" | "lsp">("git");
   const [editPlans, setEditPlans] = useState<EditPlanSummary[]>([]);
@@ -112,6 +133,18 @@ export default function WorkbenchPage() {
     };
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    getSettings()
+      .then((s) => {
+        if (cancelled) return;
+        setDictationSettings(s.dictation ?? null);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (useMultipleAgents) return;
@@ -289,9 +322,139 @@ export default function WorkbenchPage() {
     return null;
   }, [draftPrompt, startBusy, draftTracks, providersById]);
 
+  const stopDictation = useCallback(async (): Promise<string> => {
+    setDictationRecording(false);
+
+    const ws = dictationWsRef.current;
+
+    const mic = dictationMicRef.current;
+    dictationMicRef.current = null;
+
+    try {
+      await mic?.stop();
+    } catch {}
+
+    try {
+      ws?.send(JSON.stringify({ type: "stop" }));
+    } catch {}
+
+    const base = dictationBaseRef.current;
+    const committed = dictationCommittedRef.current;
+    const interim = dictationInterimRef.current;
+    const next = appendSegment(appendSegment(base, committed), interim);
+    setDraftPrompt(next);
+    dictationInterimRef.current = "";
+
+    return next;
+  }, []);
+
+  const startDictation = useCallback(async () => {
+    setDictationError(null);
+
+    const enabled =
+      Boolean(dictationSettings?.enabled) && dictationSettings?.provider === "livekit_inference";
+    if (!enabled) {
+      setDictationError("Dictation is disabled. Configure it in Settings.");
+      return;
+    }
+
+    const existing = dictationWsRef.current;
+    if (existing && existing.readyState !== WebSocket.CLOSED) return;
+    if (dictationRecording) return;
+
+    const token = (() => {
+      try {
+        return sessionStorage.getItem("contextAuthToken");
+      } catch {
+        return null;
+      }
+    })();
+    const qs = token ? `?token=${encodeURIComponent(token)}` : "";
+    const url = `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/api/dictation/livekit/stream${qs}`;
+
+    const ws = new WebSocket(url);
+    ws.binaryType = "arraybuffer";
+    dictationWsRef.current = ws;
+
+    dictationBaseRef.current = draftPrompt;
+    dictationCommittedRef.current = "";
+    dictationInterimRef.current = "";
+
+    const openPromise = new Promise<void>((resolve, reject) => {
+      ws.addEventListener("open", () => resolve(), { once: true });
+      ws.addEventListener("error", () => reject(new Error("Failed to connect to dictation stream.")), { once: true });
+    });
+
+    ws.addEventListener("message", (ev) => {
+      try {
+        const data = JSON.parse(String(ev.data ?? "{}"));
+        const t = String(data.type ?? "");
+        if (t === "interim") {
+          dictationInterimRef.current = String(data.text ?? "");
+        } else if (t === "final") {
+          dictationCommittedRef.current = appendSegment(
+            dictationCommittedRef.current,
+            String(data.text ?? ""),
+          );
+          dictationInterimRef.current = "";
+        } else if (t === "done") {
+          try {
+            ws.close();
+          } catch {}
+          return;
+        } else if (t === "error") {
+          setDictationError(String(data.message ?? "Dictation error"));
+          stopDictation().catch(() => {});
+          return;
+        } else {
+          return;
+        }
+
+        const base = dictationBaseRef.current;
+        const committed = dictationCommittedRef.current;
+        const interim = dictationInterimRef.current;
+        setDraftPrompt(appendSegment(appendSegment(base, committed), interim));
+      } catch {
+        // ignore
+      }
+    });
+
+    ws.addEventListener("close", () => {
+      dictationWsRef.current = null;
+      setDictationRecording(false);
+    });
+
+    try {
+      await openPromise;
+      setDictationRecording(true);
+      dictationMicRef.current = await startMicPcmStream({
+        onPcmChunk: (pcm16) => {
+          if (ws.readyState === WebSocket.OPEN) ws.send(pcm16);
+        },
+        onError: (err) => {
+          setDictationError(err.message);
+          stopDictation().catch(() => {});
+        },
+      });
+    } catch (e: any) {
+      setDictationError(e?.message ?? String(e));
+      try {
+        ws.close();
+      } catch {}
+      dictationWsRef.current = null;
+      setDictationRecording(false);
+    }
+  }, [dictationSettings, dictationRecording, draftPrompt, stopDictation]);
+
+  useEffect(() => {
+    return () => {
+      stopDictation().catch(() => {});
+    };
+  }, [stopDictation]);
+
   const startNewTask = async () => {
     if (!workspaceId) return;
-    const prompt = draftPrompt.trim();
+    const prompt = (dictationRecording ? await stopDictation() : draftPrompt).trim();
     if (!prompt) return;
     if (startBusy) return;
     if (startBlockedReason && !startBlockedReason.startsWith("Starting")) {
@@ -504,29 +667,34 @@ export default function WorkbenchPage() {
           )}
           <div className="wb-topbar-title">{workspace?.name ?? "Workspace"}</div>
           {activeTask && <div className="wb-topbar-sub">{activeTask.title}</div>}
-          {showDebugIds && (
-            <button
-              type="button"
-              className="wb-topbar-ids"
-              title="Click to copy workspace/task/track/session IDs"
-              onClick={() =>
-                navigator.clipboard.writeText(
-                  JSON.stringify(
-                    {
-                      workspaceId,
-                      taskId: activeTaskId,
-                      trackId: activeTrackId,
-                      sessionId: activeSessionId,
-                    },
-                    null,
-                    2,
-                  ),
-                )
-              }
-            >
-              {debugIdLabel}
-            </button>
-          )}
+          <div className="wb-topbar-right">
+            {showDebugIds && (
+              <button
+                type="button"
+                className="wb-topbar-ids"
+                title="Click to copy workspace/task/track/session IDs"
+                onClick={() =>
+                  navigator.clipboard.writeText(
+                    JSON.stringify(
+                      {
+                        workspaceId,
+                        taskId: activeTaskId,
+                        trackId: activeTrackId,
+                        sessionId: activeSessionId,
+                      },
+                      null,
+                      2,
+                    ),
+                  )
+                }
+              >
+                {debugIdLabel}
+              </button>
+            )}
+            <Link className="wb-topbar-icon" to="/settings" title="Settings" aria-label="Settings">
+              <IconGear size={14} />
+            </Link>
+          </div>
         </div>
 
         {!activeTaskId ? (
@@ -537,6 +705,12 @@ export default function WorkbenchPage() {
                 value={draftPrompt}
                 setValue={setDraftPrompt}
                 placeholder="Plan, @ for context, / for commands"
+                inputDisabled={dictationRecording}
+                recording={dictationRecording}
+                onToggleRecording={() => {
+                  if (dictationRecording) stopDictation().catch(() => {});
+                  else startDictation().catch(() => {});
+                }}
                 sessionIdForAutocomplete={null}
                 slashCommands={slashCommands}
                 attachments={draftAttachments}
@@ -1001,6 +1175,7 @@ export default function WorkbenchPage() {
 
               </>
               )}
+              {dictationError && <div className="wb-banner">{dictationError}</div>}
               {startError && <div className="wb-banner">{startError}</div>}
             </div>
           </div>

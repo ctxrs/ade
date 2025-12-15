@@ -39,6 +39,8 @@ use crate::buffers::{BufferCloseReq, BufferConflictResp, BufferId, BufferOpenReq
 use context_providers::adapters::ProviderStatus;
 use context_providers::events::NormalizedEvent;
 use context_providers::{acp::probe_provider_options, acp::AcpAgentConfig, acp::AcpClientConfig};
+use crate::settings as user_settings;
+use crate::dictation_livekit;
 
 fn is_sensitive_key(key: &str) -> bool {
     let key = key.to_ascii_lowercase();
@@ -74,6 +76,7 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
     let auth_state = state.clone();
     let api = axum::Router::new()
         .route("/api/health", get(health))
+        .route("/api/settings", get(get_settings).post(update_settings))
         .route("/api/diagnostics", get(diagnostics))
         .route("/api/blobs", post(upload_blob))
         .route("/api/blobs/:id", get(get_blob))
@@ -174,6 +177,7 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
         .route("/api/sessions/:id/authenticate", post(authenticate_session))
         .route("/api/tracks/:id/diff", get(track_diff))
         .route("/api/tracks/:id/diff/apply", post(track_diff_apply))
+        .route("/api/dictation/livekit/stream", get(dictation_livekit_stream_ws))
         .route("/api/stream", get(global_stream_ws))
         .route("/api/sessions/:id/stream", get(session_stream_ws))
         .layer(middleware::from_fn_with_state(auth_state, auth_middleware))
@@ -343,6 +347,25 @@ async fn get_blob(
         }
     }
     Ok(resp)
+}
+
+async fn get_settings(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<user_settings::PublicSettings>, StatusCode> {
+    let settings = user_settings::load_settings(&state.data_root).await;
+    Ok(Json(user_settings::to_public(&settings)))
+}
+
+async fn update_settings(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<user_settings::UpdateSettingsReq>,
+) -> Result<Json<user_settings::PublicSettings>, StatusCode> {
+    let current = user_settings::load_settings(&state.data_root).await;
+    let next = user_settings::apply_update(current, req);
+    user_settings::save_settings(&state.data_root, &next)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(user_settings::to_public(&next)))
 }
 
 #[derive(Debug, Serialize)]
@@ -4986,4 +5009,11 @@ async fn handle_ws(mut socket: WebSocket, state: Arc<AppState>, session_id: Sess
             }
         }
     }
+}
+
+async fn dictation_livekit_stream_ws(
+    ws: WebSocketUpgrade,
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    ws.on_upgrade(move |socket| dictation_livekit::dictation_livekit_stream(socket, state))
 }

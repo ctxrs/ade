@@ -1041,8 +1041,14 @@ button {
   white-space: nowrap;
 }
 
-.wb-topbar-ids {
+.wb-topbar-right {
   margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.wb-topbar-ids {
   font-family: var(--mono);
   font-size: 11px;
   color: var(--muted);
@@ -1054,6 +1060,23 @@ button {
 }
 
 .wb-topbar-ids:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.wb-topbar-icon {
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.wb-topbar-icon:hover {
   color: var(--text);
   background: rgba(255, 255, 255, 0.03);
 }
@@ -1282,6 +1305,10 @@ button {
 
 .wb-icon:hover:not(:disabled) {
   background: rgba(255, 255, 255, 0.06);
+}
+
+.wb-icon-active {
+  background: rgba(78, 163, 255, 0.22);
 }
 
 .wb-icon:disabled {

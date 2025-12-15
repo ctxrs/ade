@@ -20,6 +20,16 @@ import type { HarnessCatalogEntry } from "../utils/harnessCatalog";
 export type WorkbenchModeId = "default" | "research" | "plan" | "review";
 export type WorkbenchEnvTarget = "local" | "worktree" | "container";
 
+function imageAttachmentSrc(a: MessageAttachment): string {
+  return a.kind === "image_ref" ? `/api/blobs/${a.blob_id}` : `data:${a.mime_type};base64,${a.data_base64}`;
+}
+
+function attachmentDisplayName(name?: string | null) {
+  const n = String(name ?? "").trim();
+  if (!n) return "image";
+  return n.split(/[\\/]/).pop() || "image";
+}
+
 export type DraftTrack = {
   key: string;
   label: string;
@@ -35,6 +45,7 @@ type SharedProps = {
   value: string;
   setValue: (next: string) => void;
   placeholder: string;
+  inputDisabled?: boolean;
 
   sessionIdForAutocomplete: string | null;
   slashCommands: SlashCommandDescriptor[];
@@ -50,6 +61,10 @@ type SharedProps = {
 
   modeId: WorkbenchModeId;
   setModeId: (next: WorkbenchModeId) => void;
+
+  recording?: boolean;
+  recordDisabledReason?: string | null;
+  onToggleRecording?: (() => void) | null;
 };
 
 type NewSessionProps = SharedProps & {
@@ -153,6 +168,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
     value,
     setValue,
     placeholder,
+    inputDisabled,
     attachments,
     setAttachments,
     onSend,
@@ -163,6 +179,9 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
     setModeId,
     sessionIdForAutocomplete,
     slashCommands,
+    recording,
+    recordDisabledReason,
+    onToggleRecording,
   } = props;
 
   const [openMenu, setOpenMenu] = useState<OpenMenuId | null>(null);
@@ -751,17 +770,25 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
     >
       {attachments.length > 0 && (
         <div className="wb-composer-attachments">
-          {attachments.map((a, idx) => (
-            <button
-              key={idx}
-              type="button"
-              className="wb-attach-chip"
-              onClick={() => setAttachments((prev) => prev.filter((_, i) => i !== idx))}
-              title="Remove attachment"
-            >
-              {a.kind === "image" ? (a.name ?? "image") : "attachment"} ×
-            </button>
-          ))}
+          {attachments.map((a, idx) => {
+            if (a.kind !== "image" && a.kind !== "image_ref") return null;
+            const src = imageAttachmentSrc(a);
+            const name = attachmentDisplayName(a.name);
+            return (
+              <div key={idx} className="wb-attach-thumb" title={name}>
+                <img className="wb-attach-thumb-img" src={src} alt={name} />
+                <button
+                  type="button"
+                  className="wb-attach-thumb-remove"
+                  aria-label={`Remove ${name}`}
+                  title="Remove attachment"
+                  onClick={() => setAttachments((prev) => prev.filter((_, i) => i !== idx))}
+                >
+                  ×
+                </button>
+              </div>
+            );
+          })}
         </div>
       )}
 
@@ -771,6 +798,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
         placeholder={placeholder}
         value={value}
         onChange={(e) => setValue(e.target.value)}
+        disabled={!!inputDisabled}
         onKeyDown={(e) => {
           if (autocomplete.onKeyDown(e)) return;
           if (shouldSendOnEnter(e)) {
@@ -975,8 +1003,15 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
             }}
           />
 
-          <button type="button" className="wb-icon" title="Record (coming soon)" disabled aria-label="Record">
-            <IconMic size={14} />
+          <button
+            type="button"
+            className={`wb-icon ${recording ? "wb-icon-active" : ""}`}
+            title={recordDisabledReason ?? (recording ? "Stop recording" : "Record")}
+            aria-label="Record"
+            disabled={!onToggleRecording}
+            onClick={() => onToggleRecording?.()}
+          >
+            {recording ? <IconStop size={14} /> : <IconMic size={14} />}
           </button>
 
           <button

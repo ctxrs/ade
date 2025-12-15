@@ -39,13 +39,14 @@ urlencoding = "2"
 url = "2"
 lsp-types = { version = "0.97", features = ["proposed"] }
 similar = "2"
+jsonwebtoken = "9"
+tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
 
 [dev-dependencies]
 tempfile = "3"
 tower = "0.5"
 hyper = { version = "1", features = ["full"] }
 reqwest.workspace = true
-tokio-tungstenite = "0.26"
 which = "7"
 
 [[bin]]

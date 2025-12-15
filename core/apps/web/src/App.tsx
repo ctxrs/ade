@@ -8,6 +8,7 @@ import TaskPage from "./pages/TaskPage";
 import SessionPage from "./pages/SessionPage";
 import ProvidersPage from "./pages/ProvidersPage";
 import DiagnosticsPage from "./pages/DiagnosticsPage";
+import SettingsPage from "./pages/SettingsPage";
 import { SessionSupervisorProvider } from "./state/sessionSupervisor";
 
 export default function App() {
@@ -34,6 +35,7 @@ export default function App() {
       <BrowserRouter>
         <Routes>
           <Route path="/" element={<WorkspacesPage />} />
+          <Route path="/settings" element={<SettingsPage />} />
           <Route path="/providers" element={<ProvidersPage />} />
           <Route path="/diagnostics" element={<DiagnosticsPage />} />
           <Route path="/workspaces/:id" element={<WorkbenchPage />} />
