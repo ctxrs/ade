@@ -12,12 +12,22 @@ use tokio::time::timeout;
 
 use crate::daemon::AppState;
 use crate::installs::{truncate_for_storage, InstallEventLevel, InstallId, InstallProgressEvent};
+use crate::lsp_catalog::{LspCatalogArchive, LspCatalogInstall};
 use context_providers::tier1::Tier1AcpAdapter;
+use context_lsp::LspManagerConfig;
 
 const NODE_VERSION: &str = "22.11.0";
 const CODEX_ACP_VERSION: &str = "0.7.1";
 const CLAUDE_CODE_ACP_VERSION: &str = "0.12.4";
 const GEMINI_CLI_VERSION: &str = "0.19.0";
+
+const TYPESCRIPT_LS_VERSION: &str = "5.1.3";
+const TYPESCRIPT_VERSION: &str = "5.9.3";
+const PYRIGHT_VERSION: &str = "1.1.407";
+const VSCODE_LANGSERVERS_EXTRACTED_VERSION: &str = "4.10.0";
+const YAML_LANGUAGE_SERVER_VERSION: &str = "1.19.2";
+const BASH_LANGUAGE_SERVER_VERSION: &str = "5.6.0";
+const DOCKERFILE_LANGUAGE_SERVER_VERSION: &str = "0.15.0";
 
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 const NPM_INSTALL_TIMEOUT: Duration = Duration::from_secs(12 * 60);
@@ -70,12 +80,30 @@ pub struct AgentServerConfigFile {
     pub managed_installs: HashMap<String, ManagedInstallMetadata>,
 }
 
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub struct LspServerConfigFile {
+    #[serde(default)]
+    pub servers: HashMap<String, AgentServerCommand>,
+    /// Extra language servers (including non-builtin language ids) plus extension/filename mappings.
+    #[serde(default)]
+    pub extra_servers: Vec<UserLspServerSpec>,
+    #[serde(default)]
+    pub managed_installs: HashMap<String, ManagedInstallMetadata>,
+}
+
 pub async fn install_provider(state: &AppState, provider_id: &str) -> Result<()> {
     install_provider_impl(state, provider_id, None).await
 }
 
 pub fn is_supported_managed_provider(provider_id: &str) -> bool {
     matches!(provider_id, "codex" | "claude" | "gemini")
+}
+
+pub fn is_supported_managed_lsp_server(server_id: &str) -> bool {
+    matches!(
+        server_id,
+        "typescript" | "python" | "html" | "css" | "json" | "yaml" | "bash" | "dockerfile"
+    )
 }
 
 pub fn apply_managed_install_details(
@@ -128,6 +156,463 @@ pub async fn install_provider_with_progress(
     provider_id: String,
 ) -> Result<()> {
     let res = install_provider_impl(state.as_ref(), &provider_id, Some(install_id)).await;
+    match &res {
+        Ok(()) => state.finish_install(install_id, true, None).await,
+        Err(e) => {
+            state
+                .finish_install(
+                    install_id,
+                    false,
+                    Some(truncate_for_storage(&format!("{e:#}"), 12_000)),
+                )
+                .await
+        }
+    }
+    res
+}
+
+fn resolve_command_path(command: &str) -> (bool, Option<PathBuf>) {
+    if command.contains(std::path::MAIN_SEPARATOR) || command.contains('/') || command.contains('\\') {
+        let p = PathBuf::from(command);
+        if p.exists() {
+            return (true, Some(p));
+        }
+        return (false, None);
+    }
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    for dir in std::env::split_paths(&path) {
+        let candidate = dir.join(command);
+        if candidate.exists() {
+            return (true, Some(candidate));
+        }
+    }
+    (false, None)
+}
+
+fn catalog_target_key() -> &'static str {
+    match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("linux", "x86_64") => "linux-x64",
+        ("linux", "aarch64") => "linux-arm64",
+        ("macos", "x86_64") => "darwin-x64",
+        ("macos", "aarch64") => "darwin-arm64",
+        _ => "unknown",
+    }
+}
+
+fn ensure_executable(path: &Path) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(path)
+            .with_context(|| format!("stat {}", path.display()))?
+            .permissions();
+        perms.set_mode(perms.mode() | 0o111);
+        std::fs::set_permissions(path, perms)
+            .with_context(|| format!("chmod {}", path.display()))?;
+    }
+    Ok(())
+}
+
+fn find_unique_path_ending_with(root: &Path, suffix: &str) -> Result<PathBuf> {
+    let suffix = suffix.replace('\\', "/");
+    let mut matches = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(&dir).with_context(|| format!("read_dir {}", dir.display()))? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            let rel = path.strip_prefix(root).unwrap_or(&path);
+            if rel.to_string_lossy().replace('\\', "/").ends_with(&suffix) {
+                matches.push(path);
+            }
+        }
+    }
+    if matches.len() == 1 {
+        return Ok(matches.remove(0));
+    }
+    if matches.is_empty() {
+        anyhow::bail!("could not find extracted binary ending with {suffix}");
+    }
+    anyhow::bail!("multiple extracted binaries match {suffix}");
+}
+
+fn extract_zip_to_dir(zip_path: &Path, out_dir: &Path) -> Result<()> {
+    let file = std::fs::File::open(zip_path).with_context(|| format!("open {}", zip_path.display()))?;
+    let mut archive = zip::ZipArchive::new(file).context("parsing zip")?;
+    for i in 0..archive.len() {
+        let mut f = archive.by_index(i).context("zip entry")?;
+        let name = f.name().to_string();
+        if name.ends_with('/') {
+            continue;
+        }
+        let dest = out_dir.join(name);
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent).ok();
+        }
+        let mut out = std::fs::File::create(&dest)
+            .with_context(|| format!("create {}", dest.display()))?;
+        std::io::copy(&mut f, &mut out).context("extract zip entry")?;
+    }
+    Ok(())
+}
+
+async fn install_url_binary(
+    state: &AppState,
+    install_id: Option<InstallId>,
+    provider_id: &str,
+    server_id: &str,
+    version: &str,
+    url: &str,
+    archive: LspCatalogArchive,
+    bin_path: &str,
+) -> Result<PathBuf> {
+    let data_root = &state.data_root;
+    let install_dir = data_root
+        .join("lsp")
+        .join("binaries")
+        .join(server_id)
+        .join(version);
+    tokio::fs::create_dir_all(&install_dir).await.ok();
+
+    let tmp_dir = data_root.join("lsp").join("tmp");
+    tokio::fs::create_dir_all(&tmp_dir).await.ok();
+    let tmp = tmp_dir.join(format!("{server_id}-{version}.download"));
+
+    download_to_file(state, install_id, provider_id, "download", url, &tmp).await?;
+
+    emit_install(
+        state,
+        install_id,
+        provider_id,
+        InstallEventLevel::Info,
+        "extract",
+        "Extracting…".to_string(),
+        None,
+        None,
+        None,
+    )
+    .await;
+
+    match archive {
+        LspCatalogArchive::None => {
+            let dest = install_dir.join(bin_path);
+            if let Some(parent) = dest.parent() {
+                tokio::fs::create_dir_all(parent).await.ok();
+            }
+            tokio::fs::rename(&tmp, &dest).await.ok();
+            ensure_executable(&dest)?;
+            Ok(dest)
+        }
+        LspCatalogArchive::Gz => {
+            let gz = std::fs::File::open(&tmp).with_context(|| format!("open {}", tmp.display()))?;
+            let mut dec = flate2::read::GzDecoder::new(gz);
+            let dest = install_dir.join(bin_path);
+            if let Some(parent) = dest.parent() {
+                std::fs::create_dir_all(parent).ok();
+            }
+            let mut out = std::fs::File::create(&dest).with_context(|| format!("create {}", dest.display()))?;
+            std::io::copy(&mut dec, &mut out).context("decompress gz")?;
+            ensure_executable(&dest)?;
+            Ok(dest)
+        }
+        LspCatalogArchive::TarGz => {
+            let tar_gz = std::fs::File::open(&tmp).with_context(|| format!("open {}", tmp.display()))?;
+            let dec = flate2::read::GzDecoder::new(tar_gz);
+            let mut archive = tar::Archive::new(dec);
+            archive.unpack(&install_dir).context("extract tar.gz")?;
+            let direct = install_dir.join(bin_path);
+            let resolved = if direct.exists() {
+                direct
+            } else {
+                find_unique_path_ending_with(&install_dir, bin_path)?
+            };
+            ensure_executable(&resolved)?;
+            Ok(resolved)
+        }
+        LspCatalogArchive::Zip => {
+            extract_zip_to_dir(&tmp, &install_dir)?;
+            let direct = install_dir.join(bin_path);
+            let resolved = if direct.exists() {
+                direct
+            } else {
+                find_unique_path_ending_with(&install_dir, bin_path)?
+            };
+            ensure_executable(&resolved)?;
+            Ok(resolved)
+        }
+    }
+}
+
+async fn enable_managed_lsp_server(
+    data_root: &Path,
+    language_id: &str,
+    command: &str,
+    args: Vec<String>,
+    managed_meta_key: &str,
+    meta: ManagedInstallMetadata,
+) -> Result<()> {
+    let mut cfg = load_lsp_server_config(data_root).await.unwrap_or_default();
+    cfg.managed_installs
+        .insert(managed_meta_key.to_string(), meta.clone());
+    cfg.servers.insert(
+        language_id.to_string(),
+        AgentServerCommand {
+            command: command.to_string(),
+            args,
+            managed: Some(meta),
+        },
+    );
+    save_lsp_server_config(data_root, &cfg).await?;
+    Ok(())
+}
+
+async fn upsert_managed_extra_server(data_root: &Path, spec: UserLspServerSpec) -> Result<()> {
+    let mut cfg = load_lsp_server_config(data_root).await.unwrap_or_default();
+    if let Some(id) = spec.id.as_deref() {
+        cfg.extra_servers.retain(|s| s.id.as_deref() != Some(id));
+    }
+    cfg.extra_servers.push(spec);
+    save_lsp_server_config(data_root, &cfg).await?;
+    Ok(())
+}
+
+pub async fn install_lsp_catalog_server_with_progress(
+    state: std::sync::Arc<AppState>,
+    install_id: InstallId,
+    catalog_id: String,
+) -> Result<()> {
+    let res =
+        install_lsp_catalog_server_impl(state.as_ref(), &catalog_id, Some(install_id)).await;
+    match &res {
+        Ok(()) => state.finish_install(install_id, true, None).await,
+        Err(e) => {
+            state
+                .finish_install(
+                    install_id,
+                    false,
+                    Some(truncate_for_storage(&format!("{e:#}"), 12_000)),
+                )
+                .await
+        }
+    }
+    res
+}
+
+async fn install_lsp_catalog_server_impl(
+    state: &AppState,
+    catalog_id: &str,
+    install_id: Option<InstallId>,
+) -> Result<()> {
+    let data_root = state.data_root.clone();
+    let provider_id = format!("lsp:{catalog_id}");
+    let entry = crate::lsp_catalog::get_entry(&data_root, catalog_id).await?;
+    let extra_id = entry.id.clone();
+    let extra_language_id = entry.language_id.clone();
+    let extra_args = entry.args.clone();
+    let extra_extensions = entry.extensions.clone();
+    let extra_filenames = entry.filenames.clone();
+
+    emit_install(
+        state,
+        install_id,
+        &provider_id,
+        InstallEventLevel::Info,
+        "start",
+        format!("Installing LSP server: {}", entry.title),
+        None,
+        None,
+        None,
+    )
+    .await;
+
+    match entry.install.clone() {
+        LspCatalogInstall::ManagedNode { server_id } => {
+            install_lsp_server_impl(state, &server_id, install_id).await?;
+            return Ok(());
+        }
+        LspCatalogInstall::System { command } => {
+            let (found, resolved) = resolve_command_path(&command);
+            if !found {
+                anyhow::bail!("system command not found on PATH: {command}");
+            }
+            let cmd = resolved
+                .as_ref()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or(command);
+            let meta = ManagedInstallMetadata {
+                package: Some("system".to_string()),
+                version: None,
+                install_dir_rel: None,
+                last_success_at: Some(Utc::now().to_rfc3339()),
+                last_error: None,
+            };
+            enable_managed_lsp_server(
+                &data_root,
+                &entry.language_id,
+                &cmd,
+                entry.args.clone(),
+                &entry.id,
+                meta,
+            )
+            .await?;
+            upsert_managed_extra_server(
+                &data_root,
+                UserLspServerSpec {
+                    id: Some(extra_id.clone()),
+                    language_id: extra_language_id.clone(),
+                    command: cmd,
+                    args: extra_args.clone(),
+                    extensions: extra_extensions.clone(),
+                    filenames: extra_filenames.clone(),
+                },
+            )
+            .await?;
+        }
+        LspCatalogInstall::GoInstall {
+            module,
+            version,
+            binary,
+        } => {
+            let install_dir = data_root
+                .join("lsp")
+                .join("go")
+                .join(&entry.id)
+                .join(&version)
+                .join("bin");
+            tokio::fs::create_dir_all(&install_dir).await.ok();
+            emit_install(
+                state,
+                install_id,
+                &provider_id,
+                InstallEventLevel::Info,
+                "go_install",
+                format!("go install {module}@{version}"),
+                None,
+                None,
+                None,
+            )
+            .await;
+            let status = Command::new("go")
+                .arg("install")
+                .arg(format!("{module}@{version}"))
+                .env("GOBIN", &install_dir)
+                .status()
+                .await
+                .context("running go install")?;
+            if !status.success() {
+                anyhow::bail!("go install failed");
+            }
+            let bin = install_dir.join(&binary);
+            if !bin.exists() {
+                anyhow::bail!("go install completed but binary missing: {}", bin.display());
+            }
+            ensure_executable(&bin)?;
+            let meta = ManagedInstallMetadata {
+                package: Some(module),
+                version: Some(version.clone()),
+                install_dir_rel: Some(install_dir_rel(&data_root, &install_dir)),
+                last_success_at: Some(Utc::now().to_rfc3339()),
+                last_error: None,
+            };
+            let cmd = bin.to_string_lossy().to_string();
+            enable_managed_lsp_server(
+                &data_root,
+                &entry.language_id,
+                &cmd,
+                entry.args.clone(),
+                &entry.id,
+                meta,
+            )
+            .await?;
+            upsert_managed_extra_server(
+                &data_root,
+                UserLspServerSpec {
+                    id: Some(extra_id.clone()),
+                    language_id: extra_language_id.clone(),
+                    command: cmd,
+                    args: extra_args.clone(),
+                    extensions: extra_extensions.clone(),
+                    filenames: extra_filenames.clone(),
+                },
+            )
+            .await?;
+        }
+        LspCatalogInstall::UrlBinary { version, targets } => {
+            let target_key = catalog_target_key();
+            let t = targets
+                .get(target_key)
+                .ok_or_else(|| anyhow::anyhow!("no catalog target for {target_key}"))?;
+            let bin = install_url_binary(
+                state,
+                install_id,
+                &provider_id,
+                &entry.id,
+                &version,
+                &t.url,
+                t.archive,
+                &t.bin_path,
+            )
+            .await?;
+            let meta = ManagedInstallMetadata {
+                package: Some(t.url.clone()),
+                version: Some(version.clone()),
+                install_dir_rel: Some(install_dir_rel(
+                    &data_root,
+                    bin.parent().unwrap_or(&bin),
+                )),
+                last_success_at: Some(Utc::now().to_rfc3339()),
+                last_error: None,
+            };
+            let cmd = bin.to_string_lossy().to_string();
+            enable_managed_lsp_server(
+                &data_root,
+                &entry.language_id,
+                &cmd,
+                entry.args.clone(),
+                &entry.id,
+                meta,
+            )
+            .await?;
+            upsert_managed_extra_server(
+                &data_root,
+                UserLspServerSpec {
+                    id: Some(extra_id.clone()),
+                    language_id: extra_language_id.clone(),
+                    command: cmd,
+                    args: extra_args.clone(),
+                    extensions: extra_extensions.clone(),
+                    filenames: extra_filenames.clone(),
+                },
+            )
+            .await?;
+        }
+    }
+
+    emit_install(
+        state,
+        install_id,
+        &provider_id,
+        InstallEventLevel::Success,
+        "done",
+        "Install complete (restart daemon to apply)".to_string(),
+        None,
+        None,
+        None,
+    )
+    .await;
+    Ok(())
+}
+
+pub async fn install_lsp_server_with_progress(
+    state: std::sync::Arc<AppState>,
+    install_id: InstallId,
+    server_id: String,
+) -> Result<()> {
+    let res = install_lsp_server_impl(state.as_ref(), &server_id, Some(install_id)).await;
     match &res {
         Ok(()) => state.finish_install(install_id, true, None).await,
         Err(e) => {
@@ -542,6 +1027,304 @@ pub async fn save_agent_server_config(
     Ok(())
 }
 
+fn lsp_server_config_path(data_root: &Path) -> PathBuf {
+    data_root.join("lsp").join("lsp_servers.json")
+}
+
+pub async fn load_lsp_server_config(data_root: &Path) -> Result<LspServerConfigFile> {
+    let path = lsp_server_config_path(data_root);
+    if !path.exists() {
+        return Ok(LspServerConfigFile::default());
+    }
+    let txt = tokio::fs::read_to_string(&path).await?;
+    Ok(serde_json::from_str(&txt).context("parsing lsp server config")?)
+}
+
+pub async fn save_lsp_server_config(data_root: &Path, cfg: &LspServerConfigFile) -> Result<()> {
+    let path = lsp_server_config_path(data_root);
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+    tokio::fs::write(&path, serde_json::to_string_pretty(cfg)?).await?;
+    Ok(())
+}
+
+pub async fn apply_managed_lsp_server_config(
+    data_root: &Path,
+    cfg: &mut LspManagerConfig,
+) -> Result<()> {
+    let installed = load_lsp_server_config(data_root).await.unwrap_or_default();
+    if let Some(cmd) = installed.servers.get("rust") {
+        cfg.rust_command = cmd.command.clone();
+        cfg.rust_args = cmd.args.clone();
+    }
+    if let Some(cmd) = installed.servers.get("typescript") {
+        cfg.ts_command = cmd.command.clone();
+        cfg.ts_args = cmd.args.clone();
+    }
+    if let Some(cmd) = installed.servers.get("python") {
+        cfg.py_command = cmd.command.clone();
+        cfg.py_args = cmd.args.clone();
+    }
+    if let Some(cmd) = installed.servers.get("go") {
+        cfg.go_command = cmd.command.clone();
+        cfg.go_args = cmd.args.clone();
+    }
+    if let Some(cmd) = installed.servers.get("html") {
+        cfg.html_command = cmd.command.clone();
+        cfg.html_args = cmd.args.clone();
+    }
+    if let Some(cmd) = installed.servers.get("css") {
+        cfg.css_command = cmd.command.clone();
+        cfg.css_args = cmd.args.clone();
+    }
+    if let Some(cmd) = installed.servers.get("json") {
+        cfg.json_command = cmd.command.clone();
+        cfg.json_args = cmd.args.clone();
+    }
+    if let Some(cmd) = installed.servers.get("yaml") {
+        cfg.yaml_command = cmd.command.clone();
+        cfg.yaml_args = cmd.args.clone();
+    }
+    if let Some(cmd) = installed.servers.get("bash") {
+        cfg.bash_command = cmd.command.clone();
+        cfg.bash_args = cmd.args.clone();
+    }
+    if let Some(cmd) = installed.servers.get("dockerfile") {
+        cfg.dockerfile_command = cmd.command.clone();
+        cfg.dockerfile_args = cmd.args.clone();
+    }
+    if let Some(cmd) = installed.servers.get("cpp") {
+        cfg.clangd_command = cmd.command.clone();
+        cfg.clangd_args = cmd.args.clone();
+    }
+    if let Some(cmd) = installed.servers.get("lua") {
+        cfg.lua_command = cmd.command.clone();
+        cfg.lua_args = cmd.args.clone();
+    }
+    if let Some(cmd) = installed.servers.get("toml") {
+        cfg.toml_command = cmd.command.clone();
+        cfg.toml_args = cmd.args.clone();
+    }
+    if let Some(cmd) = installed.servers.get("markdown") {
+        cfg.markdown_command = cmd.command.clone();
+        cfg.markdown_args = cmd.args.clone();
+    }
+
+    // Apply extra managed servers with extension/filename mappings.
+    for server in installed.extra_servers {
+        let language_id = server.language_id.trim().to_string();
+        if language_id.is_empty() || server.command.trim().is_empty() {
+            continue;
+        }
+
+        match language_id.as_str() {
+            "rust" => {
+                cfg.rust_command = server.command;
+                cfg.rust_args = server.args;
+            }
+            "typescript" | "javascript" => {
+                cfg.ts_command = server.command;
+                cfg.ts_args = server.args;
+            }
+            "python" => {
+                cfg.py_command = server.command;
+                cfg.py_args = server.args;
+            }
+            "go" => {
+                cfg.go_command = server.command;
+                cfg.go_args = server.args;
+            }
+            "html" => {
+                cfg.html_command = server.command;
+                cfg.html_args = server.args;
+            }
+            "css" => {
+                cfg.css_command = server.command;
+                cfg.css_args = server.args;
+            }
+            "json" => {
+                cfg.json_command = server.command;
+                cfg.json_args = server.args;
+            }
+            "yaml" => {
+                cfg.yaml_command = server.command;
+                cfg.yaml_args = server.args;
+            }
+            "bash" => {
+                cfg.bash_command = server.command;
+                cfg.bash_args = server.args;
+            }
+            "dockerfile" => {
+                cfg.dockerfile_command = server.command;
+                cfg.dockerfile_args = server.args;
+            }
+            "cpp" | "c" => {
+                cfg.clangd_command = server.command;
+                cfg.clangd_args = server.args;
+            }
+            "lua" => {
+                cfg.lua_command = server.command;
+                cfg.lua_args = server.args;
+            }
+            "toml" => {
+                cfg.toml_command = server.command;
+                cfg.toml_args = server.args;
+            }
+            "markdown" => {
+                cfg.markdown_command = server.command;
+                cfg.markdown_args = server.args;
+            }
+            other => {
+                cfg.custom_servers
+                    .insert(other.to_string(), (server.command, server.args));
+            }
+        }
+
+        for ext in server.extensions {
+            let ext = ext.trim().trim_start_matches('.').to_ascii_lowercase();
+            if !ext.is_empty() {
+                cfg.custom_extension_map.insert(ext, language_id.clone());
+            }
+        }
+        for name in server.filenames {
+            let name = name.trim().to_string();
+            if !name.is_empty() {
+                cfg.custom_filename_map.insert(name, language_id.clone());
+            }
+        }
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserLspServerSpec {
+    /// Optional stable identifier (used by managed installs / catalog entries).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    /// Language id used for `textDocument/didOpen` (and to key the server).
+    pub language_id: String,
+    pub command: String,
+    #[serde(default)]
+    pub args: Vec<String>,
+    /// File extensions (no leading dot) that map to this language server.
+    #[serde(default)]
+    pub extensions: Vec<String>,
+    /// Exact filenames (e.g. "Dockerfile") that map to this language server.
+    #[serde(default)]
+    pub filenames: Vec<String>,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub struct UserLspConfigFile {
+    #[serde(default)]
+    pub servers: Vec<UserLspServerSpec>,
+}
+
+fn user_lsp_config_path(data_root: &Path) -> PathBuf {
+    data_root.join("lsp").join("user_servers.json")
+}
+
+pub async fn load_user_lsp_config(data_root: &Path) -> Result<UserLspConfigFile> {
+    let path = user_lsp_config_path(data_root);
+    if !path.exists() {
+        return Ok(UserLspConfigFile::default());
+    }
+    let txt = tokio::fs::read_to_string(&path).await?;
+    Ok(serde_json::from_str(&txt).context("parsing user lsp server config")?)
+}
+
+pub async fn apply_user_lsp_server_config(
+    data_root: &Path,
+    cfg: &mut LspManagerConfig,
+) -> Result<()> {
+    let user = load_user_lsp_config(data_root).await.unwrap_or_default();
+    for server in user.servers {
+        let language_id = server.language_id.trim().to_string();
+        if language_id.is_empty() || server.command.trim().is_empty() {
+            continue;
+        }
+
+        // Allow overriding known servers by language id.
+        match language_id.as_str() {
+            "rust" => {
+                cfg.rust_command = server.command;
+                cfg.rust_args = server.args;
+            }
+            "typescript" | "javascript" => {
+                cfg.ts_command = server.command;
+                cfg.ts_args = server.args;
+            }
+            "python" => {
+                cfg.py_command = server.command;
+                cfg.py_args = server.args;
+            }
+            "go" => {
+                cfg.go_command = server.command;
+                cfg.go_args = server.args;
+            }
+            "html" => {
+                cfg.html_command = server.command;
+                cfg.html_args = server.args;
+            }
+            "css" => {
+                cfg.css_command = server.command;
+                cfg.css_args = server.args;
+            }
+            "json" => {
+                cfg.json_command = server.command;
+                cfg.json_args = server.args;
+            }
+            "yaml" => {
+                cfg.yaml_command = server.command;
+                cfg.yaml_args = server.args;
+            }
+            "bash" => {
+                cfg.bash_command = server.command;
+                cfg.bash_args = server.args;
+            }
+            "dockerfile" => {
+                cfg.dockerfile_command = server.command;
+                cfg.dockerfile_args = server.args;
+            }
+            "cpp" | "c" => {
+                cfg.clangd_command = server.command;
+                cfg.clangd_args = server.args;
+            }
+            "lua" => {
+                cfg.lua_command = server.command;
+                cfg.lua_args = server.args;
+            }
+            "toml" => {
+                cfg.toml_command = server.command;
+                cfg.toml_args = server.args;
+            }
+            "markdown" => {
+                cfg.markdown_command = server.command;
+                cfg.markdown_args = server.args;
+            }
+            other => {
+                cfg.custom_servers
+                    .insert(other.to_string(), (server.command, server.args));
+            }
+        }
+
+        for ext in server.extensions {
+            let ext = ext.trim().trim_start_matches('.').to_ascii_lowercase();
+            if !ext.is_empty() {
+                cfg.custom_extension_map.insert(ext, language_id.clone());
+            }
+        }
+        for name in server.filenames {
+            let name = name.trim().to_string();
+            if !name.is_empty() {
+                cfg.custom_filename_map.insert(name, language_id.clone());
+            }
+        }
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone)]
 pub struct NodeRuntime {
     pub node_root: PathBuf,
@@ -845,60 +1628,71 @@ async fn download_to_file(
     path: &Path,
 ) -> Result<()> {
     for attempt in 1..=RETRY_COUNT {
-        let client = reqwest::Client::builder()
-            .connect_timeout(Duration::from_secs(15))
-            .timeout(DOWNLOAD_TIMEOUT)
-            .build()
-            .context("building http client")?;
-
         let attempt_res: Result<()> = async {
-            let resp = client.get(url).send().await.context("sending request")?;
-            let resp = resp.error_for_status().context("http error")?;
-
-            let total = resp.content_length();
-            let mut stream = resp.bytes_stream();
             if let Some(parent) = path.parent() {
                 tokio::fs::create_dir_all(parent).await.ok();
             }
-            let mut file = tokio::fs::File::create(path)
-                .await
-                .with_context(|| format!("creating download target: {}", path.display()))?;
-            use futures::StreamExt;
-            use tokio::io::AsyncWriteExt;
 
-            let mut downloaded: u64 = 0;
-            while let Some(chunk) = stream.next().await {
-                let bytes = chunk.context("streaming download")?;
-                downloaded += bytes.len() as u64;
-                file.write_all(&bytes)
+            if url.starts_with("file://") {
+                let u = url::Url::parse(url).context("parsing file:// url")?;
+                let src = u
+                    .to_file_path()
+                    .map_err(|_| anyhow::anyhow!("invalid file url: {url}"))?;
+                tokio::fs::copy(&src, path)
                     .await
-                    .context("writing download")?;
+                    .with_context(|| format!("copying {} -> {}", src.display(), path.display()))?;
+            } else {
+                let client = reqwest::Client::builder()
+                    .connect_timeout(Duration::from_secs(15))
+                    .timeout(DOWNLOAD_TIMEOUT)
+                    .build()
+                    .context("building http client")?;
+
+                let resp = client.get(url).send().await.context("sending request")?;
+                let resp = resp.error_for_status().context("http error")?;
+
+                let total = resp.content_length();
+                let mut stream = resp.bytes_stream();
+                let mut file = tokio::fs::File::create(path)
+                    .await
+                    .with_context(|| format!("creating download target: {}", path.display()))?;
+                use futures::StreamExt;
+                use tokio::io::AsyncWriteExt;
+
+                let mut downloaded: u64 = 0;
+                while let Some(chunk) = stream.next().await {
+                    let bytes = chunk.context("streaming download")?;
+                    downloaded += bytes.len() as u64;
+                    file.write_all(&bytes)
+                        .await
+                        .context("writing download")?;
+                    emit_install(
+                        state,
+                        install_id,
+                        provider_id,
+                        InstallEventLevel::Info,
+                        stage,
+                        "downloading…".to_string(),
+                        Some(downloaded),
+                        total,
+                        Some(attempt),
+                    )
+                    .await;
+                }
+                file.flush().await.context("flushing download")?;
                 emit_install(
                     state,
                     install_id,
                     provider_id,
-                    InstallEventLevel::Info,
+                    InstallEventLevel::Success,
                     stage,
-                    "downloading…".to_string(),
+                    "download complete".to_string(),
                     Some(downloaded),
                     total,
                     Some(attempt),
                 )
                 .await;
             }
-            file.flush().await.context("flushing download")?;
-            emit_install(
-                state,
-                install_id,
-                provider_id,
-                InstallEventLevel::Success,
-                stage,
-                "download complete".to_string(),
-                Some(downloaded),
-                total,
-                Some(attempt),
-            )
-            .await;
             Ok(())
         }
         .await;
@@ -943,4 +1737,518 @@ async fn run_command_with_timeout(
         Ok(res) => Ok(res.context("waiting for process")?),
         Err(_) => anyhow::bail!("process timed out after {}s", dur.as_secs()),
     }
+}
+
+fn sanitize_npm_package_for_path(pkg: &str) -> String {
+    pkg.trim()
+        .trim_start_matches('@')
+        .replace('/', "__")
+        .replace('\\', "__")
+}
+
+async fn npm_install_one(
+    state: &AppState,
+    install_id: Option<InstallId>,
+    provider_id: &str,
+    node: &NodeRuntime,
+    install_dir: &Path,
+    package: &str,
+    version: &str,
+) -> Result<()> {
+    let package_spec = format!("{package}@{version}");
+    npm_install(state, install_id, provider_id, node, install_dir, &package_spec).await
+}
+
+async fn resolve_node_package_bin(
+    install_dir: &Path,
+    package: &str,
+    preferred_bin_name: Option<&str>,
+) -> Result<PathBuf> {
+    let pkg_dir = install_dir.join("node_modules").join(package);
+    let pkg_json_path = pkg_dir.join("package.json");
+    let txt = tokio::fs::read_to_string(&pkg_json_path)
+        .await
+        .with_context(|| format!("reading {}", pkg_json_path.display()))?;
+    let v: serde_json::Value = serde_json::from_str(&txt).context("parsing package.json")?;
+    let bin = v.get("bin").context("package.json missing bin")?;
+    let entry_rel = match bin {
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Object(map) => {
+            if let Some(preferred) = preferred_bin_name {
+                if let Some(v) = map.get(preferred).and_then(|v| v.as_str()) {
+                    v.to_string()
+                } else if map.len() == 1 {
+                    map.values()
+                        .next()
+                        .and_then(|v| v.as_str())
+                        .context("bin map invalid")?
+                        .to_string()
+                } else {
+                    anyhow::bail!(
+                        "bin {preferred} not found in {} (available: {})",
+                        package,
+                        map.keys().cloned().collect::<Vec<_>>().join(", ")
+                    );
+                }
+            } else if map.len() == 1 {
+                map.values()
+                    .next()
+                    .and_then(|v| v.as_str())
+                    .context("bin map invalid")?
+                    .to_string()
+            } else {
+                anyhow::bail!(
+                    "multiple bins in {} but no preferred bin specified",
+                    package
+                );
+            }
+        }
+        _ => anyhow::bail!("package.json bin has unsupported type"),
+    };
+    Ok(pkg_dir.join(entry_rel))
+}
+
+async fn install_lsp_server_impl(
+    state: &AppState,
+    server_id: &str,
+    install_id: Option<InstallId>,
+) -> Result<()> {
+    let data_root = state.data_root.clone();
+    let provider_id = format!("lsp:{server_id}");
+
+    if !is_supported_managed_lsp_server(server_id) {
+        anyhow::bail!("unsupported managed lsp server: {server_id}");
+    }
+
+    let mut stage: &'static str = "start";
+
+    let res: Result<()> = async {
+        emit_install(
+            state,
+            install_id,
+            &provider_id,
+            InstallEventLevel::Info,
+            "start",
+            format!("Installing managed LSP server: {server_id}"),
+            None,
+            None,
+            None,
+        )
+        .await;
+
+        stage = "node";
+        let node = ensure_node_runtime(state, install_id, &provider_id, &data_root)
+            .await
+            .context("ensuring managed Node runtime")?;
+
+        stage = "registry_load";
+        let mut cfg = load_lsp_server_config(&data_root).await.unwrap_or_default();
+
+        let mut register = |key: &str,
+                            package: &str,
+                            version: &str,
+                            install_dir: &Path,
+                            entry: PathBuf,
+                            args: Vec<String>| {
+            let install_dir_rel = install_dir_rel(&data_root, install_dir);
+            let meta = ManagedInstallMetadata {
+                package: Some(package.to_string()),
+                version: Some(version.to_string()),
+                install_dir_rel: Some(install_dir_rel),
+                last_success_at: Some(Utc::now().to_rfc3339()),
+                last_error: None,
+            };
+            cfg.managed_installs.insert(key.to_string(), meta.clone());
+            cfg.servers.insert(
+                key.to_string(),
+                AgentServerCommand {
+                    command: node.node_bin.to_string_lossy().to_string(),
+                    args: std::iter::once(entry.to_string_lossy().to_string())
+                        .chain(args.into_iter())
+                        .collect(),
+                    managed: Some(meta),
+                },
+            );
+        };
+
+        stage = "install";
+        match server_id {
+            "typescript" => {
+                let package = "typescript-language-server";
+                let package_dir = data_root
+                    .join("lsp")
+                    .join("node")
+                    .join(sanitize_npm_package_for_path(package))
+                    .join(TYPESCRIPT_LS_VERSION);
+                tokio::fs::create_dir_all(&package_dir).await.ok();
+
+                emit_install(
+                    state,
+                    install_id,
+                    &provider_id,
+                    InstallEventLevel::Info,
+                    "npm_install",
+                    format!("Installing {package}@{TYPESCRIPT_LS_VERSION} (+ typescript@{TYPESCRIPT_VERSION})"),
+                    None,
+                    None,
+                    None,
+                )
+                .await;
+
+                npm_install_one(
+                    state,
+                    install_id,
+                    &provider_id,
+                    &node,
+                    &package_dir,
+                    "typescript",
+                    TYPESCRIPT_VERSION,
+                )
+                .await
+                .context("installing typescript")?;
+                npm_install_one(
+                    state,
+                    install_id,
+                    &provider_id,
+                    &node,
+                    &package_dir,
+                    package,
+                    TYPESCRIPT_LS_VERSION,
+                )
+                .await
+                .context("installing typescript-language-server")?;
+
+                let entry =
+                    resolve_node_package_bin(&package_dir, package, Some("typescript-language-server"))
+                        .await
+                        .context("resolving typescript-language-server bin")?;
+                register(
+                    "typescript",
+                    package,
+                    TYPESCRIPT_LS_VERSION,
+                    &package_dir,
+                    entry,
+                    vec!["--stdio".to_string()],
+                );
+            }
+            "python" => {
+                let package = "pyright";
+                let package_dir = data_root
+                    .join("lsp")
+                    .join("node")
+                    .join(sanitize_npm_package_for_path(package))
+                    .join(PYRIGHT_VERSION);
+                tokio::fs::create_dir_all(&package_dir).await.ok();
+
+                emit_install(
+                    state,
+                    install_id,
+                    &provider_id,
+                    InstallEventLevel::Info,
+                    "npm_install",
+                    format!("Installing {package}@{PYRIGHT_VERSION}"),
+                    None,
+                    None,
+                    None,
+                )
+                .await;
+
+                npm_install_one(
+                    state,
+                    install_id,
+                    &provider_id,
+                    &node,
+                    &package_dir,
+                    package,
+                    PYRIGHT_VERSION,
+                )
+                .await
+                .context("installing pyright")?;
+
+                let entry =
+                    resolve_node_package_bin(&package_dir, package, Some("pyright-langserver"))
+                        .await
+                        .context("resolving pyright-langserver bin")?;
+                register(
+                    "python",
+                    package,
+                    PYRIGHT_VERSION,
+                    &package_dir,
+                    entry,
+                    vec!["--stdio".to_string()],
+                );
+            }
+            "html" | "css" | "json" => {
+                // Shared install for html/css/json.
+                let package = "vscode-langservers-extracted";
+                let package_dir = data_root
+                    .join("lsp")
+                    .join("node")
+                    .join(sanitize_npm_package_for_path(package))
+                    .join(VSCODE_LANGSERVERS_EXTRACTED_VERSION);
+                tokio::fs::create_dir_all(&package_dir).await.ok();
+
+                emit_install(
+                    state,
+                    install_id,
+                    &provider_id,
+                    InstallEventLevel::Info,
+                    "npm_install",
+                    format!("Installing {package}@{VSCODE_LANGSERVERS_EXTRACTED_VERSION} (html/css/json)"),
+                    None,
+                    None,
+                    None,
+                )
+                .await;
+
+                npm_install_one(
+                    state,
+                    install_id,
+                    &provider_id,
+                    &node,
+                    &package_dir,
+                    package,
+                    VSCODE_LANGSERVERS_EXTRACTED_VERSION,
+                )
+                .await
+                .context("installing vscode-langservers-extracted")?;
+
+                let html_entry =
+                    resolve_node_package_bin(&package_dir, package, Some("vscode-html-language-server"))
+                        .await
+                        .context("resolving vscode-html-language-server")?;
+                register(
+                    "html",
+                    package,
+                    VSCODE_LANGSERVERS_EXTRACTED_VERSION,
+                    &package_dir,
+                    html_entry,
+                    vec!["--stdio".to_string()],
+                );
+
+                let css_entry =
+                    resolve_node_package_bin(&package_dir, package, Some("vscode-css-language-server"))
+                        .await
+                        .context("resolving vscode-css-language-server")?;
+                register(
+                    "css",
+                    package,
+                    VSCODE_LANGSERVERS_EXTRACTED_VERSION,
+                    &package_dir,
+                    css_entry,
+                    vec!["--stdio".to_string()],
+                );
+
+                let json_entry =
+                    resolve_node_package_bin(&package_dir, package, Some("vscode-json-language-server"))
+                        .await
+                        .context("resolving vscode-json-language-server")?;
+                register(
+                    "json",
+                    package,
+                    VSCODE_LANGSERVERS_EXTRACTED_VERSION,
+                    &package_dir,
+                    json_entry,
+                    vec!["--stdio".to_string()],
+                );
+            }
+            "yaml" => {
+                let package = "yaml-language-server";
+                let package_dir = data_root
+                    .join("lsp")
+                    .join("node")
+                    .join(sanitize_npm_package_for_path(package))
+                    .join(YAML_LANGUAGE_SERVER_VERSION);
+                tokio::fs::create_dir_all(&package_dir).await.ok();
+
+                emit_install(
+                    state,
+                    install_id,
+                    &provider_id,
+                    InstallEventLevel::Info,
+                    "npm_install",
+                    format!("Installing {package}@{YAML_LANGUAGE_SERVER_VERSION}"),
+                    None,
+                    None,
+                    None,
+                )
+                .await;
+
+                npm_install_one(
+                    state,
+                    install_id,
+                    &provider_id,
+                    &node,
+                    &package_dir,
+                    package,
+                    YAML_LANGUAGE_SERVER_VERSION,
+                )
+                .await
+                .context("installing yaml-language-server")?;
+
+                let entry =
+                    resolve_node_package_bin(&package_dir, package, Some("yaml-language-server"))
+                        .await
+                        .context("resolving yaml-language-server")?;
+                register(
+                    "yaml",
+                    package,
+                    YAML_LANGUAGE_SERVER_VERSION,
+                    &package_dir,
+                    entry,
+                    vec!["--stdio".to_string()],
+                );
+            }
+            "bash" => {
+                let package = "bash-language-server";
+                let package_dir = data_root
+                    .join("lsp")
+                    .join("node")
+                    .join(sanitize_npm_package_for_path(package))
+                    .join(BASH_LANGUAGE_SERVER_VERSION);
+                tokio::fs::create_dir_all(&package_dir).await.ok();
+
+                emit_install(
+                    state,
+                    install_id,
+                    &provider_id,
+                    InstallEventLevel::Info,
+                    "npm_install",
+                    format!("Installing {package}@{BASH_LANGUAGE_SERVER_VERSION}"),
+                    None,
+                    None,
+                    None,
+                )
+                .await;
+
+                npm_install_one(
+                    state,
+                    install_id,
+                    &provider_id,
+                    &node,
+                    &package_dir,
+                    package,
+                    BASH_LANGUAGE_SERVER_VERSION,
+                )
+                .await
+                .context("installing bash-language-server")?;
+
+                let entry =
+                    resolve_node_package_bin(&package_dir, package, Some("bash-language-server"))
+                        .await
+                        .context("resolving bash-language-server")?;
+                register(
+                    "bash",
+                    package,
+                    BASH_LANGUAGE_SERVER_VERSION,
+                    &package_dir,
+                    entry,
+                    vec!["start".to_string(), "--stdio".to_string()],
+                );
+            }
+            "dockerfile" => {
+                let package = "dockerfile-language-server-nodejs";
+                let package_dir = data_root
+                    .join("lsp")
+                    .join("node")
+                    .join(sanitize_npm_package_for_path(package))
+                    .join(DOCKERFILE_LANGUAGE_SERVER_VERSION);
+                tokio::fs::create_dir_all(&package_dir).await.ok();
+
+                emit_install(
+                    state,
+                    install_id,
+                    &provider_id,
+                    InstallEventLevel::Info,
+                    "npm_install",
+                    format!("Installing {package}@{DOCKERFILE_LANGUAGE_SERVER_VERSION}"),
+                    None,
+                    None,
+                    None,
+                )
+                .await;
+
+                npm_install_one(
+                    state,
+                    install_id,
+                    &provider_id,
+                    &node,
+                    &package_dir,
+                    package,
+                    DOCKERFILE_LANGUAGE_SERVER_VERSION,
+                )
+                .await
+                .context("installing dockerfile-language-server-nodejs")?;
+
+                let entry =
+                    resolve_node_package_bin(&package_dir, package, Some("docker-langserver"))
+                        .await
+                        .context("resolving dockerfile language server bin")?;
+                register(
+                    "dockerfile",
+                    package,
+                    DOCKERFILE_LANGUAGE_SERVER_VERSION,
+                    &package_dir,
+                    entry,
+                    vec!["--stdio".to_string()],
+                );
+            }
+            _ => unreachable!(),
+        }
+
+        stage = "registry_save";
+        save_lsp_server_config(&data_root, &cfg)
+            .await
+            .context("saving lsp server config")?;
+
+        emit_install(
+            state,
+            install_id,
+            &provider_id,
+            InstallEventLevel::Success,
+            "done",
+            "Install complete (restart daemon to apply)".to_string(),
+            None,
+            None,
+            None,
+        )
+        .await;
+        Ok(())
+    }
+    .await;
+
+    if let Err(e) = &res {
+        emit_install(
+            state,
+            install_id,
+            &provider_id,
+            InstallEventLevel::Error,
+            "error",
+            truncate_for_storage(&format!("{e:#}"), INSTALL_EVENT_ERROR_MAX_LEN),
+            None,
+            None,
+            None,
+        )
+        .await;
+
+        // Best-effort: record error in registry.
+        let mut cfg = load_lsp_server_config(&data_root).await.unwrap_or_default();
+        cfg.managed_installs.insert(
+            server_id.to_string(),
+            ManagedInstallMetadata {
+                package: None,
+                version: None,
+                install_dir_rel: None,
+                last_success_at: None,
+                last_error: Some(ManagedInstallError {
+                    at: Utc::now().to_rfc3339(),
+                    stage: stage.to_string(),
+                    message: truncate_for_storage(&format!("{e:#}"), LAST_ERROR_MAX_LEN),
+                }),
+            },
+        );
+        let _ = save_lsp_server_config(&data_root, &cfg).await;
+    }
+
+    res
 }

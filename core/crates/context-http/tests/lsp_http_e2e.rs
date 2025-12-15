@@ -222,8 +222,19 @@ async fn lsp_status_endpoint_returns_expected_shape() {
         v.get("edit_plans_enabled").and_then(|x| x.as_bool()),
         Some(true)
     );
-    let servers = v.get("servers").and_then(|x| x.as_array()).cloned().unwrap_or_default();
-    assert_eq!(servers.len(), 4);
+    let servers = v
+        .get("servers")
+        .and_then(|x| x.as_array())
+        .cloned()
+        .unwrap_or_default();
+    assert!(servers.len() >= 4);
+    let langs: std::collections::HashSet<String> = servers
+        .iter()
+        .filter_map(|s| s.get("language").and_then(|x| x.as_str()).map(|s| s.to_string()))
+        .collect();
+    for required in ["rust", "typescript", "python", "go"] {
+        assert!(langs.contains(required), "missing {required}");
+    }
     for s in servers {
         assert!(s.get("language").and_then(|x| x.as_str()).unwrap_or("").len() > 0);
         assert!(s.get("command").and_then(|x| x.as_str()).unwrap_or("").len() > 0);
@@ -671,6 +682,83 @@ async fn lsp_text_only_agent_endpoints_return_payloads() {
             json!({
                 "session_id": session.id.0.to_string(),
                 "path": "src/lib.rs"
+            })
+            .to_string(),
+        ))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/lsp/semantic_tokens/delta")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "session_id": session.id.0.to_string(),
+                "path": "src/lib.rs",
+                "previous_result_id": "1"
+            })
+            .to_string(),
+        ))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/lsp/folding_ranges")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "session_id": session.id.0.to_string(),
+                "path": "src/lib.rs"
+            })
+            .to_string(),
+        ))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/lsp/linked_editing_range")
+        .header("content-type", "application/json")
+        .body(Body::from(pos_req("src/lib.rs").to_string()))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    // workspace symbol search + resolve.
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/lsp/workspace_symbols")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "session_id": session.id.0.to_string(),
+                "query": "Test"
+            })
+            .to_string(),
+        ))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let symbols: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let sym = symbols
+        .as_array()
+        .and_then(|a| a.first())
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/lsp/workspace_symbols/resolve")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "session_id": session.id.0.to_string(),
+                "item": sym
             })
             .to_string(),
         ))

@@ -484,12 +484,16 @@ pub async fn serve(
         auth_token.or_else(|| std::env::var("CONTEXT_DESKTOP_TOKEN").ok())
     };
 
-    let state = Arc::new(AppState::new(
+    let mut lsp_cfg = LspManagerConfig::default();
+    let _ = installer::apply_managed_lsp_server_config(&data_root, &mut lsp_cfg).await;
+    let _ = installer::apply_user_lsp_server_config(&data_root, &mut lsp_cfg).await;
+    let state = Arc::new(AppState::new_with_lsp_config(
         data_root,
         store,
         providers,
         daemon_url.clone(),
         auth_token,
+        lsp_cfg,
     ));
     {
         let mut statuses = HashMap::new();

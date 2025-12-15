@@ -286,6 +286,54 @@ fn main() {
             continue;
         }
 
+        if msg.get("method").and_then(|v| v.as_str()) == Some("textDocument/semanticTokens/full/delta") {
+            if let Some(id) = msg.get("id").cloned() {
+                write_response(
+                    &mut output,
+                    json!({
+                        "jsonrpc":"2.0",
+                        "id": id,
+                        "result": { "resultId": "2", "edits": [] }
+                    }),
+                );
+            }
+            continue;
+        }
+
+        if msg.get("method").and_then(|v| v.as_str()) == Some("textDocument/foldingRange") {
+            if let Some(id) = msg.get("id").cloned() {
+                write_response(
+                    &mut output,
+                    json!({
+                        "jsonrpc":"2.0",
+                        "id": id,
+                        "result": [{ "startLine": 0, "endLine": 1 }]
+                    }),
+                );
+            }
+            continue;
+        }
+
+        if msg.get("method").and_then(|v| v.as_str()) == Some("textDocument/linkedEditingRange") {
+            if let Some(id) = msg.get("id").cloned() {
+                write_response(
+                    &mut output,
+                    json!({
+                        "jsonrpc":"2.0",
+                        "id": id,
+                        "result": {
+                            "ranges": [
+                                { "start": { "line": 0, "character": 1 }, "end": { "line": 0, "character": 4 } },
+                                { "start": { "line": 0, "character": 8 }, "end": { "line": 0, "character": 11 } }
+                            ],
+                            "wordPattern": null
+                        }
+                    }),
+                );
+            }
+            continue;
+        }
+
         if msg.get("method").and_then(|v| v.as_str()) == Some("textDocument/prepareTypeHierarchy") {
             if let Some(id) = msg.get("id").cloned() {
                 let uri = last_opened_uri
@@ -661,6 +709,20 @@ fn main() {
                             }
                         }]
                     }),
+                );
+            }
+            continue;
+        }
+
+        if msg.get("method").and_then(|v| v.as_str()) == Some("workspace/symbol/resolve") {
+            if let Some(id) = msg.get("id").cloned() {
+                let mut item = msg.get("params").cloned().unwrap_or(json!({}));
+                if let Some(obj) = item.as_object_mut() {
+                    obj.insert("containerName".to_string(), json!("resolved_container"));
+                }
+                write_response(
+                    &mut output,
+                    json!({ "jsonrpc":"2.0", "id": id, "result": item }),
                 );
             }
             continue;

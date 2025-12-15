@@ -82,6 +82,34 @@ fn main() {
                 .unwrap_or(json!("file:///unknown.rs"));
             last_opened_uri = uri.as_str().map(|s| s.to_string());
 
+            if let Some(uri_str) = uri.as_str() {
+                if uri_str.contains("apply_edit.rs") {
+                    write_response(
+                        &mut output,
+                        json!({
+                            "jsonrpc":"2.0",
+                            "id": 8888,
+                            "method":"workspace/applyEdit",
+                            "params": {
+                                "label": "Test didOpen applyEdit",
+                                "edit": {
+                                    "changes": {
+                                        (uri_str): [{
+                                            "range": {
+                                                "start": {"line": 0, "character": 0},
+                                                "end": {"line": 0, "character": 0}
+                                            },
+                                            "newText": "// didOpen applyEdit\n"
+                                        }]
+                                    }
+                                }
+                            }
+                        }),
+                    );
+                    let _ = read_lsp_message(&mut input);
+                }
+            }
+
             let diag = Diagnostic {
                 range: Range {
                     start: Position { line: 1, character: 0 },
@@ -402,6 +430,27 @@ fn main() {
                     "resultId": "1",
                     "data": [0,0,5,0,0]
                 }),
+                "textDocument/semanticTokens/full/delta" => json!({
+                    "resultId": "2",
+                    "edits": []
+                }),
+                "textDocument/foldingRange" => json!([
+                    { "startLine": 0, "endLine": 1 }
+                ]),
+                "textDocument/linkedEditingRange" => json!({
+                    "ranges": [
+                        { "start": { "line": 0, "character": 1 }, "end": { "line": 0, "character": 4 } },
+                        { "start": { "line": 0, "character": 8 }, "end": { "line": 0, "character": 11 } }
+                    ],
+                    "wordPattern": null
+                }),
+                "workspace/symbol/resolve" => {
+                    let mut item = msg.get("params").cloned().unwrap_or(json!({}));
+                    if let Some(obj) = item.as_object_mut() {
+                        obj.insert("containerName".to_string(), json!("resolved_container"));
+                    }
+                    item
+                }
                 "textDocument/prepareTypeHierarchy" => {
                     let uri: Uri = last_opened_uri
                         .as_deref()
