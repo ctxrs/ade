@@ -1788,7 +1788,7 @@ function Markdown({ content }: { content: string }) {
   );
 }
 
-function buildWorkbenchThreadViewModel(events: SessionEvent[], messages: Message[]): WorkbenchThreadView {
+export function buildWorkbenchThreadViewModel(events: SessionEvent[], messages: Message[]): WorkbenchThreadView {
   type ToolItem = Extract<ThreadItem, { kind: "tool" }>;
   type TurnGroup = {
     key: string;
@@ -1837,6 +1837,232 @@ function buildWorkbenchThreadViewModel(events: SessionEvent[], messages: Message
     g.toolItems.push(t);
     return t;
   };
+
+  // If messages haven't been refreshed yet (common in the Workbench "Start" flow), fall back to
+  // grouping by `user_message` events so streamed assistant/tool updates still render.
+  if (userMessages.length === 0) {
+    const userEvents = events
+      .filter((e) => e.event_type === "user_message")
+      .slice()
+      .sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
+
+    const eventsInRangeExclusive = (startIso: string, endIso: string | null) => {
+      const start = Date.parse(startIso);
+      const end = endIso ? Date.parse(endIso) : Number.POSITIVE_INFINITY;
+      return events.filter((e) => {
+        const t = Date.parse(String(e.created_at));
+        if (!Number.isFinite(t) || !Number.isFinite(start)) return false;
+        return t >= start && t < end;
+      });
+    };
+
+    const groups: WorkbenchThreadView["groups"] = [];
+
+    if (userEvents.length === 0) {
+      // As a last resort, show any tool activity even without a user turn anchor.
+      const g: TurnGroup = {
+        key: "no-user-messages",
+        header: null,
+        first_at: events[0]?.created_at ?? new Date().toISOString(),
+        toolItems: [],
+        toolById: new Map(),
+        assistant: null,
+        thought_first_at: null,
+        thought_last_at: null,
+        assistant_first_at: null,
+        assistant_complete_at: null,
+      };
+      for (const ev of events) {
+        const update = ev.payload_json?.acp_update ?? ev.payload_json ?? {};
+        const toolCallId =
+          String(ev.payload_json?.tool_call_id ?? update?.toolCallId ?? update?.rawInput?.call_id ?? "").trim();
+        if (!toolCallId) continue;
+        ensureTool(g, toolCallId, ev.created_at);
+      }
+      const items: ThreadItem[] = [...g.toolItems];
+      if (items.length === 0) items.push({ kind: "spacer", id: `spacer-${g.key}`, created_at: g.first_at });
+      groups.push({ key: g.key, header: g.header, items });
+      return { groups, debugEvents };
+    }
+
+    for (let i = 0; i < userEvents.length; i++) {
+      const u = userEvents[i];
+      const nextUser = userEvents[i + 1] ?? null;
+      const mid =
+        String(u.payload_json?.message_id ?? "").trim() ||
+        (idToString(u.id) || `msg-${u.created_at}`);
+
+      const header: WorkbenchTurnHeader = {
+        id: mid,
+        content: String(u.payload_json?.content ?? ""),
+        attachments: Array.isArray(u.payload_json?.attachments)
+          ? (u.payload_json.attachments as MessageAttachment[])
+          : [],
+        created_at: u.created_at,
+      };
+
+      const g: TurnGroup = {
+        key: `m-${mid}`,
+        header,
+        first_at: u.created_at,
+        toolItems: [],
+        toolById: new Map(),
+        assistant: null,
+        thought_first_at: null,
+        thought_last_at: null,
+        assistant_first_at: null,
+        assistant_complete_at: null,
+      };
+
+      const evs = eventsInRangeExclusive(u.created_at, nextUser?.created_at ?? null);
+
+      for (const ev of evs) {
+        const eventId = idToString(ev.id) || `${ev.created_at}`;
+        if (ev.created_at < g.first_at) g.first_at = ev.created_at;
+
+        switch (ev.event_type) {
+          case "error": {
+            const message = String(ev.payload_json?.message ?? "Error");
+            const provider = String(ev.payload_json?.provider ?? "").trim();
+            const output = provider ? `${message}\nprovider: ${provider}` : message;
+            const tool = ensureTool(g, `error-${eventId}`, ev.created_at);
+            tool.tool_kind = "error";
+            tool.title = "Error";
+            tool.status = "failed";
+            tool.updated_at = ev.created_at;
+            tool.updates_seen += 1;
+            tool.input = ev.payload_json ?? null;
+            tool.output_text = output;
+            tool.raw = ev;
+            break;
+          }
+          case "assistant_chunk": {
+            const fragment = String(ev.payload_json?.content_fragment ?? "");
+            if (!fragment) break;
+            if (!g.assistant) {
+              g.assistant = {
+                kind: "assistant",
+                id: `assistant-${g.key}`,
+                created_at: ev.created_at,
+                content: "",
+                thought: "",
+                is_complete: false,
+              };
+            }
+            g.assistant_first_at = g.assistant_first_at ?? ev.created_at;
+            g.assistant.content += fragment;
+            break;
+          }
+          case "assistant_complete": {
+            const full = String(ev.payload_json?.full_content ?? ev.payload_json?.content ?? "");
+            if (!g.assistant) {
+              g.assistant = {
+                kind: "assistant",
+                id: `assistant-${g.key}`,
+                created_at: ev.created_at,
+                content: "",
+                thought: "",
+                is_complete: false,
+              };
+            }
+            g.assistant_complete_at = ev.created_at;
+            if (full) g.assistant.content = full;
+            g.assistant.is_complete = true;
+            break;
+          }
+          case "thought_chunk": {
+            const fragment = String(ev.payload_json?.content_fragment ?? "");
+            if (!fragment) break;
+            if (!g.assistant) {
+              g.assistant = {
+                kind: "assistant",
+                id: `assistant-${g.key}`,
+                created_at: ev.created_at,
+                content: "",
+                thought: "",
+                is_complete: false,
+              };
+            }
+            g.thought_first_at = g.thought_first_at ?? ev.created_at;
+            g.thought_last_at = ev.created_at;
+            g.assistant.thought += fragment;
+            break;
+          }
+          case "tool_call":
+          case "tool_call_update":
+          case "tool_result": {
+            const update = ev.payload_json?.acp_update ?? ev.payload_json ?? {};
+            const toolCallId =
+              String(ev.payload_json?.tool_call_id ?? update?.toolCallId ?? update?.rawInput?.call_id ?? "").trim();
+            if (!toolCallId) {
+              debugEvents.push(ev);
+              break;
+            }
+            const tool = ensureTool(g, toolCallId, ev.created_at);
+            tool.updated_at = ev.created_at;
+            tool.updates_seen += 1;
+            tool.raw = ev.payload_json;
+
+            const nextKind = String(update?.kind ?? update?.toolCall?.kind ?? "").trim();
+            if (nextKind) tool.tool_kind = nextKind;
+
+            const nextTitle = String(update?.title ?? update?.toolCall?.title ?? update?.toolCall?.name ?? "").trim();
+            if (nextTitle) tool.title = nextTitle;
+            else if (tool.tool_kind && tool.title === "Tool") tool.title = humanToolKind(tool.tool_kind);
+
+            const nextStatus = String(update?.status ?? update?.toolCall?.status ?? "").trim();
+            if (nextStatus) tool.status = normalizeToolStatus(nextStatus, ev.event_type);
+            else if (ev.event_type === "tool_result") tool.status = "completed";
+
+            const locs = Array.isArray(update?.locations) ? update.locations : [];
+            tool.locations = locs.map((l: any) => ({ path: l?.path, range: l?.range }));
+
+            const rawInput =
+              update?.rawInput ?? update?.toolCall?.rawInput ?? update?.toolCall?.input ?? update?.input ?? null;
+            if (rawInput != null) tool.input = rawInput;
+
+            const output =
+              update?.outputText ??
+              update?.output_text ??
+              update?.toolCall?.outputText ??
+              update?.toolCall?.output_text ??
+              update?.result ??
+              null;
+            if (typeof output === "string") tool.output_text = output;
+
+            break;
+          }
+          default: {
+            break;
+          }
+        }
+      }
+
+      const items: ThreadItem[] = [];
+      items.push(...g.toolItems);
+      if (g.assistant) {
+        items.push({
+          ...g.assistant,
+          thought_seconds: (() => {
+            if (!g.thought_first_at) return undefined;
+            const start = Date.parse(g.thought_first_at);
+            const endRaw = g.assistant_first_at ?? g.assistant_complete_at ?? g.thought_last_at;
+            if (!endRaw) return undefined;
+            const end = Date.parse(endRaw);
+            if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return 1;
+            return Math.max(1, Math.round((end - start) / 1000));
+          })(),
+        });
+      }
+      if (items.length === 0) {
+        items.push({ kind: "spacer", id: `spacer-${g.key}`, created_at: g.first_at });
+      }
+
+      groups.push({ key: g.key, header: g.header, items });
+    }
+
+    return { groups, debugEvents };
+  }
 
   const eventsInRange = (startIso: string, endIso: string | null) => {
     const start = Date.parse(startIso);

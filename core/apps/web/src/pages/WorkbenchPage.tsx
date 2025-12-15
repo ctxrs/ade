@@ -333,6 +333,10 @@ export default function WorkbenchPage() {
         supervisor.refreshSession(sessionId, { watchDiff: true });
         supervisor.refreshQueue(sessionId);
         await postMessage(sessionId, prompt, "immediate");
+        // Ensure the workbench view can render the just-posted user message (and any streamed events)
+        // without waiting for a `done` event to trigger a refresh.
+        supervisor.refreshQueue(sessionId);
+        supervisor.refreshSession(sessionId, { watchDiff: true });
       }
 
       await refreshTasks();
