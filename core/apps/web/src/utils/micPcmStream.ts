@@ -54,7 +54,9 @@ export async function startMicPcmStream(opts: StartMicPcmStreamOpts): Promise<Mi
     },
   });
 
-  const audioContext = new AudioContext({ sampleRate: DEFAULT_TARGET_SAMPLE_RATE });
+  // Avoid forcing `sampleRate` here: some embedded WebViews (and Safari variants) may ignore it,
+  // or behave unexpectedly. We downsample manually to `DEFAULT_TARGET_SAMPLE_RATE` instead.
+  const audioContext = new AudioContext();
   const source = audioContext.createMediaStreamSource(stream);
   const sink = audioContext.createGain();
   sink.gain.value = 0;
@@ -67,6 +69,11 @@ export async function startMicPcmStream(opts: StartMicPcmStreamOpts): Promise<Mi
       await audioContext.resume();
     }
   } catch {}
+  if (audioContext.state !== "running") {
+    throw new Error(
+      `Microphone started but WebAudio is not running (state=${audioContext.state}). If you're in the desktop app on Linux, ensure your system WebView supports WebAudio + microphone capture.`,
+    );
+  }
 
   let disconnectGraph: (() => void) | null = null;
   let detachHandler: (() => void) | null = null;
@@ -97,14 +104,19 @@ export async function startMicPcmStream(opts: StartMicPcmStreamOpts): Promise<Mi
     }
   };
 
-  if (audioContext.audioWorklet?.addModule) {
+  const tryAudioWorklet = async (): Promise<boolean> => {
+    if (!audioContext.audioWorklet?.addModule) return false;
+
     const workletCode = `
       class MicProcessor extends AudioWorkletProcessor {
         process(inputs) {
           const input = inputs[0];
           if (input && input[0] && input[0].length) {
-            const copy = input[0].slice(0);
-            this.port.postMessage(copy);
+            const chan = input[0];
+            const copy = new Float32Array(chan.length);
+            copy.set(chan);
+            // Transfer the underlying buffer to avoid structured-clone surprises in some WebViews.
+            this.port.postMessage(copy.buffer, [copy.buffer]);
           }
           return true;
         }
@@ -114,33 +126,44 @@ export async function startMicPcmStream(opts: StartMicPcmStreamOpts): Promise<Mi
     const blob = new Blob([workletCode], { type: "application/javascript" });
     const url = URL.createObjectURL(blob);
 
-    await audioContext.audioWorklet.addModule(url);
-    URL.revokeObjectURL(url);
+    try {
+      await audioContext.audioWorklet.addModule(url);
+      URL.revokeObjectURL(url);
 
-    const node = new AudioWorkletNode(audioContext, "mic-processor");
-    source.connect(node);
-    node.connect(sink);
-    disconnectGraph = () => {
-      try {
-        node.disconnect();
-      } catch {}
-      try {
-        source.disconnect();
-      } catch {}
-    };
+      const node = new AudioWorkletNode(audioContext, "mic-processor");
+      source.connect(node);
+      node.connect(sink);
+      disconnectGraph = () => {
+        try {
+          node.disconnect();
+        } catch {}
+        try {
+          source.disconnect();
+        } catch {}
+      };
 
-    const onMessage = (ev: MessageEvent) => {
-      const data = ev.data;
-      if (data instanceof Float32Array) {
-        onFloats(data);
-      } else if (data instanceof ArrayBuffer) {
-        onFloats(new Float32Array(data));
-      }
-    };
-    node.port.addEventListener("message", onMessage);
-    node.port.start();
-    detachHandler = () => node.port.removeEventListener("message", onMessage);
-  } else {
+      const onMessage = (ev: MessageEvent) => {
+        const data = ev.data;
+        if (data instanceof Float32Array) {
+          onFloats(data);
+        } else if (data instanceof ArrayBuffer) {
+          onFloats(new Float32Array(data));
+        }
+      };
+      node.port.addEventListener("message", onMessage);
+      node.port.start?.();
+      detachHandler = () => node.port.removeEventListener("message", onMessage);
+      return true;
+    } catch {
+      try {
+        URL.revokeObjectURL(url);
+      } catch {}
+      return false;
+    }
+  };
+
+  const usingWorklet = await tryAudioWorklet();
+  if (!usingWorklet) {
     // Fallback for browsers without AudioWorklet support.
     const processor = audioContext.createScriptProcessor(2048, 1, 1);
     processor.onaudioprocess = (e) => {
@@ -166,7 +189,7 @@ export async function startMicPcmStream(opts: StartMicPcmStreamOpts): Promise<Mi
     if (!gotAnySamples) {
       opts.onError?.(
         new Error(
-          "Microphone started but no audio samples were captured. If you're on Safari, try enabling AudioWorklet support or switch to Chrome.",
+          `Microphone started but no audio samples were captured (sampleRate=${audioContext.sampleRate}, state=${audioContext.state}). If you're on Safari or the desktop app WebView, try switching to Chrome for now.`,
         ),
       );
     }

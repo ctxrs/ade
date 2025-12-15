@@ -3,13 +3,18 @@ import { Link } from "react-router-dom";
 import { DictationSettings, getSettings, updateSettings } from "../api/client";
 
 const MODEL_OPTIONS: Array<{ value: string; label: string }> = [
-  { value: "auto", label: "auto (best available)" },
+  { value: "auto", label: "Default (Deepgram Nova-3)" },
+  { value: "deepgram/flux-general", label: "Deepgram Flux" },
   { value: "deepgram/nova-3", label: "Deepgram Nova-3" },
+  { value: "deepgram/nova-3-medical", label: "Deepgram Nova-3 Medical" },
   { value: "deepgram/nova-2", label: "Deepgram Nova-2" },
+  { value: "deepgram/nova-2-medical", label: "Deepgram Nova-2 Medical" },
+  { value: "deepgram/nova-2-conversationalai", label: "Deepgram Nova-2 Conversational AI" },
+  { value: "deepgram/nova-2-phonecall", label: "Deepgram Nova-2 Phonecall" },
   { value: "assemblyai/universal-streaming", label: "AssemblyAI Universal-Streaming" },
   { value: "assemblyai/universal-streaming-multilingual", label: "AssemblyAI Universal-Streaming Multilingual" },
   { value: "cartesia/ink-whisper", label: "Cartesia Ink Whisper" },
-  { value: "elevenlabs/scribe-v2-realtime", label: "ElevenLabs Scribe V2 Realtime" },
+  { value: "elevenlabs/scribe_v2_realtime", label: "ElevenLabs Scribe V2 Realtime" },
 ];
 
 export default function SettingsPage() {
@@ -33,8 +38,16 @@ export default function SettingsPage() {
         if (cancelled) return;
         const d = s.dictation ?? null;
         if (d) {
+          const normalizeModel = (m: string): string => {
+            const v = String(m || "").trim();
+            if (!v || v === "auto") return "auto";
+            if (v === "elevenlabs/scribe-v2-realtime") return "elevenlabs/scribe_v2_realtime";
+            if (v === "deepgram/flux") return "deepgram/flux-general";
+            return v;
+          };
+
           setDictationEnabled(d.enabled);
-          setModel(d.livekit?.model ?? "auto");
+          setModel(normalizeModel(d.livekit?.model ?? "auto"));
           setLanguage(d.livekit?.language ?? "en");
           setBaseUrl(d.livekit?.base_url ?? "https://agent-gateway.livekit.cloud/v1");
           setApiKey(d.livekit?.api_key ?? "");

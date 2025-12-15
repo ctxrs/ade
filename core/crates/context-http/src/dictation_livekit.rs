@@ -84,6 +84,22 @@ fn ws_url_for_inference(base_url: &str) -> anyhow::Result<Url> {
     Ok(url)
 }
 
+fn normalize_model_id(model: &str) -> String {
+    let m = model.trim();
+    if m.is_empty() || m.eq_ignore_ascii_case("auto") {
+        // LiveKit Inference's STT WebSocket requires an explicit model id (at least on LiveKit Cloud).
+        // Default to a strong general-purpose model that supports streaming + interim transcripts.
+        return "deepgram/nova-3".to_string();
+    }
+    if m.eq_ignore_ascii_case("elevenlabs/scribe-v2-realtime") {
+        return "elevenlabs/scribe_v2_realtime".to_string();
+    }
+    if m.eq_ignore_ascii_case("deepgram/flux") {
+        return "deepgram/flux-general".to_string();
+    }
+    m.to_string()
+}
+
 async fn connect_livekit_inference_stt(
     cfg: &LiveKitDictationSettings,
 ) -> anyhow::Result<WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>> {
@@ -110,12 +126,10 @@ async fn connect_livekit_inference_stt(
     let mut session_create = serde_json::Map::new();
     session_create.insert("type".to_string(), serde_json::Value::String("session.create".to_string()));
     session_create.insert("settings".to_string(), serde_json::Value::Object(settings));
-    if cfg.model.trim() != "auto" && !cfg.model.trim().is_empty() {
-        session_create.insert(
-            "model".to_string(),
-            serde_json::Value::String(cfg.model.trim().to_string()),
-        );
-    }
+    session_create.insert(
+        "model".to_string(),
+        serde_json::Value::String(normalize_model_id(&cfg.model)),
+    );
 
     ws.send(TMessage::Text(
         serde_json::Value::Object(session_create).to_string().into(),
@@ -128,6 +142,7 @@ async fn connect_livekit_inference_stt(
 }
 
 pub async fn dictation_livekit_stream(mut socket: WebSocket, state: std::sync::Arc<AppState>) {
+    tracing::info!("dictation: client connected");
     let settings = settings::load_settings(&state.data_root).await;
     let Some(dictation) = settings.dictation else {
         let _ = socket
@@ -207,6 +222,10 @@ pub async fn dictation_livekit_stream(mut socket: WebSocket, state: std::sync::A
         }
     };
 
+    let _ = socket
+        .send(WsMessage::Text(json!({ "type": "ready" }).to_string()))
+        .await;
+
     let (client_tx, mut client_rx) = socket.split();
     let client_tx = Arc::new(Mutex::new(client_tx));
     let (mut lk_tx, mut lk_rx) = lk_ws.split();
@@ -216,12 +235,23 @@ pub async fn dictation_livekit_stream(mut socket: WebSocket, state: std::sync::A
     let finalize_requested_rx = finalize_requested.clone();
     let client_tx_send = client_tx.clone();
     let client_tx_recv = client_tx.clone();
+    let audio_started = Arc::new(AtomicBool::new(false));
+    let audio_started_send = audio_started.clone();
 
     let send_task = tokio::spawn(async move {
         let mut finalized = false;
+        let mut audio_bytes_sent: u64 = 0;
         while let Some(Ok(msg)) = client_rx.next().await {
             match msg {
                 WsMessage::Binary(bytes) if !finalized => {
+                    audio_bytes_sent = audio_bytes_sent.saturating_add(bytes.len() as u64);
+                    if !audio_started_send.swap(true, Ordering::Relaxed) {
+                        let _ = client_tx_send
+                            .lock()
+                            .await
+                            .send(WsMessage::Text(json!({ "type": "audio_started" }).to_string()))
+                            .await;
+                    }
                     let audio = BASE64.encode(bytes);
                     let payload = json!({ "type": "input_audio", "audio": audio }).to_string();
                     if lk_tx.send(TMessage::Text(payload.into())).await.is_err() {
@@ -258,11 +288,17 @@ pub async fn dictation_livekit_stream(mut socket: WebSocket, state: std::sync::A
                 _ => {}
             }
         }
+        tracing::info!(
+            "dictation: client send loop ended finalized={} bytes={}",
+            finalized,
+            audio_bytes_sent
+        );
     });
 
     let recv_task = tokio::spawn(async move {
         let mut got_final = false;
         let mut last_transcript_at = Instant::now();
+        let mut transcript_messages: u64 = 0;
 
         while let Some(item) = {
             if finalize_requested_rx.load(Ordering::Relaxed) {
@@ -286,6 +322,7 @@ pub async fn dictation_livekit_stream(mut socket: WebSocket, state: std::sync::A
                     let msg_type = v.get("type").and_then(|t| t.as_str()).unwrap_or("");
                     match msg_type {
                         "interim_transcript" | "final_transcript" => {
+                            transcript_messages = transcript_messages.saturating_add(1);
                             last_transcript_at = Instant::now();
                             if msg_type == "final_transcript" {
                                 got_final = true;
@@ -323,8 +360,15 @@ pub async fn dictation_livekit_stream(mut socket: WebSocket, state: std::sync::A
                 break;
             }
         }
+        tracing::info!(
+            "dictation: livekit recv loop ended got_final={} transcripts={} audio_started={}",
+            got_final,
+            transcript_messages,
+            audio_started.load(Ordering::Relaxed)
+        );
         let _ = client_tx_recv.lock().await.send(WsMessage::Text(json!({ "type": "done" }).to_string())).await;
     });
 
     let _ = tokio::join!(send_task, recv_task);
+    tracing::info!("dictation: client disconnected");
 }

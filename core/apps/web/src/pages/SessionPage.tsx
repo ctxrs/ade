@@ -165,6 +165,19 @@ export function SessionView({
   const dictationBaseRef = useRef<string>("");
   const dictationCommittedRef = useRef<string>("");
   const dictationInterimRef = useRef<string>("");
+  const dictationDebugEnabled = useMemo(() => {
+    try {
+      return new URLSearchParams(window.location.search).get("dictation_debug") === "1";
+    } catch {
+      return false;
+    }
+  }, []);
+  const [dictationDebugText, setDictationDebugText] = useState<string | null>(null);
+  const dictationAudioBytesRef = useRef(0);
+  const dictationAudioChunksRef = useRef(0);
+  const dictationReadyRef = useRef(false);
+  const dictationAudioStartedRef = useRef(false);
+  const dictationTranscriptMsgsRef = useRef(0);
 
   const entry = useSessionEntry(id ?? "");
   const session: Session | null = entry?.session ?? null;
@@ -216,6 +229,8 @@ export function SessionView({
     const next = appendSegment(appendSegment(base, committed), interim);
     setInput(next);
     dictationInterimRef.current = "";
+    dictationReadyRef.current = false;
+    dictationAudioStartedRef.current = false;
 
     return next;
   }, []);
@@ -251,6 +266,11 @@ export function SessionView({
     dictationBaseRef.current = input;
     dictationCommittedRef.current = "";
     dictationInterimRef.current = "";
+    dictationAudioBytesRef.current = 0;
+    dictationAudioChunksRef.current = 0;
+    dictationReadyRef.current = false;
+    dictationAudioStartedRef.current = false;
+    dictationTranscriptMsgsRef.current = 0;
 
     const openPromise = new Promise<void>((resolve, reject) => {
       ws.addEventListener("open", () => resolve(), { once: true });
@@ -261,9 +281,17 @@ export function SessionView({
       try {
         const data = JSON.parse(String(ev.data ?? "{}"));
         const t = String(data.type ?? "");
-        if (t === "interim") {
+        if (t === "ready") {
+          dictationReadyRef.current = true;
+          return;
+        } else if (t === "audio_started") {
+          dictationAudioStartedRef.current = true;
+          return;
+        } else if (t === "interim") {
+          dictationTranscriptMsgsRef.current += 1;
           dictationInterimRef.current = String(data.text ?? "");
         } else if (t === "final") {
+          dictationTranscriptMsgsRef.current += 1;
           dictationCommittedRef.current = appendSegment(
             dictationCommittedRef.current,
             String(data.text ?? ""),
@@ -301,6 +329,8 @@ export function SessionView({
       setDictationRecording(true);
       dictationMicRef.current = await startMicPcmStream({
         onPcmChunk: (pcm16) => {
+          dictationAudioChunksRef.current += 1;
+          dictationAudioBytesRef.current += pcm16.byteLength;
           if (ws.readyState === WebSocket.OPEN) ws.send(pcm16);
         },
         onError: (err) => {
@@ -323,6 +353,22 @@ export function SessionView({
       stopDictation().catch(() => {});
     };
   }, [stopDictation]);
+
+  useEffect(() => {
+    if (!dictationDebugEnabled) return;
+    if (!dictationRecording) {
+      setDictationDebugText(null);
+      return;
+    }
+    const timer = window.setInterval(() => {
+      const ws = dictationWsRef.current;
+      const wsState = ws ? ws.readyState : -1;
+      setDictationDebugText(
+        `Dictation debug\nws_state=${wsState} ready=${dictationReadyRef.current} audio_started=${dictationAudioStartedRef.current}\naudio_chunks=${dictationAudioChunksRef.current} audio_bytes=${dictationAudioBytesRef.current} transcript_msgs=${dictationTranscriptMsgsRef.current}`,
+      );
+    }, 500);
+    return () => window.clearInterval(timer);
+  }, [dictationDebugEnabled, dictationRecording]);
 
   useEffect(() => {
     if (!perfEnabled) return;
@@ -956,6 +1002,7 @@ export function SessionView({
                 supervisor.setSession(updated);
               }}
             />
+            {dictationDebugText && <div className="wb-banner">{dictationDebugText}</div>}
             {dictationError && <div className="wb-banner">{dictationError}</div>}
           </>
         ) : (
