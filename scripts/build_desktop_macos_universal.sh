@@ -32,8 +32,9 @@ echo "Building web assets..."
 pnpm -C core/apps/web build >/dev/null
 
 echo "Building sidecars (both arch)..."
-cargo build -p context-http -p context-mcp --release --target "$ARM_TARGET"
-cargo build -p context-http -p context-mcp --release --target "$INTEL_TARGET"
+# The Rust workspace lives under `core/` (this script runs from the repo root).
+cargo build --manifest-path core/Cargo.toml -p context-http -p context-mcp --release --target "$ARM_TARGET"
+cargo build --manifest-path core/Cargo.toml -p context-http -p context-mcp --release --target "$INTEL_TARGET"
 
 echo "Syncing universal sidecars + web dist into desktop resources..."
 node core/scripts/desktop_sync_resources_universal_macos.cjs --profile release

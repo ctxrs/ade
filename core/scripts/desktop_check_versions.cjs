@@ -24,7 +24,7 @@ const readCargoVersion = (p) => {
     }
     if (!inPackage) continue;
 
-    const match = text.match(/^\\s*version\\s*=\\s*\"([^\"]+)\"\\s*(?:#.*)?$/m);
+    const match = line.match(/^\s*version\s*=\s*"([^"]+)"\s*(?:#.*)?$/);
     if (match) return match[1];
   }
 
