@@ -82,6 +82,34 @@ fn main() {
                 .unwrap_or(json!("file:///unknown.rs"));
             last_opened_uri = uri.as_str().map(|s| s.to_string());
 
+            if let Some(uri_str) = uri.as_str() {
+                if uri_str.contains("apply_edit.rs") {
+                    write_response(
+                        &mut output,
+                        json!({
+                            "jsonrpc":"2.0",
+                            "id": 8888,
+                            "method":"workspace/applyEdit",
+                            "params": {
+                                "label": "Test didOpen applyEdit",
+                                "edit": {
+                                    "changes": {
+                                        (uri_str): [{
+                                            "range": {
+                                                "start": {"line": 0, "character": 0},
+                                                "end": {"line": 0, "character": 0}
+                                            },
+                                            "newText": "// didOpen applyEdit\n"
+                                        }]
+                                    }
+                                }
+                            }
+                        }),
+                    );
+                    let _ = read_lsp_message(&mut input);
+                }
+            }
+
             let diag = Diagnostic {
                 range: Range {
                     start: Position { line: 1, character: 0 },

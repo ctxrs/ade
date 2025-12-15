@@ -39,6 +39,32 @@ async fn test_server_produces_diagnostics() {
 }
 
 #[tokio::test]
+async fn test_server_apply_edit_is_applied_to_disk() {
+    let bin = env!("CARGO_BIN_EXE_context-lsp-test-server");
+
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let file = root.join("src/apply_edit.rs");
+    write_file(&file, "pub fn x() { }\n").await;
+
+    let mgr = LspManager::new(LspManagerConfig {
+        enabled: true,
+        rust_command: bin.to_string(),
+        rust_args: vec![],
+        diagnostics_wait: Duration::from_secs(2),
+        ..Default::default()
+    });
+
+    let _ = mgr.diagnostics_for_file(root, &file).await.unwrap();
+
+    let contents = tokio::fs::read_to_string(&file).await.unwrap();
+    assert!(
+        contents.starts_with("// didOpen applyEdit\n"),
+        "expected applyEdit to modify file, got:\n{contents}"
+    );
+}
+
+#[tokio::test]
 async fn test_server_supports_semantic_actions() {
     let bin = env!("CARGO_BIN_EXE_context-lsp-test-server");
 
