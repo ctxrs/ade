@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type React from "react";
 import { blobUrl, type MessageAttachment, type ProviderOptions, type ProviderStatus } from "../api/client";
 import { shouldSendOnEnter } from "../utils/keyboard";
-import { buildModelCatalog, composeModelId, parseModelId, type KnownEffort } from "../utils/modelEffort";
+import { buildModelCatalog, composeModelId, parseModelId } from "../utils/modelEffort";
 import { ComposerAutocompleteMenu } from "./ComposerAutocompleteMenu";
 import { useComposerAutocomplete, type SlashCommandDescriptor } from "../state/useComposerAutocomplete";
 import {
@@ -145,7 +145,7 @@ function buildModelsForProvider(providerId: string, opts?: ProviderOptions): Arr
   return FALLBACK_MODELS_BY_PROVIDER[providerId] ?? [];
 }
 
-function pickDefaultEffort(efforts: KnownEffort[]): KnownEffort | null {
+function pickDefaultEffort(efforts: string[]): string | null {
   if (efforts.includes("medium")) return "medium";
   return efforts[0] ?? null;
 }
@@ -153,7 +153,7 @@ function pickDefaultEffort(efforts: KnownEffort[]): KnownEffort | null {
 function deriveFullModelIdForBase(
   catalog: ReturnType<typeof buildModelCatalog>,
   base: string,
-  preferredEffort: KnownEffort | null,
+  preferredEffort: string | null,
 ): string {
   const efforts = catalog.effortsByBase[base] ?? [];
   if (efforts.length === 0) return base;
@@ -397,7 +397,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
     if (variant === "activeSession") {
       const models = (props as ActiveSessionProps).availableModels;
       const catalog = buildModelCatalog(models);
-      const parsed = parseModelId((props as ActiveSessionProps).currentModelId);
+      const parsed = parseModelId((props as ActiveSessionProps).currentModelId, catalog);
       return { models, catalog, parsed, loading: false, fromProviderOptions: false };
     }
 
@@ -407,7 +407,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
     const opts = ns?.providerOptions[primary.providerId];
     const models = buildModelsForProvider(primary.providerId, opts);
     const catalog = buildModelCatalog(models);
-    const parsed = parseModelId(primary.modelId);
+    const parsed = parseModelId(primary.modelId, catalog);
     const loading = !opts;
     return { models, catalog, parsed, loading, fromProviderOptions: true };
   }, [newSession, props, variant]);
@@ -741,7 +741,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
                 {expanded && canConfigureModels && (
                   <div className="wb-harness-config">
                     {rows.map((t) => {
-                      const parsed = parseModelId(t.modelId);
+                      const parsed = parseModelId(t.modelId, catalog);
                       const base = parsed.base || catalog.baseIds[0] || "";
                       const efforts = catalog.effortsByBase[base] ?? [];
                       const eff = parsed.effort;
@@ -772,7 +772,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
                                     className="wb-harness-model-select"
                                     value={eff ?? pickDefaultEffort(efforts) ?? ""}
                                     onChange={(e) => {
-                                      const nextEff = (e.target.value || "") as any;
+                                      const nextEff = e.target.value || "";
                                       const next = deriveFullModelIdForBase(catalog, base, nextEff || null);
                                       updateTrackModel(t.key, next);
                                     }}

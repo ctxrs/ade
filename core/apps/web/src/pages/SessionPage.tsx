@@ -33,6 +33,7 @@ import { HARNESS_CATALOG } from "../utils/harnessCatalog";
 import { WorkbenchComposer as UnifiedWorkbenchComposer, type WorkbenchModeId } from "../components/WorkbenchComposer";
 import { startMicPcmStream } from "../utils/micPcmStream";
 import { parseWsJson } from "../utils/wsJson";
+import { buildModelCatalog, composeModelId, parseModelId } from "../utils/modelEffort";
 
 type ThreadItem =
   | {
@@ -490,15 +491,27 @@ export function SessionView({
     acpModes?.current_mode_id ??
     "";
 
-  const effortOptions = useMemo(() => {
-    const currentBase = String(currentModelId).split("/")[0];
-    const efforts = new Set<string>();
-    for (const o of modelOptions) {
-      const [base, effort] = String(o.id).split("/");
-      if (base === currentBase && effort) efforts.add(effort);
-    }
-    return [...efforts];
-  }, [modelOptions, currentModelId]);
+  const modelCatalog = useMemo(() => buildModelCatalog(modelOptions), [modelOptions]);
+  const parsedModel = useMemo(() => parseModelId(currentModelId, modelCatalog), [currentModelId, modelCatalog]);
+  const currentBase = parsedModel.base || modelCatalog.baseIds[0] || "";
+  const currentEffort = parsedModel.effort;
+  const effortOptions = modelCatalog.effortsByBase[currentBase] ?? [];
+
+  const pickDefaultEffort = useCallback((efforts: string[]) => {
+    if (efforts.includes("medium")) return "medium";
+    return efforts[0] ?? null;
+  }, []);
+
+  const deriveFullModelIdForBase = useCallback(
+    (base: string, preferredEffort: string | null) => {
+      const efforts = modelCatalog.effortsByBase[base] ?? [];
+      if (efforts.length === 0) return base;
+      const eff = preferredEffort && efforts.includes(preferredEffort) ? preferredEffort : pickDefaultEffort(efforts);
+      if (!eff) return base;
+      return modelCatalog.fullIdByBaseEffort[base]?.[eff] ?? composeModelId(base, eff);
+    },
+    [modelCatalog, pickDefaultEffort],
+  );
 
   const threadActivityCount = variant === "workbench" ? wbFlatItems.length : threadItems.length;
 
@@ -705,41 +718,42 @@ export function SessionView({
           </div>
         )}
 
-        {(modelOptions.length > 0 || modeOptions.length > 0) && id && variant === "legacy" && (
-          <div className="card">
-            {modelOptions.length > 0 && (
-              <label>
-                Model
-                <select
-                  value={currentModelId}
-                  onChange={async (e) => {
-                    const next = e.target.value;
-                    const updated = await setSessionModel(id, next);
-                    supervisor.setSession(updated);
-                  }}
-                >
-                  {modelOptions.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            )}
+	        {(modelOptions.length > 0 || modeOptions.length > 0) && id && variant === "legacy" && (
+	          <div className="card">
+	            {modelCatalog.baseIds.length > 0 && (
+	              <label>
+	                Model
+	                <select
+	                  value={currentBase}
+	                  onChange={async (e) => {
+	                    const nextBase = e.target.value;
+	                    const next = deriveFullModelIdForBase(nextBase, currentEffort);
+	                    const updated = await setSessionModel(id, next);
+	                    supervisor.setSession(updated);
+	                  }}
+	                >
+	                  {modelCatalog.baseIds.map((b) => (
+	                    <option key={b} value={b}>
+	                      {modelCatalog.displayNameByBase[b] ?? b}
+	                    </option>
+	                  ))}
+	                </select>
+	              </label>
+	            )}
 
-            {effortOptions.length > 0 && (
-              <label>
-                Effort
-                <select
-                  value={String(currentModelId).split("/")[1] ?? ""}
-                  onChange={async (e) => {
-                    const base = String(currentModelId).split("/")[0];
-                    const next = `${base}/${e.target.value}`;
-                    const updated = await setSessionModel(id, next);
-                    supervisor.setSession(updated);
-                  }}
-                >
-                  {effortOptions.map((eff) => (
+	            {effortOptions.length > 0 && (
+	              <label>
+	                Effort
+	                <select
+	                  value={currentEffort ?? pickDefaultEffort(effortOptions) ?? ""}
+	                  onChange={async (e) => {
+	                    const nextEff = e.target.value || "";
+	                    const next = deriveFullModelIdForBase(currentBase, nextEff || null);
+	                    const updated = await setSessionModel(id, next);
+	                    supervisor.setSession(updated);
+	                  }}
+	                >
+	                  {effortOptions.map((eff) => (
                     <option key={eff} value={eff}>
                       {eff}
                     </option>
