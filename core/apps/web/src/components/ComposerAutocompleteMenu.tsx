@@ -1,7 +1,8 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import type React from "react";
 import { createPortal } from "react-dom";
-import { ArrowDown, File as FileIcon, Folder, Slash } from "lucide-react";
+import { File as FileLucideIcon, Folder, Slash } from "lucide-react";
+import { FileIcon } from "./FileIcon";
 
 export type ComposerAutocompleteItem =
   | {
@@ -124,6 +125,10 @@ export function ComposerAutocompleteMenu({
 
   if (!open) return null;
 
+  // Don't show container during initial loading state (loading + no items)
+  const hasContent = items.length > 0 || (!loading && items.length === 0);
+  if (!hasContent) return null;
+
   const body = (
     <div className="composer-ac" style={{ maxHeight }} role="listbox" aria-label="Completions">
       {!loading && items.length === 0 && <div className="composer-ac-empty">No matches</div>}
@@ -156,7 +161,7 @@ export function ComposerAutocompleteMenu({
             aria-selected={active}
           >
             <span className={`composer-ac-icon ${it.kind === "file" ? "composer-ac-icon-file" : "composer-ac-icon-slash"}`} aria-hidden="true">
-              {it.kind === "file" ? <ArrowDown size={16} /> : <Slash size={16} />}
+              {it.kind === "file" ? <FileIcon path={it.path} size={16} /> : <Slash size={16} />}
             </span>
             <span className="composer-ac-item-text" title={it.kind === "file" ? `${left} ${right}`.trim() : left}>
               <span className="composer-ac-item-left">{left}</span>
@@ -202,7 +207,7 @@ export function ComposerAutocompleteMenu({
               style={{ paddingLeft: `${trimmed.length * 14}px` }}
             >
               <span className="composer-ac-preview-icon" aria-hidden="true">
-                <FileIcon size={14} />
+                <FileLucideIcon size={14} />
               </span>
               <span className="composer-ac-preview-name">{file}</span>
             </div>

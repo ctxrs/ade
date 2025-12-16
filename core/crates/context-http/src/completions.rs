@@ -33,32 +33,51 @@ fn match_score(candidate: &str, query: &str) -> Option<i32> {
     let cand = candidate.to_lowercase();
     let q = query.to_lowercase();
 
-    if let Some(idx) = cand.find(&q) {
-        let idx = i32::try_from(idx).ok()?;
-        let len = i32::try_from(candidate.len()).ok()?;
-        // Prefer earlier matches and shorter paths.
-        return Some(10_000 - idx * 10 - len);
+    // Extract filename from path (everything after last '/')
+    let filename = candidate.rsplit('/').next().unwrap_or(candidate);
+    let filename_lower = filename.to_lowercase();
+
+    // 1. Filename exact match - highest priority
+    if filename_lower == q {
+        return Some(100_000);
     }
 
-    // Fallback: subsequence match (characters in order).
-    let mut q_chars = q.chars();
-    let mut next = q_chars.next()?;
-    let mut last_match: Option<usize> = None;
-    let mut gaps: i32 = 0;
+    // 2. Filename prefix match
+    if filename_lower.starts_with(&q) {
+        let filename_len = i32::try_from(filename.len()).ok()?;
+        return Some(50_000 - filename_len);
+    }
 
-    for (i, c) in cand.chars().enumerate() {
-        if c == next {
-            if let Some(prev) = last_match {
-                gaps += i32::try_from(i.saturating_sub(prev + 1)).ok()?;
+    // 3. Filename substring match
+    if let Some(idx) = filename_lower.find(&q) {
+        let idx = i32::try_from(idx).ok()?;
+        let filename_len = i32::try_from(filename.len()).ok()?;
+        return Some(20_000 - idx * 10 - filename_len);
+    }
+
+    // 4. Directory name substring match
+    // Check each directory component separately
+    let path_parts: Vec<&str> = candidate.split('/').collect();
+    if path_parts.len() > 1 {
+        for (i, part) in path_parts.iter().enumerate() {
+            // Skip the filename (last part)
+            if i == path_parts.len() - 1 {
+                continue;
             }
-            last_match = Some(i);
-            if let Some(n) = q_chars.next() {
-                next = n;
-            } else {
-                let len = i32::try_from(candidate.len()).ok()?;
-                return Some(5_000 - gaps * 10 - len);
+            let part_lower = part.to_lowercase();
+            if let Some(idx) = part_lower.find(&q) {
+                let idx = i32::try_from(idx).ok()?;
+                let path_len = i32::try_from(candidate.len()).ok()?;
+                return Some(5_000 - idx * 10 - path_len);
             }
         }
+    }
+
+    // 5. Full path substring match as fallback
+    if let Some(idx) = cand.find(&q) {
+        let idx = i32::try_from(idx).ok()?;
+        let path_len = i32::try_from(candidate.len()).ok()?;
+        return Some(2_000 - idx * 10 - path_len);
     }
 
     None
@@ -93,7 +112,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn ranks_prefix_and_substring_ahead_of_subsequence() {
+    fn ranks_filename_matches_highest() {
         let paths = vec![
             "src/pages/SessionPage.tsx".to_string(),
             "src/pages/WorkbenchPage.tsx".to_string(),
@@ -102,6 +121,20 @@ mod tests {
 
         let out = filter_and_rank_paths(&paths, "sess", 10);
         assert_eq!(out.first().map(|s| s.as_str()), Some("src/pages/SessionPage.tsx"));
+    }
+
+    #[test]
+    fn no_fuzzy_subsequence_matching() {
+        let paths = vec![
+            "scripts/supabase_local_start.sh".to_string(),
+            "src/earth_model.ts".to_string(),
+        ];
+
+        // "earth" should NOT match "supabase_local_start.sh" (no substring)
+        // but SHOULD match "earth_model.ts" (filename substring)
+        let out = filter_and_rank_paths(&paths, "earth", 10);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out.first().map(|s| s.as_str()), Some("src/earth_model.ts"));
     }
 
     #[test]
