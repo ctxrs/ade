@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import type React from "react";
 import { createPortal } from "react-dom";
+import { ArrowDown, File as FileIcon, Folder, Slash } from "lucide-react";
 
 export type ComposerAutocompleteItem =
   | {
@@ -29,58 +30,6 @@ function splitPath(path: string): { fileName: string; dirName: string } {
   const fileName = parts.length > 0 ? parts[parts.length - 1] : normalized;
   const dirName = parts.length > 1 ? parts.slice(0, -1).join("/") : "";
   return { fileName, dirName };
-}
-
-function IconInsert({ size = 16 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path
-        d="M12 4v10"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-      />
-      <path
-        d="M7 11l5 5 5-5"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-
-function IconFolder({ size = 16 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path
-        d="M3 7a2 2 0 012-2h5l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-
-function IconFile({ size = 16 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path
-        d="M6 3h7l5 5v13a1 1 0 01-1 1H6a1 1 0 01-1-1V4a1 1 0 011-1z"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinejoin="round"
-      />
-      <path
-        d="M13 3v6h6"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
 }
 
 export function ComposerAutocompleteMenu({
@@ -207,7 +156,7 @@ export function ComposerAutocompleteMenu({
             aria-selected={active}
           >
             <span className={`composer-ac-icon ${it.kind === "file" ? "composer-ac-icon-file" : "composer-ac-icon-slash"}`} aria-hidden="true">
-              {it.kind === "file" ? <IconInsert size={16} /> : "/"}
+              {it.kind === "file" ? <ArrowDown size={16} /> : <Slash size={16} />}
             </span>
             <span className="composer-ac-item-text" title={it.kind === "file" ? `${left} ${right}`.trim() : left}>
               <span className="composer-ac-item-left">{left}</span>
@@ -243,7 +192,7 @@ export function ComposerAutocompleteMenu({
                 style={{ paddingLeft: `${i * 14}px` }}
               >
                 <span className="composer-ac-preview-icon" aria-hidden="true">
-                  <IconFolder size={14} />
+                  <Folder size={14} />
                 </span>
                 <span className="composer-ac-preview-name">{seg}</span>
               </div>
@@ -253,7 +202,7 @@ export function ComposerAutocompleteMenu({
               style={{ paddingLeft: `${trimmed.length * 14}px` }}
             >
               <span className="composer-ac-preview-icon" aria-hidden="true">
-                <IconFile size={14} />
+                <FileIcon size={14} />
               </span>
               <span className="composer-ac-preview-name">{file}</span>
             </div>
