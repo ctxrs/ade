@@ -10,6 +10,7 @@ import {
   Task,
   Track,
   Workspace,
+  archiveTask,
   applyTrackDiffPatch,
   discardEditPlan,
   createSession,
@@ -27,6 +28,7 @@ import {
   listTracks,
   postMessage,
   trackDiff,
+  unarchiveTask,
 } from "../api/client";
 import { useSessionCacheSnapshot, useSessionEntry, useSessionSupervisor } from "../state/sessionSupervisor";
 import { DiffReviewPane } from "../components/DiffReviewPane";
@@ -35,7 +37,7 @@ import { SessionView } from "./SessionPage";
 import { HARNESS_CATALOG } from "../utils/harnessCatalog";
 import { WorkbenchComposer, type DraftTrack, type WorkbenchEnvTarget, type WorkbenchModeId } from "../components/WorkbenchComposer";
 import type { SlashCommandDescriptor } from "../state/useComposerAutocomplete";
-import { IconGear } from "../components/workbenchIcons";
+import { IconArchive, IconArrowUp, IconAt, IconChat, IconChevronDown, IconDots, IconGear, IconImage, IconLaptop, IconMic } from "../components/workbenchIcons";
 import { startMicPcmStream } from "../utils/micPcmStream";
 import { parseWsJson } from "../utils/wsJson";
 
@@ -68,10 +70,42 @@ function appendSegment(base: string, addition: string): string {
   return `${base}${needsSpace ? " " : ""}${trimmed}`;
 }
 
+function parseMs(value: string | null | undefined): number | null {
+  if (!value) return null;
+  const ms = Date.parse(value);
+  return Number.isFinite(ms) ? ms : null;
+}
+
+function taskActivityMs(t: Task): number | null {
+  return parseMs(t.last_activity_at ?? null) ?? parseMs(t.updated_at ?? null) ?? parseMs(t.created_at ?? null);
+}
+
+function formatAgeShort(ms: number | null): string {
+  if (ms === null) return "";
+  const diffMs = Math.max(0, Date.now() - ms);
+  const diffMin = Math.floor(diffMs / 60000);
+  if (diffMin < 1) return "now";
+  if (diffMin < 60) return `${diffMin}m`;
+  const diffHr = Math.floor(diffMin / 60);
+  if (diffHr < 24) return `${diffHr}h`;
+  const diffDay = Math.floor(diffHr / 24);
+  if (diffDay < 14) return `${diffDay}d`;
+  return new Date(ms).toLocaleDateString([], { month: "short", day: "numeric" });
+}
+
+function lastAssistantMessageMs(messages: { role: string; created_at: string }[]): number | null {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m?.role === "assistant") return parseMs(m.created_at);
+  }
+  return null;
+}
+
 export default function WorkbenchPage() {
   const { id: workspaceId } = useParams<{ id: string }>();
   const location = useLocation();
   const supervisor = useSessionSupervisor();
+  const sessionSnap = useSessionCacheSnapshot();
   const newComposerRef = useRef<HTMLDivElement | null>(null);
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -94,6 +128,10 @@ export default function WorkbenchPage() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [taskQuery, setTaskQuery] = useState("");
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
+  const [archivedCollapsed, setArchivedCollapsed] = useState(true);
+  const [taskSeenAssistantAtById, setTaskSeenAssistantAtById] = useState<Record<string, string>>({});
+  const [taskMenu, setTaskMenu] = useState<{ taskId: string; style: React.CSSProperties } | null>(null);
+  const taskMenuRef = useRef<HTMLDivElement | null>(null);
 
   const [tracks, setTracks] = useState<Track[]>([]);
   const [sessionsByTrack, setSessionsByTrack] = useState<Record<string, any[]>>({});
@@ -146,6 +184,54 @@ export default function WorkbenchPage() {
       document.documentElement.classList.remove("wb-no-scroll");
     };
   }, []);
+
+  useEffect(() => {
+    if (!workspaceId) return;
+    const key = `wb.archivedCollapsed.${workspaceId}`;
+    const v = localStorage.getItem(key);
+    if (v === "0") setArchivedCollapsed(false);
+    else setArchivedCollapsed(true);
+  }, [workspaceId]);
+
+  useEffect(() => {
+    if (!workspaceId) return;
+    localStorage.setItem(`wb.archivedCollapsed.${workspaceId}`, archivedCollapsed ? "1" : "0");
+  }, [archivedCollapsed, workspaceId]);
+
+  useEffect(() => {
+    if (!workspaceId) return;
+    const key = `wb.taskSeenAssistantAtById.${workspaceId}`;
+    try {
+      const parsed = JSON.parse(localStorage.getItem(key) ?? "{}");
+      if (parsed && typeof parsed === "object") setTaskSeenAssistantAtById(parsed);
+      else setTaskSeenAssistantAtById({});
+    } catch {
+      setTaskSeenAssistantAtById({});
+    }
+  }, [workspaceId]);
+
+  useEffect(() => {
+    if (!workspaceId) return;
+    localStorage.setItem(`wb.taskSeenAssistantAtById.${workspaceId}`, JSON.stringify(taskSeenAssistantAtById));
+  }, [taskSeenAssistantAtById, workspaceId]);
+
+  useEffect(() => {
+    const onPointerDown = (e: PointerEvent) => {
+      if (!taskMenu) return;
+      const el = e.target as HTMLElement | null;
+      if (el && (el.closest(".wb-task-menu") || el.closest(".wb-task-menu-trigger"))) return;
+      setTaskMenu(null);
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setTaskMenu(null);
+    };
+    window.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [taskMenu]);
 
   useEffect(() => {
     let cancelled = false;
@@ -238,10 +324,9 @@ export default function WorkbenchPage() {
 
   const sortedTasks = useMemo(() => {
     return [...tasks].sort((a, b) => {
-      const ta = Date.parse(a.updated_at);
-      const tb = Date.parse(b.updated_at);
-      if (Number.isFinite(ta) && Number.isFinite(tb)) return tb - ta;
-      return String(b.updated_at).localeCompare(String(a.updated_at));
+      const ta = taskActivityMs(a) ?? 0;
+      const tb = taskActivityMs(b) ?? 0;
+      return tb - ta;
     });
   }, [tasks]);
 
@@ -250,6 +335,53 @@ export default function WorkbenchPage() {
     if (!q) return sortedTasks;
     return sortedTasks.filter((t) => (t.title ?? "").toLowerCase().includes(q));
   }, [sortedTasks, taskQuery]);
+
+  const taskLiveInfo = useMemo(() => {
+    const workingByTask = new Set<string>();
+    const lastAssistantMsByTask: Record<string, number> = {};
+    for (const entry of Object.values(sessionSnap.sessions)) {
+      const taskId = entry.session ? idToString(entry.session.task_id) : "";
+      if (!taskId) continue;
+      if (entry.session?.status === "active") workingByTask.add(taskId);
+      const ms = lastAssistantMessageMs(entry.messages);
+      if (ms !== null) lastAssistantMsByTask[taskId] = Math.max(lastAssistantMsByTask[taskId] ?? 0, ms);
+    }
+    return { workingByTask, lastAssistantMsByTask };
+  }, [sessionSnap.sessions]);
+
+  const activeTasks = useMemo(() => filteredTasks.filter((t) => !t.archived_at), [filteredTasks]);
+  const archivedTasks = useMemo(() => filteredTasks.filter((t) => !!t.archived_at), [filteredTasks]);
+
+  const markTaskSeen = useCallback(
+    (taskId: string) => {
+      const t = tasks.find((x) => idToString(x.id) === taskId);
+      const last = t?.last_assistant_message_at ?? null;
+      if (!last) return;
+      setTaskSeenAssistantAtById((prev) => ({ ...prev, [taskId]: last }));
+    },
+    [tasks],
+  );
+
+  useEffect(() => {
+    if (!activeTaskId) return;
+    markTaskSeen(activeTaskId);
+  }, [activeTaskId, markTaskSeen]);
+
+  const onToggleArchive = useCallback(
+    async (taskId: string, nextArchived: boolean) => {
+      const updated = nextArchived ? await archiveTask(taskId) : await unarchiveTask(taskId);
+      setTasks((prev) => prev.map((t) => (idToString(t.id) === taskId ? { ...t, ...updated } : t)));
+      if (nextArchived && activeTaskId === taskId) setArchivedCollapsed(false);
+    },
+    [activeTaskId],
+  );
+
+  const openTaskMenu = useCallback((taskId: string, triggerEl: HTMLElement) => {
+    const rect = triggerEl.getBoundingClientRect();
+    const left = Math.min(rect.left, window.innerWidth - 240);
+    const top = Math.min(rect.bottom + 6, window.innerHeight - 220);
+    setTaskMenu((prev) => (prev?.taskId === taskId ? null : { taskId, style: { left, top } }));
+  }, []);
 
   const activeSessionId = useMemo(() => {
     if (!activeTrackId) return null;
@@ -672,34 +804,177 @@ export default function WorkbenchPage() {
           />
         </div>
 
-        <div className="wb-sidebar-section">
-          <div className="wb-section-title">Pinned</div>
-          <div className="wb-muted">No pinned tasks.</div>
-        </div>
-
         <div className="wb-sidebar-section wb-sidebar-grow">
-          <div className="wb-section-title">TASKS</div>
-          <div className="wb-task-list">
-            {filteredTasks.map((t) => {
-              const tid = idToString(t.id);
-              const selected = tid === activeTaskId;
-              const title = t.title ?? "New conversation";
-              return (
-                <button
-                  key={tid}
-                  type="button"
-                  className={`wb-task ${selected ? "wb-task-active" : ""}`}
-                  onClick={() => setActiveTaskId(tid)}
-                  title={title}
-                >
-                  <div className="wb-task-title">{title}</div>
-                  <div className="wb-task-sub">
-                    {new Date(t.updated_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+          <div className="wb-task-scroll">
+            <div className="wb-section-header">
+              <div className="wb-section-title">Active</div>
+            </div>
+
+            <div className="wb-task-list" role="list" aria-label="Active tasks">
+              {activeTasks.map((t) => {
+                const tid = idToString(t.id);
+                const selected = tid === activeTaskId;
+                const title = t.title ?? "New conversation";
+                const working = taskLiveInfo.workingByTask.has(tid) || t.has_active_session === true;
+                const serverLastAssistantMs = parseMs(t.last_assistant_message_at ?? null);
+                const liveLastAssistantMs = taskLiveInfo.lastAssistantMsByTask[tid] ?? null;
+                const lastAssistantMs =
+                  liveLastAssistantMs !== null && serverLastAssistantMs !== null
+                    ? Math.max(liveLastAssistantMs, serverLastAssistantMs)
+                    : liveLastAssistantMs ?? serverLastAssistantMs;
+                const seenMs = parseMs(taskSeenAssistantAtById[tid] ?? null);
+                const unread = !working && lastAssistantMs !== null && (seenMs === null || lastAssistantMs > seenMs);
+                const age = formatAgeShort(taskActivityMs(t));
+                return (
+                  <div
+                    key={tid}
+                    className={`wb-task-row ${selected ? "wb-task-row-active" : ""}`}
+                    role="listitem"
+                    onClick={() => setActiveTaskId(tid)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        setActiveTaskId(tid);
+                      }
+                    }}
+                    tabIndex={0}
+                    title={title}
+                  >
+                    <div className="wb-task-leading" aria-hidden="true">
+                      {working ? <span className="wb-task-spinner" /> : <IconChat size={14} />}
+                      {unread && <span className="wb-task-unread" />}
+                    </div>
+                    <div className="wb-task-body">
+                      <div className="wb-task-title">{title}</div>
+                    </div>
+                    <div className="wb-task-meta">
+                      {age && <div className="wb-task-age">{age}</div>}
+                      <div className="wb-task-actions" aria-label="Task actions">
+                        <button
+                          type="button"
+                          className="wb-icon wb-task-action"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onToggleArchive(tid, true).catch(() => {});
+                          }}
+                          aria-label="Archive"
+                          title="Archive"
+                        >
+                          <IconArchive size={14} />
+                        </button>
+                        <button
+                          type="button"
+                          className="wb-icon wb-task-action wb-task-menu-trigger"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openTaskMenu(tid, e.currentTarget);
+                          }}
+                          aria-label="More actions"
+                          title="More actions"
+                        >
+                          <IconDots size={14} />
+                        </button>
+                      </div>
+                    </div>
                   </div>
-                </button>
-              );
-            })}
-            {filteredTasks.length === 0 && <div className="wb-muted">No tasks yet.</div>}
+                );
+              })}
+              {activeTasks.length === 0 && <div className="wb-muted">No active tasks.</div>}
+            </div>
+
+            <div className="wb-section-header">
+              <button
+                type="button"
+                className="wb-section-toggle"
+                onClick={() => setArchivedCollapsed((v) => !v)}
+                aria-expanded={!archivedCollapsed}
+                aria-controls="wb-archived-list"
+              >
+                <span className="wb-section-title">Archived</span>
+                <span className={`wb-section-chev ${archivedCollapsed ? "wb-section-chev-collapsed" : ""}`}>
+                  <IconChevronDown size={14} />
+                </span>
+              </button>
+            </div>
+
+            {!archivedCollapsed && (
+              <div
+                id="wb-archived-list"
+                className="wb-task-list wb-task-list-archived"
+                role="list"
+                aria-label="Archived tasks"
+              >
+                {archivedTasks.map((t) => {
+                  const tid = idToString(t.id);
+                  const selected = tid === activeTaskId;
+                  const title = t.title ?? "New conversation";
+                  const working = taskLiveInfo.workingByTask.has(tid) || t.has_active_session === true;
+                  const serverLastAssistantMs = parseMs(t.last_assistant_message_at ?? null);
+                  const liveLastAssistantMs = taskLiveInfo.lastAssistantMsByTask[tid] ?? null;
+                  const lastAssistantMs =
+                    liveLastAssistantMs !== null && serverLastAssistantMs !== null
+                      ? Math.max(liveLastAssistantMs, serverLastAssistantMs)
+                      : liveLastAssistantMs ?? serverLastAssistantMs;
+                  const seenMs = parseMs(taskSeenAssistantAtById[tid] ?? null);
+                  const unread = !working && lastAssistantMs !== null && (seenMs === null || lastAssistantMs > seenMs);
+                  const age = formatAgeShort(taskActivityMs(t));
+                  return (
+                    <div
+                      key={tid}
+                      className={`wb-task-row wb-task-row-archived ${selected ? "wb-task-row-active" : ""}`}
+                      role="listitem"
+                      onClick={() => setActiveTaskId(tid)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          setActiveTaskId(tid);
+                        }
+                      }}
+                      tabIndex={0}
+                      title={title}
+                    >
+                      <div className="wb-task-leading" aria-hidden="true">
+                        {working ? <span className="wb-task-spinner" /> : <IconChat size={14} />}
+                        {unread && <span className="wb-task-unread" />}
+                      </div>
+                      <div className="wb-task-body">
+                        <div className="wb-task-title">{title}</div>
+                      </div>
+                      <div className="wb-task-meta">
+                        {age && <div className="wb-task-age">{age}</div>}
+                        <div className="wb-task-actions" aria-label="Task actions">
+                          <button
+                            type="button"
+                            className="wb-icon wb-task-action"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onToggleArchive(tid, false).catch(() => {});
+                            }}
+                            aria-label="Unarchive"
+                            title="Unarchive"
+                          >
+                            <IconArchive size={14} />
+                          </button>
+                          <button
+                            type="button"
+                            className="wb-icon wb-task-action wb-task-menu-trigger"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openTaskMenu(tid, e.currentTarget);
+                            }}
+                            aria-label="More actions"
+                            title="More actions"
+                          >
+                            <IconDots size={14} />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+                {archivedTasks.length === 0 && <div className="wb-muted">No archived tasks.</div>}
+              </div>
+            )}
           </div>
         </div>
 
@@ -1422,6 +1697,39 @@ export default function WorkbenchPage() {
           </div>
         )}
       </div>
+
+      {taskMenu && (
+        <div className="wb-menu wb-task-menu" role="menu" ref={taskMenuRef} style={taskMenu.style}>
+          <button
+            type="button"
+            className="wb-menu-item"
+            onClick={() => {
+              const tid = taskMenu.taskId;
+              const t = tasks.find((x) => idToString(x.id) === tid);
+              const nextArchived = !t?.archived_at;
+              onToggleArchive(tid, nextArchived).catch(() => {});
+              setTaskMenu(null);
+            }}
+            role="menuitem"
+          >
+            {(() => {
+              const t = tasks.find((x) => idToString(x.id) === taskMenu.taskId);
+              return t?.archived_at ? "Unarchive" : "Archive";
+            })()}
+          </button>
+          <button
+            type="button"
+            className="wb-menu-item"
+            onClick={() => {
+              navigator.clipboard.writeText(taskMenu.taskId).catch(() => {});
+              setTaskMenu(null);
+            }}
+            role="menuitem"
+          >
+            Copy task ID
+          </button>
+        </div>
+      )}
     </div>
   );
 }

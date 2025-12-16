@@ -163,6 +163,8 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
             get(list_tasks).post(create_task),
         )
         .route("/api/tasks/:id", get(get_task))
+        .route("/api/tasks/:id/archive", post(archive_task))
+        .route("/api/tasks/:id/unarchive", post(unarchive_task))
         .route("/api/tasks/:id/tracks", get(list_tracks).post(create_track))
         .route(
             "/api/tracks/:id/sessions",
@@ -3609,6 +3611,44 @@ async fn get_task(
     Path(id): Path<String>,
 ) -> Result<Json<Task>, StatusCode> {
     let task_id = TaskId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
+    match state.store.get_task(task_id).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)? {
+        Some(task) => Ok(Json(task)),
+        None => Err(StatusCode::NOT_FOUND),
+    }
+}
+
+async fn archive_task(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<Task>, StatusCode> {
+    let task_id = TaskId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
+    let updated = state
+        .store
+        .archive_task(task_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if !updated {
+        return Err(StatusCode::NOT_FOUND);
+    }
+    match state.store.get_task(task_id).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)? {
+        Some(task) => Ok(Json(task)),
+        None => Err(StatusCode::NOT_FOUND),
+    }
+}
+
+async fn unarchive_task(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<Task>, StatusCode> {
+    let task_id = TaskId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
+    let updated = state
+        .store
+        .unarchive_task(task_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if !updated {
+        return Err(StatusCode::NOT_FOUND);
+    }
     match state.store.get_task(task_id).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)? {
         Some(task) => Ok(Json(task)),
         None => Err(StatusCode::NOT_FOUND),

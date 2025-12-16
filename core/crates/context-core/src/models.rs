@@ -21,6 +21,10 @@ pub enum TaskStatus {
     Cancelled,
 }
 
+fn is_false(v: &bool) -> bool {
+    !*v
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Task {
     pub id: TaskId,
@@ -31,6 +35,14 @@ pub struct Task {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub exec_plan_id: Option<String>,
+    #[serde(default)]
+    pub archived_at: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_activity_at: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_assistant_message_at: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub has_active_session: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

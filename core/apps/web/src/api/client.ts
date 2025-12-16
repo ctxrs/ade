@@ -13,6 +13,10 @@ export type Task = {
   status: string;
   created_at: string;
   updated_at: string;
+  archived_at?: string | null;
+  last_activity_at?: string | null;
+  last_assistant_message_at?: string | null;
+  has_active_session?: boolean;
 };
 
 export type Track = {
@@ -353,6 +357,12 @@ export const createTask = (
 
 export const getTask = (taskId: string) =>
   api<Task>(`/api/tasks/${taskId}`);
+
+export const archiveTask = (taskId: string) =>
+  api<Task>(`/api/tasks/${taskId}/archive`, { method: "POST" });
+
+export const unarchiveTask = (taskId: string) =>
+  api<Task>(`/api/tasks/${taskId}/unarchive`, { method: "POST" });
 
 export const listTracks = (taskId: string) =>
   api<Track[]>(`/api/tasks/${taskId}/tracks`);

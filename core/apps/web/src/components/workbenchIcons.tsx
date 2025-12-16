@@ -121,3 +121,46 @@ export function IconGear({ size = 16 }: { size?: number }) {
     </svg>
   );
 }
+
+export function IconDots({ size = 16 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <circle cx="6" cy="12" r="1.6" fill="currentColor" />
+      <circle cx="12" cy="12" r="1.6" fill="currentColor" />
+      <circle cx="18" cy="12" r="1.6" fill="currentColor" />
+    </svg>
+  );
+}
+
+export function IconArchive({ size = 16 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path
+        d="M4 7V20a2 2 0 002 2h12a2 2 0 002-2V7"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M3 4a1 1 0 011-1h16a1 1 0 011 1v3H3V4z"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinejoin="round"
+      />
+      <path d="M10 12h4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+export function IconChat({ size = 16 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path
+        d="M21 14a4 4 0 01-4 4H9l-5 3V6a4 4 0 014-4h9a4 4 0 014 4v8z"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}

@@ -910,61 +910,164 @@ button {
 
 .wb-task-list {
   display: grid;
-  gap: 6px;
+  gap: 2px;
+}
+
+.wb-task-scroll {
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
   padding-right: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
-.wb-task {
+.wb-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.wb-section-toggle {
   width: 100%;
-  text-align: left;
-  padding: 8px 10px;
-  border-radius: 10px;
-  border: 1px solid transparent;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   background: transparent;
+  border: none;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
 }
 
-.wb-task.wb-task-collapsed {
-  padding: 8px;
-  text-align: center;
-}
-
-.wb-task-icon {
-  width: 28px;
-  height: 28px;
-  border-radius: 10px;
-  border: 1px solid var(--border);
-  background: rgba(255, 255, 255, 0.03);
+.wb-section-chev {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 12px;
-  color: var(--text);
+  color: rgba(255, 255, 255, 0.55);
+  transform: rotate(0deg);
+  transition: transform 120ms ease;
 }
 
-.wb-task:hover {
-  background: rgba(255, 255, 255, 0.04);
-}
-
-.wb-task-active {
-  border-color: var(--border);
-  background: rgba(255, 255, 255, 0.06);
+.wb-section-chev-collapsed {
+  transform: rotate(-90deg);
 }
 
 .wb-task-title {
-  font-size: 13px;
+  font-size: 12.5px;
   color: var(--text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.wb-task-sub {
-  margin-top: 2px;
+.wb-task-row {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 16px 1fr auto;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  background: transparent;
+  cursor: pointer;
+  user-select: none;
+  outline: none;
+}
+
+.wb-task-row:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.wb-task-row-active {
+  border-color: var(--border);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.wb-task-row:focus-visible {
+  outline: 2px solid rgba(78, 163, 255, 0.38);
+  outline-offset: 2px;
+}
+
+.wb-task-row-archived {
+  opacity: 0.85;
+}
+
+.wb-task-leading {
+  position: relative;
+  width: 16px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(255, 255, 255, 0.62);
+}
+
+.wb-task-unread {
+  position: absolute;
+  top: -1px;
+  right: -1px;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(78, 163, 255, 0.95);
+  box-shadow: 0 0 0 2px rgba(18, 18, 18, 0.9);
+}
+
+.wb-task-spinner {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  border: 2px solid rgba(255, 255, 255, 0.22);
+  border-top-color: rgba(78, 163, 255, 0.90);
+  animation: wb-spin 800ms linear infinite;
+}
+
+@keyframes wb-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.wb-task-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.wb-task-age {
   font-size: 12px;
   color: var(--muted);
+  min-width: 28px;
+  text-align: right;
+}
+
+.wb-task-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.wb-task-row:hover .wb-task-actions,
+.wb-task-row-active .wb-task-actions,
+.wb-task-row:focus-within .wb-task-actions,
+.wb-task-row:focus-visible .wb-task-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.wb-task-action {
+  width: 20px;
+  height: 20px;
 }
 
 .wb-sidebar-bottom {

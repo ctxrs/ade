@@ -101,8 +101,29 @@ impl Store {
     // Task APIs
     pub async fn list_tasks(&self, workspace_id: WorkspaceId) -> Result<Vec<Task>> {
         let rows = sqlx::query(
-            r#"SELECT id, workspace_id, title, description, status, exec_plan_id, created_at, updated_at
-               FROM tasks WHERE workspace_id = ? ORDER BY created_at ASC"#,
+            r#"
+            SELECT
+              t.id, t.workspace_id, t.title, t.description, t.status, t.exec_plan_id,
+              t.created_at, t.updated_at, t.archived_at,
+              (
+                SELECT MAX(m.created_at)
+                FROM messages m
+                WHERE m.task_id = t.id
+              ) AS last_activity_at,
+              (
+                SELECT MAX(m.created_at)
+                FROM messages m
+                WHERE m.task_id = t.id AND m.role = 'assistant'
+              ) AS last_assistant_message_at,
+              EXISTS(
+                SELECT 1
+                FROM sessions s
+                WHERE s.task_id = t.id AND s.status = 'active'
+              ) AS has_active_session
+            FROM tasks t
+            WHERE t.workspace_id = ?
+            ORDER BY COALESCE(last_activity_at, t.updated_at, t.created_at) DESC
+            "#,
         )
         .bind(workspace_id.0.to_string())
         .fetch_all(&self.pool)
@@ -114,6 +135,10 @@ impl Store {
             let ws_id: String = r.try_get("workspace_id")?;
             let created_at: String = r.try_get("created_at")?;
             let updated_at: String = r.try_get("updated_at")?;
+            let archived_at: Option<String> = r.try_get("archived_at")?;
+            let last_activity_at: Option<String> = r.try_get("last_activity_at")?;
+            let last_assistant_message_at: Option<String> = r.try_get("last_assistant_message_at")?;
+            let has_active_session: i64 = r.try_get("has_active_session")?;
             out.push(Task {
                 id: TaskId(uuid::Uuid::parse_str(&id)?),
                 workspace_id: WorkspaceId(uuid::Uuid::parse_str(&ws_id)?),
@@ -123,6 +148,10 @@ impl Store {
                 created_at: parse_dt(&created_at)?,
                 updated_at: parse_dt(&updated_at)?,
                 exec_plan_id: r.try_get("exec_plan_id")?,
+                archived_at: archived_at.as_deref().map(parse_dt).transpose()?,
+                last_activity_at: last_activity_at.as_deref().map(parse_dt).transpose()?,
+                last_assistant_message_at: last_assistant_message_at.as_deref().map(parse_dt).transpose()?,
+                has_active_session: has_active_session != 0,
             });
         }
         Ok(out)
@@ -144,6 +173,10 @@ impl Store {
             created_at: now,
             updated_at: now,
             exec_plan_id: None,
+            archived_at: None,
+            last_activity_at: None,
+            last_assistant_message_at: None,
+            has_active_session: false,
         };
         sqlx::query(
             r#"INSERT INTO tasks (id, workspace_id, title, description, status, exec_plan_id, created_at, updated_at)
@@ -164,7 +197,7 @@ impl Store {
 
     pub async fn get_task(&self, id: TaskId) -> Result<Option<Task>> {
         let row = sqlx::query(
-            r#"SELECT id, workspace_id, title, description, status, exec_plan_id, created_at, updated_at
+            r#"SELECT id, workspace_id, title, description, status, exec_plan_id, created_at, updated_at, archived_at
                FROM tasks WHERE id = ?"#,
         )
         .bind(id.0.to_string())
@@ -176,6 +209,7 @@ impl Store {
             let ws_id: String = r.try_get("workspace_id").ok()?;
             let created_at: String = r.try_get("created_at").ok()?;
             let updated_at: String = r.try_get("updated_at").ok()?;
+            let archived_at: Option<String> = r.try_get("archived_at").ok()?;
             Some(Task {
                 id: TaskId(uuid::Uuid::parse_str(&id).ok()?),
                 workspace_id: WorkspaceId(uuid::Uuid::parse_str(&ws_id).ok()?),
@@ -185,8 +219,41 @@ impl Store {
                 created_at: parse_dt(&created_at).ok()?,
                 updated_at: parse_dt(&updated_at).ok()?,
                 exec_plan_id: r.try_get("exec_plan_id").ok()?,
+                archived_at: archived_at.as_deref().map(parse_dt).transpose().ok()?,
+                last_activity_at: None,
+                last_assistant_message_at: None,
+                has_active_session: false,
             })
         }))
+    }
+
+    pub async fn archive_task(&self, id: TaskId) -> Result<bool> {
+        let now = Utc::now().to_rfc3339();
+        let res = sqlx::query(
+            r#"UPDATE tasks
+               SET archived_at = ?, updated_at = ?
+               WHERE id = ?"#,
+        )
+        .bind(&now)
+        .bind(&now)
+        .bind(id.0.to_string())
+        .execute(&self.pool)
+        .await?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    pub async fn unarchive_task(&self, id: TaskId) -> Result<bool> {
+        let now = Utc::now().to_rfc3339();
+        let res = sqlx::query(
+            r#"UPDATE tasks
+               SET archived_at = NULL, updated_at = ?
+               WHERE id = ?"#,
+        )
+        .bind(&now)
+        .bind(id.0.to_string())
+        .execute(&self.pool)
+        .await?;
+        Ok(res.rows_affected() > 0)
     }
 
     // Worktree APIs
