@@ -1176,6 +1176,7 @@ button {
   align-items: center;
   gap: 6px;
   color: rgba(255, 255, 255, 0.62);
+  font-family: inherit;
   font-size: 12px;
   cursor: pointer;
   max-width: 360px;
@@ -1433,6 +1434,7 @@ button {
   color: rgba(255, 255, 255, 0.92);
   padding: 6px 8px;
   cursor: pointer;
+  font-family: inherit;
   font-size: 12px;
 }
 
