@@ -1,22 +1,24 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type React from "react";
 import { createPortal } from "react-dom";
+import {
+  ArrowUp,
+  AtSign,
+  ChevronDown,
+  Container,
+  GitBranch,
+  Image,
+  Info,
+  Laptop,
+  Mic,
+  Slash,
+  Square,
+} from "lucide-react";
 import { blobUrl, type MessageAttachment, type ProviderOptions, type ProviderStatus } from "../api/client";
 import { shouldSendOnEnter } from "../utils/keyboard";
 import { buildModelCatalog, composeModelId, formatEffortLabel, parseModelId } from "../utils/modelEffort";
 import { ComposerAutocompleteMenu } from "./ComposerAutocompleteMenu";
 import { useComposerAutocomplete, type SlashCommandDescriptor } from "../state/useComposerAutocomplete";
-import {
-  IconArrowUp,
-  IconAt,
-  IconChevronDown,
-  IconInfo,
-  IconImage,
-  IconLaptop,
-  IconMic,
-  IconSlash,
-  IconStop,
-} from "./workbenchIcons";
 import type { HarnessCatalogEntry } from "../utils/harnessCatalog";
 import { imageFilesToInlineAttachments } from "../utils/messageAttachments";
 
@@ -172,7 +174,7 @@ function MenuInfoTooltip({ title, description, tooltipId }: { title: string; des
         }}
         onBlur={requestClose}
       >
-        <IconInfo size={14} />
+        <Info size={14} />
       </button>
       {tooltip}
     </>
@@ -919,7 +921,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
                     disabled={!canConfigureModels}
                     title={canConfigureModels ? "Configure models" : "Enable multi-agent to configure"}
                   >
-                    <IconChevronDown size={14} />
+                    <ChevronDown size={14} />
                   </button>
                 )}
 
@@ -1097,7 +1099,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
                 <span className="wb-switcher-logo-fallback" />
               )}
               <span className="wb-switcher-label">{harnessControl.label}</span>
-              {variant === "newSession" && <IconChevronDown size={14} />}
+              {variant === "newSession" && <ChevronDown size={14} />}
             </button>
             {openMenu === "harness" && harnessMenu}
           </div>
@@ -1117,7 +1119,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
                 <span className="wb-switcher-label">
                   {(currentBase && (activeModelData.catalog.displayNameByBase[currentBase] ?? currentBase)) || "Model"}
                 </span>
-                <IconChevronDown size={14} />
+                <ChevronDown size={14} />
               </button>
               {openMenu === "model" && modelMenu}
             </div>
@@ -1141,7 +1143,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
                     return eff ? formatEffortLabel(eff) : "Effort";
                   })()}
                 </span>
-                <IconChevronDown size={14} />
+                <ChevronDown size={14} />
               </button>
               {openMenu === "effort" && effortMenu}
             </div>
@@ -1159,7 +1161,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
               title="Mode"
             >
               <span className="wb-switcher-label">{labelForMode(modeId)}</span>
-              <IconChevronDown size={14} />
+              <ChevronDown size={14} />
             </button>
             {openMenu === "mode" && modeMenu}
           </div>
@@ -1180,10 +1182,16 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
               title="Isolation"
             >
               <span className="wb-switcher-icon">
-                <IconLaptop size={14} />
+                {(() => {
+                  const target = variant === "newSession" ? (props as NewSessionProps).envTarget : null;
+                  const label = envControl.label.toLowerCase();
+                  if (target === "worktree" || label.includes("worktree")) return <GitBranch size={14} />;
+                  if (target === "container" || label.includes("container")) return <Container size={14} />;
+                  return <Laptop size={14} />;
+                })()}
               </span>
               <span className="wb-switcher-label">{envControl.label}</span>
-              {!envControl.locked && <IconChevronDown size={14} />}
+              {!envControl.locked && <ChevronDown size={14} />}
             </button>
             {openMenu === "env" && envMenu}
           </div>
@@ -1192,7 +1200,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
         <div className="wb-action-row">
           {onInterrupt ? (
             <button type="button" className="wb-icon wb-menu-trigger" onClick={onInterrupt} aria-label="Interrupt" title="Interrupt">
-              <IconStop size={14} />
+              <Square size={14} />
             </button>
           ) : null}
 
@@ -1203,7 +1211,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
             aria-label="Insert @"
             title="Insert @"
           >
-            <IconAt size={14} />
+            <AtSign size={14} />
           </button>
           <button
             type="button"
@@ -1212,7 +1220,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
             aria-label="Insert /"
             title="Insert /"
           >
-            <IconSlash size={14} />
+            <Slash size={14} />
           </button>
 
           <button
@@ -1222,7 +1230,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
             title="Attach image"
             aria-label="Attach image"
           >
-            <IconImage size={14} />
+            <Image size={14} />
           </button>
           <input
             ref={fileInputRef}
@@ -1246,7 +1254,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
             disabled={!onToggleRecording}
             onClick={() => onToggleRecording?.()}
           >
-            {recording ? <IconStop size={14} /> : <IconMic size={14} />}
+            {recording ? <Square size={14} /> : <Mic size={14} />}
           </button>
 
           <button
@@ -1257,7 +1265,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
             title={sendDisabledReason ?? "Send"}
             aria-label="Send"
           >
-            <IconArrowUp size={14} />
+            <ArrowUp size={14} />
           </button>
         </div>
       </div>

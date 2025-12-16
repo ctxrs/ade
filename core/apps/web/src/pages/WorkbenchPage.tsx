@@ -1,6 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useParams } from "react-router-dom";
 import {
+  Archive,
+  ArrowUp,
+  AtSign,
+  ChevronDown,
+  Ellipsis,
+  Image,
+  Laptop,
+  MessageSquare,
+  Mic,
+  Settings,
+} from "lucide-react";
+import {
   DictationSettings,
   EditPlanSummary,
   LspStatus,
@@ -38,7 +50,6 @@ import { SessionView } from "./SessionPage";
 import { HARNESS_CATALOG } from "../utils/harnessCatalog";
 import { WorkbenchComposer, type DraftTrack, type WorkbenchEnvTarget, type WorkbenchModeId } from "../components/WorkbenchComposer";
 import type { SlashCommandDescriptor } from "../state/useComposerAutocomplete";
-import { IconArchive, IconArrowUp, IconAt, IconChat, IconChevronDown, IconDots, IconGear, IconImage, IconLaptop, IconMic } from "../components/workbenchIcons";
 import { startMicPcmStream } from "../utils/micPcmStream";
 import { parseWsJson } from "../utils/wsJson";
 
@@ -848,7 +859,7 @@ export default function WorkbenchPage() {
                     title={title}
                   >
                     <div className="wb-task-leading" aria-hidden="true">
-                      {working ? <span className="wb-task-spinner" /> : <IconChat size={14} />}
+                      {working ? <span className="wb-task-spinner" /> : <MessageSquare size={14} />}
                       {unread && <span className="wb-task-unread" />}
                     </div>
                     <div className="wb-task-body">
@@ -867,7 +878,7 @@ export default function WorkbenchPage() {
                           aria-label="Archive"
                           title="Archive"
                         >
-                          <IconArchive size={14} />
+                          <Archive size={14} />
                         </button>
                         <button
                           type="button"
@@ -879,7 +890,7 @@ export default function WorkbenchPage() {
                           aria-label="More actions"
                           title="More actions"
                         >
-                          <IconDots size={14} />
+                          <Ellipsis size={14} />
                         </button>
                       </div>
                     </div>
@@ -899,7 +910,7 @@ export default function WorkbenchPage() {
               >
                 <span className="wb-section-title">Archived</span>
                 <span className={`wb-section-chev ${archivedCollapsed ? "wb-section-chev-collapsed" : ""}`}>
-                  <IconChevronDown size={14} />
+                  <ChevronDown size={14} />
                 </span>
               </button>
             </div>
@@ -941,7 +952,7 @@ export default function WorkbenchPage() {
                       title={title}
                     >
                       <div className="wb-task-leading" aria-hidden="true">
-                        {working ? <span className="wb-task-spinner" /> : <IconChat size={14} />}
+                        {working ? <span className="wb-task-spinner" /> : <MessageSquare size={14} />}
                         {unread && <span className="wb-task-unread" />}
                       </div>
                       <div className="wb-task-body">
@@ -960,7 +971,7 @@ export default function WorkbenchPage() {
                             aria-label="Unarchive"
                             title="Unarchive"
                           >
-                            <IconArchive size={14} />
+                            <Archive size={14} />
                           </button>
                           <button
                             type="button"
@@ -972,7 +983,7 @@ export default function WorkbenchPage() {
                             aria-label="More actions"
                             title="More actions"
                           >
-                            <IconDots size={14} />
+                            <Ellipsis size={14} />
                           </button>
                         </div>
                       </div>
@@ -1035,7 +1046,7 @@ export default function WorkbenchPage() {
               </button>
             )}
             <Link className="wb-topbar-icon" to="/settings" title="Settings" aria-label="Settings">
-              <IconGear size={14} />
+              <Settings size={14} />
             </Link>
           </div>
         </div>
@@ -1119,7 +1130,7 @@ export default function WorkbenchPage() {
                                 ? "Plan"
                                 : "Review"}
                         </span>
-                        <IconChevronDown size={14} />
+                        <ChevronDown size={14} />
                       </button>
                       {openMenu === "mode" && (
                         <div className="wb-menu" role="menu" ref={activeMenuRef} style={menuStyle ?? undefined}>
@@ -1174,7 +1185,7 @@ export default function WorkbenchPage() {
                         <span className="wb-switcher-label">
                           {draftTracks.length === 1 ? primaryHarnessLabel : `${draftTracks.length} tracks`}
                         </span>
-                        <IconChevronDown size={14} />
+                        <ChevronDown size={14} />
                       </button>
 
                       {openMenu === "harness" && (
@@ -1273,7 +1284,7 @@ export default function WorkbenchPage() {
                                       disabled={!canConfigureModels}
                                       title={canConfigureModels ? "Configure models" : "Enable multi-agent to configure"}
                                     >
-                                      <IconChevronDown size={14} />
+                                      <ChevronDown size={14} />
                                     </button>
                                   )}
 
@@ -1360,7 +1371,7 @@ export default function WorkbenchPage() {
                           <span className="wb-switcher-label">
                             {(primaryTrack?.modelId ?? "").trim() || "Model"}
                           </span>
-                          <IconChevronDown size={14} />
+                          <ChevronDown size={14} />
                         </button>
                         {openMenu === "model" && (
                           <div
@@ -1426,12 +1437,12 @@ export default function WorkbenchPage() {
                         title="Execution target"
                       >
                         <span className="wb-switcher-icon">
-                          <IconLaptop size={14} />
+                          <Laptop size={14} />
                         </span>
                         <span className="wb-switcher-label">
                           {execTarget === "worktree" ? "Worktree" : execTarget === "local" ? "Local" : "Container"}
                         </span>
-                        <IconChevronDown size={14} />
+                        <ChevronDown size={14} />
                       </button>
                       {openMenu === "exec" && (
                         <div
@@ -1454,7 +1465,7 @@ export default function WorkbenchPage() {
                             Local (disabled)
                           </button>
                           <button type="button" className="wb-menu-item" disabled>
-                            Container (soon)
+                            Container (coming soon)
                           </button>
                         </div>
                       )}
@@ -1472,7 +1483,7 @@ export default function WorkbenchPage() {
                       }}
                       aria-label="Add context"
                     >
-                      <IconAt size={14} />
+                      <AtSign size={14} />
                     </button>
                     <button
                       type="button"
@@ -1481,7 +1492,7 @@ export default function WorkbenchPage() {
                       disabled
                       aria-label="Attach image"
                     >
-                      <IconImage size={14} />
+                      <Image size={14} />
                     </button>
                     <button
                       type="button"
@@ -1490,7 +1501,7 @@ export default function WorkbenchPage() {
                       disabled
                       aria-label="Record"
                     >
-                      <IconMic size={14} />
+                      <Mic size={14} />
                     </button>
                     <button
                       type="button"
@@ -1500,7 +1511,7 @@ export default function WorkbenchPage() {
                       title={startBlockedReason ?? "Start"}
                       aria-label="Start"
                     >
-                      <IconArrowUp size={14} />
+                      <ArrowUp size={14} />
                     </button>
                   </div>
                 </div>
