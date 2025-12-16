@@ -3,7 +3,7 @@ import type React from "react";
 import { createPortal } from "react-dom";
 import { blobUrl, type MessageAttachment, type ProviderOptions, type ProviderStatus } from "../api/client";
 import { shouldSendOnEnter } from "../utils/keyboard";
-import { buildModelCatalog, composeModelId, parseModelId } from "../utils/modelEffort";
+import { buildModelCatalog, composeModelId, formatEffortLabel, parseModelId } from "../utils/modelEffort";
 import { ComposerAutocompleteMenu } from "./ComposerAutocompleteMenu";
 import { useComposerAutocomplete, type SlashCommandDescriptor } from "../state/useComposerAutocomplete";
 import {
@@ -709,7 +709,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
             setOpenMenu(null);
           }}
         >
-          {eff}
+          {formatEffortLabel(eff)}
         </button>
       ))}
     </div>
@@ -964,7 +964,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
                                   >
                                     {efforts.map((x) => (
                                       <option key={x} value={x}>
-                                        {x}
+                                        {formatEffortLabel(x)}
                                       </option>
                                     ))}
                                   </select>
@@ -1135,7 +1135,12 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
                 aria-expanded={openMenu === "effort"}
                 title="Effort"
               >
-                <span className="wb-switcher-label">{currentEffort ?? pickDefaultEffort(effortOptions) ?? "Effort"}</span>
+                <span className="wb-switcher-label">
+                  {(() => {
+                    const eff = currentEffort ?? pickDefaultEffort(effortOptions);
+                    return eff ? formatEffortLabel(eff) : "Effort";
+                  })()}
+                </span>
                 <IconChevronDown size={14} />
               </button>
               {openMenu === "effort" && effortMenu}

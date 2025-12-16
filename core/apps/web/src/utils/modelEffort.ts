@@ -139,3 +139,11 @@ export function composeModelId(base: string, effort: string | null): string {
   if (!b) return "";
   return effort ? `${b}/${effort}` : b;
 }
+
+export function formatEffortLabel(effort: string | null | undefined): string {
+  const raw = String(effort ?? "").trim();
+  if (!raw) return "";
+  const norm = raw.toLowerCase();
+  if (norm === "xhigh" || norm === "extra_high" || norm === "extra-high") return "Extra High";
+  return norm.charAt(0).toUpperCase() + norm.slice(1);
+}

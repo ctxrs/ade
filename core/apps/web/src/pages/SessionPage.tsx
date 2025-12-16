@@ -33,7 +33,7 @@ import { HARNESS_CATALOG } from "../utils/harnessCatalog";
 import { WorkbenchComposer as UnifiedWorkbenchComposer, type WorkbenchModeId } from "../components/WorkbenchComposer";
 import { startMicPcmStream } from "../utils/micPcmStream";
 import { parseWsJson } from "../utils/wsJson";
-import { buildModelCatalog, composeModelId, parseModelId } from "../utils/modelEffort";
+import { buildModelCatalog, composeModelId, formatEffortLabel, parseModelId } from "../utils/modelEffort";
 import { imageFilesToBlobRefAttachments, imageFilesToInlineAttachments } from "../utils/messageAttachments";
 import { registerDropScope } from "../utils/dragDropScopes";
 
@@ -729,7 +729,7 @@ export function SessionView({
           if (!url) return;
           const asFile = await urlToImageFile(url);
           if (!asFile) return;
-          await onDropFiles([asFile]);
+      await onDropFiles([asFile]);
         })();
       },
     });
@@ -881,13 +881,13 @@ export function SessionView({
 	                  }}
 	                >
 	                  {effortOptions.map((eff) => (
-                    <option key={eff} value={eff}>
-                      {eff}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            )}
+	                    <option key={eff} value={eff}>
+	                      {formatEffortLabel(eff)}
+	                    </option>
+	                  ))}
+	                </select>
+	              </label>
+	            )}
 
             {modeOptions.length > 0 && (
               <label>
@@ -1477,21 +1477,21 @@ function WorkbenchComposer({
             </div>
           )}
 
-          {effortOptions.length > 0 && (
-            <div className="wb-composer-pill" title="Effort">
-              <select
-                className="wb-composer-select"
-                value={currentEffort}
-                onChange={(e) => onSetEffort(e.target.value)}
-              >
-                {effortOptions.map((eff) => (
-                  <option key={eff} value={eff}>
-                    {eff}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
+	          {effortOptions.length > 0 && (
+	            <div className="wb-composer-pill" title="Effort">
+	              <select
+	                className="wb-composer-select"
+	                value={currentEffort}
+	                onChange={(e) => onSetEffort(e.target.value)}
+	              >
+	                {effortOptions.map((eff) => (
+	                  <option key={eff} value={eff}>
+	                    {formatEffortLabel(eff)}
+	                  </option>
+	                ))}
+	              </select>
+	            </div>
+	          )}
         </div>
 
         <div className="wb-composer-right">
