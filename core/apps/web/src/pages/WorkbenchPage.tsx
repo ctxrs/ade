@@ -52,6 +52,8 @@ import { WorkbenchComposer, type DraftTrack, type WorkbenchEnvTarget, type Workb
 import type { SlashCommandDescriptor } from "../state/useComposerAutocomplete";
 import { startMicPcmStream } from "../utils/micPcmStream";
 import { parseWsJson } from "../utils/wsJson";
+import { registerDropScope } from "../utils/dragDropScopes";
+import { imageFilesToInlineAttachments } from "../utils/messageAttachments";
 
 function deriveTaskTitle(prompt: string): string {
   const line = prompt.trim().split("\n")[0] ?? "";
@@ -159,6 +161,8 @@ export default function WorkbenchPage() {
   const [startError, setStartError] = useState<string | null>(null);
   const [useMultipleAgents, setUseMultipleAgents] = useState(false);
   const [draftAttachments, setDraftAttachments] = useState<MessageAttachment[]>([]);
+  const [dropActive, setDropActive] = useState(false);
+  const dropHideTimerRef = useRef<number | null>(null);
 
   const [dictationSettings, setDictationSettings] = useState<DictationSettings | null>(null);
   const [dictationRecording, setDictationRecording] = useState(false);
@@ -756,6 +760,92 @@ export default function WorkbenchPage() {
     window.addEventListener("mouseup", onUp);
   };
 
+  const onDropFiles = useCallback(
+    async (files: File[]) => {
+      if (files.length === 0) return;
+      const next = await imageFilesToInlineAttachments(files);
+      if (next.length === 0) return;
+      setDraftAttachments((prev) => [...prev, ...next]);
+    },
+    [],
+  );
+
+  const showDropOverlay = useCallback(() => {
+    setDropActive(true);
+    if (dropHideTimerRef.current) window.clearTimeout(dropHideTimerRef.current);
+    dropHideTimerRef.current = window.setTimeout(() => setDropActive(false), 140);
+  }, []);
+
+  const hideDropOverlay = useCallback(() => {
+    if (dropHideTimerRef.current) window.clearTimeout(dropHideTimerRef.current);
+    dropHideTimerRef.current = null;
+    setDropActive(false);
+  }, []);
+
+  const extractFilesFromTransfer = useCallback(
+    (dt: DataTransfer | null): File[] => {
+      if (!dt) return [];
+      const out: File[] = [];
+      const files = dt.files ? Array.from(dt.files) : [];
+      out.push(...files);
+      const items = dt.items;
+      if (out.length === 0 && items && items.length > 0) {
+        for (const item of Array.from(items as any) as DataTransferItem[]) {
+          if (item.kind !== "file") continue;
+          const f = item.getAsFile?.();
+          if (f) out.push(f);
+        }
+      }
+      return out;
+    },
+    [],
+  );
+
+  const extractFirstUrlFromTransfer = useCallback((dt: DataTransfer | null): string | null => {
+    if (!dt) return null;
+    const uriRaw = (dt.getData?.("text/uri-list") ?? "").trim();
+    if (uriRaw) {
+      for (const line of uriRaw.split("\n")) {
+        const v = line.trim();
+        if (!v || v.startsWith("#")) continue;
+        return v;
+      }
+    }
+    const html = (dt.getData?.("text/html") ?? "").trim();
+    if (html) {
+      const m = html.match(/<img[^>]*\ssrc=("([^"]+)"|'([^']+)'|([^\s>]+))/i);
+      const src = (m?.[2] ?? m?.[3] ?? m?.[4] ?? "").trim();
+      if (src) return src;
+    }
+    const text = (dt.getData?.("text/plain") ?? "").trim();
+    if (text && /^(https?:|data:image\/|blob:)/i.test(text)) return text;
+    return null;
+  }, []);
+
+  const urlToImageFile = useCallback(async (url: string): Promise<File | null> => {
+    try {
+      const res = await fetch(url);
+      if (!res.ok) return null;
+      const blob = await res.blob();
+      const type = blob.type || "";
+      if (!type.startsWith("image/")) return null;
+      const baseName = (() => {
+        try {
+          const u = new URL(url, window.location.href);
+          const last = u.pathname.split("/").filter(Boolean).pop() || "image";
+          return last.replace(/[?#].*$/, "") || "image";
+        } catch {
+          return "image";
+        }
+      })();
+      const ext = type.split("/")[1] || "";
+      const name = ext && !baseName.toLowerCase().endsWith(`.${ext.toLowerCase()}`) ? `${baseName}.${ext}` : baseName;
+      return new File([blob], name, { type });
+    } catch {
+      return null;
+    }
+  }, []);
+
   const activeTask = activeTaskId ? tasks.find((t) => idToString(t.id) === activeTaskId) : null;
   const activeEditPlan = useMemo(() => {
     if (!activeEditPlanId) return null;
@@ -776,6 +866,30 @@ export default function WorkbenchPage() {
       setActiveEditPlanId(editPlans[0] ? idToString(editPlans[0].id) : null);
     }
   }, [activeEditPlanId, editPlans]);
+
+  useEffect(() => {
+    const el = newComposerRef.current;
+    if (!el) return;
+    return registerDropScope({
+      element: el,
+      onDragOver: () => showDropOverlay(),
+      onDrop: (dt) => {
+        hideDropOverlay();
+        void (async () => {
+          const files = extractFilesFromTransfer(dt);
+          if (files.length > 0) {
+            await onDropFiles(files);
+            return;
+          }
+          const url = extractFirstUrlFromTransfer(dt);
+          if (!url) return;
+          const asFile = await urlToImageFile(url);
+          if (!asFile) return;
+          await onDropFiles([asFile]);
+        })();
+      },
+    });
+  }, [extractFilesFromTransfer, extractFirstUrlFromTransfer, hideDropOverlay, onDropFiles, showDropOverlay, urlToImageFile]);
 
   const onEditPlanUpdated = (updated: EditPlanSummary) => {
     const pid = idToString(updated.id);
@@ -1053,7 +1167,12 @@ export default function WorkbenchPage() {
 
         {!activeTaskId ? (
           <div className="wb-center">
-            <div className="wb-new-composer-stack" ref={newComposerRef}>
+            <div className="wb-new-composer-stack ctx-drop-scope" ref={newComposerRef}>
+              {dropActive && (
+                <div className="ctx-drop-overlay" aria-hidden="true">
+                  <div className="ctx-drop-overlay-text">Drop image to attach</div>
+                </div>
+              )}
               <WorkbenchComposer
                 variant="newSession"
                 value={draftPrompt}
