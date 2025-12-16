@@ -34,6 +34,7 @@ export type Session = {
   model_id: string;
   agent_role: string;
   status: string;
+  env_target?: "worktree" | "local" | string;
 };
 
 export type Message = {
@@ -356,10 +357,13 @@ export const getTask = (taskId: string) =>
 export const listTracks = (taskId: string) =>
   api<Track[]>(`/api/tasks/${taskId}/tracks`);
 
-export const createTrack = (taskId: string, label?: string) =>
+export const createTrack = (taskId: string, label?: string, opts?: { env_target?: "worktree" | "local" }) =>
   api<Track>(`/api/tasks/${taskId}/tracks`, {
     method: "POST",
-    body: JSON.stringify({ label }),
+    body: JSON.stringify({
+      label,
+      ...(opts?.env_target ? { env_target: opts.env_target } : {}),
+    }),
   });
 
 export const createSession = (trackId: string, provider_id: string, model_id: string) =>

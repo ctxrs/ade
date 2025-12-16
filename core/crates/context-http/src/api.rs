@@ -3779,6 +3779,8 @@ async fn list_tracks(
 struct CreateTrackReq {
     #[serde(default)]
     label: Option<String>,
+    #[serde(default)]
+    env_target: Option<String>, // "worktree" | "local"
 }
 
 async fn create_track(
@@ -3861,50 +3863,104 @@ async fn create_track(
         )
     })?;
 
-    let worktree_id = WorktreeId::new();
-    let wt_path = managed_worktree_path(&state.data_root, task.workspace_id, worktree_id);
-    if let Some(parent) = wt_path.parent() {
-        tokio::fs::create_dir_all(parent).await.map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&e.to_string()),
-                }),
-            )
-        })?;
-    }
-    let branch_name = format!("context/{}/{}", task.id.0, worktree_id.0);
-    create_worktree(&ws.root_path, &wt_path, &base_commit_sha, &branch_name)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&e.to_string()),
-                }),
-            )
-        })?;
+    let env_target = req.env_target.as_deref().unwrap_or("worktree").trim().to_lowercase();
+    let worktree_id = match env_target.as_str() {
+        "worktree" => {
+            let worktree_id = WorktreeId::new();
+            let wt_path = managed_worktree_path(&state.data_root, task.workspace_id, worktree_id);
+            if let Some(parent) = wt_path.parent() {
+                tokio::fs::create_dir_all(parent).await.map_err(|e| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(ApiErrorResp {
+                            error: logs::redact_sensitive(&e.to_string()),
+                        }),
+                    )
+                })?;
+            }
+            let branch_name = format!("context/{}/{}", task.id.0, worktree_id.0);
+            create_worktree(&ws.root_path, &wt_path, &base_commit_sha, &branch_name)
+                .await
+                .map_err(|e| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(ApiErrorResp {
+                            error: logs::redact_sensitive(&e.to_string()),
+                        }),
+                    )
+                })?;
 
-    let worktree = Worktree {
-        id: worktree_id,
-        workspace_id: task.workspace_id,
-        root_path: wt_path.to_string_lossy().to_string(),
-        base_commit_sha,
-        git_branch: Some(branch_name),
-        created_at: chrono::Utc::now(),
-    };
-    state
-        .store
-        .insert_worktree(worktree)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
+            let worktree = Worktree {
+                id: worktree_id,
+                workspace_id: task.workspace_id,
+                root_path: wt_path.to_string_lossy().to_string(),
+                base_commit_sha,
+                git_branch: Some(branch_name),
+                created_at: chrono::Utc::now(),
+            };
+            state
+                .store
+                .insert_worktree(worktree)
+                .await
+                .map_err(|e| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(ApiErrorResp {
+                            error: logs::redact_sensitive(&e.to_string()),
+                        }),
+                    )
+                })?;
+            worktree_id
+        }
+        "local" => {
+            if let Some(existing) = state
+                .store
+                .get_local_worktree_for_root(task.workspace_id, &ws.root_path)
+                .await
+                .map_err(|e| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(ApiErrorResp {
+                            error: logs::redact_sensitive(&e.to_string()),
+                        }),
+                    )
+                })?
+            {
+                existing.id
+            } else {
+                let worktree_id = WorktreeId::new();
+                let worktree = Worktree {
+                    id: worktree_id,
+                    workspace_id: task.workspace_id,
+                    root_path: ws.root_path.clone(),
+                    base_commit_sha,
+                    git_branch: None,
+                    created_at: chrono::Utc::now(),
+                };
+                state
+                    .store
+                    .insert_worktree(worktree)
+                    .await
+                    .map_err(|e| {
+                        (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            Json(ApiErrorResp {
+                                error: logs::redact_sensitive(&e.to_string()),
+                            }),
+                        )
+                    })?;
+                worktree_id
+            }
+        }
+        _ => {
+            return Err((
+                StatusCode::BAD_REQUEST,
                 Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&e.to_string()),
+                    error: "env_target must be worktree or local".to_string(),
                 }),
-            )
-        })?;
+            ));
+        }
+    };
 
     let label = req.label.unwrap_or_else(|| "track".to_string());
     let track = state
@@ -3923,6 +3979,20 @@ async fn create_track(
     Ok(Json(track))
 }
 
+#[derive(Debug, Serialize)]
+struct SessionWithEnv {
+    #[serde(flatten)]
+    session: Session,
+    env_target: String, // "worktree" | "local"
+}
+
+fn env_target_for_worktree(wt: Option<&Worktree>) -> String {
+    match wt.and_then(|w| w.git_branch.as_ref()) {
+        Some(_) => "worktree".to_string(),
+        None => "local".to_string(),
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct CreateSessionReq {
     provider_id: String,
@@ -3934,7 +4004,7 @@ async fn create_session_for_track(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
     Json(req): Json<CreateSessionReq>,
-) -> Result<Json<Session>, StatusCode> {
+) -> Result<Json<SessionWithEnv>, StatusCode> {
     let track_id = TrackId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
     let track = state
         .store
@@ -3994,26 +4064,45 @@ async fn create_session_for_track(
         let _ = tx.send(SchedulerCommand::Enqueue(saved)).await;
     }
 
-    Ok(Json(session))
+    let worktree = state
+        .store
+        .get_worktree(session.worktree_id)
+        .await
+        .ok()
+        .flatten();
+    Ok(Json(SessionWithEnv {
+        env_target: env_target_for_worktree(worktree.as_ref()),
+        session,
+    }))
 }
 
 async fn get_session(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
-) -> Result<Json<Session>, StatusCode> {
+) -> Result<Json<SessionWithEnv>, StatusCode> {
     let perf = std::env::var_os("CONTEXT_PERF").is_some();
     let t0 = Instant::now();
     let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    let out =
-        match state
-            .store
-            .get_session(session_id)
-            .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        {
-            Some(session) => Ok(Json(session)),
-            None => Err(StatusCode::NOT_FOUND),
-        };
+    let out = match state
+        .store
+        .get_session(session_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    {
+        Some(session) => {
+            let worktree = state
+                .store
+                .get_worktree(session.worktree_id)
+                .await
+                .ok()
+                .flatten();
+            Ok(Json(SessionWithEnv {
+                env_target: env_target_for_worktree(worktree.as_ref()),
+                session,
+            }))
+        }
+        None => Err(StatusCode::NOT_FOUND),
+    };
     if perf {
         tracing::info!(
             target: "context_perf",
@@ -4028,14 +4117,28 @@ async fn get_session(
 async fn list_sessions_for_track(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
-) -> Result<Json<Vec<Session>>, StatusCode> {
+) -> Result<Json<Vec<SessionWithEnv>>, StatusCode> {
     let track_id = TrackId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    state
+    let sessions = state
         .store
         .list_sessions_for_track(track_id)
         .await
-        .map(Json)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let mut out = Vec::with_capacity(sessions.len());
+    for session in sessions {
+        let worktree = state
+            .store
+            .get_worktree(session.worktree_id)
+            .await
+            .ok()
+            .flatten();
+        out.push(SessionWithEnv {
+            env_target: env_target_for_worktree(worktree.as_ref()),
+            session,
+        });
+    }
+    Ok(Json(out))
 }
 
 async fn list_messages(
@@ -4500,7 +4603,7 @@ async fn set_session_model(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
     Json(req): Json<SetSessionModelReq>,
-) -> Result<Json<Session>, StatusCode> {
+) -> Result<Json<SessionWithEnv>, StatusCode> {
     let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
     let session = state
         .store
@@ -4535,7 +4638,11 @@ async fn set_session_model(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    Ok(Json(updated))
+    let worktree = state.store.get_worktree(updated.worktree_id).await.ok().flatten();
+    Ok(Json(SessionWithEnv {
+        env_target: env_target_for_worktree(worktree.as_ref()),
+        session: updated,
+    }))
 }
 
 #[derive(Debug, Deserialize)]
