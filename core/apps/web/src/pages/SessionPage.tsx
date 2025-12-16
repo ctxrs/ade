@@ -7,6 +7,8 @@ import {
   cancelSession,
   deleteMessage,
   DictationSettings,
+  getDaemonBaseUrl,
+  blobUrl,
   Message,
   MessageAttachment,
   postMessage,
@@ -80,7 +82,7 @@ type WorkbenchTurnHeader = {
 };
 
 function imageAttachmentSrc(a: MessageAttachment): string {
-  return a.kind === "image_ref" ? `/api/blobs/${a.blob_id}` : `data:${a.mime_type};base64,${a.data_base64}`;
+  return a.kind === "image_ref" ? blobUrl(a.blob_id) : `data:${a.mime_type};base64,${a.data_base64}`;
 }
 
 function attachmentDisplayName(name?: string | null) {
@@ -256,11 +258,14 @@ export function SessionView({
         return null;
       }
     })();
-    const wsUrl = new URL("/api/dictation/livekit/stream", window.location.href);
-    if (token) wsUrl.searchParams.set("token", token);
-    wsUrl.protocol = wsUrl.protocol === "https:" ? "wss:" : "ws:";
-
-    const ws = new WebSocket(wsUrl.toString());
+    const base = getDaemonBaseUrl();
+    const wsBase = base
+      ? base.startsWith("https://")
+        ? base.replace(/^https:\/\//, "wss://")
+        : base.replace(/^http:\/\//, "ws://")
+      : `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}`;
+    const qs = token ? `?token=${encodeURIComponent(token)}` : "";
+    const ws = new WebSocket(`${wsBase}/api/dictation/livekit/stream${qs}`);
     ws.binaryType = "arraybuffer";
     dictationWsRef.current = ws;
 
@@ -1048,7 +1053,7 @@ export function SessionView({
                     if (a.kind !== "image" && a.kind !== "image_ref") return null;
                     const src =
                       a.kind === "image_ref"
-                        ? `/api/blobs/${a.blob_id}`
+                        ? blobUrl(a.blob_id)
                         : `data:${a.mime_type};base64,${a.data_base64}`;
                     return (
                       <div key={idx} className="thumb">
@@ -1433,7 +1438,7 @@ function CollapsibleMessage({
             if (a.kind !== "image" && a.kind !== "image_ref") return null;
             const src =
               a.kind === "image_ref"
-                ? `/api/blobs/${a.blob_id}`
+                ? blobUrl(a.blob_id)
                 : `data:${a.mime_type};base64,${a.data_base64}`;
             return (
               <img

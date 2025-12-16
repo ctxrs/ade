@@ -16,6 +16,7 @@ import {
   createSession,
   createTask,
   createTrack,
+  getDaemonBaseUrl,
   getLspStatus,
   getProviderOptions,
   getSettings,
@@ -536,7 +537,13 @@ export default function WorkbenchPage() {
       }
     })();
     const qs = token ? `?token=${encodeURIComponent(token)}` : "";
-    const url = `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/api/dictation/livekit/stream${qs}`;
+    const base = getDaemonBaseUrl();
+    const wsBase = base
+      ? base.startsWith("https://")
+        ? base.replace(/^https:\/\//, "wss://")
+        : base.replace(/^http:\/\//, "ws://")
+      : `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}`;
+    const url = `${wsBase}/api/dictation/livekit/stream${qs}`;
 
     const ws = new WebSocket(url);
     ws.binaryType = "arraybuffer";

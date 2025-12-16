@@ -133,6 +133,18 @@ button {
   color: var(--text);
 }
 
+button.linklike {
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  text-decoration: none;
+  padding: 0;
+}
+
+button.linklike:hover {
+  text-decoration: underline;
+}
+
 .file-btn {
   display: inline-flex;
   align-items: center;

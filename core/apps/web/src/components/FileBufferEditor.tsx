@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Editor from "@monaco-editor/react";
 import { useSessionEntry } from "../state/sessionSupervisor";
+import { daemonFetchRaw } from "../api/client";
 
 type OpenResp = {
   buffer_id: string;
@@ -109,13 +110,13 @@ export function FileBufferEditor({
     setLastError(null);
     setConflict(null);
     try {
-      const res = await fetch("/api/buffers/open", {
+      const res = await daemonFetchRaw("/api/buffers/open", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ session_id: sessionId, path }),
       });
-      if (!res.ok) throw new Error(await res.text());
-      const data = (await res.json()) as OpenResp;
+      if (res.status < 200 || res.status >= 300) throw new Error(res.body);
+      const data = (res.body ? JSON.parse(res.body) : null) as OpenResp;
       setBufferId(data.buffer_id);
       setVersion(data.version);
       setText(data.text);
@@ -144,20 +145,20 @@ export function FileBufferEditor({
     pendingSave.current = true;
 
     try {
-      const res = await fetch("/api/buffers/update", {
+      const res = await daemonFetchRaw("/api/buffers/update", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ buffer_id: bid, version: nextVersion, text: nextText, force, persist }),
       });
       if (res.status === 409) {
-        const body = (await res.json()) as ConflictResp;
+        const body = (res.body ? JSON.parse(res.body) : null) as ConflictResp;
         setConflict(body);
         setStatus("conflict");
         pendingSave.current = false;
         return;
       }
-      if (!res.ok) throw new Error(await res.text());
-      const data = (await res.json()) as UpdateResp;
+      if (res.status < 200 || res.status >= 300) throw new Error(res.body);
+      const data = (res.body ? JSON.parse(res.body) : null) as UpdateResp;
       setVersion(data.version);
       if (persist) setStatus("saved");
       else setStatus("dirty");
@@ -201,7 +202,7 @@ export function FileBufferEditor({
       disposables.current = [];
       const bid = bufferId;
       if (bid) {
-        fetch("/api/buffers/close", {
+        daemonFetchRaw("/api/buffers/close", {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ session_id: sessionId, buffer_id: bid }),
@@ -301,13 +302,13 @@ export function FileBufferEditor({
                 if (!matchesThisModel(m)) return { suggestions: [] };
                 const line = Math.max(0, Number(pos.lineNumber ?? 1) - 1);
                 const character = Math.max(0, Number(pos.column ?? 1) - 1);
-                const res = await fetch("/api/lsp/completion", {
+                const res = await daemonFetchRaw("/api/lsp/completion", {
                   method: "POST",
                   headers: { "content-type": "application/json" },
                   body: JSON.stringify({ session_id: sessionId, path, line, character }),
                 });
-                if (!res.ok) return { suggestions: [] };
-                const v = await res.json();
+                if (res.status < 200 || res.status >= 300) return { suggestions: [] };
+                const v = res.body ? JSON.parse(res.body) : null;
                 const items = Array.isArray(v?.items) ? v.items : Array.isArray(v) ? v : [];
                 const suggestions = items.map((it: any) => ({
                   label: String(it?.label ?? ""),
@@ -323,13 +324,13 @@ export function FileBufferEditor({
                 if (!matchesThisModel(m)) return null;
                 const line = Math.max(0, Number(pos.lineNumber ?? 1) - 1);
                 const character = Math.max(0, Number(pos.column ?? 1) - 1);
-                const res = await fetch("/api/lsp/hover", {
+                const res = await daemonFetchRaw("/api/lsp/hover", {
                   method: "POST",
                   headers: { "content-type": "application/json" },
                   body: JSON.stringify({ session_id: sessionId, path, line, character }),
                 });
-                if (!res.ok) return null;
-                const v = await res.json();
+                if (res.status < 200 || res.status >= 300) return null;
+                const v = res.body ? JSON.parse(res.body) : null;
                 const contents = v?.contents;
                 const markdown =
                   typeof contents === "string"

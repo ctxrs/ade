@@ -131,7 +131,7 @@ export default function DiagnosticsPage() {
     <div className="page">
       <div className="row">
         <h1 style={{ marginRight: "auto" }}>Diagnostics</h1>
-        <Link to="/">Workspaces</Link>
+        <Link to="/workspaces">Workspaces</Link>
       </div>
 
       <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>

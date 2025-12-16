@@ -36,7 +36,7 @@ export default function WorkspacePage() {
 
   return (
     <div className="page">
-      <Link to="/">← Workspaces</Link>
+      <Link to="/workspaces">← Workspaces</Link>
       {workspace && (
         <>
           <h1>{workspace.name}</h1>
@@ -74,4 +74,3 @@ export default function WorkspacePage() {
     </div>
   );
 }
-

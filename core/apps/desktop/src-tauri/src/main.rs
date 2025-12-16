@@ -1,197 +1,232 @@
 use std::io::{BufRead, BufReader};
+use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::mpsc;
 use std::time::Duration;
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
 use tauri::Manager;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct DesktopTokenFile {
-    token: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct DaemonDescriptor {
-    url: String,
-    pid: u32,
-    data_dir: String,
-}
-
 fn main() {
     tauri::Builder::default()
+        .manage(ConnectionManager::default())
+        .invoke_handler(tauri::generate_handler![
+            desktop_get_connection,
+            desktop_disconnect,
+            desktop_connect_local,
+            desktop_connect_ssh,
+            desktop_pick_folder,
+            desktop_git_clone,
+            desktop_upload_blob,
+            desktop_daemon_request,
+        ])
         .setup(|app| {
-            app.manage(DaemonSupervisor(std::sync::Mutex::new(None)));
-
-            let app_handle = app.handle();
-            let token = load_or_create_desktop_token(&app_handle)?;
-            let data_dir = daemon_data_dir(&app_handle)?;
-
-            let mut url = None;
-            let mut child = None;
-
-            if let Ok(desc) = load_descriptor(&app_handle) {
-                if desc.data_dir == data_dir.to_string_lossy()
-                    && daemon_healthy(&desc.url)
-                    && daemon_authed(&desc.url, &token)
-                    && daemon_serves_ui(&desc.url)
-                {
-                    url = Some(desc.url);
-                } else {
-                    try_terminate_pid(desc.pid);
-                }
-            }
-
-            if url.is_none() {
-                let (u, c) = spawn_daemon(&app_handle, &token, &data_dir)?;
-                let pid = c.id();
-                save_descriptor(
-                    &app_handle,
-                    &DaemonDescriptor {
-                        url: u.clone(),
-                        pid,
-                        data_dir: data_dir.to_string_lossy().to_string(),
-                    },
-                )?;
-                url = Some(u);
-                child = Some(c);
-            }
-
-            let url = url.context("missing daemon url")?;
-            open_main_window(&app_handle, &url, &token)?;
-
-            // Start a lightweight supervisor that restarts the daemon if it exits or becomes unhealthy.
-            let (tx, rx) = mpsc::channel::<SupervisorCmd>();
-            {
-                let state = app_handle.state::<DaemonSupervisor>();
-                state.set(tx);
-            }
-            start_supervisor_thread(app_handle, rx, token, data_dir, url, child);
+            open_main_window(app.handle())?;
             Ok(())
         })
         .on_window_event(|event| {
             if matches!(event.event(), tauri::WindowEvent::CloseRequested { .. }) {
-                let state = event.window().state::<DaemonSupervisor>();
-                state.stop();
+                let manager = event.window().state::<ConnectionManager>();
+                manager.disconnect();
             }
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
 
-#[derive(Clone, Copy)]
-enum SupervisorCmd {
-    Stop,
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum DesktopConnectionKind {
+    None,
+    Local,
+    Ssh,
 }
 
-struct DaemonSupervisor(std::sync::Mutex<Option<mpsc::Sender<SupervisorCmd>>>);
-
-impl DaemonSupervisor {
-    fn set(&self, tx: mpsc::Sender<SupervisorCmd>) {
-        if let Ok(mut guard) = self.0.lock() {
-            *guard = Some(tx);
-        }
-    }
-
-    fn stop(&self) {
-        if let Ok(mut guard) = self.0.lock() {
-            if let Some(tx) = guard.take() {
-                let _ = tx.send(SupervisorCmd::Stop);
-            }
-        }
-    }
+#[derive(Debug, Clone, Serialize)]
+struct DesktopConnectionInfo {
+    kind: DesktopConnectionKind,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    base_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    token: Option<String>,
 }
 
-fn start_supervisor_thread(
-    app: tauri::AppHandle,
-    rx: mpsc::Receiver<SupervisorCmd>,
-    token: String,
-    data_dir: PathBuf,
-    initial_url: String,
-    initial_child: Option<Child>,
-) {
-    std::thread::spawn(move || {
-        let mut url = initial_url;
-        let mut child = initial_child;
-        let mut consecutive_unhealthy = 0u32;
-        let mut backoff_ms = 250u64;
+#[derive(Debug, Deserialize)]
+struct SshConnectReq {
+    host: String,
+    #[serde(default)]
+    user: Option<String>,
+    #[serde(default)]
+    remote_port: Option<u16>,
+    #[serde(default)]
+    start_remote: bool,
+    #[serde(default)]
+    auth_token: Option<String>,
+    #[serde(default)]
+    remote_data_dir: Option<String>,
+}
 
-        loop {
-            if let Ok(SupervisorCmd::Stop) = rx.try_recv() {
-                if let Some(mut c) = child.take() {
-                    let _ = c.kill();
-                }
-                break;
-            }
+#[derive(Debug, Deserialize)]
+struct DesktopDaemonRequest {
+    method: String,
+    path: String,
+    #[serde(default)]
+    body: Option<String>,
+    #[serde(default)]
+    headers: Vec<(String, String)>,
+}
 
-            let child_exited = match child.as_mut() {
-                Some(c) => match c.try_wait() {
-                    Ok(Some(_)) => true,
-                    Ok(None) => false,
-                    Err(_) => false,
-                },
-                None => false,
-            };
-            if child_exited {
-                child = None;
-            }
+#[derive(Debug, Serialize)]
+struct DesktopHttpResponse {
+    status: u16,
+    body: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    content_type: Option<String>,
+}
 
-            let healthy = daemon_healthy(&url) && daemon_authed(&url, &token);
-            if healthy {
-                consecutive_unhealthy = 0;
-                backoff_ms = 250;
-            } else {
-                consecutive_unhealthy = consecutive_unhealthy.saturating_add(1);
-            }
+#[tauri::command]
+fn desktop_get_connection(state: tauri::State<ConnectionManager>) -> DesktopConnectionInfo {
+    state.info()
+}
 
-            let should_restart = child_exited || consecutive_unhealthy >= 2;
-            if should_restart {
-                if let Some(mut c) = child.take() {
-                    let _ = c.kill();
-                }
+#[tauri::command]
+fn desktop_disconnect(state: tauri::State<ConnectionManager>) -> Result<(), String> {
+    state.disconnect();
+    Ok(())
+}
 
-                match spawn_daemon(&app, &token, &data_dir) {
-                    Ok((new_url, new_child)) => {
-                        let pid = new_child.id();
-                        let _ = save_descriptor(
-                            &app,
-                            &DaemonDescriptor {
-                                url: new_url.clone(),
-                                pid,
-                                data_dir: data_dir.to_string_lossy().to_string(),
-                            },
-                        );
-                        url = new_url.clone();
-                        child = Some(new_child);
-                        consecutive_unhealthy = 0;
-                        backoff_ms = 250;
-                        let _ = navigate_main_window(&app, &new_url, &token);
-                    }
-                    Err(e) => {
-                        eprintln!("desktop: failed to restart daemon: {e:#}");
-                        backoff_ms = (backoff_ms * 2).min(10_000);
-                    }
-                }
-            }
-
-            std::thread::sleep(Duration::from_millis(backoff_ms.max(500)));
-        }
+#[tauri::command]
+fn desktop_pick_folder() -> Result<Option<String>, String> {
+    let (tx, rx) = std::sync::mpsc::channel::<Option<String>>();
+    tauri::api::dialog::FileDialogBuilder::new().pick_folder(move |path| {
+        let _ = tx.send(path.map(|p| p.to_string_lossy().to_string()));
     });
+    rx.recv_timeout(Duration::from_secs(60))
+        .map_err(|_| "folder picker timed out".to_string())
 }
 
-fn open_main_window(app: &tauri::AppHandle, daemon_url: &str, token: &str) -> Result<()> {
-    if app.get_window("main").is_some() {
-        return navigate_main_window(app, daemon_url, token);
+#[tauri::command]
+fn desktop_git_clone(repo_url: String, dest_parent: String) -> Result<String, String> {
+    let repo_url = repo_url.trim().to_string();
+    if repo_url.is_empty() {
+        return Err("repo_url is required".to_string());
     }
-    let url = format!(
-        "{}/?desktop=1&token={}",
-        daemon_url.trim_end_matches('/'),
-        urlencoding::encode(token)
-    );
-    let url = url.parse().context("parsing daemon url")?;
-    tauri::WindowBuilder::new(app, "main", tauri::WindowUrl::External(url))
+    let dest_parent = PathBuf::from(dest_parent);
+    if !dest_parent.exists() {
+        return Err(format!(
+            "destination folder does not exist: {}",
+            dest_parent.display()
+        ));
+    }
+
+    let name = derive_repo_name(&repo_url).ok_or_else(|| "could not derive repo name".to_string())?;
+    let dest = dest_parent.join(&name);
+    if dest.exists() {
+        return Err(format!("destination already exists: {}", dest.display()));
+    }
+
+    let output = Command::new("git")
+        .arg("clone")
+        .arg("--")
+        .arg(&repo_url)
+        .arg(&dest)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .output()
+        .map_err(|e| format!("failed to spawn git: {e}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "git clone failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    Ok(dest.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+fn desktop_connect_local(
+    app: tauri::AppHandle,
+    state: tauri::State<ConnectionManager>,
+) -> Result<DesktopConnectionInfo, String> {
+    state.disconnect();
+    let token = uuid::Uuid::new_v4().to_string();
+    let data_dir = daemon_data_dir(&app).map_err(to_err)?;
+    let (url, child) = spawn_daemon(&app, &token, &data_dir).map_err(to_err)?;
+    state.set_local(url.clone(), token.clone(), data_dir, child);
+    Ok(state.info())
+}
+
+#[tauri::command]
+fn desktop_connect_ssh(
+    _app: tauri::AppHandle,
+    state: tauri::State<ConnectionManager>,
+    req: SshConnectReq,
+) -> Result<DesktopConnectionInfo, String> {
+    state.disconnect();
+
+    let host = req.host.trim().to_string();
+    if host.is_empty() {
+        return Err("host is required".to_string());
+    }
+    let remote_port = req.remote_port.unwrap_or(4399);
+
+    let token = if req.start_remote {
+        Some(
+            req.auth_token
+                .clone()
+                .filter(|t| !t.trim().is_empty())
+                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+        )
+    } else {
+        req.auth_token
+            .clone()
+            .filter(|t| !t.trim().is_empty())
+    };
+
+    if req.start_remote {
+        start_remote_daemon_over_ssh(&host, req.user.as_deref(), remote_port, token.as_deref(), req.remote_data_dir.as_deref())
+            .map_err(to_err)?;
+    }
+
+    let local_port = pick_unused_local_port().map_err(to_err)?;
+    let tunnel = start_ssh_tunnel(&host, req.user.as_deref(), local_port, remote_port).map_err(to_err)?;
+    let base_url = format!("http://127.0.0.1:{local_port}");
+
+    // Health check before returning.
+    if let Err(e) = probe_daemon_health(&base_url, token.as_deref()) {
+        let _ = try_kill_child(tunnel);
+        return Err(format!("failed to reach remote daemon: {e:#}"));
+    }
+
+    state.set_ssh(base_url, token, tunnel);
+    Ok(state.info())
+}
+
+#[tauri::command]
+fn desktop_daemon_request(
+    state: tauri::State<ConnectionManager>,
+    req: DesktopDaemonRequest,
+) -> Result<DesktopHttpResponse, String> {
+    state.daemon_request(req).map_err(to_err)
+}
+
+#[tauri::command]
+fn desktop_upload_blob(
+    state: tauri::State<ConnectionManager>,
+    bytes: Vec<u8>,
+    mime_type: String,
+    name: Option<String>,
+) -> Result<serde_json::Value, String> {
+    state.upload_blob(bytes, mime_type, name).map_err(to_err)
+}
+
+fn open_main_window(app: &tauri::AppHandle) -> Result<()> {
+    if app.get_window("main").is_some() {
+        return Ok(());
+    }
+    tauri::WindowBuilder::new(app, "main", tauri::WindowUrl::App("index.html".into()))
         .title("Context")
         .inner_size(1200.0, 900.0)
         .build()
@@ -199,37 +234,298 @@ fn open_main_window(app: &tauri::AppHandle, daemon_url: &str, token: &str) -> Re
     Ok(())
 }
 
-fn navigate_main_window(app: &tauri::AppHandle, daemon_url: &str, token: &str) -> Result<()> {
-    let Some(window) = app.get_window("main") else {
-        return Ok(());
+#[derive(Default)]
+struct ConnectionManager(std::sync::Mutex<ConnectionState>);
+
+#[derive(Default)]
+struct ConnectionState {
+    active: Option<ActiveConnection>,
+}
+
+enum ActiveConnection {
+    Local(LocalConnection),
+    Ssh(SshConnection),
+}
+
+struct LocalConnection {
+    base_url: String,
+    token: String,
+    data_dir: PathBuf,
+    child: Child,
+}
+
+struct SshConnection {
+    base_url: String,
+    token: Option<String>,
+    tunnel: Child,
+}
+
+impl ConnectionManager {
+    fn info(&self) -> DesktopConnectionInfo {
+        let guard = self.0.lock().ok();
+        let Some(guard) = guard.as_ref() else {
+            return DesktopConnectionInfo { kind: DesktopConnectionKind::None, base_url: None, token: None };
+        };
+        match &guard.active {
+            None => DesktopConnectionInfo { kind: DesktopConnectionKind::None, base_url: None, token: None },
+            Some(ActiveConnection::Local(c)) => DesktopConnectionInfo {
+                kind: DesktopConnectionKind::Local,
+                base_url: Some(c.base_url.clone()),
+                token: Some(c.token.clone()),
+            },
+            Some(ActiveConnection::Ssh(c)) => DesktopConnectionInfo {
+                kind: DesktopConnectionKind::Ssh,
+                base_url: Some(c.base_url.clone()),
+                token: c.token.clone(),
+            },
+        }
+    }
+
+    fn disconnect(&self) {
+        let mut guard = match self.0.lock() {
+            Ok(g) => g,
+            Err(_) => return,
+        };
+        if let Some(active) = guard.active.take() {
+            match active {
+                ActiveConnection::Local(c) => {
+                    let _ = try_kill_child(c.child);
+                }
+                ActiveConnection::Ssh(c) => {
+                    let _ = try_kill_child(c.tunnel);
+                }
+            }
+        }
+    }
+
+    fn set_local(&self, base_url: String, token: String, data_dir: PathBuf, child: Child) {
+        let mut guard = self.0.lock().expect("connection manager lock");
+        guard.active = Some(ActiveConnection::Local(LocalConnection { base_url, token, data_dir, child }));
+    }
+
+    fn set_ssh(&self, base_url: String, token: Option<String>, tunnel: Child) {
+        let mut guard = self.0.lock().expect("connection manager lock");
+        guard.active = Some(ActiveConnection::Ssh(SshConnection { base_url, token, tunnel }));
+    }
+
+    fn daemon_request(&self, req: DesktopDaemonRequest) -> Result<DesktopHttpResponse> {
+        if !req.path.starts_with("/api/") {
+            return Err(anyhow!("only /api/* paths are supported"));
+        }
+
+        let (base_url, token) = {
+            let guard = self.0.lock().context("connection manager lock")?;
+            let active = guard
+                .active
+                .as_ref()
+                .ok_or_else(|| anyhow!("not connected (open a workspace first)"))?;
+            match active {
+                ActiveConnection::Local(c) => (c.base_url.clone(), Some(c.token.clone())),
+                ActiveConnection::Ssh(c) => (c.base_url.clone(), c.token.clone()),
+            }
+        };
+
+        let url = format!("{}{}", base_url.trim_end_matches('/'), req.path);
+        let client = reqwest::blocking::Client::builder()
+            .timeout(Duration::from_secs(30))
+            .build()
+            .context("building http client")?;
+
+        let method = req.method.trim().to_uppercase();
+        let mut builder = match method.as_str() {
+            "GET" => client.get(&url),
+            "POST" => client.post(&url),
+            "DELETE" => client.delete(&url),
+            "PUT" => client.put(&url),
+            "PATCH" => client.patch(&url),
+            other => return Err(anyhow!("unsupported method: {other}")),
+        };
+
+        if let Some(t) = token.as_deref() {
+            if !t.trim().is_empty() {
+                builder = builder.bearer_auth(t);
+            }
+        }
+        for (k, v) in req.headers {
+            builder = builder.header(k, v);
+        }
+        if let Some(body) = req.body {
+            builder = builder.body(body);
+        }
+        let res = builder.send().context("sending request")?;
+        let status = res.status().as_u16();
+        let content_type = res
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string());
+        let body = res.text().unwrap_or_default();
+        Ok(DesktopHttpResponse { status, body, content_type })
+    }
+
+    fn upload_blob(
+        &self,
+        bytes: Vec<u8>,
+        mime_type: String,
+        name: Option<String>,
+    ) -> Result<serde_json::Value> {
+        let (base_url, token) = {
+            let guard = self.0.lock().context("connection manager lock")?;
+            let active = guard
+                .active
+                .as_ref()
+                .ok_or_else(|| anyhow!("not connected (open a workspace first)"))?;
+            match active {
+                ActiveConnection::Local(c) => (c.base_url.clone(), Some(c.token.clone())),
+                ActiveConnection::Ssh(c) => (c.base_url.clone(), c.token.clone()),
+            }
+        };
+
+        let url = format!("{}/api/blobs", base_url.trim_end_matches('/'));
+        let client = reqwest::blocking::Client::builder()
+            .timeout(Duration::from_secs(60))
+            .build()
+            .context("building http client")?;
+
+        let mut part = reqwest::blocking::multipart::Part::bytes(bytes);
+        if let Some(n) = name.as_deref().filter(|s| !s.trim().is_empty()) {
+            part = part.file_name(n.to_string());
+        }
+        part = part
+            .mime_str(&mime_type)
+            .context("invalid mime_type for multipart")?;
+
+        let form = reqwest::blocking::multipart::Form::new().part("file", part);
+        let mut req = client.post(url).multipart(form);
+        if let Some(t) = token.as_deref() {
+            if !t.trim().is_empty() {
+                req = req.bearer_auth(t);
+            }
+        }
+        let res = req.send().context("uploading blob")?;
+        let status = res.status();
+        let body = res.text().unwrap_or_default();
+        if !status.is_success() {
+            return Err(anyhow!("blob upload failed ({status}): {body}"));
+        }
+        Ok(serde_json::from_str(&body).context("parsing blob upload response")?)
+    }
+}
+
+fn to_err(e: impl std::fmt::Display) -> String {
+    e.to_string()
+}
+
+fn derive_repo_name(url: &str) -> Option<String> {
+    let trimmed = url.trim().trim_end_matches('/');
+    let last = trimmed.rsplit('/').next()?;
+    let name = last.trim_end_matches(".git").trim();
+    if name.is_empty() {
+        None
+    } else {
+        Some(name.to_string())
+    }
+}
+
+fn pick_unused_local_port() -> Result<u16> {
+    let listener = TcpListener::bind("127.0.0.1:0").context("binding ephemeral port")?;
+    let port = listener.local_addr().context("reading local addr")?.port();
+    Ok(port)
+}
+
+fn start_ssh_tunnel(
+    host: &str,
+    user: Option<&str>,
+    local_port: u16,
+    remote_port: u16,
+) -> Result<Child> {
+    let target = match user {
+        Some(u) if !u.trim().is_empty() => format!("{}@{}", u.trim(), host),
+        _ => host.to_string(),
     };
-    let url = format!(
-        "{}/?desktop=1&token={}",
-        daemon_url.trim_end_matches('/'),
-        urlencoding::encode(token)
+
+    let mut cmd = Command::new("ssh");
+    cmd.arg("-N")
+        .arg("-o")
+        .arg("ExitOnForwardFailure=yes")
+        .arg("-o")
+        .arg("ServerAliveInterval=30")
+        .arg("-o")
+        .arg("ServerAliveCountMax=3")
+        .arg("-L")
+        .arg(format!("{local_port}:127.0.0.1:{remote_port}"))
+        .arg(target)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped());
+
+    cmd.spawn().context("spawning ssh tunnel")
+}
+
+fn start_remote_daemon_over_ssh(
+    host: &str,
+    user: Option<&str>,
+    remote_port: u16,
+    token: Option<&str>,
+    remote_data_dir: Option<&str>,
+) -> Result<()> {
+    let target = match user {
+        Some(u) if !u.trim().is_empty() => format!("{}@{}", u.trim(), host),
+        _ => host.to_string(),
+    };
+
+    let data_dir = remote_data_dir.unwrap_or("~/.context");
+    let mut serve_cmd = format!(
+        "nohup context serve --bind 127.0.0.1:{remote_port} --data-dir {}",
+        shell_escape(data_dir)
     );
-    let js = format!(
-        "window.location.replace({});",
-        serde_json::to_string(&url).unwrap_or_else(|_| "\"/\"".to_string())
-    );
-    window.eval(&js).ok();
+    if let Some(t) = token {
+        if !t.trim().is_empty() {
+            serve_cmd.push_str(&format!(" --auth-token {}", shell_escape(t)));
+        }
+    }
+    serve_cmd.push_str(" > ~/.context/logs/daemon.log 2>&1 &");
+
+    let output = Command::new("ssh")
+        .arg(target)
+        .arg("sh")
+        .arg("-lc")
+        .arg(serve_cmd)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .output()
+        .context("starting remote daemon over ssh")?;
+    if !output.status.success() {
+        return Err(anyhow!(
+            "ssh start failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
     Ok(())
 }
 
-fn desktop_dir(app: &tauri::AppHandle) -> Result<PathBuf> {
-    let root = app
-        .path_resolver()
-        .app_data_dir()
-        .context("resolving app_data_dir")?;
-    Ok(root.join("desktop"))
+fn shell_escape(s: &str) -> String {
+    // Minimal POSIX shell escaping for tokens: wrap in single quotes and escape inner single quotes.
+    let inner = s.replace('\'', "'\"'\"'");
+    format!("'{}'", inner)
 }
 
-fn token_path(app: &tauri::AppHandle) -> Result<PathBuf> {
-    Ok(desktop_dir(app)?.join("token.json"))
-}
-
-fn descriptor_path(app: &tauri::AppHandle) -> Result<PathBuf> {
-    Ok(desktop_dir(app)?.join("daemon.json"))
+fn probe_daemon_health(base_url: &str, token: Option<&str>) -> Result<()> {
+    let url = format!("{}/api/health", base_url.trim_end_matches('/'));
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .context("building http client")?;
+    let mut req = client.get(url);
+    if let Some(t) = token {
+        if !t.trim().is_empty() {
+            req = req.bearer_auth(t);
+        }
+    }
+    let res = req.send().context("requesting /api/health")?;
+    res.error_for_status().context("health status")?;
+    Ok(())
 }
 
 fn daemon_data_dir(app: &tauri::AppHandle) -> Result<PathBuf> {
@@ -238,97 +534,6 @@ fn daemon_data_dir(app: &tauri::AppHandle) -> Result<PathBuf> {
         .app_data_dir()
         .context("resolving app_data_dir")?;
     Ok(root.join("daemon"))
-}
-
-fn load_or_create_desktop_token(app: &tauri::AppHandle) -> Result<String> {
-    let path = token_path(app)?;
-    if path.exists() {
-        let txt = std::fs::read_to_string(&path)?;
-        let parsed: DesktopTokenFile = serde_json::from_str(&txt)?;
-        return Ok(parsed.token);
-    }
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let token = uuid::Uuid::new_v4().to_string();
-    std::fs::write(
-        &path,
-        serde_json::to_string_pretty(&DesktopTokenFile {
-            token: token.clone(),
-        })?,
-    )?;
-    Ok(token)
-}
-
-fn load_descriptor(app: &tauri::AppHandle) -> Result<DaemonDescriptor> {
-    let path = descriptor_path(app)?;
-    let txt = std::fs::read_to_string(&path)?;
-    Ok(serde_json::from_str(&txt)?)
-}
-
-fn save_descriptor(app: &tauri::AppHandle, desc: &DaemonDescriptor) -> Result<()> {
-    let path = descriptor_path(app)?;
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    std::fs::write(&path, serde_json::to_string_pretty(desc)?)?;
-    Ok(())
-}
-
-fn daemon_healthy(url: &str) -> bool {
-    let client = reqwest::blocking::Client::new();
-    client
-        .get(format!("{}/api/health", url.trim_end_matches('/')))
-        .send()
-        .ok()
-        .and_then(|r| r.error_for_status().ok())
-        .is_some()
-}
-
-fn daemon_authed(url: &str, token: &str) -> bool {
-    let client = reqwest::blocking::Client::new();
-    client
-        .get(format!("{}/api/providers", url.trim_end_matches('/')))
-        .bearer_auth(token)
-        .send()
-        .ok()
-        .and_then(|r| r.error_for_status().ok())
-        .is_some()
-}
-
-fn daemon_serves_ui(url: &str) -> bool {
-    let client = reqwest::blocking::Client::new();
-    client
-        .get(format!("{}/", url.trim_end_matches('/')))
-        .send()
-        .ok()
-        .map(|r| r.status().is_success())
-        .unwrap_or(false)
-}
-
-fn try_terminate_pid(pid: u32) {
-    #[cfg(unix)]
-    {
-        let _ = Command::new("kill")
-            .arg("-TERM")
-            .arg(pid.to_string())
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
-    }
-    #[cfg(windows)]
-    {
-        let _ = Command::new("taskkill")
-            .arg("/PID")
-            .arg(pid.to_string())
-            .arg("/T")
-            .arg("/F")
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
-    }
 }
 
 fn current_arch_token() -> &'static str {
@@ -476,4 +681,10 @@ fn spawn_daemon(app: &tauri::AppHandle, token: &str, data_dir: &Path) -> Result<
 #[allow(dead_code)]
 fn is_executable(path: &Path) -> bool {
     path.exists()
+}
+
+fn try_kill_child(mut child: Child) -> Result<()> {
+    let _ = child.kill();
+    let _ = child.wait();
+    Ok(())
 }

@@ -100,7 +100,7 @@ export default function SettingsPage() {
   return (
     <div className="page">
       <div className="header">
-        <Link to="/">← Workspaces</Link>
+        <Link to="/workspaces">← Workspaces</Link>
       </div>
 
       <h1>Settings</h1>

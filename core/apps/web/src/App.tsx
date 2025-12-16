@@ -1,6 +1,8 @@
 import { useEffect } from "react";
 import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { appendDesktopLog } from "./api/client";
+import LauncherPage from "./pages/LauncherPage";
+import AppSettingsPage from "./pages/AppSettingsPage";
 import WorkspacesPage from "./pages/WorkspacesPage";
 import WorkspacePage from "./pages/WorkspacePage";
 import WorkbenchPage from "./pages/WorkbenchPage";
@@ -34,7 +36,9 @@ export default function App() {
     <SessionSupervisorProvider>
       <BrowserRouter>
         <Routes>
-          <Route path="/" element={<WorkspacesPage />} />
+          <Route path="/" element={<LauncherPage />} />
+          <Route path="/app-settings" element={<AppSettingsPage />} />
+          <Route path="/workspaces" element={<WorkspacesPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/providers" element={<ProvidersPage />} />
           <Route path="/diagnostics" element={<DiagnosticsPage />} />

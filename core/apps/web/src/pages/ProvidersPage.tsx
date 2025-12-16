@@ -11,6 +11,7 @@ import {
   listProviders,
   listInstallEvents,
 } from "../api/client";
+import { isDesktopApp } from "../utils/desktop";
 
 type InstallSession = {
   installId: string;
@@ -115,6 +116,9 @@ export default function ProvidersPage() {
 
     let eventSource: EventSource | null = null;
     try {
+      if (isDesktopApp()) {
+        throw new Error("desktop mode uses polling (no EventSource)");
+      }
       eventSource = new EventSource(installStreamUrl(installId));
       eventSourcesRef.current[providerId] = eventSource;
       eventSource.addEventListener("progress", (evt: any) => {
@@ -231,7 +235,7 @@ export default function ProvidersPage() {
   return (
     <div className="page">
       <div className="header">
-        <Link to="/">← Workspaces</Link>
+        <Link to="/workspaces">← Workspaces</Link>
       </div>
 
       <h1>Providers</h1>

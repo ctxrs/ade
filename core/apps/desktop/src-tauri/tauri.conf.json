@@ -2,8 +2,8 @@
   "build": {
     "beforeBuildCommand": "",
     "beforeDevCommand": "",
-    "devPath": "../stub",
-    "distDir": "../stub"
+    "devPath": "http://localhost:5173",
+    "distDir": "web/dist"
   },
   "package": {
     "productName": "Context",

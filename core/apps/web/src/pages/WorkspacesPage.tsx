@@ -36,7 +36,9 @@ export default function WorkspacesPage() {
     <div className="page">
       <div className="row">
         <h1 style={{ marginRight: "auto" }}>Workspaces</h1>
-        <Link to="/providers">Providers</Link>
+        <Link to="/">Launcher</Link>
+        <Link to="/app-settings" style={{ marginLeft: 12 }}>Settings</Link>
+        <Link to="/providers" style={{ marginLeft: 12 }}>Providers</Link>
       </div>
 
       {providers.some((p) => !p.installed) && (
@@ -72,6 +74,12 @@ export default function WorkspacesPage() {
           </div>
         )}
       </form>
+
+      {error?.toLowerCase().includes("not connected") && (
+        <div className="banner" style={{ marginTop: 12 }}>
+          Not connected. Go to <Link to="/">Launcher</Link> to connect to a host.
+        </div>
+      )}
 
       <ul className="list">
         {workspaces.map((ws) => {

@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import {
+  getDaemonBaseUrl,
   getHealth,
   getSession,
   idToString,
@@ -317,13 +318,21 @@ class SessionSupervisor {
     const token = authToken();
     const qs = token ? `?token=${encodeURIComponent(token)}` : "";
 
-    // Prefer same-origin (works under dev proxy); fall back to daemon_url -> ws base if provided.
+    // Prefer same-origin (works under dev proxy); fall back to configured daemon base URL; then to daemon_url from /api/health.
     let baseWs: string | null = null;
+    const configuredBase = getDaemonBaseUrl();
+    if (configuredBase) {
+      baseWs = configuredBase.startsWith("https://")
+        ? configuredBase.replace(/^https:\/\//, "wss://")
+        : configuredBase.replace(/^http:\/\//, "ws://");
+    }
     try {
       this.health = await getHealth();
       const base = String(this.health.daemon_url || "").trim();
-      if (base) {
-        baseWs = base.startsWith("https://") ? base.replace(/^https:\/\//, "wss://") : base.replace(/^http:\/\//, "ws://");
+      if (base && !baseWs) {
+        baseWs = base.startsWith("https://")
+          ? base.replace(/^https:\/\//, "wss://")
+          : base.replace(/^http:\/\//, "ws://");
       }
     } catch {
       // ignore

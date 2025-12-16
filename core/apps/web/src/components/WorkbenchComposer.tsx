@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type React from "react";
-import type { MessageAttachment, ProviderOptions, ProviderStatus } from "../api/client";
+import { blobUrl, type MessageAttachment, type ProviderOptions, type ProviderStatus } from "../api/client";
 import { shouldSendOnEnter } from "../utils/keyboard";
 import { buildModelCatalog, composeModelId, parseModelId, type KnownEffort } from "../utils/modelEffort";
 import { ComposerAutocompleteMenu } from "./ComposerAutocompleteMenu";
@@ -21,7 +21,7 @@ export type WorkbenchModeId = "default" | "research" | "plan" | "review";
 export type WorkbenchEnvTarget = "local" | "worktree" | "container";
 
 function imageAttachmentSrc(a: MessageAttachment): string {
-  return a.kind === "image_ref" ? `/api/blobs/${a.blob_id}` : `data:${a.mime_type};base64,${a.data_base64}`;
+  return a.kind === "image_ref" ? blobUrl(a.blob_id) : `data:${a.mime_type};base64,${a.data_base64}`;
 }
 
 function attachmentDisplayName(name?: string | null) {

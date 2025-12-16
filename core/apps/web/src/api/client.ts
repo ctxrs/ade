@@ -1,3 +1,5 @@
+import { desktopDaemonRequest, desktopUploadBlob, isDesktopApp } from "../utils/desktop";
+
 export type Workspace = {
   id: { 0: string } | string;
   name: string;
@@ -223,6 +225,28 @@ const authToken = (): string | null => {
   }
 };
 
+export const getDaemonBaseUrl = (): string | null => {
+  try {
+    return sessionStorage.getItem("contextDaemonBaseUrl") || localStorage.getItem("contextDaemonBaseUrl");
+  } catch {
+    return null;
+  }
+};
+
+export const setDaemonBaseUrl = (baseUrl: string | null, persist?: boolean) => {
+  try {
+    if (!baseUrl) {
+      sessionStorage.removeItem("contextDaemonBaseUrl");
+      if (persist) localStorage.removeItem("contextDaemonBaseUrl");
+      return;
+    }
+    sessionStorage.setItem("contextDaemonBaseUrl", baseUrl);
+    if (persist) localStorage.setItem("contextDaemonBaseUrl", baseUrl);
+  } catch {
+    // ignore
+  }
+};
+
 const api = async <T>(path: string, init?: RequestInit): Promise<T> => {
   const token = authToken();
   const extraHeaders: Record<string, string> = {};
@@ -312,32 +336,192 @@ const api = async <T>(path: string, init?: RequestInit): Promise<T> => {
   }
 };
 
+const desktopApi = async <T>(path: string, init?: RequestInit): Promise<T> => {
+  const extraHeaders: Record<string, string> = {};
+  if (init?.headers) {
+    if (init.headers instanceof Headers) {
+      init.headers.forEach((value, key) => {
+        extraHeaders[key] = value;
+      });
+    } else if (Array.isArray(init.headers)) {
+      for (const [key, value] of init.headers) {
+        extraHeaders[key] = value;
+      }
+    } else {
+      Object.assign(extraHeaders, init.headers as any);
+    }
+  }
+
+  const method = init?.method ? String(init.method) : "GET";
+  const body =
+    init?.body === undefined || init?.body === null
+      ? null
+      : typeof init.body === "string"
+        ? init.body
+        : String(init.body);
+
+  const resp = await desktopDaemonRequest({
+    method,
+    path,
+    body,
+    headers: Object.entries({
+      "content-type": "application/json",
+      ...extraHeaders,
+    }),
+  });
+
+  const contentType = String(resp.content_type ?? "");
+  const text = String(resp.body ?? "");
+
+  const looksLikeHtml = (t: string): boolean => {
+    const s = String(t || "").trimStart().toLowerCase();
+    return s.startsWith("<!doctype html") || s.startsWith("<html");
+  };
+
+  const trimForError = (t: string): string => {
+    const s = String(t || "").trim();
+    if (s.length <= 800) return s;
+    return `${s.slice(0, 800)}…`;
+  };
+
+  const ok = resp.status >= 200 && resp.status < 300;
+  if (!ok) {
+    if ((contentType.includes("text/html") || looksLikeHtml(text)) && path.startsWith("/api/")) {
+      throw new Error(
+        `The daemon returned HTML for ${path} (${resp.status}). Restart/update the daemon.`,
+      );
+    }
+    const lowered = String(text || "").toLowerCase();
+    if (
+      resp.status >= 500 &&
+      (lowered.includes("econnrefused") ||
+        lowered.includes("proxy error") ||
+        lowered.includes("connect econnrefused") ||
+        lowered.includes("socket hang up"))
+    ) {
+      throw new Error("Cannot reach the Context daemon. Connect to a host from the launcher first.");
+    }
+    try {
+      const parsed = text ? JSON.parse(text) : null;
+      const msg = parsed?.error ?? parsed?.message;
+      if (typeof msg === "string" && msg.length > 0) {
+        throw new Error(msg);
+      }
+    } catch {
+      // ignore
+    }
+    throw new Error(trimForError(text) || `${resp.status}`);
+  }
+
+  if (resp.status === 204) {
+    return undefined as T;
+  }
+  if (!text) return undefined as T;
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    if ((contentType.includes("text/html") || looksLikeHtml(text)) && path.startsWith("/api/")) {
+      throw new Error(`The daemon returned HTML for ${path}. Restart/update the daemon.`);
+    }
+    throw new Error(`Unexpected non-JSON response from ${path}.`);
+  }
+};
+
+const apiAny = async <T>(path: string, init?: RequestInit): Promise<T> => {
+  if (isDesktopApp()) return desktopApi<T>(path, init);
+  return api<T>(path, init);
+};
+
+export type DaemonRawResponse = {
+  status: number;
+  body: string;
+  content_type: string;
+};
+
+// For endpoints that need to handle non-2xx statuses without throwing (e.g. buffers update conflict 409).
+export const daemonFetchRaw = async (path: string, init?: RequestInit): Promise<DaemonRawResponse> => {
+  const token = authToken();
+  const extraHeaders: Record<string, string> = {};
+  if (init?.headers) {
+    if (init.headers instanceof Headers) {
+      init.headers.forEach((value, key) => {
+        extraHeaders[key] = value;
+      });
+    } else if (Array.isArray(init.headers)) {
+      for (const [key, value] of init.headers) {
+        extraHeaders[key] = value;
+      }
+    } else {
+      Object.assign(extraHeaders, init.headers as any);
+    }
+  }
+
+  const method = init?.method ? String(init.method) : "GET";
+  const body =
+    init?.body === undefined || init?.body === null
+      ? null
+      : typeof init.body === "string"
+        ? init.body
+        : String(init.body);
+
+  if (isDesktopApp()) {
+    const resp = await desktopDaemonRequest({
+      method,
+      path,
+      body,
+      headers: Object.entries({
+        "content-type": "application/json",
+        ...extraHeaders,
+      }),
+    });
+    return {
+      status: resp.status,
+      body: String(resp.body ?? ""),
+      content_type: String(resp.content_type ?? ""),
+    };
+  }
+
+  const res = await fetch(path, {
+    headers: {
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
+      ...extraHeaders,
+    },
+    ...init,
+  });
+  const text = await res.text();
+  return {
+    status: res.status,
+    body: text,
+    content_type: res.headers.get("content-type") ?? "",
+  };
+};
+
 const idToString = (id: any): string =>
   typeof id === "string" ? id : id?.["0"];
 
 export const listWorkspaces = () =>
-  api<Workspace[]>("/api/workspaces");
+  apiAny<Workspace[]>("/api/workspaces");
 
 export const getSettings = () =>
-  api<Settings>("/api/settings");
+  apiAny<Settings>("/api/settings");
 
 export const updateSettings = (settings: Settings) =>
-  api<Settings>("/api/settings", {
+  apiAny<Settings>("/api/settings", {
     method: "POST",
     body: JSON.stringify(settings),
   });
 
 export const createWorkspace = (root_path: string, name?: string) =>
-  api<Workspace>("/api/workspaces", {
+  apiAny<Workspace>("/api/workspaces", {
     method: "POST",
     body: JSON.stringify({ root_path, name }),
   });
 
 export const getWorkspace = (id: string) =>
-  api<Workspace>(`/api/workspaces/${id}`);
+  apiAny<Workspace>(`/api/workspaces/${id}`);
 
 export const listTasks = (workspaceId: string) =>
-  api<Task[]>(`/api/workspaces/${workspaceId}/tasks`);
+  apiAny<Task[]>(`/api/workspaces/${workspaceId}/tasks`);
 
 export const createTask = (
   workspaceId: string,
@@ -345,7 +529,7 @@ export const createTask = (
   description?: string,
   opts?: { create_default_track?: boolean; default_track_label?: string },
 ) =>
-  api<Task>(`/api/workspaces/${workspaceId}/tasks`, {
+  apiAny<Task>(`/api/workspaces/${workspaceId}/tasks`, {
     method: "POST",
     body: JSON.stringify({
       title,
@@ -356,19 +540,19 @@ export const createTask = (
   });
 
 export const getTask = (taskId: string) =>
-  api<Task>(`/api/tasks/${taskId}`);
+  apiAny<Task>(`/api/tasks/${taskId}`);
 
 export const archiveTask = (taskId: string) =>
-  api<Task>(`/api/tasks/${taskId}/archive`, { method: "POST" });
+  apiAny<Task>(`/api/tasks/${taskId}/archive`, { method: "POST" });
 
 export const unarchiveTask = (taskId: string) =>
-  api<Task>(`/api/tasks/${taskId}/unarchive`, { method: "POST" });
+  apiAny<Task>(`/api/tasks/${taskId}/unarchive`, { method: "POST" });
 
 export const listTracks = (taskId: string) =>
-  api<Track[]>(`/api/tasks/${taskId}/tracks`);
+  apiAny<Track[]>(`/api/tasks/${taskId}/tracks`);
 
 export const createTrack = (taskId: string, label?: string, opts?: { env_target?: "worktree" | "local" }) =>
-  api<Track>(`/api/tasks/${taskId}/tracks`, {
+  apiAny<Track>(`/api/tasks/${taskId}/tracks`, {
     method: "POST",
     body: JSON.stringify({
       label,
@@ -377,29 +561,29 @@ export const createTrack = (taskId: string, label?: string, opts?: { env_target?
   });
 
 export const createSession = (trackId: string, provider_id: string, model_id: string) =>
-  api<Session>(`/api/tracks/${trackId}/sessions`, {
+  apiAny<Session>(`/api/tracks/${trackId}/sessions`, {
     method: "POST",
     body: JSON.stringify({ provider_id, model_id }),
   });
 
 export const listSessionsForTrack = (trackId: string) =>
-  api<Session[]>(`/api/tracks/${trackId}/sessions`);
+  apiAny<Session[]>(`/api/tracks/${trackId}/sessions`);
 
 export const getSession = (sessionId: string) =>
-  api<Session>(`/api/sessions/${sessionId}`);
+  apiAny<Session>(`/api/sessions/${sessionId}`);
 
 export const listMessages = (sessionId: string) =>
-  api<Message[]>(`/api/sessions/${sessionId}/messages`);
+  apiAny<Message[]>(`/api/sessions/${sessionId}/messages`);
 
 export const listSessionEvents = (sessionId: string) =>
-  api<SessionEvent[]>(`/api/sessions/${sessionId}/events`);
+  apiAny<SessionEvent[]>(`/api/sessions/${sessionId}/events`);
 
 export const listSessionEventsPage = (sessionId: string, after?: string, limit?: number) => {
   const qs = new URLSearchParams();
   if (after) qs.set("after", after);
   if (limit) qs.set("limit", String(limit));
   const suffix = qs.toString() ? `?${qs.toString()}` : "";
-  return api<SessionEvent[]>(`/api/sessions/${sessionId}/events${suffix}`);
+  return apiAny<SessionEvent[]>(`/api/sessions/${sessionId}/events${suffix}`);
 };
 
 export const listSessionFileCompletions = (
@@ -412,7 +596,7 @@ export const listSessionFileCompletions = (
   qs.set("query", query);
   if (limit) qs.set("limit", String(limit));
   const suffix = qs.toString() ? `?${qs.toString()}` : "";
-  return api<string[]>(`/api/sessions/${sessionId}/completions/files${suffix}`, { signal });
+  return apiAny<string[]>(`/api/sessions/${sessionId}/completions/files${suffix}`, { signal });
 };
 
 export const listWorkspaceFileCompletions = (
@@ -425,7 +609,7 @@ export const listWorkspaceFileCompletions = (
   qs.set("query", query);
   if (limit) qs.set("limit", String(limit));
   const suffix = qs.toString() ? `?${qs.toString()}` : "";
-  return api<string[]>(`/api/workspaces/${workspaceId}/completions/files${suffix}`, { signal });
+  return apiAny<string[]>(`/api/workspaces/${workspaceId}/completions/files${suffix}`, { signal });
 };
 
 export const postMessage = (
@@ -434,12 +618,22 @@ export const postMessage = (
   delivery?: "immediate" | "queued",
   attachments?: MessageAttachment[],
 ) =>
-  api<Message>(`/api/sessions/${sessionId}/messages`, {
+  apiAny<Message>(`/api/sessions/${sessionId}/messages`, {
     method: "POST",
     body: JSON.stringify({ content, delivery, attachments: attachments ?? [] }),
   });
 
 export const uploadBlob = async (file: File): Promise<BlobUploadResp> => {
+  if (isDesktopApp()) {
+    const buf = await file.arrayBuffer();
+    const bytes = Array.from(new Uint8Array(buf));
+    const resp = await desktopUploadBlob({
+      bytes,
+      mime_type: file.type || "application/octet-stream",
+      name: file.name,
+    });
+    return resp as BlobUploadResp;
+  }
   const token = authToken();
   const form = new FormData();
   form.append("file", file, file.name);
@@ -459,64 +653,64 @@ export const uploadBlob = async (file: File): Promise<BlobUploadResp> => {
 };
 
 export const cancelSession = (sessionId: string) =>
-  api(`/api/sessions/${sessionId}/cancel`, { method: "POST" });
+  apiAny(`/api/sessions/${sessionId}/cancel`, { method: "POST" });
 
 export const interruptSession = (sessionId: string) =>
-  api(`/api/sessions/${sessionId}/interrupt`, { method: "POST" });
+  apiAny(`/api/sessions/${sessionId}/interrupt`, { method: "POST" });
 
 export const setSessionModel = (sessionId: string, model_id: string) =>
-  api<Session>(`/api/sessions/${sessionId}/model`, {
+  apiAny<Session>(`/api/sessions/${sessionId}/model`, {
     method: "POST",
     body: JSON.stringify({ model_id }),
   });
 
 export const setSessionMode = (sessionId: string, mode_id: string) =>
-  api(`/api/sessions/${sessionId}/mode`, {
+  apiAny(`/api/sessions/${sessionId}/mode`, {
     method: "POST",
     body: JSON.stringify({ mode_id }),
   });
 
 export const authenticateSession = (sessionId: string, method_id?: string) =>
-  api(`/api/sessions/${sessionId}/authenticate`, {
+  apiAny(`/api/sessions/${sessionId}/authenticate`, {
     method: "POST",
     body: JSON.stringify(method_id ? { method_id } : {}),
   });
 
 export const trackDiff = (trackId: string) =>
-  api<{ diff: string }>(`/api/tracks/${trackId}/diff`);
+  apiAny<{ diff: string }>(`/api/tracks/${trackId}/diff`);
 
 export const applyTrackDiffPatch = (trackId: string, action: "accept" | "reject", patch: string) =>
-  api<{ diff: string }>(`/api/tracks/${trackId}/diff/apply`, {
+  apiAny<{ diff: string }>(`/api/tracks/${trackId}/diff/apply`, {
     method: "POST",
     body: JSON.stringify({ action, patch }),
   });
 
 export const listEditPlansForTrack = (trackId: string) =>
-  api<EditPlanSummary[]>(`/api/tracks/${trackId}/edit_plans`);
+  apiAny<EditPlanSummary[]>(`/api/tracks/${trackId}/edit_plans`);
 
 export const getEditPlan = (planId: string) =>
-  api<EditPlanSummary>(`/api/edit_plans/${planId}`);
+  apiAny<EditPlanSummary>(`/api/edit_plans/${planId}`);
 
 export const applyEditPlanPatch = (planId: string, action: "accept" | "reject", patch: string) =>
-  api<EditPlanSummary>(`/api/edit_plans/${planId}/apply`, {
+  apiAny<EditPlanSummary>(`/api/edit_plans/${planId}/apply`, {
     method: "POST",
     body: JSON.stringify({ action, patch }),
   });
 
 export const discardEditPlan = (planId: string) =>
-  api<void>(`/api/edit_plans/${planId}/discard`, {
+  apiAny<void>(`/api/edit_plans/${planId}/discard`, {
     method: "POST",
     body: JSON.stringify({}),
   });
 
 export const listQueue = (sessionId: string) =>
-  api<Message[]>(`/api/sessions/${sessionId}/queue`);
+  apiAny<Message[]>(`/api/sessions/${sessionId}/queue`);
 
 export const deleteMessage = (messageId: string) =>
-  api(`/api/messages/${messageId}`, { method: "DELETE" });
+  apiAny(`/api/messages/${messageId}`, { method: "DELETE" });
 
 export const listProviders = () =>
-  api<ProviderStatus[]>(`/api/providers`);
+  apiAny<ProviderStatus[]>(`/api/providers`);
 
 export type ProviderOptions = {
   provider_id: string;
@@ -534,19 +728,19 @@ export type ProviderOptions = {
 };
 
 export const getProviderOptions = (workspaceId: string, providerId: string) =>
-  api<ProviderOptions>(`/api/workspaces/${workspaceId}/providers/${providerId}/options`);
+  apiAny<ProviderOptions>(`/api/workspaces/${workspaceId}/providers/${providerId}/options`);
 
 export const installProvider = (providerId: string) =>
-  api<InstallStartResponse>(`/api/providers/${providerId}/install`, { method: "POST" });
+  apiAny<InstallStartResponse>(`/api/providers/${providerId}/install`, { method: "POST" });
 
 export const installAllProviders = () =>
-  api<InstallStartResponse[]>(`/api/providers/install_all`, { method: "POST" });
+  apiAny<InstallStartResponse[]>(`/api/providers/install_all`, { method: "POST" });
 
 export const getInstall = (installId: string) =>
-  api<InstallInfo>(`/api/providers/install/${installId}`);
+  apiAny<InstallInfo>(`/api/providers/install/${installId}`);
 
 export const listInstallEvents = (installId: string) =>
-  api<InstallProgressEvent[]>(`/api/providers/install/${installId}/events`);
+  apiAny<InstallProgressEvent[]>(`/api/providers/install/${installId}/events`);
 
 export const installStreamUrl = (installId: string): string => {
   const token = authToken();
@@ -555,33 +749,41 @@ export const installStreamUrl = (installId: string): string => {
     : `/api/providers/install/${installId}/stream`;
 };
 
-export const getDiagnostics = () => api<Diagnostics>(`/api/diagnostics`);
+export const getDiagnostics = () => apiAny<Diagnostics>(`/api/diagnostics`);
 
-export const getHealth = () => api<Health>(`/api/health`);
+export const getHealth = () => apiAny<Health>(`/api/health`);
 
-export const getLspStatus = () => api<LspStatus>(`/api/lsp/status`);
+export const getLspStatus = () => apiAny<LspStatus>(`/api/lsp/status`);
 
-export const openLogsFolder = () => api(`/api/logs/open`, { method: "POST" });
+export const openLogsFolder = () => apiAny(`/api/logs/open`, { method: "POST" });
 
 export const appendDesktopLog = (message: string, level?: string) =>
-  api(`/api/desktop/log`, {
+  apiAny(`/api/desktop/log`, {
     method: "POST",
     body: JSON.stringify({ message, level }),
   });
 
 export const checkUpdates = (channel?: string) =>
-  api<UpdateCheck>(`/api/updates/check${channel ? `?channel=${encodeURIComponent(channel)}` : ""}`);
+  apiAny<UpdateCheck>(`/api/updates/check${channel ? `?channel=${encodeURIComponent(channel)}` : ""}`);
 
 export const downloadAppImageUpdate = (channel?: string) =>
-  api<DownloadAppImageUpdateResp>(`/api/updates/appimage/download`, {
+  apiAny<DownloadAppImageUpdateResp>(`/api/updates/appimage/download`, {
     method: "POST",
     body: JSON.stringify(channel ? { channel } : {}),
   });
 
 export const applyAppImageUpdate = () =>
-  api<ApplyAppImageUpdateResp>(`/api/updates/appimage/apply`, {
+  apiAny<ApplyAppImageUpdateResp>(`/api/updates/appimage/apply`, {
     method: "POST",
     body: JSON.stringify({ confirm: true }),
   });
+
+export const blobUrl = (blobId: string): string => {
+  const base = getDaemonBaseUrl();
+  const token = authToken();
+  const prefix = base ? base.replace(/\/+$/, "") : "";
+  const url = `${prefix}/api/blobs/${encodeURIComponent(String(blobId || ""))}`;
+  return token ? `${url}?token=${encodeURIComponent(token)}` : url;
+};
 
 export { idToString };
