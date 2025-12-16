@@ -34,6 +34,8 @@ import { WorkbenchComposer as UnifiedWorkbenchComposer, type WorkbenchModeId } f
 import { startMicPcmStream } from "../utils/micPcmStream";
 import { parseWsJson } from "../utils/wsJson";
 import { buildModelCatalog, composeModelId, parseModelId } from "../utils/modelEffort";
+import { imageFilesToBlobRefAttachments, imageFilesToInlineAttachments } from "../utils/messageAttachments";
+import { registerDropScope } from "../utils/dragDropScopes";
 
 type ThreadItem =
   | {
@@ -146,6 +148,7 @@ export function SessionView({
   const perfStartRef = useRef<number>(0);
   const [input, setInput] = useState("");
   const [draftAttachments, setDraftAttachments] = useState<MessageAttachment[]>([]);
+  const [dropActive, setDropActive] = useState(false);
   const [workbenchMode, setWorkbenchMode] = useState<WorkbenchModeId>("default");
   const [atBottom, setAtBottom] = useState(true);
   const [hasNewActivity, setHasNewActivity] = useState(false);
@@ -159,6 +162,7 @@ export function SessionView({
   const groupedVirtuosoRef = useRef<GroupedVirtuosoHandle>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const didInitialScrollRef = useRef(false);
+  const dropHideTimerRef = useRef<number | null>(null);
   useOpenSession(id ?? "", { watchDiff: true });
 
   const [dictationSettings, setDictationSettings] = useState<DictationSettings | null>(null);
@@ -616,6 +620,121 @@ export function SessionView({
   const wrapperClass = variant === "workbench" ? "wb-session-view" : "page split";
   const leftClass = variant === "workbench" ? "wb-session-left" : "left";
 
+  const dropScopeRef = useRef<HTMLDivElement | null>(null);
+
+  const onDropFiles = useCallback(
+    async (files: File[]) => {
+      if (files.length === 0) return;
+      const next =
+        variant === "workbench"
+          ? await imageFilesToInlineAttachments(files)
+          : await imageFilesToBlobRefAttachments(files);
+      if (next.length === 0) return;
+      setDraftAttachments((prev) => [...prev, ...next]);
+    },
+    [variant],
+  );
+
+  const showDropOverlay = useCallback(() => {
+    setDropActive(true);
+    if (dropHideTimerRef.current) window.clearTimeout(dropHideTimerRef.current);
+    dropHideTimerRef.current = window.setTimeout(() => setDropActive(false), 140);
+  }, []);
+
+  const hideDropOverlay = useCallback(() => {
+    if (dropHideTimerRef.current) window.clearTimeout(dropHideTimerRef.current);
+    dropHideTimerRef.current = null;
+    setDropActive(false);
+  }, []);
+
+  const extractFilesFromTransfer = useCallback(
+    (dt: DataTransfer | null): File[] => {
+      if (!dt) return [];
+      const out: File[] = [];
+      const files = dt.files ? Array.from(dt.files) : [];
+      out.push(...files);
+      const items = dt.items;
+      if (out.length === 0 && items && items.length > 0) {
+        for (const item of Array.from(items as any) as DataTransferItem[]) {
+          if (item.kind !== "file") continue;
+          const f = item.getAsFile?.();
+          if (f) out.push(f);
+        }
+      }
+      return out;
+    },
+    [],
+  );
+
+  const extractFirstUrlFromTransfer = useCallback((dt: DataTransfer | null): string | null => {
+    if (!dt) return null;
+    const uriRaw = (dt.getData?.("text/uri-list") ?? "").trim();
+    if (uriRaw) {
+      for (const line of uriRaw.split("\n")) {
+        const v = line.trim();
+        if (!v || v.startsWith("#")) continue;
+        return v;
+      }
+    }
+    const html = (dt.getData?.("text/html") ?? "").trim();
+    if (html) {
+      const m = html.match(/<img[^>]*\ssrc=("([^"]+)"|'([^']+)'|([^\s>]+))/i);
+      const src = (m?.[2] ?? m?.[3] ?? m?.[4] ?? "").trim();
+      if (src) return src;
+    }
+    const text = (dt.getData?.("text/plain") ?? "").trim();
+    if (text && /^(https?:|data:image\/|blob:)/i.test(text)) return text;
+    return null;
+  }, []);
+
+  const urlToImageFile = useCallback(async (url: string): Promise<File | null> => {
+    try {
+      const res = await fetch(url);
+      if (!res.ok) return null;
+      const blob = await res.blob();
+      const type = blob.type || "";
+      if (!type.startsWith("image/")) return null;
+      const baseName = (() => {
+        try {
+          const u = new URL(url, window.location.href);
+          const last = u.pathname.split("/").filter(Boolean).pop() || "image";
+          return last.replace(/[?#].*$/, "") || "image";
+        } catch {
+          return "image";
+        }
+      })();
+      const ext = type.split("/")[1] || "";
+      const name = ext && !baseName.toLowerCase().endsWith(`.${ext.toLowerCase()}`) ? `${baseName}.${ext}` : baseName;
+      return new File([blob], name, { type });
+    } catch {
+      return null;
+    }
+  }, []);
+
+  useEffect(() => {
+    const el = dropScopeRef.current;
+    if (!el) return;
+    return registerDropScope({
+      element: el,
+      onDragOver: () => showDropOverlay(),
+      onDrop: (dt) => {
+        hideDropOverlay();
+        void (async () => {
+          const files = extractFilesFromTransfer(dt);
+          if (files.length > 0) {
+            await onDropFiles(files);
+            return;
+          }
+          const url = extractFirstUrlFromTransfer(dt);
+          if (!url) return;
+          const asFile = await urlToImageFile(url);
+          if (!asFile) return;
+          await onDropFiles([asFile]);
+        })();
+      },
+    });
+  }, [extractFilesFromTransfer, extractFirstUrlFromTransfer, hideDropOverlay, onDropFiles, showDropOverlay, urlToImageFile]);
+
   const renderThreadItem = (item: ThreadItem) => {
     if (item.kind === "spacer") {
       return <div style={{ height: 1 }} />;
@@ -652,7 +771,15 @@ export function SessionView({
   };
 
   return (
-    <div className={wrapperClass}>
+    <div
+      className={`${wrapperClass} ctx-drop-scope`}
+      ref={dropScopeRef}
+    >
+      {dropActive && (
+        <div className="ctx-drop-overlay" aria-hidden="true">
+          <div className="ctx-drop-overlay-text">Drop image to attach</div>
+        </div>
+      )}
       <div className={leftClass}>
         {entry?.error && (
           <div className="banner">
@@ -1043,16 +1170,7 @@ export function SessionView({
                   multiple
                   onChange={async (e) => {
                     const files = Array.from(e.target.files ?? []);
-                    const next: MessageAttachment[] = [];
-                    for (const f of files) {
-                      const uploaded = await uploadBlob(f);
-                      next.push({
-                        kind: "image_ref",
-                        blob_id: uploaded.blob_id,
-                        mime_type: uploaded.mime_type,
-                        name: uploaded.name ?? f.name,
-                      });
-                    }
+                    const next = await imageFilesToBlobRefAttachments(files);
                     setDraftAttachments((prev) => [...prev, ...next]);
                     e.target.value = "";
                   }}
@@ -1402,16 +1520,7 @@ function WorkbenchComposer({
             style={{ display: "none" }}
             onChange={async (e) => {
               const files = Array.from(e.target.files ?? []);
-              const next: MessageAttachment[] = [];
-              for (const f of files) {
-                const uploaded = await uploadBlob(f);
-                next.push({
-                  kind: "image_ref",
-                  blob_id: uploaded.blob_id,
-                  mime_type: uploaded.mime_type,
-                  name: uploaded.name ?? f.name,
-                });
-              }
+              const next = await imageFilesToBlobRefAttachments(files);
               setAttachments((prev) => [...prev, ...next]);
               e.target.value = "";
             }}

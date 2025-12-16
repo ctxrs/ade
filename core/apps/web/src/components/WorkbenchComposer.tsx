@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type React from "react";
+import { createPortal } from "react-dom";
 import { blobUrl, type MessageAttachment, type ProviderOptions, type ProviderStatus } from "../api/client";
 import { shouldSendOnEnter } from "../utils/keyboard";
 import { buildModelCatalog, composeModelId, parseModelId } from "../utils/modelEffort";
@@ -9,6 +10,7 @@ import {
   IconArrowUp,
   IconAt,
   IconChevronDown,
+  IconInfo,
   IconImage,
   IconLaptop,
   IconMic,
@@ -16,9 +18,185 @@ import {
   IconStop,
 } from "./workbenchIcons";
 import type { HarnessCatalogEntry } from "../utils/harnessCatalog";
+import { imageFilesToInlineAttachments } from "../utils/messageAttachments";
 
 export type WorkbenchModeId = "default" | "research" | "plan" | "review";
 export type WorkbenchEnvTarget = "local" | "worktree" | "container";
+
+const MENU_DESCRIPTIONS = {
+  harness: `Agent harnesses are the low-level wrappers around models that provide the basic plumbing to allow the model to interact with the workspace. This normally includes features like filesystem access, shell access, configurations to set up MCP servers, and more. Despite similiarities between them, different harnesses will have varying tools, capabilities, and performance - even if used with the same underlying models. From here, you can install agent harnesses you haven't used before, switch between them for new tasks, and even run multiple agent harnesses in parallel on the same task. This can be useful to compare performance or to survey multiple different approaches to the same problem.`,
+  model: `You can switch between different models here. Model selection offers a tradeoff between cost, latency, and intelligence - but it also offers an opportunity to leverage the differences in their weights for collaboration. Even if two different models score similarly on popular coding benchmarks, they might have different "habits" - or biases. This means that if you are working on a pernicious bug fix, you might want multiple different models to both look at the problem from a different angle.`,
+  effort: `Some models have a "thinking effort" or "reasoning effort" setting, while others do not. The effort level simply corresponds to how many tokens a model spends on thinking while solving a problem. Models that offer high or extra high can sometimes be very powerful, at the expense of latency and cost. However, you can also experience an unintended negative consequence from extra high thinking: if the model is emitting lots of thinking tokens that don't add much value, this will cause the context window to fill up faster (not just from thinking tokens alone, but also from more excessive tool calls like reading files). Performance on coding tasks declines as context increases beyond the minimum context needed to solve the problem, so effort level is a key lever in tuning your agent for optimal performance.`,
+  mode: `Modes are basically just prompts, sometimes combined with access limitations. For example, the review mode is nothing more than prompting the agent to tell it to review the code and putting it in a read-only access level. That sounds fairly simple, but there is a hidden benefit: developers who build agent harnesses and models in conjunction will often train their custom model to use their bespoke harness, including its different modes. So in a way, this prompt can be more than just a regular prompt. It is a special prompt than has been trained on via reinforcement learning to achieve certain outcomes. For example, OpenAI trained their codex model to use their codex harness in review mode, so as to output only high value review comments with priority details. If you give the exact same prompt to a model that has not undergone the same RL, it will emit much less useful review comments. We recommend using RPIR (Research, Plan, Implement, Review) pattern for most changes except for small and easy ones.`,
+  isolation: `If you are new to using an ADE, you likely have your agents running in Local isolation mode, which basically means no isolation. In local mode, your agents work on the locally checked-out branch and could collide with other agents or your own changes. This results in dirty working branches, possible collisions, and risks of lost changes. An improvement is using git worktrees. They create a totally separate workspace that is disk-efficient. You can spin up many agents to all work in different worktrees and they won't collide with eachother. When they are done, you can approve and merge their changes back into the local working branch. This is a very powerful and resource-efficient isolation pattern. Finally there is container-level isolation. This is the most isolated environment, but it consumes many more resources: you have to run all of your processes again inside the container, and you have to copy all of the disk space. Despite the additional overhead, container-based isolation is most powerful when your agents need to test your application on the same ports. A simple example: if you have a key part of your application that always runs on port 3000 and you want your agent to be able to test it, worktrees won't save you: only one process can serve requests on that port. Containers solve that problem because you could have many agents working in different containers, and they can all claim their own port 3000 as theirs without worrying about collisions. Depending on your application, you may or may not need this. Containers of course also improved security isolation properties which worktrees cannot.`,
+} as const;
+
+function clamp(n: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, n));
+}
+
+function MenuInfoTooltip({ title, description, tooltipId }: { title: string; description: string; tooltipId: string }) {
+  const buttonRef = useRef<HTMLButtonElement | null>(null);
+  const tooltipRef = useRef<HTMLDivElement | null>(null);
+  const closeTimerRef = useRef<number | null>(null);
+  const [open, setOpen] = useState(false);
+  const [ready, setReady] = useState(false);
+  const [style, setStyle] = useState<React.CSSProperties | null>(null);
+
+  const cancelClose = useCallback(() => {
+    if (closeTimerRef.current == null) return;
+    window.clearTimeout(closeTimerRef.current);
+    closeTimerRef.current = null;
+  }, []);
+
+  const requestClose = useCallback(() => {
+    cancelClose();
+    closeTimerRef.current = window.setTimeout(() => {
+      setOpen(false);
+    }, 180);
+  }, [cancelClose]);
+
+  useLayoutEffect(() => {
+    if (!open) {
+      setReady(false);
+      setStyle(null);
+      return;
+    }
+
+    setReady(false);
+    setStyle({ position: "fixed", left: 0, top: 0, visibility: "hidden" });
+
+    const update = () => {
+      const btn = buttonRef.current;
+      const tip = tooltipRef.current;
+      if (!btn || !tip) return;
+
+      const anchor = btn.getBoundingClientRect();
+      const tipRect = tip.getBoundingClientRect();
+      const viewportW = window.innerWidth;
+      const viewportH = window.innerHeight;
+      const margin = 10;
+      const gap = 8;
+
+      const maxWidth = Math.max(220, Math.min(440, viewportW - margin * 2));
+      const effectiveW = Math.min(tipRect.width, maxWidth);
+
+      const downTop = anchor.bottom + gap;
+      const availableDown = viewportH - margin - downTop;
+      const availableUp = anchor.top - margin - gap;
+      const pickUp = (h: number) => availableDown < h && availableUp > availableDown;
+      let shouldOpenUp = pickUp(tipRect.height);
+      let maxHeight = Math.min(320, Math.max(0, shouldOpenUp ? availableUp : availableDown));
+      let effectiveH = Math.min(tipRect.height, maxHeight);
+
+      const revisedShouldOpenUp = pickUp(effectiveH);
+      if (revisedShouldOpenUp !== shouldOpenUp) {
+        shouldOpenUp = revisedShouldOpenUp;
+        maxHeight = Math.min(320, Math.max(0, shouldOpenUp ? availableUp : availableDown));
+        effectiveH = Math.min(tipRect.height, maxHeight);
+      }
+
+      const upTop = anchor.top - gap - effectiveH;
+      const rawTop = shouldOpenUp ? upTop : downTop;
+      const top = clamp(rawTop, margin, viewportH - margin - effectiveH);
+
+      const preferredLeft = anchor.right - effectiveW;
+      const left = clamp(preferredLeft, margin, viewportW - margin - effectiveW);
+
+      setStyle({
+        position: "fixed",
+        left,
+        top,
+        maxWidth,
+        maxHeight,
+        overflow: "auto",
+        visibility: "visible",
+      });
+      setReady(true);
+    };
+
+    const raf = window.requestAnimationFrame(update);
+    window.addEventListener("resize", update);
+    window.addEventListener("scroll", update, true);
+    return () => {
+      window.cancelAnimationFrame(raf);
+      window.removeEventListener("resize", update);
+      window.removeEventListener("scroll", update, true);
+    };
+  }, [open]);
+
+  useEffect(() => {
+    return () => {
+      if (closeTimerRef.current != null) window.clearTimeout(closeTimerRef.current);
+    };
+  }, []);
+
+  const tooltip =
+    open && typeof document !== "undefined"
+      ? createPortal(
+          <div
+            ref={tooltipRef}
+            id={tooltipId}
+            className="wb-menu-tooltip"
+            role="tooltip"
+            data-open={ready ? "true" : "false"}
+            style={style ?? undefined}
+            onMouseEnter={() => {
+              cancelClose();
+              setOpen(true);
+            }}
+            onMouseLeave={requestClose}
+          >
+            {description}
+          </div>,
+          document.body,
+        )
+      : null;
+
+  return (
+    <>
+      <button
+        ref={buttonRef}
+        type="button"
+        className="wb-menu-info-btn"
+        aria-label={`About ${title}`}
+        aria-describedby={open ? tooltipId : undefined}
+        onMouseEnter={() => {
+          cancelClose();
+          setOpen(true);
+        }}
+        onMouseLeave={requestClose}
+        onFocus={() => {
+          cancelClose();
+          setOpen(true);
+        }}
+        onBlur={requestClose}
+      >
+        <IconInfo size={14} />
+      </button>
+      {tooltip}
+    </>
+  );
+}
+
+function MenuTitleRow({
+  title,
+  description,
+  tooltipId,
+}: {
+  title: string;
+  description: string;
+  tooltipId: string;
+}) {
+  return (
+    <div className="wb-menu-title-row">
+      <div className="wb-menu-title">{title}</div>
+      <div className="wb-menu-info">
+        <MenuInfoTooltip title={title} description={description} tooltipId={tooltipId} />
+      </div>
+    </div>
+  );
+}
 
 function imageAttachmentSrc(a: MessageAttachment): string {
   return a.kind === "image_ref" ? blobUrl(a.blob_id) : `data:${a.mime_type};base64,${a.data_base64}`;
@@ -376,6 +554,9 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
 
   const modeMenu = (
     <div className="wb-menu" role="menu" ref={menuRef} style={menuStyle ?? undefined}>
+      <div className="wb-menu-top">
+        <MenuTitleRow title="Mode" description={MENU_DESCRIPTIONS.mode} tooltipId="wb-menu-tooltip-mode" />
+      </div>
       {(["default", "research", "plan", "review"] as WorkbenchModeId[]).map((m) => (
         <button
           key={m}
@@ -471,6 +652,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
   const modelMenu = (
     <div className="wb-menu wb-model-menu" role="menu" ref={menuRef} style={menuStyle ?? undefined}>
       <div className="wb-menu-top">
+        <MenuTitleRow title="Model" description={MENU_DESCRIPTIONS.model} tooltipId="wb-menu-tooltip-model" />
         <input
           className="wb-menu-search"
           value={variant === "activeSession" ? "" : ""}
@@ -513,6 +695,9 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
 
   const effortMenu = (
     <div className="wb-menu" role="menu" ref={menuRef} style={menuStyle ?? undefined}>
+      <div className="wb-menu-top">
+        <MenuTitleRow title="Effort" description={MENU_DESCRIPTIONS.effort} tooltipId="wb-menu-tooltip-effort" />
+      </div>
       {effortOptions.map((eff) => (
         <button
           key={eff}
@@ -542,6 +727,9 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
   const envMenu =
     variant === "newSession" ? (
       <div className="wb-menu wb-exec-menu" role="menu" ref={menuRef} style={menuStyle ?? undefined}>
+        <div className="wb-menu-top">
+          <MenuTitleRow title="Isolation" description={MENU_DESCRIPTIONS.isolation} tooltipId="wb-menu-tooltip-isolation" />
+        </div>
         <button
           type="button"
           className={`wb-menu-item ${(props as NewSessionProps).envTarget === "worktree" ? "wb-menu-item-active" : ""}`}
@@ -556,10 +744,6 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
           type="button"
           className={`wb-menu-item ${(props as NewSessionProps).envTarget === "local" ? "wb-menu-item-active" : ""}`}
           onClick={() => {
-            const ok = window.confirm(
-              "Local mode runs in your current checkout (shared working directory). It can conflict with other agents, editors, and dev tools. Continue?",
-            );
-            if (!ok) return;
             (props as NewSessionProps).setEnvTarget("local");
             setOpenMenu(null);
           }}
@@ -657,6 +841,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
     variant === "newSession" ? (
       <div className="wb-menu wb-harness-menu" role="menu" ref={menuRef} style={menuStyle ?? undefined}>
         <div className="wb-menu-top">
+          <MenuTitleRow title="Harness" description={MENU_DESCRIPTIONS.harness} tooltipId="wb-menu-tooltip-harness" />
           <input
             className="wb-menu-search"
             value={harnessSearch}
@@ -974,7 +1159,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
             {openMenu === "mode" && modeMenu}
           </div>
 
-          {/* Environment */}
+          {/* Isolation */}
           <div className="wb-switcher-wrap">
             <button
               type="button"
@@ -987,7 +1172,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
               aria-haspopup={!envControl.locked ? "menu" : undefined}
               aria-expanded={openMenu === "env"}
               disabled={envControl.locked}
-              title="Environment"
+              title="Isolation"
             >
               <span className="wb-switcher-icon">
                 <IconLaptop size={14} />
@@ -1042,23 +1227,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
             style={{ display: "none" }}
             onChange={async (e) => {
               const files = Array.from(e.target.files ?? []);
-              const next: MessageAttachment[] = [];
-              for (const f of files) {
-                const dataUrl = await new Promise<string>((resolve, reject) => {
-                  const reader = new FileReader();
-                  reader.onerror = () => reject(new Error("file read failed"));
-                  reader.onload = () => resolve(String(reader.result ?? ""));
-                  reader.readAsDataURL(f);
-                });
-                const idx = dataUrl.indexOf("base64,");
-                if (idx === -1) continue;
-                next.push({
-                  kind: "image",
-                  mime_type: f.type || "image/*",
-                  data_base64: dataUrl.slice(idx + "base64,".length),
-                  name: f.name,
-                });
-              }
+              const next = await imageFilesToInlineAttachments(files);
               setAttachments((prev) => [...prev, ...next]);
               e.target.value = "";
             }}
