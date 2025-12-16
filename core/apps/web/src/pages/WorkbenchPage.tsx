@@ -53,6 +53,7 @@ import type { SlashCommandDescriptor } from "../state/useComposerAutocomplete";
 import { startMicPcmStream } from "../utils/micPcmStream";
 import { parseWsJson } from "../utils/wsJson";
 import { registerDropScope } from "../utils/dragDropScopes";
+import { pickPreferredSession, pickPreferredSessionId, pickPreferredTrackId } from "../utils/workbenchSelection";
 import { imageFilesToInlineAttachments } from "../utils/messageAttachments";
 
 function deriveTaskTitle(prompt: string): string {
@@ -284,8 +285,8 @@ export default function WorkbenchPage() {
       }),
     );
     setSessionsByTrack(map);
-    const firstTrackId = trs[0] ? idToString(trs[0].id) : null;
-    setActiveTrackId((prev) => prev ?? firstTrackId);
+    const trackIds = trs.map((tr) => idToString(tr.id)).filter(Boolean);
+    setActiveTrackId((prev) => pickPreferredTrackId(trackIds, map, prev));
   };
 
   useEffect(() => {
@@ -401,9 +402,7 @@ export default function WorkbenchPage() {
 
   const activeSessionId = useMemo(() => {
     if (!activeTrackId) return null;
-    const ss = sessionsByTrack[activeTrackId] ?? [];
-    const s = ss[0];
-    return s ? idToString((s as any).id) : null;
+    return pickPreferredSessionId(sessionsByTrack[activeTrackId] ?? []);
   }, [activeTrackId, sessionsByTrack]);
 
   const showDebugIds = useMemo(() => {
@@ -1660,17 +1659,17 @@ export default function WorkbenchPage() {
           <div className="wb-body">
             <div className="wb-convo">
               <div className="wb-trackbar">
-                {tracks.map((tr) => {
-                  const trid = idToString(tr.id);
-                  const selected = trid === activeTrackId;
-                  const sessions = sessionsByTrack[trid] ?? [];
-                  const s = sessions[0] as any;
-                  const sessionId = s ? idToString((s as any).id) : "";
-                  const liveSession = sessionId ? sessionCache.sessions[sessionId]?.session : null;
-                  const displaySession = (liveSession ?? s) as any;
-                  const model = displaySession ? `${displaySession.provider_id} ${displaySession.model_id}` : "No session";
-                  const status = tr.status === "running" ? "Running…" : tr.status === "completed" ? "Task completed" : tr.status;
-                  return (
+	                {tracks.map((tr) => {
+	                  const trid = idToString(tr.id);
+	                  const selected = trid === activeTrackId;
+	                  const sessions = sessionsByTrack[trid] ?? [];
+	                  const s = pickPreferredSession(sessions) as any;
+	                  const sessionId = s ? idToString((s as any).id) : "";
+	                  const liveSession = sessionId ? sessionCache.sessions[sessionId]?.session : null;
+	                  const displaySession = (liveSession ?? s) as any;
+	                  const model = displaySession ? `${displaySession.provider_id} ${displaySession.model_id}` : "No session";
+	                  const status = tr.status === "running" ? "Running…" : tr.status === "completed" ? "Task completed" : tr.status;
+	                  return (
                     <button
                       key={trid}
                       type="button"
