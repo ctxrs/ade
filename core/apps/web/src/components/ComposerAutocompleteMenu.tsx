@@ -123,10 +123,16 @@ export function ComposerAutocompleteMenu({
   const spaceBelow = canPortal ? viewportH - (anchorForPosition!.bottom + offset) - margin : 240;
   const spaceAbove = canPortal ? anchorForPosition!.top - offset - margin : 240;
   const rowH = 30;
+  const containerExtraY = 14; // padding (6*2) + border (1*2)
   const estimatedRows = items.length > 0 ? items.length : loading ? 0 : 1;
-  const estimatedHeight = estimatedRows * rowH + 2;
+  const estimatedHeight = estimatedRows * rowH + containerExtraY;
   const openAbove = canPortal ? spaceBelow < estimatedHeight && spaceAbove > spaceBelow : false;
-  const maxHeight = clamp(Math.min(openAbove ? spaceAbove : spaceBelow, estimatedHeight || 360), 120, 360);
+  const minHeight = rowH + containerExtraY;
+  const maxHeight = clamp(
+    Math.min(openAbove ? spaceAbove : spaceBelow, estimatedHeight || 360),
+    minHeight,
+    360,
+  );
 
   const active = items[activeIndex] ?? null;
   const activeFilePath = active?.kind === "file" ? active.path : null;
@@ -146,9 +152,9 @@ export function ComposerAutocompleteMenu({
       return;
     }
     const r = el.getBoundingClientRect();
-    const previewWidth = 280;
+    const previewWidth = 240;
     const gap = 10;
-    const maxPreviewHeight = 220;
+    const maxPreviewHeight = 285;
 
     let left = popoverLeft + popoverWidth + gap;
     if (left + previewWidth + margin > viewportW) {
@@ -203,14 +209,10 @@ export function ComposerAutocompleteMenu({
             <span className={`composer-ac-icon ${it.kind === "file" ? "composer-ac-icon-file" : "composer-ac-icon-slash"}`} aria-hidden="true">
               {it.kind === "file" ? <IconInsert size={16} /> : "/"}
             </span>
-            <span className="composer-ac-item-left" title={left}>
-              {left}
+            <span className="composer-ac-item-text" title={it.kind === "file" ? `${left} ${right}`.trim() : left}>
+              <span className="composer-ac-item-left">{left}</span>
+              {right && <span className="composer-ac-item-right"> {right}</span>}
             </span>
-            {right && (
-              <span className="composer-ac-item-right" title={right}>
-                {right}
-              </span>
-            )}
           </div>
         );
       })}
@@ -235,14 +237,21 @@ export function ComposerAutocompleteMenu({
           <div className="composer-ac-preview-tree">
             {hasMore && <div className="composer-ac-preview-more">…</div>}
             {trimmed.map((seg, i) => (
-              <div key={`${seg}:${i}`} className="composer-ac-preview-row">
+              <div
+                key={`${seg}:${i}`}
+                className="composer-ac-preview-row"
+                style={{ paddingLeft: `${i * 14}px` }}
+              >
                 <span className="composer-ac-preview-icon" aria-hidden="true">
                   <IconFolder size={14} />
                 </span>
                 <span className="composer-ac-preview-name">{seg}</span>
               </div>
             ))}
-            <div className="composer-ac-preview-row composer-ac-preview-row-file">
+            <div
+              className="composer-ac-preview-row composer-ac-preview-row-file"
+              style={{ paddingLeft: `${trimmed.length * 14}px` }}
+            >
               <span className="composer-ac-preview-icon" aria-hidden="true">
                 <IconFile size={14} />
               </span>

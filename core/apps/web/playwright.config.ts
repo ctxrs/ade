@@ -8,6 +8,7 @@ export default defineConfig({
     headless: true,
   },
   webServer: {
+    url: "http://127.0.0.1:4399",
     command:
       'bash -lc "pnpm -C apps/web build && cargo run -p context-http --bin context -- serve --bind 127.0.0.1:4399 --data-dir /tmp/context-e2e"',
     cwd: "../..",
