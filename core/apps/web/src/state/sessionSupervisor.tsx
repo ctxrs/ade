@@ -71,12 +71,14 @@ const authToken = (): string | null => {
   }
 };
 
-class SessionSupervisor {
+export class SessionSupervisor {
   private listeners = new Set<() => void>();
   private snapshot: SessionSupervisorSnapshot = { connection: "connecting", sessions: {} };
   private entries = new Map<string, InternalEntry>();
   private ws: WebSocket | null = null;
   private wsUrl: string | null = null;
+  private reconnectTimer: number | null = null;
+  private reconnectBackoffMs = 800;
   private pollTimer: number | null = null;
   private resubscribeTimer: number | null = null;
   private health: Health | null = null;
@@ -315,6 +317,9 @@ class SessionSupervisor {
   }
 
   private async connect() {
+    if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
+      return;
+    }
     const token = authToken();
     const qs = token ? `?token=${encodeURIComponent(token)}` : "";
 
@@ -358,16 +363,31 @@ class SessionSupervisor {
     this.snapshot = { ...this.snapshot, connection: "disconnected" };
     this.publish();
     this.ensurePolling();
+    this.scheduleReconnect();
   }
 
   private openWebSocket(url: string): Promise<void> {
     return new Promise((resolve, reject) => {
       const ws = new WebSocket(url);
       let opened = false;
+      const timeoutMs = 3000;
+      const connectTimeout = window.setTimeout(() => {
+        if (opened) return;
+        try {
+          ws.close();
+        } catch {}
+        reject(new Error("ws connect timeout"));
+      }, timeoutMs);
       const onOpen = () => {
         opened = true;
+        window.clearTimeout(connectTimeout);
         this.ws = ws;
         this.wsUrl = url;
+        this.reconnectBackoffMs = 800;
+        if (this.reconnectTimer) {
+          window.clearTimeout(this.reconnectTimer);
+          this.reconnectTimer = null;
+        }
         this.snapshot = { ...this.snapshot, connection: "connected" };
         this.publish();
         this.stopPolling();
@@ -375,17 +395,18 @@ class SessionSupervisor {
         resolve();
       };
       const onError = () => {
+        window.clearTimeout(connectTimeout);
         if (!opened) reject(new Error("ws connect failed"));
         this.snapshot = { ...this.snapshot, connection: "disconnected" };
         this.publish();
       };
       const onClose = () => {
+        window.clearTimeout(connectTimeout);
         this.ws = null;
         this.snapshot = { ...this.snapshot, connection: "disconnected" };
         this.publish();
         this.ensurePolling();
-        // reconnect
-        window.setTimeout(() => this.connect().catch(() => {}), 800);
+        this.scheduleReconnect();
       };
       ws.addEventListener("open", onOpen, { once: true });
       ws.addEventListener("error", onError);
@@ -450,9 +471,20 @@ class SessionSupervisor {
     const after = entry.lastEventId;
     try {
       const evs = await listSessionEventsPage(sessionId, after, 500);
+      const sawTurnBoundary = evs.some(
+        (e) =>
+          e.event_type === "done" ||
+          e.event_type === "turn_interrupted" ||
+          e.event_type === "assistant_complete",
+      );
       this.upsertEvents(entry, evs);
       entry.updatedAtMs = Date.now();
       this.publish();
+      // When disconnected (polling mode), we won't get the WS-triggered refresh that keeps Messages in sync.
+      // Refreshing here ensures assistant replies show up after daemon/webapp restarts.
+      if (sawTurnBoundary) {
+        await this.refreshQueueAndDiff(entry);
+      }
     } catch {
       // ignore
     }
@@ -485,6 +517,16 @@ class SessionSupervisor {
       window.clearInterval(this.pollTimer);
       this.pollTimer = null;
     }
+  }
+
+  private scheduleReconnect() {
+    if (this.reconnectTimer) return;
+    const delay = this.reconnectBackoffMs;
+    this.reconnectBackoffMs = Math.min(10_000, Math.floor(this.reconnectBackoffMs * 1.5));
+    this.reconnectTimer = window.setTimeout(() => {
+      this.reconnectTimer = null;
+      this.connect().catch(() => {});
+    }, delay);
   }
 }
 
