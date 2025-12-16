@@ -260,6 +260,38 @@ impl Store {
         }))
     }
 
+    pub async fn get_local_worktree_for_root(
+        &self,
+        workspace_id: WorkspaceId,
+        root_path: &str,
+    ) -> Result<Option<Worktree>> {
+        let row = sqlx::query(
+            r#"SELECT id, workspace_id, root_path, base_commit_sha, git_branch, created_at
+               FROM worktrees
+               WHERE workspace_id = ? AND root_path = ? AND git_branch IS NULL
+               ORDER BY created_at DESC
+               LIMIT 1"#,
+        )
+        .bind(workspace_id.0.to_string())
+        .bind(root_path)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.and_then(|r| {
+            let id: String = r.try_get("id").ok()?;
+            let ws_id: String = r.try_get("workspace_id").ok()?;
+            let created_at: String = r.try_get("created_at").ok()?;
+            Some(Worktree {
+                id: WorktreeId(uuid::Uuid::parse_str(&id).ok()?),
+                workspace_id: WorkspaceId(uuid::Uuid::parse_str(&ws_id).ok()?),
+                root_path: r.try_get("root_path").ok()?,
+                base_commit_sha: r.try_get("base_commit_sha").ok()?,
+                git_branch: r.try_get("git_branch").ok()?,
+                created_at: parse_dt(&created_at).ok()?,
+            })
+        }))
+    }
+
     pub async fn list_worktrees(&self, workspace_id: WorkspaceId) -> Result<Vec<Worktree>> {
         let rows = sqlx::query(
             r#"SELECT id, workspace_id, root_path, base_commit_sha, git_branch, created_at

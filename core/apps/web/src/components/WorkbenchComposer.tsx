@@ -552,8 +552,19 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
         >
           Worktree
         </button>
-        <button type="button" className="wb-menu-item" disabled>
-          Local (disabled)
+        <button
+          type="button"
+          className={`wb-menu-item ${(props as NewSessionProps).envTarget === "local" ? "wb-menu-item-active" : ""}`}
+          onClick={() => {
+            const ok = window.confirm(
+              "Local mode runs in your current checkout (shared working directory). It can conflict with other agents, editors, and dev tools. Continue?",
+            );
+            if (!ok) return;
+            (props as NewSessionProps).setEnvTarget("local");
+            setOpenMenu(null);
+          }}
+        >
+          Local
         </button>
         <button type="button" className="wb-menu-item" disabled>
           Container (soon)

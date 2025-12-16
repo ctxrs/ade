@@ -990,7 +990,7 @@ export function SessionView({
               }
               harnessLogoSrc={HARNESS_CATALOG.find((h) => h.id === (session?.provider_id ?? ""))?.logoSrc}
               harnessLogoInvert={HARNESS_CATALOG.find((h) => h.id === (session?.provider_id ?? ""))?.invertInDark}
-              envLabel="Worktree"
+              envLabel={session?.env_target === "local" ? "Local" : "Worktree"}
               availableModels={modelOptions}
               currentModelId={currentModelId}
               onSetModelId={async (next) => {

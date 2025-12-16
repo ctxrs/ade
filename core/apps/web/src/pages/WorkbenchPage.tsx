@@ -542,7 +542,8 @@ export default function WorkbenchPage() {
           throw new Error(diag ? `Harness “${dt.providerId}” not installed: ${diag}` : `Harness “${dt.providerId}” not installed.`);
         }
         const label = workbenchLabelForTrack(dt);
-        const tr = await createTrack(taskId, label);
+        const env_target = execTarget === "local" ? "local" : "worktree";
+        const tr = await createTrack(taskId, label, { env_target });
         const trackId = idToString(tr.id);
         const opts = await ensureProviderOptions(dt.providerId).catch(() => undefined);
         const modelIds = modelIdsFromOptions(opts ?? providerOptions[dt.providerId]);
