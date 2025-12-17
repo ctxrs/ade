@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
@@ -15,7 +16,8 @@ impl Store {
     pub async fn open(path: impl AsRef<Path>) -> Result<Self> {
         let options = sqlx::sqlite::SqliteConnectOptions::new()
             .filename(path.as_ref())
-            .create_if_missing(true);
+            .create_if_missing(true)
+            .busy_timeout(Duration::from_secs(5));
         let pool = SqlitePoolOptions::new()
             .max_connections(5)
             .connect_with(options)
