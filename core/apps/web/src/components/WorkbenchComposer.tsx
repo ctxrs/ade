@@ -252,6 +252,8 @@ type NewSessionProps = SharedProps & {
   variant: "newSession";
   harnessCatalog: HarnessCatalogEntry[];
   providersById: Record<string, ProviderStatus>;
+  providerInstallBusyById: Record<string, boolean>;
+  onInstallProvider: (providerId: string) => void;
   providerOptions: Record<string, ProviderOptions | undefined>;
   ensureProviderOptions: (providerId: string) => Promise<ProviderOptions | undefined>;
 
@@ -882,6 +884,9 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
             const id = String(h.id);
             const label = String(h.label ?? id);
             const installed = ns.providersById[id]?.installed ?? false;
+            const installSupported = ns.providersById[id]?.details?.install_supported === "true";
+            const installRunning = ns.providersById[id]?.details?.install_running === "true";
+            const installBusy = ns.providerInstallBusyById[id] ?? false;
             const count = counts[id] ?? 0;
             const checked = count > 0;
             const expanded = expandedHarnessId === id;
@@ -909,21 +914,43 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
                   </span>
                 </button>
 
-                {checked && (
-                  <button
-                    type="button"
-                    className="wb-harness-expand wb-menu-trigger"
-                    onClick={() => {
-                      if (!canConfigureModels) return;
-                      setExpandedHarnessId((prev) => (prev === id ? null : id));
-                      ns.ensureProviderOptions(id).catch(() => {});
-                    }}
-                    disabled={!canConfigureModels}
-                    title={canConfigureModels ? "Configure models" : "Enable multi-agent to configure"}
-                  >
-                    <ChevronDown size={14} />
-                  </button>
-                )}
+                <div className="wb-harness-actions">
+                  {!installed ? (
+                    installSupported ? (
+                      <button
+                        type="button"
+                        className="wb-harness-install"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          ns.onInstallProvider(id);
+                        }}
+                        disabled={installRunning || installBusy}
+                        title="Install this harness"
+                      >
+                        {installRunning || installBusy ? "Installing…" : "Install"}
+                      </button>
+                    ) : (
+                      <span className="wb-harness-status">Not installed</span>
+                    )
+                  ) : (
+                    checked && (
+                      <button
+                        type="button"
+                        className="wb-harness-expand wb-menu-trigger"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (!canConfigureModels) return;
+                          setExpandedHarnessId((prev) => (prev === id ? null : id));
+                          ns.ensureProviderOptions(id).catch(() => {});
+                        }}
+                        disabled={!canConfigureModels}
+                        title={canConfigureModels ? "Configure models" : "Enable multi-agent to configure"}
+                      >
+                        <ChevronDown size={14} />
+                      </button>
+                    )
+                  )}
+                </div>
 
                 {expanded && canConfigureModels && (
                   <div className="wb-harness-config">
@@ -1001,8 +1028,6 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
                     })}
                   </div>
                 )}
-
-                {!installed && <div className="wb-harness-note">Not installed</div>}
               </div>
             );
           });
