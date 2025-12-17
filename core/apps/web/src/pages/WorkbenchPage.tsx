@@ -43,6 +43,7 @@ import {
   getWorktree,
   getWorkspace,
   idToString,
+  installAllProviders,
   installProvider,
   listProviders,
   listEditPlansForTrack,
@@ -314,6 +315,7 @@ export default function WorkbenchPage() {
   const [execTarget, setExecTarget] = useState<WorkbenchEnvTarget>("worktree");
   const [startBusy, setStartBusy] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
+  const [installAllBusy, setInstallAllBusy] = useState(false);
   const [useMultipleAgents, setUseMultipleAgents] = useState(false);
   const [draftAttachments, setDraftAttachments] = useState<MessageAttachment[]>([]);
   const [dropActive, setDropActive] = useState(false);
@@ -599,9 +601,13 @@ export default function WorkbenchPage() {
             setProviderInstallsById((prev) => {
               const existing = prev[providerId];
               if (!existing || existing.installId !== s.installId) return prev;
+              const stablePct =
+                typeof pct === "number" && Number.isFinite(pct)
+                  ? Math.max(existing.pct ?? 0, pct)
+                  : (existing.pct ?? 0);
               return {
                 ...prev,
-                [providerId]: { installId: s.installId, state: info.state, pct },
+                [providerId]: { installId: s.installId, state: info.state, pct: stablePct },
               };
             });
 
@@ -645,13 +651,30 @@ export default function WorkbenchPage() {
     [setStartError, installProvider, attachProviderInstall],
   );
 
+  const installAllProvidersFromMenu = useCallback(async () => {
+    setStartError(null);
+    setInstallAllBusy(true);
+    try {
+      const installs = await installAllProviders();
+      for (const { provider_id, install_id } of installs) {
+        attachProviderInstall(provider_id, install_id);
+      }
+    } catch (e: any) {
+      setStartError(e?.message ? String(e.message) : String(e));
+    } finally {
+      setInstallAllBusy(false);
+    }
+  }, [attachProviderInstall, installAllProviders, setStartError]);
+
   useEffect(() => {
     if (Object.keys(providerInstallsById).length === 0) return;
     setProviderInstallsById((prev) => {
       let changed = false;
       const next: typeof prev = { ...prev };
       for (const [providerId, s] of Object.entries(prev)) {
-        if (s?.state === "succeeded" && providersById[providerId]?.installed) {
+        const st = providersById[providerId];
+        const stillRunning = st?.details?.install_running === "true";
+        if (s?.state === "succeeded" && st?.installed && !stillRunning) {
           delete next[providerId];
           changed = true;
         }
@@ -2319,6 +2342,8 @@ export default function WorkbenchPage() {
                 providersById={providersById}
                 providerInstallsById={providerInstallsById}
                 onInstallProvider={installProviderFromMenu}
+                onInstallAllProviders={installAllProvidersFromMenu}
+                installAllBusy={installAllBusy}
                 providerOptions={providerOptions}
                 ensureProviderOptions={ensureProviderOptions}
                 draftTracks={draftTracks}

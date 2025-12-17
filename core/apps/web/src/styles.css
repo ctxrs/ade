@@ -1896,6 +1896,44 @@ button.linklike:hover {
 
 .wb-harness-menu {
   width: 320px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.wb-harness-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  padding: 0 2px;
+}
+
+.wb-harness-install-all {
+  height: 22px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.03);
+  color: rgba(255, 255, 255, 0.90);
+  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+  white-space: nowrap;
+  justify-self: end;
+  justify-content: center;
+}
+
+.wb-harness-install-all:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.18);
+}
+
+.wb-harness-install-all:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .wb-harness-row {
@@ -1910,6 +1948,9 @@ button.linklike:hover {
   display: flex;
   align-items: center;
   gap: 10px;
+  justify-content: flex-start;
+  justify-self: stretch;
+  text-align: left;
   border-radius: 10px;
   border: 1px solid transparent;
   background: transparent;
@@ -1971,7 +2012,8 @@ button.linklike:hover {
 
 .wb-harness-name {
   font-size: 12px;
-  flex: 1 1 auto;
+  text-align: left;
+  flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2017,11 +2059,13 @@ button.linklike:hover {
   gap: 6px;
   justify-self: end;
   justify-content: flex-end;
+  min-width: 78px;
 }
 
 .wb-harness-install {
   height: 22px;
   padding: 0 10px;
+  min-width: 78px;
   border-radius: 999px;
   border: 1px solid rgba(255, 255, 255, 0.12);
   background: linear-gradient(
@@ -2033,6 +2077,10 @@ button.linklike:hover {
   font-size: 12px;
   cursor: pointer;
   white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-variant-numeric: tabular-nums;
 }
 
 .wb-harness-install:hover:not(:disabled) {

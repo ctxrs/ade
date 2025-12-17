@@ -3445,6 +3445,21 @@ async fn install_all_providers(
         "goose",
         "kimi",
     ] {
+        if let Some(install_id) = state.find_running_install(id).await {
+            out.push(InstallStartResponse {
+                provider_id: id.to_string(),
+                install_id,
+            });
+            continue;
+        }
+
+        let status = state.provider_statuses.lock().await.get(id).cloned();
+        if let Some(st) = status {
+            if st.installed && matches!(st.health, context_providers::adapters::ProviderHealth::Ok) {
+                continue;
+            }
+        }
+
         let (install_id, started_new) = state.start_install(id.to_string()).await;
         if started_new {
             let state2 = state.clone();

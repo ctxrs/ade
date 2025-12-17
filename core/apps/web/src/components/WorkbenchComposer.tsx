@@ -254,6 +254,8 @@ type NewSessionProps = SharedProps & {
   providersById: Record<string, ProviderStatus>;
   providerInstallsById: Record<string, { installId: string; state: "running" | "succeeded" | "failed"; pct: number | null } | undefined>;
   onInstallProvider: (providerId: string) => void;
+  onInstallAllProviders: () => void;
+  installAllBusy?: boolean;
   providerOptions: Record<string, ProviderOptions | undefined>;
   ensureProviderOptions: (providerId: string) => Promise<ProviderOptions | undefined>;
 
@@ -486,7 +488,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
       if (menuH > maxH) {
         top = margin;
         maxHeight = maxH;
-        overflowY = "auto";
+        overflowY = "hidden";
       }
     } else {
       const downTop = triggerRect.bottom + 8;
@@ -542,11 +544,20 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
     });
 
     window.addEventListener("resize", recomputeMenuPosition);
-    window.addEventListener("scroll", recomputeMenuPosition, true);
+    const onScroll = (e: Event) => {
+      // Prevent scroll-jank while scrolling within the harness menu itself.
+      if (openMenu === "harness") {
+        const menu = menuRef.current;
+        const target = e.target as Node | null;
+        if (menu && target && menu.contains(target)) return;
+      }
+      recomputeMenuPosition();
+    };
+    window.addEventListener("scroll", onScroll, true);
     return () => {
       window.cancelAnimationFrame(raf);
       window.removeEventListener("resize", recomputeMenuPosition);
-      window.removeEventListener("scroll", recomputeMenuPosition, true);
+      window.removeEventListener("scroll", onScroll, true);
     };
   }, [openMenu, recomputeMenuPosition]);
 
@@ -984,233 +995,282 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
             />
             <span className="wb-toggle" aria-hidden="true" />
           </label>
+
+          {(() => {
+            const ns = props as NewSessionProps;
+            const hasSupportedMissing = Object.values(ns.providersById).some(
+              (st) => st.details?.install_supported === "true" && (st.installed ?? false) === false,
+            );
+            const busy = ns.installAllBusy ?? false;
+            return (
+              <button
+                type="button"
+                className="wb-harness-install-all"
+                onClick={() => ns.onInstallAllProviders()}
+                disabled={!hasSupportedMissing || busy}
+                title={hasSupportedMissing ? "Install all supported harnesses" : "No supported harnesses to install"}
+              >
+                {busy ? "Installing…" : "Install all"}
+              </button>
+            );
+          })()}
         </div>
 
-        {(() => {
-          const ns = props as NewSessionProps;
-          const q = harnessSearch.trim().toLowerCase();
-          const order = new Map<string, number>(ns.harnessCatalog.map((h, idx) => [h.id, idx]));
-          const extras = Object.keys(ns.providersById)
-            .filter((id) => !order.has(id))
-            .map((id) => ({ id, label: id, logoSrc: "" } as any))
-            .sort((a, b) => String(a.id).localeCompare(String(b.id)));
+        <div className="wb-harness-list">
+          {(() => {
+            const ns = props as NewSessionProps;
+            const q = harnessSearch.trim().toLowerCase();
+            const order = new Map<string, number>(ns.harnessCatalog.map((h, idx) => [h.id, idx]));
+            const extras = Object.keys(ns.providersById)
+              .filter((id) => !order.has(id))
+              .map((id) => ({ id, label: id, logoSrc: "" } as any))
+              .sort((a, b) => String(a.id).localeCompare(String(b.id)));
 
-          const all = [...ns.harnessCatalog, ...extras];
-          const filtered = q
-            ? all.filter((h: any) => String(h.id).toLowerCase().includes(q) || String(h.label).toLowerCase().includes(q))
-            : all;
-          if (filtered.length === 0) return <div className="wb-menu-empty">No matching agents.</div>;
+            const all = [...ns.harnessCatalog, ...extras];
+            const filtered = q
+              ? all.filter(
+                  (h: any) =>
+                    String(h.id).toLowerCase().includes(q) || String(h.label).toLowerCase().includes(q),
+                )
+              : all;
+            if (filtered.length === 0) return <div className="wb-menu-empty">No matching agents.</div>;
 
-          const counts: Record<string, number> = {};
-          for (const t of ns.draftTracks) counts[t.providerId] = (counts[t.providerId] ?? 0) + 1;
+            const counts: Record<string, number> = {};
+            for (const t of ns.draftTracks) counts[t.providerId] = (counts[t.providerId] ?? 0) + 1;
 
-          return filtered.map((h: any) => {
-            const id = String(h.id);
-            const label = String(h.label ?? id);
-            const installed = ns.providersById[id]?.installed ?? false;
-            const installSupported = ns.providersById[id]?.details?.install_supported === "true";
-            const installUi = ns.providerInstallsById[id];
-            const installRunning = installUi?.state === "running" || ns.providersById[id]?.details?.install_running === "true";
-            const installPct = installUi?.pct ?? null;
-            const count = counts[id] ?? 0;
-            const checked = count > 0;
-            const expanded = expandedHarnessId === id;
-            const canConfigureModels = ns.useMultipleAgents && ns.draftTracks.length > 1 && checked;
-            const rows = ns.draftTracks.filter((t) => t.providerId === id);
+            return filtered.map((h: any) => {
+              const id = String(h.id);
+              const label = String(h.label ?? id);
+              const installed = ns.providersById[id]?.installed ?? false;
+              const installSupported = ns.providersById[id]?.details?.install_supported === "true";
+              const installUi = ns.providerInstallsById[id];
+              const installRunning =
+                installUi?.state === "running" || ns.providersById[id]?.details?.install_running === "true";
+              const installFinishing = installUi?.state === "succeeded" && !installed;
+              const installBusy = installRunning || installFinishing;
+              const installPct =
+                installUi?.state === "succeeded"
+                  ? 100
+                  : typeof installUi?.pct === "number"
+                    ? installUi.pct
+                    : null;
+              const count = counts[id] ?? 0;
+              const checked = count > 0;
+              const expanded = expandedHarnessId === id;
+              const canConfigureModels = ns.useMultipleAgents && ns.draftTracks.length > 1 && checked;
+              const rows = ns.draftTracks.filter((t) => t.providerId === id);
 
-            const opts = ns.providerOptions[id];
-            const models = buildModelsForProvider(id, opts);
-            const catalog = buildModelCatalog(models);
+              const opts = ns.providerOptions[id];
+              const models = buildModelsForProvider(id, opts);
+              const catalog = buildModelCatalog(models);
 
-            return (
-              <div key={id} className={`wb-harness-row ${installed ? "" : "wb-disabled"}`}>
-                <button type="button" className="wb-harness-row-main" onClick={() => toggleHarness(id)} disabled={!installed}>
-                  <span className={`wb-check ${checked ? "wb-check-on" : ""}`} aria-hidden="true">
-                    {checked ? "✓" : ""}
-                  </span>
-                  {h.logoSrc ? (
-                    <img className={`wb-harness-logo ${h.invertInDark ? "wb-invert" : ""}`} src={h.logoSrc} alt="" />
-                  ) : (
-                    <span className="wb-harness-logo-fallback" aria-hidden="true" />
-                  )}
-                  <span className="wb-harness-name">{label}</span>
-                </button>
+              return (
+                <div key={id} className={`wb-harness-row ${installed ? "" : "wb-disabled"}`}>
+                  <button
+                    type="button"
+                    className="wb-harness-row-main"
+                    onClick={() => toggleHarness(id)}
+                    disabled={!installed}
+                  >
+                    <span className={`wb-check ${checked ? "wb-check-on" : ""}`} aria-hidden="true">
+                      {checked ? "✓" : ""}
+                    </span>
+                    {h.logoSrc ? (
+                      <img
+                        className={`wb-harness-logo ${h.invertInDark ? "wb-invert" : ""}`}
+                        src={h.logoSrc}
+                        alt=""
+                      />
+                    ) : (
+                      <span className="wb-harness-logo-fallback" aria-hidden="true" />
+                    )}
+                    <span className="wb-harness-name">{label}</span>
+                  </button>
 
-                <div className="wb-harness-actions">
-                  {!installed ? (
-                    <button
-                      type="button"
-                      className="wb-harness-install"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        ns.onInstallProvider(id);
-                      }}
-                      disabled={!installSupported || installRunning}
-                      title={!installSupported ? "Install not supported yet" : "Install this harness"}
-                      style={
-                        installRunning && installPct !== null
-                          ? ({ ["--wb-install-pct" as any]: `${Math.max(0, Math.min(100, installPct))}%` } as any)
-                          : undefined
-                      }
-                    >
-                      {installRunning ? `${Math.max(0, Math.min(100, installPct ?? 0))}%` : "Install"}
-                    </button>
-                  ) : (
-                    <>
-                      {checked && (
-                        <button
-                          type="button"
-                          className="wb-harness-expand wb-menu-trigger"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            if (!canConfigureModels) return;
-                            setExpandedHarnessId((prev) => (prev === id ? null : id));
-                            ns.ensureProviderOptions(id).catch(() => {});
-                          }}
-                          disabled={!canConfigureModels}
-                          title={canConfigureModels ? "Configure models" : "Enable multi-agent to configure"}
-                        >
-                          <ChevronDown size={14} />
-                        </button>
-                      )}
-
-                      {checked && ns.useMultipleAgents && (
-                        <button
-                          type="button"
-                          className="wb-harness-count-trigger wb-menu-trigger"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-                            const menuW = 140;
-                            const margin = 10;
-                            const approxH = 160;
-                            const left = clamp(rect.right - menuW, margin, window.innerWidth - margin - menuW);
-                            const openDown = rect.bottom + 6 + approxH <= window.innerHeight - margin;
-                            const top = openDown
-                              ? rect.bottom + 6
-                              : clamp(rect.top - approxH - 6, margin, window.innerHeight - margin - approxH);
-                            setCountMenu((prev) =>
-                              prev && prev.providerId === id ? null : { providerId: id, anchor: rect, style: { left, top } },
-                            );
-                          }}
-                          title="Set track count"
-                        >
-                          {Math.max(1, Math.min(MAX_TRACKS_PER_PROVIDER, count || 1))}x <ChevronDown size={12} />
-                        </button>
-                      )}
-                    </>
-                  )}
-                </div>
-
-                {countMenu?.providerId === id && checked && ns.useMultipleAgents && (
-                  <div ref={countMenuRef} className="wb-menu wb-harness-count-menu" role="menu" style={countMenu.style}>
-                    {Array.from({ length: MAX_TRACKS_PER_PROVIDER }, (_, i) => i + 1).map((n) => (
+                  <div className="wb-harness-actions">
+                    {!installed ? (
                       <button
-                        key={n}
                         type="button"
-                        className={`wb-menu-item ${count === n ? "wb-menu-item-active" : ""}`}
-                        onClick={() => {
-                          setTrackCountForProvider(id, n);
-                          setCountMenu(null);
+                        className="wb-harness-install"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          ns.onInstallProvider(id);
                         }}
-                        role="menuitemradio"
-                        aria-checked={count === n}
+                        disabled={!installSupported || installBusy}
+                        title={!installSupported ? "Install not supported yet" : "Install this harness"}
+                        style={
+                          installBusy && installPct !== null
+                            ? ({ ["--wb-install-pct" as any]: `${Math.max(0, Math.min(100, installPct))}%` } as any)
+                            : undefined
+                        }
                       >
-                        <span className="wb-harness-count-item">
-                          <span>{n}x</span>
-                          <span aria-hidden="true">{count === n ? "✓" : ""}</span>
-                        </span>
+                        {installBusy
+                          ? `${Math.max(0, Math.min(100, installPct ?? 0))}%`
+                          : installUi?.state === "failed"
+                            ? "Retry"
+                            : "Install"}
                       </button>
-                    ))}
-                  </div>
-                )}
+                    ) : (
+                      <>
+                        {checked && (
+                          <button
+                            type="button"
+                            className="wb-harness-expand wb-menu-trigger"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (!canConfigureModels) return;
+                              setExpandedHarnessId((prev) => (prev === id ? null : id));
+                              ns.ensureProviderOptions(id).catch(() => {});
+                            }}
+                            disabled={!canConfigureModels}
+                            title={canConfigureModels ? "Configure models" : "Enable multi-agent to configure"}
+                          >
+                            <ChevronDown size={14} />
+                          </button>
+                        )}
 
-                {expanded && canConfigureModels && (
-                  <div className="wb-harness-config">
-                    {rows.map((t) => {
-                      const parsed = parseModelId(t.modelId, catalog);
-                      const base = parsed.base || catalog.baseIds[0] || "";
-                      const efforts = catalog.effortsByBase[base] ?? [];
-                      const eff = parsed.effort;
-                      return (
-                        <div key={t.key} className="wb-harness-track">
-                          <div className="wb-harness-track-left">
-                            <div className="wb-harness-track-title">Track</div>
-                            {catalog.baseIds.length > 0 ? (
-                              <>
-                                <select
-                                  className="wb-harness-model-select"
-                                  value={base}
-                                  onFocus={() => ns.ensureProviderOptions(id).catch(() => {})}
-                                  onChange={(e) => {
-                                    const nextBase = e.target.value;
-                                    const next = deriveFullModelIdForBase(catalog, nextBase, eff);
-                                    updateTrackModel(t.key, next);
-                                  }}
-                                >
-                                  {catalog.baseIds.map((b) => (
-                                    <option key={b} value={b}>
-                                      {catalog.displayNameByBase[b] ?? b}
-                                    </option>
-                                  ))}
-                                </select>
-                                {efforts.length > 0 && (
+                        {checked && ns.useMultipleAgents && (
+                          <button
+                            type="button"
+                            className="wb-harness-count-trigger wb-menu-trigger"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                              const menuW = 140;
+                              const margin = 10;
+                              const approxH = 160;
+                              const left = clamp(rect.right - menuW, margin, window.innerWidth - margin - menuW);
+                              const openDown = rect.bottom + 6 + approxH <= window.innerHeight - margin;
+                              const top = openDown
+                                ? rect.bottom + 6
+                                : clamp(rect.top - approxH - 6, margin, window.innerHeight - margin - approxH);
+                              setCountMenu((prev) =>
+                                prev && prev.providerId === id ? null : { providerId: id, anchor: rect, style: { left, top } },
+                              );
+                            }}
+                            title="Set track count"
+                          >
+                            {Math.max(1, Math.min(MAX_TRACKS_PER_PROVIDER, count || 1))}x <ChevronDown size={12} />
+                          </button>
+                        )}
+                      </>
+                    )}
+                  </div>
+
+                  {countMenu?.providerId === id && checked && ns.useMultipleAgents && (
+                    <div ref={countMenuRef} className="wb-menu wb-harness-count-menu" role="menu" style={countMenu.style}>
+                      {Array.from({ length: MAX_TRACKS_PER_PROVIDER }, (_, i) => i + 1).map((n) => (
+                        <button
+                          key={n}
+                          type="button"
+                          className={`wb-menu-item ${count === n ? "wb-menu-item-active" : ""}`}
+                          onClick={() => {
+                            setTrackCountForProvider(id, n);
+                            setCountMenu(null);
+                          }}
+                          role="menuitemradio"
+                          aria-checked={count === n}
+                        >
+                          <span className="wb-harness-count-item">
+                            <span>{n}x</span>
+                            <span aria-hidden="true">{count === n ? "✓" : ""}</span>
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  {expanded && canConfigureModels && (
+                    <div className="wb-harness-config">
+                      {rows.map((t) => {
+                        const parsed = parseModelId(t.modelId, catalog);
+                        const base = parsed.base || catalog.baseIds[0] || "";
+                        const efforts = catalog.effortsByBase[base] ?? [];
+                        const eff = parsed.effort;
+                        return (
+                          <div key={t.key} className="wb-harness-track">
+                            <div className="wb-harness-track-left">
+                              <div className="wb-harness-track-title">Track</div>
+                              {catalog.baseIds.length > 0 ? (
+                                <>
                                   <select
                                     className="wb-harness-model-select"
-                                    value={eff ?? pickDefaultEffort(efforts) ?? ""}
+                                    value={base}
+                                    onFocus={() => ns.ensureProviderOptions(id).catch(() => {})}
                                     onChange={(e) => {
-                                      const nextEff = e.target.value || "";
-                                      const next = deriveFullModelIdForBase(catalog, base, nextEff || null);
+                                      const nextBase = e.target.value;
+                                      const next = deriveFullModelIdForBase(catalog, nextBase, eff);
                                       updateTrackModel(t.key, next);
                                     }}
                                   >
-                                    {efforts.map((x) => (
-                                      <option key={x} value={x}>
-                                        {formatEffortLabel(x)}
+                                    {catalog.baseIds.map((b) => (
+                                      <option key={b} value={b}>
+                                        {catalog.displayNameByBase[b] ?? b}
                                       </option>
                                     ))}
                                   </select>
-                                )}
-                              </>
-                            ) : (
-                              <input
-                                className="wb-harness-model-input"
-                                value={t.modelId}
-                                placeholder={opts ? "model_id" : "Loading models…"}
-                                onFocus={() => ns.ensureProviderOptions(id).catch(() => {})}
-                                onChange={(e) => updateTrackModel(t.key, e.target.value)}
-                              />
-                            )}
+                                  {efforts.length > 0 && (
+                                    <select
+                                      className="wb-harness-model-select"
+                                      value={eff ?? pickDefaultEffort(efforts) ?? ""}
+                                      onChange={(e) => {
+                                        const nextEff = e.target.value || "";
+                                        const next = deriveFullModelIdForBase(catalog, base, nextEff || null);
+                                        updateTrackModel(t.key, next);
+                                      }}
+                                    >
+                                      {efforts.map((x) => (
+                                        <option key={x} value={x}>
+                                          {formatEffortLabel(x)}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  )}
+                                </>
+                              ) : (
+                                <input
+                                  className="wb-harness-model-input"
+                                  value={t.modelId}
+                                  placeholder={opts ? "model_id" : "Loading models…"}
+                                  onFocus={() => ns.ensureProviderOptions(id).catch(() => {})}
+                                  onChange={(e) => updateTrackModel(t.key, e.target.value)}
+                                />
+                              )}
+                            </div>
+                            <div className="wb-harness-track-right">
+                              <button
+                                type="button"
+                                className="wb-harness-mini"
+                                onClick={() => addTrackForProvider(id)}
+                                title={
+                                  rows.length >= MAX_TRACKS_PER_PROVIDER
+                                    ? `Max ${MAX_TRACKS_PER_PROVIDER} tracks`
+                                    : "Add another track"
+                                }
+                                disabled={rows.length >= MAX_TRACKS_PER_PROVIDER}
+                              >
+                                +
+                              </button>
+                              <button
+                                type="button"
+                                className="wb-harness-mini"
+                                onClick={() => removeTrackByKey(t.key)}
+                                title="Remove track"
+                                disabled={rows.length <= 1}
+                              >
+                                −
+                              </button>
+                            </div>
                           </div>
-                          <div className="wb-harness-track-right">
-                            <button
-                              type="button"
-                              className="wb-harness-mini"
-                              onClick={() => addTrackForProvider(id)}
-                              title={rows.length >= MAX_TRACKS_PER_PROVIDER ? `Max ${MAX_TRACKS_PER_PROVIDER} tracks` : "Add another track"}
-                              disabled={rows.length >= MAX_TRACKS_PER_PROVIDER}
-                            >
-                              +
-                            </button>
-                            <button
-                              type="button"
-                              className="wb-harness-mini"
-                              onClick={() => removeTrackByKey(t.key)}
-                              title="Remove track"
-                              disabled={rows.length <= 1}
-                            >
-                              −
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            );
-          });
-        })()}
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            });
+          })()}
+        </div>
       </div>
     ) : null;
 
