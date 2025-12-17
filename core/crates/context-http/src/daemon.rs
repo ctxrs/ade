@@ -54,6 +54,7 @@ pub struct AppState {
     pub providers: Mutex<HashMap<String, Arc<dyn ProviderAdapter>>>,
     pub provider_statuses: Mutex<HashMap<String, ProviderStatus>>,
     pub provider_options_cache: Mutex<HashMap<String, CachedProviderOptions>>,
+    pub provider_verify_cache: Mutex<HashMap<String, CachedProviderVerify>>,
     pub file_completions_cache: Mutex<HashMap<WorktreeId, CachedFileCompletions>>,
     pub workspace_file_completions_cache: Mutex<HashMap<WorkspaceId, CachedFileCompletions>>,
     pub daemon_url: String,
@@ -74,6 +75,11 @@ pub struct AppState {
 }
 
 pub struct CachedProviderOptions {
+    pub cached_at: Instant,
+    pub value: serde_json::Value,
+}
+
+pub struct CachedProviderVerify {
     pub cached_at: Instant,
     pub value: serde_json::Value,
 }
@@ -151,6 +157,7 @@ impl AppState {
             providers: Mutex::new(providers),
             provider_statuses: Mutex::new(HashMap::new()),
             provider_options_cache: Mutex::new(HashMap::new()),
+            provider_verify_cache: Mutex::new(HashMap::new()),
             file_completions_cache: Mutex::new(HashMap::new()),
             workspace_file_completions_cache: Mutex::new(HashMap::new()),
             daemon_url,

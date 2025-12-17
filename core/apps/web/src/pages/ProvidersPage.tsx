@@ -4,12 +4,19 @@ import {
   InstallInfo,
   InstallProgressEvent,
   ProviderStatus,
+  ProviderOptions,
+  Workspace,
+  authenticateProviderForWorkspace,
   getInstall,
+  getProviderOptions,
+  idToString,
   installAllProviders,
   installProvider,
   installStreamUrl,
   listProviders,
   listInstallEvents,
+  listWorkspaces,
+  verifyProviderForWorkspace,
 } from "../api/client";
 import { isDesktopApp } from "../utils/desktop";
 
@@ -43,6 +50,12 @@ const safeCopy = async (text: string) => {
 
 export default function ProvidersPage() {
   const [providers, setProviders] = useState<ProviderStatus[]>([]);
+  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
+  const [workspaceId, setWorkspaceId] = useState<string | null>(null);
+  const [providerOptions, setProviderOptions] = useState<Record<string, ProviderOptions | undefined>>({});
+  const [optsBusy, setOptsBusy] = useState<Record<string, boolean>>({});
+  const [authBusy, setAuthBusy] = useState<Record<string, boolean>>({});
+  const [verifyBusy, setVerifyBusy] = useState<Record<string, boolean>>({});
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [installs, setInstalls] = useState<Record<string, InstallSession>>({});
@@ -57,7 +70,19 @@ export default function ProvidersPage() {
 
   useEffect(() => {
     refresh();
+    listWorkspaces()
+      .then((ws) => {
+        setWorkspaces(ws);
+        if (!workspaceId && ws.length > 0) {
+          setWorkspaceId(idToString((ws[0] as any).id));
+        }
+      })
+      .catch(() => {});
   }, []);
+
+  useEffect(() => {
+    setProviderOptions({});
+  }, [workspaceId]);
 
   useEffect(() => {
     for (const p of providers) {
@@ -232,6 +257,48 @@ export default function ProvidersPage() {
     }
   };
 
+  const ensureProviderOpts = async (providerId: string) => {
+    if (!workspaceId) return;
+    if (optsBusy[providerId]) return;
+    setOptsBusy((prev) => ({ ...prev, [providerId]: true }));
+    try {
+      const opts = await getProviderOptions(workspaceId, providerId);
+      setProviderOptions((prev) => ({ ...prev, [providerId]: opts }));
+    } catch (e: any) {
+      setError(e?.message ?? String(e));
+    } finally {
+      setOptsBusy((prev) => ({ ...prev, [providerId]: false }));
+    }
+  };
+
+  const onAuthenticate = async (providerId: string) => {
+    if (!workspaceId) return;
+    setAuthBusy((prev) => ({ ...prev, [providerId]: true }));
+    setError(null);
+    try {
+      await authenticateProviderForWorkspace(workspaceId, providerId);
+      await ensureProviderOpts(providerId);
+    } catch (e: any) {
+      setError(e?.message ?? String(e));
+    } finally {
+      setAuthBusy((prev) => ({ ...prev, [providerId]: false }));
+    }
+  };
+
+  const onVerify = async (providerId: string) => {
+    if (!workspaceId) return;
+    setVerifyBusy((prev) => ({ ...prev, [providerId]: true }));
+    setError(null);
+    try {
+      await verifyProviderForWorkspace(workspaceId, providerId);
+      await ensureProviderOpts(providerId);
+    } catch (e: any) {
+      setError(e?.message ?? String(e));
+    } finally {
+      setVerifyBusy((prev) => ({ ...prev, [providerId]: false }));
+    }
+  };
+
   return (
     <div className="page">
       <div className="header">
@@ -253,9 +320,75 @@ export default function ProvidersPage() {
         {error && <div className="error">{error}</div>}
       </div>
 
+      <div className="card">
+        <div className="row">
+          <strong>Auth status</strong>
+          <select
+            value={workspaceId ?? ""}
+            onChange={(e) => setWorkspaceId(e.target.value || null)}
+            disabled={workspaces.length === 0}
+          >
+            {workspaces.map((ws) => {
+              const id = idToString((ws as any).id);
+              return (
+                <option key={id} value={id}>
+                  {ws.name}
+                </option>
+              );
+            })}
+          </select>
+        </div>
+        <div className="muted">Provider auth checks run against the selected workspace root.</div>
+      </div>
+
       <ul className="list">
         {providers.map((p) => (
           <li key={p.provider_id} className="card">
+            {workspaceId && (
+              <>
+                {(() => {
+                  const opts = providerOptions[p.provider_id];
+                  const verifyStatus = String((opts as any)?.verify?.status ?? "");
+                  const statusLine = opts?.auth_required
+                    ? "Auth required"
+                    : verifyStatus === "ok"
+                      ? "Verified"
+                      : verifyStatus === "network_error"
+                        ? "Offline/unreachable"
+                        : verifyStatus === "error"
+                          ? "Verify error"
+                          : "Unknown";
+                  return <div className="muted">Auth: {statusLine}</div>;
+                })()}
+                <div className="row" style={{ flexWrap: "wrap" }}>
+                  <button
+                    type="button"
+                    onClick={() => ensureProviderOpts(p.provider_id)}
+                    disabled={!workspaceId || optsBusy[p.provider_id]}
+                    title="Probe session/new (no prompt) to detect auth_required and list models/modes"
+                  >
+                    {optsBusy[p.provider_id] ? "Checking…" : "Check"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onAuthenticate(p.provider_id)}
+                    disabled={!workspaceId || authBusy[p.provider_id] || !providerOptions[p.provider_id]?.auth_required}
+                    title="Attempt ACP authenticate for this provider"
+                  >
+                    {authBusy[p.provider_id] ? "Authenticating…" : "Authenticate"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onVerify(p.provider_id)}
+                    disabled={!workspaceId || verifyBusy[p.provider_id]}
+                    title="Send a tiny prompt to confirm credentials and connectivity"
+                  >
+                    {verifyBusy[p.provider_id] ? "Verifying…" : "Verify"}
+                  </button>
+                </div>
+              </>
+            )}
+
             {installs[p.provider_id] && (
               <div className="muted">
                 Install: {installs[p.provider_id].state}

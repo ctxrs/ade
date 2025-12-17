@@ -2020,6 +2020,35 @@ button.linklike:hover {
   white-space: nowrap;
 }
 
+.wb-harness-status {
+  margin-left: auto;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.82);
+  white-space: nowrap;
+}
+
+.wb-harness-status-ok {
+  background: rgba(92, 207, 119, 0.18);
+  border-color: rgba(92, 207, 119, 0.35);
+  color: rgba(220, 255, 232, 0.92);
+}
+
+.wb-harness-status-warn {
+  background: rgba(255, 196, 90, 0.14);
+  border-color: rgba(255, 196, 90, 0.28);
+  color: rgba(255, 235, 210, 0.92);
+}
+
+.wb-harness-status-err {
+  background: rgba(255, 96, 96, 0.14);
+  border-color: rgba(255, 96, 96, 0.28);
+  color: rgba(255, 226, 226, 0.92);
+}
+
 .wb-harness-right {
   margin-left: auto;
   display: inline-flex;
@@ -2060,6 +2089,47 @@ button.linklike:hover {
   justify-self: end;
   justify-content: flex-end;
   min-width: 78px;
+}
+
+.wb-harness-auth-btn,
+.wb-harness-verify-btn {
+  height: 22px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.03);
+  color: rgba(255, 255, 255, 0.88);
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.wb-harness-auth-btn:hover:not(:disabled),
+.wb-harness-verify-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.18);
+}
+
+.wb-harness-auth-btn:disabled,
+.wb-harness-verify-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.wb-harness-action-banner {
+  margin: 6px 2px 2px 2px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 12px;
+}
+
+.wb-harness-action-banner-error {
+  border-color: rgba(255, 96, 96, 0.28);
+  background: rgba(255, 96, 96, 0.10);
+  color: rgba(255, 226, 226, 0.92);
 }
 
 .wb-harness-install {

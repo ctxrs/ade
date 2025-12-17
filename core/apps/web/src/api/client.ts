@@ -749,11 +749,31 @@ export type ProviderOptions = {
   modes?: any;
   models?: any;
   acp_error?: any;
+  verify?: any;
   probed_at: string;
 };
 
 export const getProviderOptions = (workspaceId: string, providerId: string) =>
   apiAny<ProviderOptions>(`/api/workspaces/${workspaceId}/providers/${providerId}/options`);
+
+export type ProviderAuthCheck = {
+  provider_id: string;
+  workspace_id: string;
+  status: string;
+  auth_required?: boolean;
+  auth_methods?: any;
+  acp_error?: any;
+  checked_at?: string;
+};
+
+export const authenticateProviderForWorkspace = (workspaceId: string, providerId: string, method_id?: string) =>
+  apiAny<ProviderAuthCheck>(`/api/workspaces/${workspaceId}/providers/${providerId}/authenticate`, {
+    method: "POST",
+    body: JSON.stringify(method_id ? { method_id } : {}),
+  });
+
+export const verifyProviderForWorkspace = (workspaceId: string, providerId: string) =>
+  apiAny<ProviderAuthCheck>(`/api/workspaces/${workspaceId}/providers/${providerId}/verify`, { method: "POST" });
 
 export const installProvider = (providerId: string) =>
   apiAny<InstallStartResponse>(`/api/providers/${providerId}/install`, { method: "POST" });

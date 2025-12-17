@@ -1057,6 +1057,41 @@ pub struct AcpProviderOptionsProbe {
     pub acp_error: Option<serde_json::Value>,
 }
 
+#[derive(Debug, Clone)]
+pub struct AcpProviderVerifyProbe {
+    /// One of: `ok`, `auth_required`, `network_error`, `error`.
+    pub status: String,
+    pub auth_required: bool,
+    pub auth_methods: Option<serde_json::Value>,
+    pub acp_error: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone)]
+pub struct AcpProviderAuthenticateProbe {
+    /// One of: `ok`, `auth_required`, `error`.
+    pub status: String,
+    pub auth_required: bool,
+    pub auth_methods: Option<serde_json::Value>,
+    pub acp_error: Option<serde_json::Value>,
+}
+
+fn default_auth_method_id(methods: &serde_json::Value) -> Option<String> {
+    let list = methods.as_array()?;
+    for m in list {
+        if let Some(id) = m
+            .get("methodId")
+            .or_else(|| m.get("method_id"))
+            .or_else(|| m.get("id"))
+            .and_then(|v| v.as_str())
+        {
+            if !id.trim().is_empty() {
+                return Some(id.to_string());
+            }
+        }
+    }
+    None
+}
+
 /// Best-effort probe for ACP providers that only expose model/mode lists on `session/new`.
 ///
 /// This intentionally does **not** prompt; it runs `initialize` + `session/new`, extracts
@@ -1185,6 +1220,371 @@ pub async fn probe_provider_options(
     })
     .await
     .context("ACP probe timed out")?
+}
+
+fn is_network_error(err: &serde_json::Value) -> bool {
+    let Some(obj) = err.as_object() else {
+        return false;
+    };
+
+    let msg = obj
+        .get("message")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_lowercase();
+    let data_str = obj
+        .get("data")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_lowercase();
+
+    let hay = format!("{msg}\n{data_str}");
+    [
+        "econnrefused",
+        "enotfound",
+        "ehostunreach",
+        "enetunreach",
+        "etimedout",
+        "timeout",
+        "timed out",
+        "tls",
+        "ssl",
+        "certificate",
+        "handshake",
+        "connection reset",
+        "socket hang up",
+        "network is unreachable",
+        "no route to host",
+        "failed to connect",
+        "could not resolve",
+        "name or service not known",
+        "temporary failure in name resolution",
+    ]
+    .iter()
+    .any(|needle| hay.contains(needle))
+}
+
+/// Best-effort connectivity check for ACP providers.
+///
+/// This intentionally **does** prompt with a tiny request so we can detect failures that only
+/// surface on `session/prompt` (for example missing BYO API keys/endpoints).
+pub async fn verify_provider_connection(
+    agent: AcpAgentConfig,
+    client: AcpClientConfig,
+    workdir: PathBuf,
+    env: HashMap<String, String>,
+) -> Result<AcpProviderVerifyProbe> {
+    let probe_timeout = if agent.provider_id == "gemini" {
+        Duration::from_secs(90)
+    } else {
+        Duration::from_secs(30)
+    };
+
+    timeout(probe_timeout, async move {
+        let mut cmd = Command::new(&agent.command);
+        cmd.args(&agent.args);
+        cmd.current_dir(&workdir);
+        cmd.stdin(std::process::Stdio::piped());
+        cmd.stdout(std::process::Stdio::piped());
+        cmd.stderr(std::process::Stdio::piped());
+        for (k, v) in env {
+            cmd.env(k, v);
+        }
+
+        let mut child = cmd
+            .spawn()
+            .with_context(|| format!("spawning ACP agent {} ({})", agent.provider_id, agent.command))?;
+
+        let stdin = child.stdin.take().context("capturing agent stdin")?;
+        let stdout = child.stdout.take().context("capturing agent stdout")?;
+
+        let mut stdin = tokio::io::BufWriter::new(stdin);
+        let mut stdout_reader = BufReader::new(stdout).lines();
+
+        let mut next_id: u64 = 1;
+
+        let init_resp = acp_probe_request(
+            &mut stdin,
+            &mut stdout_reader,
+            &agent.provider_id,
+            &mut next_id,
+            "initialize",
+            json!({
+                "protocolVersion": 1,
+                "clientCapabilities": client.client_capabilities,
+                "clientInfo": {
+                    "name": client.client_name,
+                    "title": client.client_title,
+                    "version": client.client_version,
+                }
+            }),
+        )
+        .await?;
+
+        let auth_methods = init_resp
+            .get("result")
+            .and_then(|v| v.get("authMethods").or_else(|| v.get("auth_methods")))
+            .cloned();
+
+        if let Some(err) = init_resp.get("error") {
+            let _ = child.kill().await;
+            return Ok(AcpProviderVerifyProbe {
+                status: "error".to_string(),
+                auth_required: is_auth_required_error(err),
+                auth_methods,
+                acp_error: Some(err.clone()),
+            });
+        }
+
+        let cwd = workdir
+            .canonicalize()
+            .unwrap_or_else(|_| workdir.clone())
+            .to_string_lossy()
+            .to_string();
+        let mcp_servers = client
+            .mcp_servers
+            .iter()
+            .map(|s| {
+                json!({
+                    "name": s.name,
+                    "command": s.command,
+                    "args": s.args,
+                    "env": s.env.iter().map(|(name, value)| json!({"name": name, "value": value})).collect::<Vec<_>>(),
+                })
+            })
+            .collect::<Vec<_>>();
+
+        let new_resp = acp_probe_request(
+            &mut stdin,
+            &mut stdout_reader,
+            &agent.provider_id,
+            &mut next_id,
+            "session/new",
+            json!({"cwd": cwd, "mcpServers": mcp_servers}),
+        )
+        .await?;
+        if let Some(err) = new_resp.get("error") {
+            let _ = child.kill().await;
+            let auth_required = is_auth_required_error(err);
+            let status = if auth_required {
+                "auth_required"
+            } else if is_network_error(err) {
+                "network_error"
+            } else {
+                "error"
+            };
+            return Ok(AcpProviderVerifyProbe {
+                status: status.to_string(),
+                auth_required,
+                auth_methods,
+                acp_error: Some(err.clone()),
+            });
+        }
+
+        let acp_session_id = new_resp
+            .get("result")
+            .and_then(|v| v.get("sessionId"))
+            .and_then(|v| v.as_str())
+            .context("missing sessionId in session/new response")?
+            .to_string();
+
+        let prompt_resp = acp_probe_request(
+            &mut stdin,
+            &mut stdout_reader,
+            &agent.provider_id,
+            &mut next_id,
+            "session/prompt",
+            json!({
+                "sessionId": acp_session_id,
+                "prompt": [
+                    {"type":"text","text":"Respond with exactly: OK"}
+                ]
+            }),
+        )
+        .await?;
+
+        if let Some(err) = prompt_resp.get("error") {
+            let _ = child.kill().await;
+            let auth_required = is_auth_required_error(err);
+            let status = if auth_required {
+                "auth_required"
+            } else if is_network_error(err) {
+                "network_error"
+            } else {
+                "error"
+            };
+            return Ok(AcpProviderVerifyProbe {
+                status: status.to_string(),
+                auth_required,
+                auth_methods,
+                acp_error: Some(err.clone()),
+            });
+        }
+
+        let _ = child.kill().await;
+        Ok(AcpProviderVerifyProbe {
+            status: "ok".to_string(),
+            auth_required: false,
+            auth_methods,
+            acp_error: None,
+        })
+    })
+    .await
+    .context("ACP verify timed out")?
+}
+
+/// Best-effort provider-level authentication for ACP providers.
+///
+/// Calls ACP `authenticate` and then attempts `session/new` to confirm auth state.
+pub async fn authenticate_provider(
+    agent: AcpAgentConfig,
+    client: AcpClientConfig,
+    workdir: PathBuf,
+    env: HashMap<String, String>,
+    method_id: Option<String>,
+) -> Result<AcpProviderAuthenticateProbe> {
+    let auth_timeout = Duration::from_secs(5 * 60);
+
+    timeout(auth_timeout, async move {
+        let mut cmd = Command::new(&agent.command);
+        cmd.args(&agent.args);
+        cmd.current_dir(&workdir);
+        cmd.stdin(std::process::Stdio::piped());
+        cmd.stdout(std::process::Stdio::piped());
+        cmd.stderr(std::process::Stdio::piped());
+        for (k, v) in env {
+            cmd.env(k, v);
+        }
+
+        let mut child = cmd
+            .spawn()
+            .with_context(|| format!("spawning ACP agent {} ({})", agent.provider_id, agent.command))?;
+
+        let stdin = child.stdin.take().context("capturing agent stdin")?;
+        let stdout = child.stdout.take().context("capturing agent stdout")?;
+
+        let mut stdin = tokio::io::BufWriter::new(stdin);
+        let mut stdout_reader = BufReader::new(stdout).lines();
+
+        let mut next_id: u64 = 1;
+
+        let init_resp = acp_probe_request(
+            &mut stdin,
+            &mut stdout_reader,
+            &agent.provider_id,
+            &mut next_id,
+            "initialize",
+            json!({
+                "protocolVersion": 1,
+                "clientCapabilities": client.client_capabilities,
+                "clientInfo": {
+                    "name": client.client_name,
+                    "title": client.client_title,
+                    "version": client.client_version,
+                }
+            }),
+        )
+        .await?;
+
+        let auth_methods = init_resp
+            .get("result")
+            .and_then(|v| v.get("authMethods").or_else(|| v.get("auth_methods")))
+            .cloned();
+
+        if let Some(err) = init_resp.get("error") {
+            let _ = child.kill().await;
+            return Ok(AcpProviderAuthenticateProbe {
+                status: "error".to_string(),
+                auth_required: is_auth_required_error(err),
+                auth_methods,
+                acp_error: Some(err.clone()),
+            });
+        }
+
+        let Some(method_id) = method_id
+            .or_else(|| auth_methods.as_ref().and_then(default_auth_method_id))
+        else {
+            let _ = child.kill().await;
+            anyhow::bail!("no authentication methods advertised by provider");
+        };
+
+        let auth_resp = acp_probe_request(
+            &mut stdin,
+            &mut stdout_reader,
+            &agent.provider_id,
+            &mut next_id,
+            "authenticate",
+            json!({"methodId": method_id}),
+        )
+        .await?;
+        if let Some(err) = auth_resp.get("error") {
+            let _ = child.kill().await;
+            let auth_required = is_auth_required_error(err);
+            return Ok(AcpProviderAuthenticateProbe {
+                status: if auth_required {
+                    "auth_required".to_string()
+                } else {
+                    "error".to_string()
+                },
+                auth_required,
+                auth_methods,
+                acp_error: Some(err.clone()),
+            });
+        }
+
+        let cwd = workdir
+            .canonicalize()
+            .unwrap_or_else(|_| workdir.clone())
+            .to_string_lossy()
+            .to_string();
+        let mcp_servers = client
+            .mcp_servers
+            .iter()
+            .map(|s| {
+                json!({
+                    "name": s.name,
+                    "command": s.command,
+                    "args": s.args,
+                    "env": s.env.iter().map(|(name, value)| json!({"name": name, "value": value})).collect::<Vec<_>>(),
+                })
+            })
+            .collect::<Vec<_>>();
+
+        let new_resp = acp_probe_request(
+            &mut stdin,
+            &mut stdout_reader,
+            &agent.provider_id,
+            &mut next_id,
+            "session/new",
+            json!({"cwd": cwd, "mcpServers": mcp_servers}),
+        )
+        .await?;
+
+        let _ = child.kill().await;
+
+        if let Some(err) = new_resp.get("error") {
+            let auth_required = is_auth_required_error(err);
+            return Ok(AcpProviderAuthenticateProbe {
+                status: if auth_required {
+                    "auth_required".to_string()
+                } else {
+                    "error".to_string()
+                },
+                auth_required,
+                auth_methods,
+                acp_error: Some(err.clone()),
+            });
+        }
+
+        Ok(AcpProviderAuthenticateProbe {
+            status: "ok".to_string(),
+            auth_required: false,
+            auth_methods,
+            acp_error: None,
+        })
+    })
+    .await
+    .context("ACP authenticate timed out")?
 }
 
 async fn acp_probe_request(
