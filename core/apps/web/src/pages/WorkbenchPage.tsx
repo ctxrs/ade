@@ -257,7 +257,7 @@ export default function WorkbenchPage() {
         if (cancelled) return;
         setDictationSettings(s.dictation ?? null);
       })
-      .catch(() => {});
+      .catch(() => { });
     return () => {
       cancelled = true;
     };
@@ -292,7 +292,7 @@ export default function WorkbenchPage() {
   useEffect(() => {
     if (!workspaceId) return;
     getWorkspace(workspaceId).then(setWorkspace).catch(() => setWorkspace(null));
-    refreshTasks().catch(() => {});
+    refreshTasks().catch(() => { });
     listProviders().then(setProviders).catch(() => setProviders([]));
     getLspStatus().then(setLspStatus).catch(() => setLspStatus(null));
   }, [workspaceId]);
@@ -318,7 +318,7 @@ export default function WorkbenchPage() {
       setActiveEditPlanId(null);
       return;
     }
-    refreshTaskDetail(activeTaskId).catch(() => {});
+    refreshTaskDetail(activeTaskId).catch(() => { });
   }, [activeTaskId]);
 
   useEffect(() => {
@@ -355,15 +355,28 @@ export default function WorkbenchPage() {
 
   const taskLiveInfo = useMemo(() => {
     const workingByTask = new Set<string>();
+    const errorByTask = new Set<string>();
     const lastAssistantMsByTask: Record<string, number> = {};
     for (const entry of Object.values(sessionSnap.sessions)) {
       const taskId = entry.session ? idToString(entry.session.task_id) : "";
       if (!taskId) continue;
       if (entry.session?.status === "active") workingByTask.add(taskId);
+
+      // Error state - check multiple sources
+      const hasErrorStatus =
+        entry.session?.status === "failed" ||
+        entry.session?.status === "cancelled";
+      const hasErrorInSupervisor = !!entry.error;
+      const hasErrorEvent = entry.events.some(ev => ev.event_type === "error");
+
+      if (hasErrorStatus || hasErrorInSupervisor || hasErrorEvent) {
+        errorByTask.add(taskId);
+      }
+
       const ms = lastAssistantMessageMs(entry.messages);
       if (ms !== null) lastAssistantMsByTask[taskId] = Math.max(lastAssistantMsByTask[taskId] ?? 0, ms);
     }
-    return { workingByTask, lastAssistantMsByTask };
+    return { workingByTask, errorByTask, lastAssistantMsByTask };
   }, [sessionSnap.sessions]);
 
   const activeTasks = useMemo(() => filteredTasks.filter((t) => !t.archived_at), [filteredTasks]);
@@ -505,22 +518,17 @@ export default function WorkbenchPage() {
     setDictationRecording(false);
 
     const ws = dictationWsRef.current;
-    dictationWsRef.current = null;
 
     const mic = dictationMicRef.current;
     dictationMicRef.current = null;
 
     try {
       await mic?.stop();
-    } catch {}
+    } catch { }
 
     try {
       ws?.send(JSON.stringify({ type: "stop" }));
-    } catch {}
-
-    try {
-      ws?.close(1000, "client stop");
-    } catch {}
+    } catch { }
 
     const base = dictationBaseRef.current;
     const committed = dictationCommittedRef.current;
@@ -578,26 +586,12 @@ export default function WorkbenchPage() {
     dictationTranscriptMsgsRef.current = 0;
 
     const openPromise = new Promise<void>((resolve, reject) => {
-      let settled = false;
-      const settleResolve = () => {
-        if (settled) return;
-        settled = true;
-        resolve();
-      };
-      const settleReject = (err: Error) => {
-        if (settled) return;
-        settled = true;
-        reject(err);
-      };
-
-      ws.addEventListener("open", settleResolve, { once: true });
-      ws.addEventListener("error", () => settleReject(new Error("Failed to connect to dictation stream.")), { once: true });
-      ws.addEventListener("close", () => settleReject(new Error("Dictation stream closed before connecting.")), { once: true });
+      ws.addEventListener("open", () => resolve(), { once: true });
+      ws.addEventListener("error", () => reject(new Error("Failed to connect to dictation stream.")), { once: true });
     });
 
     ws.addEventListener("message", (ev) => {
       void parseWsJson((ev as MessageEvent).data).then((data) => {
-        if (dictationWsRef.current !== ws) return;
         if (!data) return;
         const t = String(data.type ?? "");
         if (t === "ready") {
@@ -616,11 +610,11 @@ export default function WorkbenchPage() {
         } else if (t === "done") {
           try {
             ws.close();
-          } catch {}
+          } catch { }
           return;
         } else if (t === "error") {
           setDictationError(String(data.message ?? "Dictation error"));
-          stopDictation().catch(() => {});
+          stopDictation().catch(() => { });
           return;
         } else {
           return;
@@ -634,7 +628,6 @@ export default function WorkbenchPage() {
     });
 
     ws.addEventListener("close", () => {
-      if (dictationWsRef.current !== ws) return;
       dictationWsRef.current = null;
       setDictationRecording(false);
     });
@@ -650,24 +643,22 @@ export default function WorkbenchPage() {
         },
         onError: (err) => {
           setDictationError(err.message);
-          stopDictation().catch(() => {});
+          stopDictation().catch(() => { });
         },
       });
     } catch (e: any) {
-      if (dictationWsRef.current === ws) setDictationError(e?.message ?? String(e));
+      setDictationError(e?.message ?? String(e));
       try {
         ws.close();
-      } catch {}
-      if (dictationWsRef.current === ws) {
-        dictationWsRef.current = null;
-        setDictationRecording(false);
-      }
+      } catch { }
+      dictationWsRef.current = null;
+      setDictationRecording(false);
     }
   }, [dictationSettings, dictationRecording, draftPrompt, stopDictation]);
 
   useEffect(() => {
     return () => {
-      stopDictation().catch(() => {});
+      stopDictation().catch(() => { });
     };
   }, [stopDictation]);
 
@@ -968,7 +959,8 @@ export default function WorkbenchPage() {
                 const tid = idToString(t.id);
                 const selected = tid === activeTaskId;
                 const title = t.title ?? "New conversation";
-                const working = taskLiveInfo.workingByTask.has(tid) || t.has_active_session === true;
+                const working = taskLiveInfo.workingByTask.has(tid);
+                const hasError = taskLiveInfo.errorByTask.has(tid);
                 const serverLastAssistantMs = parseMs(t.last_assistant_message_at ?? null);
                 const liveLastAssistantMs = taskLiveInfo.lastAssistantMsByTask[tid] ?? null;
                 const lastAssistantMs =
@@ -978,6 +970,19 @@ export default function WorkbenchPage() {
                 const seenMs = parseMs(taskSeenAssistantAtById[tid] ?? null);
                 const unread = !working && lastAssistantMs !== null && (seenMs === null || lastAssistantMs > seenMs);
                 const age = formatAgeShort(taskActivityMs(t));
+
+                // Compute indicator to show (mutually exclusive, priority order)
+                let indicator: 'working' | 'error' | 'unread' | 'idle';
+                if (working) {
+                  indicator = 'working';
+                } else if (hasError) {
+                  indicator = 'error';
+                } else if (unread) {
+                  indicator = 'unread';
+                } else {
+                  indicator = 'idle';
+                }
+
                 return (
                   <div
                     key={tid}
@@ -994,8 +999,10 @@ export default function WorkbenchPage() {
                     title={title}
                   >
                     <div className="wb-task-leading" aria-hidden="true">
-                      {working ? <span className="wb-task-spinner" /> : <MessageSquare size={14} />}
-                      {unread && <span className="wb-task-unread" />}
+                      {indicator === 'working' && <span className="wb-task-spinner" />}
+                      {indicator === 'error' && <span className="wb-task-error" />}
+                      {indicator === 'unread' && <span className="wb-task-unread" />}
+                      {indicator === 'idle' && <span className="wb-task-idle" />}
                     </div>
                     <div className="wb-task-body">
                       <div className="wb-task-title">{title}</div>
@@ -1008,7 +1015,7 @@ export default function WorkbenchPage() {
                           className="wb-icon wb-task-action"
                           onClick={(e) => {
                             e.stopPropagation();
-                            onToggleArchive(tid, true).catch(() => {});
+                            onToggleArchive(tid, true).catch(() => { });
                           }}
                           aria-label="Archive"
                           title="Archive"
@@ -1061,7 +1068,8 @@ export default function WorkbenchPage() {
                   const tid = idToString(t.id);
                   const selected = tid === activeTaskId;
                   const title = t.title ?? "New conversation";
-                  const working = taskLiveInfo.workingByTask.has(tid) || t.has_active_session === true;
+                  const working = taskLiveInfo.workingByTask.has(tid);
+                  const hasError = taskLiveInfo.errorByTask.has(tid);
                   const serverLastAssistantMs = parseMs(t.last_assistant_message_at ?? null);
                   const liveLastAssistantMs = taskLiveInfo.lastAssistantMsByTask[tid] ?? null;
                   const lastAssistantMs =
@@ -1071,6 +1079,19 @@ export default function WorkbenchPage() {
                   const seenMs = parseMs(taskSeenAssistantAtById[tid] ?? null);
                   const unread = !working && lastAssistantMs !== null && (seenMs === null || lastAssistantMs > seenMs);
                   const age = formatAgeShort(taskActivityMs(t));
+
+                  // Compute indicator to show (mutually exclusive, priority order)
+                  let indicator: 'working' | 'error' | 'unread' | 'idle';
+                  if (working) {
+                    indicator = 'working';
+                  } else if (hasError) {
+                    indicator = 'error';
+                  } else if (unread) {
+                    indicator = 'unread';
+                  } else {
+                    indicator = 'idle';
+                  }
+
                   return (
                     <div
                       key={tid}
@@ -1087,8 +1108,10 @@ export default function WorkbenchPage() {
                       title={title}
                     >
                       <div className="wb-task-leading" aria-hidden="true">
-                        {working ? <span className="wb-task-spinner" /> : <MessageSquare size={14} />}
-                        {unread && <span className="wb-task-unread" />}
+                        {indicator === 'working' && <span className="wb-task-spinner" />}
+                        {indicator === 'error' && <span className="wb-task-error" />}
+                        {indicator === 'unread' && <span className="wb-task-unread" />}
+                        {indicator === 'idle' && <span className="wb-task-idle" />}
                       </div>
                       <div className="wb-task-body">
                         <div className="wb-task-title">{title}</div>
@@ -1101,7 +1124,7 @@ export default function WorkbenchPage() {
                             className="wb-icon wb-task-action"
                             onClick={(e) => {
                               e.stopPropagation();
-                              onToggleArchive(tid, false).catch(() => {});
+                              onToggleArchive(tid, false).catch(() => { });
                             }}
                             aria-label="Unarchive"
                             title="Unarchive"
@@ -1198,12 +1221,12 @@ export default function WorkbenchPage() {
                 variant="newSession"
                 value={draftPrompt}
                 setValue={setDraftPrompt}
-                placeholder="Plan, @ for context, / for commands"
+                placeholder="@ for context, / for commands"
                 inputDisabled={dictationRecording}
                 recording={dictationRecording}
                 onToggleRecording={() => {
-                  if (dictationRecording) stopDictation().catch(() => {});
-                  else startDictation().catch(() => {});
+                  if (dictationRecording) stopDictation().catch(() => { });
+                  else startDictation().catch(() => { });
                 }}
                 sessionIdForAutocomplete={null}
                 workspaceIdForAutocomplete={workspaceId}
@@ -1231,444 +1254,444 @@ export default function WorkbenchPage() {
 
               {false && (
                 <>
-              <div className="wb-composer-card wb-new-composer-card">
-                <textarea
-                  className="wb-composer-textarea"
-                  placeholder="Plan, @ for context, / for commands"
-                  value={draftPrompt}
-                  onChange={(e) => setDraftPrompt(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (!shouldSendOnEnter(e)) return;
-                    e.preventDefault();
-                    startNewTask();
-                  }}
-                />
+                  <div className="wb-composer-card wb-new-composer-card">
+                    <textarea
+                      className="wb-composer-textarea"
+                      placeholder="@ for context, / for command"
+                      value={draftPrompt}
+                      onChange={(e) => setDraftPrompt(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (!shouldSendOnEnter(e)) return;
+                        e.preventDefault();
+                        startNewTask();
+                      }}
+                    />
 
-                <div className="wb-composer-bottom">
-                  <div className="wb-switcher-row">
-                    <div className="wb-switcher-wrap">
-                      <button
-                        type="button"
-                        className="wb-switcher wb-menu-trigger"
-                        ref={modeTriggerRef}
-                        onClick={() => {
-                          setContextMenuOpen(false);
-                          setExpandedHarnessId(null);
-                          setOpenMenu((v) => (v === "mode" ? null : "mode"));
-                        }}
-                        aria-haspopup="menu"
-                        aria-expanded={openMenu === "mode"}
-                        title="Mode"
-                      >
-                        <span className="wb-switcher-icon">∞</span>
-                        <span className="wb-switcher-label">
-                          {draftMode === "default"
-                            ? "Default"
-                            : draftMode === "research"
-                              ? "Research"
-                              : draftMode === "plan"
-                                ? "Plan"
-                                : "Review"}
-                        </span>
-                        <ChevronDown size={14} />
-                      </button>
-                      {openMenu === "mode" && (
-                        <div className="wb-menu" role="menu" ref={activeMenuRef} style={menuStyle ?? undefined}>
-                          {(["default", "research", "plan", "review"] as DraftModeId[]).map((m) => (
-                            <button
-                              key={m}
-                              type="button"
-                              className={`wb-menu-item ${draftMode === m ? "wb-menu-item-active" : ""}`}
-                              onClick={() => {
-                                setDraftMode(m);
-                                setOpenMenu(null);
-                              }}
-                              role="menuitem"
-                            >
-                              {m === "default"
+                    <div className="wb-composer-bottom">
+                      <div className="wb-switcher-row">
+                        <div className="wb-switcher-wrap">
+                          <button
+                            type="button"
+                            className="wb-switcher wb-menu-trigger"
+                            ref={modeTriggerRef}
+                            onClick={() => {
+                              setContextMenuOpen(false);
+                              setExpandedHarnessId(null);
+                              setOpenMenu((v) => (v === "mode" ? null : "mode"));
+                            }}
+                            aria-haspopup="menu"
+                            aria-expanded={openMenu === "mode"}
+                            title="Mode"
+                          >
+                            <span className="wb-switcher-icon">∞</span>
+                            <span className="wb-switcher-label">
+                              {draftMode === "default"
                                 ? "Default"
-                                : m === "research"
+                                : draftMode === "research"
                                   ? "Research"
-                                  : m === "plan"
+                                  : draftMode === "plan"
                                     ? "Plan"
                                     : "Review"}
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="wb-switcher-wrap">
-                      <button
-                        type="button"
-                        className="wb-switcher wb-menu-trigger"
-                        ref={harnessTriggerRef}
-                        onClick={() => {
-                          setContextMenuOpen(false);
-                          setExpandedHarnessId(null);
-                          setHarnessSearch("");
-                          setOpenMenu((v) => (v === "harness" ? null : "harness"));
-                        }}
-                        aria-haspopup="menu"
-                        aria-expanded={openMenu === "harness"}
-                        title="Harness"
-                      >
-                        {harnessInfoById[primaryHarnessId]?.logoSrc ? (
-                          <img
-                            className={`wb-switcher-logo ${harnessInfoById[primaryHarnessId]?.invertInDark ? "wb-invert" : ""}`}
-                            src={harnessInfoById[primaryHarnessId].logoSrc!}
-                            alt=""
-                          />
-                        ) : (
-                          <span className="wb-switcher-logo-fallback" />
-                        )}
-                        <span className="wb-switcher-label">
-                          {draftTracks.length === 1 ? primaryHarnessLabel : `${draftTracks.length} tracks`}
-                        </span>
-                        <ChevronDown size={14} />
-                      </button>
-
-                      {openMenu === "harness" && (
-                        <div
-                          className="wb-menu wb-harness-menu"
-                          role="menu"
-                          ref={activeMenuRef}
-                          style={menuStyle ?? undefined}
-                        >
-                          <div className="wb-menu-top">
-                            <input
-                              className="wb-menu-search"
-                              value={harnessSearch}
-                              onChange={(e) => setHarnessSearch(e.target.value)}
-                              placeholder="Search agents"
-                              aria-label="Search agents"
-                              autoFocus
-                            />
-                            <label className="wb-menu-toggle">
-                              <span>Use Multiple Agents</span>
-                              <input
-                                type="checkbox"
-                                checked={useMultipleAgents}
-                                onChange={(e) => {
-                                  setExpandedHarnessId(null);
-                                  setUseMultipleAgents(e.target.checked);
-                                }}
-                              />
-                              <span className="wb-toggle" aria-hidden="true" />
-                            </label>
-                          </div>
-                          {(() => {
-                            const q = harnessSearch.trim().toLowerCase();
-                            const all = HARNESS_CATALOG.concat(
-                              providersById["fake"]
-                                ? [{ id: "fake", label: "Fake", logoSrc: "", invertInDark: false } as any]
-                                : [],
-                            );
-                            const filtered = q
-                              ? all.filter((h: any) => {
-                                  const id = String(h.id).toLowerCase();
-                                  const label = String(h.label).toLowerCase();
-                                  return id.includes(q) || label.includes(q);
-                                })
-                              : all;
-                            if (filtered.length === 0) {
-                              return <div className="wb-menu-empty">No matching agents.</div>;
-                            }
-                            return filtered.map((h: any) => {
-                              const id = String(h.id);
-                              const label = String(h.label);
-                              const count = harnessCounts[id] ?? 0;
-                              const checked = count > 0;
-                              const installed = providersById[id]?.installed ?? false;
-                              const expanded = expandedHarnessId === id;
-                              const canConfigureModels = useMultipleAgents && draftTracks.length > 1;
-                              const rows = draftTracks.filter((t) => t.providerId === id);
-                              const opts = providerOptions[id];
-                              const modelIds = modelIdsFromOptions(opts);
-
-                              return (
-                                <div key={id} className={`wb-harness-row ${installed ? "" : "wb-disabled"}`}>
-                                  <button
-                                    type="button"
-                                    className="wb-harness-row-main"
-                                    onClick={() => toggleHarness(id)}
-                                    disabled={!installed}
-                                  >
-                                    <span className={`wb-check ${checked ? "wb-check-on" : ""}`} aria-hidden="true">
-                                      {checked ? "✓" : ""}
-                                    </span>
-                                    {h.logoSrc ? (
-                                      <img
-                                        className={`wb-harness-logo ${h.invertInDark ? "wb-invert" : ""}`}
-                                        src={h.logoSrc}
-                                        alt=""
-                                      />
-                                    ) : (
-                                      <span className="wb-harness-logo-fallback" aria-hidden="true" />
-                                    )}
-                                    <span className="wb-harness-name">{label}</span>
-                                    <span className="wb-harness-right">
-                                      <span className="wb-harness-count">{count > 0 ? `${count}x` : ""}</span>
-                                    </span>
-                                  </button>
-
-                                  {checked && (
-                                    <button
-                                      type="button"
-                                      className="wb-harness-expand wb-menu-trigger"
-                                      onClick={() => {
-                                        if (!canConfigureModels) return;
-                                        setExpandedHarnessId((prev) => (prev === id ? null : id));
-                                        ensureProviderOptions(id).catch(() => {});
-                                      }}
-                                      disabled={!canConfigureModels}
-                                      title={canConfigureModels ? "Configure models" : "Enable multi-agent to configure"}
-                                    >
-                                      <ChevronDown size={14} />
-                                    </button>
-                                  )}
-
-                                  {expanded && canConfigureModels && (
-                                    <div className="wb-harness-config">
-                                      {rows.map((t) => (
-                                        <div key={t.key} className="wb-harness-track">
-                                          <div className="wb-harness-track-left">
-                                            <div className="wb-harness-track-title">Track</div>
-                                            {modelIds.length > 0 ? (
-                                              <select
-                                                className="wb-harness-model-select"
-                                                value={t.modelId}
-                                                onChange={(e) => updateTrackModel(t.key, e.target.value)}
-                                                onFocus={() => ensureProviderOptions(id).catch(() => {})}
-                                              >
-                                                <option value="">Select model…</option>
-                                                {modelIds.map((m) => (
-                                                  <option key={m} value={m}>
-                                                    {m}
-                                                  </option>
-                                                ))}
-                                              </select>
-                                            ) : (
-                                              <input
-                                                className="wb-harness-model-input"
-                                                value={t.modelId}
-                                                placeholder="model_id"
-                                                onFocus={() => ensureProviderOptions(id).catch(() => {})}
-                                                onChange={(e) => updateTrackModel(t.key, e.target.value)}
-                                              />
-                                            )}
-                                          </div>
-                                          <div className="wb-harness-track-right">
-                                            <button
-                                              type="button"
-                                              className="wb-harness-mini"
-                                              onClick={() => addTrackForProvider(id)}
-                                              title="Add another track"
-                                            >
-                                              +
-                                            </button>
-                                            <button
-                                              type="button"
-                                              className="wb-harness-mini"
-                                              onClick={() => removeTrackByKey(t.key)}
-                                              title="Remove track"
-                                              disabled={rows.length <= 1}
-                                            >
-                                              −
-                                            </button>
-                                          </div>
-                                        </div>
-                                      ))}
-                                    </div>
-                                  )}
-
-                                  {!installed && <div className="wb-harness-note">Not installed</div>}
-                                </div>
-                              );
-                            });
-                          })()}
-                        </div>
-                      )}
-                    </div>
-
-                    {draftTracks.length === 1 && (
-                      <div className="wb-switcher-wrap">
-                        <button
-                          type="button"
-                          className="wb-switcher wb-menu-trigger"
-                          ref={modelTriggerRef}
-                          onClick={() => {
-                            setContextMenuOpen(false);
-                            setExpandedHarnessId(null);
-                            setModelSearch("");
-                            setOpenMenu((v) => (v === "model" ? null : "model"));
-                            ensureProviderOptions(primaryHarnessId).catch(() => {});
-                          }}
-                          aria-haspopup="menu"
-                          aria-expanded={openMenu === "model"}
-                          title="Model"
-                        >
-                          <span className="wb-switcher-label">
-                            {(primaryTrack?.modelId ?? "").trim() || "Model"}
-                          </span>
-                          <ChevronDown size={14} />
-                        </button>
-                        {openMenu === "model" && (
-                          <div
-                            className="wb-menu wb-model-menu"
-                            role="menu"
-                            ref={activeMenuRef}
-                            style={menuStyle ?? undefined}
-                          >
-                            <div className="wb-menu-top">
-                              <input
-                                className="wb-menu-search"
-                                value={modelSearch}
-                                onChange={(e) => setModelSearch(e.target.value)}
-                                placeholder="Search models"
-                                aria-label="Search models"
-                                autoFocus
-                              />
-                            </div>
-                            {(() => {
-                              const opts = providerOptions[primaryHarnessId];
-                              const modelIds = modelIdsFromOptions(opts);
-                              if (modelIds.length === 0) {
-                                return <div className="wb-menu-empty">No model list yet.</div>;
-                              }
-                              const q = modelSearch.trim().toLowerCase();
-                              const filtered = q ? modelIds.filter((m) => m.toLowerCase().includes(q)) : modelIds;
-                              if (filtered.length === 0) {
-                                return <div className="wb-menu-empty">No matching models.</div>;
-                              }
-                              return filtered.map((m) => (
+                            </span>
+                            <ChevronDown size={14} />
+                          </button>
+                          {openMenu === "mode" && (
+                            <div className="wb-menu" role="menu" ref={activeMenuRef} style={menuStyle ?? undefined}>
+                              {(["default", "research", "plan", "review"] as DraftModeId[]).map((m) => (
                                 <button
                                   key={m}
                                   type="button"
-                                  className={`wb-menu-item ${primaryTrack?.modelId === m ? "wb-menu-item-active" : ""}`}
+                                  className={`wb-menu-item ${draftMode === m ? "wb-menu-item-active" : ""}`}
                                   onClick={() => {
-                                    if (!primaryTrack) return;
-                                    updateTrackModel(primaryTrack.key, m);
+                                    setDraftMode(m);
                                     setOpenMenu(null);
                                   }}
                                   role="menuitem"
                                 >
-                                  {m}
+                                  {m === "default"
+                                    ? "Default"
+                                    : m === "research"
+                                      ? "Research"
+                                      : m === "plan"
+                                        ? "Plan"
+                                        : "Review"}
                                 </button>
-                              ));
-                            })()}
-                          </div>
-                        )}
-                      </div>
-                    )}
+                              ))}
+                            </div>
+                          )}
+                        </div>
 
-                    <div className="wb-switcher-wrap">
-                      <button
-                        type="button"
-                        className="wb-switcher wb-menu-trigger"
-                        ref={execTriggerRef}
-                        onClick={() => {
-                          setContextMenuOpen(false);
-                          setExpandedHarnessId(null);
-                          setOpenMenu((v) => (v === "exec" ? null : "exec"));
-                        }}
-                        aria-haspopup="menu"
-                        aria-expanded={openMenu === "exec"}
-                        title="Execution target"
-                      >
-                        <span className="wb-switcher-icon">
-                          <Laptop size={14} />
-                        </span>
-                        <span className="wb-switcher-label">
-                          {execTarget === "worktree" ? "Worktree" : execTarget === "local" ? "Local" : "Container"}
-                        </span>
-                        <ChevronDown size={14} />
-                      </button>
-                      {openMenu === "exec" && (
-                        <div
-                          className="wb-menu wb-exec-menu"
-                          role="menu"
-                          ref={activeMenuRef}
-                          style={menuStyle ?? undefined}
-                        >
+                        <div className="wb-switcher-wrap">
                           <button
                             type="button"
-                            className={`wb-menu-item ${execTarget === "worktree" ? "wb-menu-item-active" : ""}`}
+                            className="wb-switcher wb-menu-trigger"
+                            ref={harnessTriggerRef}
                             onClick={() => {
-                              setExecTarget("worktree");
-                              setOpenMenu(null);
+                              setContextMenuOpen(false);
+                              setExpandedHarnessId(null);
+                              setHarnessSearch("");
+                              setOpenMenu((v) => (v === "harness" ? null : "harness"));
                             }}
+                            aria-haspopup="menu"
+                            aria-expanded={openMenu === "harness"}
+                            title="Harness"
                           >
-                            Worktree
+                            {harnessInfoById[primaryHarnessId]?.logoSrc ? (
+                              <img
+                                className={`wb-switcher-logo ${harnessInfoById[primaryHarnessId]?.invertInDark ? "wb-invert" : ""}`}
+                                src={harnessInfoById[primaryHarnessId].logoSrc!}
+                                alt=""
+                              />
+                            ) : (
+                              <span className="wb-switcher-logo-fallback" />
+                            )}
+                            <span className="wb-switcher-label">
+                              {draftTracks.length === 1 ? primaryHarnessLabel : `${draftTracks.length} tracks`}
+                            </span>
+                            <ChevronDown size={14} />
                           </button>
-                          <button type="button" className="wb-menu-item" disabled>
-                            Local (disabled)
-                          </button>
-                          <button type="button" className="wb-menu-item" disabled>
-                            Container (coming soon)
-                          </button>
+
+                          {openMenu === "harness" && (
+                            <div
+                              className="wb-menu wb-harness-menu"
+                              role="menu"
+                              ref={activeMenuRef}
+                              style={menuStyle ?? undefined}
+                            >
+                              <div className="wb-menu-top">
+                                <input
+                                  className="wb-menu-search"
+                                  value={harnessSearch}
+                                  onChange={(e) => setHarnessSearch(e.target.value)}
+                                  placeholder="Search agents"
+                                  aria-label="Search agents"
+                                  autoFocus
+                                />
+                                <label className="wb-menu-toggle">
+                                  <span>Use Multiple Agents</span>
+                                  <input
+                                    type="checkbox"
+                                    checked={useMultipleAgents}
+                                    onChange={(e) => {
+                                      setExpandedHarnessId(null);
+                                      setUseMultipleAgents(e.target.checked);
+                                    }}
+                                  />
+                                  <span className="wb-toggle" aria-hidden="true" />
+                                </label>
+                              </div>
+                              {(() => {
+                                const q = harnessSearch.trim().toLowerCase();
+                                const all = HARNESS_CATALOG.concat(
+                                  providersById["fake"]
+                                    ? [{ id: "fake", label: "Fake", logoSrc: "", invertInDark: false } as any]
+                                    : [],
+                                );
+                                const filtered = q
+                                  ? all.filter((h: any) => {
+                                    const id = String(h.id).toLowerCase();
+                                    const label = String(h.label).toLowerCase();
+                                    return id.includes(q) || label.includes(q);
+                                  })
+                                  : all;
+                                if (filtered.length === 0) {
+                                  return <div className="wb-menu-empty">No matching agents.</div>;
+                                }
+                                return filtered.map((h: any) => {
+                                  const id = String(h.id);
+                                  const label = String(h.label);
+                                  const count = harnessCounts[id] ?? 0;
+                                  const checked = count > 0;
+                                  const installed = providersById[id]?.installed ?? false;
+                                  const expanded = expandedHarnessId === id;
+                                  const canConfigureModels = useMultipleAgents && draftTracks.length > 1;
+                                  const rows = draftTracks.filter((t) => t.providerId === id);
+                                  const opts = providerOptions[id];
+                                  const modelIds = modelIdsFromOptions(opts);
+
+                                  return (
+                                    <div key={id} className={`wb-harness-row ${installed ? "" : "wb-disabled"}`}>
+                                      <button
+                                        type="button"
+                                        className="wb-harness-row-main"
+                                        onClick={() => toggleHarness(id)}
+                                        disabled={!installed}
+                                      >
+                                        <span className={`wb-check ${checked ? "wb-check-on" : ""}`} aria-hidden="true">
+                                          {checked ? "✓" : ""}
+                                        </span>
+                                        {h.logoSrc ? (
+                                          <img
+                                            className={`wb-harness-logo ${h.invertInDark ? "wb-invert" : ""}`}
+                                            src={h.logoSrc}
+                                            alt=""
+                                          />
+                                        ) : (
+                                          <span className="wb-harness-logo-fallback" aria-hidden="true" />
+                                        )}
+                                        <span className="wb-harness-name">{label}</span>
+                                        <span className="wb-harness-right">
+                                          <span className="wb-harness-count">{count > 0 ? `${count}x` : ""}</span>
+                                        </span>
+                                      </button>
+
+                                      {checked && (
+                                        <button
+                                          type="button"
+                                          className="wb-harness-expand wb-menu-trigger"
+                                          onClick={() => {
+                                            if (!canConfigureModels) return;
+                                            setExpandedHarnessId((prev) => (prev === id ? null : id));
+                                            ensureProviderOptions(id).catch(() => { });
+                                          }}
+                                          disabled={!canConfigureModels}
+                                          title={canConfigureModels ? "Configure models" : "Enable multi-agent to configure"}
+                                        >
+                                          <ChevronDown size={14} />
+                                        </button>
+                                      )}
+
+                                      {expanded && canConfigureModels && (
+                                        <div className="wb-harness-config">
+                                          {rows.map((t) => (
+                                            <div key={t.key} className="wb-harness-track">
+                                              <div className="wb-harness-track-left">
+                                                <div className="wb-harness-track-title">Track</div>
+                                                {modelIds.length > 0 ? (
+                                                  <select
+                                                    className="wb-harness-model-select"
+                                                    value={t.modelId}
+                                                    onChange={(e) => updateTrackModel(t.key, e.target.value)}
+                                                    onFocus={() => ensureProviderOptions(id).catch(() => { })}
+                                                  >
+                                                    <option value="">Select model…</option>
+                                                    {modelIds.map((m) => (
+                                                      <option key={m} value={m}>
+                                                        {m}
+                                                      </option>
+                                                    ))}
+                                                  </select>
+                                                ) : (
+                                                  <input
+                                                    className="wb-harness-model-input"
+                                                    value={t.modelId}
+                                                    placeholder="model_id"
+                                                    onFocus={() => ensureProviderOptions(id).catch(() => { })}
+                                                    onChange={(e) => updateTrackModel(t.key, e.target.value)}
+                                                  />
+                                                )}
+                                              </div>
+                                              <div className="wb-harness-track-right">
+                                                <button
+                                                  type="button"
+                                                  className="wb-harness-mini"
+                                                  onClick={() => addTrackForProvider(id)}
+                                                  title="Add another track"
+                                                >
+                                                  +
+                                                </button>
+                                                <button
+                                                  type="button"
+                                                  className="wb-harness-mini"
+                                                  onClick={() => removeTrackByKey(t.key)}
+                                                  title="Remove track"
+                                                  disabled={rows.length <= 1}
+                                                >
+                                                  −
+                                                </button>
+                                              </div>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      )}
+
+                                      {!installed && <div className="wb-harness-note">Not installed</div>}
+                                    </div>
+                                  );
+                                });
+                              })()}
+                            </div>
+                          )}
                         </div>
-                      )}
+
+                        {draftTracks.length === 1 && (
+                          <div className="wb-switcher-wrap">
+                            <button
+                              type="button"
+                              className="wb-switcher wb-menu-trigger"
+                              ref={modelTriggerRef}
+                              onClick={() => {
+                                setContextMenuOpen(false);
+                                setExpandedHarnessId(null);
+                                setModelSearch("");
+                                setOpenMenu((v) => (v === "model" ? null : "model"));
+                                ensureProviderOptions(primaryHarnessId).catch(() => { });
+                              }}
+                              aria-haspopup="menu"
+                              aria-expanded={openMenu === "model"}
+                              title="Model"
+                            >
+                              <span className="wb-switcher-label">
+                                {(primaryTrack?.modelId ?? "").trim() || "Model"}
+                              </span>
+                              <ChevronDown size={14} />
+                            </button>
+                            {openMenu === "model" && (
+                              <div
+                                className="wb-menu wb-model-menu"
+                                role="menu"
+                                ref={activeMenuRef}
+                                style={menuStyle ?? undefined}
+                              >
+                                <div className="wb-menu-top">
+                                  <input
+                                    className="wb-menu-search"
+                                    value={modelSearch}
+                                    onChange={(e) => setModelSearch(e.target.value)}
+                                    placeholder="Search models"
+                                    aria-label="Search models"
+                                    autoFocus
+                                  />
+                                </div>
+                                {(() => {
+                                  const opts = providerOptions[primaryHarnessId];
+                                  const modelIds = modelIdsFromOptions(opts);
+                                  if (modelIds.length === 0) {
+                                    return <div className="wb-menu-empty">No model list yet.</div>;
+                                  }
+                                  const q = modelSearch.trim().toLowerCase();
+                                  const filtered = q ? modelIds.filter((m) => m.toLowerCase().includes(q)) : modelIds;
+                                  if (filtered.length === 0) {
+                                    return <div className="wb-menu-empty">No matching models.</div>;
+                                  }
+                                  return filtered.map((m) => (
+                                    <button
+                                      key={m}
+                                      type="button"
+                                      className={`wb-menu-item ${primaryTrack?.modelId === m ? "wb-menu-item-active" : ""}`}
+                                      onClick={() => {
+                                        if (!primaryTrack) return;
+                                        updateTrackModel(primaryTrack.key, m);
+                                        setOpenMenu(null);
+                                      }}
+                                      role="menuitem"
+                                    >
+                                      {m}
+                                    </button>
+                                  ));
+                                })()}
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        <div className="wb-switcher-wrap">
+                          <button
+                            type="button"
+                            className="wb-switcher wb-menu-trigger"
+                            ref={execTriggerRef}
+                            onClick={() => {
+                              setContextMenuOpen(false);
+                              setExpandedHarnessId(null);
+                              setOpenMenu((v) => (v === "exec" ? null : "exec"));
+                            }}
+                            aria-haspopup="menu"
+                            aria-expanded={openMenu === "exec"}
+                            title="Execution target"
+                          >
+                            <span className="wb-switcher-icon">
+                              <Laptop size={14} />
+                            </span>
+                            <span className="wb-switcher-label">
+                              {execTarget === "worktree" ? "Worktree" : execTarget === "local" ? "Local" : "Container"}
+                            </span>
+                            <ChevronDown size={14} />
+                          </button>
+                          {openMenu === "exec" && (
+                            <div
+                              className="wb-menu wb-exec-menu"
+                              role="menu"
+                              ref={activeMenuRef}
+                              style={menuStyle ?? undefined}
+                            >
+                              <button
+                                type="button"
+                                className={`wb-menu-item ${execTarget === "worktree" ? "wb-menu-item-active" : ""}`}
+                                onClick={() => {
+                                  setExecTarget("worktree");
+                                  setOpenMenu(null);
+                                }}
+                              >
+                                Worktree
+                              </button>
+                              <button type="button" className="wb-menu-item" disabled>
+                                Local (disabled)
+                              </button>
+                              <button type="button" className="wb-menu-item" disabled>
+                                Container (coming soon)
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="wb-action-row">
+                        <button
+                          type="button"
+                          className="wb-icon wb-menu-trigger"
+                          onClick={() => {
+                            setOpenMenu(null);
+                            setExpandedHarnessId(null);
+                            setContextMenuOpen((v) => !v);
+                          }}
+                          aria-label="Add context"
+                        >
+                          <AtSign size={14} />
+                        </button>
+                        <button
+                          type="button"
+                          className="wb-icon"
+                          title="Attach image (coming soon)"
+                          disabled
+                          aria-label="Attach image"
+                        >
+                          <Image size={14} />
+                        </button>
+                        <button
+                          type="button"
+                          className="wb-icon"
+                          title="Record (coming soon)"
+                          disabled
+                          aria-label="Record"
+                        >
+                          <Mic size={14} />
+                        </button>
+                        <button
+                          type="button"
+                          className="wb-send"
+                          onClick={startNewTask}
+                          disabled={!!startBlockedReason}
+                          title={startBlockedReason ?? "Start"}
+                          aria-label="Start"
+                        >
+                          <ArrowUp size={14} />
+                        </button>
+                      </div>
                     </div>
                   </div>
 
-                  <div className="wb-action-row">
-                    <button
-                      type="button"
-                      className="wb-icon wb-menu-trigger"
-                      onClick={() => {
-                        setOpenMenu(null);
-                        setExpandedHarnessId(null);
-                        setContextMenuOpen((v) => !v);
-                      }}
-                      aria-label="Add context"
-                    >
-                      <AtSign size={14} />
-                    </button>
-                    <button
-                      type="button"
-                      className="wb-icon"
-                      title="Attach image (coming soon)"
-                      disabled
-                      aria-label="Attach image"
-                    >
-                      <Image size={14} />
-                    </button>
-                    <button
-                      type="button"
-                      className="wb-icon"
-                      title="Record (coming soon)"
-                      disabled
-                      aria-label="Record"
-                    >
-                      <Mic size={14} />
-                    </button>
-                    <button
-                      type="button"
-                      className="wb-send"
-                      onClick={startNewTask}
-                      disabled={!!startBlockedReason}
-                      title={startBlockedReason ?? "Start"}
-                      aria-label="Start"
-                    >
-                      <ArrowUp size={14} />
-                    </button>
-                  </div>
-                </div>
-              </div>
+                  {contextMenuOpen && (
+                    <div className="wb-context-popover" onMouseLeave={() => setContextMenuOpen(false)}>
+                      <div className="wb-context-title">Add files, folders, docs…</div>
+                      <div className="wb-context-item">Files &amp; Folders</div>
+                      <div className="wb-context-item">Docs</div>
+                      <div className="wb-context-item">Terminals</div>
+                      <div className="wb-context-item">Past Chats</div>
+                      <div className="wb-context-item">Branch (Diff with Main)</div>
+                    </div>
+                  )}
 
-              {contextMenuOpen && (
-                <div className="wb-context-popover" onMouseLeave={() => setContextMenuOpen(false)}>
-                  <div className="wb-context-title">Add files, folders, docs…</div>
-                  <div className="wb-context-item">Files &amp; Folders</div>
-                  <div className="wb-context-item">Docs</div>
-                  <div className="wb-context-item">Terminals</div>
-                  <div className="wb-context-item">Past Chats</div>
-                  <div className="wb-context-item">Branch (Diff with Main)</div>
-                </div>
-              )}
-
-              </>
+                </>
               )}
               {dictationDebugText && <div className="wb-banner">{dictationDebugText}</div>}
               {dictationError && <div className="wb-banner">{dictationError}</div>}
@@ -1681,17 +1704,17 @@ export default function WorkbenchPage() {
           <div className="wb-body">
             <div className="wb-convo">
               <div className="wb-trackbar">
-	                {tracks.map((tr) => {
-	                  const trid = idToString(tr.id);
-	                  const selected = trid === activeTrackId;
-	                  const sessions = sessionsByTrack[trid] ?? [];
-	                  const s = pickPreferredSession(sessions) as any;
-	                  const sessionId = s ? idToString((s as any).id) : "";
-	                  const liveSession = sessionId ? sessionCache.sessions[sessionId]?.session : null;
-	                  const displaySession = (liveSession ?? s) as any;
-	                  const model = displaySession ? `${displaySession.provider_id} ${displaySession.model_id}` : "No session";
-	                  const status = tr.status === "running" ? "Running…" : tr.status === "completed" ? "Task completed" : tr.status;
-	                  return (
+                {tracks.map((tr) => {
+                  const trid = idToString(tr.id);
+                  const selected = trid === activeTrackId;
+                  const sessions = sessionsByTrack[trid] ?? [];
+                  const s = pickPreferredSession(sessions) as any;
+                  const sessionId = s ? idToString((s as any).id) : "";
+                  const liveSession = sessionId ? sessionCache.sessions[sessionId]?.session : null;
+                  const displaySession = (liveSession ?? s) as any;
+                  const model = displaySession ? `${displaySession.provider_id} ${displaySession.model_id}` : "No session";
+                  const status = tr.status === "running" ? "Running…" : tr.status === "completed" ? "Task completed" : tr.status;
+                  return (
                     <button
                       key={trid}
                       type="button"
@@ -1865,7 +1888,7 @@ export default function WorkbenchPage() {
               const tid = taskMenu.taskId;
               const t = tasks.find((x) => idToString(x.id) === tid);
               const nextArchived = !t?.archived_at;
-              onToggleArchive(tid, nextArchived).catch(() => {});
+              onToggleArchive(tid, nextArchived).catch(() => { });
               setTaskMenu(null);
             }}
             role="menuitem"
@@ -1879,7 +1902,7 @@ export default function WorkbenchPage() {
             type="button"
             className="wb-menu-item"
             onClick={() => {
-              navigator.clipboard.writeText(taskMenu.taskId).catch(() => {});
+              navigator.clipboard.writeText(taskMenu.taskId).catch(() => { });
               setTaskMenu(null);
             }}
             role="menuitem"

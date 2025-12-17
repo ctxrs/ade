@@ -39,43 +39,43 @@ import { registerDropScope } from "../utils/dragDropScopes";
 
 type ThreadItem =
   | {
-      kind: "message";
-      id: string;
-      role: "user" | "assistant";
-      content: string;
-      attachments: MessageAttachment[];
-      created_at: string;
-      delivery?: "immediate" | "queued";
-    }
+    kind: "message";
+    id: string;
+    role: "user" | "assistant";
+    content: string;
+    attachments: MessageAttachment[];
+    created_at: string;
+    delivery?: "immediate" | "queued";
+  }
   | {
-      kind: "spacer";
-      id: string;
-      created_at: string;
-    }
+    kind: "spacer";
+    id: string;
+    created_at: string;
+  }
   | {
-      kind: "assistant";
-      id: string;
-      created_at: string;
-      content: string;
-      thought: string;
-      is_complete: boolean;
-      thought_seconds?: number;
-    }
+    kind: "assistant";
+    id: string;
+    created_at: string;
+    content: string;
+    thought: string;
+    is_complete: boolean;
+    thought_seconds?: number;
+  }
   | {
-      kind: "tool";
-      id: string;
-      created_at: string;
-      updated_at: string;
-      tool_call_id: string;
-      tool_kind: string;
-      title: string;
-      status: string;
-      locations: Array<{ path?: string; range?: any }>;
-      input: any;
-      output_text: string;
-      raw: any;
-      updates_seen: number;
-    };
+    kind: "tool";
+    id: string;
+    created_at: string;
+    updated_at: string;
+    tool_call_id: string;
+    tool_kind: string;
+    title: string;
+    status: string;
+    locations: Array<{ path?: string; range?: any }>;
+    input: any;
+    output_text: string;
+    raw: any;
+    updates_seen: number;
+  };
 
 type WorkbenchTurnHeader = {
   id: string;
@@ -209,7 +209,7 @@ export function SessionView({
         if (cancelled) return;
         setDictationSettings(s.dictation ?? null);
       })
-      .catch(() => {});
+      .catch(() => { });
     return () => {
       cancelled = true;
     };
@@ -219,22 +219,17 @@ export function SessionView({
     setDictationRecording(false);
 
     const ws = dictationWsRef.current;
-    dictationWsRef.current = null;
 
     const mic = dictationMicRef.current;
     dictationMicRef.current = null;
 
     try {
       await mic?.stop();
-    } catch {}
+    } catch { }
 
     try {
       ws?.send(JSON.stringify({ type: "stop" }));
-    } catch {}
-
-    try {
-      ws?.close(1000, "client stop");
-    } catch {}
+    } catch { }
 
     const base = dictationBaseRef.current;
     const committed = dictationCommittedRef.current;
@@ -289,26 +284,12 @@ export function SessionView({
     dictationTranscriptMsgsRef.current = 0;
 
     const openPromise = new Promise<void>((resolve, reject) => {
-      let settled = false;
-      const settleResolve = () => {
-        if (settled) return;
-        settled = true;
-        resolve();
-      };
-      const settleReject = (err: Error) => {
-        if (settled) return;
-        settled = true;
-        reject(err);
-      };
-
-      ws.addEventListener("open", settleResolve, { once: true });
-      ws.addEventListener("error", () => settleReject(new Error("Failed to connect to dictation stream.")), { once: true });
-      ws.addEventListener("close", () => settleReject(new Error("Dictation stream closed before connecting.")), { once: true });
+      ws.addEventListener("open", () => resolve(), { once: true });
+      ws.addEventListener("error", () => reject(new Error("Failed to connect to dictation stream.")), { once: true });
     });
 
     ws.addEventListener("message", (ev) => {
       void parseWsJson((ev as MessageEvent).data).then((data) => {
-        if (dictationWsRef.current !== ws) return;
         if (!data) return;
         const t = String(data.type ?? "");
         if (t === "ready") {
@@ -327,11 +308,11 @@ export function SessionView({
         } else if (t === "done") {
           try {
             ws.close();
-          } catch {}
+          } catch { }
           return;
         } else if (t === "error") {
           setDictationError(String(data.message ?? "Dictation error"));
-          stopDictation().catch(() => {});
+          stopDictation().catch(() => { });
           return;
         } else {
           return;
@@ -345,7 +326,6 @@ export function SessionView({
     });
 
     ws.addEventListener("close", () => {
-      if (dictationWsRef.current !== ws) return;
       dictationWsRef.current = null;
       setDictationRecording(false);
     });
@@ -361,24 +341,22 @@ export function SessionView({
         },
         onError: (err) => {
           setDictationError(err.message);
-          stopDictation().catch(() => {});
+          stopDictation().catch(() => { });
         },
       });
     } catch (e: any) {
-      if (dictationWsRef.current === ws) setDictationError(e?.message ?? String(e));
+      setDictationError(e?.message ?? String(e));
       try {
         ws.close();
-      } catch {}
-      if (dictationWsRef.current === ws) {
-        dictationWsRef.current = null;
-        setDictationRecording(false);
-      }
+      } catch { }
+      dictationWsRef.current = null;
+      setDictationRecording(false);
     }
   }, [dictationSettings, dictationRecording, input, stopDictation]);
 
   useEffect(() => {
     return () => {
-      stopDictation().catch(() => {});
+      stopDictation().catch(() => { });
     };
   }, [stopDictation]);
 
@@ -751,7 +729,7 @@ export function SessionView({
           if (!url) return;
           const asFile = await urlToImageFile(url);
           if (!asFile) return;
-      await onDropFiles([asFile]);
+          await onDropFiles([asFile]);
         })();
       },
     });
@@ -866,49 +844,49 @@ export function SessionView({
           </div>
         )}
 
-	        {(modelOptions.length > 0 || modeOptions.length > 0) && id && variant === "legacy" && (
-	          <div className="card">
-	            {modelCatalog.baseIds.length > 0 && (
-	              <label>
-	                Model
-	                <select
-	                  value={currentBase}
-	                  onChange={async (e) => {
-	                    const nextBase = e.target.value;
-	                    const next = deriveFullModelIdForBase(nextBase, currentEffort);
-	                    const updated = await setSessionModel(id, next);
-	                    supervisor.setSession(updated);
-	                  }}
-	                >
-	                  {modelCatalog.baseIds.map((b) => (
-	                    <option key={b} value={b}>
-	                      {modelCatalog.displayNameByBase[b] ?? b}
-	                    </option>
-	                  ))}
-	                </select>
-	              </label>
-	            )}
+        {(modelOptions.length > 0 || modeOptions.length > 0) && id && variant === "legacy" && (
+          <div className="card">
+            {modelCatalog.baseIds.length > 0 && (
+              <label>
+                Model
+                <select
+                  value={currentBase}
+                  onChange={async (e) => {
+                    const nextBase = e.target.value;
+                    const next = deriveFullModelIdForBase(nextBase, currentEffort);
+                    const updated = await setSessionModel(id, next);
+                    supervisor.setSession(updated);
+                  }}
+                >
+                  {modelCatalog.baseIds.map((b) => (
+                    <option key={b} value={b}>
+                      {modelCatalog.displayNameByBase[b] ?? b}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
 
-	            {effortOptions.length > 0 && (
-	              <label>
-	                Effort
-	                <select
-	                  value={currentEffort ?? pickDefaultEffort(effortOptions) ?? ""}
-	                  onChange={async (e) => {
-	                    const nextEff = e.target.value || "";
-	                    const next = deriveFullModelIdForBase(currentBase, nextEff || null);
-	                    const updated = await setSessionModel(id, next);
-	                    supervisor.setSession(updated);
-	                  }}
-	                >
-	                  {effortOptions.map((eff) => (
-	                    <option key={eff} value={eff}>
-	                      {formatEffortLabel(eff)}
-	                    </option>
-	                  ))}
-	                </select>
-	              </label>
-	            )}
+            {effortOptions.length > 0 && (
+              <label>
+                Effort
+                <select
+                  value={currentEffort ?? pickDefaultEffort(effortOptions) ?? ""}
+                  onChange={async (e) => {
+                    const nextEff = e.target.value || "";
+                    const next = deriveFullModelIdForBase(currentBase, nextEff || null);
+                    const updated = await setSessionModel(id, next);
+                    supervisor.setSession(updated);
+                  }}
+                >
+                  {effortOptions.map((eff) => (
+                    <option key={eff} value={eff}>
+                      {formatEffortLabel(eff)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
 
             {modeOptions.length > 0 && (
               <label>
@@ -1134,7 +1112,7 @@ export function SessionView({
               variant="activeSession"
               value={input}
               setValue={setInput}
-              placeholder="Message, @ for context, / for commands"
+              placeholder="@ for context, / for commands"
               inputDisabled={dictationRecording}
               sessionIdForAutocomplete={id ?? null}
               slashCommands={slashCommands}
@@ -1148,8 +1126,8 @@ export function SessionView({
               setModeId={setWorkbenchMode}
               recording={dictationRecording}
               onToggleRecording={() => {
-                if (dictationRecording) stopDictation().catch(() => {});
-                else startDictation().catch(() => {});
+                if (dictationRecording) stopDictation().catch(() => { });
+                else startDictation().catch(() => { });
               }}
               harnessLabel={
                 HARNESS_CATALOG.find((h) => h.id === (session?.provider_id ?? ""))?.label ??
@@ -1498,21 +1476,21 @@ function WorkbenchComposer({
             </div>
           )}
 
-	          {effortOptions.length > 0 && (
-	            <div className="wb-composer-pill" title="Effort">
-	              <select
-	                className="wb-composer-select"
-	                value={currentEffort}
-	                onChange={(e) => onSetEffort(e.target.value)}
-	              >
-	                {effortOptions.map((eff) => (
-	                  <option key={eff} value={eff}>
-	                    {formatEffortLabel(eff)}
-	                  </option>
-	                ))}
-	              </select>
-	            </div>
-	          )}
+          {effortOptions.length > 0 && (
+            <div className="wb-composer-pill" title="Effort">
+              <select
+                className="wb-composer-select"
+                value={currentEffort}
+                onChange={(e) => onSetEffort(e.target.value)}
+              >
+                {effortOptions.map((eff) => (
+                  <option key={eff} value={eff}>
+                    {formatEffortLabel(eff)}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
         </div>
 
         <div className="wb-composer-right">

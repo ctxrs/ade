@@ -1030,6 +1030,25 @@ button.linklike:hover {
   box-shadow: 0 0 0 2px rgba(18, 18, 18, 0.9);
 }
 
+.wb-task-error {
+  position: absolute;
+  top: -1px;
+  right: -1px;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(255, 69, 58, 0.95);
+  box-shadow: 0 0 0 2px rgba(18, 18, 18, 0.9);
+}
+
+.wb-task-idle {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.25);
+  box-shadow: 0 0 0 1px rgba(18, 18, 18, 0.5);
+}
+
 .wb-task-spinner {
   width: 12px;
   height: 12px;
