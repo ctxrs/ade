@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { EditPlanSummary, applyEditPlanPatch } from "../api/client";
 import { FileBufferEditor } from "./FileBufferEditor";
 
@@ -45,6 +45,16 @@ export function EditPlanReviewPane({
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  const planId = idToString(plan.id);
+
+  useEffect(() => {
+    setShowRaw(false);
+    setEditingPath(null);
+    setExpandedFiles({});
+    setBusyKey(null);
+    setError(null);
+  }, [planId, sessionId]);
+
   const diff = plan.diff ?? "";
   const files = useMemo(() => parseUnifiedDiff(diff), [diff]);
 
@@ -52,7 +62,7 @@ export function EditPlanReviewPane({
     setBusyKey(key);
     setError(null);
     try {
-      const resp = await applyEditPlanPatch(idToString(plan.id), action, patch);
+      const resp = await applyEditPlanPatch(planId, action, patch);
       onPlanUpdated(resp);
     } catch (e: any) {
       setError(e?.message ?? String(e));

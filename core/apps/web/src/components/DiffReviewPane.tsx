@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { applyTrackDiffPatch } from "../api/client";
 import { FileBufferEditor } from "./FileBufferEditor";
 
@@ -46,6 +46,14 @@ export function DiffReviewPane({
   const [expandedFiles, setExpandedFiles] = useState<Record<string, boolean>>({});
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setShowRaw(false);
+    setEditingPath(null);
+    setExpandedFiles({});
+    setBusyKey(null);
+    setError(null);
+  }, [trackId, sessionId]);
 
   const files = useMemo(() => parseUnifiedDiff(diff), [diff]);
 
