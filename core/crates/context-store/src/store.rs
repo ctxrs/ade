@@ -109,7 +109,7 @@ impl Store {
             r#"
             SELECT
               t.id, t.workspace_id, t.title, t.description, t.status, t.exec_plan_id,
-              t.created_at, t.updated_at, t.archived_at,
+              t.created_at, t.updated_at, t.archived_at, t.assistant_seen_at,
               (
                 SELECT MAX(m.created_at)
                 FROM messages m
@@ -141,6 +141,7 @@ impl Store {
             let created_at: String = r.try_get("created_at")?;
             let updated_at: String = r.try_get("updated_at")?;
             let archived_at: Option<String> = r.try_get("archived_at")?;
+            let assistant_seen_at: Option<String> = r.try_get("assistant_seen_at")?;
             let last_activity_at: Option<String> = r.try_get("last_activity_at")?;
             let last_assistant_message_at: Option<String> = r.try_get("last_assistant_message_at")?;
             let has_active_session: i64 = r.try_get("has_active_session")?;
@@ -154,6 +155,7 @@ impl Store {
                 updated_at: parse_dt(&updated_at)?,
                 exec_plan_id: r.try_get("exec_plan_id")?,
                 archived_at: archived_at.as_deref().map(parse_dt).transpose()?,
+                assistant_seen_at: assistant_seen_at.as_deref().map(parse_dt).transpose()?,
                 last_activity_at: last_activity_at.as_deref().map(parse_dt).transpose()?,
                 last_assistant_message_at: last_assistant_message_at.as_deref().map(parse_dt).transpose()?,
                 has_active_session: has_active_session != 0,
@@ -179,6 +181,7 @@ impl Store {
             updated_at: now,
             exec_plan_id: None,
             archived_at: None,
+            assistant_seen_at: None,
             last_activity_at: None,
             last_assistant_message_at: None,
             has_active_session: false,
@@ -202,7 +205,7 @@ impl Store {
 
     pub async fn get_task(&self, id: TaskId) -> Result<Option<Task>> {
         let row = sqlx::query(
-            r#"SELECT id, workspace_id, title, description, status, exec_plan_id, created_at, updated_at, archived_at
+            r#"SELECT id, workspace_id, title, description, status, exec_plan_id, created_at, updated_at, archived_at, assistant_seen_at
                FROM tasks WHERE id = ?"#,
         )
         .bind(id.0.to_string())
@@ -215,6 +218,7 @@ impl Store {
             let created_at: String = r.try_get("created_at").ok()?;
             let updated_at: String = r.try_get("updated_at").ok()?;
             let archived_at: Option<String> = r.try_get("archived_at").ok()?;
+            let assistant_seen_at: Option<String> = r.try_get("assistant_seen_at").ok()?;
             Some(Task {
                 id: TaskId(uuid::Uuid::parse_str(&id).ok()?),
                 workspace_id: WorkspaceId(uuid::Uuid::parse_str(&ws_id).ok()?),
@@ -225,6 +229,7 @@ impl Store {
                 updated_at: parse_dt(&updated_at).ok()?,
                 exec_plan_id: r.try_get("exec_plan_id").ok()?,
                 archived_at: archived_at.as_deref().map(parse_dt).transpose().ok()?,
+                assistant_seen_at: assistant_seen_at.as_deref().map(parse_dt).transpose().ok()?,
                 last_activity_at: None,
                 last_assistant_message_at: None,
                 has_active_session: false,
@@ -276,6 +281,32 @@ impl Store {
         Ok(res.rows_affected() > 0)
     }
 
+    pub async fn mark_task_read(&self, id: TaskId) -> Result<bool> {
+        let now = Utc::now().to_rfc3339();
+        let res = sqlx::query(
+            r#"UPDATE tasks
+               SET assistant_seen_at = ?
+               WHERE id = ?"#,
+        )
+        .bind(&now)
+        .bind(id.0.to_string())
+        .execute(&self.pool)
+        .await?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    pub async fn mark_task_unread(&self, id: TaskId) -> Result<bool> {
+        let res = sqlx::query(
+            r#"UPDATE tasks
+               SET assistant_seen_at = NULL
+               WHERE id = ?"#,
+        )
+        .bind(id.0.to_string())
+        .execute(&self.pool)
+        .await?;
+        Ok(res.rows_affected() > 0)
+    }
+
     pub async fn delete_task(&self, id: TaskId) -> Result<bool> {
         let res = sqlx::query(r#"DELETE FROM tasks WHERE id = ?"#)
             .bind(id.0.to_string())
@@ -289,7 +320,7 @@ impl Store {
             r#"
             SELECT
               t.id, t.workspace_id, t.title, t.description, t.status, t.exec_plan_id,
-              t.created_at, t.updated_at, t.archived_at,
+              t.created_at, t.updated_at, t.archived_at, t.assistant_seen_at,
               (
                 SELECT MAX(m.created_at)
                 FROM messages m
@@ -319,6 +350,7 @@ impl Store {
             let created_at: String = r.try_get("created_at").ok()?;
             let updated_at: String = r.try_get("updated_at").ok()?;
             let archived_at: Option<String> = r.try_get("archived_at").ok()?;
+            let assistant_seen_at: Option<String> = r.try_get("assistant_seen_at").ok()?;
             let last_activity_at: Option<String> = r.try_get("last_activity_at").ok()?;
             let last_assistant_message_at: Option<String> = r.try_get("last_assistant_message_at").ok()?;
             let has_active_session: i64 = r.try_get("has_active_session").ok()?;
@@ -332,6 +364,7 @@ impl Store {
                 updated_at: parse_dt(&updated_at).ok()?,
                 exec_plan_id: r.try_get("exec_plan_id").ok()?,
                 archived_at: archived_at.as_deref().map(parse_dt).transpose().ok()?,
+                assistant_seen_at: assistant_seen_at.as_deref().map(parse_dt).transpose().ok()?,
                 last_activity_at: last_activity_at.as_deref().map(parse_dt).transpose().ok()?,
                 last_assistant_message_at: last_assistant_message_at.as_deref().map(parse_dt).transpose().ok()?,
                 has_active_session: has_active_session != 0,
