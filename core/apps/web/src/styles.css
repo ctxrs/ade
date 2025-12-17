@@ -2130,11 +2130,11 @@ button.linklike:hover {
 }
 
 .wb-worktree-chip {
-  border: 1px solid rgba(255, 255, 255, 0.10);
-  border-radius: 999px;
-  padding: 2px 8px;
-  background: rgba(255, 255, 255, 0.02);
-  color: rgba(255, 255, 255, 0.72);
+  border: none;
+  border-radius: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -2143,13 +2143,20 @@ button.linklike:hover {
 }
 
 .wb-worktree-chip:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.04);
-  color: rgba(255, 255, 255, 0.88);
+  color: var(--text);
+  text-decoration: underline;
 }
 
 .wb-worktree-chip:disabled {
   opacity: 0.55;
   cursor: not-allowed;
+}
+
+.wb-worktree-chip:focus-visible:not(:disabled) {
+  outline: 2px solid rgba(78, 163, 255, 0.38);
+  outline-offset: 2px;
+  color: var(--text);
+  text-decoration: underline;
 }
 
 .wb-worktree-chip-slug {
@@ -2158,6 +2165,15 @@ button.linklike:hover {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.wb-worktree-chip-copy {
+  opacity: 0;
+}
+
+.wb-worktree-chip:hover:not(:disabled) .wb-worktree-chip-copy,
+.wb-worktree-chip:focus-visible:not(:disabled) .wb-worktree-chip-copy {
+  opacity: 1;
 }
 
 .wb-trackbar {

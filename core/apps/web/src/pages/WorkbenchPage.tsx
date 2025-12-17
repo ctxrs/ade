@@ -2304,7 +2304,9 @@ export default function WorkbenchPage() {
                           >
                             <GitBranch size={13} />
                             <span className="wb-worktree-chip-slug">{singleTrackHeader.worktreeSlug}</span>
-                            <Copy size={13} />
+                            <span className="wb-worktree-chip-copy" aria-hidden="true">
+                              <Copy size={13} />
+                            </span>
                           </button>
                         </>
                       )}
