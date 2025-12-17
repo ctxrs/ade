@@ -168,6 +168,8 @@ export default function WorkbenchPage() {
   const newComposerRef = useRef<HTMLDivElement | null>(null);
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarWidth, setSidebarWidth] = useState(260);
+  const [sidebarResizing, setSidebarResizing] = useState(false);
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [providers, setProviders] = useState<ProviderStatus[]>([]);
   const [providerInstallBusyById, setProviderInstallBusyById] = useState<Record<string, boolean>>({});
@@ -258,6 +260,15 @@ export default function WorkbenchPage() {
   }, []);
 
   useEffect(() => {
+    const onResize = () => {
+      const max = Math.max(170, window.innerWidth - 240);
+      setSidebarWidth((w) => Math.min(max, Math.max(170, Math.round(w))));
+    };
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  useEffect(() => {
     if (!workspaceId) return;
     const key = `wb.archivedCollapsed.${workspaceId}`;
     const v = localStorage.getItem(key);
@@ -269,6 +280,31 @@ export default function WorkbenchPage() {
     if (!workspaceId) return;
     localStorage.setItem(`wb.archivedCollapsed.${workspaceId}`, archivedCollapsed ? "1" : "0");
   }, [archivedCollapsed, workspaceId]);
+
+  useLayoutEffect(() => {
+    if (!workspaceId) return;
+    const key = `wb.sidebarWidth.${workspaceId}`;
+    try {
+      const raw = localStorage.getItem(key);
+      const parsed = raw ? Number(raw) : NaN;
+      if (!Number.isFinite(parsed)) return;
+      const max = Math.max(170, window.innerWidth - 240);
+      setSidebarWidth(Math.min(max, Math.max(170, Math.round(parsed))));
+    } catch {
+      // ignore
+    }
+  }, [workspaceId]);
+
+  useEffect(() => {
+    if (!workspaceId) return;
+    try {
+      const max = Math.max(170, window.innerWidth - 240);
+      const clamped = Math.min(max, Math.max(170, Math.round(sidebarWidth)));
+      localStorage.setItem(`wb.sidebarWidth.${workspaceId}`, String(clamped));
+    } catch {
+      // ignore
+    }
+  }, [sidebarWidth, workspaceId]);
 
   useLayoutEffect(() => {
     if (!workspaceId) return;
@@ -1134,6 +1170,28 @@ export default function WorkbenchPage() {
     window.addEventListener("mouseup", onUp);
   };
 
+  const onSidebarResizerMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (sidebarCollapsed) return;
+    setSidebarResizing(true);
+    const startX = e.clientX;
+    const startW = sidebarWidth;
+    const onMove = (ev: MouseEvent) => {
+      const dx = ev.clientX - startX;
+      const max = Math.max(170, window.innerWidth - 240);
+      const next = Math.min(max, Math.max(170, Math.round(startW + dx)));
+      setSidebarWidth(next);
+    };
+    const onUp = () => {
+      setSidebarResizing(false);
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
+
   const onDropFiles = useCallback(
     async (files: File[]) => {
       if (files.length === 0) return;
@@ -1481,8 +1539,17 @@ export default function WorkbenchPage() {
     setEditPlans((prev) => prev.filter((p) => idToString(p.id) !== pid));
   };
 
+  const rootStyle = useMemo(() => {
+    const max = Math.max(170, window.innerWidth - 240);
+    const clamped = Math.min(max, Math.max(170, Math.round(sidebarWidth)));
+    return { ["--wb-sidebar-width" as any]: `${clamped}px` } as React.CSSProperties;
+  }, [sidebarWidth]);
+
   return (
-    <div className={`wb-root ${sidebarCollapsed ? "wb-root-collapsed" : ""}`}>
+    <div
+      className={`wb-root ${sidebarCollapsed ? "wb-root-collapsed" : ""} ${sidebarResizing ? "wb-root-resizing" : ""}`}
+      style={rootStyle}
+    >
       <div className="wb-topbar">
         {sidebarCollapsed && (
           <button
@@ -1857,6 +1924,17 @@ export default function WorkbenchPage() {
           </Link>
         </div>
       </div>
+
+      {!sidebarCollapsed && (
+        <div
+          className="wb-sidebar-resizer"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize sidebar"
+          onMouseDown={onSidebarResizerMouseDown}
+          onDoubleClick={() => setSidebarWidth(260)}
+        />
+      )}
 
       <div className="wb-main">
         {!activeTaskId ? (

@@ -816,8 +816,9 @@ button.linklike:hover {
 
 .wb-root {
   height: 100vh;
+  position: relative;
   display: grid;
-  grid-template-columns: 260px 1fr;
+  grid-template-columns: var(--wb-sidebar-width, 260px) 1fr;
   grid-template-rows: 36px 1fr;
   grid-template-areas:
     "topbar topbar"
@@ -829,6 +830,10 @@ button.linklike:hover {
 
 .wb-root.wb-root-collapsed {
   grid-template-columns: 0px 1fr;
+}
+
+.wb-root.wb-root-resizing {
+  transition: none;
 }
 
 .wb-sidebar {
@@ -852,6 +857,37 @@ button.linklike:hover {
   transform: translateX(-10px);
   pointer-events: none;
   border-right: none;
+}
+
+.wb-sidebar-resizer {
+  position: absolute;
+  top: 36px;
+  bottom: 0;
+  left: calc(var(--wb-sidebar-width, 260px) - 3px);
+  width: 6px;
+  cursor: col-resize;
+  z-index: 5;
+}
+
+.wb-sidebar-resizer::after {
+  content: "";
+  position: absolute;
+  left: 2px;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  border-radius: 99px;
+  background: rgba(255, 255, 255, 0);
+  transition: background 120ms ease;
+}
+
+.wb-sidebar-resizer:hover::after,
+.wb-root.wb-root-resizing .wb-sidebar-resizer::after {
+  background: rgba(78, 163, 255, 0.35);
+}
+
+.wb-root.wb-root-collapsed .wb-sidebar-resizer {
+  display: none;
 }
 
 .wb-sidebar-top {
@@ -927,6 +963,7 @@ button.linklike:hover {
 .wb-task-list {
   display: grid;
   gap: 2px;
+  min-width: 0;
 }
 
 .wb-task-scroll {
@@ -937,6 +974,7 @@ button.linklike:hover {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  min-width: 0;
 }
 
 .wb-section-header {
@@ -982,6 +1020,7 @@ button.linklike:hover {
 
 .wb-task-row {
   width: 100%;
+  max-width: 100%;
   display: grid;
   grid-template-columns: 18px 1fr auto;
   align-items: center;
@@ -993,6 +1032,7 @@ button.linklike:hover {
   cursor: pointer;
   user-select: none;
   outline: none;
+  min-width: 0;
 }
 
 .wb-task-row:hover {
@@ -1027,6 +1067,10 @@ button.linklike:hover {
   position: relative;
   width: 18px;
   height: 18px;
+}
+
+.wb-task-body {
+  min-width: 0;
 }
 
 .wb-task-harness-logo {
