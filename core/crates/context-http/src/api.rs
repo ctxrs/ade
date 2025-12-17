@@ -3179,6 +3179,10 @@ fn default_agent_server_command(provider_id: &str) -> Option<(String, Vec<String
         "codex" => Some(("codex-acp".to_string(), vec![])),
         "claude" => Some(("claude-code-acp".to_string(), vec![])),
         "gemini" => Some(("gemini".to_string(), vec!["--experimental-acp".to_string()])),
+        "qwen" => Some(("qwen".to_string(), vec!["--experimental-acp".to_string()])),
+        "opencode" => Some(("opencode".to_string(), vec!["acp".to_string()])),
+        "goose" => Some(("goose".to_string(), vec!["acp".to_string()])),
+        "mistral" => Some(("vibe-acp".to_string(), vec![])),
         _ => None,
     }
 }
@@ -3428,7 +3432,7 @@ async fn install_all_providers(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<InstallStartResponse>>, StatusCode> {
     let mut out = Vec::new();
-    for id in ["codex", "claude", "gemini"] {
+    for id in ["codex", "claude", "gemini", "qwen", "opencode", "goose", "mistral"] {
         let (install_id, started_new) = state.start_install(id.to_string()).await;
         if started_new {
             let state2 = state.clone();
@@ -4848,9 +4852,7 @@ async fn set_session_model(
 
     let adapter = {
         let map = state.providers.lock().await;
-        map.get(&session.provider_id)
-            .cloned()
-            .or_else(|| map.get("fake").cloned())
+        map.get(&session.provider_id).cloned()
     }
     .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
 
@@ -4899,9 +4901,7 @@ async fn set_session_mode(
 
     let adapter = {
         let map = state.providers.lock().await;
-        map.get(&session.provider_id)
-            .cloned()
-            .or_else(|| map.get("fake").cloned())
+        map.get(&session.provider_id).cloned()
     }
     .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
 
@@ -4968,9 +4968,7 @@ async fn authenticate_session(
 
     let adapter = {
         let map = state.providers.lock().await;
-        map.get(&session.provider_id)
-            .cloned()
-            .or_else(|| map.get("fake").cloned())
+        map.get(&session.provider_id).cloned()
     }
     .ok_or_else(|| {
         (

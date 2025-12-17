@@ -452,6 +452,7 @@ dependencies = [
  "atty",
  "axum",
  "base64",
+ "bzip2",
  "chrono",
  "clap",
  "context-core",

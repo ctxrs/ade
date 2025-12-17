@@ -1896,6 +1896,23 @@ button.linklike:hover {
 
 .wb-harness-menu {
   width: 320px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.wb-harness-install-all-row {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0 4px 6px 4px;
+}
+
+.wb-harness-list {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-bottom: 2px;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .wb-harness-row {
@@ -1916,6 +1933,7 @@ button.linklike:hover {
   padding: 6px 6px;
   cursor: pointer;
   color: rgba(255, 255, 255, 0.92);
+  text-align: left;
 }
 
 .wb-harness-row-main:hover {
@@ -2033,6 +2051,17 @@ button.linklike:hover {
   font-size: 12px;
   cursor: pointer;
   white-space: nowrap;
+  width: 74px;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.wb-harness-install-all {
+  width: auto;
+  min-width: 92px;
 }
 
 .wb-harness-install:hover:not(:disabled) {

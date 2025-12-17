@@ -254,6 +254,7 @@ type NewSessionProps = SharedProps & {
   providersById: Record<string, ProviderStatus>;
   providerInstallsById: Record<string, { installId: string; state: "running" | "succeeded" | "failed"; pct: number | null } | undefined>;
   onInstallProvider: (providerId: string) => void;
+  onInstallAllProviders?: () => void;
   providerOptions: Record<string, ProviderOptions | undefined>;
   ensureProviderOptions: (providerId: string) => Promise<ProviderOptions | undefined>;
 
@@ -486,7 +487,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
       if (menuH > maxH) {
         top = margin;
         maxHeight = maxH;
-        overflowY = "auto";
+        overflowY = "hidden";
       }
     } else {
       const downTop = triggerRect.bottom + 8;
@@ -542,11 +543,18 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
     });
 
     window.addEventListener("resize", recomputeMenuPosition);
-    window.addEventListener("scroll", recomputeMenuPosition, true);
+    const onAnyScroll = (e: Event) => {
+      const target = e.target as Element | null;
+      if (target && typeof (target as any).closest === "function" && target.closest(".wb-menu")) {
+        return;
+      }
+      recomputeMenuPosition();
+    };
+    window.addEventListener("scroll", onAnyScroll, true);
     return () => {
       window.cancelAnimationFrame(raf);
       window.removeEventListener("resize", recomputeMenuPosition);
-      window.removeEventListener("scroll", recomputeMenuPosition, true);
+      window.removeEventListener("scroll", onAnyScroll, true);
     };
   }, [openMenu, recomputeMenuPosition]);
 
@@ -991,6 +999,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
           const q = harnessSearch.trim().toLowerCase();
           const order = new Map<string, number>(ns.harnessCatalog.map((h, idx) => [h.id, idx]));
           const extras = Object.keys(ns.providersById)
+            .filter((id) => id !== "fake")
             .filter((id) => !order.has(id))
             .map((id) => ({ id, label: id, logoSrc: "" } as any))
             .sort((a, b) => String(a.id).localeCompare(String(b.id)));
@@ -1001,43 +1010,99 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
             : all;
           if (filtered.length === 0) return <div className="wb-menu-empty">No matching agents.</div>;
 
+          const installableMissingCount = all.filter((h: any) => {
+            const id = String(h.id);
+            const installed = ns.providersById[id]?.installed ?? false;
+            if (installed) return false;
+            return ns.providersById[id]?.details?.install_supported === "true";
+          }).length;
+
           const counts: Record<string, number> = {};
           for (const t of ns.draftTracks) counts[t.providerId] = (counts[t.providerId] ?? 0) + 1;
 
-          return filtered.map((h: any) => {
-            const id = String(h.id);
-            const label = String(h.label ?? id);
-            const installed = ns.providersById[id]?.installed ?? false;
-            const installSupported =
-              ns.providersById[id]?.details?.install_supported === "true" || id === "codex" || id === "claude" || id === "gemini";
-            const installUi = ns.providerInstallsById[id];
-            const installRunning = installUi?.state === "running" || ns.providersById[id]?.details?.install_running === "true";
-            const installPct = installUi?.pct ?? null;
-            const count = counts[id] ?? 0;
-            const checked = count > 0;
-            const expanded = expandedHarnessId === id;
-            const canConfigureModels = ns.useMultipleAgents && ns.draftTracks.length > 1 && checked;
-            const rows = ns.draftTracks.filter((t) => t.providerId === id);
+          return (
+            <>
+              {ns.onInstallAllProviders && (
+                <div className="wb-harness-install-all-row">
+                  <button
+                    type="button"
+                    className="wb-harness-install wb-harness-install-all"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      ns.onInstallAllProviders?.();
+                    }}
+                    disabled={installableMissingCount === 0}
+                    title={installableMissingCount === 0 ? "All supported harnesses are installed" : "Install all supported harnesses"}
+                  >
+                    Install all
+                  </button>
+                </div>
+              )}
 
-            const opts = ns.providerOptions[id];
-            const models = buildModelsForProvider(id, opts);
-            const catalog = buildModelCatalog(models);
+              <div className="wb-harness-list" role="presentation">
+                {filtered.map((h: any) => {
+                  const id = String(h.id);
+                  const label = String(h.label ?? id);
+                  const installed = ns.providersById[id]?.installed ?? false;
+                  const installSupported = ns.providersById[id]?.details?.install_supported === "true";
+                  const installUi = ns.providerInstallsById[id];
+                  const installRunning = installUi?.state === "running" || ns.providersById[id]?.details?.install_running === "true";
+                  const installPct = installUi?.pct ?? null;
+                  const count = counts[id] ?? 0;
+                  const checked = count > 0;
+                  const expanded = expandedHarnessId === id;
+                  const canConfigureModels = ns.useMultipleAgents && ns.draftTracks.length > 1 && checked;
+                  const rows = ns.draftTracks.filter((t) => t.providerId === id);
 
-            return (
-              <div key={id} className={`wb-harness-row ${installed ? "" : "wb-disabled"}`}>
-                <button type="button" className="wb-harness-row-main" onClick={() => toggleHarness(id)} disabled={!installed}>
-                  <span className={`wb-check ${checked ? "wb-check-on" : ""}`} aria-hidden="true">
-                    {checked ? "✓" : ""}
-                  </span>
-                  {h.logoSrc ? (
-                    <img className={`wb-harness-logo ${h.invertInDark ? "wb-invert" : ""}`} src={h.logoSrc} alt="" />
-                  ) : (
-                    <span className="wb-harness-logo-fallback" aria-hidden="true" />
-                  )}
-                  <span className="wb-harness-name">{label}</span>
-                </button>
+                  const opts = ns.providerOptions[id];
+                  const models = buildModelsForProvider(id, opts);
+                  const catalog = buildModelCatalog(models);
+
+                  return (
+                    <div key={id} className={`wb-harness-row ${installed ? "" : "wb-disabled"}`}>
+                      <button
+                        type="button"
+                        className="wb-harness-row-main"
+                        onClick={() => toggleHarness(id)}
+                        disabled={!installed}
+                      >
+                        <span className={`wb-check ${checked ? "wb-check-on" : ""}`} aria-hidden="true">
+                          {checked ? "✓" : ""}
+                        </span>
+                        {h.logoSrc ? (
+                          <img className={`wb-harness-logo ${h.invertInDark ? "wb-invert" : ""}`} src={h.logoSrc} alt="" />
+                        ) : (
+                          <span className="wb-harness-logo-fallback" aria-hidden="true" />
+                        )}
+                        <span className="wb-harness-name">{label}</span>
+                      </button>
 
                 <div className="wb-harness-actions">
+                  {checked && ns.useMultipleAgents && (
+                    <button
+                      type="button"
+                      className="wb-harness-count-trigger wb-menu-trigger"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                        const menuW = 140;
+                        const margin = 10;
+                        const approxH = 160;
+                        const left = clamp(rect.right - menuW, margin, window.innerWidth - margin - menuW);
+                        const openDown = rect.bottom + 6 + approxH <= window.innerHeight - margin;
+                        const top = openDown
+                          ? rect.bottom + 6
+                          : clamp(rect.top - approxH - 6, margin, window.innerHeight - margin - approxH);
+                        setCountMenu((prev) =>
+                          prev && prev.providerId === id ? null : { providerId: id, anchor: rect, style: { left, top } },
+                        );
+                      }}
+                      title="Set track count"
+                    >
+                      {Math.max(1, Math.min(MAX_TRACKS_PER_PROVIDER, count || 1))}x <ChevronDown size={12} />
+                    </button>
+                  )}
+
                   {!installed ? (
                     <button
                       type="button"
@@ -1057,78 +1122,56 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
                       {installRunning ? `${Math.max(0, Math.min(100, installPct ?? 0))}%` : "Install"}
                     </button>
                   ) : (
-                    <>
-                      {checked && (
-                        <button
-                          type="button"
-                          className="wb-harness-expand wb-menu-trigger"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            if (!canConfigureModels) return;
-                            setExpandedHarnessId((prev) => (prev === id ? null : id));
-                            ns.ensureProviderOptions(id).catch(() => {});
-                          }}
-                          disabled={!canConfigureModels}
-                          title={canConfigureModels ? "Configure models" : "Enable multi-agent to configure"}
-                        >
-                          <ChevronDown size={14} />
-                        </button>
-                      )}
-
-                      {checked && ns.useMultipleAgents && (
-                        <button
-                          type="button"
-                          className="wb-harness-count-trigger wb-menu-trigger"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-                            const menuW = 140;
-                            const margin = 10;
-                            const approxH = 160;
-                            const left = clamp(rect.right - menuW, margin, window.innerWidth - margin - menuW);
-                            const openDown = rect.bottom + 6 + approxH <= window.innerHeight - margin;
-                            const top = openDown
-                              ? rect.bottom + 6
-                              : clamp(rect.top - approxH - 6, margin, window.innerHeight - margin - approxH);
-                            setCountMenu((prev) =>
-                              prev && prev.providerId === id ? null : { providerId: id, anchor: rect, style: { left, top } },
-                            );
-                          }}
-                          title="Set track count"
-                        >
-                          {Math.max(1, Math.min(MAX_TRACKS_PER_PROVIDER, count || 1))}x <ChevronDown size={12} />
-                        </button>
-                      )}
-                    </>
+                    checked && (
+                      <button
+                        type="button"
+                        className="wb-harness-expand wb-menu-trigger"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (!canConfigureModels) return;
+                          setExpandedHarnessId((prev) => (prev === id ? null : id));
+                          ns.ensureProviderOptions(id).catch(() => {});
+                        }}
+                        disabled={!canConfigureModels}
+                        title={canConfigureModels ? "Configure models" : "Enable multi-agent to configure"}
+                      >
+                        <ChevronDown size={14} />
+                      </button>
+                    )
                   )}
                 </div>
 
-                {countMenu?.providerId === id && checked && ns.useMultipleAgents && (
-                  <div ref={countMenuRef} className="wb-menu wb-harness-count-menu" role="menu" style={countMenu.style}>
-                    {Array.from({ length: MAX_TRACKS_PER_PROVIDER }, (_, i) => i + 1).map((n) => (
-                      <button
-                        key={n}
-                        type="button"
-                        className={`wb-menu-item ${count === n ? "wb-menu-item-active" : ""}`}
-                        onClick={() => {
-                          setTrackCountForProvider(id, n);
-                          setCountMenu(null);
-                        }}
-                        role="menuitemradio"
-                        aria-checked={count === n}
-                      >
-                        <span className="wb-harness-count-item">
-                          <span>{n}x</span>
-                          <span aria-hidden="true">{count === n ? "✓" : ""}</span>
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                )}
+                      {countMenu?.providerId === id && checked && ns.useMultipleAgents && (
+                        <div
+                          ref={countMenuRef}
+                          className="wb-menu wb-harness-count-menu"
+                          role="menu"
+                          style={countMenu.style}
+                        >
+                          {Array.from({ length: MAX_TRACKS_PER_PROVIDER }, (_, i) => i + 1).map((n) => (
+                            <button
+                              key={n}
+                              type="button"
+                              className={`wb-menu-item ${count === n ? "wb-menu-item-active" : ""}`}
+                              onClick={() => {
+                                setTrackCountForProvider(id, n);
+                                setCountMenu(null);
+                              }}
+                              role="menuitemradio"
+                              aria-checked={count === n}
+                            >
+                              <span className="wb-harness-count-item">
+                                <span>{n}x</span>
+                                <span aria-hidden="true">{count === n ? "✓" : ""}</span>
+                              </span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
 
-                {expanded && canConfigureModels && (
-                  <div className="wb-harness-config">
-                    {rows.map((t) => {
+                      {expanded && canConfigureModels && (
+                        <div className="wb-harness-config">
+                          {rows.map((t) => {
                       const parsed = parseModelId(t.modelId, catalog);
                       const base = parsed.base || catalog.baseIds[0] || "";
                       const efforts = catalog.effortsByBase[base] ?? [];
@@ -1205,12 +1248,15 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
                           </div>
                         </div>
                       );
-                    })}
-                  </div>
-                )}
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
-            );
-          });
+            </>
+          );
         })()}
       </div>
     ) : null;

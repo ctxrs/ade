@@ -43,6 +43,7 @@ import {
   getWorktree,
   getWorkspace,
   idToString,
+  installAllProviders,
   installProvider,
   listProviders,
   listEditPlansForTrack,
@@ -203,7 +204,6 @@ export default function WorkbenchPage() {
     const installed = providers.filter((p) => p.installed).map((p) => p.provider_id);
     if (installed.includes("codex")) return "codex";
     if (installed.includes("claude")) return "claude";
-    if (installed.includes("fake")) return "fake";
     if (installed.includes("gemini")) return "gemini";
     return installed[0] ?? "codex";
   }, [providers]);
@@ -467,8 +467,12 @@ export default function WorkbenchPage() {
     const stagePct: Record<string, number> = {
       start: 2,
       node: 15,
+      node_download: 25,
+      node_extract: 35,
       prepare: 25,
       npm_install: 65,
+      download: 75,
+      extract: 85,
       entrypoint: 80,
       inspect: 90,
       refresh: 95,
@@ -488,7 +492,15 @@ export default function WorkbenchPage() {
               typeof last?.bytes === "number" &&
                 typeof last?.total_bytes === "number" &&
                 last.total_bytes > 0
-                ? Math.max(0, Math.min(100, Math.round((last.bytes / last.total_bytes) * 100)))
+                ? (() => {
+                  const raw = Math.max(0, Math.min(100, Math.round((last.bytes / last.total_bytes) * 100)));
+                  const stage = typeof last?.stage === "string" ? last.stage : "";
+                  if (stage.includes("download")) {
+                    // Keep room for non-download stages so the UI doesn't hit 100% early.
+                    return Math.round((raw / 100) * 75);
+                  }
+                  return raw;
+                })()
                 : typeof last?.stage === "string"
                   ? (stagePct[last.stage] ?? s.pct ?? 0)
                   : (s.pct ?? 0);
@@ -496,9 +508,13 @@ export default function WorkbenchPage() {
             setProviderInstallsById((prev) => {
               const existing = prev[providerId];
               if (!existing || existing.installId !== s.installId) return prev;
+              const nextPct =
+                info.state === "succeeded"
+                  ? 100
+                  : Math.max(existing.pct ?? 0, pct);
               return {
                 ...prev,
-                [providerId]: { installId: s.installId, state: info.state, pct },
+                [providerId]: { installId: s.installId, state: info.state, pct: nextPct },
               };
             });
 
@@ -541,6 +557,18 @@ export default function WorkbenchPage() {
     },
     [setStartError, installProvider, attachProviderInstall],
   );
+
+  const installAllProvidersFromMenu = useCallback(async () => {
+    setStartError(null);
+    try {
+      const installs = await installAllProviders();
+      for (const i of installs) {
+        attachProviderInstall(i.provider_id, i.install_id);
+      }
+    } catch (e: any) {
+      setStartError(e?.message ? String(e.message) : String(e));
+    }
+  }, [attachProviderInstall, installAllProviders]);
 
   useEffect(() => {
     if (Object.keys(providerInstallsById).length === 0) return;
@@ -2140,6 +2168,7 @@ export default function WorkbenchPage() {
                 providersById={providersById}
                 providerInstallsById={providerInstallsById}
                 onInstallProvider={installProviderFromMenu}
+                onInstallAllProviders={installAllProvidersFromMenu}
                 providerOptions={providerOptions}
                 ensureProviderOptions={ensureProviderOptions}
                 draftTracks={draftTracks}

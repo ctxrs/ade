@@ -20,6 +20,10 @@ const NODE_VERSION: &str = "22.11.0";
 const CODEX_ACP_VERSION: &str = "0.7.1";
 const CLAUDE_CODE_ACP_VERSION: &str = "0.12.4";
 const GEMINI_CLI_VERSION: &str = "0.19.0";
+const QWEN_CODE_VERSION: &str = "0.4.1";
+const OPENCODE_VERSION: &str = "1.0.150";
+const MISTRAL_VIBE_ACP_VERSION: &str = "1.1.2";
+const GOOSE_VERSION: &str = "stable";
 
 const TYPESCRIPT_LS_VERSION: &str = "5.1.3";
 const TYPESCRIPT_VERSION: &str = "5.9.3";
@@ -96,7 +100,27 @@ pub async fn install_provider(state: &AppState, provider_id: &str) -> Result<()>
 }
 
 pub fn is_supported_managed_provider(provider_id: &str) -> bool {
-    matches!(provider_id, "codex" | "claude" | "gemini")
+    matches!(
+        provider_id,
+        "codex"
+            | "claude"
+            | "gemini"
+            | "qwen"
+            | "opencode"
+            | "mistral"
+            | "goose"
+    )
+}
+
+fn managed_provider_target_key() -> &'static str {
+    match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("linux", "x86_64") => "linux-x86_64",
+        ("linux", "aarch64") => "linux-aarch64",
+        ("macos", "x86_64") => "darwin-x86_64",
+        ("macos", "aarch64") => "darwin-aarch64",
+        ("windows", "x86_64") => "windows-x86_64",
+        _ => "unknown",
+    }
 }
 
 pub fn is_supported_managed_lsp_server(server_id: &str) -> bool {
@@ -258,6 +282,37 @@ fn extract_zip_to_dir(zip_path: &Path, out_dir: &Path) -> Result<()> {
         std::io::copy(&mut f, &mut out).context("extract zip entry")?;
     }
     Ok(())
+}
+
+#[derive(Debug, Clone, Copy)]
+enum ManagedArchive {
+    None,
+    Zip,
+    TarGz,
+    TarBz2,
+}
+
+fn extract_archive_to_dir(archive_path: &Path, out_dir: &Path, kind: ManagedArchive) -> Result<()> {
+    match kind {
+        ManagedArchive::None => Ok(()),
+        ManagedArchive::Zip => extract_zip_to_dir(archive_path, out_dir),
+        ManagedArchive::TarGz => {
+            let tar_gz =
+                std::fs::File::open(archive_path).with_context(|| format!("open {}", archive_path.display()))?;
+            let dec = flate2::read::GzDecoder::new(tar_gz);
+            let mut archive = tar::Archive::new(dec);
+            archive.unpack(out_dir).context("extract tar.gz")?;
+            Ok(())
+        }
+        ManagedArchive::TarBz2 => {
+            let tar_bz2 =
+                std::fs::File::open(archive_path).with_context(|| format!("open {}", archive_path.display()))?;
+            let dec = bzip2::read::BzDecoder::new(tar_bz2);
+            let mut archive = tar::Archive::new(dec);
+            archive.unpack(out_dir).context("extract tar.bz2")?;
+            Ok(())
+        }
+    }
 }
 
 async fn install_url_binary(
@@ -634,36 +689,12 @@ async fn install_provider_impl(
     install_id: Option<InstallId>,
 ) -> Result<()> {
     let provider_id = provider_id.to_string();
-    let (package, version, script_rel, extra_args) = match provider_id.as_str() {
-        "codex" => (
-            "@zed-industries/codex-acp",
-            CODEX_ACP_VERSION,
-            "node_modules/@zed-industries/codex-acp/bin/codex-acp.js",
-            Vec::<String>::new(),
-        ),
-        "claude" => (
-            "@zed-industries/claude-code-acp",
-            CLAUDE_CODE_ACP_VERSION,
-            "node_modules/@zed-industries/claude-code-acp/dist/index.js",
-            Vec::<String>::new(),
-        ),
-        "gemini" => (
-            "@google/gemini-cli",
-            GEMINI_CLI_VERSION,
-            "node_modules/.bin/gemini",
-            vec!["--experimental-acp".to_string()],
-        ),
-        other => anyhow::bail!("unsupported provider for install: {other}"),
-    };
 
     let data_root = state.data_root.clone();
-    let install_dir = data_root
-        .join("providers")
-        .join("agent-servers")
-        .join(&provider_id)
-        .join(version);
-    let install_dir_rel = install_dir_rel(&data_root, &install_dir);
     let mut stage: &'static str = "start";
+    let mut meta_package: Option<String> = None;
+    let mut meta_version: Option<String> = None;
+    let mut meta_install_dir_rel: Option<String> = None;
 
     let res: Result<()> = async {
         emit_install(
@@ -679,38 +710,242 @@ async fn install_provider_impl(
         )
         .await;
 
-        stage = "node";
-        let node = ensure_node_runtime(state, install_id, &provider_id, &data_root)
-            .await
-            .context("ensuring managed Node runtime")?;
+        let (command, args) = match provider_id.as_str() {
+            "codex" | "claude" | "gemini" | "qwen" => {
+                let (package, version, script_rel, extra_args) = match provider_id.as_str() {
+                    "codex" => (
+                        "@zed-industries/codex-acp",
+                        CODEX_ACP_VERSION,
+                        "node_modules/@zed-industries/codex-acp/bin/codex-acp.js",
+                        Vec::<String>::new(),
+                    ),
+                    "claude" => (
+                        "@zed-industries/claude-code-acp",
+                        CLAUDE_CODE_ACP_VERSION,
+                        "node_modules/@zed-industries/claude-code-acp/dist/index.js",
+                        Vec::<String>::new(),
+                    ),
+                    "gemini" => (
+                        "@google/gemini-cli",
+                        GEMINI_CLI_VERSION,
+                        "node_modules/.bin/gemini",
+                        vec!["--experimental-acp".to_string()],
+                    ),
+                    "qwen" => (
+                        "@qwen-code/qwen-code",
+                        QWEN_CODE_VERSION,
+                        "node_modules/.bin/qwen",
+                        vec!["--experimental-acp".to_string()],
+                    ),
+                    _ => unreachable!("handled by match arm"),
+                };
 
-        stage = "prepare";
-        repair_install_dir(install_id, state, &provider_id, &install_dir, script_rel)
-            .await
-            .context("preparing install directory")?;
+                meta_package = Some(package.to_string());
+                meta_version = Some(version.to_string());
 
-        let package_spec = format!("{package}@{version}");
-        stage = "npm_install";
-        npm_install(
-            state,
-            install_id,
-            &provider_id,
-            &node,
-            &install_dir,
-            &package_spec,
-        )
-        .await
-        .context("running npm install")?;
+                let install_dir = data_root
+                    .join("providers")
+                    .join("agent-servers")
+                    .join(&provider_id)
+                    .join(version);
+                meta_install_dir_rel = Some(install_dir_rel(&data_root, &install_dir));
 
-        stage = "entrypoint";
-        let script_path = install_dir.join(script_rel);
-        if !script_path.exists() {
-            tokio::fs::remove_dir_all(&install_dir).await.ok();
-            anyhow::bail!("install completed but entrypoint missing: {}", script_path.display());
-        }
+                stage = "node";
+                let node = ensure_node_runtime(state, install_id, &provider_id, &data_root)
+                    .await
+                    .context("ensuring managed Node runtime")?;
 
-        let mut args = vec![script_path.to_string_lossy().to_string()];
-        args.extend(extra_args.clone());
+                stage = "prepare";
+                repair_install_dir(install_id, state, &provider_id, &install_dir, script_rel)
+                    .await
+                    .context("preparing install directory")?;
+
+                let package_spec = format!("{package}@{version}");
+                stage = "npm_install";
+                npm_install(
+                    state,
+                    install_id,
+                    &provider_id,
+                    &node,
+                    &install_dir,
+                    &package_spec,
+                )
+                .await
+                .context("running npm install")?;
+
+                stage = "entrypoint";
+                let script_path = install_dir.join(script_rel);
+                if !script_path.exists() {
+                    tokio::fs::remove_dir_all(&install_dir).await.ok();
+                    anyhow::bail!(
+                        "install completed but entrypoint missing: {}",
+                        script_path.display()
+                    );
+                }
+
+                let mut args = vec![script_path.to_string_lossy().to_string()];
+                args.extend(extra_args.clone());
+
+                let cmd = node.node_bin.to_string_lossy().to_string();
+                (cmd, args)
+            }
+            "opencode" | "mistral" | "goose" => {
+                let target = managed_provider_target_key();
+                let (package, version, url, archive, bin_rel, args) = match provider_id.as_str() {
+                    "opencode" => {
+                        let (url, archive, bin_rel) = match target {
+                            "linux-x86_64" => (
+                                "https://github.com/sst/opencode/releases/download/v1.0.150/opencode-linux-x64.tar.gz",
+                                ManagedArchive::TarGz,
+                                "opencode",
+                            ),
+                            "linux-aarch64" => (
+                                "https://github.com/sst/opencode/releases/download/v1.0.150/opencode-linux-arm64.tar.gz",
+                                ManagedArchive::TarGz,
+                                "opencode",
+                            ),
+                            "darwin-aarch64" => (
+                                "https://github.com/sst/opencode/releases/download/v1.0.150/opencode-darwin-arm64.zip",
+                                ManagedArchive::Zip,
+                                "opencode",
+                            ),
+                            "darwin-x86_64" => (
+                                "https://github.com/sst/opencode/releases/download/v1.0.150/opencode-darwin-x64.zip",
+                                ManagedArchive::Zip,
+                                "opencode",
+                            ),
+                            "windows-x86_64" => (
+                                "https://github.com/sst/opencode/releases/download/v1.0.150/opencode-windows-x64.zip",
+                                ManagedArchive::Zip,
+                                "opencode.exe",
+                            ),
+                            _ => anyhow::bail!("unsupported platform for opencode: {target}"),
+                        };
+                        (
+                            "sst/opencode",
+                            OPENCODE_VERSION,
+                            url.to_string(),
+                            archive,
+                            bin_rel.to_string(),
+                            vec!["acp".to_string()],
+                        )
+                    }
+                    "mistral" => {
+                        let (url, bin_rel) = match target {
+                            "linux-x86_64" => (
+                                "https://github.com/mistralai/mistral-vibe/releases/download/v1.1.2/vibe-acp-linux-x86_64-1.1.2.zip",
+                                "vibe-acp",
+                            ),
+                            "darwin-aarch64" => (
+                                "https://github.com/mistralai/mistral-vibe/releases/download/v1.1.2/vibe-acp-darwin-aarch64-1.1.2.zip",
+                                "vibe-acp",
+                            ),
+                            "darwin-x86_64" => (
+                                "https://github.com/mistralai/mistral-vibe/releases/download/v1.1.2/vibe-acp-darwin-x86_64-1.1.2.zip",
+                                "vibe-acp",
+                            ),
+                            "windows-x86_64" => (
+                                "https://github.com/mistralai/mistral-vibe/releases/download/v1.1.2/vibe-acp-windows-x86_64-1.1.2.zip",
+                                "vibe-acp.exe",
+                            ),
+                            _ => anyhow::bail!("unsupported platform for mistral-vibe: {target}"),
+                        };
+                        (
+                            "mistralai/mistral-vibe",
+                            MISTRAL_VIBE_ACP_VERSION,
+                            url.to_string(),
+                            ManagedArchive::Zip,
+                            bin_rel.to_string(),
+                            Vec::<String>::new(),
+                        )
+                    }
+                    "goose" => {
+                        let file = match target {
+                            "linux-x86_64" => "goose-x86_64-unknown-linux-gnu.tar.bz2",
+                            "linux-aarch64" => "goose-aarch64-unknown-linux-gnu.tar.bz2",
+                            "darwin-aarch64" => "goose-aarch64-apple-darwin.tar.bz2",
+                            "darwin-x86_64" => "goose-x86_64-apple-darwin.tar.bz2",
+                            "windows-x86_64" => "goose-x86_64-pc-windows-gnu.zip",
+                            _ => anyhow::bail!("unsupported platform for goose: {target}"),
+                        };
+                        let url = format!("https://github.com/block/goose/releases/download/stable/{file}");
+                        let archive = if target.starts_with("windows") {
+                            ManagedArchive::Zip
+                        } else {
+                            ManagedArchive::TarBz2
+                        };
+                        let bin_rel = if target.starts_with("windows") {
+                            "goose.exe"
+                        } else {
+                            "goose"
+                        };
+                        (
+                            "block/goose",
+                            GOOSE_VERSION,
+                            url,
+                            archive,
+                            bin_rel.to_string(),
+                            vec!["acp".to_string()],
+                        )
+                    }
+                    _ => unreachable!("handled by match arm"),
+                };
+
+                meta_package = Some(package.to_string());
+                meta_version = Some(version.to_string());
+
+                let install_dir = data_root
+                    .join("providers")
+                    .join("agent-servers")
+                    .join(&provider_id)
+                    .join(version);
+                meta_install_dir_rel = Some(install_dir_rel(&data_root, &install_dir));
+
+                stage = "prepare";
+                repair_binary_install_dir(install_id, state, &provider_id, &install_dir, &bin_rel)
+                    .await
+                    .context("preparing install directory")?;
+
+                let tmp_dir = data_root.join("providers").join("tmp");
+                tokio::fs::create_dir_all(&tmp_dir).await.ok();
+                let tmp = tmp_dir.join(format!("{provider_id}-{version}.download"));
+
+                stage = "download";
+                download_to_file(state, install_id, &provider_id, "download", &url, &tmp)
+                    .await
+                    .context("downloading provider")?;
+
+                stage = "extract";
+                emit_install(
+                    state,
+                    install_id,
+                    &provider_id,
+                    InstallEventLevel::Info,
+                    "extract",
+                    "Extracting…".to_string(),
+                    None,
+                    None,
+                    None,
+                )
+                .await;
+                extract_archive_to_dir(&tmp, &install_dir, archive)
+                    .context("extracting archive")?;
+                tokio::fs::remove_file(&tmp).await.ok();
+
+                stage = "entrypoint";
+                let direct = install_dir.join(&bin_rel);
+                let resolved = if direct.exists() {
+                    direct
+                } else {
+                    find_unique_path_ending_with(&install_dir, &bin_rel)?
+                };
+                ensure_executable(&resolved)?;
+
+                let cmd = resolved.to_string_lossy().to_string();
+                (cmd, args)
+            }
+            other => anyhow::bail!("unsupported provider for install: {other}"),
+        };
 
         stage = "inspect";
         emit_install(
@@ -726,12 +961,8 @@ async fn install_provider_impl(
         )
         .await;
 
-        let adapter = std::sync::Arc::new(Tier1AcpAdapter::from_command(
-            &provider_id,
-            &node.node_bin,
-            &script_path,
-            extra_args,
-        ));
+        let adapter =
+            std::sync::Arc::new(Tier1AcpAdapter::from_raw(&provider_id, command.clone(), args.clone()));
 
         // Refresh the in-memory adapter so new Sessions use the managed install.
         {
@@ -775,9 +1006,9 @@ async fn install_provider_impl(
             .await
             .context("loading managed install registry")?;
         let meta = ManagedInstallMetadata {
-            package: Some(package.to_string()),
-            version: Some(version.to_string()),
-            install_dir_rel: Some(install_dir_rel.clone()),
+            package: meta_package.clone(),
+            version: meta_version.clone(),
+            install_dir_rel: meta_install_dir_rel.clone(),
             last_success_at: Some(Utc::now().to_rfc3339()),
             last_error: None,
         };
@@ -785,8 +1016,8 @@ async fn install_provider_impl(
         cfg.providers.insert(
             provider_id.clone(),
             AgentServerCommand {
-                command: node.node_bin.to_string_lossy().to_string(),
-                args,
+                command,
+                args: args.clone(),
                 managed: Some(meta),
             },
         );
@@ -841,9 +1072,9 @@ async fn install_provider_impl(
             &provider_id,
             stage,
             e,
-            Some(package),
-            Some(version),
-            Some(install_dir_rel),
+            meta_package.as_deref(),
+            meta_version.as_deref(),
+            meta_install_dir_rel.clone(),
         )
         .await;
     }
@@ -955,6 +1186,38 @@ async fn repair_install_dir(
         let expected = install_dir.join(expected_entrypoint_rel);
         let node_modules = install_dir.join("node_modules");
         if !node_modules.exists() || !expected.exists() {
+            tokio::fs::remove_dir_all(install_dir).await.ok();
+        }
+    }
+    tokio::fs::create_dir_all(install_dir)
+        .await
+        .with_context(|| format!("creating install dir: {}", install_dir.display()))?;
+    Ok(())
+}
+
+async fn repair_binary_install_dir(
+    install_id: Option<InstallId>,
+    state: &AppState,
+    provider_id: &str,
+    install_dir: &Path,
+    expected_entrypoint_rel: &str,
+) -> Result<()> {
+    emit_install(
+        state,
+        install_id,
+        provider_id,
+        InstallEventLevel::Info,
+        "prepare",
+        format!("Preparing install dir: {}", install_dir.display()),
+        None,
+        None,
+        None,
+    )
+    .await;
+
+    if install_dir.exists() {
+        let expected = install_dir.join(expected_entrypoint_rel);
+        if !expected.exists() {
             tokio::fs::remove_dir_all(install_dir).await.ok();
         }
     }
