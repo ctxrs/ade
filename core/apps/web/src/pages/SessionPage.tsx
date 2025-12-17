@@ -174,6 +174,18 @@ export function SessionView({
   const dropHideTimerRef = useRef<number | null>(null);
   useOpenSession(id ?? "", { watchDiff: true });
 
+  useEffect(() => {
+    didInitialScrollRef.current = false;
+    setAtBottom(true);
+    setHasNewActivity(false);
+    setExpandedTurnHeaders({});
+    setExpandedThoughtByAssistantId({});
+    setExpandedToolById({});
+    setSendError(null);
+    setAuthMethodId("");
+    setAuthError(null);
+  }, [id]);
+
   const [dictationSettings, setDictationSettings] = useState<DictationSettings | null>(null);
   const [dictationRecording, setDictationRecording] = useState(false);
   const [dictationError, setDictationError] = useState<string | null>(null);
@@ -203,6 +215,7 @@ export function SessionView({
   const queue: Message[] = entry?.queue ?? [];
   const diff = entry?.diff ?? "";
   const eventsKey = `${entry?.lastEventId ?? ""}:${events.length}`;
+  const messagesKey = deriveMessagesKey(messages);
   const streamConnected = supervisorSnap.connection === "connected";
 
   const interruptBanner = useMemo(() => {
@@ -407,7 +420,7 @@ export function SessionView({
     () => buildWorkbenchThreadViewModel(events, messages),
     // messages are canonical for turn headers; include in memo key
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [eventsKey, messages.length],
+    [eventsKey, messagesKey],
   );
 
   const debugEvents = variant === "workbench" ? workbenchThreadView.debugEvents : legacyThreadView.debugEvents;
@@ -440,7 +453,7 @@ export function SessionView({
       virtuosoRef.current?.scrollToIndex({ index: threadItems.length - 1, align: "end" });
       didInitialScrollRef.current = true;
     });
-  }, [variant, wbListItems.length, threadItems.length]);
+  }, [id, variant, wbListItems.length, threadItems.length]);
 
   const contextIndicator = useMemo(() => {
     const done = [...events]
@@ -2226,6 +2239,28 @@ function Markdown({ content }: { content: string }) {
       {content}
     </ReactMarkdown>
   );
+}
+
+function hashFNV1a32(current: number, text: string): number {
+  let h = current;
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h;
+}
+
+export function deriveMessagesKey(messages: Message[]): string {
+  let h = 2166136261;
+  for (const m of messages) {
+    h = hashFNV1a32(h, idToString(m.id));
+    h = hashFNV1a32(h, "\u0000");
+    h = hashFNV1a32(h, m.created_at);
+    h = hashFNV1a32(h, "\u0000");
+    h = hashFNV1a32(h, m.content);
+    h = hashFNV1a32(h, "\u0000");
+  }
+  return `${messages.length}:${(h >>> 0).toString(16)}`;
 }
 
 export function buildWorkbenchThreadViewModel(events: SessionEvent[], messages: Message[]): WorkbenchThreadView {

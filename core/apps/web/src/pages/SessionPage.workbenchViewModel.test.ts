@@ -34,5 +34,21 @@ describe("buildWorkbenchThreadViewModel", () => {
     expect(out.groups[0]?.header?.content).toBe("hello");
     expect(out.groups[0]?.items.some((it: any) => it.kind === "assistant" && String(it.content).includes("Hi"))).toBe(true);
   });
-});
 
+  it("produces a messagesKey that changes when message content changes with same length", async () => {
+    const { deriveMessagesKey } = await import("./SessionPage");
+
+    const base = {
+      id: "m1",
+      session_id: "s1",
+      role: "user",
+      attachments: [],
+      delivery: "immediate",
+      created_at: "2025-12-15T00:00:00.000Z",
+    };
+
+    const k1 = deriveMessagesKey([{ ...base, content: "hello" }] as any);
+    const k2 = deriveMessagesKey([{ ...base, content: "world" }] as any);
+    expect(k1).not.toBe(k2);
+  });
+});
