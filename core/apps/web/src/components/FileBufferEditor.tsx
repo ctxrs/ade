@@ -47,6 +47,9 @@ export function FileBufferEditor({
   const syncTimer = useRef<number | null>(null);
   const pendingSave = useRef(false);
   const lastSentVersion = useRef<number>(0);
+  const latestText = useRef<string>("");
+  const latestBufferId = useRef<string | null>(null);
+  const latestVersion = useRef<number>(1);
   const disposables = useRef<{ dispose: () => void }[]>([]);
 
   const [bufferId, setBufferId] = useState<string | null>(null);
@@ -120,6 +123,9 @@ export function FileBufferEditor({
       setBufferId(data.buffer_id);
       setVersion(data.version);
       setText(data.text);
+      latestBufferId.current = data.buffer_id;
+      latestVersion.current = data.version;
+      latestText.current = data.text;
       lastSentVersion.current = data.version;
       setStatus("saved");
     } catch (e: any) {
@@ -129,15 +135,16 @@ export function FileBufferEditor({
   };
 
   const doSave = async (opts?: { force?: boolean; nextText?: string; persist?: boolean }) => {
-    const bid = bufferId;
+    const bid = latestBufferId.current;
     if (!bid) return;
     const force = Boolean(opts?.force);
-    const nextText = opts?.nextText ?? text;
+    const nextText = opts?.nextText ?? latestText.current;
     const persist = opts?.persist ?? true;
 
     // Ensure monotonic version even if multiple saves happen quickly.
-    const nextVersion = Math.max(version + 1, lastSentVersion.current + 1);
+    const nextVersion = Math.max(latestVersion.current + 1, lastSentVersion.current + 1);
     lastSentVersion.current = nextVersion;
+    latestVersion.current = nextVersion;
     setVersion(nextVersion);
     if (persist) setStatus("saving");
     setLastError(null);
@@ -159,6 +166,7 @@ export function FileBufferEditor({
       }
       if (res.status < 200 || res.status >= 300) throw new Error(res.body);
       const data = (res.body ? JSON.parse(res.body) : null) as UpdateResp;
+      latestVersion.current = data.version;
       setVersion(data.version);
       if (persist) setStatus("saved");
       else setStatus("dirty");
@@ -200,7 +208,7 @@ export function FileBufferEditor({
         }
       }
       disposables.current = [];
-      const bid = bufferId;
+      const bid = latestBufferId.current;
       if (bid) {
         daemonFetchRaw("/api/buffers/close", {
           method: "POST",
@@ -240,6 +248,7 @@ export function FileBufferEditor({
               type="button"
               className="wb-small"
               onClick={() => {
+                latestText.current = conflict.disk_text;
                 setText(conflict.disk_text);
                 doSave({ force: true, nextText: conflict.disk_text }).catch(() => {});
               }}
@@ -352,6 +361,7 @@ export function FileBufferEditor({
           }}
           onChange={(v) => {
             const next = String(v ?? "");
+            latestText.current = next;
             setText(next);
             if (status !== "saving") setStatus("dirty");
             scheduleSync();
