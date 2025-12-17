@@ -22,10 +22,12 @@ const CLAUDE_CODE_ACP_VERSION: &str = "0.12.4";
 const GEMINI_CLI_VERSION: &str = "0.19.0";
 const QWEN_CODE_VERSION: &str = "0.4.1";
 const AUGGIE_VERSION: &str = "0.12.0";
+const CAGENT_VERSION: &str = "1.15.3";
 const OPENCODE_VERSION: &str = "1.0.150";
 const MISTRAL_VIBE_ACP_VERSION: &str = "1.1.2";
 const KIMI_CLI_VERSION: &str = "0.62";
 const GOOSE_VERSION: &str = "stable";
+const CODE_ASSISTANT_VERSION: &str = "0.1.20";
 
 const TYPESCRIPT_LS_VERSION: &str = "5.1.3";
 const TYPESCRIPT_VERSION: &str = "5.9.3";
@@ -110,6 +112,8 @@ pub fn is_supported_managed_provider(provider_id: &str) -> bool {
             | "gemini"
             | "qwen"
             | "auggie"
+            | "cagent"
+            | "code-assistant"
             | "opencode"
             | "mistral"
             | "goose"
@@ -307,6 +311,7 @@ fn extract_zip_to_dir(zip_path: &Path, out_dir: &Path) -> Result<()> {
 
 #[derive(Debug, Clone, Copy)]
 enum AgentServerArchive {
+    None,
     TarGz,
     TarBz2,
     Zip,
@@ -374,6 +379,15 @@ async fn install_agent_server_url_binary(
     .await;
 
     match archive {
+        AgentServerArchive::None => {
+            let dest = install_dir.join(bin_path);
+            if let Some(parent) = dest.parent() {
+                std::fs::create_dir_all(parent).ok();
+            }
+            std::fs::rename(&tmp, &dest).ok();
+            ensure_executable(&dest)?;
+            Ok(dest)
+        }
         AgentServerArchive::TarGz => {
             let tar_gz = std::fs::File::open(&tmp).with_context(|| format!("open {}", tmp.display()))?;
             let dec = flate2::read::GzDecoder::new(tar_gz);
@@ -1272,6 +1286,118 @@ async fn install_provider_impl(
                     AUGGIE_VERSION,
                     "node_modules/.bin/auggie",
                     vec!["--acp".to_string()],
+                    &mut stage,
+                )
+                .await?
+            }
+            "cagent" => {
+                let os = std::env::consts::OS;
+                let arch = std::env::consts::ARCH;
+                let (file, bin_path) = match (os, arch) {
+                    ("macos", "aarch64") => ("cagent-darwin-arm64", "cagent"),
+                    ("macos", "x86_64") => ("cagent-darwin-amd64", "cagent"),
+                    ("linux", "aarch64") => ("cagent-linux-arm64", "cagent"),
+                    ("linux", "x86_64") => ("cagent-linux-amd64", "cagent"),
+                    ("windows", "x86_64") => ("cagent-windows-amd64.exe", "cagent.exe"),
+                    ("windows", "aarch64") => ("cagent-windows-arm64.exe", "cagent.exe"),
+                    _ => anyhow::bail!("unsupported cagent platform: {os}/{arch}"),
+                };
+                let url = format!("https://github.com/docker/cagent/releases/download/v{CAGENT_VERSION}/{file}");
+
+                let cfg_path = state
+                    .data_root
+                    .join("providers")
+                    .join("agent-servers")
+                    .join("cagent")
+                    .join("config.yaml");
+                if !cfg_path.exists() {
+                    stage = "prepare";
+                    emit_install(
+                        state,
+                        install_id,
+                        &provider_id,
+                        InstallEventLevel::Info,
+                        "prepare",
+                        "Writing default cagent config".to_string(),
+                        None,
+                        None,
+                        None,
+                    )
+                    .await;
+                    if let Some(parent) = cfg_path.parent() {
+                        tokio::fs::create_dir_all(parent).await.ok();
+                    }
+                    let cfg = r#"agents:
+  root:
+    model: openai/gpt-5-mini
+    description: Context default agent
+    instruction: |
+      You are a helpful coding assistant.
+"#;
+                    tokio::fs::write(&cfg_path, cfg).await.ok();
+                }
+
+                error_package = Some(url.clone());
+                error_version = Some(CAGENT_VERSION.to_string());
+                error_install_dir_rel = Some(format!(
+                    "providers/agent-servers/{}/{}",
+                    provider_id, CAGENT_VERSION
+                ));
+                install_managed_archive_provider(
+                    state,
+                    install_id,
+                    &provider_id,
+                    CAGENT_VERSION,
+                    &url,
+                    AgentServerArchive::None,
+                    bin_path,
+                    vec![
+                        "acp".to_string(),
+                        cfg_path.to_string_lossy().to_string(),
+                    ],
+                    &mut stage,
+                )
+                .await?
+            }
+            "code-assistant" => {
+                let target = zed_target_key().context("resolving platform target")?;
+                let (url, bin_path) = match target {
+                    "darwin-aarch64" => (
+                        format!("https://github.com/stippi/code-assistant/releases/download/v{CODE_ASSISTANT_VERSION}/code-assistant-macos-aarch64.zip"),
+                        "code-assistant",
+                    ),
+                    "darwin-x86_64" => (
+                        format!("https://github.com/stippi/code-assistant/releases/download/v{CODE_ASSISTANT_VERSION}/code-assistant-macos-x86_64.zip"),
+                        "code-assistant",
+                    ),
+                    "linux-x86_64" => (
+                        format!("https://github.com/stippi/code-assistant/releases/download/v{CODE_ASSISTANT_VERSION}/code-assistant-linux-x86_64.zip"),
+                        "code-assistant",
+                    ),
+                    "windows-x86_64" => (
+                        format!("https://github.com/stippi/code-assistant/releases/download/v{CODE_ASSISTANT_VERSION}/code-assistant-windows-x86_64.zip"),
+                        "code-assistant.exe",
+                    ),
+                    other => anyhow::bail!(
+                        "unsupported code-assistant platform: {other} (no binary published for this platform)"
+                    ),
+                };
+
+                error_package = Some(url.clone());
+                error_version = Some(CODE_ASSISTANT_VERSION.to_string());
+                error_install_dir_rel = Some(format!(
+                    "providers/agent-servers/{}/{}",
+                    provider_id, CODE_ASSISTANT_VERSION
+                ));
+                install_managed_archive_provider(
+                    state,
+                    install_id,
+                    &provider_id,
+                    CODE_ASSISTANT_VERSION,
+                    &url,
+                    AgentServerArchive::Zip,
+                    bin_path,
+                    vec!["acp".to_string()],
                     &mut stage,
                 )
                 .await?
