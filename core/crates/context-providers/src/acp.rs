@@ -769,7 +769,7 @@ impl AcpProcess {
                             };
 
                             // Responses to our requests
-                            if let Some(id) = parsed.get("id").and_then(|v| v.as_u64()) {
+                            if let Some(id) = parsed.get("id").and_then(jsonrpc_id_u64) {
                                 if let Some(tx) = self.pending.remove(&id) {
                                     let _ = tx.send(parsed);
                                 }
@@ -884,7 +884,7 @@ fn build_request_permission_response(
 ) -> Result<Option<String>> {
     let id = msg
         .get("id")
-        .and_then(|v| v.as_u64())
+        .and_then(jsonrpc_id_u64)
         .context("request_permission missing id")?;
     let params = msg.get("params").cloned().unwrap_or(json!({}));
     let options = params
@@ -1039,6 +1039,12 @@ fn normalize_session_update(msg: &serde_json::Value, state: &mut StreamState) ->
         }],
         _ => vec![],
     }
+}
+
+fn jsonrpc_id_u64(v: &serde_json::Value) -> Option<u64> {
+    v.as_u64()
+        .or_else(|| v.as_i64().and_then(|n| u64::try_from(n).ok()))
+        .or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok()))
 }
 
 #[derive(Debug, Clone)]
@@ -1213,7 +1219,7 @@ async fn acp_probe_request(
             Err(_) => continue,
         };
 
-        if let Some(mid) = parsed.get("id").and_then(|v| v.as_u64()) {
+        if let Some(mid) = parsed.get("id").and_then(jsonrpc_id_u64) {
             if mid == id {
                 return Ok(parsed);
             }
@@ -1412,5 +1418,14 @@ mod tests {
             .and_then(|v| v.get("optionId"))
             .and_then(|v| v.as_str());
         assert_eq!(option_id, Some("allow"));
+    }
+
+    #[test]
+    fn parses_jsonrpc_id_as_u64() {
+        assert_eq!(jsonrpc_id_u64(&json!(7)), Some(7));
+        assert_eq!(jsonrpc_id_u64(&json!("7")), Some(7));
+        assert_eq!(jsonrpc_id_u64(&json!(7_i64)), Some(7));
+        assert_eq!(jsonrpc_id_u64(&json!(-1)), None);
+        assert_eq!(jsonrpc_id_u64(&json!("not-a-number")), None);
     }
 }
