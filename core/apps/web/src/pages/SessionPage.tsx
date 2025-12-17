@@ -36,6 +36,12 @@ import { parseWsJson } from "../utils/wsJson";
 import { buildModelCatalog, composeModelId, formatEffortLabel, parseModelId } from "../utils/modelEffort";
 import { imageFilesToBlobRefAttachments, imageFilesToInlineAttachments } from "../utils/messageAttachments";
 import { registerDropScope } from "../utils/dragDropScopes";
+import {
+  composerDraftKeyTrackV1,
+  loadComposerDraftV1,
+  removeComposerDraft,
+  saveComposerDraftV1,
+} from "../utils/composerDraftPersistence";
 
 type ThreadItem =
   | {
@@ -146,10 +152,17 @@ export function SessionView({
     }
   }, [id]);
   const perfStartRef = useRef<number>(0);
-  const [input, setInput] = useState("");
-  const [draftAttachments, setDraftAttachments] = useState<MessageAttachment[]>([]);
+  type TrackComposerState = {
+    input: string;
+    attachments: MessageAttachment[];
+    modeId: WorkbenchModeId;
+  };
+  const DEFAULT_TRACK_COMPOSER: TrackComposerState = useMemo(
+    () => ({ input: "", attachments: [], modeId: "default" }),
+    [],
+  );
+  const [composerByTrackKey, setComposerByTrackKey] = useState<Record<string, TrackComposerState>>({});
   const [dropActive, setDropActive] = useState(false);
-  const [workbenchMode, setWorkbenchMode] = useState<WorkbenchModeId>("default");
   const [atBottom, setAtBottom] = useState(true);
   const [hasNewActivity, setHasNewActivity] = useState(false);
   const [authMethodId, setAuthMethodId] = useState<string>("");
@@ -190,6 +203,46 @@ export function SessionView({
 
   const entry = useSessionEntry(id ?? "");
   const session: Session | null = entry?.session ?? null;
+  const activeTrackId = session ? idToString(session.track_id) : null;
+  const activeWorkspaceId = session ? idToString(session.workspace_id) : null;
+  const activeTrackKey = activeTrackId ?? `session:${id ?? ""}`;
+  const activeComposer = composerByTrackKey[activeTrackKey] ?? DEFAULT_TRACK_COMPOSER;
+  const input = activeComposer.input;
+  const draftAttachments = activeComposer.attachments;
+  const workbenchMode = activeComposer.modeId;
+  const setInput = useCallback(
+    (next: string) => {
+      setComposerByTrackKey((prev) => {
+        const current = prev[activeTrackKey] ?? DEFAULT_TRACK_COMPOSER;
+        if (current.input === next) return prev;
+        return { ...prev, [activeTrackKey]: { ...current, input: next } };
+      });
+    },
+    [DEFAULT_TRACK_COMPOSER, activeTrackKey],
+  );
+  const setDraftAttachments = useCallback(
+    (next: React.SetStateAction<MessageAttachment[]>) => {
+      setComposerByTrackKey((prev) => {
+        const current = prev[activeTrackKey] ?? DEFAULT_TRACK_COMPOSER;
+        const updated =
+          typeof next === "function"
+            ? (next as (prev: MessageAttachment[]) => MessageAttachment[])(current.attachments)
+            : next;
+        return { ...prev, [activeTrackKey]: { ...current, attachments: updated } };
+      });
+    },
+    [DEFAULT_TRACK_COMPOSER, activeTrackKey],
+  );
+  const setWorkbenchMode = useCallback(
+    (next: WorkbenchModeId) => {
+      setComposerByTrackKey((prev) => {
+        const current = prev[activeTrackKey] ?? DEFAULT_TRACK_COMPOSER;
+        if (current.modeId === next) return prev;
+        return { ...prev, [activeTrackKey]: { ...current, modeId: next } };
+      });
+    },
+    [DEFAULT_TRACK_COMPOSER, activeTrackKey],
+  );
   const events: SessionEvent[] = entry?.events ?? [];
   const messages: Message[] = entry?.messages ?? [];
   const queue: Message[] = entry?.queue ?? [];
@@ -215,6 +268,45 @@ export function SessionView({
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (!activeWorkspaceId || !activeTrackId) return;
+    const tempKey = `session:${id ?? ""}`;
+    const key = composerDraftKeyTrackV1(activeWorkspaceId, activeTrackId);
+    const draft = loadComposerDraftV1(key);
+    setComposerByTrackKey((prev) => {
+      if (prev[activeTrackId]) return prev;
+      const temp = prev[tempKey];
+      if (temp) {
+        const { [tempKey]: _, ...rest } = prev;
+        return { ...rest, [activeTrackId]: temp };
+      }
+      if (!draft) return prev;
+      return {
+        ...prev,
+        [activeTrackId]: {
+          input: draft.text,
+          attachments: [],
+          modeId: draft.modeId ?? "default",
+        },
+      };
+    });
+  }, [activeTrackId, activeWorkspaceId, id]);
+
+  useEffect(() => {
+    if (!activeWorkspaceId || !activeTrackId) return;
+    const key = composerDraftKeyTrackV1(activeWorkspaceId, activeTrackId);
+    const timer = window.setTimeout(() => {
+      const text = input;
+      const modeId = workbenchMode;
+      if (text.trim().length === 0 && modeId === "default") {
+        removeComposerDraft(key);
+        return;
+      }
+      saveComposerDraftV1(key, { v: 1, text, modeId });
+    }, 200);
+    return () => window.clearTimeout(timer);
+  }, [activeTrackId, activeWorkspaceId, input, workbenchMode]);
 
   const stopDictation = useCallback(async (): Promise<string> => {
     setDictationRecording(false);
@@ -242,7 +334,7 @@ export function SessionView({
     dictationAudioStartedRef.current = false;
 
     return next;
-  }, []);
+  }, [setInput]);
 
   const startDictation = useCallback(async () => {
     setDictationError(null);
@@ -559,7 +651,7 @@ export function SessionView({
   const insertIntoComposer = (text: string) => {
     const el = textareaRef.current;
     if (!el) {
-      setInput((v) => v + text);
+      setInput(input + text);
       return;
     }
     const start = el.selectionStart ?? input.length;
