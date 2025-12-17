@@ -1,7 +1,7 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import type React from "react";
 import { createPortal } from "react-dom";
-import { File as FileLucideIcon, Folder, Slash } from "lucide-react";
+import { File as FileLucideIcon, Folder } from "lucide-react";
 import { FileIcon } from "./FileIcon";
 
 export type ComposerAutocompleteItem =
@@ -160,9 +160,11 @@ export function ComposerAutocompleteMenu({
             role="option"
             aria-selected={active}
           >
-            <span className={`composer-ac-icon ${it.kind === "file" ? "composer-ac-icon-file" : "composer-ac-icon-slash"}`} aria-hidden="true">
-              {it.kind === "file" ? <FileIcon path={it.path} size={16} /> : <Slash size={16} />}
-            </span>
+            {it.kind === "file" ? (
+              <span className="composer-ac-icon" aria-hidden="true">
+                <FileIcon path={it.path} size={16} />
+              </span>
+            ) : null}
             <span className="composer-ac-item-text" title={it.kind === "file" ? `${left} ${right}`.trim() : left}>
               <span className="composer-ac-item-left">{left}</span>
               {right && <span className="composer-ac-item-right"> {right}</span>}

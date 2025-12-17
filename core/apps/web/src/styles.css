@@ -2806,10 +2806,6 @@ button.linklike:hover {
   flex: 0 0 auto;
 }
 
-.composer-ac-icon-slash {
-  color: rgba(210, 210, 220, 0.7);
-}
-
 .composer-ac-item-text {
   min-width: 0;
   flex: 1 1 auto;
