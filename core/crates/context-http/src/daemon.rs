@@ -18,6 +18,7 @@ use context_core::models::{Session, SessionEvent};
 use context_providers::adapters::ProviderAdapter;
 use context_providers::adapters::ProviderStatus;
 use context_providers::ask_user_question::AskUserQuestionBroker;
+use context_providers::fake::FakeProviderAdapter;
 use context_providers::tier1::Tier1AcpAdapter;
 use context_store::Store;
 use context_lsp::{LspManager, LspManagerConfig};
@@ -585,6 +586,10 @@ pub async fn serve(
     providers.insert("auggie".into(), auggie_adapter.clone());
     providers.insert("cagent".into(), cagent_adapter.clone());
     providers.insert("code-assistant".into(), code_assistant_adapter.clone());
+
+    if std::env::var("CONTEXT_SHOW_FAKE_PROVIDER").ok().as_deref() == Some("1") {
+        providers.insert("fake".into(), Arc::new(FakeProviderAdapter::new()));
+    }
 
     // Register additional harnesses as ACP adapters so they appear in /providers even if not installed.
     // These binaries are expected to support ACP over stdio.
