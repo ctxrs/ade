@@ -14,7 +14,14 @@ import {
   Slash,
   Square,
 } from "lucide-react";
-import { blobUrl, type MessageAttachment, type ProviderOptions, type ProviderStatus } from "../api/client";
+import {
+  authenticateProviderForWorkspace,
+  blobUrl,
+  type MessageAttachment,
+  type ProviderOptions,
+  type ProviderStatus,
+  verifyProviderForWorkspace,
+} from "../api/client";
 import { shouldSendOnEnter } from "../utils/keyboard";
 import { buildModelCatalog, composeModelId, formatEffortLabel, parseModelId } from "../utils/modelEffort";
 import { ComposerAutocompleteMenu } from "./ComposerAutocompleteMenu";
@@ -816,11 +823,19 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
 
   const [harnessSearch, setHarnessSearch] = useState("");
   const [expandedHarnessId, setExpandedHarnessId] = useState<string | null>(null);
+  const [providerAuthBusy, setProviderAuthBusy] = useState<Record<string, boolean>>({});
+  const [providerVerifyBusy, setProviderVerifyBusy] = useState<Record<string, boolean>>({});
+  const [providerActionNotice, setProviderActionNotice] = useState<string | null>(null);
+  const [providerActionError, setProviderActionError] = useState<string | null>(null);
   const [countMenu, setCountMenu] = useState<{ providerId: string; anchor: DOMRect; style: React.CSSProperties } | null>(null);
   const countMenuRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    if (openMenu !== "harness") setCountMenu(null);
+    if (openMenu !== "harness") {
+      setCountMenu(null);
+      setProviderActionNotice(null);
+      setProviderActionError(null);
+    }
   }, [openMenu]);
 
   useLayoutEffect(() => {
@@ -1064,6 +1079,27 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
               const models = buildModelsForProvider(id, opts);
               const catalog = buildModelCatalog(models);
 
+              const statusUi = (() => {
+                if (!opts) return null;
+                const verifyStatus = String((opts as any)?.verify?.status ?? "");
+                if (opts.auth_required || verifyStatus === "auth_required") {
+                  return { label: "Auth required", kind: "warn" as const };
+                }
+                if (verifyStatus === "ok") {
+                  return { label: "Verified", kind: "ok" as const };
+                }
+                if (verifyStatus === "network_error") {
+                  return { label: "Offline", kind: "warn" as const };
+                }
+                if (verifyStatus === "error") {
+                  return { label: "Error", kind: "err" as const };
+                }
+                if (opts.probe_ok === false) {
+                  return { label: "Unhealthy", kind: "err" as const };
+                }
+                return null;
+              })();
+
               return (
                 <div key={id} className={`wb-harness-row ${installed ? "" : "wb-disabled"}`}>
                   <button
@@ -1085,6 +1121,11 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
                       <span className="wb-harness-logo-fallback" aria-hidden="true" />
                     )}
                     <span className="wb-harness-name">{label}</span>
+                    {statusUi && (
+                      <span className={`wb-harness-status wb-harness-status-${statusUi.kind}`}>
+                        {statusUi.label}
+                      </span>
+                    )}
                   </button>
 
                   <div className="wb-harness-actions">
@@ -1112,6 +1153,78 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
                       </button>
                     ) : (
                       <>
+                        {opts?.auth_required && (
+                          <button
+                            type="button"
+                            className="wb-harness-auth-btn"
+                            onClick={async (e) => {
+                              e.stopPropagation();
+                              const wsId = props.workspaceIdForAutocomplete;
+                              if (!wsId) {
+                                setProviderActionError("No workspace selected.");
+                                return;
+                              }
+                              setProviderActionNotice(null);
+                              setProviderActionError(null);
+                              setProviderAuthBusy((prev) => ({ ...prev, [id]: true }));
+                              try {
+                                const resp = await authenticateProviderForWorkspace(wsId, id);
+                                setProviderActionNotice(
+                                  resp.status === "ok"
+                                    ? `Authenticated ${id}.`
+                                    : `Authentication status: ${resp.status}`,
+                                );
+                              } catch (err: any) {
+                                setProviderActionError(err?.message ?? String(err));
+                              } finally {
+                                setProviderAuthBusy((prev) => ({ ...prev, [id]: false }));
+                                ns.ensureProviderOptions(id).catch(() => {});
+                              }
+                            }}
+                            disabled={providerAuthBusy[id] || !props.workspaceIdForAutocomplete}
+                            title="Authenticate this provider"
+                          >
+                            {providerAuthBusy[id] ? "Auth…" : "Authenticate"}
+                          </button>
+                        )}
+
+                        {checked && !opts?.auth_required && (
+                          <button
+                            type="button"
+                            className="wb-harness-verify-btn"
+                            onClick={async (e) => {
+                              e.stopPropagation();
+                              const wsId = props.workspaceIdForAutocomplete;
+                              if (!wsId) {
+                                setProviderActionError("No workspace selected.");
+                                return;
+                              }
+                              setProviderActionNotice(null);
+                              setProviderActionError(null);
+                              setProviderVerifyBusy((prev) => ({ ...prev, [id]: true }));
+                              try {
+                                const resp = await verifyProviderForWorkspace(wsId, id);
+                                setProviderActionNotice(
+                                  resp.status === "ok"
+                                    ? `Verified ${id}.`
+                                    : resp.status === "network_error"
+                                      ? `Verify failed: offline/unreachable.`
+                                      : `Verify failed: ${resp.status}`,
+                                );
+                              } catch (err: any) {
+                                setProviderActionError(err?.message ?? String(err));
+                              } finally {
+                                setProviderVerifyBusy((prev) => ({ ...prev, [id]: false }));
+                                ns.ensureProviderOptions(id).catch(() => {});
+                              }
+                            }}
+                            disabled={providerVerifyBusy[id] || !props.workspaceIdForAutocomplete}
+                            title="Send a tiny prompt to confirm credentials and connectivity"
+                          >
+                            {providerVerifyBusy[id] ? "Verifying…" : "Verify"}
+                          </button>
+                        )}
+
                         {checked && (
                           <button
                             type="button"
@@ -1271,6 +1384,12 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
             });
           })()}
         </div>
+
+        {(providerActionNotice || providerActionError) && (
+          <div className={`wb-harness-action-banner ${providerActionError ? "wb-harness-action-banner-error" : ""}`}>
+            {providerActionError ?? providerActionNotice}
+          </div>
+        )}
       </div>
     ) : null;
 

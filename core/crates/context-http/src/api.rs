@@ -38,7 +38,13 @@ use crate::updates;
 use crate::buffers::{BufferCloseReq, BufferConflictResp, BufferId, BufferOpenReq, BufferOpenResp, BufferUpdateReq, BufferUpdateResp};
 use context_providers::adapters::ProviderStatus;
 use context_providers::events::NormalizedEvent;
-use context_providers::{acp::probe_provider_options, acp::AcpAgentConfig, acp::AcpClientConfig};
+use context_providers::{
+    acp::authenticate_provider,
+    acp::probe_provider_options,
+    acp::verify_provider_connection,
+    acp::AcpAgentConfig,
+    acp::AcpClientConfig,
+};
 use crate::settings as user_settings;
 use crate::dictation_livekit;
 
@@ -157,6 +163,14 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
         .route(
             "/api/workspaces/:id/providers/:provider_id/options",
             get(get_provider_options),
+        )
+        .route(
+            "/api/workspaces/:id/providers/:provider_id/authenticate",
+            post(authenticate_provider_for_workspace),
+        )
+        .route(
+            "/api/workspaces/:id/providers/:provider_id/verify",
+            post(verify_provider_for_workspace),
         )
         .route(
             "/api/workspaces/:id/tasks",
@@ -3206,6 +3220,7 @@ async fn get_provider_options(
     Path((ws_id, provider_id)): Path<(String, String)>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiErrorResp>)> {
     const CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(30);
+    const VERIFY_TTL: std::time::Duration = std::time::Duration::from_secs(30 * 60);
 
     let ws_id = WorkspaceId(uuid::Uuid::parse_str(&ws_id).map_err(|_| {
         (
@@ -3217,6 +3232,12 @@ async fn get_provider_options(
     })?);
 
     let cache_key = format!("{}/{}", ws_id.0, provider_id);
+    let verify_entry: Option<(std::time::Instant, serde_json::Value)> = state
+        .provider_verify_cache
+        .lock()
+        .await
+        .get(&cache_key)
+        .map(|c| (c.cached_at, c.value.clone()));
     let cached_entry: Option<(std::time::Instant, serde_json::Value)> = state
         .provider_options_cache
         .lock()
@@ -3225,7 +3246,15 @@ async fn get_provider_options(
         .map(|c| (c.cached_at, c.value.clone()));
     if let Some((cached_at, cached_value)) = cached_entry.as_ref() {
         if cached_at.elapsed() < CACHE_TTL {
-            return Ok(Json(cached_value.clone()));
+            let mut out = cached_value.clone();
+            if let Some((verify_at, verify)) = verify_entry.as_ref() {
+                if verify_at.elapsed() < VERIFY_TTL {
+                    if let Some(obj) = out.as_object_mut() {
+                        obj.insert("verify".to_string(), verify.clone());
+                    }
+                }
+            }
+            return Ok(Json(out));
         }
     }
     let cached_models = cached_entry
@@ -3248,7 +3277,7 @@ async fn get_provider_options(
 
     if let Some(st) = provider_status.as_ref() {
         if !st.installed || !matches!(st.health, context_providers::adapters::ProviderHealth::Ok) {
-            let resp = redact_json_value(serde_json::json!({
+            let base_resp = redact_json_value(serde_json::json!({
                 "provider_id": provider_id,
                 "workspace_id": ws_id.0,
                 "installed": st.installed,
@@ -3266,10 +3295,18 @@ async fn get_provider_options(
                     cache_key,
                     crate::daemon::CachedProviderOptions {
                         cached_at: std::time::Instant::now(),
-                        value: resp.clone(),
+                        value: base_resp.clone(),
                     },
                 );
-            return Ok(Json(resp));
+            let mut out = base_resp;
+            if let Some((verify_at, verify)) = verify_entry.as_ref() {
+                if verify_at.elapsed() < VERIFY_TTL {
+                    if let Some(obj) = out.as_object_mut() {
+                        obj.insert("verify".to_string(), verify.clone());
+                    }
+                }
+            }
+            return Ok(Json(out));
         }
     }
 
@@ -3375,6 +3412,215 @@ async fn get_provider_options(
         .insert(
             cache_key,
             crate::daemon::CachedProviderOptions {
+                cached_at: std::time::Instant::now(),
+                value: resp.clone(),
+            },
+        );
+
+    let mut out = resp;
+    if let Some((verify_at, verify)) = verify_entry.as_ref() {
+        if verify_at.elapsed() < VERIFY_TTL {
+            if let Some(obj) = out.as_object_mut() {
+                obj.insert("verify".to_string(), verify.clone());
+            }
+        }
+    }
+    Ok(Json(out))
+}
+
+#[derive(Debug, Deserialize)]
+struct AuthenticateProviderReq {
+    #[serde(default)]
+    method_id: Option<String>,
+}
+
+async fn authenticate_provider_for_workspace(
+    State(state): State<Arc<AppState>>,
+    Path((ws_id, provider_id)): Path<(String, String)>,
+    Json(req): Json<AuthenticateProviderReq>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiErrorResp>)> {
+    let ws_id = WorkspaceId(uuid::Uuid::parse_str(&ws_id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid workspace id".to_string(),
+            }),
+        )
+    })?);
+
+    let ws = state
+        .store
+        .get_workspace(ws_id)
+        .await
+        .map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: "failed to load workspace".to_string(),
+                }),
+            )
+        })?
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "workspace not found".to_string(),
+            }),
+        ))?;
+
+    let cfg = installer::load_agent_server_config(&state.data_root)
+        .await
+        .unwrap_or_default();
+    let (command, args) = cfg
+        .providers
+        .get(&provider_id)
+        .map(|c| (c.command.clone(), c.args.clone()))
+        .or_else(|| default_agent_server_command(&provider_id))
+        .ok_or((
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "unknown provider id".to_string(),
+            }),
+        ))?;
+
+    let agent = AcpAgentConfig {
+        provider_id: provider_id.clone(),
+        command,
+        args,
+    };
+    let client = AcpClientConfig {
+        client_name: "context".to_string(),
+        client_title: "Context".to_string(),
+        client_version: env!("CARGO_PKG_VERSION").to_string(),
+        client_capabilities: serde_json::json!({}),
+        mcp_servers: vec![],
+    };
+
+    let mut env = std::collections::HashMap::new();
+    env.insert("CONTEXT_DAEMON_URL".to_string(), state.daemon_url.clone());
+    if let Some(token) = state.auth_token.as_ref() {
+        env.insert("CONTEXT_AUTH_TOKEN".to_string(), token.clone());
+    }
+    env.insert("CONTEXT_MCP_DISABLED".to_string(), "1".to_string());
+
+    let probe = authenticate_provider(agent, client, PathBuf::from(&ws.root_path), env, req.method_id).await;
+    let (status, auth_required, auth_methods, acp_error) = match probe {
+        Ok(p) => (p.status, p.auth_required, p.auth_methods, p.acp_error),
+        Err(e) => (
+            "error".to_string(),
+            false,
+            None,
+            Some(serde_json::json!({"message": logs::redact_sensitive(&e.to_string())})),
+        ),
+    };
+
+    let resp = redact_json_value(serde_json::json!({
+        "provider_id": provider_id,
+        "workspace_id": ws_id.0,
+        "status": status,
+        "auth_required": auth_required,
+        "auth_methods": auth_methods,
+        "acp_error": acp_error,
+        "checked_at": chrono::Utc::now().to_rfc3339(),
+    }));
+    Ok(Json(resp))
+}
+
+async fn verify_provider_for_workspace(
+    State(state): State<Arc<AppState>>,
+    Path((ws_id, provider_id)): Path<(String, String)>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiErrorResp>)> {
+    let ws_id = WorkspaceId(uuid::Uuid::parse_str(&ws_id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid workspace id".to_string(),
+            }),
+        )
+    })?);
+
+    let ws = state
+        .store
+        .get_workspace(ws_id)
+        .await
+        .map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: "failed to load workspace".to_string(),
+                }),
+            )
+        })?
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "workspace not found".to_string(),
+            }),
+        ))?;
+
+    let cfg = installer::load_agent_server_config(&state.data_root)
+        .await
+        .unwrap_or_default();
+    let (command, args) = cfg
+        .providers
+        .get(&provider_id)
+        .map(|c| (c.command.clone(), c.args.clone()))
+        .or_else(|| default_agent_server_command(&provider_id))
+        .ok_or((
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "unknown provider id".to_string(),
+            }),
+        ))?;
+
+    let agent = AcpAgentConfig {
+        provider_id: provider_id.clone(),
+        command,
+        args,
+    };
+    let client = AcpClientConfig {
+        client_name: "context".to_string(),
+        client_title: "Context".to_string(),
+        client_version: env!("CARGO_PKG_VERSION").to_string(),
+        client_capabilities: serde_json::json!({}),
+        mcp_servers: vec![],
+    };
+
+    let mut env = std::collections::HashMap::new();
+    env.insert("CONTEXT_DAEMON_URL".to_string(), state.daemon_url.clone());
+    if let Some(token) = state.auth_token.as_ref() {
+        env.insert("CONTEXT_AUTH_TOKEN".to_string(), token.clone());
+    }
+    env.insert("CONTEXT_MCP_DISABLED".to_string(), "1".to_string());
+
+    let probe = verify_provider_connection(agent, client, PathBuf::from(&ws.root_path), env).await;
+    let (status, auth_required, auth_methods, acp_error) = match probe {
+        Ok(p) => (p.status, p.auth_required, p.auth_methods, p.acp_error),
+        Err(e) => (
+            "error".to_string(),
+            false,
+            None,
+            Some(serde_json::json!({"message": logs::redact_sensitive(&e.to_string())})),
+        ),
+    };
+
+    let resp = redact_json_value(serde_json::json!({
+        "provider_id": provider_id.clone(),
+        "workspace_id": ws_id.0,
+        "status": status,
+        "auth_required": auth_required,
+        "auth_methods": auth_methods,
+        "acp_error": acp_error,
+        "checked_at": chrono::Utc::now().to_rfc3339(),
+    }));
+
+    let cache_key = format!("{}/{}", ws_id.0, provider_id);
+    state
+        .provider_verify_cache
+        .lock()
+        .await
+        .insert(
+            cache_key,
+            crate::daemon::CachedProviderVerify {
                 cached_at: std::time::Instant::now(),
                 value: resp.clone(),
             },
