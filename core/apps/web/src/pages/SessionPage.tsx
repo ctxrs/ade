@@ -1061,7 +1061,11 @@ export function SessionView({
                       );
                     }}
                     itemContent={(index, groupIndex) => {
-                      const item = wbGroups[groupIndex]?.items[index];
+                      const prefix = wbGroupCounts.slice(0, groupIndex).reduce((a, b) => a + b, 0);
+                      const localIndex = index - prefix;
+                      const item =
+                        wbGroups[groupIndex]?.items[localIndex] ??
+                        wbGroups[groupIndex]?.items[index];
                       if (!item) return <div style={{ height: 1 }} />;
                       return renderThreadItem(item);
                     }}

@@ -4,7 +4,7 @@ import { tmpdir } from "os";
 import path from "path";
 import { execSync } from "child_process";
 
-test("golden path: workspace → task → session → message", async ({ page }) => {
+test("workbench: second message gets a response", async ({ page }) => {
   const repo = mkdtempSync(path.join(tmpdir(), "context-e2e-"));
   execSync("git init", { cwd: repo });
   execSync("git config user.email test@example.com", { cwd: repo });
@@ -25,14 +25,20 @@ test("golden path: workspace → task → session → message", async ({ page })
     .getByRole("link", { name: workspaceName })
     .click();
 
-  // Workbench UI: choose Fake harness so the test doesn't depend on external agents.
+  // Choose Fake harness so the test doesn't depend on external agents.
   await page.locator(".wb-new-composer-stack").getByTitle("Harness").click();
   await page.locator(".wb-harness-menu").getByLabel("Search agents").fill("fake");
   await page.locator(".wb-harness-menu").getByRole("button", { name: "Fake" }).click();
 
-  await page.locator(".wb-new-composer-stack textarea.wb-composer-textarea").fill("hello");
+  await page.locator(".wb-new-composer-stack textarea.wb-composer-textarea").fill("hello 1");
   await page.locator(".wb-new-composer-stack button[aria-label=\"Send\"]").click();
 
-  await expect(page.locator(".wb-session textarea.wb-active-textarea")).toBeVisible();
+  const sessionComposer = page.locator(".wb-session textarea.wb-active-textarea");
+  await expect(sessionComposer).toBeVisible({ timeout: 20000 });
   await expect(page.locator(".wb-session .wb-assistant-entry")).toHaveCount(1);
+
+  await sessionComposer.fill("hello 2");
+  await page.locator(".wb-session button[aria-label=\"Send\"]").click();
+  await expect(page.locator(".wb-session .wb-assistant-entry")).toHaveCount(2, { timeout: 15000 });
 });
+
