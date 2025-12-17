@@ -1361,6 +1361,50 @@ export default function WorkbenchPage() {
 
   return (
     <div className={`wb-root ${sidebarCollapsed ? "wb-root-collapsed" : ""}`}>
+      <div className="wb-topbar">
+        {sidebarCollapsed && (
+          <button
+            type="button"
+            className="wb-topbar-expand"
+            aria-label="Show sidebar"
+            title="Show sidebar"
+            onClick={() => setSidebarCollapsed(false)}
+          >
+            ›
+          </button>
+        )}
+        <div className="wb-topbar-title">{workspace?.name ?? "Workspace"}</div>
+        {activeTask && <div className="wb-topbar-sub">{activeTask.title}</div>}
+        <div className="wb-topbar-right">
+          {showDebugIds && (
+            <button
+              type="button"
+              className="wb-topbar-ids"
+              title="Click to copy workspace/task/track/session IDs"
+              onClick={() =>
+                navigator.clipboard.writeText(
+                  JSON.stringify(
+                    {
+                      workspaceId,
+                      taskId: activeTaskId,
+                      trackId: activeTrackId,
+                      sessionId: activeSessionId,
+                    },
+                    null,
+                    2,
+                  ),
+                )
+              }
+            >
+              {debugIdLabel}
+            </button>
+          )}
+          <Link className="wb-topbar-icon" to="/settings" title="Settings" aria-label="Settings">
+            <Settings size={14} />
+          </Link>
+        </div>
+      </div>
+
       <div className="wb-sidebar" aria-hidden={sidebarCollapsed}>
         <div className="wb-sidebar-top">
           <div className="wb-sidebar-header">
@@ -1725,50 +1769,6 @@ export default function WorkbenchPage() {
       </div>
 
       <div className="wb-main">
-        <div className="wb-topbar">
-          {sidebarCollapsed && (
-            <button
-              type="button"
-              className="wb-topbar-expand"
-              aria-label="Show sidebar"
-              title="Show sidebar"
-              onClick={() => setSidebarCollapsed(false)}
-            >
-              ›
-            </button>
-          )}
-          <div className="wb-topbar-title">{workspace?.name ?? "Workspace"}</div>
-          {activeTask && <div className="wb-topbar-sub">{activeTask.title}</div>}
-          <div className="wb-topbar-right">
-            {showDebugIds && (
-              <button
-                type="button"
-                className="wb-topbar-ids"
-                title="Click to copy workspace/task/track/session IDs"
-                onClick={() =>
-                  navigator.clipboard.writeText(
-                    JSON.stringify(
-                      {
-                        workspaceId,
-                        taskId: activeTaskId,
-                        trackId: activeTrackId,
-                        sessionId: activeSessionId,
-                      },
-                      null,
-                      2,
-                    ),
-                  )
-                }
-              >
-                {debugIdLabel}
-              </button>
-            )}
-            <Link className="wb-topbar-icon" to="/settings" title="Settings" aria-label="Settings">
-              <Settings size={14} />
-            </Link>
-          </div>
-        </div>
-
         {!activeTaskId ? (
           <div className="wb-center">
             <div className="wb-new-composer-stack ctx-drop-scope" ref={newComposerRef}>
