@@ -53,11 +53,8 @@ export const HARNESS_CATALOG: HarnessCatalogEntry[] = [
   { id: "swe-agent", label: "SWE-agent", logoSrc: "" },
   { id: "tabby", label: "Tabby", logoSrc: "" },
   { id: "cagent", label: "cagent", logoSrc: "" },
-  { id: "llmling-agent", label: "llmling-agent", logoSrc: "" },
-  { id: "fast-agent", label: "fast-agent", logoSrc: "" },
   { id: "code-assistant", label: "code-assistant", logoSrc: "" },
   { id: "kilo", label: "Kilo Code", logoSrc: "" },
-  { id: "stakpak", label: "stakpak", logoSrc: "" },
 
   // Additional closed-source CLI harnesses (shown for completeness).
   { id: "cody", label: "Cody", logoSrc: "" },
