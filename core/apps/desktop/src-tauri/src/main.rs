@@ -23,7 +23,7 @@ fn main() {
             desktop_daemon_request,
         ])
         .setup(|app| {
-            open_main_window(app.handle())?;
+            open_main_window(&app.handle())?;
             Ok(())
         })
         .on_window_event(|event| {
@@ -342,7 +342,10 @@ impl ConnectionManager {
         }
 
         let (base_url, token) = {
-            let guard = self.0.lock().context("connection manager lock")?;
+            let guard = self
+                .0
+                .lock()
+                .map_err(|e| anyhow!("connection manager lock poisoned: {e}"))?;
             let active = guard
                 .active
                 .as_ref()
@@ -398,7 +401,10 @@ impl ConnectionManager {
         name: Option<String>,
     ) -> Result<serde_json::Value> {
         let (base_url, token) = {
-            let guard = self.0.lock().context("connection manager lock")?;
+            let guard = self
+                .0
+                .lock()
+                .map_err(|e| anyhow!("connection manager lock poisoned: {e}"))?;
             let active = guard
                 .active
                 .as_ref()
