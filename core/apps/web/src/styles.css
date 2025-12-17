@@ -1049,6 +1049,73 @@ button.linklike:hover {
   box-shadow: 0 0 0 1px rgba(18, 18, 18, 0.5);
 }
 
+/* Track expansion UI styles */
+.wb-track-chevron {
+  position: absolute;
+  left: -16px;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.4);
+  cursor: pointer;
+  transition: transform 150ms ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.wb-track-chevron:hover {
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.wb-track-chevron-expanded {
+  transform: rotate(90deg);
+}
+
+.wb-track-list {
+  margin-left: 24px;
+  margin-top: 2px;
+  margin-bottom: 4px;
+}
+
+.wb-track-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.wb-track-row:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.wb-track-leading {
+  position: relative;
+  width: 16px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.wb-track-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.wb-track-label {
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .wb-task-spinner {
   width: 12px;
   height: 12px;

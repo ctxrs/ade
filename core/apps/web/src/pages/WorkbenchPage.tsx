@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useParams } from "react-router-dom";
 import {
   Archive,
   ArrowUp,
   AtSign,
   ChevronDown,
+  ChevronRight,
   Ellipsis,
   Image,
   Laptop,
@@ -152,6 +153,11 @@ export default function WorkbenchPage() {
   const [sessionsByTrack, setSessionsByTrack] = useState<Record<string, any[]>>({});
   const [activeTrackId, setActiveTrackId] = useState<string | null>(null);
 
+  // Track-level state for expansion UI
+  const [tracksByTaskId, setTracksByTaskId] = useState<Record<string, Track[]>>({});
+  const [trackSeenAssistantAtById, setTrackSeenAssistantAtById] = useState<Record<string, string>>({});
+  const [expandedTaskIds, setExpandedTaskIds] = useState<Set<string>>(new Set());
+
   const [draftPrompt, setDraftPrompt] = useState("");
   const [draftTracks, setDraftTracks] = useState<DraftTrack[]>([
     { key: "t1", label: "", providerId: "codex", modelId: "" },
@@ -215,7 +221,7 @@ export default function WorkbenchPage() {
     localStorage.setItem(`wb.archivedCollapsed.${workspaceId}`, archivedCollapsed ? "1" : "0");
   }, [archivedCollapsed, workspaceId]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!workspaceId) return;
     const key = `wb.taskSeenAssistantAtById.${workspaceId}`;
     try {
@@ -231,6 +237,44 @@ export default function WorkbenchPage() {
     if (!workspaceId) return;
     localStorage.setItem(`wb.taskSeenAssistantAtById.${workspaceId}`, JSON.stringify(taskSeenAssistantAtById));
   }, [taskSeenAssistantAtById, workspaceId]);
+
+  // Load track-level seen state from localStorage
+  useLayoutEffect(() => {
+    if (!workspaceId) return;
+    const key = `wb.trackSeenAssistantAtById.${workspaceId}`;
+    try {
+      const parsed = JSON.parse(localStorage.getItem(key) ?? "{}");
+      if (parsed && typeof parsed === "object") setTrackSeenAssistantAtById(parsed);
+      else setTrackSeenAssistantAtById({});
+    } catch {
+      setTrackSeenAssistantAtById({});
+    }
+  }, [workspaceId]);
+
+  // Save track-level seen state to localStorage
+  useEffect(() => {
+    if (!workspaceId) return;
+    localStorage.setItem(`wb.trackSeenAssistantAtById.${workspaceId}`, JSON.stringify(trackSeenAssistantAtById));
+  }, [trackSeenAssistantAtById, workspaceId]);
+
+  // Load expanded task IDs from localStorage
+  useLayoutEffect(() => {
+    if (!workspaceId) return;
+    const key = `wb.expandedTaskIds.${workspaceId}`;
+    try {
+      const parsed = JSON.parse(localStorage.getItem(key) ?? "[]");
+      if (Array.isArray(parsed)) setExpandedTaskIds(new Set(parsed));
+      else setExpandedTaskIds(new Set());
+    } catch {
+      setExpandedTaskIds(new Set());
+    }
+  }, [workspaceId]);
+
+  // Save expanded task IDs to localStorage
+  useEffect(() => {
+    if (!workspaceId) return;
+    localStorage.setItem(`wb.expandedTaskIds.${workspaceId}`, JSON.stringify(Array.from(expandedTaskIds)));
+  }, [expandedTaskIds, workspaceId]);
 
   useEffect(() => {
     const onPointerDown = (e: PointerEvent) => {
@@ -297,6 +341,27 @@ export default function WorkbenchPage() {
     getLspStatus().then(setLspStatus).catch(() => setLspStatus(null));
   }, [workspaceId]);
 
+  // Load tracks for all tasks (for expansion UI)
+  useEffect(() => {
+    if (!tasks.length) return;
+    const loadAllTracks = async () => {
+      const map: Record<string, Track[]> = {};
+      await Promise.all(
+        tasks.map(async (task) => {
+          try {
+            const taskId = idToString(task.id);
+            const tracks = await listTracks(taskId);
+            map[taskId] = tracks;
+          } catch {
+            // Ignore errors for individual tasks
+          }
+        })
+      );
+      setTracksByTaskId(map);
+    };
+    loadAllTracks().catch(() => { });
+  }, [tasks]);
+
   useEffect(() => {
     if (!providers.length) return;
     const codexInstalled = providersById["codex"]?.installed ?? false;
@@ -353,6 +418,32 @@ export default function WorkbenchPage() {
     return sortedTasks.filter((t) => (t.title ?? "").toLowerCase().includes(q));
   }, [sortedTasks, taskQuery]);
 
+  // Helper to check if agent is still working (hasn't finished responding)
+  const isAgentStillWorking = useCallback((entry: any): boolean => {
+    // Check for queued messages
+    if (entry.queue && entry.queue.length > 0) {
+      return true;
+    }
+
+    // Check last message - if from user, agent needs to respond
+    if (entry.messages && entry.messages.length > 0) {
+      const lastMessage = entry.messages[entry.messages.length - 1];
+      if (lastMessage.role === "user") {
+        return true;
+      }
+    }
+
+    // Check if last event is "Done" - if not, still working
+    if (entry.events && entry.events.length > 0) {
+      const lastEvent = entry.events[entry.events.length - 1];
+      if (lastEvent.event_type !== "done") {
+        return true;
+      }
+    }
+
+    return false;
+  }, []);
+
   const taskLiveInfo = useMemo(() => {
     const workingByTask = new Set<string>();
     const errorByTask = new Set<string>();
@@ -360,7 +451,11 @@ export default function WorkbenchPage() {
     for (const entry of Object.values(sessionSnap.sessions)) {
       const taskId = entry.session ? idToString(entry.session.task_id) : "";
       if (!taskId) continue;
-      if (entry.session?.status === "active") workingByTask.add(taskId);
+
+      // Check if agent is still working on this session
+      if (isAgentStillWorking(entry)) {
+        workingByTask.add(taskId);
+      }
 
       // Error state - check multiple sources
       const hasErrorStatus =
@@ -377,7 +472,73 @@ export default function WorkbenchPage() {
       if (ms !== null) lastAssistantMsByTask[taskId] = Math.max(lastAssistantMsByTask[taskId] ?? 0, ms);
     }
     return { workingByTask, errorByTask, lastAssistantMsByTask };
-  }, [sessionSnap.sessions]);
+  }, [sessionSnap.sessions, isAgentStillWorking]);
+
+  // Compute per-track state and aggregate to task level
+  const taskStateByTrack = useMemo(() => {
+    const stateByTask = new Map<string, any[]>();
+
+    // Iterate through all sessions to compute track-level state
+    for (const entry of Object.values(sessionSnap.sessions)) {
+      if (!entry.session) continue;
+
+      const taskId = idToString(entry.session.task_id);
+      const trackId = idToString(entry.session.track_id);
+
+      // Compute state for this track/session
+      const working = isAgentStillWorking(entry);
+
+      const hasError =
+        entry.session.status === "failed" ||
+        entry.session.status === "cancelled" ||
+        !!entry.error ||
+        entry.events.some(ev => ev.event_type === "error");
+
+      const lastAssistantMs = lastAssistantMessageMs(entry.messages);
+      const seenMs = parseMs(trackSeenAssistantAtById[trackId] ?? null);
+      const unread = !working && !hasError && lastAssistantMs !== null &&
+        (seenMs === null || lastAssistantMs > seenMs);
+
+      const trackState = {
+        trackId,
+        sessionId: entry.sessionId,
+        working,
+        hasError,
+        unread,
+        lastAssistantMs,
+        seenMs,
+      };
+
+      if (!stateByTask.has(taskId)) {
+        stateByTask.set(taskId, []);
+      }
+      stateByTask.get(taskId)!.push(trackState);
+    }
+
+    // Aggregate to task level with proper priority
+    const result = new Map<string, any>();
+    for (const [taskId, tracks] of stateByTask.entries()) {
+      // Priority: error > unread > working > idle
+      const hasAnyError = tracks.some(t => t.hasError);
+      const hasAnyUnread = tracks.some(t => t.unread);
+      const hasAnyWorking = tracks.some(t => t.working);
+
+      let indicator: 'working' | 'error' | 'unread' | 'idle';
+      if (hasAnyError) {
+        indicator = 'error';
+      } else if (hasAnyUnread) {
+        indicator = 'unread';
+      } else if (hasAnyWorking) {
+        indicator = 'working';
+      } else {
+        indicator = 'idle';
+      }
+
+      result.set(taskId, { taskId, tracks, indicator });
+    }
+
+    return result;
+  }, [sessionSnap.sessions, trackSeenAssistantAtById, isAgentStillWorking]);
 
   const activeTasks = useMemo(() => filteredTasks.filter((t) => !t.archived_at), [filteredTasks]);
   const archivedTasks = useMemo(() => filteredTasks.filter((t) => !!t.archived_at), [filteredTasks]);
@@ -391,6 +552,18 @@ export default function WorkbenchPage() {
     },
     [tasks],
   );
+
+  const toggleTaskExpanded = useCallback((taskId: string) => {
+    setExpandedTaskIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(taskId)) {
+        next.delete(taskId);
+      } else {
+        next.add(taskId);
+      }
+      return next;
+    });
+  }, []);
 
   useEffect(() => {
     if (!activeTaskId) return;
@@ -972,71 +1145,132 @@ export default function WorkbenchPage() {
                 const age = formatAgeShort(taskActivityMs(t));
 
                 // Compute indicator to show (mutually exclusive, priority order)
+                // Priority: error > unread > working > idle
                 let indicator: 'working' | 'error' | 'unread' | 'idle';
-                if (working) {
-                  indicator = 'working';
-                } else if (hasError) {
+                if (hasError) {
                   indicator = 'error';
                 } else if (unread) {
                   indicator = 'unread';
+                } else if (working) {
+                  indicator = 'working';
                 } else {
                   indicator = 'idle';
                 }
 
+                // Get tracks for this task and expansion state
+                const tracksForTask = tracksByTaskId[tid] || [];
+                const expanded = expandedTaskIds.has(tid);
+                const hasMultipleTracks = tracksForTask.length > 1;
+
                 return (
-                  <div
-                    key={tid}
-                    className={`wb-task-row ${selected ? "wb-task-row-active" : ""}`}
-                    role="listitem"
-                    onClick={() => setActiveTaskId(tid)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" || e.key === " ") {
-                        e.preventDefault();
-                        setActiveTaskId(tid);
-                      }
-                    }}
-                    tabIndex={0}
-                    title={title}
-                  >
-                    <div className="wb-task-leading" aria-hidden="true">
-                      {indicator === 'working' && <span className="wb-task-spinner" />}
-                      {indicator === 'error' && <span className="wb-task-error" />}
-                      {indicator === 'unread' && <span className="wb-task-unread" />}
-                      {indicator === 'idle' && <span className="wb-task-idle" />}
-                    </div>
-                    <div className="wb-task-body">
-                      <div className="wb-task-title">{title}</div>
-                    </div>
-                    <div className="wb-task-meta">
-                      {age && <div className="wb-task-age">{age}</div>}
-                      <div className="wb-task-actions" aria-label="Task actions">
-                        <button
-                          type="button"
-                          className="wb-icon wb-task-action"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onToggleArchive(tid, true).catch(() => { });
-                          }}
-                          aria-label="Archive"
-                          title="Archive"
-                        >
-                          <Archive size={14} />
-                        </button>
-                        <button
-                          type="button"
-                          className="wb-icon wb-task-action wb-task-menu-trigger"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            openTaskMenu(tid, e.currentTarget);
-                          }}
-                          aria-label="More actions"
-                          title="More actions"
-                        >
-                          <Ellipsis size={14} />
-                        </button>
+                  <React.Fragment key={tid}>
+                    <div
+                      className={`wb-task-row ${selected ? "wb-task-row-active" : ""}`}
+                      role="listitem"
+                      onClick={() => setActiveTaskId(tid)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          setActiveTaskId(tid);
+                        }
+                      }}
+                      tabIndex={0}
+                      title={title}
+                    >
+                      <div className="wb-task-leading" aria-hidden="true">
+                        {/* Chevron for multi-track tasks */}
+                        {hasMultipleTracks && (
+                          <button
+                            type="button"
+                            className="wb-track-chevron"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleTaskExpanded(tid);
+                            }}
+                            aria-label={expanded ? "Collapse tracks" : "Expand tracks"}
+                          >
+                            <ChevronRight
+                              size={12}
+                              className={expanded ? "wb-track-chevron-expanded" : ""}
+                            />
+                          </button>
+                        )}
+
+                        {/* Task state indicator */}
+                        {indicator === 'working' && <span className="wb-task-spinner" />}
+                        {indicator === 'error' && <span className="wb-task-error" />}
+                        {indicator === 'unread' && <span className="wb-task-unread" />}
+                        {indicator === 'idle' && <span className="wb-task-idle" />}
+                      </div>
+                      <div className="wb-task-body">
+                        <div className="wb-task-title">{title}</div>
+                      </div>
+                      <div className="wb-task-meta">
+                        {age && <div className="wb-task-age">{age}</div>}
+                        <div className="wb-task-actions" aria-label="Task actions">
+                          <button
+                            type="button"
+                            className="wb-icon wb-task-action"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onToggleArchive(tid, true).catch(() => { });
+                            }}
+                            aria-label="Archive"
+                            title="Archive"
+                          >
+                            <Archive size={14} />
+                          </button>
+                          <button
+                            type="button"
+                            className="wb-icon wb-task-action wb-task-menu-trigger"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openTaskMenu(tid, e.currentTarget);
+                            }}
+                            aria-label="More actions"
+                            title="More actions"
+                          >
+                            <Ellipsis size={14} />
+                          </button>
+                        </div>
                       </div>
                     </div>
-                  </div>
+
+                    {/* Expanded tracks list */}
+                    {expanded && hasMultipleTracks && (
+                      <div className="wb-track-list">
+                        {tracksForTask.map((track) => {
+                          const trackId = idToString(track.id);
+                          const trackState = taskStateByTrack.get(tid)?.tracks.find((t: any) => t.trackId === trackId);
+                          const trackIndicator: 'working' | 'error' | 'unread' | 'idle' = trackState
+                            ? (trackState.hasError ? 'error' : trackState.unread ? 'unread' : trackState.working ? 'working' : 'idle')
+                            : 'idle';
+
+                          return (
+                            <div
+                              key={trackId}
+                              className="wb-track-row"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setActiveTrackId(trackId);
+                                setActiveTaskId(tid);
+                              }}
+                            >
+                              <div className="wb-track-leading">
+                                {trackIndicator === 'working' && <span className="wb-task-spinner" />}
+                                {trackIndicator === 'error' && <span className="wb-task-error" />}
+                                {trackIndicator === 'unread' && <span className="wb-task-unread" />}
+                                {trackIndicator === 'idle' && <span className="wb-task-idle" />}
+                              </div>
+                              <div className="wb-track-body">
+                                <div className="wb-track-label">{track.label || "Untitled"}</div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </React.Fragment>
                 );
               })}
               {activeTasks.length === 0 && <div className="wb-muted">No active tasks.</div>}
@@ -1081,71 +1315,132 @@ export default function WorkbenchPage() {
                   const age = formatAgeShort(taskActivityMs(t));
 
                   // Compute indicator to show (mutually exclusive, priority order)
+                  // Priority: error > unread > working > idle
                   let indicator: 'working' | 'error' | 'unread' | 'idle';
-                  if (working) {
-                    indicator = 'working';
-                  } else if (hasError) {
+                  if (hasError) {
                     indicator = 'error';
                   } else if (unread) {
                     indicator = 'unread';
+                  } else if (working) {
+                    indicator = 'working';
                   } else {
                     indicator = 'idle';
                   }
 
+                  // Get tracks for this task and expansion state
+                  const tracksForTask = tracksByTaskId[tid] || [];
+                  const expanded = expandedTaskIds.has(tid);
+                  const hasMultipleTracks = tracksForTask.length > 1;
+
                   return (
-                    <div
-                      key={tid}
-                      className={`wb-task-row wb-task-row-archived ${selected ? "wb-task-row-active" : ""}`}
-                      role="listitem"
-                      onClick={() => setActiveTaskId(tid)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" || e.key === " ") {
-                          e.preventDefault();
-                          setActiveTaskId(tid);
-                        }
-                      }}
-                      tabIndex={0}
-                      title={title}
-                    >
-                      <div className="wb-task-leading" aria-hidden="true">
-                        {indicator === 'working' && <span className="wb-task-spinner" />}
-                        {indicator === 'error' && <span className="wb-task-error" />}
-                        {indicator === 'unread' && <span className="wb-task-unread" />}
-                        {indicator === 'idle' && <span className="wb-task-idle" />}
-                      </div>
-                      <div className="wb-task-body">
-                        <div className="wb-task-title">{title}</div>
-                      </div>
-                      <div className="wb-task-meta">
-                        {age && <div className="wb-task-age">{age}</div>}
-                        <div className="wb-task-actions" aria-label="Task actions">
-                          <button
-                            type="button"
-                            className="wb-icon wb-task-action"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              onToggleArchive(tid, false).catch(() => { });
-                            }}
-                            aria-label="Unarchive"
-                            title="Unarchive"
-                          >
-                            <Archive size={14} />
-                          </button>
-                          <button
-                            type="button"
-                            className="wb-icon wb-task-action wb-task-menu-trigger"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              openTaskMenu(tid, e.currentTarget);
-                            }}
-                            aria-label="More actions"
-                            title="More actions"
-                          >
-                            <Ellipsis size={14} />
-                          </button>
+                    <React.Fragment key={tid}>
+                      <div
+                        className={`wb-task-row wb-task-row-archived ${selected ? "wb-task-row-active" : ""}`}
+                        role="listitem"
+                        onClick={() => setActiveTaskId(tid)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            setActiveTaskId(tid);
+                          }
+                        }}
+                        tabIndex={0}
+                        title={title}
+                      >
+                        <div className="wb-task-leading" aria-hidden="true">
+                          {/* Chevron for multi-track tasks */}
+                          {hasMultipleTracks && (
+                            <button
+                              type="button"
+                              className="wb-track-chevron"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                toggleTaskExpanded(tid);
+                              }}
+                              aria-label={expanded ? "Collapse tracks" : "Expand tracks"}
+                            >
+                              <ChevronRight
+                                size={12}
+                                className={expanded ? "wb-track-chevron-expanded" : ""}
+                              />
+                            </button>
+                          )}
+
+                          {/* Task state indicator */}
+                          {indicator === 'working' && <span className="wb-task-spinner" />}
+                          {indicator === 'error' && <span className="wb-task-error" />}
+                          {indicator === 'unread' && <span className="wb-task-unread" />}
+                          {indicator === 'idle' && <span className="wb-task-idle" />}
+                        </div>
+                        <div className="wb-task-body">
+                          <div className="wb-task-title">{title}</div>
+                        </div>
+                        <div className="wb-task-meta">
+                          {age && <div className="wb-task-age">{age}</div>}
+                          <div className="wb-task-actions" aria-label="Task actions">
+                            <button
+                              type="button"
+                              className="wb-icon wb-task-action"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onToggleArchive(tid, false).catch(() => { });
+                              }}
+                              aria-label="Unarchive"
+                              title="Unarchive"
+                            >
+                              <Archive size={14} />
+                            </button>
+                            <button
+                              type="button"
+                              className="wb-icon wb-task-action wb-task-menu-trigger"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openTaskMenu(tid, e.currentTarget);
+                              }}
+                              aria-label="More actions"
+                              title="More actions"
+                            >
+                              <Ellipsis size={14} />
+                            </button>
+                          </div>
                         </div>
                       </div>
-                    </div>
+
+                      {/* Expanded tracks list */}
+                      {expanded && hasMultipleTracks && (
+                        <div className="wb-track-list">
+                          {tracksForTask.map((track) => {
+                            const trackId = idToString(track.id);
+                            const trackState = taskStateByTrack.get(tid)?.tracks.find((t: any) => t.trackId === trackId);
+                            const trackIndicator: 'working' | 'error' | 'unread' | 'idle' = trackState
+                              ? (trackState.hasError ? 'error' : trackState.unread ? 'unread' : trackState.working ? 'working' : 'idle')
+                              : 'idle';
+
+                            return (
+                              <div
+                                key={trackId}
+                                className="wb-track-row"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setActiveTrackId(trackId);
+                                  setActiveTaskId(tid);
+                                }}
+                              >
+                                <div className="wb-track-leading">
+                                  {trackIndicator === 'working' && <span className="wb-task-spinner" />}
+                                  {trackIndicator === 'error' && <span className="wb-task-error" />}
+                                  {trackIndicator === 'unread' && <span className="wb-task-unread" />}
+                                  {trackIndicator === 'idle' && <span className="wb-task-idle" />}
+                                </div>
+                                <div className="wb-track-body">
+                                  <div className="wb-track-label">{track.label || "Untitled"}</div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </React.Fragment>
                   );
                 })}
                 {archivedTasks.length === 0 && <div className="wb-muted">No archived tasks.</div>}
