@@ -14,6 +14,7 @@ import {
   trackDiff,
 } from "../api/client";
 import type { Health } from "../api/client";
+import { parseWsJson } from "../utils/wsJson";
 
 type ConnectionStatus = "connecting" | "connected" | "disconnected";
 
@@ -304,13 +305,33 @@ export class SessionSupervisor {
   }
 
   private upsertEvents(entry: InternalEntry, incoming: SessionEvent[]) {
+    if (incoming.length === 0) return;
+
+    const lastExistingCreatedAt =
+      entry.events.length > 0 ? String(entry.events[entry.events.length - 1]?.created_at ?? "") : null;
+
+    let prevCreatedAt = lastExistingCreatedAt;
+    let needsSort = false;
+    const toAdd: SessionEvent[] = [];
+
     for (const ev of incoming) {
       const eid = idToString(ev.id) || `${ev.created_at}-${ev.event_type}`;
       if (entry.eventIdSet.has(eid)) continue;
       entry.eventIdSet.add(eid);
-      entry.events.push(ev);
+
+      const createdAt = String(ev.created_at ?? "");
+      if (prevCreatedAt && createdAt.localeCompare(prevCreatedAt) < 0) needsSort = true;
+      prevCreatedAt = createdAt;
+
+      toAdd.push(ev);
     }
-    entry.events.sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
+
+    if (toAdd.length === 0) return;
+
+    entry.events.push(...toAdd);
+    if (needsSort) {
+      entry.events.sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
+    }
     while (entry.events.length > MAX_EVENTS_PER_SESSION) {
       const first = entry.events.shift();
       if (!first) break;
@@ -319,6 +340,10 @@ export class SessionSupervisor {
     }
     const last = entry.events[entry.events.length - 1];
     if (last) entry.lastEventId = idToString(last.id) || entry.lastEventId;
+  }
+
+  private isTurnBoundaryEventType(eventType: unknown): boolean {
+    return eventType === "done" || eventType === "turn_interrupted" || eventType === "assistant_complete";
   }
 
   private async connect() {
@@ -417,33 +442,36 @@ export class SessionSupervisor {
       ws.addEventListener("error", onError);
       ws.addEventListener("close", onClose);
       ws.addEventListener("message", (ev) => {
-        try {
-          const data = JSON.parse(String(ev.data ?? "{}"));
-          const sid = idToString(data.session_id);
-          if (!sid) return;
-          const entry = this.entries.get(sid);
-          if (!entry) return;
-          if (String(data.type || "") === "lsp_diagnostics") {
-            const path = String(data.path || "");
-            if (path) {
-              entry.diagnosticsByPath[path] = Array.isArray(data.diagnostics) ? data.diagnostics : [];
+        void (async () => {
+          try {
+            const data = await parseWsJson(ev.data ?? "{}");
+            if (!data) return;
+            const sid = idToString(data.session_id);
+            if (!sid) return;
+            const entry = this.entries.get(sid);
+            if (!entry) return;
+            if (String(data.type || "") === "lsp_diagnostics") {
+              const path = String(data.path || "");
+              if (path) {
+                entry.diagnosticsByPath[path] = Array.isArray(data.diagnostics) ? data.diagnostics : [];
+              }
+              entry.updatedAtMs = Date.now();
+              this.publish();
+              return;
             }
+            this.upsertEvents(entry, [data as SessionEvent]);
             entry.updatedAtMs = Date.now();
-            this.publish();
-            return;
-          }
-          this.upsertEvents(entry, [data as SessionEvent]);
-          entry.updatedAtMs = Date.now();
-          // Keep hot sessions warm when they are producing events.
-          entry.warmUntilMs = Date.now() + WARM_TTL_MS;
+            // Keep hot sessions warm when they are producing events.
+            entry.warmUntilMs = Date.now() + WARM_TTL_MS;
 
-          if (data.event_type === "done" || data.event_type === "turn_interrupted") {
-            this.refreshQueueAndDiff(entry).catch(() => {});
+            if (this.isTurnBoundaryEventType(data.event_type)) {
+              this.refreshQueueAndDiff(entry).catch(() => {});
+            }
+            this.publish();
+          } catch {
+            // ignore
           }
-          this.publish();
-        } catch {
-          // ignore
-        }
+        })();
       });
     });
   }
@@ -476,12 +504,7 @@ export class SessionSupervisor {
     const after = entry.lastEventId;
     try {
       const evs = await listSessionEventsPage(sessionId, after, 500);
-      const sawTurnBoundary = evs.some(
-        (e) =>
-          e.event_type === "done" ||
-          e.event_type === "turn_interrupted" ||
-          e.event_type === "assistant_complete",
-      );
+      const sawTurnBoundary = evs.some((e) => this.isTurnBoundaryEventType(e.event_type));
       this.upsertEvents(entry, evs);
       entry.updatedAtMs = Date.now();
       this.publish();
@@ -515,7 +538,7 @@ export class SessionSupervisor {
         const entry = this.entries.get(sid);
         if (!entry) continue;
         const lastType = entry.events.length > 0 ? String(entry.events[entry.events.length - 1].event_type ?? "") : "";
-        const doneLike = lastType === "done" || lastType === "turn_interrupted" || lastType === "assistant_complete";
+        const doneLike = this.isTurnBoundaryEventType(lastType);
         // When connected, only poll sessions that appear to be mid-turn to avoid unnecessary load.
         // When disconnected, poll everything warm.
         if (this.snapshot.connection === "connected" && doneLike) continue;
