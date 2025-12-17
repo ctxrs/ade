@@ -1022,7 +1022,7 @@ button.linklike:hover {
   width: 100%;
   max-width: 100%;
   display: grid;
-  grid-template-columns: 18px 1fr auto;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
   align-items: center;
   gap: 8px;
   padding: 5px 8px;
@@ -1261,7 +1261,7 @@ button.linklike:hover {
 
 .wb-task-meta {
   position: relative;
-  width: 86px;
+  min-width: 44px;
   display: flex;
   align-items: center;
   justify-content: flex-end;
@@ -1272,7 +1272,6 @@ button.linklike:hover {
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
-  width: 100%;
   transition: opacity 120ms ease;
 }
 
