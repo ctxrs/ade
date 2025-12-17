@@ -1685,6 +1685,10 @@ export default function WorkbenchPage() {
                         openTaskMenu(tid, { x: e.clientX, y: e.clientY });
                       }}
                       onKeyDown={(e) => {
+                        const target = e.target as HTMLElement | null;
+                        if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) {
+                          return;
+                        }
                         if (e.key === "Enter" || e.key === " ") {
                           e.preventDefault();
                           setActiveTaskId(tid);
@@ -1835,6 +1839,13 @@ export default function WorkbenchPage() {
                           openTaskMenu(tid, { x: e.clientX, y: e.clientY });
                         }}
                         onKeyDown={(e) => {
+                          const target = e.target as HTMLElement | null;
+                          if (
+                            target &&
+                            (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)
+                          ) {
+                            return;
+                          }
                           if (e.key === "Enter" || e.key === " ") {
                             e.preventDefault();
                             setActiveTaskId(tid);
