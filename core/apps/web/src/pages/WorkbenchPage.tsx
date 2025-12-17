@@ -505,6 +505,7 @@ export default function WorkbenchPage() {
     setDictationRecording(false);
 
     const ws = dictationWsRef.current;
+    dictationWsRef.current = null;
 
     const mic = dictationMicRef.current;
     dictationMicRef.current = null;
@@ -515,6 +516,10 @@ export default function WorkbenchPage() {
 
     try {
       ws?.send(JSON.stringify({ type: "stop" }));
+    } catch {}
+
+    try {
+      ws?.close(1000, "client stop");
     } catch {}
 
     const base = dictationBaseRef.current;
@@ -573,12 +578,26 @@ export default function WorkbenchPage() {
     dictationTranscriptMsgsRef.current = 0;
 
     const openPromise = new Promise<void>((resolve, reject) => {
-      ws.addEventListener("open", () => resolve(), { once: true });
-      ws.addEventListener("error", () => reject(new Error("Failed to connect to dictation stream.")), { once: true });
+      let settled = false;
+      const settleResolve = () => {
+        if (settled) return;
+        settled = true;
+        resolve();
+      };
+      const settleReject = (err: Error) => {
+        if (settled) return;
+        settled = true;
+        reject(err);
+      };
+
+      ws.addEventListener("open", settleResolve, { once: true });
+      ws.addEventListener("error", () => settleReject(new Error("Failed to connect to dictation stream.")), { once: true });
+      ws.addEventListener("close", () => settleReject(new Error("Dictation stream closed before connecting.")), { once: true });
     });
 
     ws.addEventListener("message", (ev) => {
       void parseWsJson((ev as MessageEvent).data).then((data) => {
+        if (dictationWsRef.current !== ws) return;
         if (!data) return;
         const t = String(data.type ?? "");
         if (t === "ready") {
@@ -615,6 +634,7 @@ export default function WorkbenchPage() {
     });
 
     ws.addEventListener("close", () => {
+      if (dictationWsRef.current !== ws) return;
       dictationWsRef.current = null;
       setDictationRecording(false);
     });
@@ -634,12 +654,14 @@ export default function WorkbenchPage() {
         },
       });
     } catch (e: any) {
-      setDictationError(e?.message ?? String(e));
+      if (dictationWsRef.current === ws) setDictationError(e?.message ?? String(e));
       try {
         ws.close();
       } catch {}
-      dictationWsRef.current = null;
-      setDictationRecording(false);
+      if (dictationWsRef.current === ws) {
+        dictationWsRef.current = null;
+        setDictationRecording(false);
+      }
     }
   }, [dictationSettings, dictationRecording, draftPrompt, stopDictation]);
 
