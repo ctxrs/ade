@@ -58,6 +58,7 @@ import {
   updateTaskTitle,
 } from "../api/client";
 import { useSessionCacheSnapshot, useSessionEntry, useSessionSupervisor } from "../state/sessionSupervisor";
+import { loadWorkbenchSelectionV1, saveWorkbenchSelectionV1, type PersistedWorkbenchSelectionV1 } from "../state/uiStateStore";
 import { DiffReviewPane } from "../components/DiffReviewPane";
 import { EditPlanReviewPane } from "../components/EditPlanReviewPane";
 import { SessionView, buildWorkbenchThreadViewModel } from "./SessionPage";
@@ -227,7 +228,11 @@ export default function WorkbenchPage() {
 
   const [tasks, setTasks] = useState<Task[]>([]);
   const [taskQuery, setTaskQuery] = useState("");
-  const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
+  const [activeTaskId, setActiveTaskId] = useState<string | null>(() => {
+    const params = new URLSearchParams(location.search);
+    const taskId = params.get("task");
+    return taskId ? String(taskId) : null;
+  });
   const [archivedCollapsed, setArchivedCollapsed] = useState(true);
   const [taskMenu, setTaskMenu] = useState<{ taskId: string; style: React.CSSProperties } | null>(null);
   const taskMenuRef = useRef<HTMLDivElement | null>(null);
@@ -240,7 +245,11 @@ export default function WorkbenchPage() {
 
   const [tracks, setTracks] = useState<Track[]>([]);
   const [sessionsByTrack, setSessionsByTrack] = useState<Record<string, any[]>>({});
-  const [activeTrackId, setActiveTrackId] = useState<string | null>(null);
+  const [activeTrackId, setActiveTrackId] = useState<string | null>(() => {
+    const params = new URLSearchParams(location.search);
+    const trackId = params.get("track");
+    return trackId ? String(trackId) : null;
+  });
   const [activeWorktree, setActiveWorktree] = useState<Worktree | null>(null);
   const taskDetailAbortRef = useRef<AbortController | null>(null);
   const taskDetailLoadSeqRef = useRef(0);
@@ -259,38 +268,40 @@ export default function WorkbenchPage() {
     };
   }, [location.search]);
 
-  const selectionStorageKey = useMemo(
-    () => (workspaceId ? `contextWorkbenchSelection:${workspaceId}` : null),
-    [workspaceId],
-  );
+  const [persistedSelection, setPersistedSelection] = useState<PersistedWorkbenchSelectionV1 | null>(null);
+  const [persistedSelectionLoaded, setPersistedSelectionLoaded] = useState(false);
+  const [uiStateWarning, setUiStateWarning] = useState<string | null>(null);
+  const persistedSelectionLoadSeqRef = useRef(0);
+  const didAttemptSelectionRestoreRef = useRef(false);
 
-  const readStoredSelection = useCallback(() => {
-    if (!selectionStorageKey) return { taskId: null as string | null, trackId: null as string | null, sessionId: null as string | null };
-    try {
-      const raw = localStorage.getItem(selectionStorageKey);
-      if (!raw) return { taskId: null, trackId: null, sessionId: null };
-      const parsed = JSON.parse(raw);
-      return {
-        taskId: typeof parsed?.taskId === "string" ? parsed.taskId : null,
-        trackId: typeof parsed?.trackId === "string" ? parsed.trackId : null,
-        sessionId: typeof parsed?.sessionId === "string" ? parsed.sessionId : null,
-      };
-    } catch {
-      return { taskId: null, trackId: null, sessionId: null };
+  useEffect(() => {
+    didAttemptSelectionRestoreRef.current = false;
+  }, [workspaceId]);
+
+  useEffect(() => {
+    if (!workspaceId) {
+      setPersistedSelection(null);
+      setPersistedSelectionLoaded(false);
+      setUiStateWarning(null);
+      return;
     }
-  }, [selectionStorageKey]);
-
-  const writeStoredSelection = useCallback(
-    (sel: { taskId: string | null; trackId: string | null; sessionId: string | null }) => {
-      if (!selectionStorageKey) return;
-      try {
-        localStorage.setItem(selectionStorageKey, JSON.stringify(sel));
-      } catch {
-        // ignore
-      }
-    },
-    [selectionStorageKey],
-  );
+    setPersistedSelectionLoaded(false);
+    const seq = ++persistedSelectionLoadSeqRef.current;
+    loadWorkbenchSelectionV1(workspaceId)
+      .then((sel) => {
+        if (seq !== persistedSelectionLoadSeqRef.current) return;
+        setPersistedSelection(sel);
+        setPersistedSelectionLoaded(true);
+        setUiStateWarning(null);
+      })
+      .catch((e: unknown) => {
+        if (seq !== persistedSelectionLoadSeqRef.current) return;
+        const msg = e instanceof Error ? e.message : String(e);
+        setPersistedSelection(null);
+        setPersistedSelectionLoaded(true);
+        setUiStateWarning(`UI state persistence disabled: ${msg}`);
+      });
+  }, [workspaceId]);
 
   const updateWorkbenchUrlSelection = useCallback(
     (sel: { taskId: string | null; trackId: string | null; sessionId: string | null }, replace: boolean) => {
@@ -309,6 +320,27 @@ export default function WorkbenchPage() {
       navigate({ pathname: location.pathname, search: nextSearch }, { replace });
     },
     [location.pathname, location.search, navigate],
+  );
+
+  const normalizeWorkbenchSelection = useCallback(
+    (sel: { taskId: string | null; trackId: string | null; sessionId: string | null }) => {
+      if (!sel.taskId) return { taskId: null, trackId: null, sessionId: null };
+      if (!sel.trackId) return { taskId: sel.taskId, trackId: null, sessionId: null };
+      if (!sel.sessionId) return { taskId: sel.taskId, trackId: sel.trackId, sessionId: null };
+      return sel;
+    },
+    [],
+  );
+
+  const applyWorkbenchSelection = useCallback(
+    (sel: { taskId: string | null; trackId: string | null; sessionId: string | null }, replace: boolean) => {
+      const next = normalizeWorkbenchSelection(sel);
+      didAttemptSelectionRestoreRef.current = true;
+      setActiveTaskId(next.taskId);
+      setActiveTrackId(next.trackId);
+      updateWorkbenchUrlSelection(next, replace);
+    },
+    [normalizeWorkbenchSelection, updateWorkbenchUrlSelection],
   );
 
   // Keep tracks cached per task so we can show best-effort provider badges.
@@ -711,27 +743,49 @@ export default function WorkbenchPage() {
     loadAllTracks().catch(() => { });
   }, [tasks]);
 
-	  useEffect(() => {
-	    if (!workspaceId) return;
-	    if (selectionFromUrl.taskId) {
-	      // Treat the URL as the source of truth for selection, even before tasks/tracks have loaded.
-	      // Validation happens once tasks are hydrated.
-	      setActiveTaskId((prev) => (prev === selectionFromUrl.taskId ? prev : selectionFromUrl.taskId));
-	      if (selectionFromUrl.trackId) {
-	        setActiveTrackId((prev) => (prev === selectionFromUrl.trackId ? prev : selectionFromUrl.trackId));
-	      }
-	      if (tasks.length > 0) {
-	        const exists = tasks.some((t) => idToString(t.id) === selectionFromUrl.taskId);
-	        if (!exists) updateWorkbenchUrlSelection({ taskId: null, trackId: null, sessionId: null }, true);
-	      }
-	      return;
-	    }
-	    if (activeTaskId) return;
-	    const stored = readStoredSelection();
-    if (stored.taskId && tasks.some((t) => idToString(t.id) === stored.taskId)) {
-      setActiveTaskId(stored.taskId);
+  useEffect(() => {
+    if (!workspaceId) return;
+
+    if (selectionFromUrl.taskId) {
+      // Treat the URL as the source of truth for selection, even before tasks/tracks have loaded.
+      // Validation happens once tasks are hydrated.
+      didAttemptSelectionRestoreRef.current = true;
+      setActiveTaskId(selectionFromUrl.taskId);
+      setActiveTrackId(selectionFromUrl.trackId);
+      if (tasks.length > 0) {
+        const exists = tasks.some((t) => idToString(t.id) === selectionFromUrl.taskId);
+        if (!exists) updateWorkbenchUrlSelection({ taskId: null, trackId: null, sessionId: null }, true);
+      }
+      return;
     }
-  }, [workspaceId, tasks, activeTaskId, selectionFromUrl.taskId, readStoredSelection, updateWorkbenchUrlSelection]);
+
+    // URL cleared selection: clear local selection too.
+    if (activeTaskId !== null) setActiveTaskId(null);
+    if (activeTrackId !== null) setActiveTrackId(null);
+  }, [
+    workspaceId,
+    selectionFromUrl.taskId,
+    selectionFromUrl.trackId,
+    tasks,
+    updateWorkbenchUrlSelection,
+    activeTaskId,
+    activeTrackId,
+  ]);
+
+  useEffect(() => {
+    if (!workspaceId) return;
+    if (selectionFromUrl.taskId) return;
+    if (!persistedSelectionLoaded) return;
+    if (didAttemptSelectionRestoreRef.current) return;
+    didAttemptSelectionRestoreRef.current = true;
+
+    const stored = persistedSelection;
+    if (!stored?.taskId) return;
+    updateWorkbenchUrlSelection(
+      { taskId: stored.taskId, trackId: stored.trackId, sessionId: stored.sessionId },
+      true,
+    );
+  }, [workspaceId, selectionFromUrl.taskId, persistedSelectionLoaded, persistedSelection, updateWorkbenchUrlSelection]);
 
   useEffect(() => {
     if (!providers.length) return;
@@ -759,11 +813,10 @@ export default function WorkbenchPage() {
       controller.abort();
       return;
     }
-    const stored = readStoredSelection();
     const useUrl = selectionFromUrl.taskId === activeTaskId;
-    const preferredTrackId = useUrl ? selectionFromUrl.trackId : stored.trackId;
-    const preferredSessionId = useUrl ? selectionFromUrl.sessionId : stored.sessionId;
-    // Prime selection from URL/storage to avoid clobbering deep-links while task detail hydrates.
+    const preferredTrackId = useUrl ? selectionFromUrl.trackId : null;
+    const preferredSessionId = useUrl ? selectionFromUrl.sessionId : null;
+    // Prime selection from URL to avoid clobbering deep-links while task detail hydrates.
     setActiveTrackId(preferredTrackId ?? null);
     setTracks([]);
     setSessionsByTrack({});
@@ -773,7 +826,6 @@ export default function WorkbenchPage() {
     return () => controller.abort();
   }, [
     activeTaskId,
-    readStoredSelection,
     selectionFromUrl.sessionId,
     selectionFromUrl.taskId,
     selectionFromUrl.trackId,
@@ -1094,12 +1146,14 @@ export default function WorkbenchPage() {
           delete next[taskId];
           return next;
         });
-        if (activeTaskId === taskId) setActiveTaskId(null);
+        if (activeTaskId === taskId) {
+          applyWorkbenchSelection({ taskId: null, trackId: null, sessionId: null }, true);
+        }
       } catch (e: any) {
         window.alert(e?.message ?? "Failed to delete task.");
       }
     },
-    [activeTaskId, tasks],
+    [activeTaskId, tasks, applyWorkbenchSelection],
   );
 
   const openConvoMenu = useCallback((triggerEl: HTMLElement) => {
@@ -1138,7 +1192,17 @@ export default function WorkbenchPage() {
     if (shouldDeferUrlSync) return;
 
     const next = { taskId: activeTaskId, trackId: activeTrackId, sessionId: activeSessionId };
-    writeStoredSelection(next);
+    const persisted: PersistedWorkbenchSelectionV1 = {
+      v: 1,
+      taskId: next.taskId,
+      trackId: next.taskId ? next.trackId : null,
+      sessionId: next.taskId && next.trackId ? next.sessionId : null,
+    };
+    setPersistedSelection(persisted);
+    saveWorkbenchSelectionV1(workspaceId, persisted).catch((e: unknown) => {
+      const msg = e instanceof Error ? e.message : String(e);
+      setUiStateWarning(`UI state persistence disabled: ${msg}`);
+    });
 
     const matchesUrl =
       selectionFromUrl.taskId === next.taskId &&
@@ -1155,7 +1219,6 @@ export default function WorkbenchPage() {
     selectionFromUrl.taskId,
     selectionFromUrl.trackId,
     updateWorkbenchUrlSelection,
-    writeStoredSelection,
   ]);
 
   const showDebugIds = useMemo(() => {
@@ -1969,10 +2032,20 @@ export default function WorkbenchPage() {
         </div>
       </div>
 
+      {uiStateWarning && (
+        <div className="banner" style={{ margin: "8px 12px 0" }}>
+          {uiStateWarning}
+        </div>
+      )}
+
       <div className="wb-sidebar" aria-hidden={sidebarCollapsed}>
         <div className="wb-sidebar-top">
           <div className="wb-sidebar-header">
-            <button type="button" className="wb-new-agent" onClick={() => setActiveTaskId(null)}>
+            <button
+              type="button"
+              className="wb-new-agent"
+              onClick={() => applyWorkbenchSelection({ taskId: null, trackId: null, sessionId: null }, false)}
+            >
               New Task
             </button>
             <button
@@ -2032,7 +2105,7 @@ export default function WorkbenchPage() {
                     <div
                       className={`wb-task-row ${selected ? "wb-task-row-active" : ""}`}
                       role="listitem"
-                      onClick={() => setActiveTaskId(tid)}
+                      onClick={() => applyWorkbenchSelection({ taskId: tid, trackId: null, sessionId: null }, false)}
                       onContextMenu={(e) => {
                         e.preventDefault();
                         e.stopPropagation();
@@ -2045,7 +2118,7 @@ export default function WorkbenchPage() {
                         }
                         if (e.key === "Enter" || e.key === " ") {
                           e.preventDefault();
-                          setActiveTaskId(tid);
+                          applyWorkbenchSelection({ taskId: tid, trackId: null, sessionId: null }, false);
                         }
                       }}
                       tabIndex={0}
@@ -2185,29 +2258,29 @@ export default function WorkbenchPage() {
                     <React.Fragment key={tid}>
                       <div
                         className={`wb-task-row wb-task-row-archived ${selected ? "wb-task-row-active" : ""}`}
-                        role="listitem"
-                        onClick={() => setActiveTaskId(tid)}
-                        onContextMenu={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          openTaskMenu(tid, { x: e.clientX, y: e.clientY });
-                        }}
-                        onKeyDown={(e) => {
+                      role="listitem"
+                      onClick={() => applyWorkbenchSelection({ taskId: tid, trackId: null, sessionId: null }, false)}
+                      onContextMenu={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        openTaskMenu(tid, { x: e.clientX, y: e.clientY });
+                      }}
+                      onKeyDown={(e) => {
                           const target = e.target as HTMLElement | null;
                           if (
                             target &&
                             (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)
                           ) {
                             return;
-                          }
-                          if (e.key === "Enter" || e.key === " ") {
-                            e.preventDefault();
-                            setActiveTaskId(tid);
-                          }
-                        }}
-                        tabIndex={0}
-                        title={title}
-                      >
+                        }
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          applyWorkbenchSelection({ taskId: tid, trackId: null, sessionId: null }, false);
+                        }
+                      }}
+                      tabIndex={0}
+                      title={title}
+                    >
                         <div className="wb-task-leading" aria-hidden="true">
                           {/* TODO: multi-track indicator/dropdown (design TBD). */}
                           {providerCount > 1 ? (
@@ -2920,7 +2993,9 @@ export default function WorkbenchPage() {
                         key={trid}
                         type="button"
                         className={`wb-trackcard ${selected ? "wb-trackcard-active" : ""}`}
-                        onClick={() => setActiveTrackId(trid)}
+                        onClick={() =>
+                          activeTaskId && applyWorkbenchSelection({ taskId: activeTaskId, trackId: trid, sessionId: null }, false)
+                        }
                       >
                         <div className="wb-trackcard-title">{model}</div>
                         <div className="wb-trackcard-sub">{status}</div>
