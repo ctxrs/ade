@@ -1008,8 +1008,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
             const id = String(h.id);
             const label = String(h.label ?? id);
             const installed = ns.providersById[id]?.installed ?? false;
-            const installSupported =
-              ns.providersById[id]?.details?.install_supported === "true" || id === "codex" || id === "claude" || id === "gemini";
+            const installSupported = ns.providersById[id]?.details?.install_supported === "true";
             const installUi = ns.providerInstallsById[id];
             const installRunning = installUi?.state === "running" || ns.providersById[id]?.details?.install_running === "true";
             const installPct = installUi?.pct ?? null;

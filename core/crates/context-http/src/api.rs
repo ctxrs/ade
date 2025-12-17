@@ -3179,6 +3179,11 @@ fn default_agent_server_command(provider_id: &str) -> Option<(String, Vec<String
         "codex" => Some(("codex-acp".to_string(), vec![])),
         "claude" => Some(("claude-code-acp".to_string(), vec![])),
         "gemini" => Some(("gemini".to_string(), vec!["--experimental-acp".to_string()])),
+        "qwen" => Some(("qwen".to_string(), vec!["--experimental-acp".to_string()])),
+        "opencode" => Some(("opencode".to_string(), vec!["acp".to_string()])),
+        "mistral" => Some(("vibe-acp".to_string(), vec![])),
+        "goose" => Some(("goose".to_string(), vec!["acp".to_string()])),
+        "kimi" => Some(("kimi".to_string(), vec!["--acp".to_string()])),
         _ => None,
     }
 }
@@ -3428,7 +3433,16 @@ async fn install_all_providers(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<InstallStartResponse>>, StatusCode> {
     let mut out = Vec::new();
-    for id in ["codex", "claude", "gemini"] {
+    for id in [
+        "codex",
+        "claude",
+        "gemini",
+        "qwen",
+        "opencode",
+        "mistral",
+        "goose",
+        "kimi",
+    ] {
         let (install_id, started_new) = state.start_install(id.to_string()).await;
         if started_new {
             let state2 = state.clone();

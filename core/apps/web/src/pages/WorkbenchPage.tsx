@@ -11,6 +11,7 @@ import {
   GitBranch,
   Image,
   Laptop,
+  LayersPlus,
   MessageSquare,
   Mic,
   Settings,
@@ -18,6 +19,7 @@ import {
 import {
   DictationSettings,
   EditPlanSummary,
+  InstallInfo,
   LspStatus,
   MessageAttachment,
   ProviderOptions,
@@ -34,6 +36,7 @@ import {
   createTrack,
   deleteTask,
   getDaemonBaseUrl,
+  getInstall,
   getLspStatus,
   getProviderOptions,
   getSettings,
@@ -46,6 +49,8 @@ import {
   listSessionsForTrack,
   listTasks,
   listTracks,
+  markTaskRead as markTaskReadApi,
+  markTaskUnread as markTaskUnreadApi,
   postMessage,
   trackDiff,
   unarchiveTask,
@@ -66,6 +71,12 @@ import { pickPreferredSession, pickPreferredSessionId, pickPreferredTrackId } fr
 import { imageFilesToInlineAttachments } from "../utils/messageAttachments";
 import { parseModelId } from "../utils/modelEffort";
 import { formatRelativeAgeShort } from "../utils/relativeTime";
+import {
+  composerDraftKeyNewTaskV1,
+  loadComposerDraftV1,
+  removeComposerDraft,
+  saveComposerDraftV1,
+} from "../utils/composerDraftPersistence";
 
 function deriveTaskTitle(prompt: string): string {
   const line = prompt.trim().split("\n")[0] ?? "";
@@ -173,7 +184,17 @@ export default function WorkbenchPage() {
   const [sidebarResizing, setSidebarResizing] = useState(false);
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [providers, setProviders] = useState<ProviderStatus[]>([]);
-  const [providerInstallBusyById, setProviderInstallBusyById] = useState<Record<string, boolean>>({});
+  const [providerInstallsById, setProviderInstallsById] = useState<
+    Record<
+      string,
+      | {
+        installId: string;
+        state: InstallInfo["state"];
+        pct: number | null;
+      }
+      | undefined
+    >
+  >({});
   const [providerOptions, setProviderOptions] = useState<Record<string, ProviderOptions | undefined>>({});
   const providersById = useMemo(
     () => Object.fromEntries(providers.map((p) => [p.provider_id, p])),
@@ -192,7 +213,6 @@ export default function WorkbenchPage() {
   const [taskQuery, setTaskQuery] = useState("");
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const [archivedCollapsed, setArchivedCollapsed] = useState(true);
-  const [taskSeenAssistantAtById, setTaskSeenAssistantAtById] = useState<Record<string, string>>({});
   const [taskMenu, setTaskMenu] = useState<{ taskId: string; style: React.CSSProperties } | null>(null);
   const taskMenuRef = useRef<HTMLDivElement | null>(null);
   const [renamingTaskId, setRenamingTaskId] = useState<string | null>(null);
@@ -206,6 +226,10 @@ export default function WorkbenchPage() {
   const [sessionsByTrack, setSessionsByTrack] = useState<Record<string, any[]>>({});
   const [activeTrackId, setActiveTrackId] = useState<string | null>(null);
   const [activeWorktree, setActiveWorktree] = useState<Worktree | null>(null);
+  const taskDetailAbortRef = useRef<AbortController | null>(null);
+  const taskDetailLoadSeqRef = useRef(0);
+  const editPlansAbortRef = useRef<AbortController | null>(null);
+  const editPlansLoadSeqRef = useRef(0);
 
   const selectionFromUrl = useMemo(() => {
     const params = new URLSearchParams(location.search);
@@ -325,6 +349,30 @@ export default function WorkbenchPage() {
   }, []);
 
   useEffect(() => {
+    if (!workspaceId) return;
+    const key = composerDraftKeyNewTaskV1(workspaceId);
+    const draft = loadComposerDraftV1(key);
+    if (!draft) return;
+    setDraftPrompt(draft.text);
+    setDraftMode(draft.modeId ?? "default");
+  }, [workspaceId]);
+
+  useEffect(() => {
+    if (!workspaceId) return;
+    const key = composerDraftKeyNewTaskV1(workspaceId);
+    const timer = window.setTimeout(() => {
+      const text = draftPrompt;
+      const modeId = draftMode;
+      if (text.trim().length === 0 && modeId === "default") {
+        removeComposerDraft(key);
+        return;
+      }
+      saveComposerDraftV1(key, { v: 1, text, modeId });
+    }, 200);
+    return () => window.clearTimeout(timer);
+  }, [draftMode, draftPrompt, workspaceId]);
+
+  useEffect(() => {
     const onResize = () => {
       const max = Math.max(170, window.innerWidth - 240);
       setSidebarWidth((w) => Math.min(max, Math.max(170, Math.round(w))));
@@ -370,23 +418,6 @@ export default function WorkbenchPage() {
       // ignore
     }
   }, [sidebarWidth, workspaceId]);
-
-  useLayoutEffect(() => {
-    if (!workspaceId) return;
-    const key = `wb.taskSeenAssistantAtById.${workspaceId}`;
-    try {
-      const parsed = JSON.parse(localStorage.getItem(key) ?? "{}");
-      if (parsed && typeof parsed === "object") setTaskSeenAssistantAtById(parsed);
-      else setTaskSeenAssistantAtById({});
-    } catch {
-      setTaskSeenAssistantAtById({});
-    }
-  }, [workspaceId]);
-
-  useEffect(() => {
-    if (!workspaceId) return;
-    localStorage.setItem(`wb.taskSeenAssistantAtById.${workspaceId}`, JSON.stringify(taskSeenAssistantAtById));
-  }, [taskSeenAssistantAtById, workspaceId]);
 
   useEffect(() => {
     const onPointerDown = (e: PointerEvent) => {
@@ -452,8 +483,12 @@ export default function WorkbenchPage() {
     taskId: string,
     preferredTrackId: string | null,
     preferredSessionId: string | null,
+    signal?: AbortSignal,
+    seq?: number,
   ) => {
     const trs = await listTracks(taskId);
+    if (signal?.aborted) return;
+    if (seq !== undefined && seq !== taskDetailLoadSeqRef.current) return;
     setTracks(trs);
     const map: Record<string, any[]> = {};
     await Promise.all(
@@ -462,6 +497,8 @@ export default function WorkbenchPage() {
         map[trid] = await listSessionsForTrack(trid);
       }),
     );
+    if (signal?.aborted) return;
+    if (seq !== undefined && seq !== taskDetailLoadSeqRef.current) return;
     setSessionsByTrack(map);
     const trackIds = trs.map((tr) => idToString(tr.id)).filter(Boolean);
     setActiveTrackId((prev) => {
@@ -482,35 +519,134 @@ export default function WorkbenchPage() {
     getLspStatus().then(setLspStatus).catch(() => setLspStatus(null));
   }, [workspaceId]);
 
-  const anyProviderInstallRunning = useMemo(
-    () => providers.some((p) => p.details?.install_running === "true"),
-    [providers],
-  );
+  const attachProviderInstall = useCallback((providerId: string, installId: string) => {
+    setProviderInstallsById((prev) => {
+      if (prev[providerId]?.installId === installId) return prev;
+      return {
+        ...prev,
+        [providerId]: {
+          installId,
+          state: "running",
+          pct: prev[providerId]?.pct ?? 0,
+        },
+      };
+    });
+  }, []);
 
   useEffect(() => {
-    if (!anyProviderInstallRunning) return;
-    const t = window.setInterval(() => {
-      listProviders().then(setProviders).catch(() => { });
-    }, 1500);
-    return () => window.clearInterval(t);
-  }, [anyProviderInstallRunning, setProviders, listProviders]);
+    for (const p of providers) {
+      const installId = p.details?.install_id;
+      const running = p.details?.install_running === "true";
+      if (running && installId && !providerInstallsById[p.provider_id]) {
+        attachProviderInstall(p.provider_id, installId);
+      }
+    }
+  }, [providers, providerInstallsById, attachProviderInstall]);
+
+  useEffect(() => {
+    const running = Object.entries(providerInstallsById).flatMap(([providerId, s]) =>
+      s && s.state === "running" ? ([[providerId, s]] as const) : [],
+    );
+    if (running.length === 0) return;
+
+    const stagePct: Record<string, number> = {
+      start: 2,
+      download: 10,
+      node: 15,
+      node_download: 18,
+      node_extract: 22,
+      prepare: 25,
+      venv: 35,
+      npm_install: 65,
+      pip_install: 70,
+      extract: 78,
+      entrypoint: 80,
+      inspect: 90,
+      refresh: 95,
+      registry: 98,
+    };
+
+    let cancelled = false;
+    const tick = async () => {
+      if (cancelled) return;
+      let needsProviderRefresh = false;
+      await Promise.all(
+        running.map(async ([providerId, s]) => {
+          try {
+            const info = await getInstall(s.installId);
+            const last = info.last_event;
+            const pct =
+              typeof last?.bytes === "number" &&
+                typeof last?.total_bytes === "number" &&
+                last.total_bytes > 0
+                ? Math.max(0, Math.min(100, Math.round((last.bytes / last.total_bytes) * 100)))
+                : typeof last?.stage === "string"
+                  ? (stagePct[last.stage] ?? s.pct ?? 0)
+                  : (s.pct ?? 0);
+
+            setProviderInstallsById((prev) => {
+              const existing = prev[providerId];
+              if (!existing || existing.installId !== s.installId) return prev;
+              return {
+                ...prev,
+                [providerId]: { installId: s.installId, state: info.state, pct },
+              };
+            });
+
+            if (info.state !== "running") {
+              needsProviderRefresh = true;
+            }
+          } catch {
+            // ignore poll errors
+          }
+        }),
+      );
+
+      if (needsProviderRefresh) {
+        try {
+          const next = await listProviders();
+          if (!cancelled) setProviders(next);
+        } catch {
+          // ignore
+        }
+      }
+    };
+
+    tick();
+    const t = window.setInterval(tick, 1000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(t);
+    };
+  }, [providerInstallsById, getInstall, listProviders]);
 
   const installProviderFromMenu = useCallback(
     async (providerId: string) => {
       setStartError(null);
-      setProviderInstallBusyById((prev) => ({ ...prev, [providerId]: true }));
       try {
-        await installProvider(providerId);
-        const next = await listProviders();
-        setProviders(next);
+        const { install_id } = await installProvider(providerId);
+        attachProviderInstall(providerId, install_id);
       } catch (e: any) {
         setStartError(e?.message ? String(e.message) : String(e));
-      } finally {
-        setProviderInstallBusyById((prev) => ({ ...prev, [providerId]: false }));
       }
     },
-    [setProviders, setStartError, installProvider, listProviders],
+    [setStartError, installProvider, attachProviderInstall],
   );
+
+  useEffect(() => {
+    if (Object.keys(providerInstallsById).length === 0) return;
+    setProviderInstallsById((prev) => {
+      let changed = false;
+      const next: typeof prev = { ...prev };
+      for (const [providerId, s] of Object.entries(prev)) {
+        if (s?.state === "succeeded" && providersById[providerId]?.installed) {
+          delete next[providerId];
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [providerInstallsById, providersById]);
 
   // Load tracks for all tasks (for expansion UI)
   useEffect(() => {
@@ -568,19 +704,31 @@ export default function WorkbenchPage() {
   }, [providers.length, providersById, defaultProviderId]);
 
   useEffect(() => {
+    taskDetailAbortRef.current?.abort();
+    const controller = new AbortController();
+    taskDetailAbortRef.current = controller;
+    const seq = ++taskDetailLoadSeqRef.current;
+
     if (!activeTaskId) {
       setTracks([]);
       setSessionsByTrack({});
-      setActiveTrackId(null);
       setEditPlans([]);
       setActiveEditPlanId(null);
+      controller.abort();
       return;
     }
     const stored = readStoredSelection();
     const useUrl = selectionFromUrl.taskId === activeTaskId;
     const preferredTrackId = useUrl ? selectionFromUrl.trackId : stored.trackId;
     const preferredSessionId = useUrl ? selectionFromUrl.sessionId : stored.sessionId;
-    refreshTaskDetail(activeTaskId, preferredTrackId, preferredSessionId).catch(() => { });
+    // Prime selection from URL/storage to avoid clobbering deep-links while task detail hydrates.
+    setActiveTrackId(preferredTrackId ?? null);
+    setTracks([]);
+    setSessionsByTrack({});
+    setEditPlans([]);
+    setActiveEditPlanId(null);
+    refreshTaskDetail(activeTaskId, preferredTrackId, preferredSessionId, controller.signal, seq).catch(() => { });
+    return () => controller.abort();
   }, [
     activeTaskId,
     readStoredSelection,
@@ -590,21 +738,34 @@ export default function WorkbenchPage() {
   ]);
 
   useEffect(() => {
+    editPlansAbortRef.current?.abort();
+    const controller = new AbortController();
+    editPlansAbortRef.current = controller;
+    const seq = ++editPlansLoadSeqRef.current;
+
     if (!activeTrackId) {
       setEditPlans([]);
       setActiveEditPlanId(null);
+      controller.abort();
       return;
     }
-    listEditPlansForTrack(activeTrackId)
+    setEditPlans([]);
+    setActiveEditPlanId(null);
+    listEditPlansForTrack(activeTrackId, controller.signal)
       .then((plans) => {
+        if (controller.signal.aborted) return;
+        if (seq !== editPlansLoadSeqRef.current) return;
         setEditPlans(plans);
         const first = plans[0] ? idToString(plans[0].id) : null;
         setActiveEditPlanId((prev) => (prev && plans.some((p) => idToString(p.id) === prev) ? prev : first));
       })
-      .catch(() => {
+      .catch((e: any) => {
+        if (e?.name === "AbortError") return;
         setEditPlans([]);
         setActiveEditPlanId(null);
       });
+
+    return () => controller.abort();
   }, [activeTrackId]);
 
   const sortedTasks = useMemo(() => {
@@ -758,20 +919,50 @@ export default function WorkbenchPage() {
   const activeTasks = useMemo(() => filteredTasks.filter((t) => !t.archived_at), [filteredTasks]);
   const archivedTasks = useMemo(() => filteredTasks.filter((t) => !!t.archived_at), [filteredTasks]);
 
-  const markTaskSeen = useCallback(
-    (taskId: string) => {
-      const t = tasks.find((x) => idToString(x.id) === taskId);
-      const last = t?.last_assistant_message_at ?? null;
-      if (!last) return;
-      setTaskSeenAssistantAtById((prev) => ({ ...prev, [taskId]: last }));
-    },
-    [tasks],
-  );
+  const markTaskReadInFlightRef = useRef<Record<string, Promise<void>>>({});
+
+  const markTaskRead = useCallback(async (taskId: string) => {
+    if (markTaskReadInFlightRef.current[taskId]) return;
+    const p = (async () => {
+      try {
+        const updated = await markTaskReadApi(taskId);
+        setTasks((prev) => prev.map((t) => (idToString(t.id) === taskId ? { ...t, ...updated } : t)));
+      } catch {
+        // ignore
+      }
+    })().finally(() => {
+      delete markTaskReadInFlightRef.current[taskId];
+    });
+    markTaskReadInFlightRef.current[taskId] = p;
+    await p;
+  }, []);
+
+  const markTaskUnread = useCallback(async (taskId: string) => {
+    try {
+      const updated = await markTaskUnreadApi(taskId);
+      setTasks((prev) => prev.map((t) => (idToString(t.id) === taskId ? { ...t, ...updated } : t)));
+    } catch {
+      // ignore
+    }
+  }, []);
 
   useEffect(() => {
     if (!activeTaskId) return;
-    markTaskSeen(activeTaskId);
-  }, [activeTaskId, markTaskSeen]);
+    const tid = activeTaskId;
+    const t = tasks.find((x) => idToString(x.id) === tid);
+    if (!t) return;
+    const working = taskLiveInfo.workingByTask.has(tid);
+    const serverLastAssistantMs = parseMs(t.last_assistant_message_at ?? null);
+    const liveLastAssistantMs = taskLiveInfo.lastAssistantMsByTask[tid] ?? null;
+    const lastAssistantMs =
+      liveLastAssistantMs !== null && serverLastAssistantMs !== null
+        ? Math.max(liveLastAssistantMs, serverLastAssistantMs)
+        : liveLastAssistantMs ?? serverLastAssistantMs;
+    const seenMs = parseMs(t.assistant_seen_at ?? null);
+    const unread = !working && lastAssistantMs !== null && (seenMs === null || lastAssistantMs > seenMs);
+    if (!unread) return;
+    void markTaskRead(tid);
+  }, [activeTaskId, markTaskRead, taskLiveInfo.lastAssistantMsByTask, taskLiveInfo.workingByTask, tasks]);
 
   useEffect(() => {
     if (!renamingTaskId) return;
@@ -835,7 +1026,7 @@ export default function WorkbenchPage() {
         setTasks((prev) => prev.map((t) => (idToString(t.id) === taskId ? { ...t, ...updated } : t)));
         cancelRenameTask();
       } catch (e: any) {
-        window.alert(e?.message ?? "Failed to rename task.");
+        window.alert(e?.message ?? "Failed to rename.");
       }
     },
     [cancelRenameTask, renameDraft, tasks],
@@ -859,11 +1050,6 @@ export default function WorkbenchPage() {
           delete next[taskId];
           return next;
         });
-        setTaskSeenAssistantAtById((prev) => {
-          const next = { ...prev };
-          delete next[taskId];
-          return next;
-        });
         if (activeTaskId === taskId) setActiveTaskId(null);
       } catch (e: any) {
         window.alert(e?.message ?? "Failed to delete task.");
@@ -871,25 +1057,6 @@ export default function WorkbenchPage() {
     },
     [activeTaskId, tasks],
   );
-
-  const markTaskRead = useCallback(
-    (taskId: string) => {
-      const t = tasks.find((x) => idToString(x.id) === taskId);
-      const last = t?.last_assistant_message_at ?? null;
-      if (!last) return;
-      setTaskSeenAssistantAtById((prev) => ({ ...prev, [taskId]: last }));
-    },
-    [tasks],
-  );
-
-  const markTaskUnread = useCallback((taskId: string) => {
-    setTaskSeenAssistantAtById((prev) => {
-      if (!prev[taskId]) return prev;
-      const next = { ...prev };
-      delete next[taskId];
-      return next;
-    });
-  }, []);
 
   const openConvoMenu = useCallback((triggerEl: HTMLElement) => {
     const rect = triggerEl.getBoundingClientRect();
@@ -1796,7 +1963,7 @@ export default function WorkbenchPage() {
                   liveLastAssistantMs !== null && serverLastAssistantMs !== null
                     ? Math.max(liveLastAssistantMs, serverLastAssistantMs)
                     : liveLastAssistantMs ?? serverLastAssistantMs;
-                const seenMs = parseMs(taskSeenAssistantAtById[tid] ?? null);
+                const seenMs = parseMs(t.assistant_seen_at ?? null);
                 const unread = !working && lastAssistantMs !== null && (seenMs === null || lastAssistantMs > seenMs);
                 const age = formatRelativeAgeShort(t.last_activity_at ?? t.updated_at ?? t.created_at) || "Now";
                 const dotKind = hasError ? "error" : unread ? "unread" : null;
@@ -1804,6 +1971,7 @@ export default function WorkbenchPage() {
                   (providerIdsByTaskFromSessions[tid] ?? []).length > 0
                     ? providerIdsByTaskFromSessions[tid]
                     : (taskProviderIdsByTaskId[tid] ?? []);
+                const providerCount = new Set(providerIds).size;
                 const harnesses = providerIds
                   .map((pid) => HARNESS_CATALOG.find((h) => h.id === pid))
                   .filter(Boolean)
@@ -1821,6 +1989,10 @@ export default function WorkbenchPage() {
                         openTaskMenu(tid, { x: e.clientX, y: e.clientY });
                       }}
                       onKeyDown={(e) => {
+                        const target = e.target as HTMLElement | null;
+                        if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) {
+                          return;
+                        }
                         if (e.key === "Enter" || e.key === " ") {
                           e.preventDefault();
                           setActiveTaskId(tid);
@@ -1831,22 +2003,17 @@ export default function WorkbenchPage() {
                     >
                       <div className="wb-task-leading" aria-hidden="true">
                         {/* TODO: multi-track indicator/dropdown (design TBD). */}
-                        <div
-                          className={`wb-task-harness-stack wb-task-harness-stack-${Math.min(3, Math.max(1, harnesses.length || 1))}`}
-                        >
-                          {harnesses.length > 0 ? (
-                            harnesses.map((h, idx) => (
-                              <img
-                                key={`${tid}-${h.id}-${idx}`}
-                                className={`wb-task-harness-logo ${h.invertInDark ? "wb-invert" : ""}`}
-                                src={h.logoSrc}
-                                alt=""
-                              />
-                            ))
-                          ) : (
-                            <span className="wb-task-harness-fallback" aria-hidden="true" />
-                          )}
-                        </div>
+                        {providerCount > 1 ? (
+                          <LayersPlus className="wb-task-harness-multi" size={16} />
+                        ) : harnesses.length > 0 ? (
+                          <img
+                            className={`wb-task-harness-logo ${harnesses[0].invertInDark ? "wb-invert" : ""}`}
+                            src={harnesses[0].logoSrc}
+                            alt=""
+                          />
+                        ) : (
+                          <span className="wb-task-harness-fallback" aria-hidden="true" />
+                        )}
                       </div>
                       <div className="wb-task-body">
                         {renamingTaskId === tid ? (
@@ -1950,7 +2117,7 @@ export default function WorkbenchPage() {
                     liveLastAssistantMs !== null && serverLastAssistantMs !== null
                       ? Math.max(liveLastAssistantMs, serverLastAssistantMs)
                       : liveLastAssistantMs ?? serverLastAssistantMs;
-                  const seenMs = parseMs(taskSeenAssistantAtById[tid] ?? null);
+                  const seenMs = parseMs(t.assistant_seen_at ?? null);
                   const unread = !working && lastAssistantMs !== null && (seenMs === null || lastAssistantMs > seenMs);
                   const age = formatRelativeAgeShort(t.last_activity_at ?? t.updated_at ?? t.created_at) || "Now";
                   const dotKind = hasError ? "error" : unread ? "unread" : null;
@@ -1958,6 +2125,7 @@ export default function WorkbenchPage() {
                     (providerIdsByTaskFromSessions[tid] ?? []).length > 0
                       ? providerIdsByTaskFromSessions[tid]
                       : (taskProviderIdsByTaskId[tid] ?? []);
+                  const providerCount = new Set(providerIds).size;
                   const harnesses = providerIds
                     .map((pid) => HARNESS_CATALOG.find((h) => h.id === pid))
                     .filter(Boolean)
@@ -1975,6 +2143,13 @@ export default function WorkbenchPage() {
                           openTaskMenu(tid, { x: e.clientX, y: e.clientY });
                         }}
                         onKeyDown={(e) => {
+                          const target = e.target as HTMLElement | null;
+                          if (
+                            target &&
+                            (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)
+                          ) {
+                            return;
+                          }
                           if (e.key === "Enter" || e.key === " ") {
                             e.preventDefault();
                             setActiveTaskId(tid);
@@ -1985,22 +2160,17 @@ export default function WorkbenchPage() {
                       >
                         <div className="wb-task-leading" aria-hidden="true">
                           {/* TODO: multi-track indicator/dropdown (design TBD). */}
-                          <div
-                            className={`wb-task-harness-stack wb-task-harness-stack-${Math.min(3, Math.max(1, harnesses.length || 1))}`}
-                          >
-                            {harnesses.length > 0 ? (
-                              harnesses.map((h, idx) => (
-                                <img
-                                  key={`${tid}-${h.id}-${idx}`}
-                                  className={`wb-task-harness-logo ${h.invertInDark ? "wb-invert" : ""}`}
-                                  src={h.logoSrc}
-                                  alt=""
-                                />
-                              ))
-                            ) : (
-                              <span className="wb-task-harness-fallback" aria-hidden="true" />
-                            )}
-                          </div>
+                          {providerCount > 1 ? (
+                            <LayersPlus className="wb-task-harness-multi" size={16} />
+                          ) : harnesses.length > 0 ? (
+                            <img
+                              className={`wb-task-harness-logo ${harnesses[0].invertInDark ? "wb-invert" : ""}`}
+                              src={harnesses[0].logoSrc}
+                              alt=""
+                            />
+                          ) : (
+                            <span className="wb-task-harness-fallback" aria-hidden="true" />
+                          )}
                         </div>
                         <div className="wb-task-body">
                           {renamingTaskId === tid ? (
@@ -2127,7 +2297,7 @@ export default function WorkbenchPage() {
                 setModeId={setDraftMode}
                 harnessCatalog={HARNESS_CATALOG}
                 providersById={providersById}
-                providerInstallBusyById={providerInstallBusyById}
+                providerInstallsById={providerInstallsById}
                 onInstallProvider={installProviderFromMenu}
                 providerOptions={providerOptions}
                 ensureProviderOptions={ensureProviderOptions}
@@ -2293,7 +2463,7 @@ export default function WorkbenchPage() {
                                   const installed = providersById[id]?.installed ?? false;
                                   const installSupported = providersById[id]?.details?.install_supported === "true";
                                   const installRunning = providersById[id]?.details?.install_running === "true";
-                                  const installBusy = providerInstallBusyById[id] ?? false;
+                                  const installBusy = providerInstallsById[id]?.state === "running";
                                   const expanded = expandedHarnessId === id;
                                   const canConfigureModels = useMultipleAgents && draftTracks.length > 1;
                                   const rows = draftTracks.filter((t) => t.providerId === id);
@@ -2342,7 +2512,14 @@ export default function WorkbenchPage() {
                                               {installRunning || installBusy ? "Installing…" : "Install"}
                                             </button>
                                           ) : (
-                                            <span className="wb-harness-status">Not installed</span>
+                                            <button
+                                              type="button"
+                                              className="wb-harness-install"
+                                              disabled
+                                              title="Install not supported yet"
+                                            >
+                                              Install
+                                            </button>
                                           )
                                         ) : (
                                           checked && (
@@ -2904,7 +3081,7 @@ export default function WorkbenchPage() {
                 liveLastAssistantMs !== null && serverLastAssistantMs !== null
                   ? Math.max(liveLastAssistantMs, serverLastAssistantMs)
                   : liveLastAssistantMs ?? serverLastAssistantMs;
-              const seenMs = parseMs(taskSeenAssistantAtById[tid] ?? null);
+              const seenMs = parseMs(t?.assistant_seen_at ?? null);
               const unread =
                 lastAssistantMs !== null && (seenMs === null || lastAssistantMs > seenMs);
               setTaskMenu(null);
@@ -2922,7 +3099,7 @@ export default function WorkbenchPage() {
                 liveLastAssistantMs !== null && serverLastAssistantMs !== null
                   ? Math.max(liveLastAssistantMs, serverLastAssistantMs)
                   : liveLastAssistantMs ?? serverLastAssistantMs;
-              const seenMs = parseMs(taskSeenAssistantAtById[tid] ?? null);
+              const seenMs = parseMs(t?.assistant_seen_at ?? null);
               const unread =
                 lastAssistantMs !== null && (seenMs === null || lastAssistantMs > seenMs);
               return unread ? "Mark as Read" : "Mark as Unread";
@@ -2968,6 +3145,19 @@ export default function WorkbenchPage() {
             role="menuitem"
           >
             Copy Worktree Location
+          </button>
+          <button
+            type="button"
+            className="wb-menu-item"
+            disabled={!activeTaskId || !!activeTask?.archived_at}
+            onClick={() => {
+              if (!activeTaskId) return;
+              setConvoMenu(null);
+              onToggleArchive(activeTaskId, true).catch(() => { });
+            }}
+            role="menuitem"
+          >
+            Archive Conversation
           </button>
         </div>
       )}

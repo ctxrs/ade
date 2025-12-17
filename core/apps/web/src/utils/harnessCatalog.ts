@@ -24,7 +24,7 @@ export type HarnessCatalogEntry = {
   invertInDark?: boolean;
 };
 
-// Mirrors Emdash provider list so we can reuse the same icons and naming.
+// Curated list of popular harnesses shown in the selector. Entries without a logo use the fallback slot.
 export const HARNESS_CATALOG: HarnessCatalogEntry[] = [
   { id: "claude", label: "Claude Code", logoSrc: claudeLogo },
   { id: "codex", label: "Codex", logoSrc: codexLogo, invertInDark: true },
@@ -44,5 +44,22 @@ export const HARNESS_CATALOG: HarnessCatalogEntry[] = [
   { id: "codebuff", label: "Codebuff", logoSrc: codebuffLogo },
   { id: "charm", label: "Charm", logoSrc: charmLogo },
   { id: "rovo", label: "Rovo Dev", logoSrc: atlassianLogo },
-];
 
+  // Additional popular open source harnesses (no bundled icons yet).
+  { id: "aider", label: "Aider", logoSrc: "" },
+  { id: "continue", label: "Continue", logoSrc: "" },
+  { id: "plandex", label: "Plandex", logoSrc: "" },
+  { id: "openhands", label: "OpenHands", logoSrc: "" },
+  { id: "swe-agent", label: "SWE-agent", logoSrc: "" },
+  { id: "tabby", label: "Tabby", logoSrc: "" },
+  { id: "cagent", label: "cagent", logoSrc: "" },
+  { id: "llmling-agent", label: "llmling-agent", logoSrc: "" },
+  { id: "fast-agent", label: "fast-agent", logoSrc: "" },
+  { id: "code-assistant", label: "code-assistant", logoSrc: "" },
+  { id: "kilo", label: "Kilo Code", logoSrc: "" },
+  { id: "stakpak", label: "stakpak", logoSrc: "" },
+
+  // Additional closed-source CLI harnesses (shown for completeness).
+  { id: "cody", label: "Cody", logoSrc: "" },
+  { id: "junie", label: "JetBrains Junie", logoSrc: "" },
+];

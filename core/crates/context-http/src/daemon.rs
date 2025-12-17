@@ -485,10 +485,62 @@ pub async fn serve(
             .map(|c| Tier1AcpAdapter::from_raw("gemini", c.command.clone(), c.args.clone()))
             .unwrap_or_else(Tier1AcpAdapter::gemini),
     );
+    let qwen_adapter: Arc<Tier1AcpAdapter> = Arc::new(
+        agent_cfg
+            .providers
+            .get("qwen")
+            .map(|c| Tier1AcpAdapter::from_raw("qwen", c.command.clone(), c.args.clone()))
+            .unwrap_or_else(|| {
+                Tier1AcpAdapter::from_raw(
+                    "qwen",
+                    "qwen".to_string(),
+                    vec!["--experimental-acp".to_string()],
+                )
+            }),
+    );
+    let opencode_adapter: Arc<Tier1AcpAdapter> = Arc::new(
+        agent_cfg
+            .providers
+            .get("opencode")
+            .map(|c| Tier1AcpAdapter::from_raw("opencode", c.command.clone(), c.args.clone()))
+            .unwrap_or_else(|| {
+                Tier1AcpAdapter::from_raw(
+                    "opencode",
+                    "opencode".to_string(),
+                    vec!["acp".to_string()],
+                )
+            }),
+    );
+    let mistral_adapter: Arc<Tier1AcpAdapter> = Arc::new(
+        agent_cfg
+            .providers
+            .get("mistral")
+            .map(|c| Tier1AcpAdapter::from_raw("mistral", c.command.clone(), c.args.clone()))
+            .unwrap_or_else(|| Tier1AcpAdapter::from_raw("mistral", "vibe-acp".to_string(), vec![])),
+    );
+    let goose_adapter: Arc<Tier1AcpAdapter> = Arc::new(
+        agent_cfg
+            .providers
+            .get("goose")
+            .map(|c| Tier1AcpAdapter::from_raw("goose", c.command.clone(), c.args.clone()))
+            .unwrap_or_else(|| Tier1AcpAdapter::from_raw("goose", "goose".to_string(), vec!["acp".to_string()])),
+    );
+    let kimi_adapter: Arc<Tier1AcpAdapter> = Arc::new(
+        agent_cfg
+            .providers
+            .get("kimi")
+            .map(|c| Tier1AcpAdapter::from_raw("kimi", c.command.clone(), c.args.clone()))
+            .unwrap_or_else(|| Tier1AcpAdapter::from_raw("kimi", "kimi".to_string(), vec!["--acp".to_string()])),
+    );
 
     providers.insert("codex".into(), codex_adapter.clone());
     providers.insert("claude".into(), claude_adapter.clone());
     providers.insert("gemini".into(), gemini_adapter.clone());
+    providers.insert("qwen".into(), qwen_adapter.clone());
+    providers.insert("opencode".into(), opencode_adapter.clone());
+    providers.insert("mistral".into(), mistral_adapter.clone());
+    providers.insert("goose".into(), goose_adapter.clone());
+    providers.insert("kimi".into(), kimi_adapter.clone());
 
     let listener = tokio::net::TcpListener::bind(&bind).await?;
     let local_addr = listener.local_addr()?;
