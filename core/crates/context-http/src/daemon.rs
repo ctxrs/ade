@@ -551,6 +551,29 @@ pub async fn serve(
             .map(|c| Tier1AcpAdapter::from_raw("auggie", c.command.clone(), c.args.clone()))
             .unwrap_or_else(|| Tier1AcpAdapter::from_raw("auggie", "auggie".to_string(), vec!["--acp".to_string()])),
     );
+    let cagent_adapter: Arc<Tier1AcpAdapter> = Arc::new(
+        agent_cfg
+            .providers
+            .get("cagent")
+            .map(|c| Tier1AcpAdapter::from_raw("cagent", c.command.clone(), c.args.clone()))
+            .unwrap_or_else(|| {
+                let cfg = data_root
+                    .join("providers")
+                    .join("agent-servers")
+                    .join("cagent")
+                    .join("config.yaml")
+                    .to_string_lossy()
+                    .to_string();
+                Tier1AcpAdapter::from_raw("cagent", "cagent".to_string(), vec!["acp".to_string(), cfg])
+            }),
+    );
+    let code_assistant_adapter: Arc<Tier1AcpAdapter> = Arc::new(
+        agent_cfg
+            .providers
+            .get("code-assistant")
+            .map(|c| Tier1AcpAdapter::from_raw("code-assistant", c.command.clone(), c.args.clone()))
+            .unwrap_or_else(|| Tier1AcpAdapter::from_raw("code-assistant", "code-assistant".to_string(), vec!["acp".to_string()])),
+    );
 
     providers.insert("codex".into(), codex_adapter.clone());
     providers.insert("gemini".into(), gemini_adapter.clone());
@@ -560,6 +583,8 @@ pub async fn serve(
     providers.insert("goose".into(), goose_adapter.clone());
     providers.insert("kimi".into(), kimi_adapter.clone());
     providers.insert("auggie".into(), auggie_adapter.clone());
+    providers.insert("cagent".into(), cagent_adapter.clone());
+    providers.insert("code-assistant".into(), code_assistant_adapter.clone());
 
     // Register additional harnesses as ACP adapters so they appear in /providers even if not installed.
     // These binaries are expected to support ACP over stdio.
