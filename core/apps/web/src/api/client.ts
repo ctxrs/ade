@@ -30,6 +30,15 @@ export type Track = {
   status: string;
 };
 
+export type Worktree = {
+  id: { 0: string } | string;
+  workspace_id: { 0: string } | string;
+  root_path: string;
+  base_commit_sha: string;
+  git_branch?: string | null;
+  created_at: string;
+};
+
 export type Session = {
   id: { 0: string } | string;
   track_id: { 0: string } | string;
@@ -571,6 +580,9 @@ export const listSessionsForTrack = (trackId: string) =>
 
 export const getSession = (sessionId: string) =>
   apiAny<Session>(`/api/sessions/${sessionId}`);
+
+export const getWorktree = (worktreeId: string) =>
+  apiAny<Worktree>(`/api/worktrees/${worktreeId}`);
 
 export const listMessages = (sessionId: string) =>
   apiAny<Message[]>(`/api/sessions/${sessionId}/messages`);

@@ -52,6 +52,12 @@ export const desktopPickFolder = async (): Promise<string | null> =>
 export const desktopGitClone = async (repo_url: string, dest_parent: string): Promise<string> =>
   invoke<string>("desktop_git_clone", { repo_url, dest_parent });
 
+export const desktopSaveTextFile = async (args: {
+  suggested_name?: string | null;
+  contents: string;
+}): Promise<string | null> =>
+  invoke<string | null>("desktop_save_text_file", args);
+
 export const desktopDaemonRequest = async (req: {
   method: string;
   path: string;

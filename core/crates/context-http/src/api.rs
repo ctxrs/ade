@@ -166,6 +166,7 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
         .route("/api/tasks/:id/archive", post(archive_task))
         .route("/api/tasks/:id/unarchive", post(unarchive_task))
         .route("/api/tasks/:id/tracks", get(list_tracks).post(create_track))
+        .route("/api/worktrees/:id", get(get_worktree))
         .route(
             "/api/tracks/:id/sessions",
             get(list_sessions_for_track).post(create_session_for_track),
@@ -195,6 +196,22 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
     api.fallback_service(
         ServeDir::new(dist_dir).not_found_service(ServeFile::new(index_path)),
     )
+}
+
+async fn get_worktree(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<Worktree>, StatusCode> {
+    let worktree_id = WorktreeId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
+    match state
+        .store
+        .get_worktree(worktree_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    {
+        Some(wt) => Ok(Json(wt)),
+        None => Err(StatusCode::NOT_FOUND),
+    }
 }
 
 #[derive(Debug, Serialize)]

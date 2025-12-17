@@ -18,6 +18,7 @@ fn main() {
             desktop_connect_ssh,
             desktop_pick_folder,
             desktop_git_clone,
+            desktop_save_text_file,
             desktop_upload_blob,
             desktop_daemon_request,
         ])
@@ -104,6 +105,33 @@ fn desktop_pick_folder() -> Result<Option<String>, String> {
     });
     rx.recv_timeout(Duration::from_secs(60))
         .map_err(|_| "folder picker timed out".to_string())
+}
+
+#[tauri::command]
+fn desktop_save_text_file(suggested_name: Option<String>, contents: String) -> Result<Option<String>, String> {
+    let suggested = suggested_name.unwrap_or_else(|| "conversation.md".to_string());
+    let suggested = suggested.trim();
+
+    let (tx, rx) = std::sync::mpsc::channel::<Option<String>>();
+    let mut dialog = tauri::api::dialog::FileDialogBuilder::new()
+        .add_filter("Markdown", &["md"])
+        .set_title("Save Conversation Export");
+    if !suggested.is_empty() {
+        dialog = dialog.set_file_name(suggested);
+    }
+    dialog.save_file(move |path| {
+        let _ = tx.send(path.map(|p| p.to_string_lossy().to_string()));
+    });
+
+    let picked = rx
+        .recv_timeout(Duration::from_secs(60))
+        .map_err(|_| "save file dialog timed out".to_string())?;
+    let Some(path) = picked else {
+        return Ok(None);
+    };
+
+    std::fs::write(&path, contents).map_err(|e| format!("failed to write file: {e}"))?;
+    Ok(Some(path))
 }
 
 #[tauri::command]

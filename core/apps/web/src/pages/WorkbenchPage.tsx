@@ -5,8 +5,10 @@ import {
   ArrowUp,
   AtSign,
   ChevronDown,
+  Copy,
   ChevronRight,
   Ellipsis,
+  GitBranch,
   Image,
   Laptop,
   MessageSquare,
@@ -22,6 +24,7 @@ import {
   ProviderStatus,
   Task,
   Track,
+  Worktree,
   Workspace,
   archiveTask,
   applyTrackDiffPatch,
@@ -33,6 +36,7 @@ import {
   getLspStatus,
   getProviderOptions,
   getSettings,
+  getWorktree,
   getWorkspace,
   idToString,
   listProviders,
@@ -47,15 +51,18 @@ import {
 import { useSessionCacheSnapshot, useSessionEntry, useSessionSupervisor } from "../state/sessionSupervisor";
 import { DiffReviewPane } from "../components/DiffReviewPane";
 import { EditPlanReviewPane } from "../components/EditPlanReviewPane";
-import { SessionView } from "./SessionPage";
+import { SessionView, buildWorkbenchThreadViewModel } from "./SessionPage";
 import { HARNESS_CATALOG } from "../utils/harnessCatalog";
 import { WorkbenchComposer, type DraftTrack, type WorkbenchEnvTarget, type WorkbenchModeId } from "../components/WorkbenchComposer";
 import type { SlashCommandDescriptor } from "../state/useComposerAutocomplete";
 import { startMicPcmStream } from "../utils/micPcmStream";
+import { desktopSaveTextFile, isDesktopApp } from "../utils/desktop";
 import { parseWsJson } from "../utils/wsJson";
 import { registerDropScope } from "../utils/dragDropScopes";
 import { pickPreferredSession, pickPreferredSessionId, pickPreferredTrackId } from "../utils/workbenchSelection";
 import { imageFilesToInlineAttachments } from "../utils/messageAttachments";
+import { parseModelId } from "../utils/modelEffort";
+import { formatRelativeAgeShort } from "../utils/relativeTime";
 
 function deriveTaskTitle(prompt: string): string {
   const line = prompt.trim().split("\n")[0] ?? "";
@@ -92,6 +99,13 @@ function parseMs(value: string | null | undefined): number | null {
   return Number.isFinite(ms) ? ms : null;
 }
 
+function lastPathSegment(path: string | null | undefined): string {
+  const raw = String(path ?? "").trim();
+  if (!raw) return "";
+  const parts = raw.split(/[\\/]/).filter(Boolean);
+  return parts[parts.length - 1] ?? "";
+}
+
 function taskActivityMs(t: Task): number | null {
   return parseMs(t.last_activity_at ?? null) ?? parseMs(t.updated_at ?? null) ?? parseMs(t.created_at ?? null);
 }
@@ -115,6 +129,45 @@ function lastAssistantMessageMs(messages: { role: string; created_at: string }[]
     if (m?.role === "assistant") return parseMs(m.created_at);
   }
   return null;
+}
+
+function sanitizeFileName(name: string): string {
+  const raw = String(name ?? "").trim() || "conversation";
+  const noBadChars = raw.replace(/[<>:"/\\|?*\u0000-\u001F]/g, "");
+  const collapsed = noBadChars.replace(/\s+/g, "-").replace(/-+/g, "-").replace(/^-+|-+$/g, "");
+  return (collapsed || "conversation").slice(0, 80);
+}
+
+async function saveMarkdownExport(suggestedName: string, contents: string): Promise<void> {
+  const name = suggestedName.toLowerCase().endsWith(".md") ? suggestedName : `${suggestedName}.md`;
+  if (isDesktopApp()) {
+    await desktopSaveTextFile({ suggested_name: name, contents });
+    return;
+  }
+
+  const picker = (window as any).showSaveFilePicker as undefined | ((opts: any) => Promise<any>);
+  if (typeof picker === "function") {
+    const handle = await picker({
+      suggestedName: name,
+      types: [{ description: "Markdown", accept: { "text/markdown": [".md"] } }],
+    });
+    const writable = await handle.createWritable();
+    await writable.write(contents);
+    await writable.close();
+    return;
+  }
+
+  const blob = new Blob([contents], { type: "text/markdown" });
+  const url = URL.createObjectURL(blob);
+  try {
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = name;
+    a.rel = "noopener";
+    a.click();
+  } finally {
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
 }
 
 export default function WorkbenchPage() {
@@ -148,10 +201,13 @@ export default function WorkbenchPage() {
   const [taskSeenAssistantAtById, setTaskSeenAssistantAtById] = useState<Record<string, string>>({});
   const [taskMenu, setTaskMenu] = useState<{ taskId: string; style: React.CSSProperties } | null>(null);
   const taskMenuRef = useRef<HTMLDivElement | null>(null);
+  const [convoMenu, setConvoMenu] = useState<{ style: React.CSSProperties } | null>(null);
+  const convoMenuRef = useRef<HTMLDivElement | null>(null);
 
   const [tracks, setTracks] = useState<Track[]>([]);
   const [sessionsByTrack, setSessionsByTrack] = useState<Record<string, any[]>>({});
   const [activeTrackId, setActiveTrackId] = useState<string | null>(null);
+  const [activeWorktree, setActiveWorktree] = useState<Worktree | null>(null);
 
   // Track-level state for expansion UI
   const [tracksByTaskId, setTracksByTaskId] = useState<Record<string, Track[]>>({});
@@ -293,6 +349,24 @@ export default function WorkbenchPage() {
       window.removeEventListener("keydown", onKeyDown);
     };
   }, [taskMenu]);
+
+  useEffect(() => {
+    const onPointerDown = (e: PointerEvent) => {
+      if (!convoMenu) return;
+      const el = e.target as HTMLElement | null;
+      if (el && (el.closest(".wb-convo-menu") || el.closest(".wb-convo-menu-trigger"))) return;
+      setConvoMenu(null);
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setConvoMenu(null);
+    };
+    window.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [convoMenu]);
 
   useEffect(() => {
     let cancelled = false;
@@ -586,6 +660,13 @@ export default function WorkbenchPage() {
     setTaskMenu((prev) => (prev?.taskId === taskId ? null : { taskId, style: { left, top } }));
   }, []);
 
+  const openConvoMenu = useCallback((triggerEl: HTMLElement) => {
+    const rect = triggerEl.getBoundingClientRect();
+    const left = Math.min(rect.left, window.innerWidth - 240);
+    const top = Math.min(rect.bottom + 6, window.innerHeight - 220);
+    setConvoMenu((prev) => (prev ? null : { style: { left, top } }));
+  }, []);
+
   const activeSessionId = useMemo(() => {
     if (!activeTrackId) return null;
     return pickPreferredSessionId(sessionsByTrack[activeTrackId] ?? []);
@@ -618,6 +699,27 @@ export default function WorkbenchPage() {
   const activeEntry = useSessionEntry(activeSessionId ?? "");
   const activeTrackDiff = activeEntry?.diff ?? "";
   const activeTrackIdFromSession = activeEntry?.session ? idToString(activeEntry.session.track_id) : "";
+  const activeWorktreeId = activeEntry?.session ? idToString(activeEntry.session.worktree_id) : "";
+
+  useEffect(() => {
+    if (!activeWorktreeId) {
+      setActiveWorktree(null);
+      return;
+    }
+    let cancelled = false;
+    getWorktree(activeWorktreeId)
+      .then((wt) => {
+        if (cancelled) return;
+        setActiveWorktree(wt);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setActiveWorktree(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeWorktreeId]);
 
   const hasDiff = activeTrackDiff.trim().length > 0;
   const hasEditPlans = editPlans.some((p) => (p.diff ?? "").trim().length > 0);
@@ -1032,6 +1134,169 @@ export default function WorkbenchPage() {
   }, []);
 
   const activeTask = activeTaskId ? tasks.find((t) => idToString(t.id) === activeTaskId) : null;
+  const singleTrackHeader = useMemo(() => {
+    if (tracks.length !== 1) return null;
+    const sess = activeEntry?.session ?? null;
+    const parsedModel = parseModelId(sess?.model_id ?? "");
+    const harness =
+      HARNESS_CATALOG.find((h) => h.id === (sess?.provider_id ?? ""))?.label ??
+      (sess?.provider_id ?? "Provider");
+
+    const lastIso = (() => {
+      const entry = activeEntry;
+      if (!entry) return null;
+      let bestIso: string | null = entry.session?.updated_at ?? null;
+      let bestMs = bestIso ? parseMs(bestIso) ?? -1 : -1;
+      for (const m of entry.messages ?? []) {
+        const ms = parseMs(m.created_at);
+        if (ms !== null && ms >= bestMs) {
+          bestMs = ms;
+          bestIso = m.created_at;
+        }
+      }
+      for (const e of entry.events ?? []) {
+        const ms = parseMs(e.created_at);
+        if (ms !== null && ms >= bestMs) {
+          bestMs = ms;
+          bestIso = e.created_at;
+        }
+      }
+      return bestIso;
+    })();
+
+    const age = formatRelativeAgeShort(lastIso) || "Now";
+    const worktreePath = sess?.env_target === "worktree" ? String(activeWorktree?.root_path ?? "") : "";
+    const worktreeSlug = worktreePath ? lastPathSegment(worktreePath) : "";
+
+    return {
+      title: activeTask?.title ?? "Conversation",
+      age,
+      harness,
+      modelBase: parsedModel.base || String(sess?.model_id ?? ""),
+      effort: parsedModel.effort,
+      worktreeSlug,
+      worktreePath,
+      canCopyWorktree: Boolean(worktreePath),
+    };
+  }, [activeEntry, activeTask?.title, activeWorktree?.root_path, tracks.length]);
+
+  const copyWorktreeLocation = useCallback(async () => {
+    const path = String(singleTrackHeader?.worktreePath ?? "").trim();
+    if (!path) return;
+    try {
+      await navigator.clipboard.writeText(path);
+    } catch (e: any) {
+      window.alert(e?.message ?? "Failed to copy worktree location.");
+    }
+  }, [singleTrackHeader?.worktreePath]);
+
+  const exportConversation = useCallback(async () => {
+    if (!activeEntry?.session) return;
+    const sess = activeEntry.session;
+
+    const harness =
+      HARNESS_CATALOG.find((h) => h.id === (sess?.provider_id ?? ""))?.label ??
+      (sess?.provider_id ?? "Provider");
+    const parsedModel = parseModelId(sess?.model_id ?? "");
+
+    const thread = buildWorkbenchThreadViewModel(activeEntry.events ?? [], activeEntry.messages ?? []);
+    const exportedAt = new Date().toISOString();
+
+    const lines: string[] = [];
+    const title = singleTrackHeader?.title ?? "Conversation";
+    lines.push(`# ${title}`);
+    lines.push("");
+    lines.push(`- Exported: ${exportedAt}`);
+    lines.push(`- Harness: ${harness}`);
+    lines.push(`- Model: ${parsedModel.base || String(sess.model_id ?? "")}`);
+    if (parsedModel.effort) lines.push(`- Effort: ${parsedModel.effort}`);
+    if (singleTrackHeader?.worktreePath) lines.push(`- Worktree: ${singleTrackHeader.worktreePath}`);
+    lines.push(`- Session ID: ${idToString(sess.id)}`);
+    lines.push("");
+    lines.push("---");
+    lines.push("");
+
+    const attachmentLine = (atts: any[]): string => {
+      const names = (atts ?? [])
+        .map((a) => String(a?.name ?? a?.blob_id ?? a?.kind ?? "").trim())
+        .filter(Boolean);
+      if (names.length === 0) return "";
+      return `Attachments: ${names.join(", ")}`;
+    };
+
+    for (let i = 0; i < (thread.groups ?? []).length; i++) {
+      const g: any = (thread.groups ?? [])[i];
+      lines.push(`## Turn ${i + 1}`);
+      lines.push("");
+
+      if (g?.header) {
+        lines.push(`### User (${String(g.header.created_at ?? "").trim() || "unknown time"})`);
+        lines.push("");
+        const attsLine = attachmentLine(g.header.attachments ?? []);
+        if (attsLine) {
+          lines.push(`_${attsLine}_`);
+          lines.push("");
+        }
+        lines.push(String(g.header.content ?? ""));
+        lines.push("");
+      }
+
+      const items: any[] = Array.isArray(g?.items) ? g.items : [];
+      for (const item of items) {
+        if (!item || item.kind === "spacer") continue;
+        if (item.kind === "tool") {
+          const title = String(item.title ?? "Tool");
+          const status = String(item.status ?? "").trim();
+          lines.push(`### Tool: ${title}${status ? ` (${status})` : ""}`);
+          lines.push("");
+          const kind = String(item.tool_kind ?? "").trim();
+          if (kind) {
+            lines.push(`**Kind:** \`${kind}\``);
+            lines.push("");
+          }
+          if (item.input != null) {
+            lines.push("**Input:**");
+            lines.push("");
+            lines.push("```json");
+            try {
+              lines.push(JSON.stringify(item.input, null, 2));
+            } catch {
+              lines.push(String(item.input));
+            }
+            lines.push("```");
+            lines.push("");
+          }
+          const out = String(item.output_text ?? "").trim();
+          if (out) {
+            lines.push("**Output:**");
+            lines.push("");
+            lines.push("```");
+            lines.push(out);
+            lines.push("```");
+            lines.push("");
+          }
+          continue;
+        }
+        if (item.kind === "assistant") {
+          lines.push(`### Assistant (${String(item.created_at ?? "").trim() || "unknown time"})`);
+          lines.push("");
+          lines.push(String(item.content ?? ""));
+          lines.push("");
+          continue;
+        }
+      }
+
+      lines.push("---");
+      lines.push("");
+    }
+
+    try {
+      const fileBase = sanitizeFileName(title);
+      await saveMarkdownExport(fileBase, lines.join("\n"));
+    } catch (e: any) {
+      window.alert(e?.message ?? "Failed to export conversation.");
+    }
+  }, [activeEntry, singleTrackHeader?.title, singleTrackHeader?.worktreePath]);
   const activeEditPlan = useMemo(() => {
     if (!activeEditPlanId) return null;
     return editPlans.find((p) => idToString(p.id) === activeEditPlanId) ?? null;
@@ -1998,30 +2263,89 @@ export default function WorkbenchPage() {
         {activeTaskId && (
           <div className="wb-body">
             <div className="wb-convo">
-              <div className="wb-trackbar">
-                {tracks.map((tr) => {
-                  const trid = idToString(tr.id);
-                  const selected = trid === activeTrackId;
-                  const sessions = sessionsByTrack[trid] ?? [];
-                  const s = pickPreferredSession(sessions) as any;
-                  const sessionId = s ? idToString((s as any).id) : "";
-                  const liveSession = sessionId ? sessionCache.sessions[sessionId]?.session : null;
-                  const displaySession = (liveSession ?? s) as any;
-                  const model = displaySession ? `${displaySession.provider_id} ${displaySession.model_id}` : "No session";
-                  const status = tr.status === "running" ? "Running…" : tr.status === "completed" ? "Task completed" : tr.status;
-                  return (
+              {tracks.length === 1 && singleTrackHeader ? (
+                <div className="wb-single-track-header">
+                  <div className="wb-single-track-title">{singleTrackHeader.title}</div>
+                  <div className="wb-single-track-meta">
+                    <div className="wb-single-track-meta-left">
+                      <span>{singleTrackHeader.age}</span>
+                      <span className="wb-single-track-dot" aria-hidden="true">
+                        ·
+                      </span>
+                      <span>{singleTrackHeader.harness}</span>
+                      {singleTrackHeader.modelBase && (
+                        <>
+                          <span className="wb-single-track-dot" aria-hidden="true">
+                            ·
+                          </span>
+                          <span>{singleTrackHeader.modelBase}</span>
+                        </>
+                      )}
+                      {singleTrackHeader.effort && (
+                        <>
+                          <span className="wb-single-track-dot" aria-hidden="true">
+                            ·
+                          </span>
+                          <span>{singleTrackHeader.effort}</span>
+                        </>
+                      )}
+                      {singleTrackHeader.worktreeSlug && (
+                        <>
+                          <span className="wb-single-track-dot" aria-hidden="true">
+                            ·
+                          </span>
+                          <button
+                            type="button"
+                            className="wb-worktree-chip"
+                            disabled={!singleTrackHeader.canCopyWorktree}
+                            onClick={() => void copyWorktreeLocation()}
+                            title="Copy worktree location"
+                            aria-label="Copy worktree location"
+                          >
+                            <GitBranch size={13} />
+                            <span className="wb-worktree-chip-slug">{singleTrackHeader.worktreeSlug}</span>
+                            <Copy size={13} />
+                          </button>
+                        </>
+                      )}
+                    </div>
                     <button
-                      key={trid}
                       type="button"
-                      className={`wb-trackcard ${selected ? "wb-trackcard-active" : ""}`}
-                      onClick={() => setActiveTrackId(trid)}
+                      className="wb-icon wb-convo-menu-trigger"
+                      aria-label="Conversation options"
+                      title="Conversation options"
+                      onClick={(e) => openConvoMenu(e.currentTarget)}
                     >
-                      <div className="wb-trackcard-title">{model}</div>
-                      <div className="wb-trackcard-sub">{status}</div>
+                      <Ellipsis size={14} />
                     </button>
-                  );
-                })}
-              </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="wb-trackbar">
+                  {tracks.map((tr) => {
+                    const trid = idToString(tr.id);
+                    const selected = trid === activeTrackId;
+                    const sessions = sessionsByTrack[trid] ?? [];
+                    const s = pickPreferredSession(sessions) as any;
+                    const sessionId = s ? idToString((s as any).id) : "";
+                    const liveSession = sessionId ? sessionCache.sessions[sessionId]?.session : null;
+                    const displaySession = (liveSession ?? s) as any;
+                    const model = displaySession ? `${displaySession.provider_id} ${displaySession.model_id}` : "No session";
+                    const status = tr.status === "running" ? "Running…" : tr.status === "completed" ? "Task completed" : tr.status;
+                    return (
+                      <button
+                        key={trid}
+                        type="button"
+                        className={`wb-trackcard ${selected ? "wb-trackcard-active" : ""}`}
+                        onClick={() => setActiveTrackId(trid)}
+                      >
+                        <div className="wb-trackcard-title">{model}</div>
+                        <div className="wb-trackcard-sub">{status}</div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
 
               <div className="wb-session">
                 {activeSessionId ? (
@@ -2203,6 +2527,35 @@ export default function WorkbenchPage() {
             role="menuitem"
           >
             Copy task ID
+          </button>
+        </div>
+      )}
+
+      {convoMenu && (
+        <div className="wb-menu wb-convo-menu" role="menu" ref={convoMenuRef} style={convoMenu.style}>
+          <button
+            type="button"
+            className="wb-menu-item"
+            disabled={!activeSessionId}
+            onClick={() => {
+              setConvoMenu(null);
+              void exportConversation();
+            }}
+            role="menuitem"
+          >
+            Export Conversation
+          </button>
+          <button
+            type="button"
+            className="wb-menu-item"
+            disabled={!singleTrackHeader?.canCopyWorktree}
+            onClick={() => {
+              setConvoMenu(null);
+              void copyWorktreeLocation();
+            }}
+            role="menuitem"
+          >
+            Copy Worktree Location
           </button>
         </div>
       )}
