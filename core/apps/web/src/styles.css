@@ -1840,11 +1840,46 @@ button.linklike:hover {
   opacity: 0.4;
 }
 
-.wb-harness-note {
-  grid-column: 1 / -1;
-  margin-left: 44px;
+.wb-harness-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  justify-self: end;
+}
+
+.wb-harness-install {
+  height: 22px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.03);
+  color: rgba(255, 255, 255, 0.92);
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.wb-harness-install:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.18);
+}
+
+.wb-harness-install:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.wb-harness-status {
+  height: 22px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  background: transparent;
   color: rgba(255, 255, 255, 0.55);
   font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
 }
 
 .wb-harness-config {

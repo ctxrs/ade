@@ -39,6 +39,7 @@ import {
   getWorktree,
   getWorkspace,
   idToString,
+  installProvider,
   listProviders,
   listEditPlansForTrack,
   listSessionsForTrack,
@@ -180,6 +181,7 @@ export default function WorkbenchPage() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [providers, setProviders] = useState<ProviderStatus[]>([]);
+  const [providerInstallBusyById, setProviderInstallBusyById] = useState<Record<string, boolean>>({});
   const [providerOptions, setProviderOptions] = useState<Record<string, ProviderOptions | undefined>>({});
   const providersById = useMemo(
     () => Object.fromEntries(providers.map((p) => [p.provider_id, p])),
@@ -414,6 +416,36 @@ export default function WorkbenchPage() {
     listProviders().then(setProviders).catch(() => setProviders([]));
     getLspStatus().then(setLspStatus).catch(() => setLspStatus(null));
   }, [workspaceId]);
+
+  const anyProviderInstallRunning = useMemo(
+    () => providers.some((p) => p.details?.install_running === "true"),
+    [providers],
+  );
+
+  useEffect(() => {
+    if (!anyProviderInstallRunning) return;
+    const t = window.setInterval(() => {
+      listProviders().then(setProviders).catch(() => { });
+    }, 1500);
+    return () => window.clearInterval(t);
+  }, [anyProviderInstallRunning, setProviders, listProviders]);
+
+  const installProviderFromMenu = useCallback(
+    async (providerId: string) => {
+      setStartError(null);
+      setProviderInstallBusyById((prev) => ({ ...prev, [providerId]: true }));
+      try {
+        await installProvider(providerId);
+        const next = await listProviders();
+        setProviders(next);
+      } catch (e: any) {
+        setStartError(e?.message ? String(e.message) : String(e));
+      } finally {
+        setProviderInstallBusyById((prev) => ({ ...prev, [providerId]: false }));
+      }
+    },
+    [setProviders, setStartError, installProvider, listProviders],
+  );
 
   // Load tracks for all tasks (for expansion UI)
   useEffect(() => {
@@ -1801,6 +1833,8 @@ export default function WorkbenchPage() {
                 setModeId={setDraftMode}
                 harnessCatalog={HARNESS_CATALOG}
                 providersById={providersById}
+                providerInstallBusyById={providerInstallBusyById}
+                onInstallProvider={installProviderFromMenu}
                 providerOptions={providerOptions}
                 ensureProviderOptions={ensureProviderOptions}
                 draftTracks={draftTracks}
@@ -1963,6 +1997,9 @@ export default function WorkbenchPage() {
                                   const count = harnessCounts[id] ?? 0;
                                   const checked = count > 0;
                                   const installed = providersById[id]?.installed ?? false;
+                                  const installSupported = providersById[id]?.details?.install_supported === "true";
+                                  const installRunning = providersById[id]?.details?.install_running === "true";
+                                  const installBusy = providerInstallBusyById[id] ?? false;
                                   const expanded = expandedHarnessId === id;
                                   const canConfigureModels = useMultipleAgents && draftTracks.length > 1;
                                   const rows = draftTracks.filter((t) => t.providerId === id);
@@ -1995,21 +2032,43 @@ export default function WorkbenchPage() {
                                         </span>
                                       </button>
 
-                                      {checked && (
-                                        <button
-                                          type="button"
-                                          className="wb-harness-expand wb-menu-trigger"
-                                          onClick={() => {
-                                            if (!canConfigureModels) return;
-                                            setExpandedHarnessId((prev) => (prev === id ? null : id));
-                                            ensureProviderOptions(id).catch(() => { });
-                                          }}
-                                          disabled={!canConfigureModels}
-                                          title={canConfigureModels ? "Configure models" : "Enable multi-agent to configure"}
-                                        >
-                                          <ChevronDown size={14} />
-                                        </button>
-                                      )}
+                                      <div className="wb-harness-actions">
+                                        {!installed ? (
+                                          installSupported ? (
+                                            <button
+                                              type="button"
+                                              className="wb-harness-install"
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                installProviderFromMenu(id);
+                                              }}
+                                              disabled={installRunning || installBusy}
+                                              title="Install this harness"
+                                            >
+                                              {installRunning || installBusy ? "Installing…" : "Install"}
+                                            </button>
+                                          ) : (
+                                            <span className="wb-harness-status">Not installed</span>
+                                          )
+                                        ) : (
+                                          checked && (
+                                            <button
+                                              type="button"
+                                              className="wb-harness-expand wb-menu-trigger"
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                if (!canConfigureModels) return;
+                                                setExpandedHarnessId((prev) => (prev === id ? null : id));
+                                                ensureProviderOptions(id).catch(() => { });
+                                              }}
+                                              disabled={!canConfigureModels}
+                                              title={canConfigureModels ? "Configure models" : "Enable multi-agent to configure"}
+                                            >
+                                              <ChevronDown size={14} />
+                                            </button>
+                                          )
+                                        )}
+                                      </div>
 
                                       {expanded && canConfigureModels && (
                                         <div className="wb-harness-config">
@@ -2064,8 +2123,6 @@ export default function WorkbenchPage() {
                                           ))}
                                         </div>
                                       )}
-
-                                      {!installed && <div className="wb-harness-note">Not installed</div>}
                                     </div>
                                   );
                                 });

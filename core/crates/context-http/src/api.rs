@@ -3111,6 +3111,14 @@ async fn list_providers(
 
     for status in out.iter_mut() {
         installer::apply_managed_install_details(status, &managed);
+        status.details.insert(
+            "install_supported".into(),
+            if installer::is_supported_managed_provider(&status.provider_id) {
+                "true".into()
+            } else {
+                "false".into()
+            },
+        );
         if let Some(install_id) = state.find_running_install(&status.provider_id).await {
             status
                 .details
@@ -3135,6 +3143,14 @@ async fn get_provider(
         .await
         .unwrap_or_default();
     installer::apply_managed_install_details(&mut status, &managed);
+    status.details.insert(
+        "install_supported".into(),
+        if installer::is_supported_managed_provider(&status.provider_id) {
+            "true".into()
+        } else {
+            "false".into()
+        },
+    );
     if let Some(install_id) = state.find_running_install(&id).await {
         status
             .details
