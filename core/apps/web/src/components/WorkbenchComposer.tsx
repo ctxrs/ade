@@ -252,7 +252,7 @@ type NewSessionProps = SharedProps & {
   variant: "newSession";
   harnessCatalog: HarnessCatalogEntry[];
   providersById: Record<string, ProviderStatus>;
-  providerInstallBusyById: Record<string, boolean>;
+  providerInstallsById: Record<string, { installId: string; state: "running" | "succeeded" | "failed"; pct: number | null } | undefined>;
   onInstallProvider: (providerId: string) => void;
   providerOptions: Record<string, ProviderOptions | undefined>;
   ensureProviderOptions: (providerId: string) => Promise<ProviderOptions | undefined>;
@@ -320,6 +320,8 @@ const FALLBACK_MODELS_BY_PROVIDER: Record<string, Array<{ id: string; name?: str
     { id: "gemini-1.5-flash", name: "Gemini 1.5 Flash" },
   ],
 };
+
+const MAX_TRACKS_PER_PROVIDER = 4;
 
 function buildModelsForProvider(providerId: string, opts?: ProviderOptions): Array<{ id: string; name?: string }> {
   const models = buildModelsFromProviderOptions(opts);
@@ -803,6 +805,60 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
 
   const [harnessSearch, setHarnessSearch] = useState("");
   const [expandedHarnessId, setExpandedHarnessId] = useState<string | null>(null);
+  const [countMenu, setCountMenu] = useState<{ providerId: string; anchor: DOMRect; style: React.CSSProperties } | null>(null);
+  const countMenuRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (openMenu !== "harness") setCountMenu(null);
+  }, [openMenu]);
+
+  useLayoutEffect(() => {
+    if (!countMenu) return;
+    const menu = countMenuRef.current;
+    if (!menu) return;
+
+    const rect = countMenu.anchor;
+    const menuRect = menu.getBoundingClientRect();
+    const margin = 10;
+    const gap = 6;
+    const viewportW = window.innerWidth;
+    const viewportH = window.innerHeight;
+
+    let left = Number(countMenu.style.left ?? 0);
+    let top = Number(countMenu.style.top ?? 0);
+
+    left = clamp(left, margin, viewportW - margin - menuRect.width);
+
+    if (top + menuRect.height > viewportH - margin) {
+      top = rect.top - menuRect.height - gap;
+    }
+    if (top < margin) {
+      top = rect.bottom + gap;
+    }
+    top = clamp(top, margin, viewportH - margin - menuRect.height);
+
+    if (left !== countMenu.style.left || top !== countMenu.style.top) {
+      setCountMenu((prev) => (prev ? { ...prev, style: { left, top } } : prev));
+    }
+  }, [countMenu]);
+
+  useEffect(() => {
+    if (!countMenu) return;
+    const onPointerDown = (e: PointerEvent) => {
+      const el = e.target as Element | null;
+      if (el && (el.closest(".wb-harness-count-menu") || el.closest(".wb-harness-count-trigger"))) return;
+      setCountMenu(null);
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setCountMenu(null);
+    };
+    window.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [countMenu]);
 
   const toggleHarness = useCallback(
     (providerId: string) => {
@@ -846,7 +902,47 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
     (providerId: string) => {
       if (variant !== "newSession") return;
       const ns = props as NewSessionProps;
-      ns.setDraftTracks((prev) => [...prev, { key: `t${Date.now()}`, label: "", providerId, modelId: "" }]);
+      ns.setDraftTracks((prev) => {
+        const existing = prev.filter((t) => t.providerId === providerId).length;
+        if (existing >= MAX_TRACKS_PER_PROVIDER) return prev;
+        return [...prev, { key: `t${Date.now()}`, label: "", providerId, modelId: "" }];
+      });
+    },
+    [props, variant],
+  );
+
+  const setTrackCountForProvider = useCallback(
+    (providerId: string, nextCount: number) => {
+      if (variant !== "newSession") return;
+      const ns = props as NewSessionProps;
+      if (!ns.useMultipleAgents) return;
+      const clamped = Math.max(1, Math.min(MAX_TRACKS_PER_PROVIDER, Math.round(nextCount)));
+      ns.setDraftTracks((prev) => {
+        const existing = prev.filter((t) => t.providerId === providerId);
+        const firstIdx = prev.findIndex((t) => t.providerId === providerId);
+        const keep = existing.slice(0, clamped);
+        while (keep.length < clamped) {
+          keep.push({ key: `t${Date.now()}_${keep.length}`, label: "", providerId, modelId: "" });
+        }
+
+        if (firstIdx === -1) {
+          return [...prev, ...keep];
+        }
+
+        const next: DraftTrack[] = [];
+        let inserted = false;
+        for (const t of prev) {
+          if (t.providerId !== providerId) {
+            next.push(t);
+            continue;
+          }
+          if (!inserted) {
+            next.push(...keep);
+            inserted = true;
+          }
+        }
+        return next.length > 0 ? next : prev;
+      });
     },
     [props, variant],
   );
@@ -893,7 +989,11 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
         {(() => {
           const ns = props as NewSessionProps;
           const q = harnessSearch.trim().toLowerCase();
-          const all = ns.harnessCatalog.concat(ns.providersById["fake"] ? ([{ id: "fake", label: "Fake" }] as any) : []);
+          const knownIds = Object.keys(ns.providersById);
+          const order = new Map<string, number>(ns.harnessCatalog.map((h, idx) => [h.id, idx]));
+          const all = knownIds
+            .map((id) => ns.harnessCatalog.find((h) => h.id === id) ?? ({ id, label: id, logoSrc: "" } as any))
+            .sort((a: any, b: any) => (order.get(String(a.id)) ?? 999) - (order.get(String(b.id)) ?? 999));
           const filtered = q
             ? all.filter((h: any) => String(h.id).toLowerCase().includes(q) || String(h.label).toLowerCase().includes(q))
             : all;
@@ -907,8 +1007,9 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
             const label = String(h.label ?? id);
             const installed = ns.providersById[id]?.installed ?? false;
             const installSupported = ns.providersById[id]?.details?.install_supported === "true";
-            const installRunning = ns.providersById[id]?.details?.install_running === "true";
-            const installBusy = ns.providerInstallBusyById[id] ?? false;
+            const installUi = ns.providerInstallsById[id];
+            const installRunning = installUi?.state === "running" || ns.providersById[id]?.details?.install_running === "true";
+            const installPct = installUi?.pct ?? null;
             const count = counts[id] ?? 0;
             const checked = count > 0;
             const expanded = expandedHarnessId === id;
@@ -931,48 +1032,96 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
                     <span className="wb-harness-logo-fallback" aria-hidden="true" />
                   )}
                   <span className="wb-harness-name">{label}</span>
-                  <span className="wb-harness-right">
-                    <span className="wb-harness-count">{count > 0 ? `${count}x` : ""}</span>
-                  </span>
                 </button>
 
                 <div className="wb-harness-actions">
                   {!installed ? (
-                    installSupported ? (
-                      <button
-                        type="button"
-                        className="wb-harness-install"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          ns.onInstallProvider(id);
-                        }}
-                        disabled={installRunning || installBusy}
-                        title="Install this harness"
-                      >
-                        {installRunning || installBusy ? "Installing…" : "Install"}
-                      </button>
-                    ) : (
-                      <span className="wb-harness-status">Not installed</span>
-                    )
+                    <button
+                      type="button"
+                      className="wb-harness-install"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        ns.onInstallProvider(id);
+                      }}
+                      disabled={!installSupported || installRunning}
+                      title={!installSupported ? "Install not supported yet" : "Install this harness"}
+                      style={
+                        installRunning && installPct !== null
+                          ? ({ ["--wb-install-pct" as any]: `${Math.max(0, Math.min(100, installPct))}%` } as any)
+                          : undefined
+                      }
+                    >
+                      {installRunning ? `${Math.max(0, Math.min(100, installPct ?? 0))}%` : "Install"}
+                    </button>
                   ) : (
-                    checked && (
-                      <button
-                        type="button"
-                        className="wb-harness-expand wb-menu-trigger"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          if (!canConfigureModels) return;
-                          setExpandedHarnessId((prev) => (prev === id ? null : id));
-                          ns.ensureProviderOptions(id).catch(() => {});
-                        }}
-                        disabled={!canConfigureModels}
-                        title={canConfigureModels ? "Configure models" : "Enable multi-agent to configure"}
-                      >
-                        <ChevronDown size={14} />
-                      </button>
-                    )
+                    <>
+                      {checked && (
+                        <button
+                          type="button"
+                          className="wb-harness-expand wb-menu-trigger"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (!canConfigureModels) return;
+                            setExpandedHarnessId((prev) => (prev === id ? null : id));
+                            ns.ensureProviderOptions(id).catch(() => {});
+                          }}
+                          disabled={!canConfigureModels}
+                          title={canConfigureModels ? "Configure models" : "Enable multi-agent to configure"}
+                        >
+                          <ChevronDown size={14} />
+                        </button>
+                      )}
+
+                      {checked && ns.useMultipleAgents && (
+                        <button
+                          type="button"
+                          className="wb-harness-count-trigger wb-menu-trigger"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                            const menuW = 140;
+                            const margin = 10;
+                            const approxH = 160;
+                            const left = clamp(rect.right - menuW, margin, window.innerWidth - margin - menuW);
+                            const openDown = rect.bottom + 6 + approxH <= window.innerHeight - margin;
+                            const top = openDown
+                              ? rect.bottom + 6
+                              : clamp(rect.top - approxH - 6, margin, window.innerHeight - margin - approxH);
+                            setCountMenu((prev) =>
+                              prev && prev.providerId === id ? null : { providerId: id, anchor: rect, style: { left, top } },
+                            );
+                          }}
+                          title="Set track count"
+                        >
+                          {Math.max(1, Math.min(MAX_TRACKS_PER_PROVIDER, count || 1))}x <ChevronDown size={12} />
+                        </button>
+                      )}
+                    </>
                   )}
                 </div>
+
+                {countMenu?.providerId === id && checked && ns.useMultipleAgents && (
+                  <div ref={countMenuRef} className="wb-menu wb-harness-count-menu" role="menu" style={countMenu.style}>
+                    {Array.from({ length: MAX_TRACKS_PER_PROVIDER }, (_, i) => i + 1).map((n) => (
+                      <button
+                        key={n}
+                        type="button"
+                        className={`wb-menu-item ${count === n ? "wb-menu-item-active" : ""}`}
+                        onClick={() => {
+                          setTrackCountForProvider(id, n);
+                          setCountMenu(null);
+                        }}
+                        role="menuitemradio"
+                        aria-checked={count === n}
+                      >
+                        <span className="wb-harness-count-item">
+                          <span>{n}x</span>
+                          <span aria-hidden="true">{count === n ? "✓" : ""}</span>
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
 
                 {expanded && canConfigureModels && (
                   <div className="wb-harness-config">
@@ -1032,7 +1181,13 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
                             )}
                           </div>
                           <div className="wb-harness-track-right">
-                            <button type="button" className="wb-harness-mini" onClick={() => addTrackForProvider(id)} title="Add another track">
+                            <button
+                              type="button"
+                              className="wb-harness-mini"
+                              onClick={() => addTrackForProvider(id)}
+                              title={rows.length >= MAX_TRACKS_PER_PROVIDER ? `Max ${MAX_TRACKS_PER_PROVIDER} tracks` : "Add another track"}
+                              disabled={rows.length >= MAX_TRACKS_PER_PROVIDER}
+                            >
                               +
                             </button>
                             <button

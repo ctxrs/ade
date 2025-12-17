@@ -19,6 +19,7 @@ import {
 import {
   DictationSettings,
   EditPlanSummary,
+  InstallInfo,
   LspStatus,
   MessageAttachment,
   ProviderOptions,
@@ -35,6 +36,7 @@ import {
   createTrack,
   deleteTask,
   getDaemonBaseUrl,
+  getInstall,
   getLspStatus,
   getProviderOptions,
   getSettings,
@@ -181,7 +183,17 @@ export default function WorkbenchPage() {
   const [sidebarResizing, setSidebarResizing] = useState(false);
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [providers, setProviders] = useState<ProviderStatus[]>([]);
-  const [providerInstallBusyById, setProviderInstallBusyById] = useState<Record<string, boolean>>({});
+  const [providerInstallsById, setProviderInstallsById] = useState<
+    Record<
+      string,
+      | {
+        installId: string;
+        state: InstallInfo["state"];
+        pct: number | null;
+      }
+      | undefined
+    >
+  >({});
   const [providerOptions, setProviderOptions] = useState<Record<string, ProviderOptions | undefined>>({});
   const providersById = useMemo(
     () => Object.fromEntries(providers.map((p) => [p.provider_id, p])),
@@ -213,6 +225,10 @@ export default function WorkbenchPage() {
   const [sessionsByTrack, setSessionsByTrack] = useState<Record<string, any[]>>({});
   const [activeTrackId, setActiveTrackId] = useState<string | null>(null);
   const [activeWorktree, setActiveWorktree] = useState<Worktree | null>(null);
+  const taskDetailAbortRef = useRef<AbortController | null>(null);
+  const taskDetailLoadSeqRef = useRef(0);
+  const editPlansAbortRef = useRef<AbortController | null>(null);
+  const editPlansLoadSeqRef = useRef(0);
 
   // Keep tracks cached per task so we can show best-effort provider badges.
   const [tracksByTaskId, setTracksByTaskId] = useState<Record<string, Track[]>>({});
@@ -398,19 +414,16 @@ export default function WorkbenchPage() {
     setTasks(await listTasks(workspaceId));
   };
 
-  const refreshTaskDetail = async (taskId: string) => {
-    const trs = await listTracks(taskId);
-    setTracks(trs);
+  const fetchTaskDetail = async (taskId: string, signal?: AbortSignal) => {
+    const trs = await listTracks(taskId, signal);
     const map: Record<string, any[]> = {};
     await Promise.all(
       trs.map(async (tr) => {
         const trid = idToString(tr.id);
-        map[trid] = await listSessionsForTrack(trid);
+        map[trid] = await listSessionsForTrack(trid, signal);
       }),
     );
-    setSessionsByTrack(map);
-    const trackIds = trs.map((tr) => idToString(tr.id)).filter(Boolean);
-    setActiveTrackId((prev) => pickPreferredTrackId(trackIds, map, prev));
+    return { tracks: trs, sessionsByTrack: map };
   };
 
   useEffect(() => {
@@ -421,35 +434,128 @@ export default function WorkbenchPage() {
     getLspStatus().then(setLspStatus).catch(() => setLspStatus(null));
   }, [workspaceId]);
 
-  const anyProviderInstallRunning = useMemo(
-    () => providers.some((p) => p.details?.install_running === "true"),
-    [providers],
-  );
+  const attachProviderInstall = useCallback((providerId: string, installId: string) => {
+    setProviderInstallsById((prev) => {
+      if (prev[providerId]?.installId === installId) return prev;
+      return {
+        ...prev,
+        [providerId]: {
+          installId,
+          state: "running",
+          pct: prev[providerId]?.pct ?? 0,
+        },
+      };
+    });
+  }, []);
 
   useEffect(() => {
-    if (!anyProviderInstallRunning) return;
-    const t = window.setInterval(() => {
-      listProviders().then(setProviders).catch(() => { });
-    }, 1500);
-    return () => window.clearInterval(t);
-  }, [anyProviderInstallRunning, setProviders, listProviders]);
+    for (const p of providers) {
+      const installId = p.details?.install_id;
+      const running = p.details?.install_running === "true";
+      if (running && installId && !providerInstallsById[p.provider_id]) {
+        attachProviderInstall(p.provider_id, installId);
+      }
+    }
+  }, [providers, providerInstallsById, attachProviderInstall]);
+
+  useEffect(() => {
+    const running = Object.entries(providerInstallsById).flatMap(([providerId, s]) =>
+      s && s.state === "running" ? ([[providerId, s]] as const) : [],
+    );
+    if (running.length === 0) return;
+
+    const stagePct: Record<string, number> = {
+      start: 2,
+      node: 15,
+      prepare: 25,
+      npm_install: 65,
+      entrypoint: 80,
+      inspect: 90,
+      refresh: 95,
+      registry: 98,
+    };
+
+    let cancelled = false;
+    const tick = async () => {
+      if (cancelled) return;
+      let needsProviderRefresh = false;
+      await Promise.all(
+        running.map(async ([providerId, s]) => {
+          try {
+            const info = await getInstall(s.installId);
+            const last = info.last_event;
+            const pct =
+              typeof last?.bytes === "number" &&
+                typeof last?.total_bytes === "number" &&
+                last.total_bytes > 0
+                ? Math.max(0, Math.min(100, Math.round((last.bytes / last.total_bytes) * 100)))
+                : typeof last?.stage === "string"
+                  ? (stagePct[last.stage] ?? s.pct ?? 0)
+                  : (s.pct ?? 0);
+
+            setProviderInstallsById((prev) => {
+              const existing = prev[providerId];
+              if (!existing || existing.installId !== s.installId) return prev;
+              return {
+                ...prev,
+                [providerId]: { installId: s.installId, state: info.state, pct },
+              };
+            });
+
+            if (info.state !== "running") {
+              needsProviderRefresh = true;
+            }
+          } catch {
+            // ignore poll errors
+          }
+        }),
+      );
+
+      if (needsProviderRefresh) {
+        try {
+          const next = await listProviders();
+          if (!cancelled) setProviders(next);
+        } catch {
+          // ignore
+        }
+      }
+    };
+
+    tick();
+    const t = window.setInterval(tick, 1000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(t);
+    };
+  }, [providerInstallsById, getInstall, listProviders]);
 
   const installProviderFromMenu = useCallback(
     async (providerId: string) => {
       setStartError(null);
-      setProviderInstallBusyById((prev) => ({ ...prev, [providerId]: true }));
       try {
-        await installProvider(providerId);
-        const next = await listProviders();
-        setProviders(next);
+        const { install_id } = await installProvider(providerId);
+        attachProviderInstall(providerId, install_id);
       } catch (e: any) {
         setStartError(e?.message ? String(e.message) : String(e));
-      } finally {
-        setProviderInstallBusyById((prev) => ({ ...prev, [providerId]: false }));
       }
     },
-    [setProviders, setStartError, installProvider, listProviders],
+    [setStartError, installProvider, attachProviderInstall],
   );
+
+  useEffect(() => {
+    if (Object.keys(providerInstallsById).length === 0) return;
+    setProviderInstallsById((prev) => {
+      let changed = false;
+      const next: typeof prev = { ...prev };
+      for (const [providerId, s] of Object.entries(prev)) {
+        if (s?.state === "succeeded" && providersById[providerId]?.installed) {
+          delete next[providerId];
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [providerInstallsById, providersById]);
 
   // Load tracks for all tasks (for expansion UI)
   useEffect(() => {
@@ -485,33 +591,72 @@ export default function WorkbenchPage() {
   }, [providers.length, providersById, defaultProviderId]);
 
   useEffect(() => {
+    taskDetailAbortRef.current?.abort();
+    const controller = new AbortController();
+    taskDetailAbortRef.current = controller;
+    const seq = ++taskDetailLoadSeqRef.current;
+
     if (!activeTaskId) {
       setTracks([]);
       setSessionsByTrack({});
       setActiveTrackId(null);
       setEditPlans([]);
       setActiveEditPlanId(null);
+      controller.abort();
       return;
     }
-    refreshTaskDetail(activeTaskId).catch(() => { });
+
+    setTracks([]);
+    setSessionsByTrack({});
+    setActiveTrackId(null);
+    setEditPlans([]);
+    setActiveEditPlanId(null);
+
+    fetchTaskDetail(activeTaskId, controller.signal)
+      .then(({ tracks: trs, sessionsByTrack: map }) => {
+        if (controller.signal.aborted) return;
+        if (seq !== taskDetailLoadSeqRef.current) return;
+        setTracks(trs);
+        setSessionsByTrack(map);
+        const trackIds = trs.map((tr) => idToString(tr.id)).filter(Boolean);
+        setActiveTrackId(pickPreferredTrackId(trackIds, map, null));
+      })
+      .catch((e: any) => {
+        if (e?.name === "AbortError") return;
+      });
+
+    return () => controller.abort();
   }, [activeTaskId]);
 
   useEffect(() => {
+    editPlansAbortRef.current?.abort();
+    const controller = new AbortController();
+    editPlansAbortRef.current = controller;
+    const seq = ++editPlansLoadSeqRef.current;
+
     if (!activeTrackId) {
       setEditPlans([]);
       setActiveEditPlanId(null);
+      controller.abort();
       return;
     }
-    listEditPlansForTrack(activeTrackId)
+    setEditPlans([]);
+    setActiveEditPlanId(null);
+    listEditPlansForTrack(activeTrackId, controller.signal)
       .then((plans) => {
+        if (controller.signal.aborted) return;
+        if (seq !== editPlansLoadSeqRef.current) return;
         setEditPlans(plans);
         const first = plans[0] ? idToString(plans[0].id) : null;
         setActiveEditPlanId((prev) => (prev && plans.some((p) => idToString(p.id) === prev) ? prev : first));
       })
-      .catch(() => {
+      .catch((e: any) => {
+        if (e?.name === "AbortError") return;
         setEditPlans([]);
         setActiveEditPlanId(null);
       });
+
+    return () => controller.abort();
   }, [activeTrackId]);
 
   const sortedTasks = useMemo(() => {
@@ -772,7 +917,7 @@ export default function WorkbenchPage() {
         setTasks((prev) => prev.map((t) => (idToString(t.id) === taskId ? { ...t, ...updated } : t)));
         cancelRenameTask();
       } catch (e: any) {
-        window.alert(e?.message ?? "Failed to rename task.");
+        window.alert(e?.message ?? "Failed to rename.");
       }
     },
     [cancelRenameTask, renameDraft, tasks],
@@ -1993,7 +2138,7 @@ export default function WorkbenchPage() {
                 setModeId={setDraftMode}
                 harnessCatalog={HARNESS_CATALOG}
                 providersById={providersById}
-                providerInstallBusyById={providerInstallBusyById}
+                providerInstallsById={providerInstallsById}
                 onInstallProvider={installProviderFromMenu}
                 providerOptions={providerOptions}
                 ensureProviderOptions={ensureProviderOptions}
@@ -2159,7 +2304,7 @@ export default function WorkbenchPage() {
                                   const installed = providersById[id]?.installed ?? false;
                                   const installSupported = providersById[id]?.details?.install_supported === "true";
                                   const installRunning = providersById[id]?.details?.install_running === "true";
-                                  const installBusy = providerInstallBusyById[id] ?? false;
+                                  const installBusy = providerInstallsById[id]?.state === "running";
                                   const expanded = expandedHarnessId === id;
                                   const canConfigureModels = useMultipleAgents && draftTracks.length > 1;
                                   const rows = draftTracks.filter((t) => t.providerId === id);
@@ -2208,7 +2353,14 @@ export default function WorkbenchPage() {
                                               {installRunning || installBusy ? "Installing…" : "Install"}
                                             </button>
                                           ) : (
-                                            <span className="wb-harness-status">Not installed</span>
+                                            <button
+                                              type="button"
+                                              className="wb-harness-install"
+                                              disabled
+                                              title="Install not supported yet"
+                                            >
+                                              Install
+                                            </button>
                                           )
                                         ) : (
                                           checked && (

@@ -2016,6 +2016,7 @@ button.linklike:hover {
   align-items: center;
   gap: 6px;
   justify-self: end;
+  justify-content: flex-end;
 }
 
 .wb-harness-install {
@@ -2023,7 +2024,11 @@ button.linklike:hover {
   padding: 0 10px;
   border-radius: 999px;
   border: 1px solid rgba(255, 255, 255, 0.12);
-  background: rgba(255, 255, 255, 0.03);
+  background: linear-gradient(
+    to right,
+    rgba(78, 163, 255, 0.22) var(--wb-install-pct, 0%),
+    rgba(255, 255, 255, 0.03) var(--wb-install-pct, 0%)
+  );
   color: rgba(255, 255, 255, 0.92);
   font-size: 12px;
   cursor: pointer;
@@ -2040,17 +2045,37 @@ button.linklike:hover {
   cursor: not-allowed;
 }
 
-.wb-harness-status {
+.wb-harness-count-trigger {
   height: 22px;
   padding: 0 10px;
   border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.10);
-  background: transparent;
-  color: rgba(255, 255, 255, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.03);
+  color: rgba(255, 255, 255, 0.88);
   font-size: 12px;
   display: inline-flex;
   align-items: center;
+  gap: 6px;
   white-space: nowrap;
+  cursor: pointer;
+}
+
+.wb-harness-count-trigger:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.18);
+}
+
+.wb-harness-count-menu {
+  z-index: 60;
+  min-width: 140px;
+  max-width: 220px;
+}
+
+.wb-harness-count-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
 
 .wb-harness-config {
