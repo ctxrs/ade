@@ -56,6 +56,7 @@ import {
   trackDiff,
   unarchiveTask,
   updateTaskTitle,
+  verifyProviderForWorkspace,
 } from "../api/client";
 import { useSessionCacheSnapshot, useSessionEntry, useSessionSupervisor } from "../state/sessionSupervisor";
 import { loadWorkbenchSelectionV1, saveWorkbenchSelectionV1, type PersistedWorkbenchSelectionV1 } from "../state/uiStateStore";
@@ -206,6 +207,8 @@ export default function WorkbenchPage() {
     >
   >({});
   const [providerOptions, setProviderOptions] = useState<Record<string, ProviderOptions | undefined>>({});
+  const postInstallHandledRef = useRef<Set<string>>(new Set());
+  const postInstallInFlightRef = useRef<Set<string>>(new Set());
   const providersById = useMemo(
     () => Object.fromEntries(providers.map((p) => [p.provider_id, p])),
     [providers],
@@ -596,6 +599,45 @@ export default function WorkbenchPage() {
     }
   }, [providers, providerInstallsById, attachProviderInstall]);
 
+  const refreshProviderOptions = useCallback(
+    async (providerId: string): Promise<ProviderOptions | undefined> => {
+      if (!workspaceId) return;
+      try {
+        const opts = await getProviderOptions(workspaceId, providerId);
+        setProviderOptions((prev) => ({ ...prev, [providerId]: opts }));
+        return opts;
+      } catch {
+        return;
+      }
+    },
+    [workspaceId],
+  );
+
+  const runPostInstallAuthVerify = useCallback(
+    async (providerId: string) => {
+      if (!workspaceId) return;
+
+      // First: probe (no prompt) so we can learn if auth is required.
+      const opts = await refreshProviderOptions(providerId);
+      if (!opts) return;
+
+      if (opts.auth_required) {
+        // Don't automatically kick off long-running auth flows; surface the Authenticate button instead.
+        return;
+      }
+
+      // Second: explicit verify (tiny prompt) to catch BYO-key / endpoint issues that don't show up on probe.
+      try {
+        await verifyProviderForWorkspace(workspaceId, providerId);
+      } catch {
+        // ignore; options refresh will surface status details
+      }
+
+      await refreshProviderOptions(providerId);
+    },
+    [refreshProviderOptions, workspaceId],
+  );
+
   useEffect(() => {
     const running = Object.entries(providerInstallsById).flatMap(([providerId, s]) =>
       s && s.state === "running" ? ([[providerId, s]] as const) : [],
@@ -623,6 +665,7 @@ export default function WorkbenchPage() {
     const tick = async () => {
       if (cancelled) return;
       let needsProviderRefresh = false;
+      const completedProviders: string[] = [];
       await Promise.all(
         running.map(async ([providerId, s]) => {
           try {
@@ -663,6 +706,11 @@ export default function WorkbenchPage() {
             if (info.state !== "running") {
               needsProviderRefresh = true;
             }
+
+            if (info.state === "succeeded" && !postInstallHandledRef.current.has(s.installId)) {
+              postInstallHandledRef.current.add(s.installId);
+              completedProviders.push(providerId);
+            }
           } catch {
             // ignore poll errors
           }
@@ -673,6 +721,16 @@ export default function WorkbenchPage() {
         try {
           const next = await listProviders();
           if (!cancelled) setProviders(next);
+
+          if (!cancelled && completedProviders.length > 0) {
+            for (const providerId of completedProviders) {
+              if (postInstallInFlightRef.current.has(providerId)) continue;
+              postInstallInFlightRef.current.add(providerId);
+              runPostInstallAuthVerify(providerId).finally(() => {
+                postInstallInFlightRef.current.delete(providerId);
+              });
+            }
+          }
         } catch {
           // ignore
         }
@@ -685,7 +743,7 @@ export default function WorkbenchPage() {
       cancelled = true;
       window.clearInterval(t);
     };
-  }, [providerInstallsById, getInstall, listProviders]);
+  }, [providerInstallsById, getInstall, listProviders, runPostInstallAuthVerify]);
 
   const installProviderFromMenu = useCallback(
     async (providerId: string) => {
@@ -1300,14 +1358,15 @@ export default function WorkbenchPage() {
   const providerOptionsInFlightRef = useRef<Record<string, Promise<ProviderOptions | undefined>>>({});
 
   const ensureProviderOptions = useCallback(
-    async (providerId: string): Promise<ProviderOptions | undefined> => {
+    async (providerId: string, opts?: { force?: boolean }): Promise<ProviderOptions | undefined> => {
       if (!workspaceId) return;
       const installed = providersById[providerId]?.installed ?? false;
       if (!installed) return;
-      if (providerOptions[providerId]) return providerOptions[providerId];
 
+      const force = opts?.force ?? false;
       const existing = providerOptionsInFlightRef.current[providerId];
-      if (existing) return existing;
+      if (existing && !force) return existing;
+      if (!force && providerOptions[providerId]) return providerOptions[providerId];
 
       const p = getProviderOptions(workspaceId, providerId)
         .then((opts) => {
@@ -1315,7 +1374,9 @@ export default function WorkbenchPage() {
           return opts;
         })
         .finally(() => {
-          delete providerOptionsInFlightRef.current[providerId];
+          if (providerOptionsInFlightRef.current[providerId] === p) {
+            delete providerOptionsInFlightRef.current[providerId];
+          }
         });
 
       providerOptionsInFlightRef.current[providerId] = p;

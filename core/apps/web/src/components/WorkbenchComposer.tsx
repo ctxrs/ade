@@ -264,7 +264,7 @@ type NewSessionProps = SharedProps & {
   onInstallAllProviders: () => void;
   installAllBusy?: boolean;
   providerOptions: Record<string, ProviderOptions | undefined>;
-  ensureProviderOptions: (providerId: string) => Promise<ProviderOptions | undefined>;
+  ensureProviderOptions: (providerId: string, opts?: { force?: boolean }) => Promise<ProviderOptions | undefined>;
 
   draftTracks: DraftTrack[];
   setDraftTracks: React.Dispatch<React.SetStateAction<DraftTrack[]>>;
@@ -1075,15 +1075,12 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
               const opts = ns.providerOptions[id];
               const models = buildModelsForProvider(id, opts);
               const catalog = buildModelCatalog(models);
+              const verifyStatus = String((opts as any)?.verify?.status ?? "");
 
               const statusUi = (() => {
                 if (!opts) return null;
-                const verifyStatus = String((opts as any)?.verify?.status ?? "");
                 if (opts.auth_required || verifyStatus === "auth_required") {
                   return { label: "Auth required", kind: "warn" as const };
-                }
-                if (verifyStatus === "ok") {
-                  return { label: "Verified", kind: "ok" as const };
                 }
                 if (verifyStatus === "network_error") {
                   return { label: "Offline", kind: "warn" as const };
@@ -1096,6 +1093,8 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
                 }
                 return null;
               })();
+
+              const showVerifyButton = checked && !opts?.auth_required && verifyStatus !== "ok";
 
               return (
                 <div key={id} className={`wb-harness-row ${installed ? "" : "wb-disabled"}`}>
@@ -1166,16 +1165,14 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
                               setProviderAuthBusy((prev) => ({ ...prev, [id]: true }));
                               try {
                                 const resp = await authenticateProviderForWorkspace(wsId, id);
-                                setProviderActionNotice(
-                                  resp.status === "ok"
-                                    ? `Authenticated ${id}.`
-                                    : `Authentication status: ${resp.status}`,
-                                );
+                                if (resp.status !== "ok") {
+                                  setProviderActionNotice(`Authentication status: ${resp.status}`);
+                                }
                               } catch (err: any) {
                                 setProviderActionError(err?.message ?? String(err));
                               } finally {
                                 setProviderAuthBusy((prev) => ({ ...prev, [id]: false }));
-                                ns.ensureProviderOptions(id).catch(() => {});
+                                ns.ensureProviderOptions(id, { force: true }).catch(() => {});
                               }
                             }}
                             disabled={providerAuthBusy[id] || !props.workspaceIdForAutocomplete}
@@ -1185,7 +1182,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
                           </button>
                         )}
 
-                        {checked && !opts?.auth_required && (
+                        {showVerifyButton && (
                           <button
                             type="button"
                             className="wb-harness-verify-btn"
@@ -1201,18 +1198,18 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
                               setProviderVerifyBusy((prev) => ({ ...prev, [id]: true }));
                               try {
                                 const resp = await verifyProviderForWorkspace(wsId, id);
-                                setProviderActionNotice(
-                                  resp.status === "ok"
-                                    ? `Verified ${id}.`
-                                    : resp.status === "network_error"
+                                if (resp.status !== "ok") {
+                                  setProviderActionNotice(
+                                    resp.status === "network_error"
                                       ? `Verify failed: offline/unreachable.`
                                       : `Verify failed: ${resp.status}`,
-                                );
+                                  );
+                                }
                               } catch (err: any) {
                                 setProviderActionError(err?.message ?? String(err));
                               } finally {
                                 setProviderVerifyBusy((prev) => ({ ...prev, [id]: false }));
-                                ns.ensureProviderOptions(id).catch(() => {});
+                                ns.ensureProviderOptions(id, { force: true }).catch(() => {});
                               }
                             }}
                             disabled={providerVerifyBusy[id] || !props.workspaceIdForAutocomplete}
