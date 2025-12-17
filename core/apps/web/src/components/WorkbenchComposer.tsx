@@ -989,11 +989,13 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
         {(() => {
           const ns = props as NewSessionProps;
           const q = harnessSearch.trim().toLowerCase();
-          const knownIds = Object.keys(ns.providersById);
           const order = new Map<string, number>(ns.harnessCatalog.map((h, idx) => [h.id, idx]));
-          const all = knownIds
-            .map((id) => ns.harnessCatalog.find((h) => h.id === id) ?? ({ id, label: id, logoSrc: "" } as any))
-            .sort((a: any, b: any) => (order.get(String(a.id)) ?? 999) - (order.get(String(b.id)) ?? 999));
+          const extras = Object.keys(ns.providersById)
+            .filter((id) => !order.has(id))
+            .map((id) => ({ id, label: id, logoSrc: "" } as any))
+            .sort((a, b) => String(a.id).localeCompare(String(b.id)));
+
+          const all = [...ns.harnessCatalog, ...extras];
           const filtered = q
             ? all.filter((h: any) => String(h.id).toLowerCase().includes(q) || String(h.label).toLowerCase().includes(q))
             : all;
@@ -1006,7 +1008,8 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
             const id = String(h.id);
             const label = String(h.label ?? id);
             const installed = ns.providersById[id]?.installed ?? false;
-            const installSupported = ns.providersById[id]?.details?.install_supported === "true";
+            const installSupported =
+              ns.providersById[id]?.details?.install_supported === "true" || id === "codex" || id === "claude" || id === "gemini";
             const installUi = ns.providerInstallsById[id];
             const installRunning = installUi?.state === "running" || ns.providersById[id]?.details?.install_running === "true";
             const installPct = installUi?.pct ?? null;
