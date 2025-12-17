@@ -211,7 +211,7 @@ export default function WorkbenchPage() {
   );
   const defaultProviderId = useMemo(() => {
     const installed = providers
-      .filter((p) => p.installed && p.provider_id !== "fake" && p.details?.ui_hidden !== "true")
+      .filter((p) => p.installed && p.details?.ui_hidden !== "true")
       .map((p) => p.provider_id);
     if (installed.includes("codex")) return "codex";
     if (installed.includes("claude")) return "claude";

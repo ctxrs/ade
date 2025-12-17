@@ -77,12 +77,11 @@ export default function TaskPage() {
             <select value={providerId} onChange={(e) => setProviderId(e.target.value)}>
               {providers
                 .filter((p) => p.details?.ui_hidden !== "true")
-                .filter((p) => p.provider_id !== "fake" || p.details?.ui_hidden === "false")
                 .map((p) => (
-                <option key={p.provider_id} value={p.provider_id} disabled={!p.installed}>
-                  {p.provider_id} {p.installed ? "" : "(missing)"}
-                </option>
-              ))}
+                  <option key={p.provider_id} value={p.provider_id} disabled={!p.installed}>
+                    {p.provider_id} {p.installed ? "" : "(missing)"}
+                  </option>
+                ))}
             </select>
           ) : (
             <input value={providerId} onChange={(e) => setProviderId(e.target.value)} />
