@@ -3175,12 +3175,6 @@ async fn get_provider(
         .await
         .unwrap_or_default();
     installer::apply_managed_install_details(&mut status, &managed);
-    if status.provider_id == "fake" {
-        let show_fake = std::env::var("CONTEXT_SHOW_FAKE_PROVIDER").ok().as_deref() == Some("1");
-        status
-            .details
-            .insert("ui_hidden".into(), if show_fake { "false" } else { "true" }.into());
-    }
     status.details.insert(
         "install_supported".into(),
         if installer::is_supported_managed_provider(&status.provider_id) {
@@ -5141,9 +5135,7 @@ async fn set_session_model(
 
     let adapter = {
         let map = state.providers.lock().await;
-        map.get(&session.provider_id)
-            .cloned()
-            .or_else(|| map.get("fake").cloned())
+        map.get(&session.provider_id).cloned()
     }
     .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
 
@@ -5192,9 +5184,7 @@ async fn set_session_mode(
 
     let adapter = {
         let map = state.providers.lock().await;
-        map.get(&session.provider_id)
-            .cloned()
-            .or_else(|| map.get("fake").cloned())
+        map.get(&session.provider_id).cloned()
     }
     .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
 
@@ -5261,9 +5251,7 @@ async fn authenticate_session(
 
     let adapter = {
         let map = state.providers.lock().await;
-        map.get(&session.provider_id)
-            .cloned()
-            .or_else(|| map.get("fake").cloned())
+        map.get(&session.provider_id).cloned()
     }
     .ok_or_else(|| {
         (

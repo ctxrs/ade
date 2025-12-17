@@ -551,20 +551,16 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
     });
 
     window.addEventListener("resize", recomputeMenuPosition);
-    const onScroll = (e: Event) => {
-      // Prevent scroll-jank while scrolling within the harness menu itself.
-      if (openMenu === "harness") {
-        const menu = menuRef.current;
-        const target = e.target as Node | null;
-        if (menu && target && menu.contains(target)) return;
-      }
+    const onAnyScroll = (e: Event) => {
+      const target = e.target as Element | null;
+      if (target && typeof (target as any).closest === "function" && target.closest(".wb-menu")) return;
       recomputeMenuPosition();
     };
-    window.addEventListener("scroll", onScroll, true);
+    window.addEventListener("scroll", onAnyScroll, true);
     return () => {
       window.cancelAnimationFrame(raf);
       window.removeEventListener("resize", recomputeMenuPosition);
-      window.removeEventListener("scroll", onScroll, true);
+      window.removeEventListener("scroll", onAnyScroll, true);
     };
   }, [openMenu, recomputeMenuPosition]);
 
@@ -1037,6 +1033,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
             const q = harnessSearch.trim().toLowerCase();
             const order = new Map<string, number>(ns.harnessCatalog.map((h, idx) => [h.id, idx]));
             const extras = Object.keys(ns.providersById)
+              .filter((id) => id !== "fake")
               .filter((id) => !order.has(id) && ns.providersById[id]?.details?.ui_hidden !== "true")
               .map((id) => ({ id, label: id, logoSrc: "" } as any))
               .sort((a, b) => String(a.id).localeCompare(String(b.id)));

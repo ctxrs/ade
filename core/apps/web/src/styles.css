@@ -1899,12 +1899,13 @@ button.linklike:hover {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  overflow: hidden;
 }
 
 .wb-harness-list {
   flex: 1 1 auto;
   min-height: 0;
-  overflow: auto;
+  overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
   padding: 0 2px;
@@ -1957,6 +1958,7 @@ button.linklike:hover {
   padding: 6px 6px;
   cursor: pointer;
   color: rgba(255, 255, 255, 0.92);
+  text-align: left;
 }
 
 .wb-harness-row-main:hover {
@@ -2136,6 +2138,8 @@ button.linklike:hover {
   height: 22px;
   padding: 0 10px;
   min-width: 78px;
+  width: 78px;
+  box-sizing: border-box;
   border-radius: 999px;
   border: 1px solid rgba(255, 255, 255, 0.12);
   background: linear-gradient(

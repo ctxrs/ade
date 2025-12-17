@@ -18,7 +18,6 @@ use context_core::models::{Session, SessionEvent};
 use context_providers::adapters::ProviderAdapter;
 use context_providers::adapters::ProviderStatus;
 use context_providers::ask_user_question::AskUserQuestionBroker;
-use context_providers::fake::FakeProviderAdapter;
 use context_providers::tier1::Tier1AcpAdapter;
 use context_store::Store;
 use context_lsp::{LspManager, LspManagerConfig};
@@ -474,7 +473,6 @@ pub async fn serve(
         .unwrap_or_default();
 
     let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
-    providers.insert("fake".into(), Arc::new(FakeProviderAdapter::new()));
     let codex_adapter: Arc<Tier1AcpAdapter> = Arc::new(
         agent_cfg
             .providers
@@ -556,6 +554,30 @@ pub async fn serve(
     providers.insert("goose".into(), goose_adapter.clone());
     providers.insert("kimi".into(), kimi_adapter.clone());
     providers.insert("auggie".into(), auggie_adapter.clone());
+
+    // Register additional harnesses as ACP adapters so they appear in /providers even if not installed.
+    // These binaries are expected to support ACP over stdio.
+    for (id, command, args) in [
+        ("qwen", "qwen", vec!["--experimental-acp"]),
+        ("opencode", "opencode", vec!["acp"]),
+        ("goose", "goose", vec!["acp"]),
+        ("mistral", "vibe-acp", vec![]),
+    ] {
+        let adapter: Arc<Tier1AcpAdapter> = Arc::new(
+            agent_cfg
+                .providers
+                .get(id)
+                .map(|c| Tier1AcpAdapter::from_raw(id, c.command.clone(), c.args.clone()))
+                .unwrap_or_else(|| {
+                    Tier1AcpAdapter::from_raw(
+                        id,
+                        command.to_string(),
+                        args.into_iter().map(|s| s.to_string()).collect(),
+                    )
+                }),
+        );
+        providers.insert(id.to_string(), adapter);
+    }
 
     let listener = tokio::net::TcpListener::bind(&bind).await?;
     let local_addr = listener.local_addr()?;

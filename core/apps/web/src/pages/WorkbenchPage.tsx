@@ -632,7 +632,15 @@ export default function WorkbenchPage() {
               typeof last?.bytes === "number" &&
                 typeof last?.total_bytes === "number" &&
                 last.total_bytes > 0
-                ? Math.max(0, Math.min(100, Math.round((last.bytes / last.total_bytes) * 100)))
+                ? (() => {
+                  const raw = Math.max(0, Math.min(100, Math.round((last.bytes / last.total_bytes) * 100)));
+                  const stage = typeof last?.stage === "string" ? last.stage : "";
+                  if (stage.includes("download")) {
+                    // Keep room for non-download stages so the UI doesn't hit 100% early.
+                    return Math.round((raw / 100) * 75);
+                  }
+                  return raw;
+                })()
                 : typeof last?.stage === "string"
                   ? (stagePct[last.stage] ?? s.pct ?? 0)
                   : (s.pct ?? 0);
@@ -641,9 +649,11 @@ export default function WorkbenchPage() {
               const existing = prev[providerId];
               if (!existing || existing.installId !== s.installId) return prev;
               const stablePct =
-                typeof pct === "number" && Number.isFinite(pct)
-                  ? Math.max(existing.pct ?? 0, pct)
-                  : (existing.pct ?? 0);
+                info.state === "succeeded"
+                  ? 100
+                  : typeof pct === "number" && Number.isFinite(pct)
+                    ? Math.max(existing.pct ?? 0, pct)
+                    : (existing.pct ?? 0);
               return {
                 ...prev,
                 [providerId]: { installId: s.installId, state: info.state, pct: stablePct },
