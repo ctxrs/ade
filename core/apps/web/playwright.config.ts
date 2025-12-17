@@ -19,7 +19,7 @@ export default defineConfig({
   webServer: {
     url: baseURL,
     command:
-      `bash -lc "rm -rf ${dataDir} && pnpm -C apps/web build && cargo run -p context-http --bin context -- serve --bind ${HOST}:${PORT} --data-dir ${dataDir}"`,
+      `bash -lc "rm -rf ${dataDir} && pnpm -C apps/web build && CONTEXT_SHOW_FAKE_PROVIDER=1 cargo run -p context-http --bin context -- serve --bind ${HOST}:${PORT} --data-dir ${dataDir}"`,
     cwd: "../..",
     reuseExistingServer: false,
     timeout: 300_000,

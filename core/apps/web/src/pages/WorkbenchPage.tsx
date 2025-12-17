@@ -210,11 +210,18 @@ export default function WorkbenchPage() {
     [providers],
   );
   const defaultProviderId = useMemo(() => {
-    const installed = providers.filter((p) => p.installed).map((p) => p.provider_id);
+    const installed = providers
+      .filter((p) => p.installed && p.details?.ui_hidden !== "true")
+      .map((p) => p.provider_id);
     if (installed.includes("codex")) return "codex";
     if (installed.includes("claude")) return "claude";
-    if (installed.includes("fake")) return "fake";
     if (installed.includes("gemini")) return "gemini";
+    if (installed.includes("qwen")) return "qwen";
+    if (installed.includes("opencode")) return "opencode";
+    if (installed.includes("mistral")) return "mistral";
+    if (installed.includes("goose")) return "goose";
+    if (installed.includes("kimi")) return "kimi";
+    if (installed.includes("auggie")) return "auggie";
     return installed[0] ?? "codex";
   }, [providers]);
 
@@ -2485,11 +2492,7 @@ export default function WorkbenchPage() {
                               </div>
                               {(() => {
                                 const q = harnessSearch.trim().toLowerCase();
-                                const all = HARNESS_CATALOG.concat(
-                                  providersById["fake"]
-                                    ? [{ id: "fake", label: "Fake", logoSrc: "", invertInDark: false } as any]
-                                    : [],
-                                );
+                                const all = HARNESS_CATALOG;
                                 const filtered = q
                                   ? all.filter((h: any) => {
                                     const id = String(h.id).toLowerCase();

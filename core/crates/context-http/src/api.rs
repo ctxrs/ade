@@ -3119,6 +3119,13 @@ async fn list_providers(
 
     for status in out.iter_mut() {
         installer::apply_managed_install_details(status, &managed);
+        if status.provider_id == "fake"
+            && std::env::var("CONTEXT_SHOW_FAKE_PROVIDER").ok().as_deref() != Some("1")
+        {
+            status
+                .details
+                .insert("ui_hidden".into(), "true".into());
+        }
         status.details.insert(
             "install_supported".into(),
             if installer::is_supported_managed_provider(&status.provider_id) {
@@ -3151,6 +3158,13 @@ async fn get_provider(
         .await
         .unwrap_or_default();
     installer::apply_managed_install_details(&mut status, &managed);
+    if status.provider_id == "fake"
+        && std::env::var("CONTEXT_SHOW_FAKE_PROVIDER").ok().as_deref() != Some("1")
+    {
+        status
+            .details
+            .insert("ui_hidden".into(), "true".into());
+    }
     status.details.insert(
         "install_supported".into(),
         if installer::is_supported_managed_provider(&status.provider_id) {

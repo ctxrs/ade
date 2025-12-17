@@ -1022,7 +1022,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
             const q = harnessSearch.trim().toLowerCase();
             const order = new Map<string, number>(ns.harnessCatalog.map((h, idx) => [h.id, idx]));
             const extras = Object.keys(ns.providersById)
-              .filter((id) => !order.has(id))
+              .filter((id) => !order.has(id) && ns.providersById[id]?.details?.ui_hidden !== "true")
               .map((id) => ({ id, label: id, logoSrc: "" } as any))
               .sort((a, b) => String(a.id).localeCompare(String(b.id)));
 
