@@ -132,6 +132,14 @@ function lastAssistantMessageMs(messages: { role: string; created_at: string }[]
   return null;
 }
 
+function lastRoleMessageMs(messages: { role: string; created_at: string }[], role: string): number | null {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m?.role === role) return parseMs(m.created_at);
+  }
+  return null;
+}
+
 function sanitizeFileName(name: string): string {
   const raw = String(name ?? "").trim() || "conversation";
   const noBadChars = raw.replace(/[<>:"/\\|?*\u0000-\u001F]/g, "");
@@ -491,10 +499,14 @@ export default function WorkbenchPage() {
     if (seq !== undefined && seq !== taskDetailLoadSeqRef.current) return;
     setTracks(trs);
     const map: Record<string, any[]> = {};
-    await Promise.all(
+    await Promise.allSettled(
       trs.map(async (tr) => {
         const trid = idToString(tr.id);
-        map[trid] = await listSessionsForTrack(trid);
+        try {
+          map[trid] = await listSessionsForTrack(trid);
+        } catch {
+          map[trid] = [];
+        }
       }),
     );
     if (signal?.aborted) return;
@@ -784,28 +796,30 @@ export default function WorkbenchPage() {
 
   // Helper to check if agent is still working (hasn't finished responding)
   const isAgentStillWorking = useCallback((entry: any): boolean => {
-    // Check for queued messages
-    if (entry.queue && entry.queue.length > 0) {
-      return true;
-    }
+    const doneLike = new Set(["done", "assistant_complete", "turn_interrupted"]);
+    const ignored = new Set(["input_queued", "notice", "interrupt_requested"]);
 
-    // Check last message - if from user, agent needs to respond
-    if (entry.messages && entry.messages.length > 0) {
-      const lastMessage = entry.messages[entry.messages.length - 1];
-      if (lastMessage.role === "user") {
-        return true;
+    const events = Array.isArray(entry?.events) ? entry.events : [];
+    const messages = Array.isArray(entry?.messages) ? entry.messages : [];
+
+    const lastRelevantEventType = (() => {
+      for (let i = events.length - 1; i >= 0; i--) {
+        const t = String(events[i]?.event_type ?? "").trim();
+        if (!t) continue;
+        if (ignored.has(t)) continue;
+        return t;
       }
+      return "";
+    })();
+
+    if (lastRelevantEventType) {
+      return !doneLike.has(lastRelevantEventType);
     }
 
-    // Check if last event is "Done" - if not, still working
-    if (entry.events && entry.events.length > 0) {
-      const lastEvent = entry.events[entry.events.length - 1];
-      if (lastEvent.event_type !== "done") {
-        return true;
-      }
-    }
-
-    return false;
+    const lastUser = lastRoleMessageMs(messages, "user");
+    if (lastUser === null) return false;
+    const lastAssistant = lastRoleMessageMs(messages, "assistant");
+    return lastAssistant === null || lastUser > lastAssistant;
   }, []);
 
   const taskLiveInfo = useMemo(() => {
@@ -1085,6 +1099,13 @@ export default function WorkbenchPage() {
     if (!workspaceId) return;
     // If the URL already specifies a Task but state hasn't hydrated yet, don't clobber it.
     if (!activeTaskId && selectionFromUrl.taskId) return;
+
+    const shouldDeferUrlSync =
+      selectionFromUrl.taskId === activeTaskId &&
+      tracks.length === 0 &&
+      ((selectionFromUrl.trackId && selectionFromUrl.trackId !== activeTrackId) ||
+        (selectionFromUrl.sessionId && !activeSessionId));
+    if (shouldDeferUrlSync) return;
 
     const next = { taskId: activeTaskId, trackId: activeTrackId, sessionId: activeSessionId };
     writeStoredSelection(next);
@@ -1432,12 +1453,11 @@ export default function WorkbenchPage() {
 	        const session = await createSession(trackId, dt.providerId, modelId);
 	        const sessionId = idToString(session.id);
 	        if (!firstTrackId) firstTrackId = trackId;
-	        if (!firstSessionId) {
+        if (!firstSessionId) {
 	          firstSessionId = sessionId;
 	          setActiveTrackId(trackId);
 	          updateWorkbenchUrlSelection({ taskId, trackId, sessionId }, true);
 	        }
-	        supervisor.openSession(sessionId, { watchDiff: true });
 	        supervisor.refreshSession(sessionId, { watchDiff: true });
 	        supervisor.refreshQueue(sessionId);
 	        await postMessage(sessionId, prompt, "immediate", draftAttachments);
@@ -2884,7 +2904,7 @@ export default function WorkbenchPage() {
 
               <div className="wb-session">
                 {activeSessionId ? (
-                  <SessionView sessionId={activeSessionId} variant="workbench" showDiffPane={false} />
+                  <SessionView key={activeSessionId ?? "empty"} sessionId={activeSessionId} variant="workbench" showDiffPane={false} />
                 ) : (
                   <div className="wb-muted" style={{ padding: 16 }}>
                     Select a track with a session.
