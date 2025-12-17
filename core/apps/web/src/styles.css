@@ -2319,7 +2319,7 @@ button.linklike:hover {
 
 .wb-worktree-chip-copied .wb-worktree-chip-copy {
   opacity: 1;
-  color: var(--success);
+  color: var(--text);
 }
 
 .wb-worktree-chip-copied .wb-worktree-chip-copy svg {
