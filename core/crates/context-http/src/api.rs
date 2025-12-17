@@ -39,11 +39,11 @@ use crate::buffers::{BufferCloseReq, BufferConflictResp, BufferId, BufferOpenReq
 use context_providers::adapters::ProviderStatus;
 use context_providers::events::NormalizedEvent;
 use context_providers::{
-    acp::authenticate_provider,
-    acp::probe_provider_options,
-    acp::verify_provider_connection,
-    acp::AcpAgentConfig,
-    acp::AcpClientConfig,
+    acp::{
+        authenticate_provider, probe_provider_options, verify_provider_connection, AcpAgentConfig,
+        AcpClientConfig,
+    },
+    ask_user_question::{AskUserQuestionAnswer, AskUserQuestionOutcome},
 };
 use crate::settings as user_settings;
 use crate::dictation_livekit;
@@ -199,6 +199,10 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
         .route("/api/sessions/:id/cancel", post(cancel_session))
         .route("/api/sessions/:id/interrupt", post(interrupt_session))
         .route("/api/sessions/:id/authenticate", post(authenticate_session))
+        .route(
+            "/api/sessions/:id/ask_user_question",
+            post(submit_ask_user_question),
+        )
         .route("/api/tracks/:id/diff", get(track_diff))
         .route("/api/tracks/:id/diff/apply", post(track_diff_apply))
         .route("/api/dictation/livekit/stream", get(dictation_livekit_stream_ws))
@@ -5421,6 +5425,121 @@ async fn authenticate_session(
             ))
         }
     }
+}
+
+#[derive(Debug, Deserialize)]
+struct SubmitAskUserQuestionReq {
+    tool_call_id: String,
+    #[serde(default)]
+    outcome: Option<String>,
+    #[serde(default)]
+    answers: Option<std::collections::HashMap<String, String>>,
+}
+
+#[derive(Debug, Serialize)]
+struct SubmitAskUserQuestionResp {
+    ok: bool,
+}
+
+async fn submit_ask_user_question(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(req): Json<SubmitAskUserQuestionReq>,
+) -> Result<Json<SubmitAskUserQuestionResp>, (StatusCode, Json<ApiErrorResp>)> {
+    let session_uuid = uuid::Uuid::parse_str(&id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid session id".to_string(),
+            }),
+        )
+    })?;
+    let session_id = SessionId(session_uuid);
+
+    // Validate the session exists (prevents accidentally fulfilling a prompt for a deleted session).
+    let exists = state
+        .store
+        .get_session(session_id)
+        .await
+        .map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: "failed to load session".to_string(),
+                }),
+            )
+        })?
+        .is_some();
+    if !exists {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "session not found".to_string(),
+            }),
+        ));
+    }
+
+    let tool_call_id = req.tool_call_id.trim().to_string();
+    if tool_call_id.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "missing tool_call_id".to_string(),
+            }),
+        ));
+    }
+
+    let outcome = match req.outcome.as_deref() {
+        Some("cancelled") => AskUserQuestionOutcome::Cancelled,
+        Some("submitted") | None => AskUserQuestionOutcome::Submitted,
+        Some(other) => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: format!("invalid outcome: {other}"),
+                }),
+            ))
+        }
+    };
+    let answers = req.answers.unwrap_or_default();
+
+    let ok = state
+        .ask_user_question
+        .submit(
+            &session_uuid.to_string(),
+            &tool_call_id,
+            AskUserQuestionAnswer { outcome, answers },
+        )
+        .await;
+
+    if !ok {
+        return Err((
+            StatusCode::CONFLICT,
+            Json(ApiErrorResp {
+                error: "no pending AskUserQuestion for this tool_call_id".to_string(),
+            }),
+        ));
+    }
+
+    if let Ok(event) = state
+        .store
+        .append_session_event(
+            session_id,
+            None,
+            None,
+            SessionEventType::Notice,
+            serde_json::json!({
+                "kind": "ask_user_question_answered",
+                "tool_call_id": tool_call_id,
+                "outcome": outcome.as_str(),
+            }),
+        )
+        .await
+    {
+        state.publish_event(event).await;
+    }
+
+    Ok(Json(SubmitAskUserQuestionResp { ok: true }))
 }
 
 #[derive(Debug, Serialize)]

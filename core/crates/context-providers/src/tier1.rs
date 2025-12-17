@@ -14,6 +14,7 @@ use crate::acp::{AcpAgentConfig, AcpClientConfig, AcpMcpServer, AcpSessionPool};
 use crate::adapters::{
     ProviderAdapter, ProviderCapabilities, ProviderHealth, ProviderStatus, RunHandle, TurnInput,
 };
+use crate::ask_user_question::AskUserQuestionBroker;
 use crate::events::NormalizedEvent;
 
 pub struct Tier1AcpAdapter {
@@ -40,8 +41,37 @@ impl Tier1AcpAdapter {
         }
     }
 
+    fn new_with_ask_user_question(
+        id: &str,
+        command: &str,
+        args: Vec<String>,
+        broker: Arc<AskUserQuestionBroker>,
+    ) -> Self {
+        let agent = AcpAgentConfig {
+            provider_id: id.to_string(),
+            command: command.to_string(),
+            args: args.clone(),
+        };
+        let pool = Arc::new(AcpSessionPool::new_with_ask_user_question(agent, broker));
+        pool.spawn_reaper();
+        Self {
+            id: id.to_string(),
+            command: command.to_string(),
+            args,
+            pool,
+        }
+    }
+
     pub fn from_raw(id: &str, command: String, args: Vec<String>) -> Self {
         Self::new(id, &command, args)
+    }
+
+    pub fn claude_from_raw_with_ask_user_question(
+        command: String,
+        args: Vec<String>,
+        broker: Arc<AskUserQuestionBroker>,
+    ) -> Self {
+        Self::new_with_ask_user_question("claude", &command, args, broker)
     }
 
     pub fn from_command(
@@ -61,6 +91,10 @@ impl Tier1AcpAdapter {
 
     pub fn claude() -> Self {
         Self::new("claude", "claude-code-acp", vec![])
+    }
+
+    pub fn claude_with_ask_user_question(broker: Arc<AskUserQuestionBroker>) -> Self {
+        Self::new_with_ask_user_question("claude", "claude-code-acp", vec![], broker)
     }
 
     pub fn gemini() -> Self {

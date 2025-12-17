@@ -3178,3 +3178,161 @@ button.linklike:hover {
   color: var(--muted);
   margin-top: 4px;
 }
+
+/* AskUserQuestion modal (Claude ACP extension) */
+.askq-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.askq-modal {
+  width: min(720px, calc(100vw - 32px));
+  max-height: min(80vh, 720px);
+  overflow: auto;
+  background: rgba(20, 20, 22, 0.98);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 14px;
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.55);
+  padding: 16px;
+}
+
+.askq-title {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 10px;
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.askq-tabs {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.askq-tab {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.03);
+  color: rgba(255, 255, 255, 0.86);
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.askq-tab-active {
+  background: rgba(120, 160, 255, 0.12);
+  border-color: rgba(120, 160, 255, 0.35);
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.askq-tab-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(120, 255, 160, 0.9);
+}
+
+.askq-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.askq-question {
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.92);
+  line-height: 1.35;
+}
+
+.askq-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.askq-option {
+  display: grid;
+  grid-template-columns: 18px 1fr;
+  gap: 8px;
+  align-items: start;
+  padding: 10px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: 10px;
+}
+
+.askq-option-selected {
+  border-color: rgba(120, 160, 255, 0.35);
+  background: rgba(120, 160, 255, 0.08);
+}
+
+.askq-option-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.askq-option-desc {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.askq-other {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.askq-other-label {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.78);
+}
+
+.askq-other-input {
+  height: 34px;
+  border-radius: 10px;
+  padding: 0 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.03);
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.askq-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.askq-cancel,
+.askq-submit {
+  height: 34px;
+  border-radius: 10px;
+  padding: 0 14px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.03);
+  color: rgba(255, 255, 255, 0.92);
+  cursor: pointer;
+}
+
+.askq-submit:disabled,
+.askq-cancel:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.askq-error {
+  font-size: 12px;
+  color: rgba(255, 150, 150, 0.95);
+}

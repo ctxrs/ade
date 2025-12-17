@@ -17,6 +17,7 @@ use context_core::ids::{SessionId, WorkspaceId, WorktreeId};
 use context_core::models::{Session, SessionEvent};
 use context_providers::adapters::ProviderAdapter;
 use context_providers::adapters::ProviderStatus;
+use context_providers::ask_user_question::AskUserQuestionBroker;
 use context_providers::fake::FakeProviderAdapter;
 use context_providers::tier1::Tier1AcpAdapter;
 use context_store::Store;
@@ -63,6 +64,7 @@ pub struct AppState {
     pub lsp: Arc<LspManager>,
     pub lsp_edit_plans_enabled: bool,
     pub buffers: BufferStore,
+    pub ask_user_question: Arc<AskUserQuestionBroker>,
     pub shutdown_tx: broadcast::Sender<()>,
     schedulers: Mutex<HashMap<SessionId, mpsc::Sender<SchedulerCommand>>>,
     broadcasters: Mutex<HashMap<SessionId, broadcast::Sender<SessionEvent>>>,
@@ -150,6 +152,7 @@ impl AppState {
         let (shutdown_tx, _) = broadcast::channel(8);
         let (global_broadcaster, _) = broadcast::channel(2048);
         let (lsp_diag_broadcaster, _) = broadcast::channel(2048);
+        let ask_user_question = Arc::new(AskUserQuestionBroker::new());
         let lsp = Arc::new(LspManager::new(lsp_cfg.clone()));
         Self {
             data_root,
@@ -166,6 +169,7 @@ impl AppState {
             lsp,
             lsp_edit_plans_enabled,
             buffers: BufferStore::default(),
+            ask_user_question,
             shutdown_tx,
             schedulers: Mutex::new(HashMap::new()),
             broadcasters: Mutex::new(HashMap::new()),
@@ -478,13 +482,10 @@ pub async fn serve(
             .map(|c| Tier1AcpAdapter::from_raw("codex", c.command.clone(), c.args.clone()))
             .unwrap_or_else(Tier1AcpAdapter::codex),
     );
-    let claude_adapter: Arc<Tier1AcpAdapter> = Arc::new(
-        agent_cfg
-            .providers
-            .get("claude")
-            .map(|c| Tier1AcpAdapter::from_raw("claude", c.command.clone(), c.args.clone()))
-            .unwrap_or_else(Tier1AcpAdapter::claude),
-    );
+    let claude_cmd = agent_cfg
+        .providers
+        .get("claude")
+        .map(|c| (c.command.clone(), c.args.clone()));
     let gemini_adapter: Arc<Tier1AcpAdapter> = Arc::new(
         agent_cfg
             .providers
@@ -548,7 +549,6 @@ pub async fn serve(
     );
 
     providers.insert("codex".into(), codex_adapter.clone());
-    providers.insert("claude".into(), claude_adapter.clone());
     providers.insert("gemini".into(), gemini_adapter.clone());
     providers.insert("qwen".into(), qwen_adapter.clone());
     providers.insert("opencode".into(), opencode_adapter.clone());
@@ -585,6 +585,21 @@ pub async fn serve(
         auth_token,
         lsp_cfg,
     ));
+
+    // Claude-only extension plumbing: AskUserQuestion is implemented via a Claude-specific ACP
+    // extension method and should not be threaded into other providers.
+    let claude_adapter: Arc<Tier1AcpAdapter> = Arc::new(match claude_cmd {
+        Some((command, args)) => Tier1AcpAdapter::claude_from_raw_with_ask_user_question(
+            command,
+            args,
+            Arc::clone(&state.ask_user_question),
+        ),
+        None => Tier1AcpAdapter::claude_with_ask_user_question(Arc::clone(&state.ask_user_question)),
+    });
+    {
+        let mut map = state.providers.lock().await;
+        map.insert("claude".into(), claude_adapter.clone());
+    }
     {
         let mut statuses = HashMap::new();
         let map = state.providers.lock().await;

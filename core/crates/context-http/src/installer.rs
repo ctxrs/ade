@@ -1308,11 +1308,15 @@ async fn install_provider_impl(
         )
         .await;
 
-        let adapter = std::sync::Arc::new(Tier1AcpAdapter::from_raw(
-            &provider_id,
-            managed.command.clone(),
-            managed.args.clone(),
-        ));
+        let adapter: std::sync::Arc<Tier1AcpAdapter> = std::sync::Arc::new(if provider_id == "claude" {
+            Tier1AcpAdapter::claude_from_raw_with_ask_user_question(
+                managed.command.clone(),
+                managed.args.clone(),
+                std::sync::Arc::clone(&state.ask_user_question),
+            )
+        } else {
+            Tier1AcpAdapter::from_raw(&provider_id, managed.command.clone(), managed.args.clone())
+        });
 
         // Refresh the in-memory adapter so new Sessions use the managed install.
         {

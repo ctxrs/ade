@@ -20,12 +20,14 @@ import {
   getSettings,
   idToString,
   interruptSession,
+  submitAskUserQuestion,
   uploadBlob,
 } from "../api/client";
 import { useOpenSession, useSessionCacheSnapshot, useSessionEntry, useSessionSupervisor } from "../state/sessionSupervisor";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { DiffReviewPane } from "../components/DiffReviewPane";
+import { AskUserQuestionModal } from "../components/AskUserQuestionModal";
 import { ComposerAutocompleteMenu } from "../components/ComposerAutocompleteMenu";
 import { useComposerAutocomplete, type SlashCommandDescriptor } from "../state/useComposerAutocomplete";
 import { shouldSendOnEnter } from "../utils/keyboard";
@@ -165,6 +167,7 @@ export function SessionView({
   const [authMethodId, setAuthMethodId] = useState<string>("");
   const [authBusy, setAuthBusy] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [optimisticAskAnswered, setOptimisticAskAnswered] = useState<Record<string, boolean>>({});
   const [expandedTurnHeaders, setExpandedTurnHeaders] = useState<Record<string, boolean>>({});
   const [expandedThoughtByAssistantId, setExpandedThoughtByAssistantId] = useState<Record<string, boolean>>({});
   const [expandedToolById, setExpandedToolById] = useState<Record<string, boolean>>({});
@@ -184,6 +187,7 @@ export function SessionView({
     setSendError(null);
     setAuthMethodId("");
     setAuthError(null);
+    setOptimisticAskAnswered({});
   }, [id]);
 
   const [dictationSettings, setDictationSettings] = useState<DictationSettings | null>(null);
@@ -223,6 +227,29 @@ export function SessionView({
     if (!last) return null;
     return `Interrupted at ${new Date(last.created_at).toLocaleTimeString()}.`;
   }, [eventsKey]);
+
+  const askUserQuestion = useMemo(() => {
+    const answered = new Set<string>();
+    for (const ev of events) {
+      if (ev.event_type !== "notice") continue;
+      if (ev.payload_json?.kind !== "ask_user_question_answered") continue;
+      const toolCallId = String(ev.payload_json?.tool_call_id ?? "").trim();
+      if (toolCallId) answered.add(toolCallId);
+    }
+    for (const toolCallId of Object.keys(optimisticAskAnswered)) {
+      if (toolCallId) answered.add(toolCallId);
+    }
+
+    for (let i = events.length - 1; i >= 0; i--) {
+      const ev = events[i];
+      if (ev.event_type !== "notice") continue;
+      if (ev.payload_json?.kind !== "ask_user_question") continue;
+      const toolCallId = String(ev.payload_json?.tool_call_id ?? "").trim();
+      if (!toolCallId || answered.has(toolCallId)) continue;
+      return { toolCallId, input: ev.payload_json?.input ?? null };
+    }
+    return null;
+  }, [eventsKey, optimisticAskAnswered]);
 
   useEffect(() => {
     let cancelled = false;
@@ -826,6 +853,20 @@ export function SessionView({
           <div className="ctx-drop-overlay-text">Drop image to attach</div>
         </div>
       )}
+      <AskUserQuestionModal
+        open={Boolean(askUserQuestion)}
+        input={askUserQuestion?.input}
+        onCancel={async () => {
+          if (!askUserQuestion) return;
+          await submitAskUserQuestion(id, askUserQuestion.toolCallId, "cancelled", {});
+          setOptimisticAskAnswered((prev) => ({ ...prev, [askUserQuestion.toolCallId]: true }));
+        }}
+        onSubmit={async (answers) => {
+          if (!askUserQuestion) return;
+          await submitAskUserQuestion(id, askUserQuestion.toolCallId, "submitted", answers);
+          setOptimisticAskAnswered((prev) => ({ ...prev, [askUserQuestion.toolCallId]: true }));
+        }}
+      />
       <div className={leftClass}>
         {entry?.error && (
           <div className="banner">

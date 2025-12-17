@@ -701,6 +701,19 @@ export const authenticateSession = (sessionId: string, method_id?: string) =>
     body: JSON.stringify(method_id ? { method_id } : {}),
   });
 
+export type AskUserQuestionOutcome = "submitted" | "cancelled";
+
+export const submitAskUserQuestion = (
+  sessionId: string,
+  tool_call_id: string,
+  outcome: AskUserQuestionOutcome,
+  answers?: Record<string, string>,
+) =>
+  apiAny(`/api/sessions/${sessionId}/ask_user_question`, {
+    method: "POST",
+    body: JSON.stringify({ tool_call_id, outcome, answers }),
+  });
+
 export const trackDiff = (trackId: string) =>
   apiAny<{ diff: string }>(`/api/tracks/${trackId}/diff`);
 
