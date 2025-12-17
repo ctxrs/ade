@@ -1044,6 +1044,10 @@ button.linklike:hover {
   background: rgba(255, 255, 255, 0.06);
 }
 
+.wb-task-row-active .wb-task-leading {
+  color: rgba(255, 255, 255, 0.78);
+}
+
 .wb-task-row:focus-visible {
   outline: 2px solid rgba(78, 163, 255, 0.38);
   outline-offset: 2px;
@@ -1086,6 +1090,15 @@ button.linklike:hover {
   border: none;
 }
 
+.wb-task-harness-multi {
+  width: 16px;
+  height: 16px;
+  display: block;
+  position: absolute;
+  left: 0;
+  top: 1px;
+}
+
 .wb-task-harness-fallback {
   width: 16px;
   height: 16px;
@@ -1115,19 +1128,22 @@ button.linklike:hover {
 
 .wb-task-rename {
   width: 100%;
-  height: 22px;
-  border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.10);
-  background: rgba(255, 255, 255, 0.04);
-  color: rgba(255, 255, 255, 0.92);
-  padding: 0 8px;
+  height: 18px;
+  line-height: 18px;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  padding: 0;
+  margin: 0;
   outline: none;
   font: inherit;
+  font-size: 12.5px;
 }
 
-.wb-task-rename:focus {
-  border-color: rgba(78, 163, 255, 0.45);
-  box-shadow: 0 0 0 2px rgba(78, 163, 255, 0.18);
+.wb-task-rename:focus-visible {
+  outline: 2px solid rgba(78, 163, 255, 0.38);
+  outline-offset: 2px;
+  border-radius: 6px;
 }
 
 .wb-task-status-dot {

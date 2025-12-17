@@ -11,6 +11,7 @@ import {
   GitBranch,
   Image,
   Laptop,
+  LayersPlus,
   MessageSquare,
   Mic,
   Settings,
@@ -1646,6 +1647,7 @@ export default function WorkbenchPage() {
                   (providerIdsByTaskFromSessions[tid] ?? []).length > 0
                     ? providerIdsByTaskFromSessions[tid]
                     : (taskProviderIdsByTaskId[tid] ?? []);
+                const providerCount = new Set(providerIds).size;
                 const harnesses = providerIds
                   .map((pid) => HARNESS_CATALOG.find((h) => h.id === pid))
                   .filter(Boolean)
@@ -1673,22 +1675,17 @@ export default function WorkbenchPage() {
                     >
                       <div className="wb-task-leading" aria-hidden="true">
                         {/* TODO: multi-track indicator/dropdown (design TBD). */}
-                        <div
-                          className={`wb-task-harness-stack wb-task-harness-stack-${Math.min(3, Math.max(1, harnesses.length || 1))}`}
-                        >
-                          {harnesses.length > 0 ? (
-                            harnesses.map((h, idx) => (
-                              <img
-                                key={`${tid}-${h.id}-${idx}`}
-                                className={`wb-task-harness-logo ${h.invertInDark ? "wb-invert" : ""}`}
-                                src={h.logoSrc}
-                                alt=""
-                              />
-                            ))
-                          ) : (
-                            <span className="wb-task-harness-fallback" aria-hidden="true" />
-                          )}
-                        </div>
+                        {providerCount > 1 ? (
+                          <LayersPlus className="wb-task-harness-multi" size={16} />
+                        ) : harnesses.length > 0 ? (
+                          <img
+                            className={`wb-task-harness-logo ${harnesses[0].invertInDark ? "wb-invert" : ""}`}
+                            src={harnesses[0].logoSrc}
+                            alt=""
+                          />
+                        ) : (
+                          <span className="wb-task-harness-fallback" aria-hidden="true" />
+                        )}
                       </div>
                       <div className="wb-task-body">
                         {renamingTaskId === tid ? (
@@ -1800,6 +1797,7 @@ export default function WorkbenchPage() {
                     (providerIdsByTaskFromSessions[tid] ?? []).length > 0
                       ? providerIdsByTaskFromSessions[tid]
                       : (taskProviderIdsByTaskId[tid] ?? []);
+                  const providerCount = new Set(providerIds).size;
                   const harnesses = providerIds
                     .map((pid) => HARNESS_CATALOG.find((h) => h.id === pid))
                     .filter(Boolean)
@@ -1827,22 +1825,17 @@ export default function WorkbenchPage() {
                       >
                         <div className="wb-task-leading" aria-hidden="true">
                           {/* TODO: multi-track indicator/dropdown (design TBD). */}
-                          <div
-                            className={`wb-task-harness-stack wb-task-harness-stack-${Math.min(3, Math.max(1, harnesses.length || 1))}`}
-                          >
-                            {harnesses.length > 0 ? (
-                              harnesses.map((h, idx) => (
-                                <img
-                                  key={`${tid}-${h.id}-${idx}`}
-                                  className={`wb-task-harness-logo ${h.invertInDark ? "wb-invert" : ""}`}
-                                  src={h.logoSrc}
-                                  alt=""
-                                />
-                              ))
-                            ) : (
-                              <span className="wb-task-harness-fallback" aria-hidden="true" />
-                            )}
-                          </div>
+                          {providerCount > 1 ? (
+                            <LayersPlus className="wb-task-harness-multi" size={16} />
+                          ) : harnesses.length > 0 ? (
+                            <img
+                              className={`wb-task-harness-logo ${harnesses[0].invertInDark ? "wb-invert" : ""}`}
+                              src={harnesses[0].logoSrc}
+                              alt=""
+                            />
+                          ) : (
+                            <span className="wb-task-harness-fallback" aria-hidden="true" />
+                          )}
                         </div>
                         <div className="wb-task-body">
                           {renamingTaskId === tid ? (
@@ -2810,6 +2803,19 @@ export default function WorkbenchPage() {
             role="menuitem"
           >
             Copy Worktree Location
+          </button>
+          <button
+            type="button"
+            className="wb-menu-item"
+            disabled={!activeTaskId || !!activeTask?.archived_at}
+            onClick={() => {
+              if (!activeTaskId) return;
+              setConvoMenu(null);
+              onToggleArchive(activeTaskId, true).catch(() => { });
+            }}
+            role="menuitem"
+          >
+            Archive Conversation
           </button>
         </div>
       )}
