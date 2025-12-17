@@ -875,8 +875,17 @@ impl AcpProcess {
                                 continue;
                             }
 
-                            // Agent -> Client request: _claude_code_acp/ask_user_question
-                            if parsed.get("method").and_then(|v| v.as_str()) == Some("_claude_code_acp/ask_user_question") {
+                            // Agent -> Client request: Claude Code AskUserQuestion (ACP extMethod)
+                            //
+                            // In ACP JS SDKs, `extMethod(method, ...)` sends JSON-RPC method `_${method}`.
+                            // Correct wire method is `_claude_code_acp/ask_user_question`, but if the agent
+                            // passes a leading underscore to `extMethod`, it becomes `__claude_code_acp/...`.
+                            let is_ask_user_question = matches!(
+                                parsed.get("method").and_then(|v| v.as_str()),
+                                Some("_claude_code_acp/ask_user_question")
+                                    | Some("__claude_code_acp/ask_user_question")
+                            );
+                            if is_ask_user_question {
                                 let req_id = parsed
                                     .get("id")
                                     .and_then(jsonrpc_id_u64)

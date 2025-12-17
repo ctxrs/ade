@@ -891,7 +891,25 @@ async fn patch_claude_code_acp_for_ask_user_question(script_path: &Path) -> Resu
     let original = tokio::fs::read_to_string(&acp_agent_js)
         .await
         .with_context(|| format!("reading {}", acp_agent_js.display()))?;
-    if original.contains("_claude_code_acp/ask_user_question") {
+
+    // `@agentclientprotocol/sdk` implements `extMethod(method, ...)` by sending the JSON-RPC
+    // request method `_${method}`. That means callers should pass `claude_code_acp/...` (no
+    // leading underscore) to produce `_claude_code_acp/...` on the wire.
+    //
+    // Older/broken patches (including our initial one) used `_claude_code_acp/...` as the method
+    // argument, which results in `__claude_code_acp/...` on the wire.
+    if original.contains("extMethod(\"_claude_code_acp/ask_user_question\"") {
+        let patched = original.replace(
+            "extMethod(\"_claude_code_acp/ask_user_question\"",
+            "extMethod(\"claude_code_acp/ask_user_question\"",
+        );
+        tokio::fs::write(&acp_agent_js, patched)
+            .await
+            .with_context(|| format!("writing {}", acp_agent_js.display()))?;
+        return Ok(true);
+    }
+
+    if original.contains("extMethod(\"claude_code_acp/ask_user_question\"") {
         return Ok(false);
     }
 
@@ -905,7 +923,7 @@ async fn patch_claude_code_acp_for_ask_user_question(script_path: &Path) -> Resu
                     throw new Error("Tool use aborted");
                 }
                 try {
-                    const rawResponse = await this.client.extMethod("_claude_code_acp/ask_user_question", {
+                    const rawResponse = await this.client.extMethod("claude_code_acp/ask_user_question", {
                         sessionId,
                         toolCallId: toolUseID,
                         input: toolInput,
