@@ -3117,14 +3117,13 @@ async fn list_providers(
         .await
         .unwrap_or_default();
 
+    let show_fake = std::env::var("CONTEXT_SHOW_FAKE_PROVIDER").ok().as_deref() == Some("1");
     for status in out.iter_mut() {
         installer::apply_managed_install_details(status, &managed);
-        if status.provider_id == "fake"
-            && std::env::var("CONTEXT_SHOW_FAKE_PROVIDER").ok().as_deref() != Some("1")
-        {
+        if status.provider_id == "fake" {
             status
                 .details
-                .insert("ui_hidden".into(), "true".into());
+                .insert("ui_hidden".into(), if show_fake { "false" } else { "true" }.into());
         }
         status.details.insert(
             "install_supported".into(),
@@ -3158,12 +3157,11 @@ async fn get_provider(
         .await
         .unwrap_or_default();
     installer::apply_managed_install_details(&mut status, &managed);
-    if status.provider_id == "fake"
-        && std::env::var("CONTEXT_SHOW_FAKE_PROVIDER").ok().as_deref() != Some("1")
-    {
+    if status.provider_id == "fake" {
+        let show_fake = std::env::var("CONTEXT_SHOW_FAKE_PROVIDER").ok().as_deref() == Some("1");
         status
             .details
-            .insert("ui_hidden".into(), "true".into());
+            .insert("ui_hidden".into(), if show_fake { "false" } else { "true" }.into());
     }
     status.details.insert(
         "install_supported".into(),

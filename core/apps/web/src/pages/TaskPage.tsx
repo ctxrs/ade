@@ -19,8 +19,8 @@ export default function TaskPage() {
   const [tracks, setTracks] = useState<Track[]>([]);
   const [sessionsByTrack, setSessionsByTrack] = useState<Record<string, Session[]>>({});
   const [providers, setProviders] = useState<ProviderStatus[]>([]);
-  const [providerId, setProviderId] = useState("fake");
-  const [modelId, setModelId] = useState("fake-model");
+  const [providerId, setProviderId] = useState("codex");
+  const [modelId, setModelId] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   const refresh = async () => {
@@ -75,7 +75,10 @@ export default function TaskPage() {
           Provider
           {providers.length > 0 ? (
             <select value={providerId} onChange={(e) => setProviderId(e.target.value)}>
-              {providers.map((p) => (
+              {providers
+                .filter((p) => p.details?.ui_hidden !== "true")
+                .filter((p) => p.provider_id !== "fake" || p.details?.ui_hidden === "false")
+                .map((p) => (
                 <option key={p.provider_id} value={p.provider_id} disabled={!p.installed}>
                   {p.provider_id} {p.installed ? "" : "(missing)"}
                 </option>
