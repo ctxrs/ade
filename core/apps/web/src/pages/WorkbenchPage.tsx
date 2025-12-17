@@ -1727,18 +1727,6 @@ export default function WorkbenchPage() {
                         <div className="wb-task-actions" aria-label="Task actions">
                           <button
                             type="button"
-                            className="wb-icon wb-task-action"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              onToggleArchive(tid, true).catch(() => { });
-                            }}
-                            aria-label="Archive"
-                            title="Archive"
-                          >
-                            <Archive size={14} />
-                          </button>
-                          <button
-                            type="button"
                             className="wb-icon wb-task-action wb-task-menu-trigger"
                             onClick={(e) => {
                               e.stopPropagation();
@@ -1748,6 +1736,18 @@ export default function WorkbenchPage() {
                             title="More actions"
                           >
                             <Ellipsis size={14} />
+                          </button>
+                          <button
+                            type="button"
+                            className="wb-icon wb-task-action"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onToggleArchive(tid, true).catch(() => { });
+                            }}
+                            aria-label="Archive"
+                            title="Archive"
+                          >
+                            <Archive size={14} />
                           </button>
                         </div>
                       </div>
@@ -1881,18 +1881,6 @@ export default function WorkbenchPage() {
                           <div className="wb-task-actions" aria-label="Task actions">
                             <button
                               type="button"
-                              className="wb-icon wb-task-action"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                onToggleArchive(tid, false).catch(() => { });
-                              }}
-                              aria-label="Unarchive"
-                              title="Unarchive"
-                            >
-                              <Archive size={14} />
-                            </button>
-                            <button
-                              type="button"
                               className="wb-icon wb-task-action wb-task-menu-trigger"
                               onClick={(e) => {
                                 e.stopPropagation();
@@ -1902,6 +1890,18 @@ export default function WorkbenchPage() {
                               title="More actions"
                             >
                               <Ellipsis size={14} />
+                            </button>
+                            <button
+                              type="button"
+                              className="wb-icon wb-task-action"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onToggleArchive(tid, false).catch(() => { });
+                              }}
+                              aria-label="Unarchive"
+                              title="Unarchive"
+                            >
+                              <Archive size={14} />
                             </button>
                           </div>
                         </div>
