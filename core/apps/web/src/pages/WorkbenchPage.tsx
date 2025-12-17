@@ -5,6 +5,7 @@ import {
   ArrowUp,
   AtSign,
   ChevronDown,
+  Check,
   Copy,
   Ellipsis,
   GitBranch,
@@ -1266,15 +1267,50 @@ export default function WorkbenchPage() {
     };
   }, [activeEntry, activeTask?.title, activeWorktree?.root_path, tracks.length]);
 
+  const formatWorktreePathForCopy = useCallback((raw: string): string => {
+    const path = String(raw ?? "").trim();
+    if (!path) return "";
+
+    // Prefer "~" for user home directories.
+    // This is a UI convenience for paths that typically get pasted into shells.
+    const posixMatch = path.match(/^\/(?:home|Users)\/[^/]+(\/.*)?$/);
+    if (posixMatch) return `~${posixMatch[1] ?? ""}`;
+
+    const windowsMatch = path.match(/^[A-Za-z]:\\Users\\[^\\]+(\\.*)?$/);
+    if (windowsMatch) return `~${windowsMatch[1] ?? ""}`;
+
+    return path;
+  }, []);
+
+  const [worktreeCopied, setWorktreeCopied] = useState(false);
+  const worktreeCopiedTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (worktreeCopiedTimerRef.current) {
+        window.clearTimeout(worktreeCopiedTimerRef.current);
+        worktreeCopiedTimerRef.current = null;
+      }
+    };
+  }, []);
+
   const copyWorktreeLocation = useCallback(async () => {
     const path = String(singleTrackHeader?.worktreePath ?? "").trim();
     if (!path) return;
     try {
-      await navigator.clipboard.writeText(path);
+      await navigator.clipboard.writeText(formatWorktreePathForCopy(path));
+      setWorktreeCopied(true);
+      if (worktreeCopiedTimerRef.current) {
+        window.clearTimeout(worktreeCopiedTimerRef.current);
+      }
+      worktreeCopiedTimerRef.current = window.setTimeout(() => {
+        setWorktreeCopied(false);
+        worktreeCopiedTimerRef.current = null;
+      }, 1100);
     } catch (e: any) {
       window.alert(e?.message ?? "Failed to copy worktree location.");
     }
-  }, [singleTrackHeader?.worktreePath]);
+  }, [formatWorktreePathForCopy, singleTrackHeader?.worktreePath]);
 
   const exportConversation = useCallback(async () => {
     if (!activeEntry?.session) return;
@@ -1296,7 +1332,7 @@ export default function WorkbenchPage() {
     lines.push(`- Harness: ${harness}`);
     lines.push(`- Model: ${parsedModel.base || String(sess.model_id ?? "")}`);
     if (parsedModel.effort) lines.push(`- Effort: ${parsedModel.effort}`);
-    if (singleTrackHeader?.worktreePath) lines.push(`- Worktree: ${singleTrackHeader.worktreePath}`);
+    if (singleTrackHeader?.worktreePath) lines.push(`- Worktree: ${formatWorktreePathForCopy(singleTrackHeader.worktreePath)}`);
     lines.push(`- Session ID: ${idToString(sess.id)}`);
     lines.push("");
     lines.push("---");
@@ -2375,7 +2411,7 @@ export default function WorkbenchPage() {
                           </span>
                           <button
                             type="button"
-                            className="wb-worktree-chip"
+                            className={`wb-worktree-chip ${worktreeCopied ? "wb-worktree-chip-copied" : ""}`}
                             disabled={!singleTrackHeader.canCopyWorktree}
                             onClick={() => void copyWorktreeLocation()}
                             title="Copy worktree location"
@@ -2384,9 +2420,14 @@ export default function WorkbenchPage() {
                             <GitBranch size={13} />
                             <span className="wb-worktree-chip-slug">{singleTrackHeader.worktreeSlug}</span>
                             <span className="wb-worktree-chip-copy" aria-hidden="true">
-                              <Copy size={13} />
+                              {worktreeCopied ? <Check size={13} /> : <Copy size={13} />}
                             </span>
                           </button>
+                          {worktreeCopied && (
+                            <span className="sr-only" aria-live="polite">
+                              Copied worktree location to clipboard.
+                            </span>
+                          )}
                         </>
                       )}
                     </div>
