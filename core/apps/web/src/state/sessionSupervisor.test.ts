@@ -1,6 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { SessionSupervisor } from "./sessionSupervisor";
 import type { Message, Session, SessionEvent } from "../api/client";
 
 vi.mock("../api/client", () => {
@@ -20,34 +19,39 @@ vi.mock("../api/client", () => {
 
 import { getSession, listMessages, listQueue, listSessionEvents, listSessionEventsPage } from "../api/client";
 
+const mkSession = (sessionId: string, trackId: string): Session => ({
+  id: { 0: sessionId },
+  track_id: { 0: trackId },
+  task_id: { 0: "task-1" },
+  workspace_id: { 0: "ws-1" },
+  worktree_id: { 0: "wt-1" },
+  provider_id: "fake",
+  model_id: "fake-model",
+  agent_role: "assistant",
+  status: "idle",
+});
+
+async function waitForCondition(cond: () => boolean, timeoutMs = 1000) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (cond()) return;
+    await new Promise((r) => setTimeout(r, 0));
+  }
+  throw new Error("Timed out waiting for condition");
+}
+
 describe("SessionSupervisor", () => {
-  beforeEach(() => {
-    vi.useFakeTimers();
-  });
-
   afterEach(() => {
-    vi.clearAllTimers();
-    vi.useRealTimers();
-    vi.resetAllMocks();
+    vi.clearAllMocks();
   });
 
-  it("refreshes Messages when polling backfills a turn boundary event", async () => {
+  it("refreshes Messages when backfill observes done", async () => {
+    const { SessionSupervisor } = await import("./sessionSupervisor");
+
     const sessionId = "session-1";
     const trackId = "track-1";
 
-    const session: Session = {
-      id: { 0: sessionId },
-      track_id: { 0: trackId },
-      task_id: { 0: "task-1" },
-      workspace_id: { 0: "ws-1" },
-      worktree_id: { 0: "wt-1" },
-      provider_id: "fake",
-      model_id: "fake-model",
-      agent_role: "assistant",
-      status: "idle",
-    };
-
-    (getSession as any).mockResolvedValue(session);
+    (getSession as any).mockResolvedValue(mkSession(sessionId, trackId));
     (listSessionEvents as any).mockResolvedValue([]);
     (listQueue as any).mockResolvedValue([]);
 
@@ -79,53 +83,32 @@ describe("SessionSupervisor", () => {
       return messagesCalls === 1 ? initialMessages : updatedMessages;
     });
 
-    let pageCalls = 0;
-    (listSessionEventsPage as any).mockImplementation(async () => {
-      pageCalls += 1;
-      if (pageCalls !== 1) return [];
-      const ev: SessionEvent = {
+    (listSessionEventsPage as any).mockResolvedValue([
+      {
         id: { 0: "e1" },
         session_id: { 0: sessionId },
         event_type: "done",
         payload_json: {},
         created_at: new Date().toISOString(),
-      };
-      return [ev];
-    });
+      } satisfies SessionEvent,
+    ]);
 
     const sup = new SessionSupervisor();
-    const close = sup.openSession(sessionId);
-
-    await Promise.resolve();
-    await Promise.resolve();
-
-    await vi.advanceTimersByTimeAsync(1600);
-    await Promise.resolve();
-    await Promise.resolve();
+    await (sup as any).ensureLoaded(sessionId);
+    await (sup as any).backfillSession(sessionId);
 
     const snap = sup.getSnapshot();
+    expect((listMessages as any).mock.calls.length).toBe(2);
     expect(snap.sessions[sessionId]?.messages.length).toBe(2);
-
-    close();
   });
 
-  it("refreshes Messages when polling backfills assistant_complete", async () => {
+  it("ingests assistant_complete without forcing a Messages refresh", async () => {
+    const { SessionSupervisor } = await import("./sessionSupervisor");
+
     const sessionId = "session-1";
     const trackId = "track-1";
 
-    const session: Session = {
-      id: { 0: sessionId },
-      track_id: { 0: trackId },
-      task_id: { 0: "task-1" },
-      workspace_id: { 0: "ws-1" },
-      worktree_id: { 0: "wt-1" },
-      provider_id: "fake",
-      model_id: "fake-model",
-      agent_role: "assistant",
-      status: "idle",
-    };
-
-    (getSession as any).mockResolvedValue(session);
+    (getSession as any).mockResolvedValue(mkSession(sessionId, trackId));
     (listSessionEvents as any).mockResolvedValue([]);
     (listQueue as any).mockResolvedValue([]);
 
@@ -157,53 +140,33 @@ describe("SessionSupervisor", () => {
       return messagesCalls === 1 ? initialMessages : updatedMessages;
     });
 
-    let pageCalls = 0;
-    (listSessionEventsPage as any).mockImplementation(async () => {
-      pageCalls += 1;
-      if (pageCalls !== 1) return [];
-      const ev: SessionEvent = {
+    (listSessionEventsPage as any).mockResolvedValue([
+      {
         id: { 0: "e1" },
         session_id: { 0: sessionId },
         event_type: "assistant_complete",
         payload_json: {},
         created_at: new Date().toISOString(),
-      };
-      return [ev];
-    });
+      } satisfies SessionEvent,
+    ]);
 
     const sup = new SessionSupervisor();
-    const close = sup.openSession(sessionId);
-
-    await Promise.resolve();
-    await Promise.resolve();
-
-    await vi.advanceTimersByTimeAsync(1600);
-    await Promise.resolve();
-    await Promise.resolve();
+    await (sup as any).ensureLoaded(sessionId);
+    await (sup as any).backfillSession(sessionId);
 
     const snap = sup.getSnapshot();
-    expect(snap.sessions[sessionId]?.messages.length).toBe(2);
-
-    close();
+    expect(snap.sessions[sessionId]?.events.some((e) => e.event_type === "assistant_complete")).toBe(true);
+    expect((listMessages as any).mock.calls.length).toBe(1);
+    expect(snap.sessions[sessionId]?.messages.length).toBe(1);
   });
 
-  it("parses WS message frames delivered as Blob-like objects and refreshes on assistant_complete", async () => {
+  it("parses Blob-like WS frames and ingests assistant_complete without forcing a Messages refresh", async () => {
+    const { SessionSupervisor } = await import("./sessionSupervisor");
+
     const sessionId = "session-1";
     const trackId = "track-1";
 
-    const session: Session = {
-      id: { 0: sessionId },
-      track_id: { 0: trackId },
-      task_id: { 0: "task-1" },
-      workspace_id: { 0: "ws-1" },
-      worktree_id: { 0: "wt-1" },
-      provider_id: "fake",
-      model_id: "fake-model",
-      agent_role: "assistant",
-      status: "idle",
-    };
-
-    (getSession as any).mockResolvedValue(session);
+    (getSession as any).mockResolvedValue(mkSession(sessionId, trackId));
     (listSessionEvents as any).mockResolvedValue([]);
     (listSessionEventsPage as any).mockResolvedValue([]);
     (listQueue as any).mockResolvedValue([]);
@@ -286,10 +249,7 @@ describe("SessionSupervisor", () => {
     (globalThis as any).WebSocket = FakeWebSocket as any;
     try {
       const sup = new SessionSupervisor();
-      const close = sup.openSession(sessionId);
-
-      await Promise.resolve();
-      await Promise.resolve();
+      await (sup as any).ensureLoaded(sessionId);
 
       await (sup as any).openWebSocket("ws://example.test");
       expect(sockets.length).toBe(1);
@@ -306,14 +266,13 @@ describe("SessionSupervisor", () => {
       };
 
       sockets[0].emitMessage(frame);
-      await Promise.resolve();
-      await Promise.resolve();
+      await waitForCondition(() => (sup.getSnapshot().sessions[sessionId]?.events.length ?? 0) === 1);
 
       const snap = sup.getSnapshot();
       expect(snap.sessions[sessionId]?.events.length).toBe(1);
-      expect(snap.sessions[sessionId]?.messages.length).toBe(2);
-
-      close();
+      expect(snap.sessions[sessionId]?.events[0]?.event_type).toBe("assistant_complete");
+      expect((listMessages as any).mock.calls.length).toBe(1);
+      expect(snap.sessions[sessionId]?.messages.length).toBe(1);
     } finally {
       (globalThis as any).WebSocket = originalWebSocket;
     }

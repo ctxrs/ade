@@ -342,8 +342,11 @@ export class SessionSupervisor {
     if (last) entry.lastEventId = idToString(last.id) || entry.lastEventId;
   }
 
-  private isTurnBoundaryEventType(eventType: unknown): boolean {
-    return eventType === "done" || eventType === "turn_interrupted" || eventType === "assistant_complete";
+  // We only refresh durable data (Messages/Queue/Diff) once the turn is fully finalized.
+  // `assistant_complete` is a UI boundary, but it can be observed before the daemon has
+  // finished inserting the assistant message into the Messages table (event-first publish).
+  private isRefreshBoundaryEventType(eventType: unknown): boolean {
+    return eventType === "done" || eventType === "turn_interrupted";
   }
 
   private async connect() {
@@ -464,7 +467,7 @@ export class SessionSupervisor {
             // Keep hot sessions warm when they are producing events.
             entry.warmUntilMs = Date.now() + WARM_TTL_MS;
 
-            if (this.isTurnBoundaryEventType(data.event_type)) {
+            if (this.isRefreshBoundaryEventType(data.event_type)) {
               this.refreshQueueAndDiff(entry).catch(() => {});
             }
             this.publish();
@@ -504,13 +507,13 @@ export class SessionSupervisor {
     const after = entry.lastEventId;
     try {
       const evs = await listSessionEventsPage(sessionId, after, 500);
-      const sawTurnBoundary = evs.some((e) => this.isTurnBoundaryEventType(e.event_type));
+      const sawRefreshBoundary = evs.some((e) => this.isRefreshBoundaryEventType(e.event_type));
       this.upsertEvents(entry, evs);
       entry.updatedAtMs = Date.now();
       this.publish();
       // When disconnected (polling mode), we won't get the WS-triggered refresh that keeps Messages in sync.
       // Refreshing here ensures assistant replies show up after daemon/webapp restarts.
-      if (sawTurnBoundary) {
+      if (sawRefreshBoundary) {
         await this.refreshQueueAndDiff(entry);
       }
     } catch {
@@ -538,7 +541,7 @@ export class SessionSupervisor {
         const entry = this.entries.get(sid);
         if (!entry) continue;
         const lastType = entry.events.length > 0 ? String(entry.events[entry.events.length - 1].event_type ?? "") : "";
-        const doneLike = this.isTurnBoundaryEventType(lastType);
+        const doneLike = this.isRefreshBoundaryEventType(lastType);
         // When connected, only poll sessions that appear to be mid-turn to avoid unnecessary load.
         // When disconnected, poll everything warm.
         if (this.snapshot.connection === "connected" && doneLike) continue;
