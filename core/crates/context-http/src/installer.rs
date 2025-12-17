@@ -821,6 +821,17 @@ async fn install_managed_npm_provider(
         .await
         .context("running npm install")?;
 
+    if provider_id == "claude" {
+        *stage = "patch";
+        if let Err(e) =
+            patch_claude_code_acp_for_ask_user_question(&install_dir.join(script_rel)).await
+        {
+            // Don't hard-fail install if patching fails; Claude can still run without the UI.
+            // This is a best-effort enhancement until the upstream package includes AskUserQuestion routing.
+            tracing::warn!("failed to patch claude-code-acp for AskUserQuestion: {e:#}");
+        }
+    }
+
     *stage = "entrypoint";
     let script_path = install_dir.join(script_rel);
     if !script_path.exists() {
@@ -847,6 +858,106 @@ async fn install_managed_npm_provider(
         args,
         meta,
     })
+}
+
+pub async fn ensure_claude_code_acp_ask_user_question_patched(
+    agent_cfg: &AgentServerConfigFile,
+) -> Result<bool> {
+    let Some(cmd) = agent_cfg.providers.get("claude") else {
+        return Ok(false);
+    };
+    let Some(script_path) = cmd.args.first() else {
+        return Ok(false);
+    };
+    let script_path = PathBuf::from(script_path);
+    patch_claude_code_acp_for_ask_user_question(&script_path).await
+}
+
+async fn patch_claude_code_acp_for_ask_user_question(script_path: &Path) -> Result<bool> {
+    // `script_path` is usually `.../node_modules/@zed-industries/claude-code-acp/dist/index.js`.
+    // We patch `dist/acp-agent.js` in the same directory to route `AskUserQuestion` tool calls via
+    // the ACP extension method `_claude_code_acp/ask_user_question`.
+    let Some(dist_dir) = script_path.parent() else {
+        return Ok(false);
+    };
+    if script_path.file_name().and_then(|s| s.to_str()) != Some("index.js") {
+        return Ok(false);
+    }
+    let acp_agent_js = dist_dir.join("acp-agent.js");
+    if !acp_agent_js.exists() {
+        return Ok(false);
+    }
+
+    let original = tokio::fs::read_to_string(&acp_agent_js)
+        .await
+        .with_context(|| format!("reading {}", acp_agent_js.display()))?;
+    if original.contains("_claude_code_acp/ask_user_question") {
+        return Ok(false);
+    }
+
+    let needle = "if (toolName === \"ExitPlanMode\") {";
+    let Some(insert_at) = original.find(needle) else {
+        return Ok(false);
+    };
+
+    let ask_block = r#"if (toolName === "AskUserQuestion") {
+                if (signal.aborted) {
+                    throw new Error("Tool use aborted");
+                }
+                try {
+                    const rawResponse = await this.client.extMethod("_claude_code_acp/ask_user_question", {
+                        sessionId,
+                        toolCallId: toolUseID,
+                        input: toolInput,
+                    });
+                    if (signal.aborted) {
+                        throw new Error("Tool use aborted");
+                    }
+                    const outcome = rawResponse?.outcome === "submitted" || rawResponse?.outcome === "cancelled" ? rawResponse.outcome : undefined;
+                    let answers;
+                    if (rawResponse && typeof rawResponse.answers === "object" && rawResponse.answers !== null && !Array.isArray(rawResponse.answers)) {
+                        answers = {};
+                        for (const [key, value] of Object.entries(rawResponse.answers)) {
+                            if (typeof value === "string") {
+                                answers[key] = value;
+                            }
+                        }
+                    }
+                    if (outcome === "cancelled") {
+                        return {
+                            behavior: "deny",
+                            message: "User cancelled the question prompt. Proceed without using AskUserQuestion and ask for clarification in the chat instead.",
+                        };
+                    }
+                    return {
+                        behavior: "allow",
+                        updatedInput: {
+                            ...toolInput,
+                            answers: answers ?? {},
+                        },
+                    };
+                }
+                catch (error) {
+                    const errorMessage = error instanceof Error && error.message ? error.message : String(error);
+                    return {
+                        behavior: "deny",
+                        message: "This ACP client does not support the AskUserQuestion interactive UI. Ask the user your questions in plain text and continue after the next user message. Details: " +
+                            errorMessage,
+                    };
+                }
+            }
+            "#;
+
+    let mut patched = String::with_capacity(original.len() + ask_block.len() + 16);
+    patched.push_str(&original[..insert_at]);
+    patched.push_str(ask_block);
+    patched.push_str(&original[insert_at..]);
+
+    tokio::fs::write(&acp_agent_js, patched)
+        .await
+        .with_context(|| format!("writing {}", acp_agent_js.display()))?;
+
+    Ok(true)
 }
 
 async fn install_managed_archive_provider(

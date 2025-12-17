@@ -472,6 +472,12 @@ pub async fn serve(
         .await
         .unwrap_or_default();
 
+    match installer::ensure_claude_code_acp_ask_user_question_patched(&agent_cfg).await {
+        Ok(true) => tracing::info!("patched claude-code-acp to enable AskUserQuestion over ACP"),
+        Ok(false) => {}
+        Err(e) => tracing::warn!("failed to patch claude-code-acp for AskUserQuestion: {e:#}"),
+    }
+
     let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
     let codex_adapter: Arc<Tier1AcpAdapter> = Arc::new(
         agent_cfg
