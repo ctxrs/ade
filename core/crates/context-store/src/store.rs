@@ -256,6 +256,84 @@ impl Store {
         Ok(res.rows_affected() > 0)
     }
 
+    pub async fn update_task_title(&self, id: TaskId, title: String) -> Result<bool> {
+        let now = Utc::now().to_rfc3339();
+        let res = sqlx::query(
+            r#"UPDATE tasks
+               SET title = ?, updated_at = ?
+               WHERE id = ?"#,
+        )
+        .bind(title)
+        .bind(&now)
+        .bind(id.0.to_string())
+        .execute(&self.pool)
+        .await?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    pub async fn delete_task(&self, id: TaskId) -> Result<bool> {
+        let res = sqlx::query(r#"DELETE FROM tasks WHERE id = ?"#)
+            .bind(id.0.to_string())
+            .execute(&self.pool)
+            .await?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    pub async fn get_task_with_activity(&self, id: TaskId) -> Result<Option<Task>> {
+        let row = sqlx::query(
+            r#"
+            SELECT
+              t.id, t.workspace_id, t.title, t.description, t.status, t.exec_plan_id,
+              t.created_at, t.updated_at, t.archived_at,
+              (
+                SELECT MAX(m.created_at)
+                FROM messages m
+                WHERE m.task_id = t.id
+              ) AS last_activity_at,
+              (
+                SELECT MAX(m.created_at)
+                FROM messages m
+                WHERE m.task_id = t.id AND m.role = 'assistant'
+              ) AS last_assistant_message_at,
+              EXISTS(
+                SELECT 1
+                FROM sessions s
+                WHERE s.task_id = t.id AND s.status = 'active'
+              ) AS has_active_session
+            FROM tasks t
+            WHERE t.id = ?
+            "#,
+        )
+        .bind(id.0.to_string())
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.and_then(|r| {
+            let id: String = r.try_get("id").ok()?;
+            let ws_id: String = r.try_get("workspace_id").ok()?;
+            let created_at: String = r.try_get("created_at").ok()?;
+            let updated_at: String = r.try_get("updated_at").ok()?;
+            let archived_at: Option<String> = r.try_get("archived_at").ok()?;
+            let last_activity_at: Option<String> = r.try_get("last_activity_at").ok()?;
+            let last_assistant_message_at: Option<String> = r.try_get("last_assistant_message_at").ok()?;
+            let has_active_session: i64 = r.try_get("has_active_session").ok()?;
+            Some(Task {
+                id: TaskId(uuid::Uuid::parse_str(&id).ok()?),
+                workspace_id: WorkspaceId(uuid::Uuid::parse_str(&ws_id).ok()?),
+                title: r.try_get("title").ok()?,
+                description: r.try_get("description").ok()?,
+                status: parse_task_status(r.try_get::<String, _>("status").ok()?.as_str()),
+                created_at: parse_dt(&created_at).ok()?,
+                updated_at: parse_dt(&updated_at).ok()?,
+                exec_plan_id: r.try_get("exec_plan_id").ok()?,
+                archived_at: archived_at.as_deref().map(parse_dt).transpose().ok()?,
+                last_activity_at: last_activity_at.as_deref().map(parse_dt).transpose().ok()?,
+                last_assistant_message_at: last_assistant_message_at.as_deref().map(parse_dt).transpose().ok()?,
+                has_active_session: has_active_session != 0,
+            })
+        }))
+    }
+
     // Worktree APIs
     pub async fn insert_worktree(&self, worktree: Worktree) -> Result<Worktree> {
         sqlx::query(

@@ -983,7 +983,7 @@ button.linklike:hover {
 .wb-task-row {
   width: 100%;
   display: grid;
-  grid-template-columns: 16px 1fr auto;
+  grid-template-columns: 18px 1fr auto;
   align-items: center;
   gap: 8px;
   padding: 5px 8px;
@@ -1015,12 +1015,89 @@ button.linklike:hover {
 
 .wb-task-leading {
   position: relative;
-  width: 16px;
-  height: 16px;
+  width: 18px;
+  height: 18px;
   display: flex;
   align-items: center;
   justify-content: center;
   color: rgba(255, 255, 255, 0.62);
+}
+
+.wb-task-harness-stack {
+  position: relative;
+  width: 18px;
+  height: 18px;
+}
+
+.wb-task-harness-logo {
+  width: 16px;
+  height: 16px;
+  border-radius: 6px;
+  object-fit: contain;
+  display: block;
+  position: absolute;
+  left: 0;
+  top: 1px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(18, 18, 18, 0.80);
+}
+
+.wb-task-harness-fallback {
+  width: 16px;
+  height: 16px;
+  border-radius: 6px;
+  display: block;
+  position: absolute;
+  left: 0;
+  top: 1px;
+  background: rgba(255, 255, 255, 0.10);
+  border: 1px solid rgba(18, 18, 18, 0.80);
+}
+
+.wb-task-harness-stack img:nth-child(1) {
+  z-index: 3;
+  transform: translate(0, 0);
+}
+
+.wb-task-harness-stack img:nth-child(2) {
+  z-index: 2;
+  transform: translate(3px, -3px);
+}
+
+.wb-task-harness-stack img:nth-child(3) {
+  z-index: 1;
+  transform: translate(6px, -6px);
+}
+
+.wb-task-rename {
+  width: 100%;
+  height: 22px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.92);
+  padding: 0 8px;
+  outline: none;
+  font: inherit;
+}
+
+.wb-task-rename:focus {
+  border-color: rgba(78, 163, 255, 0.45);
+  box-shadow: 0 0 0 2px rgba(78, 163, 255, 0.18);
+}
+
+.wb-task-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+}
+
+.wb-task-status-dot-unread {
+  background: rgba(78, 163, 255, 0.95);
+}
+
+.wb-task-status-dot-error {
+  background: rgba(255, 69, 58, 0.95);
 }
 
 .wb-task-unread {
@@ -1139,9 +1216,20 @@ button.linklike:hover {
 }
 
 .wb-task-meta {
+  position: relative;
+  width: 86px;
   display: flex;
   align-items: center;
-  gap: 6px;
+  justify-content: flex-end;
+}
+
+.wb-task-meta-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  width: 100%;
+  transition: opacity 120ms ease;
 }
 
 .wb-task-age {
@@ -1152,6 +1240,10 @@ button.linklike:hover {
 }
 
 .wb-task-actions {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
   display: flex;
   align-items: center;
   gap: 2px;
@@ -1160,16 +1252,30 @@ button.linklike:hover {
 }
 
 .wb-task-row:hover .wb-task-actions,
-.wb-task-row-active .wb-task-actions,
 .wb-task-row:focus-within .wb-task-actions,
 .wb-task-row:focus-visible .wb-task-actions {
   opacity: 1;
   pointer-events: auto;
 }
 
+.wb-task-row:hover .wb-task-meta-status,
+.wb-task-row:focus-within .wb-task-meta-status,
+.wb-task-row:focus-visible .wb-task-meta-status {
+  opacity: 0;
+}
+
 .wb-task-action {
   width: 20px;
   height: 20px;
+}
+
+.wb-menu-item-danger {
+  color: rgba(255, 120, 120, 0.96);
+}
+
+.wb-menu-item-danger:hover {
+  background: rgba(255, 69, 58, 0.10);
+  border-color: rgba(255, 69, 58, 0.16);
 }
 
 .wb-sidebar-bottom {

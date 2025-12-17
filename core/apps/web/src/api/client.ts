@@ -551,6 +551,12 @@ export const createTask = (
 export const getTask = (taskId: string) =>
   apiAny<Task>(`/api/tasks/${taskId}`);
 
+export const updateTaskTitle = (taskId: string, title: string) =>
+  apiAny<Task>(`/api/tasks/${taskId}/title`, { method: "POST", body: JSON.stringify({ title }) });
+
+export const deleteTask = (taskId: string) =>
+  apiAny<void>(`/api/tasks/${taskId}`, { method: "DELETE" });
+
 export const archiveTask = (taskId: string) =>
   apiAny<Task>(`/api/tasks/${taskId}/archive`, { method: "POST" });
 

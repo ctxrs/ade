@@ -162,7 +162,8 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
             "/api/workspaces/:id/tasks",
             get(list_tasks).post(create_task),
         )
-        .route("/api/tasks/:id", get(get_task))
+        .route("/api/tasks/:id", get(get_task).delete(delete_task))
+        .route("/api/tasks/:id/title", post(update_task_title))
         .route("/api/tasks/:id/archive", post(archive_task))
         .route("/api/tasks/:id/unarchive", post(unarchive_task))
         .route("/api/tasks/:id/tracks", get(list_tracks).post(create_track))
@@ -226,6 +227,11 @@ struct HealthResp {
 #[derive(Debug, Serialize)]
 struct ApiErrorResp {
     error: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct UpdateTaskTitleReq {
+    title: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -3644,10 +3650,105 @@ async fn get_task(
     Path(id): Path<String>,
 ) -> Result<Json<Task>, StatusCode> {
     let task_id = TaskId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    match state.store.get_task(task_id).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)? {
+    match state
+        .store
+        .get_task_with_activity(task_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    {
         Some(task) => Ok(Json(task)),
         None => Err(StatusCode::NOT_FOUND),
     }
+}
+
+async fn update_task_title(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(req): Json<UpdateTaskTitleReq>,
+) -> Result<Json<Task>, (StatusCode, Json<ApiErrorResp>)> {
+    let task_id = TaskId(uuid::Uuid::parse_str(&id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid task id".to_string(),
+            }),
+        )
+    })?);
+    let title = req.title.trim().to_string();
+    if title.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "title is required".to_string(),
+            }),
+        ));
+    }
+    if title.len() > 120 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "title is too long".to_string(),
+            }),
+        ));
+    }
+
+    let updated = state
+        .store
+        .update_task_title(task_id, title)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
+    if !updated {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "task not found".to_string(),
+            }),
+        ));
+    }
+
+    match state
+        .store
+        .get_task_with_activity(task_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })? {
+        Some(task) => Ok(Json(task)),
+        None => Err((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "task not found".to_string(),
+            }),
+        )),
+    }
+}
+
+async fn delete_task(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<StatusCode, StatusCode> {
+    let task_id = TaskId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
+    let deleted = state
+        .store
+        .delete_task(task_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if !deleted {
+        return Err(StatusCode::NOT_FOUND);
+    }
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn archive_task(
@@ -3663,7 +3764,12 @@ async fn archive_task(
     if !updated {
         return Err(StatusCode::NOT_FOUND);
     }
-    match state.store.get_task(task_id).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)? {
+    match state
+        .store
+        .get_task_with_activity(task_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    {
         Some(task) => Ok(Json(task)),
         None => Err(StatusCode::NOT_FOUND),
     }
@@ -3682,7 +3788,12 @@ async fn unarchive_task(
     if !updated {
         return Err(StatusCode::NOT_FOUND);
     }
-    match state.store.get_task(task_id).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)? {
+    match state
+        .store
+        .get_task_with_activity(task_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    {
         Some(task) => Ok(Json(task)),
         None => Err(StatusCode::NOT_FOUND),
     }
