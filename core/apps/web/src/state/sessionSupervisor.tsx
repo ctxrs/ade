@@ -110,13 +110,17 @@ export class SessionSupervisor {
   };
 
   refreshSession = (sessionId: string, opts?: OpenOptions) => {
-    this.ensureLoaded(String(sessionId), opts).catch(() => {});
+    const sid = String(sessionId);
+    this.ensureLoaded(sid, opts)
+      .catch(() => {})
+      .finally(() => {
+        this.backfillSession(sid).catch(() => {});
+      });
   };
 
   refreshQueue = (sessionId: string) => {
-    const entry = this.entries.get(String(sessionId));
-    if (!entry) return;
-    this.refreshQueueAndDiff(entry).catch(() => {});
+    const entry = this.ensureEntry(String(sessionId));
+    return this.refreshQueueAndDiff(entry).catch(() => {});
   };
 
   setSession = (session: Session) => {
@@ -225,9 +229,10 @@ export class SessionSupervisor {
 
   private kick() {
     this.scheduleResubscribe();
-    if (this.snapshot.connection !== "connected") {
-      this.ensurePolling();
-    }
+    // Always keep a lightweight polling backfill running for "warm" sessions.
+    // Even when the global WebSocket is connected, events can be missed after long-idle periods
+    // (e.g. replying to older sessions). Backfill is cheap (cursor-based) and deduped.
+    this.ensurePolling();
   }
 
   private async ensureLoaded(sessionId: string, opts?: OpenOptions) {
@@ -507,6 +512,13 @@ export class SessionSupervisor {
     this.pollTimer = window.setInterval(() => {
       const ids = this.computeSubscribedSet();
       for (const sid of ids) {
+        const entry = this.entries.get(sid);
+        if (!entry) continue;
+        const lastType = entry.events.length > 0 ? String(entry.events[entry.events.length - 1].event_type ?? "") : "";
+        const doneLike = lastType === "done" || lastType === "turn_interrupted" || lastType === "assistant_complete";
+        // When connected, only poll sessions that appear to be mid-turn to avoid unnecessary load.
+        // When disconnected, poll everything warm.
+        if (this.snapshot.connection === "connected" && doneLike) continue;
         this.backfillSession(sid).catch(() => {});
       }
     }, POLL_INTERVAL_MS);

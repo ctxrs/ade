@@ -1,7 +1,7 @@
 import { forwardRef, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { GroupedVirtuoso, GroupedVirtuosoHandle, Virtuoso, VirtuosoHandle } from "react-virtuoso";
+import { Virtuoso, VirtuosoHandle } from "react-virtuoso";
 import { Link, useParams } from "react-router-dom";
 import {
   cancelSession,
@@ -36,12 +36,6 @@ import { parseWsJson } from "../utils/wsJson";
 import { buildModelCatalog, composeModelId, formatEffortLabel, parseModelId } from "../utils/modelEffort";
 import { imageFilesToBlobRefAttachments, imageFilesToInlineAttachments } from "../utils/messageAttachments";
 import { registerDropScope } from "../utils/dragDropScopes";
-import {
-  composerDraftKeyTrackV1,
-  loadComposerDraftV1,
-  removeComposerDraft,
-  saveComposerDraftV1,
-} from "../utils/composerDraftPersistence";
 
 type ThreadItem =
   | {
@@ -89,6 +83,14 @@ type WorkbenchTurnHeader = {
   attachments: MessageAttachment[];
   created_at: string;
 };
+
+type WorkbenchListItem =
+  | ThreadItem
+  | {
+      kind: "turn_header";
+      id: string;
+      header: WorkbenchTurnHeader;
+    };
 
 function imageAttachmentSrc(a: MessageAttachment): string {
   return a.kind === "image_ref" ? blobUrl(a.blob_id) : `data:${a.mime_type};base64,${a.data_base64}`;
@@ -152,17 +154,12 @@ export function SessionView({
     }
   }, [id]);
   const perfStartRef = useRef<number>(0);
-  type TrackComposerState = {
-    input: string;
-    attachments: MessageAttachment[];
-    modeId: WorkbenchModeId;
-  };
-  const DEFAULT_TRACK_COMPOSER: TrackComposerState = useMemo(
-    () => ({ input: "", attachments: [], modeId: "default" }),
-    [],
-  );
-  const [composerByTrackKey, setComposerByTrackKey] = useState<Record<string, TrackComposerState>>({});
+  const [input, setInput] = useState("");
+  const [draftAttachments, setDraftAttachments] = useState<MessageAttachment[]>([]);
   const [dropActive, setDropActive] = useState(false);
+  const [workbenchMode, setWorkbenchMode] = useState<WorkbenchModeId>("default");
+  const [sendBusy, setSendBusy] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
   const [atBottom, setAtBottom] = useState(true);
   const [hasNewActivity, setHasNewActivity] = useState(false);
   const [authMethodId, setAuthMethodId] = useState<string>("");
@@ -172,10 +169,8 @@ export function SessionView({
   const [expandedThoughtByAssistantId, setExpandedThoughtByAssistantId] = useState<Record<string, boolean>>({});
   const [expandedToolById, setExpandedToolById] = useState<Record<string, boolean>>({});
   const virtuosoRef = useRef<VirtuosoHandle>(null);
-  const groupedVirtuosoRef = useRef<GroupedVirtuosoHandle>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const didInitialScrollRef = useRef(false);
-  const prevWorkbenchUsesGroupedRef = useRef<boolean | null>(null);
   const dropHideTimerRef = useRef<number | null>(null);
   useOpenSession(id ?? "", { watchDiff: true });
 
@@ -203,46 +198,6 @@ export function SessionView({
 
   const entry = useSessionEntry(id ?? "");
   const session: Session | null = entry?.session ?? null;
-  const activeTrackId = session ? idToString(session.track_id) : null;
-  const activeWorkspaceId = session ? idToString(session.workspace_id) : null;
-  const activeTrackKey = activeTrackId ?? `session:${id ?? ""}`;
-  const activeComposer = composerByTrackKey[activeTrackKey] ?? DEFAULT_TRACK_COMPOSER;
-  const input = activeComposer.input;
-  const draftAttachments = activeComposer.attachments;
-  const workbenchMode = activeComposer.modeId;
-  const setInput = useCallback(
-    (next: string) => {
-      setComposerByTrackKey((prev) => {
-        const current = prev[activeTrackKey] ?? DEFAULT_TRACK_COMPOSER;
-        if (current.input === next) return prev;
-        return { ...prev, [activeTrackKey]: { ...current, input: next } };
-      });
-    },
-    [DEFAULT_TRACK_COMPOSER, activeTrackKey],
-  );
-  const setDraftAttachments = useCallback(
-    (next: React.SetStateAction<MessageAttachment[]>) => {
-      setComposerByTrackKey((prev) => {
-        const current = prev[activeTrackKey] ?? DEFAULT_TRACK_COMPOSER;
-        const updated =
-          typeof next === "function"
-            ? (next as (prev: MessageAttachment[]) => MessageAttachment[])(current.attachments)
-            : next;
-        return { ...prev, [activeTrackKey]: { ...current, attachments: updated } };
-      });
-    },
-    [DEFAULT_TRACK_COMPOSER, activeTrackKey],
-  );
-  const setWorkbenchMode = useCallback(
-    (next: WorkbenchModeId) => {
-      setComposerByTrackKey((prev) => {
-        const current = prev[activeTrackKey] ?? DEFAULT_TRACK_COMPOSER;
-        if (current.modeId === next) return prev;
-        return { ...prev, [activeTrackKey]: { ...current, modeId: next } };
-      });
-    },
-    [DEFAULT_TRACK_COMPOSER, activeTrackKey],
-  );
   const events: SessionEvent[] = entry?.events ?? [];
   const messages: Message[] = entry?.messages ?? [];
   const queue: Message[] = entry?.queue ?? [];
@@ -268,45 +223,6 @@ export function SessionView({
       cancelled = true;
     };
   }, []);
-
-  useEffect(() => {
-    if (!activeWorkspaceId || !activeTrackId) return;
-    const tempKey = `session:${id ?? ""}`;
-    const key = composerDraftKeyTrackV1(activeWorkspaceId, activeTrackId);
-    const draft = loadComposerDraftV1(key);
-    setComposerByTrackKey((prev) => {
-      if (prev[activeTrackId]) return prev;
-      const temp = prev[tempKey];
-      if (temp) {
-        const { [tempKey]: _, ...rest } = prev;
-        return { ...rest, [activeTrackId]: temp };
-      }
-      if (!draft) return prev;
-      return {
-        ...prev,
-        [activeTrackId]: {
-          input: draft.text,
-          attachments: [],
-          modeId: draft.modeId ?? "default",
-        },
-      };
-    });
-  }, [activeTrackId, activeWorkspaceId, id]);
-
-  useEffect(() => {
-    if (!activeWorkspaceId || !activeTrackId) return;
-    const key = composerDraftKeyTrackV1(activeWorkspaceId, activeTrackId);
-    const timer = window.setTimeout(() => {
-      const text = input;
-      const modeId = workbenchMode;
-      if (text.trim().length === 0 && modeId === "default") {
-        removeComposerDraft(key);
-        return;
-      }
-      saveComposerDraftV1(key, { v: 1, text, modeId });
-    }, 200);
-    return () => window.clearTimeout(timer);
-  }, [activeTrackId, activeWorkspaceId, input, workbenchMode]);
 
   const stopDictation = useCallback(async (): Promise<string> => {
     setDictationRecording(false);
@@ -334,7 +250,7 @@ export function SessionView({
     dictationAudioStartedRef.current = false;
 
     return next;
-  }, [setInput]);
+  }, []);
 
   const startDictation = useCallback(async () => {
     setDictationError(null);
@@ -497,29 +413,34 @@ export function SessionView({
   const debugEvents = variant === "workbench" ? workbenchThreadView.debugEvents : legacyThreadView.debugEvents;
   const threadItems = variant === "workbench" ? [] : legacyThreadView.items;
   const wbGroups = variant === "workbench" ? workbenchThreadView.groups : [];
-  const wbGroupCounts = useMemo(() => wbGroups.map((g) => g.items.length), [wbGroups]);
-  const wbFlatItems = useMemo(() => wbGroups.flatMap((g) => g.items), [wbGroups]);
-  const workbenchUsesGrouped =
-    variant === "workbench" && wbGroups.length > 0 && wbGroups.every((g) => g.header != null);
+  const wbListItems = useMemo<WorkbenchListItem[]>(() => {
+    const out: WorkbenchListItem[] = [];
+    for (const g of wbGroups) {
+      if (g.header) {
+        out.push({ kind: "turn_header", id: `turn-header-${g.header.id}`, header: g.header });
+      }
+      out.push(...g.items);
+    }
+    return out;
+  }, [wbGroups]);
 
   useEffect(() => {
     if (variant === "workbench") {
-      if (wbFlatItems.length === 0) return;
-      const prev = prevWorkbenchUsesGroupedRef.current;
-      prevWorkbenchUsesGroupedRef.current = workbenchUsesGrouped;
-      if (didInitialScrollRef.current && prev === workbenchUsesGrouped) return;
-      if (workbenchUsesGrouped) {
-        groupedVirtuosoRef.current?.scrollToIndex({ index: "LAST", align: "end" });
-      } else {
-        virtuosoRef.current?.scrollToIndex({ index: wbFlatItems.length - 1, align: "end" });
-      }
-    } else {
-      if (threadItems.length === 0) return;
+      if (wbListItems.length === 0) return;
       if (didInitialScrollRef.current) return;
-      virtuosoRef.current?.scrollToIndex({ index: threadItems.length - 1, align: "end" });
+      requestAnimationFrame(() => {
+        virtuosoRef.current?.scrollToIndex({ index: wbListItems.length - 1, align: "end" });
+        didInitialScrollRef.current = true;
+      });
+      return;
     }
-    didInitialScrollRef.current = true;
-  }, [variant, wbFlatItems.length, threadItems.length, workbenchUsesGrouped]);
+    if (threadItems.length === 0) return;
+    if (didInitialScrollRef.current) return;
+    requestAnimationFrame(() => {
+      virtuosoRef.current?.scrollToIndex({ index: threadItems.length - 1, align: "end" });
+      didInitialScrollRef.current = true;
+    });
+  }, [variant, wbListItems.length, threadItems.length]);
 
   const contextIndicator = useMemo(() => {
     const done = [...events]
@@ -619,7 +540,7 @@ export function SessionView({
     [modelCatalog, pickDefaultEffort],
   );
 
-  const threadActivityCount = variant === "workbench" ? wbFlatItems.length : threadItems.length;
+  const threadActivityCount = variant === "workbench" ? wbListItems.length : threadItems.length;
 
   useEffect(() => {
     if (!atBottom && threadActivityCount > 0) {
@@ -629,13 +550,23 @@ export function SessionView({
 
   const sendNow = async () => {
     if (!id) return;
+    if (sendBusy) return;
     const text = (dictationRecording ? await stopDictation() : input).trim();
     if (!text) return;
-    await postMessage(id, text, undefined, draftAttachments);
-    setInput("");
-    setDraftAttachments([]);
-    supervisor.refreshQueue(id);
-    supervisor.refreshSession(id, { watchDiff: true });
+    setSendBusy(true);
+    setSendError(null);
+    try {
+      await postMessage(id, text, undefined, draftAttachments);
+      // Refresh Messages immediately so user turns render without waiting for a `done` event.
+      await supervisor.refreshQueue(id);
+      supervisor.refreshSession(id, { watchDiff: true });
+      setInput("");
+      setDraftAttachments([]);
+    } catch (e: any) {
+      setSendError(e?.message ? String(e.message) : String(e));
+    } finally {
+      setSendBusy(false);
+    }
   };
 
   const onSend = async (e: React.FormEvent) => {
@@ -651,7 +582,7 @@ export function SessionView({
   const insertIntoComposer = (text: string) => {
     const el = textareaRef.current;
     if (!el) {
-      setInput(input + text);
+      setInput((v) => v + text);
       return;
     }
     const start = el.selectionStart ?? input.length;
@@ -890,7 +821,7 @@ export function SessionView({
         )}
         {showDebug && variant === "workbench" && (
           <div className="wb-muted" style={{ fontFamily: "var(--mono)" }}>
-            debug: events={events.length} messages={messages.length} userMessages={messages.filter((m) => m.role === "user").length} groups={wbGroups.length} headers={wbGroups.filter((g) => !!g.header).length} items={wbFlatItems.length}
+            debug: events={events.length} messages={messages.length} userMessages={messages.filter((m) => m.role === "user").length} items={wbListItems.length}
           </div>
         )}
         {session && variant === "legacy" && (
@@ -1104,42 +1035,39 @@ export function SessionView({
         {(() => {
           const jumpToLatest = () => {
             if (variant === "workbench") {
-              if (workbenchUsesGrouped) {
-                groupedVirtuosoRef.current?.scrollToIndex({ index: "LAST", align: "end" });
-              } else if (wbFlatItems.length > 0) {
-                virtuosoRef.current?.scrollToIndex({ index: wbFlatItems.length - 1, align: "end" });
+              if (wbListItems.length > 0) {
+                virtuosoRef.current?.scrollToIndex({ index: wbListItems.length - 1, align: "end" });
               }
               return;
             }
-            if (threadItems.length > 0) {
-              virtuosoRef.current?.scrollToIndex({ index: threadItems.length - 1, align: "end" });
-            }
+            if (threadItems.length > 0) virtuosoRef.current?.scrollToIndex({ index: threadItems.length - 1, align: "end" });
           };
 
           if (variant === "workbench") {
             return (
               <div className="thread-stack">
-                {workbenchUsesGrouped ? (
-                  <GroupedVirtuoso
-                    style={virtuosoStyle}
-                    groupCounts={wbGroupCounts}
-                    ref={groupedVirtuosoRef}
-                    followOutput="auto"
-                    atBottomStateChange={(b) => {
-                      setAtBottom(b);
-                      if (b) setHasNewActivity(false);
-                    }}
-                    components={{
-                      List: forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>((props, ref) => (
-                        <div {...props} ref={ref} role="list" />
-                      )),
-                      Item: forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>((props, ref) => (
-                        <div {...props} ref={ref} role="listitem" />
-                      )),
-                    }}
-                    groupContent={(groupIndex) => {
-                      const header = wbGroups[groupIndex]?.header ?? null;
-                      if (!header) return null;
+                <Virtuoso
+                  style={virtuosoStyle}
+                  data={wbListItems}
+                  ref={virtuosoRef}
+                  followOutput="auto"
+                  computeItemKey={(index, item) => item?.id ?? `i:${index}`}
+                  atBottomStateChange={(b) => {
+                    setAtBottom(b);
+                    if (b) setHasNewActivity(false);
+                  }}
+                  components={{
+                    List: forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>((props, ref) => (
+                      <div {...props} ref={ref} role="list" />
+                    )),
+                    Item: forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>((props, ref) => (
+                      <div {...props} ref={ref} role="listitem" />
+                    )),
+                  }}
+                  itemContent={(_, item) => {
+                    if (!item) return <div style={{ height: 1 }} />;
+                    if ((item as any).kind === "turn_header") {
+                      const header = (item as Extract<WorkbenchListItem, { kind: "turn_header" }>).header;
                       const isLong = header.content.split("\n").length > 4 || header.content.length > 280;
                       const expanded = expandedTurnHeaders[header.id] ?? !isLong;
                       return (
@@ -1151,38 +1079,10 @@ export function SessionView({
                           }
                         />
                       );
-                    }}
-                    itemContent={(index, groupIndex) => {
-                      const prefix = wbGroupCounts.slice(0, groupIndex).reduce((a, b) => a + b, 0);
-                      const localIndex = index - prefix;
-                      const item =
-                        wbGroups[groupIndex]?.items[localIndex] ??
-                        wbGroups[groupIndex]?.items[index];
-                      if (!item) return <div style={{ height: 1 }} />;
-                      return renderThreadItem(item);
-                    }}
-                  />
-                ) : (
-                  <Virtuoso
-                    style={virtuosoStyle}
-                    data={wbFlatItems}
-                    ref={virtuosoRef}
-                    followOutput="auto"
-                    atBottomStateChange={(b) => {
-                      setAtBottom(b);
-                      if (b) setHasNewActivity(false);
-                    }}
-                    components={{
-                      List: forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>((props, ref) => (
-                        <div {...props} ref={ref} role="list" />
-                      )),
-                      Item: forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>((props, ref) => (
-                        <div {...props} ref={ref} role="listitem" />
-                      )),
-                    }}
-                    itemContent={(_, item) => renderThreadItem(item)}
-                  />
-                )}
+                    }
+                    return renderThreadItem(item as ThreadItem);
+                  }}
+                />
 
                 {hasNewActivity && (
                   <button
@@ -1201,15 +1101,16 @@ export function SessionView({
 
           return (
             <div className="thread-stack">
-              <Virtuoso
-                style={virtuosoStyle}
-                data={threadItems}
-                ref={virtuosoRef}
-                followOutput="auto"
-                atBottomStateChange={(b) => {
-                  setAtBottom(b);
-                  if (b) setHasNewActivity(false);
-                }}
+	                  <Virtuoso
+	                style={virtuosoStyle}
+	                data={threadItems}
+	                ref={virtuosoRef}
+	                followOutput="auto"
+	                computeItemKey={(index, item) => item?.id ?? `i:${index}`}
+	                atBottomStateChange={(b) => {
+	                  setAtBottom(b);
+	                  if (b) setHasNewActivity(false);
+	                }}
                 components={{
                   List: forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>((props, ref) => (
                     <div {...props} ref={ref} role="list" />
@@ -1251,8 +1152,8 @@ export function SessionView({
               attachments={draftAttachments}
               setAttachments={setDraftAttachments}
               onSend={sendNow}
-              sendDisabled={!input.trim()}
-              sendDisabledReason={!input.trim() ? "Enter a message." : null}
+              sendDisabled={sendBusy || !input.trim()}
+              sendDisabledReason={sendBusy ? "Sending…" : !input.trim() ? "Enter a message." : null}
               onInterrupt={id ? () => interruptSession(id) : null}
               modeId={workbenchMode}
               setModeId={setWorkbenchMode}
@@ -1276,11 +1177,13 @@ export function SessionView({
                 supervisor.setSession(updated);
               }}
             />
+            {sendError && <div className="wb-banner">{sendError}</div>}
             {dictationDebugText && <div className="wb-banner">{dictationDebugText}</div>}
             {dictationError && <div className="wb-banner">{dictationError}</div>}
           </>
         ) : (
           <form onSubmit={onSend} className="composer">
+            {sendError && <div className="banner">{sendError}</div>}
             <div className="row">
               <button
                 type="button"

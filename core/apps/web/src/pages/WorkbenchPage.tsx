@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Link, useLocation, useParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import {
   Archive,
   ArrowUp,
@@ -11,7 +11,6 @@ import {
   GitBranch,
   Image,
   Laptop,
-  LayersPlus,
   MessageSquare,
   Mic,
   Settings,
@@ -19,7 +18,6 @@ import {
 import {
   DictationSettings,
   EditPlanSummary,
-  InstallInfo,
   LspStatus,
   MessageAttachment,
   ProviderOptions,
@@ -36,7 +34,6 @@ import {
   createTrack,
   deleteTask,
   getDaemonBaseUrl,
-  getInstall,
   getLspStatus,
   getProviderOptions,
   getSettings,
@@ -49,8 +46,6 @@ import {
   listSessionsForTrack,
   listTasks,
   listTracks,
-  markTaskRead as markTaskReadApi,
-  markTaskUnread as markTaskUnreadApi,
   postMessage,
   trackDiff,
   unarchiveTask,
@@ -71,12 +66,6 @@ import { pickPreferredSession, pickPreferredSessionId, pickPreferredTrackId } fr
 import { imageFilesToInlineAttachments } from "../utils/messageAttachments";
 import { parseModelId } from "../utils/modelEffort";
 import { formatRelativeAgeShort } from "../utils/relativeTime";
-import {
-  composerDraftKeyNewTaskV1,
-  loadComposerDraftV1,
-  removeComposerDraft,
-  saveComposerDraftV1,
-} from "../utils/composerDraftPersistence";
 
 function deriveTaskTitle(prompt: string): string {
   const line = prompt.trim().split("\n")[0] ?? "";
@@ -174,6 +163,7 @@ async function saveMarkdownExport(suggestedName: string, contents: string): Prom
 export default function WorkbenchPage() {
   const { id: workspaceId } = useParams<{ id: string }>();
   const location = useLocation();
+  const navigate = useNavigate();
   const supervisor = useSessionSupervisor();
   const sessionSnap = useSessionCacheSnapshot();
   const newComposerRef = useRef<HTMLDivElement | null>(null);
@@ -183,17 +173,7 @@ export default function WorkbenchPage() {
   const [sidebarResizing, setSidebarResizing] = useState(false);
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [providers, setProviders] = useState<ProviderStatus[]>([]);
-  const [providerInstallsById, setProviderInstallsById] = useState<
-    Record<
-      string,
-      | {
-        installId: string;
-        state: InstallInfo["state"];
-        pct: number | null;
-      }
-      | undefined
-    >
-  >({});
+  const [providerInstallBusyById, setProviderInstallBusyById] = useState<Record<string, boolean>>({});
   const [providerOptions, setProviderOptions] = useState<Record<string, ProviderOptions | undefined>>({});
   const providersById = useMemo(
     () => Object.fromEntries(providers.map((p) => [p.provider_id, p])),
@@ -212,6 +192,7 @@ export default function WorkbenchPage() {
   const [taskQuery, setTaskQuery] = useState("");
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const [archivedCollapsed, setArchivedCollapsed] = useState(true);
+  const [taskSeenAssistantAtById, setTaskSeenAssistantAtById] = useState<Record<string, string>>({});
   const [taskMenu, setTaskMenu] = useState<{ taskId: string; style: React.CSSProperties } | null>(null);
   const taskMenuRef = useRef<HTMLDivElement | null>(null);
   const [renamingTaskId, setRenamingTaskId] = useState<string | null>(null);
@@ -225,10 +206,70 @@ export default function WorkbenchPage() {
   const [sessionsByTrack, setSessionsByTrack] = useState<Record<string, any[]>>({});
   const [activeTrackId, setActiveTrackId] = useState<string | null>(null);
   const [activeWorktree, setActiveWorktree] = useState<Worktree | null>(null);
-  const taskDetailAbortRef = useRef<AbortController | null>(null);
-  const taskDetailLoadSeqRef = useRef(0);
-  const editPlansAbortRef = useRef<AbortController | null>(null);
-  const editPlansLoadSeqRef = useRef(0);
+
+  const selectionFromUrl = useMemo(() => {
+    const params = new URLSearchParams(location.search);
+    const taskId = params.get("task");
+    const trackId = params.get("track");
+    const sessionId = params.get("session");
+    return {
+      taskId: taskId ? String(taskId) : null,
+      trackId: trackId ? String(trackId) : null,
+      sessionId: sessionId ? String(sessionId) : null,
+    };
+  }, [location.search]);
+
+  const selectionStorageKey = useMemo(
+    () => (workspaceId ? `contextWorkbenchSelection:${workspaceId}` : null),
+    [workspaceId],
+  );
+
+  const readStoredSelection = useCallback(() => {
+    if (!selectionStorageKey) return { taskId: null as string | null, trackId: null as string | null, sessionId: null as string | null };
+    try {
+      const raw = localStorage.getItem(selectionStorageKey);
+      if (!raw) return { taskId: null, trackId: null, sessionId: null };
+      const parsed = JSON.parse(raw);
+      return {
+        taskId: typeof parsed?.taskId === "string" ? parsed.taskId : null,
+        trackId: typeof parsed?.trackId === "string" ? parsed.trackId : null,
+        sessionId: typeof parsed?.sessionId === "string" ? parsed.sessionId : null,
+      };
+    } catch {
+      return { taskId: null, trackId: null, sessionId: null };
+    }
+  }, [selectionStorageKey]);
+
+  const writeStoredSelection = useCallback(
+    (sel: { taskId: string | null; trackId: string | null; sessionId: string | null }) => {
+      if (!selectionStorageKey) return;
+      try {
+        localStorage.setItem(selectionStorageKey, JSON.stringify(sel));
+      } catch {
+        // ignore
+      }
+    },
+    [selectionStorageKey],
+  );
+
+  const updateWorkbenchUrlSelection = useCallback(
+    (sel: { taskId: string | null; trackId: string | null; sessionId: string | null }, replace: boolean) => {
+      const params = new URLSearchParams(location.search);
+      const update = (key: string, value: string | null) => {
+        if (!value) params.delete(key);
+        else params.set(key, value);
+      };
+      update("task", sel.taskId);
+      update("track", sel.trackId);
+      update("session", sel.sessionId);
+
+      const search = params.toString();
+      const nextSearch = search ? `?${search}` : "";
+      if (nextSearch === location.search) return;
+      navigate({ pathname: location.pathname, search: nextSearch }, { replace });
+    },
+    [location.pathname, location.search, navigate],
+  );
 
   // Keep tracks cached per task so we can show best-effort provider badges.
   const [tracksByTaskId, setTracksByTaskId] = useState<Record<string, Track[]>>({});
@@ -284,30 +325,6 @@ export default function WorkbenchPage() {
   }, []);
 
   useEffect(() => {
-    if (!workspaceId) return;
-    const key = composerDraftKeyNewTaskV1(workspaceId);
-    const draft = loadComposerDraftV1(key);
-    if (!draft) return;
-    setDraftPrompt(draft.text);
-    setDraftMode(draft.modeId ?? "default");
-  }, [workspaceId]);
-
-  useEffect(() => {
-    if (!workspaceId) return;
-    const key = composerDraftKeyNewTaskV1(workspaceId);
-    const timer = window.setTimeout(() => {
-      const text = draftPrompt;
-      const modeId = draftMode;
-      if (text.trim().length === 0 && modeId === "default") {
-        removeComposerDraft(key);
-        return;
-      }
-      saveComposerDraftV1(key, { v: 1, text, modeId });
-    }, 200);
-    return () => window.clearTimeout(timer);
-  }, [draftMode, draftPrompt, workspaceId]);
-
-  useEffect(() => {
     const onResize = () => {
       const max = Math.max(170, window.innerWidth - 240);
       setSidebarWidth((w) => Math.min(max, Math.max(170, Math.round(w))));
@@ -353,6 +370,23 @@ export default function WorkbenchPage() {
       // ignore
     }
   }, [sidebarWidth, workspaceId]);
+
+  useLayoutEffect(() => {
+    if (!workspaceId) return;
+    const key = `wb.taskSeenAssistantAtById.${workspaceId}`;
+    try {
+      const parsed = JSON.parse(localStorage.getItem(key) ?? "{}");
+      if (parsed && typeof parsed === "object") setTaskSeenAssistantAtById(parsed);
+      else setTaskSeenAssistantAtById({});
+    } catch {
+      setTaskSeenAssistantAtById({});
+    }
+  }, [workspaceId]);
+
+  useEffect(() => {
+    if (!workspaceId) return;
+    localStorage.setItem(`wb.taskSeenAssistantAtById.${workspaceId}`, JSON.stringify(taskSeenAssistantAtById));
+  }, [taskSeenAssistantAtById, workspaceId]);
 
   useEffect(() => {
     const onPointerDown = (e: PointerEvent) => {
@@ -414,16 +448,30 @@ export default function WorkbenchPage() {
     setTasks(await listTasks(workspaceId));
   };
 
-  const fetchTaskDetail = async (taskId: string, signal?: AbortSignal) => {
-    const trs = await listTracks(taskId, signal);
+  const refreshTaskDetail = async (
+    taskId: string,
+    preferredTrackId: string | null,
+    preferredSessionId: string | null,
+  ) => {
+    const trs = await listTracks(taskId);
+    setTracks(trs);
     const map: Record<string, any[]> = {};
     await Promise.all(
       trs.map(async (tr) => {
         const trid = idToString(tr.id);
-        map[trid] = await listSessionsForTrack(trid, signal);
+        map[trid] = await listSessionsForTrack(trid);
       }),
     );
-    return { tracks: trs, sessionsByTrack: map };
+    setSessionsByTrack(map);
+    const trackIds = trs.map((tr) => idToString(tr.id)).filter(Boolean);
+    setActiveTrackId((prev) => {
+      const wantedFromSession =
+        preferredSessionId && trackIds.length > 0
+          ? trackIds.find((trid) => (map[trid] ?? []).some((s: any) => idToString(s?.id) === preferredSessionId))
+          : null;
+      const wanted = wantedFromSession ?? preferredTrackId ?? prev;
+      return pickPreferredTrackId(trackIds, map, wanted);
+    });
   };
 
   useEffect(() => {
@@ -434,128 +482,35 @@ export default function WorkbenchPage() {
     getLspStatus().then(setLspStatus).catch(() => setLspStatus(null));
   }, [workspaceId]);
 
-  const attachProviderInstall = useCallback((providerId: string, installId: string) => {
-    setProviderInstallsById((prev) => {
-      if (prev[providerId]?.installId === installId) return prev;
-      return {
-        ...prev,
-        [providerId]: {
-          installId,
-          state: "running",
-          pct: prev[providerId]?.pct ?? 0,
-        },
-      };
-    });
-  }, []);
+  const anyProviderInstallRunning = useMemo(
+    () => providers.some((p) => p.details?.install_running === "true"),
+    [providers],
+  );
 
   useEffect(() => {
-    for (const p of providers) {
-      const installId = p.details?.install_id;
-      const running = p.details?.install_running === "true";
-      if (running && installId && !providerInstallsById[p.provider_id]) {
-        attachProviderInstall(p.provider_id, installId);
-      }
-    }
-  }, [providers, providerInstallsById, attachProviderInstall]);
-
-  useEffect(() => {
-    const running = Object.entries(providerInstallsById).flatMap(([providerId, s]) =>
-      s && s.state === "running" ? ([[providerId, s]] as const) : [],
-    );
-    if (running.length === 0) return;
-
-    const stagePct: Record<string, number> = {
-      start: 2,
-      node: 15,
-      prepare: 25,
-      npm_install: 65,
-      entrypoint: 80,
-      inspect: 90,
-      refresh: 95,
-      registry: 98,
-    };
-
-    let cancelled = false;
-    const tick = async () => {
-      if (cancelled) return;
-      let needsProviderRefresh = false;
-      await Promise.all(
-        running.map(async ([providerId, s]) => {
-          try {
-            const info = await getInstall(s.installId);
-            const last = info.last_event;
-            const pct =
-              typeof last?.bytes === "number" &&
-                typeof last?.total_bytes === "number" &&
-                last.total_bytes > 0
-                ? Math.max(0, Math.min(100, Math.round((last.bytes / last.total_bytes) * 100)))
-                : typeof last?.stage === "string"
-                  ? (stagePct[last.stage] ?? s.pct ?? 0)
-                  : (s.pct ?? 0);
-
-            setProviderInstallsById((prev) => {
-              const existing = prev[providerId];
-              if (!existing || existing.installId !== s.installId) return prev;
-              return {
-                ...prev,
-                [providerId]: { installId: s.installId, state: info.state, pct },
-              };
-            });
-
-            if (info.state !== "running") {
-              needsProviderRefresh = true;
-            }
-          } catch {
-            // ignore poll errors
-          }
-        }),
-      );
-
-      if (needsProviderRefresh) {
-        try {
-          const next = await listProviders();
-          if (!cancelled) setProviders(next);
-        } catch {
-          // ignore
-        }
-      }
-    };
-
-    tick();
-    const t = window.setInterval(tick, 1000);
-    return () => {
-      cancelled = true;
-      window.clearInterval(t);
-    };
-  }, [providerInstallsById, getInstall, listProviders]);
+    if (!anyProviderInstallRunning) return;
+    const t = window.setInterval(() => {
+      listProviders().then(setProviders).catch(() => { });
+    }, 1500);
+    return () => window.clearInterval(t);
+  }, [anyProviderInstallRunning, setProviders, listProviders]);
 
   const installProviderFromMenu = useCallback(
     async (providerId: string) => {
       setStartError(null);
+      setProviderInstallBusyById((prev) => ({ ...prev, [providerId]: true }));
       try {
-        const { install_id } = await installProvider(providerId);
-        attachProviderInstall(providerId, install_id);
+        await installProvider(providerId);
+        const next = await listProviders();
+        setProviders(next);
       } catch (e: any) {
         setStartError(e?.message ? String(e.message) : String(e));
+      } finally {
+        setProviderInstallBusyById((prev) => ({ ...prev, [providerId]: false }));
       }
     },
-    [setStartError, installProvider, attachProviderInstall],
+    [setProviders, setStartError, installProvider, listProviders],
   );
-
-  useEffect(() => {
-    if (Object.keys(providerInstallsById).length === 0) return;
-    setProviderInstallsById((prev) => {
-      let changed = false;
-      const next: typeof prev = { ...prev };
-      for (const [providerId, s] of Object.entries(prev)) {
-        if (s?.state === "succeeded" && providersById[providerId]?.installed) {
-          delete next[providerId];
-          changed = true;
-        }
-      }
-      return changed ? next : prev;
-    });
-  }, [providerInstallsById, providersById]);
 
   // Load tracks for all tasks (for expansion UI)
   useEffect(() => {
@@ -578,6 +533,28 @@ export default function WorkbenchPage() {
     loadAllTracks().catch(() => { });
   }, [tasks]);
 
+	  useEffect(() => {
+	    if (!workspaceId) return;
+	    if (selectionFromUrl.taskId) {
+	      // Treat the URL as the source of truth for selection, even before tasks/tracks have loaded.
+	      // Validation happens once tasks are hydrated.
+	      setActiveTaskId((prev) => (prev === selectionFromUrl.taskId ? prev : selectionFromUrl.taskId));
+	      if (selectionFromUrl.trackId) {
+	        setActiveTrackId((prev) => (prev === selectionFromUrl.trackId ? prev : selectionFromUrl.trackId));
+	      }
+	      if (tasks.length > 0) {
+	        const exists = tasks.some((t) => idToString(t.id) === selectionFromUrl.taskId);
+	        if (!exists) updateWorkbenchUrlSelection({ taskId: null, trackId: null, sessionId: null }, true);
+	      }
+	      return;
+	    }
+	    if (activeTaskId) return;
+	    const stored = readStoredSelection();
+    if (stored.taskId && tasks.some((t) => idToString(t.id) === stored.taskId)) {
+      setActiveTaskId(stored.taskId);
+    }
+  }, [workspaceId, tasks, activeTaskId, selectionFromUrl.taskId, readStoredSelection, updateWorkbenchUrlSelection]);
+
   useEffect(() => {
     if (!providers.length) return;
     const codexInstalled = providersById["codex"]?.installed ?? false;
@@ -591,72 +568,43 @@ export default function WorkbenchPage() {
   }, [providers.length, providersById, defaultProviderId]);
 
   useEffect(() => {
-    taskDetailAbortRef.current?.abort();
-    const controller = new AbortController();
-    taskDetailAbortRef.current = controller;
-    const seq = ++taskDetailLoadSeqRef.current;
-
     if (!activeTaskId) {
       setTracks([]);
       setSessionsByTrack({});
       setActiveTrackId(null);
       setEditPlans([]);
       setActiveEditPlanId(null);
-      controller.abort();
       return;
     }
-
-    setTracks([]);
-    setSessionsByTrack({});
-    setActiveTrackId(null);
-    setEditPlans([]);
-    setActiveEditPlanId(null);
-
-    fetchTaskDetail(activeTaskId, controller.signal)
-      .then(({ tracks: trs, sessionsByTrack: map }) => {
-        if (controller.signal.aborted) return;
-        if (seq !== taskDetailLoadSeqRef.current) return;
-        setTracks(trs);
-        setSessionsByTrack(map);
-        const trackIds = trs.map((tr) => idToString(tr.id)).filter(Boolean);
-        setActiveTrackId(pickPreferredTrackId(trackIds, map, null));
-      })
-      .catch((e: any) => {
-        if (e?.name === "AbortError") return;
-      });
-
-    return () => controller.abort();
-  }, [activeTaskId]);
+    const stored = readStoredSelection();
+    const useUrl = selectionFromUrl.taskId === activeTaskId;
+    const preferredTrackId = useUrl ? selectionFromUrl.trackId : stored.trackId;
+    const preferredSessionId = useUrl ? selectionFromUrl.sessionId : stored.sessionId;
+    refreshTaskDetail(activeTaskId, preferredTrackId, preferredSessionId).catch(() => { });
+  }, [
+    activeTaskId,
+    readStoredSelection,
+    selectionFromUrl.sessionId,
+    selectionFromUrl.taskId,
+    selectionFromUrl.trackId,
+  ]);
 
   useEffect(() => {
-    editPlansAbortRef.current?.abort();
-    const controller = new AbortController();
-    editPlansAbortRef.current = controller;
-    const seq = ++editPlansLoadSeqRef.current;
-
     if (!activeTrackId) {
       setEditPlans([]);
       setActiveEditPlanId(null);
-      controller.abort();
       return;
     }
-    setEditPlans([]);
-    setActiveEditPlanId(null);
-    listEditPlansForTrack(activeTrackId, controller.signal)
+    listEditPlansForTrack(activeTrackId)
       .then((plans) => {
-        if (controller.signal.aborted) return;
-        if (seq !== editPlansLoadSeqRef.current) return;
         setEditPlans(plans);
         const first = plans[0] ? idToString(plans[0].id) : null;
         setActiveEditPlanId((prev) => (prev && plans.some((p) => idToString(p.id) === prev) ? prev : first));
       })
-      .catch((e: any) => {
-        if (e?.name === "AbortError") return;
+      .catch(() => {
         setEditPlans([]);
         setActiveEditPlanId(null);
       });
-
-    return () => controller.abort();
   }, [activeTrackId]);
 
   const sortedTasks = useMemo(() => {
@@ -810,50 +758,20 @@ export default function WorkbenchPage() {
   const activeTasks = useMemo(() => filteredTasks.filter((t) => !t.archived_at), [filteredTasks]);
   const archivedTasks = useMemo(() => filteredTasks.filter((t) => !!t.archived_at), [filteredTasks]);
 
-  const markTaskReadInFlightRef = useRef<Record<string, Promise<void>>>({});
-
-  const markTaskRead = useCallback(async (taskId: string) => {
-    if (markTaskReadInFlightRef.current[taskId]) return;
-    const p = (async () => {
-      try {
-        const updated = await markTaskReadApi(taskId);
-        setTasks((prev) => prev.map((t) => (idToString(t.id) === taskId ? { ...t, ...updated } : t)));
-      } catch {
-        // ignore
-      }
-    })().finally(() => {
-      delete markTaskReadInFlightRef.current[taskId];
-    });
-    markTaskReadInFlightRef.current[taskId] = p;
-    await p;
-  }, []);
-
-  const markTaskUnread = useCallback(async (taskId: string) => {
-    try {
-      const updated = await markTaskUnreadApi(taskId);
-      setTasks((prev) => prev.map((t) => (idToString(t.id) === taskId ? { ...t, ...updated } : t)));
-    } catch {
-      // ignore
-    }
-  }, []);
+  const markTaskSeen = useCallback(
+    (taskId: string) => {
+      const t = tasks.find((x) => idToString(x.id) === taskId);
+      const last = t?.last_assistant_message_at ?? null;
+      if (!last) return;
+      setTaskSeenAssistantAtById((prev) => ({ ...prev, [taskId]: last }));
+    },
+    [tasks],
+  );
 
   useEffect(() => {
     if (!activeTaskId) return;
-    const tid = activeTaskId;
-    const t = tasks.find((x) => idToString(x.id) === tid);
-    if (!t) return;
-    const working = taskLiveInfo.workingByTask.has(tid);
-    const serverLastAssistantMs = parseMs(t.last_assistant_message_at ?? null);
-    const liveLastAssistantMs = taskLiveInfo.lastAssistantMsByTask[tid] ?? null;
-    const lastAssistantMs =
-      liveLastAssistantMs !== null && serverLastAssistantMs !== null
-        ? Math.max(liveLastAssistantMs, serverLastAssistantMs)
-        : liveLastAssistantMs ?? serverLastAssistantMs;
-    const seenMs = parseMs(t.assistant_seen_at ?? null);
-    const unread = !working && lastAssistantMs !== null && (seenMs === null || lastAssistantMs > seenMs);
-    if (!unread) return;
-    void markTaskRead(tid);
-  }, [activeTaskId, markTaskRead, taskLiveInfo.lastAssistantMsByTask, taskLiveInfo.workingByTask, tasks]);
+    markTaskSeen(activeTaskId);
+  }, [activeTaskId, markTaskSeen]);
 
   useEffect(() => {
     if (!renamingTaskId) return;
@@ -917,7 +835,7 @@ export default function WorkbenchPage() {
         setTasks((prev) => prev.map((t) => (idToString(t.id) === taskId ? { ...t, ...updated } : t)));
         cancelRenameTask();
       } catch (e: any) {
-        window.alert(e?.message ?? "Failed to rename.");
+        window.alert(e?.message ?? "Failed to rename task.");
       }
     },
     [cancelRenameTask, renameDraft, tasks],
@@ -941,6 +859,11 @@ export default function WorkbenchPage() {
           delete next[taskId];
           return next;
         });
+        setTaskSeenAssistantAtById((prev) => {
+          const next = { ...prev };
+          delete next[taskId];
+          return next;
+        });
         if (activeTaskId === taskId) setActiveTaskId(null);
       } catch (e: any) {
         window.alert(e?.message ?? "Failed to delete task.");
@@ -948,6 +871,25 @@ export default function WorkbenchPage() {
     },
     [activeTaskId, tasks],
   );
+
+  const markTaskRead = useCallback(
+    (taskId: string) => {
+      const t = tasks.find((x) => idToString(x.id) === taskId);
+      const last = t?.last_assistant_message_at ?? null;
+      if (!last) return;
+      setTaskSeenAssistantAtById((prev) => ({ ...prev, [taskId]: last }));
+    },
+    [tasks],
+  );
+
+  const markTaskUnread = useCallback((taskId: string) => {
+    setTaskSeenAssistantAtById((prev) => {
+      if (!prev[taskId]) return prev;
+      const next = { ...prev };
+      delete next[taskId];
+      return next;
+    });
+  }, []);
 
   const openConvoMenu = useCallback((triggerEl: HTMLElement) => {
     const rect = triggerEl.getBoundingClientRect();
@@ -958,8 +900,45 @@ export default function WorkbenchPage() {
 
   const activeSessionId = useMemo(() => {
     if (!activeTrackId) return null;
-    return pickPreferredSessionId(sessionsByTrack[activeTrackId] ?? []);
-  }, [activeTrackId, sessionsByTrack]);
+    const sessions = sessionsByTrack[activeTrackId] ?? [];
+    if (selectionFromUrl.sessionId) {
+      const trackMatches = !selectionFromUrl.trackId || selectionFromUrl.trackId === activeTrackId;
+      if (trackMatches) {
+        // If the URL specifies a session, prefer it even before sessions are loaded for the track.
+        // This makes refresh + deep-links deterministic and avoids transient “empty” UI states.
+        if (sessions.length === 0) return selectionFromUrl.sessionId;
+        const matches = sessions.some((s: any) => idToString(s?.id) === selectionFromUrl.sessionId);
+        if (matches) return selectionFromUrl.sessionId;
+      }
+    }
+    return pickPreferredSessionId(sessions);
+  }, [activeTrackId, sessionsByTrack, selectionFromUrl.sessionId, selectionFromUrl.trackId]);
+
+  useEffect(() => {
+    if (!workspaceId) return;
+    // If the URL already specifies a Task but state hasn't hydrated yet, don't clobber it.
+    if (!activeTaskId && selectionFromUrl.taskId) return;
+
+    const next = { taskId: activeTaskId, trackId: activeTrackId, sessionId: activeSessionId };
+    writeStoredSelection(next);
+
+    const matchesUrl =
+      selectionFromUrl.taskId === next.taskId &&
+      selectionFromUrl.trackId === next.trackId &&
+      selectionFromUrl.sessionId === next.sessionId;
+    if (matchesUrl) return;
+    updateWorkbenchUrlSelection(next, true);
+  }, [
+    workspaceId,
+    activeTaskId,
+    activeTrackId,
+    activeSessionId,
+    selectionFromUrl.sessionId,
+    selectionFromUrl.taskId,
+    selectionFromUrl.trackId,
+    updateWorkbenchUrlSelection,
+    writeStoredSelection,
+  ]);
 
   const showDebugIds = useMemo(() => {
     const params = new URLSearchParams(location.search);
@@ -1254,14 +1233,19 @@ export default function WorkbenchPage() {
     setStartBusy(true);
     setStartError(null);
 
-    try {
-      const title = deriveTaskTitle(prompt);
-      const task = await createTask(workspaceId, title, undefined, { create_default_track: false });
-      const taskId = idToString(task.id);
+	    try {
+	      const title = deriveTaskTitle(prompt);
+	      const task = await createTask(workspaceId, title, undefined, { create_default_track: false });
+	      const taskId = idToString(task.id);
+	      let firstTrackId: string | null = null;
+	      let firstSessionId: string | null = null;
+	      setActiveTaskId(taskId);
+	      setActiveTrackId(null);
+	      updateWorkbenchUrlSelection({ taskId, trackId: null, sessionId: null }, true);
 
-      const toStart =
-        draftTracks.length > 0
-          ? draftTracks
+	      const toStart =
+	        draftTracks.length > 0
+	          ? draftTracks
           : [{ key: "t1", label: "", providerId: "codex", modelId: "" }];
 
       for (let i = 0; i < toStart.length; i++) {
@@ -1274,28 +1258,36 @@ export default function WorkbenchPage() {
         const label = workbenchLabelForTrack(dt);
         const env_target = execTarget === "local" ? "local" : "worktree";
         const tr = await createTrack(taskId, label, { env_target });
-        const trackId = idToString(tr.id);
-        const opts = await ensureProviderOptions(dt.providerId).catch(() => undefined);
-        const modelIds = modelIdsFromOptions(opts ?? providerOptions[dt.providerId]);
-        const modelId = dt.modelId || modelIds[0] || (dt.providerId === "fake" ? "fake-model" : "default");
-        const session = await createSession(trackId, dt.providerId, modelId);
-        const sessionId = idToString(session.id);
-        supervisor.openSession(sessionId, { watchDiff: true });
-        supervisor.refreshSession(sessionId, { watchDiff: true });
-        supervisor.refreshQueue(sessionId);
-        await postMessage(sessionId, prompt, "immediate", draftAttachments);
+	        const trackId = idToString(tr.id);
+	        const opts = await ensureProviderOptions(dt.providerId).catch(() => undefined);
+	        const modelIds = modelIdsFromOptions(opts ?? providerOptions[dt.providerId]);
+	        const modelId = dt.modelId || modelIds[0] || (dt.providerId === "fake" ? "fake-model" : "default");
+	        const session = await createSession(trackId, dt.providerId, modelId);
+	        const sessionId = idToString(session.id);
+	        if (!firstTrackId) firstTrackId = trackId;
+	        if (!firstSessionId) {
+	          firstSessionId = sessionId;
+	          setActiveTrackId(trackId);
+	          updateWorkbenchUrlSelection({ taskId, trackId, sessionId }, true);
+	        }
+	        supervisor.openSession(sessionId, { watchDiff: true });
+	        supervisor.refreshSession(sessionId, { watchDiff: true });
+	        supervisor.refreshQueue(sessionId);
+	        await postMessage(sessionId, prompt, "immediate", draftAttachments);
         // Ensure the workbench view can render the just-posted user message (and any streamed events)
         // without waiting for a `done` event to trigger a refresh.
         supervisor.refreshQueue(sessionId);
         supervisor.refreshSession(sessionId, { watchDiff: true });
-      }
+	      }
 
-      await refreshTasks();
-      setActiveTaskId(taskId);
-      setDraftPrompt("");
-      setDraftAttachments([]);
-    } catch (e: any) {
-      setStartError(e?.message ?? String(e));
+	      if (firstTrackId) {
+	        await refreshTaskDetail(taskId, firstTrackId, firstSessionId);
+	      }
+	      await refreshTasks();
+	      setDraftPrompt("");
+	      setDraftAttachments([]);
+	    } catch (e: any) {
+	      setStartError(e?.message ?? String(e));
     } finally {
       setStartBusy(false);
     }
@@ -1804,7 +1796,7 @@ export default function WorkbenchPage() {
                   liveLastAssistantMs !== null && serverLastAssistantMs !== null
                     ? Math.max(liveLastAssistantMs, serverLastAssistantMs)
                     : liveLastAssistantMs ?? serverLastAssistantMs;
-                const seenMs = parseMs(t.assistant_seen_at ?? null);
+                const seenMs = parseMs(taskSeenAssistantAtById[tid] ?? null);
                 const unread = !working && lastAssistantMs !== null && (seenMs === null || lastAssistantMs > seenMs);
                 const age = formatRelativeAgeShort(t.last_activity_at ?? t.updated_at ?? t.created_at) || "Now";
                 const dotKind = hasError ? "error" : unread ? "unread" : null;
@@ -1812,7 +1804,6 @@ export default function WorkbenchPage() {
                   (providerIdsByTaskFromSessions[tid] ?? []).length > 0
                     ? providerIdsByTaskFromSessions[tid]
                     : (taskProviderIdsByTaskId[tid] ?? []);
-                const providerCount = new Set(providerIds).size;
                 const harnesses = providerIds
                   .map((pid) => HARNESS_CATALOG.find((h) => h.id === pid))
                   .filter(Boolean)
@@ -1830,10 +1821,6 @@ export default function WorkbenchPage() {
                         openTaskMenu(tid, { x: e.clientX, y: e.clientY });
                       }}
                       onKeyDown={(e) => {
-                        const target = e.target as HTMLElement | null;
-                        if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) {
-                          return;
-                        }
                         if (e.key === "Enter" || e.key === " ") {
                           e.preventDefault();
                           setActiveTaskId(tid);
@@ -1844,17 +1831,22 @@ export default function WorkbenchPage() {
                     >
                       <div className="wb-task-leading" aria-hidden="true">
                         {/* TODO: multi-track indicator/dropdown (design TBD). */}
-                        {providerCount > 1 ? (
-                          <LayersPlus className="wb-task-harness-multi" size={16} />
-                        ) : harnesses.length > 0 ? (
-                          <img
-                            className={`wb-task-harness-logo ${harnesses[0].invertInDark ? "wb-invert" : ""}`}
-                            src={harnesses[0].logoSrc}
-                            alt=""
-                          />
-                        ) : (
-                          <span className="wb-task-harness-fallback" aria-hidden="true" />
-                        )}
+                        <div
+                          className={`wb-task-harness-stack wb-task-harness-stack-${Math.min(3, Math.max(1, harnesses.length || 1))}`}
+                        >
+                          {harnesses.length > 0 ? (
+                            harnesses.map((h, idx) => (
+                              <img
+                                key={`${tid}-${h.id}-${idx}`}
+                                className={`wb-task-harness-logo ${h.invertInDark ? "wb-invert" : ""}`}
+                                src={h.logoSrc}
+                                alt=""
+                              />
+                            ))
+                          ) : (
+                            <span className="wb-task-harness-fallback" aria-hidden="true" />
+                          )}
+                        </div>
                       </div>
                       <div className="wb-task-body">
                         {renamingTaskId === tid ? (
@@ -1958,7 +1950,7 @@ export default function WorkbenchPage() {
                     liveLastAssistantMs !== null && serverLastAssistantMs !== null
                       ? Math.max(liveLastAssistantMs, serverLastAssistantMs)
                       : liveLastAssistantMs ?? serverLastAssistantMs;
-                  const seenMs = parseMs(t.assistant_seen_at ?? null);
+                  const seenMs = parseMs(taskSeenAssistantAtById[tid] ?? null);
                   const unread = !working && lastAssistantMs !== null && (seenMs === null || lastAssistantMs > seenMs);
                   const age = formatRelativeAgeShort(t.last_activity_at ?? t.updated_at ?? t.created_at) || "Now";
                   const dotKind = hasError ? "error" : unread ? "unread" : null;
@@ -1966,7 +1958,6 @@ export default function WorkbenchPage() {
                     (providerIdsByTaskFromSessions[tid] ?? []).length > 0
                       ? providerIdsByTaskFromSessions[tid]
                       : (taskProviderIdsByTaskId[tid] ?? []);
-                  const providerCount = new Set(providerIds).size;
                   const harnesses = providerIds
                     .map((pid) => HARNESS_CATALOG.find((h) => h.id === pid))
                     .filter(Boolean)
@@ -1984,13 +1975,6 @@ export default function WorkbenchPage() {
                           openTaskMenu(tid, { x: e.clientX, y: e.clientY });
                         }}
                         onKeyDown={(e) => {
-                          const target = e.target as HTMLElement | null;
-                          if (
-                            target &&
-                            (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)
-                          ) {
-                            return;
-                          }
                           if (e.key === "Enter" || e.key === " ") {
                             e.preventDefault();
                             setActiveTaskId(tid);
@@ -2001,17 +1985,22 @@ export default function WorkbenchPage() {
                       >
                         <div className="wb-task-leading" aria-hidden="true">
                           {/* TODO: multi-track indicator/dropdown (design TBD). */}
-                          {providerCount > 1 ? (
-                            <LayersPlus className="wb-task-harness-multi" size={16} />
-                          ) : harnesses.length > 0 ? (
-                            <img
-                              className={`wb-task-harness-logo ${harnesses[0].invertInDark ? "wb-invert" : ""}`}
-                              src={harnesses[0].logoSrc}
-                              alt=""
-                            />
-                          ) : (
-                            <span className="wb-task-harness-fallback" aria-hidden="true" />
-                          )}
+                          <div
+                            className={`wb-task-harness-stack wb-task-harness-stack-${Math.min(3, Math.max(1, harnesses.length || 1))}`}
+                          >
+                            {harnesses.length > 0 ? (
+                              harnesses.map((h, idx) => (
+                                <img
+                                  key={`${tid}-${h.id}-${idx}`}
+                                  className={`wb-task-harness-logo ${h.invertInDark ? "wb-invert" : ""}`}
+                                  src={h.logoSrc}
+                                  alt=""
+                                />
+                              ))
+                            ) : (
+                              <span className="wb-task-harness-fallback" aria-hidden="true" />
+                            )}
+                          </div>
                         </div>
                         <div className="wb-task-body">
                           {renamingTaskId === tid ? (
@@ -2138,7 +2127,7 @@ export default function WorkbenchPage() {
                 setModeId={setDraftMode}
                 harnessCatalog={HARNESS_CATALOG}
                 providersById={providersById}
-                providerInstallsById={providerInstallsById}
+                providerInstallBusyById={providerInstallBusyById}
                 onInstallProvider={installProviderFromMenu}
                 providerOptions={providerOptions}
                 ensureProviderOptions={ensureProviderOptions}
@@ -2304,7 +2293,7 @@ export default function WorkbenchPage() {
                                   const installed = providersById[id]?.installed ?? false;
                                   const installSupported = providersById[id]?.details?.install_supported === "true";
                                   const installRunning = providersById[id]?.details?.install_running === "true";
-                                  const installBusy = providerInstallsById[id]?.state === "running";
+                                  const installBusy = providerInstallBusyById[id] ?? false;
                                   const expanded = expandedHarnessId === id;
                                   const canConfigureModels = useMultipleAgents && draftTracks.length > 1;
                                   const rows = draftTracks.filter((t) => t.providerId === id);
@@ -2353,14 +2342,7 @@ export default function WorkbenchPage() {
                                               {installRunning || installBusy ? "Installing…" : "Install"}
                                             </button>
                                           ) : (
-                                            <button
-                                              type="button"
-                                              className="wb-harness-install"
-                                              disabled
-                                              title="Install not supported yet"
-                                            >
-                                              Install
-                                            </button>
+                                            <span className="wb-harness-status">Not installed</span>
                                           )
                                         ) : (
                                           checked && (
@@ -2922,7 +2904,7 @@ export default function WorkbenchPage() {
                 liveLastAssistantMs !== null && serverLastAssistantMs !== null
                   ? Math.max(liveLastAssistantMs, serverLastAssistantMs)
                   : liveLastAssistantMs ?? serverLastAssistantMs;
-              const seenMs = parseMs(t?.assistant_seen_at ?? null);
+              const seenMs = parseMs(taskSeenAssistantAtById[tid] ?? null);
               const unread =
                 lastAssistantMs !== null && (seenMs === null || lastAssistantMs > seenMs);
               setTaskMenu(null);
@@ -2940,7 +2922,7 @@ export default function WorkbenchPage() {
                 liveLastAssistantMs !== null && serverLastAssistantMs !== null
                   ? Math.max(liveLastAssistantMs, serverLastAssistantMs)
                   : liveLastAssistantMs ?? serverLastAssistantMs;
-              const seenMs = parseMs(t?.assistant_seen_at ?? null);
+              const seenMs = parseMs(taskSeenAssistantAtById[tid] ?? null);
               const unread =
                 lastAssistantMs !== null && (seenMs === null || lastAssistantMs > seenMs);
               return unread ? "Mark as Read" : "Mark as Unread";
@@ -2986,19 +2968,6 @@ export default function WorkbenchPage() {
             role="menuitem"
           >
             Copy Worktree Location
-          </button>
-          <button
-            type="button"
-            className="wb-menu-item"
-            disabled={!activeTaskId || !!activeTask?.archived_at}
-            onClick={() => {
-              if (!activeTaskId) return;
-              setConvoMenu(null);
-              onToggleArchive(activeTaskId, true).catch(() => { });
-            }}
-            role="menuitem"
-          >
-            Archive Conversation
           </button>
         </div>
       )}

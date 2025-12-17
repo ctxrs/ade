@@ -84,7 +84,7 @@ impl ProviderAdapter for FakeProviderAdapter {
                     sleep(Duration::from_millis(10)).await;
                     send(SessionEventType::ToolResult, json!({"tool_call_id": tool_call_id, "result": "ok"})).await;
                     sleep(Duration::from_millis(10)).await;
-                    send(SessionEventType::AssistantComplete, json!({"content": "done"})).await;
+                    send(SessionEventType::AssistantComplete, json!({"content": format!("done: {}", input.content)})).await;
                     send(SessionEventType::Done, json!({})).await;
                 } => {}
                 _ = &mut cancel_rx => {
