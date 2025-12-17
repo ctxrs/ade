@@ -1,4 +1,6 @@
 use std::collections::{HashMap, HashSet};
+use std::fs::OpenOptions;
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
@@ -7,6 +9,7 @@ use anyhow::{Context, Result};
 use axum::Router;
 use chrono::Utc;
 use directories::BaseDirs;
+use fs2::FileExt;
 use serde_json::json;
 use tokio::sync::{broadcast, mpsc, Mutex};
 
@@ -26,6 +29,24 @@ use crate::api;
 use crate::installs::{InstallId, InstallProgressEvent, InstallState, InstallStateKind};
 use crate::installer;
 use crate::scheduler::{session_worker, SchedulerCommand};
+
+fn acquire_daemon_lock(data_root: &Path) -> Result<std::fs::File> {
+    let path = data_root.join("daemon.lock");
+    let file = OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .open(&path)
+        .with_context(|| format!("opening daemon lockfile {}", path.display()))?;
+
+    match file.try_lock_exclusive() {
+        Ok(()) => Ok(file),
+        Err(e) if e.kind() == ErrorKind::WouldBlock => {
+            anyhow::bail!("Context daemon already running (lockfile {})", path.display())
+        }
+        Err(e) => Err(e).with_context(|| format!("locking daemon lockfile {}", path.display())),
+    }
+}
 
 pub struct AppState {
     pub data_root: PathBuf,
@@ -425,6 +446,9 @@ pub async fn serve(
     };
     tokio::fs::create_dir_all(&data_root).await?;
     tokio::fs::create_dir_all(data_root.join("logs")).await.ok();
+
+    let _daemon_lock = acquire_daemon_lock(&data_root)?;
+
     let db_dir = data_root.join("db");
     tokio::fs::create_dir_all(&db_dir).await?;
     let db_path = db_dir.join("db.sqlite");

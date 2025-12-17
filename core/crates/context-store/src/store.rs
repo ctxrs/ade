@@ -5,7 +5,10 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use context_core::ids::*;
 use context_core::models::*;
-use sqlx::{sqlite::SqlitePoolOptions, Pool, Row, Sqlite};
+use sqlx::{
+    sqlite::{SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous},
+    Pool, Row, Sqlite,
+};
 
 #[derive(Clone)]
 pub struct Store {
@@ -17,9 +20,12 @@ impl Store {
         let options = sqlx::sqlite::SqliteConnectOptions::new()
             .filename(path.as_ref())
             .create_if_missing(true)
+            .foreign_keys(true)
+            .journal_mode(SqliteJournalMode::Wal)
+            .synchronous(SqliteSynchronous::Normal)
             .busy_timeout(Duration::from_secs(5));
         let pool = SqlitePoolOptions::new()
-            .max_connections(5)
+            .max_connections(1)
             .connect_with(options)
             .await?;
         sqlx::migrate!("./migrations").run(&pool).await?;
