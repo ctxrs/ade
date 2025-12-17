@@ -381,6 +381,13 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
   } = props;
 
   const newSession = variant === "newSession" ? (props as NewSessionProps) : null;
+  const multiTrackMode = (newSession?.draftTracks.length ?? 0) > 1;
+
+  useEffect(() => {
+    if (!newSession) return;
+    if (!multiTrackMode) return;
+    if (newSession.envTarget !== "worktree") newSession.setEnvTarget("worktree");
+  }, [multiTrackMode, newSession?.envTarget, newSession?.setEnvTarget]);
 
   const [openMenu, setOpenMenu] = useState<OpenMenuId | null>(null);
   const [menuStyle, setMenuStyle] = useState<React.CSSProperties | null>(null);
@@ -724,41 +731,56 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
       return { label: (props as ActiveSessionProps).envLabel, locked: true };
     }
     const ns = props as NewSessionProps;
-    const label = ns.envTarget === "worktree" ? "Worktree" : ns.envTarget === "local" ? "Local" : "Container";
+    const effective = ns.draftTracks.length > 1 ? "worktree" : ns.envTarget;
+    const label = effective === "worktree" ? "Worktree" : effective === "local" ? "Local" : "Container";
     return { label, locked: false };
   }, [props, variant]);
 
   const envMenu =
-    variant === "newSession" ? (
-      <div className="wb-menu wb-exec-menu" role="menu" ref={menuRef} style={menuStyle ?? undefined}>
-        <div className="wb-menu-top">
-          <MenuTitleRow title="Isolation" description={MENU_DESCRIPTIONS.isolation} tooltipId="wb-menu-tooltip-isolation" />
-        </div>
-        <button
-          type="button"
-          className={`wb-menu-item ${(props as NewSessionProps).envTarget === "worktree" ? "wb-menu-item-active" : ""}`}
-          onClick={() => {
-            (props as NewSessionProps).setEnvTarget("worktree");
-            setOpenMenu(null);
-          }}
-        >
-          Worktree
-        </button>
-        <button
-          type="button"
-          className={`wb-menu-item ${(props as NewSessionProps).envTarget === "local" ? "wb-menu-item-active" : ""}`}
-          onClick={() => {
-            (props as NewSessionProps).setEnvTarget("local");
-            setOpenMenu(null);
-          }}
-        >
-          Local
-        </button>
-        <button type="button" className="wb-menu-item" disabled>
-          Container (soon)
-        </button>
-      </div>
-    ) : null;
+    variant === "newSession"
+      ? (() => {
+          const ns = props as NewSessionProps;
+          const localDisabled = ns.draftTracks.length > 1;
+          const effective = localDisabled ? "worktree" : ns.envTarget;
+          return (
+            <div className="wb-menu wb-exec-menu" role="menu" ref={menuRef} style={menuStyle ?? undefined}>
+              <div className="wb-menu-top">
+                <MenuTitleRow title="Isolation" description={MENU_DESCRIPTIONS.isolation} tooltipId="wb-menu-tooltip-isolation" />
+              </div>
+              <button
+                type="button"
+                className={`wb-menu-item ${effective === "worktree" ? "wb-menu-item-active" : ""}`}
+                onClick={() => {
+                  ns.setEnvTarget("worktree");
+                  setOpenMenu(null);
+                }}
+              >
+                Worktree
+              </button>
+              <div
+                title={localDisabled ? "Local is disabled in multi-track mode" : undefined}
+                style={localDisabled ? { display: "block", cursor: "not-allowed" } : undefined}
+              >
+                <button
+                  type="button"
+                  className={`wb-menu-item ${effective === "local" ? "wb-menu-item-active" : ""}`}
+                  disabled={localDisabled}
+                  style={localDisabled ? { pointerEvents: "none" } : undefined}
+                  onClick={() => {
+                    ns.setEnvTarget("local");
+                    setOpenMenu(null);
+                  }}
+                >
+                  Local
+                </button>
+              </div>
+              <button type="button" className="wb-menu-item" disabled>
+                Container (soon)
+              </button>
+            </div>
+          );
+        })()
+      : null;
 
   const harnessControl = useMemo(() => {
     if (variant === "activeSession") {
