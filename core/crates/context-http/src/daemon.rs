@@ -532,6 +532,13 @@ pub async fn serve(
             .map(|c| Tier1AcpAdapter::from_raw("kimi", c.command.clone(), c.args.clone()))
             .unwrap_or_else(|| Tier1AcpAdapter::from_raw("kimi", "kimi".to_string(), vec!["--acp".to_string()])),
     );
+    let auggie_adapter: Arc<Tier1AcpAdapter> = Arc::new(
+        agent_cfg
+            .providers
+            .get("auggie")
+            .map(|c| Tier1AcpAdapter::from_raw("auggie", c.command.clone(), c.args.clone()))
+            .unwrap_or_else(|| Tier1AcpAdapter::from_raw("auggie", "auggie".to_string(), vec!["--acp".to_string()])),
+    );
 
     providers.insert("codex".into(), codex_adapter.clone());
     providers.insert("claude".into(), claude_adapter.clone());
@@ -541,6 +548,7 @@ pub async fn serve(
     providers.insert("mistral".into(), mistral_adapter.clone());
     providers.insert("goose".into(), goose_adapter.clone());
     providers.insert("kimi".into(), kimi_adapter.clone());
+    providers.insert("auggie".into(), auggie_adapter.clone());
 
     let listener = tokio::net::TcpListener::bind(&bind).await?;
     let local_addr = listener.local_addr()?;

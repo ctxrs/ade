@@ -21,6 +21,7 @@ const CODEX_ACP_VERSION: &str = "0.7.1";
 const CLAUDE_CODE_ACP_VERSION: &str = "0.12.4";
 const GEMINI_CLI_VERSION: &str = "0.19.0";
 const QWEN_CODE_VERSION: &str = "0.4.1";
+const AUGGIE_VERSION: &str = "0.12.0";
 const OPENCODE_VERSION: &str = "1.0.150";
 const MISTRAL_VIBE_ACP_VERSION: &str = "1.1.2";
 const KIMI_CLI_VERSION: &str = "0.62";
@@ -104,7 +105,15 @@ pub async fn install_provider(state: &AppState, provider_id: &str) -> Result<()>
 pub fn is_supported_managed_provider(provider_id: &str) -> bool {
     matches!(
         provider_id,
-        "codex" | "claude" | "gemini" | "qwen" | "opencode" | "mistral" | "goose" | "kimi"
+        "codex"
+            | "claude"
+            | "gemini"
+            | "qwen"
+            | "auggie"
+            | "opencode"
+            | "mistral"
+            | "goose"
+            | "kimi"
     )
 }
 
@@ -1115,6 +1124,25 @@ async fn install_provider_impl(
                     QWEN_CODE_VERSION,
                     "node_modules/.bin/qwen",
                     vec!["--experimental-acp".to_string()],
+                    &mut stage,
+                )
+                .await?
+            }
+            "auggie" => {
+                error_package = Some("@augmentcode/auggie".to_string());
+                error_version = Some(AUGGIE_VERSION.to_string());
+                error_install_dir_rel = Some(format!(
+                    "providers/agent-servers/{}/{}",
+                    provider_id, AUGGIE_VERSION
+                ));
+                install_managed_npm_provider(
+                    state,
+                    install_id,
+                    &provider_id,
+                    "@augmentcode/auggie",
+                    AUGGIE_VERSION,
+                    "node_modules/.bin/auggie",
+                    vec!["--acp".to_string()],
                     &mut stage,
                 )
                 .await?
