@@ -313,6 +313,27 @@ mod tests {
             .iter()
             .any(|e| matches!(e.event_type, context_core::models::SessionEventType::UserMessage)));
 
+        // mark task read/unread endpoints
+        let task_after_read: context_core::models::Task = client
+            .post(format!("{base}/api/tasks/{}/mark_read", task.id.0))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert!(task_after_read.assistant_seen_at.is_some());
+
+        let task_after_unread: context_core::models::Task = client
+            .post(format!("{base}/api/tasks/{}/mark_unread", task.id.0))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert!(task_after_unread.assistant_seen_at.is_none());
+
         server.abort();
     }
 }

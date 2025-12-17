@@ -166,6 +166,8 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
         .route("/api/tasks/:id/title", post(update_task_title))
         .route("/api/tasks/:id/archive", post(archive_task))
         .route("/api/tasks/:id/unarchive", post(unarchive_task))
+        .route("/api/tasks/:id/mark_read", post(mark_task_read))
+        .route("/api/tasks/:id/mark_unread", post(mark_task_unread))
         .route("/api/tasks/:id/tracks", get(list_tracks).post(create_track))
         .route("/api/worktrees/:id", get(get_worktree))
         .route(
@@ -3783,6 +3785,54 @@ async fn unarchive_task(
     let updated = state
         .store
         .unarchive_task(task_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if !updated {
+        return Err(StatusCode::NOT_FOUND);
+    }
+    match state
+        .store
+        .get_task_with_activity(task_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    {
+        Some(task) => Ok(Json(task)),
+        None => Err(StatusCode::NOT_FOUND),
+    }
+}
+
+async fn mark_task_read(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<Task>, StatusCode> {
+    let task_id = TaskId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
+    let updated = state
+        .store
+        .mark_task_read(task_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if !updated {
+        return Err(StatusCode::NOT_FOUND);
+    }
+    match state
+        .store
+        .get_task_with_activity(task_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    {
+        Some(task) => Ok(Json(task)),
+        None => Err(StatusCode::NOT_FOUND),
+    }
+}
+
+async fn mark_task_unread(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<Task>, StatusCode> {
+    let task_id = TaskId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
+    let updated = state
+        .store
+        .mark_task_unread(task_id)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     if !updated {

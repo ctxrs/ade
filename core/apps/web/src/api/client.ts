@@ -16,6 +16,7 @@ export type Task = {
   created_at: string;
   updated_at: string;
   archived_at?: string | null;
+  assistant_seen_at?: string | null;
   last_activity_at?: string | null;
   last_assistant_message_at?: string | null;
   has_active_session?: boolean;
@@ -562,6 +563,12 @@ export const archiveTask = (taskId: string) =>
 
 export const unarchiveTask = (taskId: string) =>
   apiAny<Task>(`/api/tasks/${taskId}/unarchive`, { method: "POST" });
+
+export const markTaskRead = (taskId: string) =>
+  apiAny<Task>(`/api/tasks/${taskId}/mark_read`, { method: "POST" });
+
+export const markTaskUnread = (taskId: string) =>
+  apiAny<Task>(`/api/tasks/${taskId}/mark_unread`, { method: "POST" });
 
 export const listTracks = (taskId: string) =>
   apiAny<Track[]>(`/api/tasks/${taskId}/tracks`);

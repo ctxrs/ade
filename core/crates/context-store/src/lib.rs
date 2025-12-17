@@ -48,9 +48,28 @@ mod tests {
         let tasks = store.list_tasks(ws.id).await.unwrap();
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].id.0, task.id.0);
+        assert!(tasks[0].assistant_seen_at.is_none());
 
         let fetched = store.get_task(task.id).await.unwrap().unwrap();
         assert_eq!(fetched.title, "do thing");
+        assert!(fetched.assistant_seen_at.is_none());
+
+        let updated_at_before = fetched.updated_at;
+        store.mark_task_read(task.id).await.unwrap();
+        let fetched_after_read = store.get_task(task.id).await.unwrap().unwrap();
+        assert!(fetched_after_read.assistant_seen_at.is_some());
+        assert_eq!(fetched_after_read.updated_at, updated_at_before);
+
+        drop(store);
+        let store = Store::open(&db_path).await.unwrap();
+        let fetched_after_restart = store.get_task(task.id).await.unwrap().unwrap();
+        assert!(fetched_after_restart.assistant_seen_at.is_some());
+        assert_eq!(fetched_after_restart.updated_at, updated_at_before);
+
+        store.mark_task_unread(task.id).await.unwrap();
+        let fetched_after_unread = store.get_task(task.id).await.unwrap().unwrap();
+        assert!(fetched_after_unread.assistant_seen_at.is_none());
+        assert_eq!(fetched_after_unread.updated_at, updated_at_before);
 
         // ensure list for other workspace empty
         let other = WorkspaceId::new();

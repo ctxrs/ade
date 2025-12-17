@@ -38,6 +38,8 @@ pub struct Task {
     #[serde(default)]
     pub archived_at: Option<DateTime<Utc>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assistant_seen_at: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_activity_at: Option<DateTime<Utc>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_assistant_message_at: Option<DateTime<Utc>>,

@@ -47,6 +47,8 @@ import {
   listSessionsForTrack,
   listTasks,
   listTracks,
+  markTaskRead as markTaskReadApi,
+  markTaskUnread as markTaskUnreadApi,
   postMessage,
   trackDiff,
   unarchiveTask,
@@ -67,6 +69,12 @@ import { pickPreferredSession, pickPreferredSessionId, pickPreferredTrackId } fr
 import { imageFilesToInlineAttachments } from "../utils/messageAttachments";
 import { parseModelId } from "../utils/modelEffort";
 import { formatRelativeAgeShort } from "../utils/relativeTime";
+import {
+  composerDraftKeyNewTaskV1,
+  loadComposerDraftV1,
+  removeComposerDraft,
+  saveComposerDraftV1,
+} from "../utils/composerDraftPersistence";
 
 function deriveTaskTitle(prompt: string): string {
   const line = prompt.trim().split("\n")[0] ?? "";
@@ -192,7 +200,6 @@ export default function WorkbenchPage() {
   const [taskQuery, setTaskQuery] = useState("");
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const [archivedCollapsed, setArchivedCollapsed] = useState(true);
-  const [taskSeenAssistantAtById, setTaskSeenAssistantAtById] = useState<Record<string, string>>({});
   const [taskMenu, setTaskMenu] = useState<{ taskId: string; style: React.CSSProperties } | null>(null);
   const taskMenuRef = useRef<HTMLDivElement | null>(null);
   const [renamingTaskId, setRenamingTaskId] = useState<string | null>(null);
@@ -261,6 +268,30 @@ export default function WorkbenchPage() {
   }, []);
 
   useEffect(() => {
+    if (!workspaceId) return;
+    const key = composerDraftKeyNewTaskV1(workspaceId);
+    const draft = loadComposerDraftV1(key);
+    if (!draft) return;
+    setDraftPrompt(draft.text);
+    setDraftMode(draft.modeId ?? "default");
+  }, [workspaceId]);
+
+  useEffect(() => {
+    if (!workspaceId) return;
+    const key = composerDraftKeyNewTaskV1(workspaceId);
+    const timer = window.setTimeout(() => {
+      const text = draftPrompt;
+      const modeId = draftMode;
+      if (text.trim().length === 0 && modeId === "default") {
+        removeComposerDraft(key);
+        return;
+      }
+      saveComposerDraftV1(key, { v: 1, text, modeId });
+    }, 200);
+    return () => window.clearTimeout(timer);
+  }, [draftMode, draftPrompt, workspaceId]);
+
+  useEffect(() => {
     const onResize = () => {
       const max = Math.max(170, window.innerWidth - 240);
       setSidebarWidth((w) => Math.min(max, Math.max(170, Math.round(w))));
@@ -306,23 +337,6 @@ export default function WorkbenchPage() {
       // ignore
     }
   }, [sidebarWidth, workspaceId]);
-
-  useLayoutEffect(() => {
-    if (!workspaceId) return;
-    const key = `wb.taskSeenAssistantAtById.${workspaceId}`;
-    try {
-      const parsed = JSON.parse(localStorage.getItem(key) ?? "{}");
-      if (parsed && typeof parsed === "object") setTaskSeenAssistantAtById(parsed);
-      else setTaskSeenAssistantAtById({});
-    } catch {
-      setTaskSeenAssistantAtById({});
-    }
-  }, [workspaceId]);
-
-  useEffect(() => {
-    if (!workspaceId) return;
-    localStorage.setItem(`wb.taskSeenAssistantAtById.${workspaceId}`, JSON.stringify(taskSeenAssistantAtById));
-  }, [taskSeenAssistantAtById, workspaceId]);
 
   useEffect(() => {
     const onPointerDown = (e: PointerEvent) => {
@@ -651,20 +665,50 @@ export default function WorkbenchPage() {
   const activeTasks = useMemo(() => filteredTasks.filter((t) => !t.archived_at), [filteredTasks]);
   const archivedTasks = useMemo(() => filteredTasks.filter((t) => !!t.archived_at), [filteredTasks]);
 
-  const markTaskSeen = useCallback(
-    (taskId: string) => {
-      const t = tasks.find((x) => idToString(x.id) === taskId);
-      const last = t?.last_assistant_message_at ?? null;
-      if (!last) return;
-      setTaskSeenAssistantAtById((prev) => ({ ...prev, [taskId]: last }));
-    },
-    [tasks],
-  );
+  const markTaskReadInFlightRef = useRef<Record<string, Promise<void>>>({});
+
+  const markTaskRead = useCallback(async (taskId: string) => {
+    if (markTaskReadInFlightRef.current[taskId]) return;
+    const p = (async () => {
+      try {
+        const updated = await markTaskReadApi(taskId);
+        setTasks((prev) => prev.map((t) => (idToString(t.id) === taskId ? { ...t, ...updated } : t)));
+      } catch {
+        // ignore
+      }
+    })().finally(() => {
+      delete markTaskReadInFlightRef.current[taskId];
+    });
+    markTaskReadInFlightRef.current[taskId] = p;
+    await p;
+  }, []);
+
+  const markTaskUnread = useCallback(async (taskId: string) => {
+    try {
+      const updated = await markTaskUnreadApi(taskId);
+      setTasks((prev) => prev.map((t) => (idToString(t.id) === taskId ? { ...t, ...updated } : t)));
+    } catch {
+      // ignore
+    }
+  }, []);
 
   useEffect(() => {
     if (!activeTaskId) return;
-    markTaskSeen(activeTaskId);
-  }, [activeTaskId, markTaskSeen]);
+    const tid = activeTaskId;
+    const t = tasks.find((x) => idToString(x.id) === tid);
+    if (!t) return;
+    const working = taskLiveInfo.workingByTask.has(tid);
+    const serverLastAssistantMs = parseMs(t.last_assistant_message_at ?? null);
+    const liveLastAssistantMs = taskLiveInfo.lastAssistantMsByTask[tid] ?? null;
+    const lastAssistantMs =
+      liveLastAssistantMs !== null && serverLastAssistantMs !== null
+        ? Math.max(liveLastAssistantMs, serverLastAssistantMs)
+        : liveLastAssistantMs ?? serverLastAssistantMs;
+    const seenMs = parseMs(t.assistant_seen_at ?? null);
+    const unread = !working && lastAssistantMs !== null && (seenMs === null || lastAssistantMs > seenMs);
+    if (!unread) return;
+    void markTaskRead(tid);
+  }, [activeTaskId, markTaskRead, taskLiveInfo.lastAssistantMsByTask, taskLiveInfo.workingByTask, tasks]);
 
   useEffect(() => {
     if (!renamingTaskId) return;
@@ -752,11 +796,6 @@ export default function WorkbenchPage() {
           delete next[taskId];
           return next;
         });
-        setTaskSeenAssistantAtById((prev) => {
-          const next = { ...prev };
-          delete next[taskId];
-          return next;
-        });
         if (activeTaskId === taskId) setActiveTaskId(null);
       } catch (e: any) {
         window.alert(e?.message ?? "Failed to delete task.");
@@ -764,25 +803,6 @@ export default function WorkbenchPage() {
     },
     [activeTaskId, tasks],
   );
-
-  const markTaskRead = useCallback(
-    (taskId: string) => {
-      const t = tasks.find((x) => idToString(x.id) === taskId);
-      const last = t?.last_assistant_message_at ?? null;
-      if (!last) return;
-      setTaskSeenAssistantAtById((prev) => ({ ...prev, [taskId]: last }));
-    },
-    [tasks],
-  );
-
-  const markTaskUnread = useCallback((taskId: string) => {
-    setTaskSeenAssistantAtById((prev) => {
-      if (!prev[taskId]) return prev;
-      const next = { ...prev };
-      delete next[taskId];
-      return next;
-    });
-  }, []);
 
   const openConvoMenu = useCallback((triggerEl: HTMLElement) => {
     const rect = triggerEl.getBoundingClientRect();
@@ -1639,7 +1659,7 @@ export default function WorkbenchPage() {
                   liveLastAssistantMs !== null && serverLastAssistantMs !== null
                     ? Math.max(liveLastAssistantMs, serverLastAssistantMs)
                     : liveLastAssistantMs ?? serverLastAssistantMs;
-                const seenMs = parseMs(taskSeenAssistantAtById[tid] ?? null);
+                const seenMs = parseMs(t.assistant_seen_at ?? null);
                 const unread = !working && lastAssistantMs !== null && (seenMs === null || lastAssistantMs > seenMs);
                 const age = formatRelativeAgeShort(t.last_activity_at ?? t.updated_at ?? t.created_at) || "Now";
                 const dotKind = hasError ? "error" : unread ? "unread" : null;
@@ -1789,7 +1809,7 @@ export default function WorkbenchPage() {
                     liveLastAssistantMs !== null && serverLastAssistantMs !== null
                       ? Math.max(liveLastAssistantMs, serverLastAssistantMs)
                       : liveLastAssistantMs ?? serverLastAssistantMs;
-                  const seenMs = parseMs(taskSeenAssistantAtById[tid] ?? null);
+                  const seenMs = parseMs(t.assistant_seen_at ?? null);
                   const unread = !working && lastAssistantMs !== null && (seenMs === null || lastAssistantMs > seenMs);
                   const age = formatRelativeAgeShort(t.last_activity_at ?? t.updated_at ?? t.created_at) || "Now";
                   const dotKind = hasError ? "error" : unread ? "unread" : null;
@@ -2739,7 +2759,7 @@ export default function WorkbenchPage() {
                 liveLastAssistantMs !== null && serverLastAssistantMs !== null
                   ? Math.max(liveLastAssistantMs, serverLastAssistantMs)
                   : liveLastAssistantMs ?? serverLastAssistantMs;
-              const seenMs = parseMs(taskSeenAssistantAtById[tid] ?? null);
+              const seenMs = parseMs(t?.assistant_seen_at ?? null);
               const unread =
                 lastAssistantMs !== null && (seenMs === null || lastAssistantMs > seenMs);
               setTaskMenu(null);
@@ -2757,7 +2777,7 @@ export default function WorkbenchPage() {
                 liveLastAssistantMs !== null && serverLastAssistantMs !== null
                   ? Math.max(liveLastAssistantMs, serverLastAssistantMs)
                   : liveLastAssistantMs ?? serverLastAssistantMs;
-              const seenMs = parseMs(taskSeenAssistantAtById[tid] ?? null);
+              const seenMs = parseMs(t?.assistant_seen_at ?? null);
               const unread =
                 lastAssistantMs !== null && (seenMs === null || lastAssistantMs > seenMs);
               return unread ? "Mark as Read" : "Mark as Unread";
