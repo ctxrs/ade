@@ -4,17 +4,15 @@ import { tmpdir } from "os";
 import path from "path";
 import { execSync } from "child_process";
 
-test("workbench: diff updates mid-turn", async ({ page, request }) => {
-  const repo = mkdtempSync(path.join(tmpdir(), "context-e2e-"));
-  execSync("git init", { cwd: repo });
-  execSync("git config user.email test@example.com", { cwd: repo });
-  execSync("git config user.name Test", { cwd: repo });
-  writeFileSync(path.join(repo, "file.txt"), "hello\n");
-  execSync("git add .", { cwd: repo });
-  execSync("git commit -m init", { cwd: repo });
-
-  const workspaceName = `ws-${Date.now()}`;
-  const taskTitle = "slow-diff-test";
+async function createWorkspaceAndStartRun(opts: {
+  page: any;
+  request: any;
+  repo: string;
+  workspaceName: string;
+  taskTitle: string;
+  prompt: string;
+}) {
+  const { page, repo, workspaceName, taskTitle, prompt, request } = opts;
 
   await page.goto("/");
   await page.getByLabel("Root path").fill(repo);
@@ -31,8 +29,7 @@ test("workbench: diff updates mid-turn", async ({ page, request }) => {
   await page.locator(".wb-harness-menu").getByLabel("Search agents").fill("fake");
   await page.locator(".wb-harness-menu").getByRole("button", { name: "Fake" }).click();
 
-  // Start a slow run so we can mutate the worktree while it is active.
-  await page.locator(".wb-new-composer-stack textarea.wb-composer-textarea").fill(taskTitle);
+  await page.locator(".wb-new-composer-stack textarea.wb-composer-textarea").fill(prompt);
   await page.locator(".wb-new-composer-stack button[aria-label=\"Send\"]").click();
 
   const sessionComposer = page.locator(".wb-session textarea.wb-active-textarea");
@@ -45,7 +42,6 @@ test("workbench: diff updates mid-turn", async ({ page, request }) => {
     return "";
   };
 
-  // Discover session/worktree info via the daemon API (workbench no longer encodes session in the URL).
   let workspaceId = "";
   await expect
     .poll(
@@ -60,7 +56,6 @@ test("workbench: diff updates mid-turn", async ({ page, request }) => {
       { timeout: 20_000 }
     )
     .not.toBe("");
-  expect(workspaceId, "workspace id available").toBeTruthy();
 
   let taskId = "";
   await expect
@@ -76,14 +71,12 @@ test("workbench: diff updates mid-turn", async ({ page, request }) => {
       { timeout: 20_000 }
     )
     .not.toBe("");
-  expect(taskId, "task id available").toBeTruthy();
 
   const tracksResp = await request.get(`/api/tasks/${taskId}/tracks`);
   expect(tracksResp.ok()).toBeTruthy();
   const tracks = (await tracksResp.json()) as any[];
-  expect(tracks.length, "task has at least one track").toBeGreaterThan(0);
   const trackId = readId(tracks[0]?.id);
-  expect(trackId, "track id available").toBeTruthy();
+  expect(trackId).toBeTruthy();
 
   let sessionId = "";
   await expect
@@ -98,24 +91,88 @@ test("workbench: diff updates mid-turn", async ({ page, request }) => {
       { timeout: 20_000 }
     )
     .not.toBe("");
-  expect(sessionId, "session id available").toBeTruthy();
 
   const sessionResp = await request.get(`/api/sessions/${sessionId}`);
   expect(sessionResp.ok()).toBeTruthy();
   const session = (await sessionResp.json()) as any;
 
   const worktreeId = readId(session?.worktree_id);
-  expect(worktreeId, "session worktree_id available").toBeTruthy();
-
+  expect(worktreeId).toBeTruthy();
   const wtResp = await request.get(`/api/worktrees/${worktreeId}`);
   expect(wtResp.ok()).toBeTruthy();
   const wt = (await wtResp.json()) as any;
   const worktreeRoot = String(wt?.root_path ?? "");
-  expect(worktreeRoot, "worktree root_path available").toBeTruthy();
+  expect(worktreeRoot).toBeTruthy();
+
+  return { sessionId, trackId, worktreeRoot };
+}
+
+test("workbench: diff updates mid-turn", async ({ page, request }) => {
+  const repo = mkdtempSync(path.join(tmpdir(), "context-e2e-"));
+  execSync("git init", { cwd: repo });
+  execSync("git config user.email test@example.com", { cwd: repo });
+  execSync("git config user.name Test", { cwd: repo });
+  writeFileSync(path.join(repo, "file.txt"), "hello\n");
+  execSync("git add .", { cwd: repo });
+  execSync("git commit -m init", { cwd: repo });
+
+  const workspaceName = `ws-${Date.now()}`;
+  const taskTitle = "slow-diff-test";
+
+  const { worktreeRoot } = await createWorkspaceAndStartRun({
+    page,
+    request,
+    repo,
+    workspaceName,
+    taskTitle,
+    prompt: taskTitle,
+  });
 
   writeFileSync(path.join(worktreeRoot, "file.txt"), "hello\nchanged while running\n");
 
   // Diff panel should appear and show pending changes before the run completes.
+  await expect(page.locator(".wb-diff-pill")).toHaveText(/Pending Change/, { timeout: 10_000 });
+  await expect(page.locator(".diff-pane")).toContainText("file.txt", { timeout: 10_000 });
+});
+
+test("workbench: diff updates for manual edits while idle", async ({ page, request }) => {
+  const repo = mkdtempSync(path.join(tmpdir(), "context-e2e-"));
+  execSync("git init", { cwd: repo });
+  execSync("git config user.email test@example.com", { cwd: repo });
+  execSync("git config user.name Test", { cwd: repo });
+  writeFileSync(path.join(repo, "file.txt"), "hello\n");
+  execSync("git add .", { cwd: repo });
+  execSync("git commit -m init", { cwd: repo });
+
+  const workspaceName = `ws-${Date.now()}`;
+  const taskTitle = "idle-diff-test";
+  const { sessionId, worktreeRoot } = await createWorkspaceAndStartRun({
+    page,
+    request,
+    repo,
+    workspaceName,
+    taskTitle,
+    prompt: taskTitle,
+  });
+
+  // Wait until the initial turn finishes so we're simulating "manual edits while idle" (no new events).
+  await expect
+    .poll(
+      async () => {
+        const evsResp = await request.get(`/api/sessions/${sessionId}/events`);
+        if (!evsResp.ok()) return false;
+        const evs = (await evsResp.json()) as any[];
+        const lastType = evs.length > 0 ? String(evs[evs.length - 1]?.event_type ?? "") : "";
+        return lastType === "done";
+      },
+      { timeout: 20_000 }
+    )
+    .toBe(true);
+
+  // Simulate user editing the worktree outside the agent.
+  writeFileSync(path.join(worktreeRoot, "file.txt"), "hello\nchanged while idle\n");
+
+  // Diff should appear without sending another message.
   await expect(page.locator(".wb-diff-pill")).toHaveText(/Pending Change/, { timeout: 10_000 });
   await expect(page.locator(".diff-pane")).toContainText("file.txt", { timeout: 10_000 });
 });

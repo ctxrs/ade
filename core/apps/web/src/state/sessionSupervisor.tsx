@@ -45,6 +45,7 @@ type OpenOptions = {
 type InternalEntry = SessionCacheEntry & {
   refCount: number;
   wantDiffCount: number;
+  nextDiffPollAtMs: number;
   warmUntilMs: number;
   eventIdSet: Set<string>;
   eventsHydrated: boolean;
@@ -64,6 +65,7 @@ const MAX_CACHED_SESSIONS = 30;
 const WARM_TTL_MS = 10 * 60 * 1000;
 const POLL_INTERVAL_MS = 1500;
 const DIFF_POLL_INTERVAL_MS = 900;
+const DIFF_POLL_IDLE_INTERVAL_MS = 2500;
 
 const authToken = (): string | null => {
   try {
@@ -201,6 +203,7 @@ export class SessionSupervisor {
       updatedAtMs: Date.now(),
       refCount: 0,
       wantDiffCount: 0,
+      nextDiffPollAtMs: 0,
       warmUntilMs: Date.now() + WARM_TTL_MS,
       eventIdSet: new Set(),
       eventsHydrated: false,
@@ -352,12 +355,15 @@ export class SessionSupervisor {
     return eventType === "done" || eventType === "turn_interrupted";
   }
 
-  private shouldLivePollDiff(entry: InternalEntry): boolean {
+  private isMidTurn(entry: InternalEntry): boolean {
+    const lastType = entry.events.length > 0 ? String(entry.events[entry.events.length - 1].event_type ?? "") : "";
+    return lastType !== "" && !this.isRefreshBoundaryEventType(lastType);
+  }
+
+  private shouldPollDiff(entry: InternalEntry): boolean {
     if (entry.wantDiffCount <= 0) return false;
     if (!entry.trackId) return false;
-    const lastType = entry.events.length > 0 ? String(entry.events[entry.events.length - 1].event_type ?? "") : "";
-    const midTurnByEvents = lastType !== "" && !this.isRefreshBoundaryEventType(lastType);
-    return midTurnByEvents;
+    return true;
   }
 
   private async connect() {
@@ -480,7 +486,7 @@ export class SessionSupervisor {
 
             if (this.isRefreshBoundaryEventType(data.event_type)) {
               this.refreshQueueAndDiff(entry).catch(() => {});
-            } else if (this.shouldLivePollDiff(entry)) {
+            } else if (this.isMidTurn(entry) && this.shouldPollDiff(entry)) {
               this.ensureDiffPolling();
               // Diff is computed from git and can safely be refreshed mid-turn.
               this.refreshDiff(entry).catch(() => {});
@@ -530,7 +536,7 @@ export class SessionSupervisor {
       // Refreshing here ensures assistant replies show up after daemon/webapp restarts.
       if (sawRefreshBoundary) {
         await this.refreshQueueAndDiff(entry);
-      } else if (this.shouldLivePollDiff(entry)) {
+      } else if (this.isMidTurn(entry) && this.shouldPollDiff(entry)) {
         this.ensureDiffPolling();
         await this.refreshDiff(entry);
       }
@@ -588,11 +594,15 @@ export class SessionSupervisor {
     this.diffPollTimer = window.setInterval(() => {
       const ids = this.computeSubscribedSet();
       let anyNeeded = false;
+      const now = Date.now();
       for (const sid of ids) {
         const entry = this.entries.get(sid);
         if (!entry) continue;
-        if (!this.shouldLivePollDiff(entry)) continue;
+        if (!this.shouldPollDiff(entry)) continue;
         anyNeeded = true;
+        if (entry.fetching.diff) continue;
+        if (entry.nextDiffPollAtMs > now) continue;
+        entry.nextDiffPollAtMs = now + (this.isMidTurn(entry) ? DIFF_POLL_INTERVAL_MS : DIFF_POLL_IDLE_INTERVAL_MS);
         this.refreshDiff(entry).catch(() => {});
       }
       if (!anyNeeded) this.stopDiffPolling();
