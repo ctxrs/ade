@@ -1141,7 +1141,11 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
                         }
                       >
                         {installBusy
-                          ? `${Math.max(0, Math.min(100, installPct ?? 0))}%`
+                          ? installFinishing
+                            ? "Finalizing…"
+                            : installPct === null
+                              ? "Installing…"
+                              : `${Math.max(0, Math.min(100, installPct))}%`
                           : installUi?.state === "failed"
                             ? "Retry"
                             : "Install"}

@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use chrono::Utc;
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
@@ -146,8 +146,7 @@ async fn start_turn(
         let map = state.providers.lock().await;
         map.get(&session.provider_id)
             .cloned()
-            .or_else(|| map.get("fake").cloned())
-            .expect("fake provider")
+            .ok_or_else(|| anyhow!("provider not available: {}", session.provider_id))?
     };
 
     let mut message = message;

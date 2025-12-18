@@ -1591,7 +1591,7 @@ button.linklike:hover {
 .wb-switcher-logo {
   width: 16px;
   height: 16px;
-  border-radius: 5px;
+  border-radius: 0;
   display: block;
   object-fit: contain;
 }
@@ -1599,7 +1599,7 @@ button.linklike:hover {
 .wb-switcher-logo-fallback {
   width: 16px;
   height: 16px;
-  border-radius: 5px;
+  border-radius: 0;
   background: rgba(255, 255, 255, 0.08);
   display: block;
 }
@@ -1899,6 +1899,7 @@ button.linklike:hover {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  max-height: min(560px, calc(100vh - 140px));
   overflow: hidden;
 }
 
@@ -1946,9 +1947,10 @@ button.linklike:hover {
 
 .wb-harness-row-main {
   width: 100%;
-  display: flex;
+  display: grid;
+  grid-template-columns: 16px 16px 1fr auto;
   align-items: center;
-  gap: 10px;
+  column-gap: 10px;
   justify-content: flex-start;
   justify-self: stretch;
   text-align: left;
@@ -1998,7 +2000,7 @@ button.linklike:hover {
 .wb-harness-logo {
   width: 16px;
   height: 16px;
-  border-radius: 6px;
+  border-radius: 0;
   display: block;
   object-fit: contain;
   flex: 0 0 auto;
@@ -2007,7 +2009,7 @@ button.linklike:hover {
 .wb-harness-logo-fallback {
   width: 16px;
   height: 16px;
-  border-radius: 6px;
+  border-radius: 0;
   background: rgba(255, 255, 255, 0.08);
   flex: 0 0 auto;
 }
@@ -2023,7 +2025,7 @@ button.linklike:hover {
 }
 
 .wb-harness-status {
-  margin-left: auto;
+  margin-left: 0;
   font-size: 11px;
   padding: 2px 8px;
   border-radius: 999px;
