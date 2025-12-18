@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Editor from "@monaco-editor/react";
 import { useSessionEntry } from "../state/sessionSupervisor";
 import { daemonFetchRaw } from "../api/client";
+import { guessMonacoLanguage } from "../utils/monacoLanguage";
 
 type OpenResp = {
   buffer_id: string;
@@ -371,16 +372,4 @@ export function FileBufferEditor({
       </div>
     </div>
   );
-}
-
-function guessMonacoLanguage(path: string): string {
-  const lower = String(path).toLowerCase();
-  if (lower.endsWith(".ts") || lower.endsWith(".tsx")) return "typescript";
-  if (lower.endsWith(".js") || lower.endsWith(".jsx") || lower.endsWith(".mjs") || lower.endsWith(".cjs")) return "javascript";
-  if (lower.endsWith(".rs")) return "rust";
-  if (lower.endsWith(".py")) return "python";
-  if (lower.endsWith(".go")) return "go";
-  if (lower.endsWith(".json")) return "json";
-  if (lower.endsWith(".md")) return "markdown";
-  return "plaintext";
 }

@@ -478,6 +478,315 @@ button.linklike:hover {
   color: #ddd6fe;
 }
 
+.cursor-diff {
+  display: grid;
+}
+
+.cursor-diff-list {
+  display: grid;
+  gap: 10px;
+}
+
+.cursor-diff-file {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  overflow: visible;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.cursor-diff-file-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  position: relative;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.cursor-diff-chevron {
+  height: 24px;
+  width: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.65);
+  padding: 0;
+  border-radius: 6px;
+}
+
+.cursor-diff-chevron:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.cursor-diff-file-icon {
+  opacity: 0.9;
+}
+
+.cursor-diff-file-path {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.86);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  user-select: text;
+  cursor: text;
+  min-width: 0;
+  max-width: 360px;
+}
+
+.cursor-diff-summary {
+  font-family: var(--mono);
+  font-size: 12px;
+  white-space: nowrap;
+  opacity: 0.9;
+}
+
+.cursor-diff-spacer {
+  flex: 1;
+  min-width: 8px;
+}
+
+.cursor-diff-plus {
+  color: rgba(34, 197, 94, 0.95);
+}
+
+.cursor-diff-minus {
+  color: rgba(248, 113, 113, 0.95);
+}
+
+.cursor-diff-new {
+  color: rgba(34, 197, 94, 0.95);
+}
+
+.cursor-diff-deleted {
+  color: rgba(248, 113, 113, 0.95);
+}
+
+.cursor-diff-file-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  position: relative;
+}
+
+.cursor-diff-icon-btn {
+  height: 24px;
+  width: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.65);
+  padding: 0;
+  border-radius: 6px;
+}
+
+.cursor-diff-icon-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.88);
+}
+
+.cursor-diff-icon-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.cursor-diff-icon-btn-danger:hover:not(:disabled) {
+  color: rgba(248, 113, 113, 0.95);
+}
+
+.cursor-diff-icon-btn-keep:hover:not(:disabled) {
+  color: rgba(34, 197, 94, 0.95);
+}
+
+.cursor-diff-tooltip {
+  position: absolute;
+  right: -6px;
+  top: -36px;
+  background: rgba(20, 20, 20, 0.95);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.92);
+  white-space: nowrap;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+  z-index: 10;
+  pointer-events: none;
+}
+
+.cursor-diff-file-body {
+  position: relative;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(0, 0, 0, 0.15);
+  overflow: hidden;
+  border-radius: 0 0 10px 10px;
+}
+
+.cursor-diff-file-new .cursor-diff-file-body {
+  background: rgba(100, 116, 70, 0.38);
+}
+
+.cursor-diff-file-new .monaco-editor,
+.cursor-diff-file-new .monaco-editor-background,
+.cursor-diff-file-new .monaco-editor .margin {
+  background: transparent !important;
+}
+
+.monaco-editor .cursor-diff-line-add {
+  background: rgba(100, 116, 70, 0.35);
+}
+
+.monaco-editor .cursor-diff-line-del {
+  background: rgba(127, 29, 29, 0.45);
+}
+
+.cursor-diff-editor-shell {
+  border-left: 2px solid rgba(255, 255, 255, 0.12);
+}
+
+.cursor-diff-file-new .cursor-diff-editor-shell {
+  border-left-color: rgba(34, 197, 94, 0.35);
+}
+
+.cursor-diff-file-deleted .cursor-diff-editor-shell {
+  border-left-color: rgba(248, 113, 113, 0.35);
+}
+
+.cursor-diff-file-active.cursor-diff-file-new .cursor-diff-editor-shell,
+.cursor-diff-file-active.cursor-diff-file-modified .cursor-diff-editor-shell {
+  border-left-color: rgba(34, 197, 94, 0.55);
+}
+
+.cursor-diff-file-active.cursor-diff-file-deleted .cursor-diff-editor-shell {
+  border-left-color: rgba(248, 113, 113, 0.55);
+}
+
+.cursor-diff-overlay {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  display: inline-flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.cursor-diff-overlay-btn {
+  height: 30px;
+  border-radius: 8px;
+  padding: 0 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 13px;
+}
+
+.cursor-diff-overlay-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.cursor-diff-overlay-btn-keep {
+  border: 1px solid rgba(34, 197, 94, 0.35);
+  background: rgba(34, 197, 94, 0.45);
+  color: rgba(255, 255, 255, 0.96);
+}
+
+.cursor-diff-overlay-btn-keep:hover:not(:disabled) {
+  background: rgba(34, 197, 94, 0.55);
+}
+
+.cursor-diff-kbd {
+  margin-left: 8px;
+  font-size: 12px;
+  opacity: 0.8;
+}
+
+.cursor-demo {
+  min-height: 100vh;
+  padding: 10px 12px;
+  background: #1e1e1e;
+}
+
+.cursor-demo-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.cursor-demo-tabs {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.cursor-demo-tab {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.8);
+  padding: 4px 6px;
+  border-radius: 8px;
+}
+
+.cursor-demo-tab-active {
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.cursor-demo-pill {
+  font-size: 13px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.cursor-demo-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cursor-demo-action {
+  height: 28px;
+  border-radius: 8px;
+  padding: 0 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.03);
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 13px;
+}
+
+.cursor-demo-action:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.cursor-demo-action-primary {
+  background: rgba(59, 130, 246, 0.8);
+  border-color: rgba(59, 130, 246, 0.8);
+  color: rgba(255, 255, 255, 0.96);
+}
+
+.cursor-demo-action-primary:hover {
+  background: rgba(59, 130, 246, 0.9);
+}
+
+.cursor-demo-action-ghost {
+  width: 30px;
+  padding: 0;
+  border-color: transparent;
+  background: transparent;
+}
+
+.cursor-demo-content .diff-pane {
+  padding: 0;
+}
+
 .json {
   white-space: pre-wrap;
   font-size: 12px;

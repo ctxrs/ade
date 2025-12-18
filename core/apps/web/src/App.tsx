@@ -8,6 +8,7 @@ import WorkspacePage from "./pages/WorkspacePage";
 import WorkbenchPage from "./pages/WorkbenchPage";
 import TaskPage from "./pages/TaskPage";
 import SessionPage from "./pages/SessionPage";
+import CursorDiffDemoPage from "./pages/CursorDiffDemoPage";
 import ProvidersPage from "./pages/ProvidersPage";
 import DiagnosticsPage from "./pages/DiagnosticsPage";
 import SettingsPage from "./pages/SettingsPage";
@@ -46,6 +47,7 @@ export default function App() {
           <Route path="/workspaces/:id/legacy" element={<WorkspacePage />} />
           <Route path="/tasks/:id" element={<TaskPage />} />
           <Route path="/sessions/:id" element={<SessionPage />} />
+          <Route path="/__cursor_diff_demo" element={<CursorDiffDemoPage />} />
         </Routes>
       </BrowserRouter>
     </SessionSupervisorProvider>
