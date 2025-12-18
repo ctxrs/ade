@@ -588,6 +588,7 @@ pub async fn serve(
     for (id, command, args) in [
         ("qwen", "qwen", vec!["--experimental-acp"]),
         ("opencode", "opencode", vec!["acp"]),
+        ("openhands", "openhands", vec!["acp"]),
         ("goose", "goose", vec!["acp"]),
         ("mistral", "vibe-acp", vec![]),
     ] {

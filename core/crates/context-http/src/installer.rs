@@ -27,6 +27,7 @@ const OPENCODE_VERSION: &str = "1.0.150";
 const MISTRAL_VIBE_ACP_VERSION: &str = "1.1.2";
 const KIMI_CLI_VERSION: &str = "0.62";
 const GOOSE_VERSION: &str = "stable";
+const OPENHANDS_CLI_VERSION: &str = "1.0.1-cli";
 
 const TYPESCRIPT_LS_VERSION: &str = "5.1.3";
 const TYPESCRIPT_VERSION: &str = "5.9.3";
@@ -116,6 +117,7 @@ pub fn is_supported_managed_provider(provider_id: &str) -> bool {
             | "mistral"
             | "goose"
             | "kimi"
+            | "openhands"
     )
 }
 
@@ -1402,6 +1404,39 @@ async fn install_provider_impl(
                     &url,
                     archive,
                     bin_path,
+                    vec!["acp".to_string()],
+                    &mut stage,
+                )
+                .await?
+            }
+            "openhands" => {
+                let os = std::env::consts::OS;
+                let url = match os {
+                    "linux" => format!(
+                        "https://github.com/OpenHands/OpenHands/releases/download/{OPENHANDS_CLI_VERSION}/openhands-linux"
+                    ),
+                    "macos" => format!(
+                        "https://github.com/OpenHands/OpenHands/releases/download/{OPENHANDS_CLI_VERSION}/openhands-macos"
+                    ),
+                    other => anyhow::bail!(
+                        "unsupported OpenHands CLI platform: {other} (no binary published for this platform)"
+                    ),
+                };
+
+                error_package = Some(url.clone());
+                error_version = Some(OPENHANDS_CLI_VERSION.to_string());
+                error_install_dir_rel = Some(format!(
+                    "providers/agent-servers/{}/{}",
+                    provider_id, OPENHANDS_CLI_VERSION
+                ));
+                install_managed_archive_provider(
+                    state,
+                    install_id,
+                    &provider_id,
+                    OPENHANDS_CLI_VERSION,
+                    &url,
+                    AgentServerArchive::None,
+                    "openhands",
                     vec!["acp".to_string()],
                     &mut stage,
                 )
