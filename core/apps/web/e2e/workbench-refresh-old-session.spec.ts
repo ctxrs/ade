@@ -44,11 +44,6 @@ test("workbench: refresh keeps selection, even for older sessions", async ({ pag
   await expect(page.locator(".wb-new-composer-stack button[aria-label=\"Send\"]")).toBeEnabled({ timeout: 20000 });
   await page.locator(".wb-new-composer-stack button[aria-label=\"Send\"]").click();
 
-  // Wait until the workbench encodes the created selection in the URL.
-  await expect(page).toHaveURL(/[\?&]task=/, { timeout: 20000 });
-  await expect(page).toHaveURL(/[\?&]track=/, { timeout: 60000 });
-  await expect(page).toHaveURL(/[\?&]session=/, { timeout: 60000 });
-
   const sessionComposer = page.locator(".wb-session textarea.wb-active-textarea");
   try {
     await expect(sessionComposer).toBeVisible({ timeout: 20000 });
@@ -59,11 +54,6 @@ test("workbench: refresh keeps selection, even for older sessions", async ({ pag
   await expect(page.locator(".wb-session .wb-assistant-entry").filter({ hasText: "done: hello refresh" })).toBeVisible({
     timeout: 20000,
   });
-
-  // Workbench should encode active selection in the URL so refresh is deterministic.
-  await expect(page).toHaveURL(/[\?&]task=/);
-  await expect(page).toHaveURL(/[\?&]track=/);
-  await expect(page).toHaveURL(/[\?&]session=/);
 
   const url = new URL(page.url());
   const workspaceId = url.pathname.split("/").filter(Boolean).pop();
@@ -132,13 +122,9 @@ test("workbench: refresh keeps selection, even for older sessions", async ({ pag
   await page.reload();
 
   const urlAfter = new URL(page.url());
-  const sessionParam = urlAfter.searchParams.get("session");
-  expect(sessionParam).toBe(sessionId);
-
-  if (urlAfter.searchParams.get("debug") !== "1") {
-    urlAfter.searchParams.set("debug", "1");
-    await page.goto(urlAfter.toString());
-  }
+  expect(urlAfter.searchParams.get("task")).toBeNull();
+  expect(urlAfter.searchParams.get("track")).toBeNull();
+  expect(urlAfter.searchParams.get("session")).toBeNull();
 
   try {
     await expect(page.locator(".wb-session textarea.wb-active-textarea")).toBeVisible({ timeout: 20000 });
@@ -146,14 +132,17 @@ test("workbench: refresh keeps selection, even for older sessions", async ({ pag
     await page.screenshot({ path: path.join(tmpdir(), "context-e2e-after-reload-session-missing.png"), fullPage: true });
     throw err;
   }
-  const debugLine = page.locator(".wb-session-view .wb-muted").filter({ hasText: "debug:" });
-  await expect(debugLine).toBeVisible({ timeout: 20000 });
   await expect(page.locator(".wb-session .wb-assistant-entry").filter({ hasText: "done: hello refresh" })).toBeVisible({
     timeout: 20000,
   });
 
-  await page.locator(".wb-session textarea.wb-active-textarea").fill("hello again");
-  await page.locator(".wb-session button[aria-label=\"Send\"]").click();
+  const composer = page.locator(".wb-session textarea.wb-active-textarea");
+  await composer.click();
+  await composer.type("hello again");
+  await expect(composer).toHaveValue("hello again", { timeout: 20000 });
+  const sendButton = page.locator(".wb-session button[aria-label=\"Send\"]");
+  await expect(sendButton).toBeEnabled({ timeout: 20000 });
+  await sendButton.click();
   await expect
     .poll(async () => {
       const resp = await page.request.get(`/api/sessions/${sessionId}/events`);

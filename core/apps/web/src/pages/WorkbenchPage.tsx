@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import {
   Archive,
   ArrowUp,
@@ -59,7 +59,6 @@ import {
   verifyProviderForWorkspace,
 } from "../api/client";
 import { useSessionCacheSnapshot, useSessionEntry, useSessionSupervisor } from "../state/sessionSupervisor";
-import { loadWorkbenchSelectionV1, saveWorkbenchSelectionV1, type PersistedWorkbenchSelectionV1 } from "../state/uiStateStore";
 import { DiffReviewPane } from "../components/DiffReviewPane";
 import { EditPlanReviewPane } from "../components/EditPlanReviewPane";
 import { SessionView, buildWorkbenchThreadViewModel } from "./SessionPage";
@@ -75,11 +74,16 @@ import { imageFilesToInlineAttachments } from "../utils/messageAttachments";
 import { parseModelId } from "../utils/modelEffort";
 import { formatRelativeAgeShort } from "../utils/relativeTime";
 import {
-  composerDraftKeyNewTaskV1,
-  loadComposerDraftV1,
-  removeComposerDraft,
-  saveComposerDraftV1,
-} from "../utils/composerDraftPersistence";
+  WorkbenchStoreProvider,
+  scrollKey,
+  sessionDraftKey,
+  useActiveWorkbenchIds,
+  useActiveWorkbenchTab,
+  useNewTaskDraft,
+  useWorkbenchDraft,
+  useWorkbenchSnapshot,
+  useWorkbenchStore,
+} from "../workbench/store";
 
 function deriveTaskTitle(prompt: string): string {
   const line = prompt.trim().split("\n")[0] ?? "";
@@ -184,10 +188,32 @@ async function saveMarkdownExport(suggestedName: string, contents: string): Prom
 
 export default function WorkbenchPage() {
   const { id: workspaceId } = useParams<{ id: string }>();
-  const location = useLocation();
-  const navigate = useNavigate();
+  if (!workspaceId) return null;
+  return (
+    <WorkbenchStoreProvider workspaceId={workspaceId}>
+      <WorkbenchPageInner workspaceId={workspaceId} />
+    </WorkbenchStoreProvider>
+  );
+}
+
+function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const supervisor = useSessionSupervisor();
   const sessionSnap = useSessionCacheSnapshot();
+  const workbenchStore = useWorkbenchStore();
+  const workbenchSnap = useWorkbenchSnapshot();
+  const activeTab = useActiveWorkbenchTab();
+  const { taskId: activeTaskId, trackId: activeTrackId } = useActiveWorkbenchIds();
+  const { value: newTaskDraft, setValue: setNewTaskDraft } = useNewTaskDraft();
+  const draftPrompt = newTaskDraft.text;
+  const draftMode = newTaskDraft.modeId;
+  const setDraftPrompt = useCallback(
+    (text: string) => setNewTaskDraft({ text, modeId: newTaskDraft.modeId }),
+    [newTaskDraft.modeId, setNewTaskDraft],
+  );
+  const setDraftMode = useCallback(
+    (modeId: WorkbenchModeId) => setNewTaskDraft({ text: newTaskDraft.text, modeId }),
+    [newTaskDraft.text, setNewTaskDraft],
+  );
   const newComposerRef = useRef<HTMLDivElement | null>(null);
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -231,11 +257,6 @@ export default function WorkbenchPage() {
 
   const [tasks, setTasks] = useState<Task[]>([]);
   const [taskQuery, setTaskQuery] = useState("");
-  const [activeTaskId, setActiveTaskId] = useState<string | null>(() => {
-    const params = new URLSearchParams(location.search);
-    const taskId = params.get("task");
-    return taskId ? String(taskId) : null;
-  });
   const [archivedCollapsed, setArchivedCollapsed] = useState(true);
   const [taskMenu, setTaskMenu] = useState<{ taskId: string; style: React.CSSProperties } | null>(null);
   const taskMenuRef = useRef<HTMLDivElement | null>(null);
@@ -248,112 +269,29 @@ export default function WorkbenchPage() {
 
   const [tracks, setTracks] = useState<Track[]>([]);
   const [sessionsByTrack, setSessionsByTrack] = useState<Record<string, any[]>>({});
-  const [activeTrackId, setActiveTrackId] = useState<string | null>(() => {
-    const params = new URLSearchParams(location.search);
-    const trackId = params.get("track");
-    return trackId ? String(trackId) : null;
-  });
   const [activeWorktree, setActiveWorktree] = useState<Worktree | null>(null);
   const taskDetailAbortRef = useRef<AbortController | null>(null);
   const taskDetailLoadSeqRef = useRef(0);
   const editPlansAbortRef = useRef<AbortController | null>(null);
   const editPlansLoadSeqRef = useRef(0);
 
-  const selectionFromUrl = useMemo(() => {
-    const params = new URLSearchParams(location.search);
-    const taskId = params.get("task");
-    const trackId = params.get("track");
-    const sessionId = params.get("session");
-    return {
-      taskId: taskId ? String(taskId) : null,
-      trackId: trackId ? String(trackId) : null,
-      sessionId: sessionId ? String(sessionId) : null,
-    };
-  }, [location.search]);
+  const focusNewTask = useCallback(() => {
+    workbenchStore.focusNewTask();
+  }, [workbenchStore]);
 
-  const [persistedSelection, setPersistedSelection] = useState<PersistedWorkbenchSelectionV1 | null>(null);
-  const [persistedSelectionLoaded, setPersistedSelectionLoaded] = useState(false);
-  const [uiStateWarning, setUiStateWarning] = useState<string | null>(null);
-  const persistedSelectionLoadSeqRef = useRef(0);
-  const didAttemptSelectionRestoreRef = useRef(false);
-
-  useEffect(() => {
-    didAttemptSelectionRestoreRef.current = false;
-  }, [workspaceId]);
-
-  useEffect(() => {
-    if (!workspaceId) {
-      setPersistedSelection(null);
-      setPersistedSelectionLoaded(false);
-      setUiStateWarning(null);
-      return;
-    }
-    setPersistedSelectionLoaded(false);
-    const seq = ++persistedSelectionLoadSeqRef.current;
-    loadWorkbenchSelectionV1(workspaceId)
-      .then((sel) => {
-        if (seq !== persistedSelectionLoadSeqRef.current) return;
-        setPersistedSelection(sel);
-        setPersistedSelectionLoaded(true);
-        setUiStateWarning(null);
-      })
-      .catch((e: unknown) => {
-        if (seq !== persistedSelectionLoadSeqRef.current) return;
-        const msg = e instanceof Error ? e.message : String(e);
-        setPersistedSelection(null);
-        setPersistedSelectionLoaded(true);
-        setUiStateWarning(`UI state persistence disabled: ${msg}`);
-      });
-  }, [workspaceId]);
-
-  const updateWorkbenchUrlSelection = useCallback(
-    (sel: { taskId: string | null; trackId: string | null; sessionId: string | null }, replace: boolean) => {
-      const params = new URLSearchParams(location.search);
-      const update = (key: string, value: string | null) => {
-        if (!value) params.delete(key);
-        else params.set(key, value);
-      };
-      update("task", sel.taskId);
-      update("track", sel.trackId);
-      update("session", sel.sessionId);
-
-      const search = params.toString();
-      const nextSearch = search ? `?${search}` : "";
-      if (nextSearch === location.search) return;
-      navigate({ pathname: location.pathname, search: nextSearch }, { replace });
+  const focusTask = useCallback(
+    (taskId: string, trackId?: string | null, sessionId?: string | null) => {
+      workbenchStore.focusTask(taskId, trackId, sessionId);
     },
-    [location.pathname, location.search, navigate],
-  );
-
-  const normalizeWorkbenchSelection = useCallback(
-    (sel: { taskId: string | null; trackId: string | null; sessionId: string | null }) => {
-      if (!sel.taskId) return { taskId: null, trackId: null, sessionId: null };
-      if (!sel.trackId) return { taskId: sel.taskId, trackId: null, sessionId: null };
-      if (!sel.sessionId) return { taskId: sel.taskId, trackId: sel.trackId, sessionId: null };
-      return sel;
-    },
-    [],
-  );
-
-  const applyWorkbenchSelection = useCallback(
-    (sel: { taskId: string | null; trackId: string | null; sessionId: string | null }, replace: boolean) => {
-      const next = normalizeWorkbenchSelection(sel);
-      didAttemptSelectionRestoreRef.current = true;
-      setActiveTaskId(next.taskId);
-      setActiveTrackId(next.trackId);
-      updateWorkbenchUrlSelection(next, replace);
-    },
-    [normalizeWorkbenchSelection, updateWorkbenchUrlSelection],
+    [workbenchStore],
   );
 
   // Keep tracks cached per task so we can show best-effort provider badges.
   const [tracksByTaskId, setTracksByTaskId] = useState<Record<string, Track[]>>({});
 
-  const [draftPrompt, setDraftPrompt] = useState("");
   const [draftTracks, setDraftTracks] = useState<DraftTrack[]>([
     { key: "t1", label: "", providerId: "codex", modelId: "" },
   ]);
-  const [draftMode, setDraftMode] = useState<WorkbenchModeId>("default");
   const [execTarget, setExecTarget] = useState<WorkbenchEnvTarget>("worktree");
   const [startBusy, setStartBusy] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
@@ -399,30 +337,6 @@ export default function WorkbenchPage() {
       document.documentElement.classList.remove("wb-no-scroll");
     };
   }, []);
-
-  useEffect(() => {
-    if (!workspaceId) return;
-    const key = composerDraftKeyNewTaskV1(workspaceId);
-    const draft = loadComposerDraftV1(key);
-    if (!draft) return;
-    setDraftPrompt(draft.text);
-    setDraftMode(draft.modeId ?? "default");
-  }, [workspaceId]);
-
-  useEffect(() => {
-    if (!workspaceId) return;
-    const key = composerDraftKeyNewTaskV1(workspaceId);
-    const timer = window.setTimeout(() => {
-      const text = draftPrompt;
-      const modeId = draftMode;
-      if (text.trim().length === 0 && modeId === "default") {
-        removeComposerDraft(key);
-        return;
-      }
-      saveComposerDraftV1(key, { v: 1, text, modeId });
-    }, 200);
-    return () => window.clearTimeout(timer);
-  }, [draftMode, draftPrompt, workspaceId]);
 
   useEffect(() => {
     const onResize = () => {
@@ -557,14 +471,18 @@ export default function WorkbenchPage() {
     if (seq !== undefined && seq !== taskDetailLoadSeqRef.current) return;
     setSessionsByTrack(map);
     const trackIds = trs.map((tr) => idToString(tr.id)).filter(Boolean);
-    setActiveTrackId((prev) => {
-      const wantedFromSession =
-        preferredSessionId && trackIds.length > 0
-          ? trackIds.find((trid) => (map[trid] ?? []).some((s: any) => idToString(s?.id) === preferredSessionId))
-          : null;
-      const wanted = wantedFromSession ?? preferredTrackId ?? prev;
-      return pickPreferredTrackId(trackIds, map, wanted);
-    });
+
+    const wantedFromSession =
+      preferredSessionId && trackIds.length > 0
+        ? trackIds.find((trid) => (map[trid] ?? []).some((s: any) => idToString(s?.id) === preferredSessionId))
+        : null;
+    const activeTab = workbenchStore.getActiveTab();
+    const prevTrackId = activeTab?.kind === "track" && activeTab.ref.taskId === taskId ? activeTab.ref.trackId : null;
+    const wanted = wantedFromSession ?? preferredTrackId ?? prevTrackId;
+    const nextTrackId = pickPreferredTrackId(trackIds, map, wanted);
+    if (activeTab?.kind === "track" && activeTab.ref.taskId === taskId) {
+      workbenchStore.setActiveTrackForActiveTask(nextTrackId);
+    }
   };
 
   useEffect(() => {
@@ -812,50 +730,6 @@ export default function WorkbenchPage() {
   }, [tasks]);
 
   useEffect(() => {
-    if (!workspaceId) return;
-
-    if (selectionFromUrl.taskId) {
-      // Treat the URL as the source of truth for selection, even before tasks/tracks have loaded.
-      // Validation happens once tasks are hydrated.
-      didAttemptSelectionRestoreRef.current = true;
-      setActiveTaskId(selectionFromUrl.taskId);
-      setActiveTrackId(selectionFromUrl.trackId);
-      if (tasks.length > 0) {
-        const exists = tasks.some((t) => idToString(t.id) === selectionFromUrl.taskId);
-        if (!exists) updateWorkbenchUrlSelection({ taskId: null, trackId: null, sessionId: null }, true);
-      }
-      return;
-    }
-
-    // URL cleared selection: clear local selection too.
-    if (activeTaskId !== null) setActiveTaskId(null);
-    if (activeTrackId !== null) setActiveTrackId(null);
-  }, [
-    workspaceId,
-    selectionFromUrl.taskId,
-    selectionFromUrl.trackId,
-    tasks,
-    updateWorkbenchUrlSelection,
-    activeTaskId,
-    activeTrackId,
-  ]);
-
-  useEffect(() => {
-    if (!workspaceId) return;
-    if (selectionFromUrl.taskId) return;
-    if (!persistedSelectionLoaded) return;
-    if (didAttemptSelectionRestoreRef.current) return;
-    didAttemptSelectionRestoreRef.current = true;
-
-    const stored = persistedSelection;
-    if (!stored?.taskId) return;
-    updateWorkbenchUrlSelection(
-      { taskId: stored.taskId, trackId: stored.trackId, sessionId: stored.sessionId },
-      true,
-    );
-  }, [workspaceId, selectionFromUrl.taskId, persistedSelectionLoaded, persistedSelection, updateWorkbenchUrlSelection]);
-
-  useEffect(() => {
     if (!providers.length) return;
     const codexInstalled = providersById["codex"]?.installed ?? false;
     if (codexInstalled) return;
@@ -881,23 +755,13 @@ export default function WorkbenchPage() {
       controller.abort();
       return;
     }
-    const useUrl = selectionFromUrl.taskId === activeTaskId;
-    const preferredTrackId = useUrl ? selectionFromUrl.trackId : null;
-    const preferredSessionId = useUrl ? selectionFromUrl.sessionId : null;
-    // Prime selection from URL to avoid clobbering deep-links while task detail hydrates.
-    setActiveTrackId(preferredTrackId ?? null);
     setTracks([]);
     setSessionsByTrack({});
     setEditPlans([]);
     setActiveEditPlanId(null);
-    refreshTaskDetail(activeTaskId, preferredTrackId, preferredSessionId, controller.signal, seq).catch(() => { });
+    refreshTaskDetail(activeTaskId, null, null, controller.signal, seq).catch(() => { });
     return () => controller.abort();
-  }, [
-    activeTaskId,
-    selectionFromUrl.sessionId,
-    selectionFromUrl.taskId,
-    selectionFromUrl.trackId,
-  ]);
+  }, [activeTaskId]);
 
   useEffect(() => {
     editPlansAbortRef.current?.abort();
@@ -1215,13 +1079,13 @@ export default function WorkbenchPage() {
           return next;
         });
         if (activeTaskId === taskId) {
-          applyWorkbenchSelection({ taskId: null, trackId: null, sessionId: null }, true);
+          focusNewTask();
         }
       } catch (e: any) {
         window.alert(e?.message ?? "Failed to delete task.");
       }
     },
-    [activeTaskId, tasks, applyWorkbenchSelection],
+    [activeTaskId, focusNewTask, tasks],
   );
 
   const openConvoMenu = useCallback((triggerEl: HTMLElement) => {
@@ -1233,64 +1097,37 @@ export default function WorkbenchPage() {
 
   const activeSessionId = useMemo(() => {
     if (!activeTrackId) return null;
+    const override =
+      activeTab?.kind === "track" && activeTab.ref.trackId === activeTrackId ? (activeTab.ref.sessionId ?? null) : null;
+    if (override) return override;
     const sessions = sessionsByTrack[activeTrackId] ?? [];
-    if (selectionFromUrl.sessionId) {
-      const trackMatches = !selectionFromUrl.trackId || selectionFromUrl.trackId === activeTrackId;
-      if (trackMatches) {
-        // If the URL specifies a session, prefer it even before sessions are loaded for the track.
-        // This makes refresh + deep-links deterministic and avoids transient “empty” UI states.
-        if (sessions.length === 0) return selectionFromUrl.sessionId;
-        const matches = sessions.some((s: any) => idToString(s?.id) === selectionFromUrl.sessionId);
-        if (matches) return selectionFromUrl.sessionId;
-      }
-    }
     return pickPreferredSessionId(sessions);
-  }, [activeTrackId, sessionsByTrack, selectionFromUrl.sessionId, selectionFromUrl.trackId]);
+  }, [activeTab, activeTrackId, sessionsByTrack]);
 
-  useEffect(() => {
-    if (!workspaceId) return;
-    // If the URL already specifies a Task but state hasn't hydrated yet, don't clobber it.
-    if (!activeTaskId && selectionFromUrl.taskId) return;
+  const activeSessionDraft = useWorkbenchDraft(activeSessionId ? sessionDraftKey(activeSessionId) : "", {
+    text: "",
+    modeId: "default",
+  });
 
-    const shouldDeferUrlSync =
-      selectionFromUrl.taskId === activeTaskId &&
-      tracks.length === 0 &&
-      ((selectionFromUrl.trackId && selectionFromUrl.trackId !== activeTrackId) ||
-        (selectionFromUrl.sessionId && !activeSessionId));
-    if (shouldDeferUrlSync) return;
+  const activeScrollKey = useMemo(() => {
+    if (!activeSessionId) return null;
+    if (!activeTab) return null;
+    return scrollKey(activeTab.id, activeSessionId);
+  }, [activeSessionId, activeTab]);
 
-    const next = { taskId: activeTaskId, trackId: activeTrackId, sessionId: activeSessionId };
-    const persisted: PersistedWorkbenchSelectionV1 = {
-      v: 1,
-      taskId: next.taskId,
-      trackId: next.taskId ? next.trackId : null,
-      sessionId: next.taskId && next.trackId ? next.sessionId : null,
-    };
-    setPersistedSelection(persisted);
-    saveWorkbenchSelectionV1(workspaceId, persisted).catch((e: unknown) => {
-      const msg = e instanceof Error ? e.message : String(e);
-      setUiStateWarning(`UI state persistence disabled: ${msg}`);
-    });
-
-    const matchesUrl =
-      selectionFromUrl.taskId === next.taskId &&
-      selectionFromUrl.trackId === next.trackId &&
-      selectionFromUrl.sessionId === next.sessionId;
-    if (matchesUrl) return;
-    updateWorkbenchUrlSelection(next, true);
-  }, [
-    workspaceId,
-    activeTaskId,
-    activeTrackId,
-    activeSessionId,
-    selectionFromUrl.sessionId,
-    selectionFromUrl.taskId,
-    selectionFromUrl.trackId,
-    updateWorkbenchUrlSelection,
-  ]);
+  const activeScrollState = useMemo(() => {
+    if (!activeScrollKey) return null;
+    return (
+      workbenchSnap.window.scrollByKey[activeScrollKey] ?? {
+        stickToBottom: true,
+        anchorItemId: null,
+        updatedAtMs: 0,
+      }
+    );
+  }, [activeScrollKey, workbenchSnap.window.scrollByKey]);
 
   const showDebugIds = useMemo(() => {
-    const params = new URLSearchParams(location.search);
+    const params = new URLSearchParams(window.location.search);
     const ids = params.get("ids");
     const debug = params.get("debug");
     if (ids === "1" || debug === "1") {
@@ -1302,7 +1139,7 @@ export default function WorkbenchPage() {
       return false;
     }
     return localStorage.getItem("contextDebugIds") === "1";
-  }, [location.search]);
+  }, []);
 
   const debugIdLabel = useMemo(() => {
     const short = (v: string | null) => {
@@ -1585,60 +1422,58 @@ export default function WorkbenchPage() {
     setStartBusy(true);
     setStartError(null);
 
-	    try {
-	      const title = deriveTaskTitle(prompt);
-	      const task = await createTask(workspaceId, title, undefined, { create_default_track: false });
-	      const taskId = idToString(task.id);
-	      let firstTrackId: string | null = null;
-	      let firstSessionId: string | null = null;
-	      setActiveTaskId(taskId);
-	      setActiveTrackId(null);
-	      updateWorkbenchUrlSelection({ taskId, trackId: null, sessionId: null }, true);
+    try {
+      const title = deriveTaskTitle(prompt);
+      const task = await createTask(workspaceId, title, undefined, { create_default_track: false });
+      const taskId = idToString(task.id);
+      let firstTrackId: string | null = null;
+      let firstSessionId: string | null = null;
 
-	      const toStart =
-	        draftTracks.length > 0
-	          ? draftTracks
-          : [{ key: "t1", label: "", providerId: "codex", modelId: "" }];
+      const toStart =
+        draftTracks.length > 0 ? draftTracks : [{ key: "t1", label: "", providerId: "codex", modelId: "" }];
 
       for (let i = 0; i < toStart.length; i++) {
         const dt = toStart[i];
         const installed = providersById[dt.providerId]?.installed ?? false;
         if (!installed) {
           const diag = providersById[dt.providerId]?.diagnostics?.[0];
-          throw new Error(diag ? `Harness “${dt.providerId}” not installed: ${diag}` : `Harness “${dt.providerId}” not installed.`);
+          throw new Error(
+            diag
+              ? `Harness “${dt.providerId}” not installed: ${diag}`
+              : `Harness “${dt.providerId}” not installed.`,
+          );
         }
         const label = workbenchLabelForTrack(dt);
         const env_target = execTarget === "local" ? "local" : "worktree";
         const tr = await createTrack(taskId, label, { env_target });
-	        const trackId = idToString(tr.id);
-	        const opts = await ensureProviderOptions(dt.providerId).catch(() => undefined);
-	        const modelIds = modelIdsFromOptions(opts ?? providerOptions[dt.providerId]);
-	        const modelId = dt.modelId || modelIds[0] || (dt.providerId === "fake" ? "fake-model" : "default");
-	        const session = await createSession(trackId, dt.providerId, modelId);
-	        const sessionId = idToString(session.id);
-	        if (!firstTrackId) firstTrackId = trackId;
+        const trackId = idToString(tr.id);
+        const opts = await ensureProviderOptions(dt.providerId).catch(() => undefined);
+        const modelIds = modelIdsFromOptions(opts ?? providerOptions[dt.providerId]);
+        const modelId = dt.modelId || modelIds[0] || (dt.providerId === "fake" ? "fake-model" : "default");
+        const session = await createSession(trackId, dt.providerId, modelId);
+        const sessionId = idToString(session.id);
+        if (!firstTrackId) firstTrackId = trackId;
         if (!firstSessionId) {
-	          firstSessionId = sessionId;
-	          setActiveTrackId(trackId);
-	          updateWorkbenchUrlSelection({ taskId, trackId, sessionId }, true);
-	        }
-	        supervisor.refreshSession(sessionId, { watchDiff: true });
-	        supervisor.refreshQueue(sessionId);
-	        await postMessage(sessionId, prompt, "immediate", draftAttachments);
+          firstSessionId = sessionId;
+          focusTask(taskId, trackId, sessionId);
+        }
+        supervisor.refreshSession(sessionId, { watchDiff: true });
+        supervisor.refreshQueue(sessionId);
+        await postMessage(sessionId, prompt, "immediate", draftAttachments);
         // Ensure the workbench view can render the just-posted user message (and any streamed events)
         // without waiting for a `done` event to trigger a refresh.
         supervisor.refreshQueue(sessionId);
         supervisor.refreshSession(sessionId, { watchDiff: true });
-	      }
+      }
 
-	      if (firstTrackId) {
-	        await refreshTaskDetail(taskId, firstTrackId, firstSessionId);
-	      }
-	      await refreshTasks();
-	      setDraftPrompt("");
-	      setDraftAttachments([]);
-	    } catch (e: any) {
-	      setStartError(e?.message ?? String(e));
+      if (firstTrackId) {
+        await refreshTaskDetail(taskId, firstTrackId, firstSessionId);
+      }
+      await refreshTasks();
+      setNewTaskDraft({ text: "", modeId: "default" });
+      setDraftAttachments([]);
+    } catch (e: any) {
+      setStartError(e?.message ?? String(e));
     } finally {
       setStartBusy(false);
     }
@@ -2054,6 +1889,26 @@ export default function WorkbenchPage() {
     return { ["--wb-sidebar-width" as any]: `${clamped}px` } as React.CSSProperties;
   }, [sidebarWidth]);
 
+  if (!workbenchSnap.hydrated) {
+    return (
+      <div
+        className={`wb-root ${sidebarCollapsed ? "wb-root-collapsed" : ""} ${sidebarResizing ? "wb-root-resizing" : ""}`}
+        style={rootStyle}
+      >
+        <div className="wb-topbar">
+          <div className="wb-topbar-title">{workspace?.name ?? "Workspace"}</div>
+        </div>
+        <div className="wb-main">
+          <div className="wb-center">
+            <div className="wb-muted" style={{ padding: 16 }}>
+              Loading workspace layout…
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div
       className={`wb-root ${sidebarCollapsed ? "wb-root-collapsed" : ""} ${sidebarResizing ? "wb-root-resizing" : ""}`}
@@ -2103,9 +1958,9 @@ export default function WorkbenchPage() {
         </div>
       </div>
 
-      {uiStateWarning && (
+      {workbenchSnap.warnings.length > 0 && (
         <div className="banner" style={{ margin: "8px 12px 0" }}>
-          {uiStateWarning}
+          {workbenchSnap.warnings[0]}
         </div>
       )}
 
@@ -2115,7 +1970,7 @@ export default function WorkbenchPage() {
             <button
               type="button"
               className="wb-new-agent"
-              onClick={() => applyWorkbenchSelection({ taskId: null, trackId: null, sessionId: null }, false)}
+              onClick={focusNewTask}
             >
               New Task
             </button>
@@ -2176,7 +2031,7 @@ export default function WorkbenchPage() {
                     <div
                       className={`wb-task-row ${selected ? "wb-task-row-active" : ""}`}
                       role="listitem"
-                      onClick={() => applyWorkbenchSelection({ taskId: tid, trackId: null, sessionId: null }, false)}
+                      onClick={() => focusTask(tid)}
                       onContextMenu={(e) => {
                         e.preventDefault();
                         e.stopPropagation();
@@ -2189,7 +2044,7 @@ export default function WorkbenchPage() {
                         }
                         if (e.key === "Enter" || e.key === " ") {
                           e.preventDefault();
-                          applyWorkbenchSelection({ taskId: tid, trackId: null, sessionId: null }, false);
+                          focusTask(tid);
                         }
                       }}
                       tabIndex={0}
@@ -2330,7 +2185,7 @@ export default function WorkbenchPage() {
                       <div
                         className={`wb-task-row wb-task-row-archived ${selected ? "wb-task-row-active" : ""}`}
                       role="listitem"
-                      onClick={() => applyWorkbenchSelection({ taskId: tid, trackId: null, sessionId: null }, false)}
+                      onClick={() => focusTask(tid)}
                       onContextMenu={(e) => {
                         e.preventDefault();
                         e.stopPropagation();
@@ -2346,7 +2201,7 @@ export default function WorkbenchPage() {
                         }
                         if (e.key === "Enter" || e.key === " ") {
                           e.preventDefault();
-                          applyWorkbenchSelection({ taskId: tid, trackId: null, sessionId: null }, false);
+                          focusTask(tid);
                         }
                       }}
                       tabIndex={0}
@@ -3064,9 +2919,7 @@ export default function WorkbenchPage() {
                         key={trid}
                         type="button"
                         className={`wb-trackcard ${selected ? "wb-trackcard-active" : ""}`}
-                        onClick={() =>
-                          activeTaskId && applyWorkbenchSelection({ taskId: activeTaskId, trackId: trid, sessionId: null }, false)
-                        }
+                        onClick={() => workbenchStore.setActiveTrackForActiveTask(trid)}
                       >
                         <div className="wb-trackcard-title">{model}</div>
                         <div className="wb-trackcard-sub">{status}</div>
@@ -3078,7 +2931,25 @@ export default function WorkbenchPage() {
 
               <div className="wb-session">
                 {activeSessionId ? (
-                  <SessionView key={activeSessionId ?? "empty"} sessionId={activeSessionId} variant="workbench" showDiffPane={false} />
+                  <SessionView
+                    key={activeSessionId ?? "empty"}
+                    sessionId={activeSessionId}
+                    variant="workbench"
+                    showDiffPane={false}
+                    draft={activeSessionDraft.value}
+                    draftUpdatedAtMs={activeSessionDraft.updatedAtMs}
+                    onDraftChange={(text) =>
+                      activeSessionDraft.setValue({ text, modeId: activeSessionDraft.value.modeId })
+                    }
+                    onModeChange={(modeId) =>
+                      activeSessionDraft.setValue({ text: activeSessionDraft.value.text, modeId })
+                    }
+                    scrollState={activeScrollState ? { stickToBottom: activeScrollState.stickToBottom, anchorItemId: activeScrollState.anchorItemId } : null}
+                    onScrollStateChange={(next) => {
+                      if (!activeScrollKey) return;
+                      workbenchStore.setScrollState(activeScrollKey, next);
+                    }}
+                  />
                 ) : (
                   <div className="wb-muted" style={{ padding: 16 }}>
                     Select a track with a session.
