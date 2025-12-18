@@ -1,14 +1,26 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import Editor from "@monaco-editor/react";
+import { Check, ChevronDown, ChevronUp, MessageSquare, X } from "lucide-react";
 import { applyTrackDiffPatch } from "../api/client";
+import { guessMonacoLanguage } from "../utils/monacoLanguage";
 import { FileBufferEditor } from "./FileBufferEditor";
+import { FileIcon } from "./FileIcon";
 
 type DiffFile = {
   key: string;
   oldPath: string;
   newPath: string;
+  filePath: string;
   sectionLines: string[];
   headerLines: string[];
   hunks: DiffHunk[];
+  isNew: boolean;
+  isDeleted: boolean;
+  isBinary: boolean;
+  addedLines: number;
+  deletedLines: number;
+  renderText: string;
+  renderLineKinds: Array<"add" | "del" | "ctx">;
 };
 
 type DiffHunk = {
@@ -32,8 +44,6 @@ export function DiffReviewPane({
   onFileSaved?: () => void;
   labels?: Partial<{
     title: string;
-    rawToggleShow: string;
-    rawToggleHide: string;
     empty: string;
     acceptAll: string;
     rejectAll: string;
@@ -41,18 +51,21 @@ export function DiffReviewPane({
     reject: string;
   }>;
 }) {
-  const [showRaw, setShowRaw] = useState(false);
   const [editingPath, setEditingPath] = useState<string | null>(null);
   const [expandedFiles, setExpandedFiles] = useState<Record<string, boolean>>({});
+  const [activeFileKey, setActiveFileKey] = useState<string | null>(null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [hoverKeepKey, setHoverKeepKey] = useState<string | null>(null);
+  const tooltipTimeoutRef = useRef<number | null>(null);
 
   useEffect(() => {
-    setShowRaw(false);
     setEditingPath(null);
     setExpandedFiles({});
+    setActiveFileKey(null);
     setBusyKey(null);
     setError(null);
+    setHoverKeepKey(null);
   }, [trackId, sessionId]);
 
   const files = useMemo(() => parseUnifiedDiff(diff), [diff]);
@@ -71,8 +84,7 @@ export function DiffReviewPane({
     }
   };
 
-  const toggleFile = (key: string) =>
-    setExpandedFiles((prev) => ({ ...prev, [key]: !(prev[key] ?? true) }));
+  const toggleFile = (key: string) => setExpandedFiles((prev) => ({ ...prev, [key]: !(prev[key] ?? true) }));
 
   const hasChanges = diff.trim().length > 0;
 
@@ -93,105 +105,167 @@ export function DiffReviewPane({
 
   return (
     <div className="diff-pane">
-      <div className="diff-header">
-        <h2>{labels?.title ?? "Review"}</h2>
-        <div className="row" style={{ alignItems: "center" }}>
-          <button type="button" onClick={() => setShowRaw((v) => !v)}>
-            {showRaw ? labels?.rawToggleHide ?? "Hide raw" : labels?.rawToggleShow ?? "Raw diff"}
-          </button>
-        </div>
-      </div>
-
       {error && <div className="banner">{error}</div>}
 
       {!hasChanges && <div className="muted">{labels?.empty ?? "No changes."}</div>}
 
-      {hasChanges && showRaw && <pre className="diff">{diff}</pre>}
+      {hasChanges && (
+        <div className="cursor-diff">
+          <div className="cursor-diff-list">
+            {files.map((f) => {
+              const isOpen = expandedFiles[f.key] ?? true;
+              const filePatch = f.sectionLines.join("\n") + "\n";
+              const fileBusy = busyKey === `file:${f.key}`;
+              const canEdit = Boolean(sessionId) && f.filePath !== "(unknown)";
 
-      {hasChanges && !showRaw && (
-        <div className="diff-review">
-          {files.map((f) => {
-            const isOpen = expandedFiles[f.key] ?? true;
-            const fileLabel = f.newPath || f.oldPath || "(unknown)";
-            const filePatch = f.sectionLines.join("\n") + "\n";
-            const fileBusy = busyKey === `file:${f.key}`;
-            const canEdit = Boolean(sessionId) && fileLabel !== "(unknown)";
+              const summary = (
+                <span className="cursor-diff-summary" aria-label="Diff summary">
+                  {f.isNew ? (
+                    <>
+                      <span className="cursor-diff-new">(New)</span>{" "}
+                      <span className="cursor-diff-plus">+{f.addedLines}</span>
+                    </>
+                  ) : f.isDeleted ? (
+                    <>
+                      <span className="cursor-diff-deleted">(Deleted)</span>{" "}
+                      <span className="cursor-diff-minus">-{f.deletedLines}</span>
+                    </>
+                  ) : (
+                    <>
+                      <span className="cursor-diff-plus">+{f.addedLines}</span>{" "}
+                      <span className="cursor-diff-minus">-{f.deletedLines}</span>
+                    </>
+                  )}
+                </span>
+              );
 
-            return (
-              <div key={f.key} className="diff-file">
-                <button type="button" className="diff-file-header" onClick={() => toggleFile(f.key)}>
-                  <span className="diff-file-path">{fileLabel}</span>
-                  <span className="muted">
-                    {f.hunks.length} hunk{f.hunks.length === 1 ? "" : "s"}
-                  </span>
-                  <span className="thinking-chev">{isOpen ? "▴" : "▾"}</span>
-                </button>
-                {isOpen && (
-                  <div className="diff-file-body">
-                    <div className="diff-file-actions">
+              return (
+                <div
+                  key={f.key}
+                  className={`cursor-diff-file ${fileAccentClass(f)} ${activeFileKey === f.key ? "cursor-diff-file-active" : ""}`}
+                >
+                  <div className="cursor-diff-file-header">
+                    <button
+                      type="button"
+                      className="cursor-diff-chevron"
+                      onClick={() => toggleFile(f.key)}
+                      aria-label={isOpen ? "Collapse file diff" : "Expand file diff"}
+                      aria-expanded={isOpen}
+                    >
+                      {isOpen ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
+                    </button>
+                    <FileIcon path={f.filePath} size={14} className="cursor-diff-file-icon" />
+                    <span
+                      className="cursor-diff-file-path"
+                      title={f.filePath}
+                      onDoubleClick={() => {
+                        if (canEdit) setEditingPath(f.filePath);
+                      }}
+                    >
+                      {f.filePath}
+                    </span>
+                    {summary}
+                    <div className="cursor-diff-spacer" />
+
+                    <div className="cursor-diff-file-actions" aria-label="File actions">
                       <button
                         type="button"
-                        disabled={!trackId || fileBusy || busyKey !== null}
-                        onClick={() => doApply(`file:${f.key}`, "accept", filePatch)}
+                        className="cursor-diff-icon-btn"
+                        aria-label="Comment"
+                        disabled
+                        title="Comment"
                       >
-                        {fileBusy ? "Working…" : labels?.acceptAll ?? "Accept all"}
+                        <MessageSquare size={14} />
                       </button>
                       <button
                         type="button"
+                        className="cursor-diff-icon-btn"
+                        aria-label={isOpen ? "Collapse" : "Expand"}
+                        title={isOpen ? "Collapse" : "Expand"}
+                        onClick={() => toggleFile(f.key)}
+                      >
+                        {isOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                      </button>
+                      <button
+                        type="button"
+                        className="cursor-diff-icon-btn cursor-diff-icon-btn-danger"
+                        aria-label="Undo"
+                        title="Undo"
                         disabled={!trackId || fileBusy || busyKey !== null}
                         onClick={() => doApply(`file:${f.key}`, "reject", filePatch)}
                       >
-                        {fileBusy ? "Working…" : labels?.rejectAll ?? "Reject all"}
+                        <X size={14} />
                       </button>
-                      {canEdit && (
-                        <button type="button" className="wb-small" onClick={() => setEditingPath(fileLabel)}>
-                          Edit
-                        </button>
+                      <button
+                        type="button"
+                        className="cursor-diff-icon-btn cursor-diff-icon-btn-keep"
+                        aria-label="Keep"
+                        onMouseEnter={() => {
+                          if (tooltipTimeoutRef.current) window.clearTimeout(tooltipTimeoutRef.current);
+                          setHoverKeepKey(f.key);
+                        }}
+                        onMouseLeave={() => {
+                          tooltipTimeoutRef.current = window.setTimeout(() => setHoverKeepKey(null), 80);
+                        }}
+                        title="Keep"
+                        disabled={!trackId || fileBusy || busyKey !== null}
+                        onClick={() => doApply(`file:${f.key}`, "accept", filePatch)}
+                      >
+                        <Check size={14} />
+                      </button>
+                      {hoverKeepKey === f.key && (
+                        <div className="cursor-diff-tooltip" role="tooltip">
+                          Keep changes in this file
+                        </div>
                       )}
                     </div>
-
-                    {f.hunks.length > 0 ? (
-                      <div className="diff-hunks">
-                        {f.hunks.map((h, idx) => {
-                          const hunkBusy = busyKey === `hunk:${h.key}`;
-                          const patch =
-                            f.headerLines.join("\n") + "\n" + h.headerLine + "\n" + h.lines.join("\n") + "\n";
-                          return (
-                            <div key={h.key} className="diff-hunk">
-                              <div className="diff-hunk-top">
-                                <div className="muted">
-                                  Hunk {idx + 1}: <code>{h.headerLine}</code>
-                                </div>
-                                <div className="row" style={{ gap: 6 }}>
-                                  <button
-                                    type="button"
-                                    disabled={!trackId || hunkBusy || busyKey !== null}
-                                    onClick={() => doApply(`hunk:${h.key}`, "accept", patch)}
-                                  >
-                                    {hunkBusy ? "Working…" : labels?.accept ?? "Accept"}
-                                  </button>
-                                  <button
-                                    type="button"
-                                    disabled={!trackId || hunkBusy || busyKey !== null}
-                                    onClick={() => doApply(`hunk:${h.key}`, "reject", patch)}
-                                  >
-                                    {hunkBusy ? "Working…" : labels?.reject ?? "Reject"}
-                                  </button>
-                                </div>
-                              </div>
-                              <HunkPreview lines={h.lines} />
-                            </div>
-                          );
-                        })}
-                      </div>
-                    ) : (
-                      <div className="muted">Binary or metadata-only diff.</div>
-                    )}
                   </div>
-                )}
-              </div>
-            );
-          })}
+
+                  {isOpen && (
+                    <div
+                      className="cursor-diff-file-body"
+                      onMouseDown={() => setActiveFileKey(f.key)}
+                      role="region"
+                      aria-label={`Diff for ${f.filePath}`}
+                    >
+                      {f.isBinary ? (
+                        <div className="muted" style={{ padding: 12 }}>
+                          Binary or metadata-only diff.
+                        </div>
+                      ) : (
+                        <>
+                          <div className="cursor-diff-editor-shell">
+                            <DecoratedDiffEditor file={f} />
+                          </div>
+
+                          {activeFileKey === f.key && (
+                            <div className="cursor-diff-overlay" aria-label="Quick actions">
+                              <button
+                                type="button"
+                                className="cursor-diff-overlay-btn"
+                                disabled={!trackId || fileBusy || busyKey !== null}
+                                onClick={() => doApply(`file:${f.key}`, "reject", filePatch)}
+                              >
+                                Undo <span className="cursor-diff-kbd">⌘N</span>
+                              </button>
+                              <button
+                                type="button"
+                                className="cursor-diff-overlay-btn cursor-diff-overlay-btn-keep"
+                                disabled={!trackId || fileBusy || busyKey !== null}
+                                onClick={() => doApply(`file:${f.key}`, "accept", filePatch)}
+                              >
+                                Keep <span className="cursor-diff-kbd">⌘Y</span>
+                              </button>
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
     </div>
@@ -200,8 +274,14 @@ export function DiffReviewPane({
 
 function parseUnifiedDiff(diffText: string): DiffFile[] {
   const lines = String(diffText ?? "").split("\n");
+  if (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
   const files: DiffFile[] = [];
-  let current: DiffFile | null = null;
+  let current:
+    | Omit<
+        DiffFile,
+        "filePath" | "isNew" | "isDeleted" | "isBinary" | "addedLines" | "deletedLines" | "renderText" | "renderLineKinds"
+      >
+    | null = null;
   let inHeader = false;
   let currentHunk: DiffHunk | null = null;
 
@@ -211,7 +291,8 @@ function parseUnifiedDiff(diffText: string): DiffFile[] {
       current.hunks.push(currentHunk);
       currentHunk = null;
     }
-    files.push(current);
+    const file: DiffFile = finalizeFile(current);
+    files.push(file);
     current = null;
     inHeader = false;
   };
@@ -237,7 +318,6 @@ function parseUnifiedDiff(diffText: string): DiffFile[] {
     }
 
     if (!current) continue;
-
     current.sectionLines.push(line);
 
     if (line.startsWith("@@ ")) {
@@ -258,20 +338,134 @@ function parseUnifiedDiff(diffText: string): DiffFile[] {
   return files.filter((f) => f.sectionLines.some((l) => l.trim().length > 0));
 }
 
-function HunkPreview({ lines }: { lines: string[] }) {
-  const maxLines = 260;
-  const shown = lines.length > maxLines ? lines.slice(0, maxLines) : lines;
+function finalizeFile(
+  raw: Omit<
+    DiffFile,
+    "filePath" | "isNew" | "isDeleted" | "isBinary" | "addedLines" | "deletedLines" | "renderText" | "renderLineKinds"
+  >,
+): DiffFile {
+  const filePath =
+    raw.newPath && raw.newPath !== "dev/null"
+      ? raw.newPath
+      : raw.oldPath && raw.oldPath !== "dev/null"
+        ? raw.oldPath
+        : "(unknown)";
+  const headerText = raw.headerLines.join("\n");
+  const isNew = raw.oldPath === "dev/null" || headerText.includes("new file mode") || headerText.includes("--- /dev/null");
+  const isDeleted = raw.newPath === "dev/null" || headerText.includes("deleted file mode") || headerText.includes("+++ /dev/null");
+  const patchText = raw.sectionLines.join("\n");
+  const isBinary = patchText.includes("GIT binary patch") || patchText.includes("Binary files");
+
+  let addedLines = 0;
+  let deletedLines = 0;
+  const renderLines: string[] = [];
+  const renderLineKinds: Array<"add" | "del" | "ctx"> = [];
+
+  for (const h of raw.hunks) {
+    for (const l of h.lines) {
+      if (!l) continue;
+      const prefix = l[0];
+      if (prefix === "+") {
+        if (!l.startsWith("+++")) {
+          addedLines += 1;
+          renderLines.push(l.slice(1));
+          renderLineKinds.push("add");
+        }
+        continue;
+      }
+      if (prefix === "-") {
+        if (!l.startsWith("---")) {
+          deletedLines += 1;
+          renderLines.push(l.slice(1));
+          renderLineKinds.push("del");
+        }
+        continue;
+      }
+      if (prefix === " ") {
+        renderLines.push(l.slice(1));
+        renderLineKinds.push("ctx");
+        continue;
+      }
+      // \ No newline at end of file
+    }
+  }
+
+  return {
+    ...raw,
+    filePath,
+    isNew,
+    isDeleted,
+    isBinary: isBinary || raw.hunks.length === 0,
+    addedLines,
+    deletedLines,
+    renderText: renderLines.join("\n"),
+    renderLineKinds,
+  };
+}
+
+function estimateDiffHeightPx(file: DiffFile): number {
+  const visibleLines = Math.max(3, file.renderText ? file.renderText.split("\n").length : 0);
+  const lineHeight = 22;
+  const topBottomPadding = 18;
+  const max = 580;
+  return Math.min(max, visibleLines * lineHeight + topBottomPadding);
+}
+
+function fileAccentClass(file: DiffFile): string {
+  if (file.isDeleted && !file.isNew) return "cursor-diff-file-deleted";
+  if (file.isNew) return "cursor-diff-file-new";
+  if (file.deletedLines > 0 && file.addedLines === 0) return "cursor-diff-file-deleted";
+  return "cursor-diff-file-modified";
+}
+
+function DecoratedDiffEditor({ file }: { file: DiffFile }) {
+  const decorationIdsRef = useRef<string[]>([]);
+
   return (
-    <div className="diff-hunk-pre" role="region" aria-label="Diff hunk">
-      {shown.map((l, idx) => {
-        const cls = l.startsWith("+") ? "add" : l.startsWith("-") ? "del" : l.startsWith("@@") ? "h" : "ctx";
-        return (
-          <div key={idx} className={`diff-line ${cls}`}>
-            {l === "" ? "\u00A0" : l}
-          </div>
-        );
-      })}
-      {lines.length > maxLines && <div className="diff-line ctx">…(truncated)…</div>}
-    </div>
+    <Editor
+      key={file.key}
+      height={`${estimateDiffHeightPx(file)}px`}
+      language={guessMonacoLanguage(file.filePath)}
+      value={file.renderText}
+      theme="vs-dark"
+      options={{
+        readOnly: true,
+        minimap: { enabled: false },
+        scrollbar: { vertical: "hidden", horizontal: "hidden" },
+        scrollBeyondLastLine: false,
+        renderOverviewRuler: false,
+        overviewRulerLanes: 0,
+        hideCursorInOverviewRuler: true,
+        glyphMargin: false,
+        folding: false,
+        lineNumbersMinChars: 2,
+        fontSize: 12,
+        lineHeight: 22,
+        renderLineHighlight: "none",
+        fixedOverflowWidgets: true,
+        padding: { top: 10, bottom: 10 },
+        wordWrap: "off",
+      }}
+      onMount={(editor, monaco) => {
+        const applyDecorations = () => {
+          const decs = file.renderLineKinds
+            .map((kind, idx) => {
+              if (kind === "ctx") return null;
+              const range = new monaco.Range(idx + 1, 1, idx + 1, 1);
+              return {
+                range,
+                options: {
+                  isWholeLine: true,
+                  className: kind === "add" ? "cursor-diff-line-add" : "cursor-diff-line-del",
+                },
+              };
+            })
+            .filter(Boolean) as any[];
+          decorationIdsRef.current = editor.deltaDecorations(decorationIdsRef.current, decs);
+        };
+
+        applyDecorations();
+      }}
+    />
   );
 }
