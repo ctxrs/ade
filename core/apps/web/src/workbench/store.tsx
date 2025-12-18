@@ -11,7 +11,7 @@ import {
 } from "./persistence";
 
 const WINDOW_ID_STORAGE_KEY = "contextUiWindowId.v1";
-const DEFAULT_NEW_TASK_DRAFT_KEY = "new_task";
+export const NEW_TASK_DRAFT_KEY = "new_task";
 
 export function sessionDraftKey(sessionId: string): string {
   return `session:${sessionId}`;
@@ -146,7 +146,7 @@ export class WorkbenchStore {
   init = () => {
     this.hydrate().catch(() => {});
     this.initBroadcast();
-    this.ensureDraftLoaded(DEFAULT_NEW_TASK_DRAFT_KEY).catch(() => {});
+    this.ensureDraftLoaded(NEW_TASK_DRAFT_KEY).catch(() => {});
   };
 
   private publish() {
@@ -414,6 +414,24 @@ export class WorkbenchStore {
     }
   };
 
+  flushDraft = async (draftKey: string): Promise<void> => {
+    const key = String(draftKey || "").trim();
+    if (!key) return;
+    if (!this.persistEnabled) return;
+    const draft = this.snapshot.drafts.byKey[key];
+    if (!draft) return;
+
+    const existingTimer = this.draftTimers.get(key);
+    if (existingTimer) window.clearTimeout(existingTimer);
+    this.draftTimers.delete(key);
+
+    try {
+      await saveWorkbenchDraftV1(this.snapshot.workspaceId, key, draft);
+    } catch (e: any) {
+      this.addWarning(`Draft persistence failed: ${e?.message ?? String(e)}`);
+    }
+  };
+
   private schedulePersistDraft(key: string, draft: WorkbenchDraft) {
     if (!this.persistEnabled) return;
     const existingTimer = this.draftTimers.get(key);
@@ -502,5 +520,5 @@ export function useWorkbenchDraft(
 }
 
 export function useNewTaskDraft() {
-  return useWorkbenchDraft(DEFAULT_NEW_TASK_DRAFT_KEY, { text: "", modeId: "default" });
+  return useWorkbenchDraft(NEW_TASK_DRAFT_KEY, { text: "", modeId: "default" });
 }

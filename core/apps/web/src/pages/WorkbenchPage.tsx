@@ -74,6 +74,7 @@ import { imageFilesToInlineAttachments } from "../utils/messageAttachments";
 import { parseModelId } from "../utils/modelEffort";
 import { formatRelativeAgeShort } from "../utils/relativeTime";
 import {
+  NEW_TASK_DRAFT_KEY,
   WorkbenchStoreProvider,
   scrollKey,
   sessionDraftKey,
@@ -1473,6 +1474,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       }
       await refreshTasks();
       setNewTaskDraft({ text: "", modeId: "default" });
+      await workbenchStore.flushDraft(NEW_TASK_DRAFT_KEY);
       setDraftAttachments([]);
     } catch (e: any) {
       setStartError(e?.message ?? String(e));
@@ -2946,6 +2948,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
                     onDraftChange={(text) =>
                       activeSessionDraft.setValue({ text, modeId: activeSessionDraft.value.modeId })
                     }
+                    onDraftPersistNow={() => workbenchStore.flushDraft(sessionDraftKey(activeSessionId))}
                     onModeChange={(modeId) =>
                       activeSessionDraft.setValue({ text: activeSessionDraft.value.text, modeId })
                     }

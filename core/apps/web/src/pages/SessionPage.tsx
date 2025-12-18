@@ -136,6 +136,7 @@ export function SessionView({
   draft,
   draftUpdatedAtMs,
   onDraftChange,
+  onDraftPersistNow,
   onModeChange,
   scrollState,
   onScrollStateChange,
@@ -146,6 +147,7 @@ export function SessionView({
   draft?: { text: string; modeId: WorkbenchModeId } | null;
   draftUpdatedAtMs?: number | null;
   onDraftChange?: ((text: string) => void) | null;
+  onDraftPersistNow?: (() => void | Promise<void>) | null;
   onModeChange?: ((modeId: WorkbenchModeId) => void) | null;
   scrollState?: { stickToBottom: boolean; anchorItemId: string | null } | null;
   onScrollStateChange?: ((next: { stickToBottom: boolean; anchorItemId: string | null }) => void) | null;
@@ -666,6 +668,11 @@ export function SessionView({
       supervisor.refreshSession(id, { watchDiff: true });
       setInput("");
       setDraftAttachments([]);
+      try {
+        await onDraftPersistNow?.();
+      } catch {
+        // best-effort
+      }
     } catch (e: any) {
       setSendError(e?.message ? String(e.message) : String(e));
     } finally {
