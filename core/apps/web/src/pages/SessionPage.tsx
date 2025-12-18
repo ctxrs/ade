@@ -2314,7 +2314,23 @@ function remarkNormalizeCursorMarkdown() {
       }
 
       if (!Array.isArray(node.children)) return;
-      for (const child of node.children) walk(child);
+      for (let i = 0; i < node.children.length; i++) {
+        const child = node.children[i] as MdastNode;
+        if (
+          child?.type === "paragraph" &&
+          Array.isArray(child.children) &&
+          child.children.length === 1 &&
+          (child.children[0] as any)?.type === "text"
+        ) {
+          const raw = String((child.children[0] as any)?.value ?? "");
+          const trimmed = raw.trim();
+          if (/^(⸻|—{3,}|-{3,}|_{3,}|\*{3,})$/.test(trimmed)) {
+            node.children[i] = { type: "thematicBreak" };
+            continue;
+          }
+        }
+        walk(child);
+      }
     };
 
     walk(tree);
@@ -2353,7 +2369,19 @@ function Markdown({ content }: { content: string }) {
               >
                 ⧉
               </button>
-              <SyntaxHighlighter style={oneDark} language={lang} PreTag="div">
+              <SyntaxHighlighter
+                style={oneDark}
+                language={lang}
+                PreTag="div"
+                customStyle={{
+                  margin: 0,
+                  background: "transparent",
+                  padding: "12px",
+                  fontSize: "12px",
+                  lineHeight: 1.45,
+                }}
+                codeTagProps={{ style: { fontFamily: "var(--mono)" } }}
+              >
                 {codeString}
               </SyntaxHighlighter>
             </div>
