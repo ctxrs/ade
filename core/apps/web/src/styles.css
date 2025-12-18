@@ -450,18 +450,17 @@ button.linklike:hover {
   font-family: var(--mono);
   font-size: 12px;
   line-height: 1.35;
-  overflow-y: hidden;
-  overflow-x: auto;
+  overflow: hidden;
   max-height: none;
   background: #0b1020;
   color: #e5e7eb;
-  white-space: pre;
 }
 
 .diff-line {
   padding: 0 6px;
   border-radius: 4px;
-  white-space: pre;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .diff-line.add {
