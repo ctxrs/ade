@@ -76,15 +76,23 @@ impl ProviderAdapter for FakeProviderAdapter {
                     .await;
             };
 
+            let slow = input.content.contains("slow-diff-test");
+            let delay = if slow {
+                Duration::from_millis(1200)
+            } else {
+                Duration::from_millis(10)
+            };
+
             tokio::select! {
                 _ = async {
                     send(SessionEventType::AssistantChunk, json!({"content": format!("echo: {}", input.content)})).await;
-                    sleep(Duration::from_millis(10)).await;
+                    sleep(delay).await;
                     send(SessionEventType::ToolCall, json!({"tool_call_id": tool_call_id, "name": "fake_tool", "args": {}})).await;
-                    sleep(Duration::from_millis(10)).await;
+                    sleep(delay).await;
                     send(SessionEventType::ToolResult, json!({"tool_call_id": tool_call_id, "result": "ok"})).await;
-                    sleep(Duration::from_millis(10)).await;
+                    sleep(delay).await;
                     send(SessionEventType::AssistantComplete, json!({"content": format!("done: {}", input.content)})).await;
+                    sleep(delay).await;
                     send(SessionEventType::Done, json!({})).await;
                 } => {}
                 _ = &mut cancel_rx => {

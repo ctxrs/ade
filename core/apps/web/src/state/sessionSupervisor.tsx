@@ -63,6 +63,7 @@ const MAX_EVENTS_PER_SESSION = 2000;
 const MAX_CACHED_SESSIONS = 30;
 const WARM_TTL_MS = 10 * 60 * 1000;
 const POLL_INTERVAL_MS = 1500;
+const DIFF_POLL_INTERVAL_MS = 900;
 
 const authToken = (): string | null => {
   try {
@@ -81,6 +82,7 @@ export class SessionSupervisor {
   private reconnectTimer: number | null = null;
   private reconnectBackoffMs = 800;
   private pollTimer: number | null = null;
+  private diffPollTimer: number | null = null;
   private resubscribeTimer: number | null = null;
   private health: Health | null = null;
 
@@ -234,6 +236,7 @@ export class SessionSupervisor {
     // Even when the global WebSocket is connected, events can be missed after long-idle periods
     // (e.g. replying to older sessions). Backfill is cheap (cursor-based) and deduped.
     this.ensurePolling();
+    this.ensureDiffPolling();
   }
 
   private async ensureLoaded(sessionId: string, opts?: OpenOptions) {
@@ -342,11 +345,19 @@ export class SessionSupervisor {
     if (last) entry.lastEventId = idToString(last.id) || entry.lastEventId;
   }
 
-  // We only refresh durable data (Messages/Queue/Diff) once the turn is fully finalized.
+  // We only refresh durable data (Messages/Queue) once the turn is fully finalized.
   // `assistant_complete` is a UI boundary, but it can be observed before the daemon has
   // finished inserting the assistant message into the Messages table (event-first publish).
   private isRefreshBoundaryEventType(eventType: unknown): boolean {
     return eventType === "done" || eventType === "turn_interrupted";
+  }
+
+  private shouldLivePollDiff(entry: InternalEntry): boolean {
+    if (entry.wantDiffCount <= 0) return false;
+    if (!entry.trackId) return false;
+    const lastType = entry.events.length > 0 ? String(entry.events[entry.events.length - 1].event_type ?? "") : "";
+    const midTurnByEvents = lastType !== "" && !this.isRefreshBoundaryEventType(lastType);
+    return midTurnByEvents;
   }
 
   private async connect() {
@@ -469,6 +480,10 @@ export class SessionSupervisor {
 
             if (this.isRefreshBoundaryEventType(data.event_type)) {
               this.refreshQueueAndDiff(entry).catch(() => {});
+            } else if (this.shouldLivePollDiff(entry)) {
+              this.ensureDiffPolling();
+              // Diff is computed from git and can safely be refreshed mid-turn.
+              this.refreshDiff(entry).catch(() => {});
             }
             this.publish();
           } catch {
@@ -515,6 +530,9 @@ export class SessionSupervisor {
       // Refreshing here ensures assistant replies show up after daemon/webapp restarts.
       if (sawRefreshBoundary) {
         await this.refreshQueueAndDiff(entry);
+      } else if (this.shouldLivePollDiff(entry)) {
+        this.ensureDiffPolling();
+        await this.refreshDiff(entry);
       }
     } catch {
       // ignore
@@ -525,12 +543,27 @@ export class SessionSupervisor {
     const sid = entry.sessionId;
     entry.messages = await listMessages(sid);
     entry.queue = await listQueue(sid);
-    if (entry.wantDiffCount > 0 && entry.trackId) {
-      const d = await trackDiff(entry.trackId);
-      entry.diff = d.diff;
-    }
+    await this.refreshDiff(entry);
     entry.updatedAtMs = Date.now();
     this.publish();
+  }
+
+  private async refreshDiff(entry: InternalEntry) {
+    if (entry.fetching.diff) return;
+    if (entry.wantDiffCount <= 0) return;
+    if (!entry.trackId) return;
+    entry.fetching.diff = true;
+    try {
+      const d = await trackDiff(entry.trackId);
+      const next = d.diff ?? "";
+      if (next !== (entry.diff ?? "")) {
+        entry.diff = next;
+        entry.updatedAtMs = Date.now();
+        this.publish();
+      }
+    } finally {
+      entry.fetching.diff = false;
+    }
   }
 
   private ensurePolling() {
@@ -550,10 +583,33 @@ export class SessionSupervisor {
     }, POLL_INTERVAL_MS);
   }
 
+  private ensureDiffPolling() {
+    if (this.diffPollTimer) return;
+    this.diffPollTimer = window.setInterval(() => {
+      const ids = this.computeSubscribedSet();
+      let anyNeeded = false;
+      for (const sid of ids) {
+        const entry = this.entries.get(sid);
+        if (!entry) continue;
+        if (!this.shouldLivePollDiff(entry)) continue;
+        anyNeeded = true;
+        this.refreshDiff(entry).catch(() => {});
+      }
+      if (!anyNeeded) this.stopDiffPolling();
+    }, DIFF_POLL_INTERVAL_MS);
+  }
+
   private stopPolling() {
     if (this.pollTimer) {
       window.clearInterval(this.pollTimer);
       this.pollTimer = null;
+    }
+  }
+
+  private stopDiffPolling() {
+    if (this.diffPollTimer) {
+      window.clearInterval(this.diffPollTimer);
+      this.diffPollTimer = null;
     }
   }
 
