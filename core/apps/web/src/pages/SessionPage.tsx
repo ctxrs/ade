@@ -14,6 +14,8 @@ import {
   postMessage,
   Session,
   SessionEvent,
+  SessionTurn,
+  SessionTurnTool,
   setSessionMode,
   setSessionModel,
   authenticateSession,
@@ -57,11 +59,26 @@ type ThreadItem =
   | {
     kind: "assistant";
     id: string;
+    turn_id: string;
     created_at: string;
     content: string;
     thought: string;
     is_complete: boolean;
     thought_seconds?: number;
+  }
+  | {
+    kind: "tool_group";
+    id: string;
+    turn_id: string;
+    created_at: string;
+    updated_at: string;
+    tool_total: number;
+    tool_pending: number;
+    tool_running: number;
+    tool_completed: number;
+    tool_failed: number;
+    tools: Array<Extract<ThreadItem, { kind: "tool" }>>;
+    thought: string;
   }
   | {
     kind: "tool";
@@ -183,6 +200,7 @@ export function SessionView({
   const [authError, setAuthError] = useState<string | null>(null);
   const [optimisticAskAnswered, setOptimisticAskAnswered] = useState<Record<string, boolean>>({});
   const [expandedTurnHeaders, setExpandedTurnHeaders] = useState<Record<string, boolean>>({});
+  const [expandedTurnDetailsById, setExpandedTurnDetailsById] = useState<Record<string, boolean>>({});
   const [expandedThoughtByAssistantId, setExpandedThoughtByAssistantId] = useState<Record<string, boolean>>({});
   const [expandedToolById, setExpandedToolById] = useState<Record<string, boolean>>({});
   const virtuosoRef = useRef<VirtuosoHandle>(null);
@@ -267,11 +285,16 @@ export function SessionView({
 
   const entry = useSessionEntry(id ?? "");
   const session: Session | null = entry?.session ?? null;
+  const turns = entry?.turns ?? [];
+  const turnToolsByTurnId = entry?.turnToolsByTurnId ?? {};
+  const turnToolsLoading = entry?.turnToolsLoading ?? [];
+  const hasMoreTurns = entry?.hasMoreTurns ?? false;
   const events: SessionEvent[] = entry?.events ?? [];
   const messages: Message[] = entry?.messages ?? [];
   const queue: Message[] = entry?.queue ?? [];
   const diff = entry?.diff ?? "";
   const eventsKey = `${entry?.lastEventSeq ?? 0}:${events.length}`;
+  const turnsKey = deriveTurnsKey(turns);
   const messagesKey = deriveMessagesKey(messages);
   const streamConnected = supervisorSnap.connection === "connected";
 
@@ -506,10 +529,10 @@ export function SessionView({
 
   const legacyThreadView = useMemo(() => buildThreadViewModel(events), [eventsKey]);
   const workbenchThreadView = useMemo(
-    () => buildWorkbenchThreadViewModel(events, messages),
+    () => buildWorkbenchThreadViewModel(turns, messages, turnToolsByTurnId, events),
     // messages are canonical for turn headers; include in memo key
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [eventsKey, messagesKey],
+    [turnsKey, messagesKey, turnToolsByTurnId, eventsKey],
   );
 
   const debugEvents = variant === "workbench" ? workbenchThreadView.debugEvents : legacyThreadView.debugEvents;
@@ -549,6 +572,13 @@ export function SessionView({
   }, [id, scrollState?.anchorItemId, scrollState?.stickToBottom, threadItems.length, variant, wbListItems.length]);
 
   const contextIndicator = useMemo(() => {
+    const fromTurns = [...turns].reverse().find((t) => t.metrics_json);
+    if (fromTurns?.metrics_json) {
+      return fromTurns.metrics_json as {
+        context_tokens_estimate: number;
+        remaining_fraction: number;
+      };
+    }
     const done = [...events]
       .reverse()
       .find((e) => e.event_type === "done" && e.payload_json?.context_window);
@@ -557,7 +587,7 @@ export function SessionView({
       context_tokens_estimate: number;
       remaining_fraction: number;
     };
-  }, [eventsKey]);
+  }, [eventsKey, turnsKey]);
 
   const planEntries = useMemo(() => {
     const last = [...events].reverse().find((e) => e.event_type === "plan");
@@ -884,7 +914,8 @@ export function SessionView({
       return <div style={{ height: 1 }} />;
     }
     if (item.kind === "assistant") {
-      const thoughtExpanded = expandedThoughtByAssistantId[item.id] ?? false;
+      const thoughtExpanded =
+        variant === "workbench" ? false : expandedThoughtByAssistantId[item.id] ?? false;
       return (
         <AssistantEntry
           id={item.id}
@@ -897,6 +928,26 @@ export function SessionView({
           onToggleThought={() =>
             setExpandedThoughtByAssistantId((prev) => ({ ...prev, [item.id]: !thoughtExpanded }))
           }
+        />
+      );
+    }
+    if (item.kind === "tool_group") {
+      const expanded = expandedTurnDetailsById[item.turn_id] ?? false;
+      const toolsLoading = turnToolsLoading.includes(item.turn_id);
+      return (
+        <WorkbenchToolGroupRow
+          item={item}
+          variant={variant}
+          expanded={expanded}
+          toolsLoading={toolsLoading}
+          onToggle={() =>
+            setExpandedTurnDetailsById((prev) => ({ ...prev, [item.turn_id]: !expanded }))
+          }
+          onRequestTools={() => supervisor.loadTurnTools(id, item.turn_id)}
+          onToggleTool={(toolId) =>
+            setExpandedToolById((prev) => ({ ...prev, [toolId]: !prev[toolId] }))
+          }
+          expandedToolById={expandedToolById}
         />
       );
     }
@@ -1177,6 +1228,10 @@ export function SessionView({
                   ref={virtuosoRef}
                   followOutput="auto"
                   computeItemKey={(index, item) => item?.id ?? `i:${index}`}
+                  startReached={() => {
+                    if (!hasMoreTurns) return;
+                    supervisor.loadMoreTurns(id);
+                  }}
                   atBottomStateChange={(b) => {
                     setAtBottom(b);
                     if (b) setHasNewActivity(false);
@@ -1469,6 +1524,10 @@ function ThreadItemView({ item, variant }: { item: ThreadItem; variant: SessionV
     case "tool":
       // Workbench uses specialized renderers; legacy never reaches here.
       return variant === "workbench" ? null : null;
+    case "tool_group":
+      return null;
+    default:
+      return null;
   }
 }
 
@@ -1782,30 +1841,12 @@ function AssistantEntry({
   onToggleThought: () => void;
 }) {
   const [showThought, setShowThought] = useState(false);
-  const show = variant === "workbench" ? thoughtExpanded : showThought;
+  const show = variant === "workbench" ? false : showThought;
   const toggle = variant === "workbench" ? onToggleThought : () => setShowThought((s) => !s);
 
   if (variant === "workbench") {
     return (
       <div className="wb-assistant-entry">
-        {thought.trim() && (
-          <div className="wb-thought">
-            <button
-              type="button"
-              className="wb-event-row wb-thought-row"
-              onClick={toggle}
-              aria-expanded={show}
-              aria-controls={`thought-${id}`}
-            >
-              <span className="wb-event-text">Thought for {thoughtSeconds ?? 1}s</span>
-            </button>
-            {show && (
-              <pre id={`thought-${id}`} className="wb-thought-body">
-                {thought}
-              </pre>
-            )}
-          </div>
-        )}
         <div className="wb-assistant-body">
           <Markdown content={content} />
         </div>
@@ -2000,6 +2041,89 @@ function WorkbenchToolRow({
               ) : (
                 <pre className="wb-tool-pre">{item.output_text}</pre>
               )}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function WorkbenchToolGroupRow({
+  item,
+  variant,
+  expanded,
+  onToggle,
+  toolsLoading,
+  onRequestTools,
+  onToggleTool,
+  expandedToolById,
+}: {
+  item: Extract<ThreadItem, { kind: "tool_group" }>;
+  variant: SessionViewVariant;
+  expanded: boolean;
+  onToggle: () => void;
+  toolsLoading: boolean;
+  onRequestTools: () => void;
+  onToggleTool: (id: string) => void;
+  expandedToolById: Record<string, boolean>;
+}) {
+  if (variant !== "workbench") return null;
+
+  const total = Math.max(item.tool_total ?? 0, item.tools.length);
+  const parts: string[] = [];
+  if (total > 0) {
+    parts.push(`${total} tool${total === 1 ? "" : "s"}`);
+  }
+  if ((item.tool_running ?? 0) > 0) {
+    parts.push(`${item.tool_running} running`);
+  }
+  if ((item.tool_failed ?? 0) > 0) {
+    parts.push(`${item.tool_failed} failed`);
+  }
+  if (parts.length === 0 && item.thought.trim()) {
+    parts.push("Thought");
+  }
+  const label = parts.join(" · ") || "Activity";
+  const hasDetails = total > 0 || item.thought.trim().length > 0;
+
+  useEffect(() => {
+    if (!expanded) return;
+    if (total > 0 && item.tools.length === 0 && !toolsLoading) {
+      onRequestTools();
+    }
+  }, [expanded, total, item.tools.length, toolsLoading, onRequestTools]);
+
+  return (
+    <div className="wb-tool-group">
+      <button
+        type="button"
+        className={`wb-event-row ${expanded ? "wb-event-row-expanded" : ""}`}
+        onClick={hasDetails ? onToggle : undefined}
+        aria-expanded={hasDetails ? expanded : undefined}
+        title={label}
+      >
+        <span className="wb-event-text">{label}</span>
+        {hasDetails && <span className="wb-event-chev">{expanded ? "▴" : "▾"}</span>}
+      </button>
+      {hasDetails && expanded && (
+        <div className="wb-tool-group-body">
+          {total > 0 && item.tools.length === 0 && toolsLoading && (
+            <div className="wb-tool-loading">Loading tools…</div>
+          )}
+          {item.tools.map((tool) => (
+            <WorkbenchToolRow
+              key={tool.id}
+              item={tool}
+              variant={variant}
+              expanded={expandedToolById[tool.id] ?? false}
+              onToggle={() => onToggleTool(tool.id)}
+            />
+          ))}
+          {item.thought.trim() && (
+            <div className="wb-tool-thought">
+              <div className="wb-tool-section-title">Thought</div>
+              <pre className="wb-tool-pre">{item.thought}</pre>
             </div>
           )}
         </div>
@@ -2416,7 +2540,127 @@ export function deriveMessagesKey(messages: Message[]): string {
   return `${messages.length}:${(h >>> 0).toString(16)}`;
 }
 
-export function buildWorkbenchThreadViewModel(events: SessionEvent[], messages: Message[]): WorkbenchThreadView {
+function deriveTurnsKey(turns: SessionTurn[]): string {
+  if (turns.length === 0) return "0";
+  const first = turns[0];
+  const last = turns[turns.length - 1];
+  return `${turns.length}:${first.start_seq ?? ""}:${last.start_seq ?? ""}:${last.updated_at ?? ""}`;
+}
+
+export function buildWorkbenchThreadViewModel(
+  turns: SessionTurn[],
+  messages: Message[],
+  toolsByTurnId: Record<string, SessionTurnTool[]>,
+  events: SessionEvent[],
+): WorkbenchThreadView {
+  if (turns.length > 0) {
+    return buildWorkbenchThreadViewModelFromTurns(turns, messages, toolsByTurnId);
+  }
+  return buildWorkbenchThreadViewModelFromEvents(events, messages);
+}
+
+function buildWorkbenchThreadViewModelFromTurns(
+  turns: SessionTurn[],
+  messages: Message[],
+  toolsByTurnId: Record<string, SessionTurnTool[]>,
+): WorkbenchThreadView {
+  const debugEvents: SessionEvent[] = [];
+  const groups: WorkbenchThreadView["groups"] = [];
+
+  const messageById = new Map<string, Message>();
+  for (const m of messages) {
+    const mid = idToString(m.id);
+    if (mid) messageById.set(mid, m);
+  }
+
+  for (const turn of turns) {
+    const turnId = idToString(turn.turn_id) || `turn-${turn.started_at}`;
+    const userMessageId = turn.user_message_id ? idToString(turn.user_message_id) : "";
+    const assistantMessageId = turn.assistant_message_id ? idToString(turn.assistant_message_id) : "";
+
+    const userMessage = userMessageId ? messageById.get(userMessageId) : undefined;
+    const assistantMessage = assistantMessageId ? messageById.get(assistantMessageId) : undefined;
+
+    const header: WorkbenchTurnHeader | null = userMessage
+      ? {
+        id: userMessageId || turnId,
+        content: userMessage.content ?? "",
+        attachments: Array.isArray((userMessage as any).attachments)
+          ? ((userMessage as any).attachments as MessageAttachment[])
+          : [],
+        created_at: userMessage.created_at,
+      }
+      : null;
+
+    const tools = (toolsByTurnId[turnId] ?? []).map((tool) => {
+      const toolKind = String(tool.tool_kind ?? "tool");
+      const title = String(tool.title ?? humanToolKind(toolKind));
+      return {
+        kind: "tool",
+        id: `tool-${turnId}-${tool.tool_call_id}`,
+        tool_call_id: tool.tool_call_id,
+        created_at: tool.created_at,
+        updated_at: tool.updated_at ?? tool.created_at,
+        tool_kind: toolKind,
+        title,
+        status: String(tool.status ?? "pending"),
+        locations: [],
+        input: tool.input_json ?? null,
+        output_text: String(tool.output_text ?? ""),
+        raw: tool,
+        updates_seen: 1,
+      } satisfies Extract<ThreadItem, { kind: "tool" }>;
+    });
+
+    const thought = String(turn.thought_partial ?? "");
+    const hasDetails = (turn.tool_total ?? 0) > 0 || thought.trim().length > 0;
+
+    const items: ThreadItem[] = [];
+    if (hasDetails) {
+      items.push({
+        kind: "tool_group",
+        id: `tool-group-${turnId}`,
+        turn_id: turnId,
+        created_at: turn.started_at,
+        updated_at: turn.updated_at,
+        tool_total: turn.tool_total ?? 0,
+        tool_pending: turn.tool_pending ?? 0,
+        tool_running: turn.tool_running ?? 0,
+        tool_completed: turn.tool_completed ?? 0,
+        tool_failed: turn.tool_failed ?? 0,
+        tools,
+        thought,
+      });
+    }
+
+    const assistantContent = String(assistantMessage?.content ?? turn.assistant_partial ?? "");
+    const isComplete =
+      turn.status === "completed" ||
+      turn.status === "interrupted" ||
+      turn.status === "failed";
+    if (assistantContent.trim() || isComplete) {
+      items.push({
+        kind: "assistant",
+        id: `assistant-${turnId}`,
+        turn_id: turnId,
+        created_at: assistantMessage?.created_at ?? turn.updated_at ?? turn.started_at,
+        content: assistantContent,
+        thought,
+        is_complete: isComplete,
+      });
+    }
+
+    if (items.length === 0) {
+      items.push({ kind: "spacer", id: `spacer-${turnId}`, created_at: turn.started_at });
+    }
+
+    groups.push({ key: `turn-${turnId}`, header, items });
+  }
+
+  return { groups, debugEvents };
+}
+
+function buildWorkbenchThreadViewModelFromEvents(events: SessionEvent[], messages: Message[]): WorkbenchThreadView {
   type ToolItem = Extract<ThreadItem, { kind: "tool" }>;
   type TurnGroup = {
     key: string;
@@ -2571,6 +2815,7 @@ export function buildWorkbenchThreadViewModel(events: SessionEvent[], messages: 
               g.assistant = {
                 kind: "assistant",
                 id: `assistant-${g.key}`,
+                turn_id: g.key,
                 created_at: ev.created_at,
                 content: "",
                 thought: "",
@@ -2587,6 +2832,7 @@ export function buildWorkbenchThreadViewModel(events: SessionEvent[], messages: 
               g.assistant = {
                 kind: "assistant",
                 id: `assistant-${g.key}`,
+                turn_id: g.key,
                 created_at: ev.created_at,
                 content: "",
                 thought: "",
@@ -2605,6 +2851,7 @@ export function buildWorkbenchThreadViewModel(events: SessionEvent[], messages: 
               g.assistant = {
                 kind: "assistant",
                 id: `assistant-${g.key}`,
+                turn_id: g.key,
                 created_at: ev.created_at,
                 content: "",
                 thought: "",
@@ -2765,6 +3012,7 @@ export function buildWorkbenchThreadViewModel(events: SessionEvent[], messages: 
             g.assistant = {
               kind: "assistant",
               id: `assistant-${g.key}`,
+              turn_id: g.key,
               created_at: ev.created_at,
               content: "",
               thought: "",
@@ -2781,6 +3029,7 @@ export function buildWorkbenchThreadViewModel(events: SessionEvent[], messages: 
             g.assistant = {
               kind: "assistant",
               id: `assistant-${g.key}`,
+              turn_id: g.key,
               created_at: ev.created_at,
               content: "",
               thought: "",
@@ -2799,6 +3048,7 @@ export function buildWorkbenchThreadViewModel(events: SessionEvent[], messages: 
             g.assistant = {
               kind: "assistant",
               id: `assistant-${g.key}`,
+              turn_id: g.key,
               created_at: ev.created_at,
               content: "",
               thought: "",
@@ -2864,6 +3114,7 @@ export function buildWorkbenchThreadViewModel(events: SessionEvent[], messages: 
       g.assistant = {
         kind: "assistant",
         id: `assistant-${g.key}`,
+        turn_id: g.key,
         created_at: assistant.created_at,
         content: assistant.content ?? "",
         thought: "",
@@ -2944,6 +3195,7 @@ function buildThreadViewModel(events: SessionEvent[]): {
     const item: Extract<ThreadItem, { kind: "assistant" }> = {
       kind: "assistant",
       id: `assistant-${turnId}`,
+      turn_id: turnId,
       created_at: createdAt,
       content: "",
       thought: "",

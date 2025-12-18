@@ -192,6 +192,8 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
         .route("/api/sessions/:id/messages", get(list_messages).post(post_message))
         .route("/api/sessions/:id/model", post(set_session_model))
         .route("/api/sessions/:id/mode", post(set_session_mode))
+        .route("/api/sessions/:id/turns", get(list_session_turns))
+        .route("/api/sessions/:id/turns/:turn_id/tools", get(list_session_turn_tools))
         .route("/api/sessions/:id/events", get(list_session_events))
         .route("/api/sessions/:id/completions/files", get(session_file_completions))
         .route("/api/sessions/:id/queue", get(list_queue))
@@ -4583,7 +4585,30 @@ async fn create_session_for_track(
             )
             .await
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        let start_seq = event.seq;
         state.publish_event(event).await;
+
+        let turn = SessionTurn {
+            turn_id,
+            session_id: session.id,
+            run_id: Some(run_id),
+            user_message_id: Some(saved.id),
+            assistant_message_id: None,
+            status: SessionTurnStatus::Running,
+            start_seq: Some(start_seq),
+            end_seq: None,
+            started_at: saved.created_at,
+            updated_at: saved.created_at,
+            assistant_partial: None,
+            thought_partial: None,
+            metrics_json: None,
+            tool_total: 0,
+            tool_pending: 0,
+            tool_running: 0,
+            tool_completed: 0,
+            tool_failed: 0,
+        };
+        let _ = state.store.insert_session_turn(turn).await;
 
         let tx = state.ensure_scheduler(session.clone()).await;
         let _ = tx.send(SchedulerCommand::Enqueue(saved)).await;
@@ -4701,6 +4726,52 @@ async fn list_queue(
         );
     }
     out
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct ListSessionTurnsQuery {
+    before_seq: Option<i64>,
+    limit: Option<u32>,
+}
+
+async fn list_session_turns(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Query(q): Query<ListSessionTurnsQuery>,
+) -> Result<Json<Vec<SessionTurn>>, StatusCode> {
+    let perf = std::env::var_os("CONTEXT_PERF").is_some();
+    let t0 = Instant::now();
+    let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
+    let limit = q.limit;
+    let out = state
+        .store
+        .list_session_turns_page_by_seq(session_id, q.before_seq, limit)
+        .await
+        .map(Json)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR);
+    if perf {
+        tracing::info!(
+            target: "context_perf",
+            endpoint = "list_session_turns",
+            session_id = %session_id.0,
+            ms = %t0.elapsed().as_millis(),
+        );
+    }
+    out
+}
+
+async fn list_session_turn_tools(
+    State(state): State<Arc<AppState>>,
+    Path((id, turn_id)): Path<(String, String)>,
+) -> Result<Json<Vec<SessionTurnTool>>, StatusCode> {
+    let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
+    let turn_id = TurnId(uuid::Uuid::parse_str(&turn_id).map_err(|_| StatusCode::BAD_REQUEST)?);
+    state
+        .store
+        .list_turn_tools(session_id, turn_id)
+        .await
+        .map(Json)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
 async fn list_session_events(
@@ -4934,6 +5005,12 @@ async fn delete_message(
         .delete_message(msg_id)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if let Some(turn_id) = msg.turn_id {
+        let _ = state
+            .store
+            .delete_session_turn(msg.session_id, turn_id)
+            .await;
+    }
 
     if let Some(tx) = state.scheduler_sender(msg.session_id).await {
         let _ = tx.send(SchedulerCommand::RemoveQueued(msg_id)).await;
@@ -5061,7 +5138,35 @@ async fn post_message(
         )
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let start_seq = event.seq;
     state.publish_event(event).await;
+
+    let turn_status = if matches!(saved.delivery, MessageDelivery::Queued) {
+        SessionTurnStatus::Queued
+    } else {
+        SessionTurnStatus::Running
+    };
+    let turn = SessionTurn {
+        turn_id,
+        session_id,
+        run_id: Some(run_id),
+        user_message_id: Some(saved.id),
+        assistant_message_id: None,
+        status: turn_status,
+        start_seq: Some(start_seq),
+        end_seq: None,
+        started_at: saved.created_at,
+        updated_at: saved.created_at,
+        assistant_partial: None,
+        thought_partial: None,
+        metrics_json: None,
+        tool_total: 0,
+        tool_pending: 0,
+        tool_running: 0,
+        tool_completed: 0,
+        tool_failed: 0,
+    };
+    let _ = state.store.insert_session_turn(turn).await;
 
     if matches!(saved.delivery, MessageDelivery::Queued) {
         let queued = state

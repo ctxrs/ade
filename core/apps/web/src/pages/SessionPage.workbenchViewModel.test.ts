@@ -29,7 +29,7 @@ describe("buildWorkbenchThreadViewModel", () => {
       },
     ];
 
-    const out = buildWorkbenchThreadViewModel(events as any, [] as any);
+    const out = buildWorkbenchThreadViewModel([], [] as any, {}, events as any);
     expect(out.groups.length).toBe(1);
     expect(out.groups[0]?.header?.content).toBe("hello");
     expect(out.groups[0]?.items.some((it: any) => it.kind === "assistant" && String(it.content).includes("Hi"))).toBe(true);

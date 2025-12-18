@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { Message, Session, SessionEvent } from "../api/client";
+import type { Message, Session, SessionEvent, SessionTurn } from "../api/client";
 
 vi.mock("../api/client", () => {
   const idToString = (id: any): string => (typeof id === "string" ? id : id?.["0"]);
@@ -11,13 +11,23 @@ vi.mock("../api/client", () => {
     getSession: vi.fn(),
     listQueue: vi.fn(),
     listMessages: vi.fn(),
+    listSessionTurnsPage: vi.fn(async () => []),
+    listTurnTools: vi.fn(async () => []),
     listSessionEventsTail: vi.fn(),
     listSessionEventsPage: vi.fn(),
     trackDiff: vi.fn(async () => ({ diff: "" })),
   };
 });
 
-import { getSession, listMessages, listQueue, listSessionEventsTail, listSessionEventsPage } from "../api/client";
+import {
+  getSession,
+  listMessages,
+  listQueue,
+  listSessionEventsTail,
+  listSessionEventsPage,
+  listSessionTurnsPage,
+  listTurnTools,
+} from "../api/client";
 
 const mkSession = (sessionId: string, trackId: string): Session => ({
   id: { 0: sessionId },

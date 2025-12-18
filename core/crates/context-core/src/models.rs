@@ -155,6 +155,52 @@ pub struct Message {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+pub enum SessionTurnStatus {
+    Queued,
+    Running,
+    Completed,
+    Interrupted,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionTurn {
+    pub turn_id: TurnId,
+    pub session_id: SessionId,
+    pub run_id: Option<RunId>,
+    pub user_message_id: Option<MessageId>,
+    pub assistant_message_id: Option<MessageId>,
+    pub status: SessionTurnStatus,
+    pub start_seq: Option<i64>,
+    pub end_seq: Option<i64>,
+    pub started_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub assistant_partial: Option<String>,
+    pub thought_partial: Option<String>,
+    pub metrics_json: Option<serde_json::Value>,
+    pub tool_total: i64,
+    pub tool_pending: i64,
+    pub tool_running: i64,
+    pub tool_completed: i64,
+    pub tool_failed: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionTurnTool {
+    pub session_id: SessionId,
+    pub tool_call_id: String,
+    pub turn_id: TurnId,
+    pub tool_kind: Option<String>,
+    pub title: Option<String>,
+    pub status: Option<String>,
+    pub input_json: Option<serde_json::Value>,
+    pub output_text: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum SessionEventType {
     Init,
     UserMessage,
