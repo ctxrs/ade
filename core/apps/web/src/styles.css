@@ -1798,14 +1798,12 @@ button.linklike:hover {
   box-shadow:
     0 12px 40px rgba(0, 0, 0, 0.25),
     inset 0 1px 0 rgba(255, 255, 255, 0.04);
-  height: 150px;
-  grid-template-rows: 1fr auto;
+  min-height: 150px;
+  grid-template-rows: auto auto;
 }
 
 .wb-composer-textarea {
   width: 100%;
-  min-height: 0;
-  height: 100%;
   resize: none;
   background: transparent;
   border: 1px solid transparent;
@@ -1814,10 +1812,21 @@ button.linklike:hover {
   font-size: 13px;
   line-height: 1.45;
   padding: 2px 2px;
+  overflow-y: auto;
 }
 
 .wb-composer-textarea::placeholder {
   color: rgba(255, 255, 255, 0.35);
+}
+
+.wb-new-composer-textarea {
+  min-height: 88px;
+  max-height: 380px;
+}
+
+.wb-active-textarea {
+  min-height: 28px;
+  max-height: 220px;
 }
 
 .wb-composer-row {

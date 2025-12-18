@@ -424,14 +424,23 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
     slashCommands,
   });
 
-  useEffect(() => {
-    if (variant !== "activeSession") return;
+  const resizeTextarea = useCallback(() => {
     const el = textareaRef.current;
     if (!el) return;
+
+    const minHeightPx = variant === "newSession" ? 88 : 28;
+    const maxHeightPx = variant === "newSession" ? 380 : 220;
+
     el.style.height = "0px";
-    const next = Math.min(220, Math.max(28, el.scrollHeight));
+    const next = Math.min(maxHeightPx, Math.max(minHeightPx, el.scrollHeight));
     el.style.height = `${next}px`;
-  }, [variant, value]);
+
+    if (recording) el.scrollTop = el.scrollHeight;
+  }, [recording, variant]);
+
+  useLayoutEffect(() => {
+    resizeTextarea();
+  }, [resizeTextarea, value]);
 
   useEffect(() => {
     if (!openMenu) return;
@@ -1421,7 +1430,11 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
 
       <textarea
         ref={textareaRef}
-        className={variant === "newSession" ? "wb-composer-textarea" : "wb-composer-textarea wb-active-textarea"}
+        className={
+          variant === "newSession"
+            ? "wb-composer-textarea wb-new-composer-textarea"
+            : "wb-composer-textarea wb-active-textarea"
+        }
         placeholder={placeholder}
         value={value}
         onChange={(e) => setValue(e.target.value)}
