@@ -450,8 +450,9 @@ button.linklike:hover {
   font-family: var(--mono);
   font-size: 12px;
   line-height: 1.35;
-  overflow: auto;
-  max-height: 40vh;
+  overflow-y: hidden;
+  overflow-x: auto;
+  max-height: none;
   background: #0b1020;
   color: #e5e7eb;
   white-space: pre;
