@@ -2889,6 +2889,12 @@ button.linklike:hover {
   color: var(--muted);
 }
 
+.wb-trackcard-skeleton {
+  height: 48px;
+  border-color: rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.02);
+}
+
 .wb-session {
   flex: 1;
   min-height: 0;

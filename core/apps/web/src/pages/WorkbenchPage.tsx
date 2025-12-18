@@ -1627,6 +1627,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   }, []);
 
   const activeTask = activeTaskId ? tasks.find((t) => idToString(t.id) === activeTaskId) : null;
+  const expectedActiveTrackCount = activeTaskId ? (tracksByTaskId[activeTaskId]?.length ?? null) : null;
   const singleTrackHeader = useMemo(() => {
     if (tracks.length !== 1) return null;
     const sess = activeEntry?.session ?? null;
@@ -1672,6 +1673,27 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       canCopyWorktree: Boolean(worktreePath),
     };
   }, [activeEntry, activeTask?.title, activeWorktree?.root_path, tracks.length]);
+
+  const singleTrackHeaderForRender = useMemo(() => {
+    if (singleTrackHeader) return singleTrackHeader;
+    if (!activeTaskId) return null;
+    return {
+      title: activeTask?.title ?? "Conversation",
+      age: "Loading…",
+      harness: "",
+      modelBase: "",
+      effort: "",
+      worktreeSlug: "",
+      worktreePath: "",
+      canCopyWorktree: false,
+    };
+  }, [activeTask?.title, activeTaskId, singleTrackHeader]);
+
+  const showSingleTrackHeader = Boolean(
+    activeTaskId &&
+      singleTrackHeaderForRender &&
+      (tracks.length === 1 || (tracks.length === 0 && (expectedActiveTrackCount === 1 || expectedActiveTrackCount === null))),
+  );
 
   const formatWorktreePathForCopy = useCallback((raw: string): string => {
     const path = String(raw ?? "").trim();
@@ -1867,7 +1889,15 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
         })();
       },
     });
-  }, [extractFilesFromTransfer, extractFirstUrlFromTransfer, hideDropOverlay, onDropFiles, showDropOverlay, urlToImageFile]);
+  }, [
+    activeTaskId,
+    extractFilesFromTransfer,
+    extractFirstUrlFromTransfer,
+    hideDropOverlay,
+    onDropFiles,
+    showDropOverlay,
+    urlToImageFile,
+  ]);
 
   const onEditPlanUpdated = (updated: EditPlanSummary) => {
     const pid = idToString(updated.id);
@@ -2845,33 +2875,37 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
         {activeTaskId && (
           <div className="wb-body">
             <div className="wb-convo">
-              {tracks.length === 1 && singleTrackHeader ? (
-                <div className="wb-single-track-header">
-                  <div className="wb-single-track-title">{singleTrackHeader.title}</div>
+              {showSingleTrackHeader ? (
+                <div className="wb-single-track-header" aria-busy={tracks.length === 0 ? "true" : undefined}>
+                  <div className="wb-single-track-title">{singleTrackHeaderForRender?.title ?? "Conversation"}</div>
                   <div className="wb-single-track-meta">
                     <div className="wb-single-track-meta-left">
-                      <span>{singleTrackHeader.age}</span>
-                      <span className="wb-single-track-dot" aria-hidden="true">
-                        ·
-                      </span>
-                      <span>{singleTrackHeader.harness}</span>
-                      {singleTrackHeader.modelBase && (
+                      <span>{singleTrackHeaderForRender?.age ?? "Now"}</span>
+                      {singleTrackHeaderForRender?.harness ? (
                         <>
                           <span className="wb-single-track-dot" aria-hidden="true">
                             ·
                           </span>
-                          <span>{singleTrackHeader.modelBase}</span>
+                          <span>{singleTrackHeaderForRender.harness}</span>
                         </>
-                      )}
-                      {singleTrackHeader.effort && (
+                      ) : null}
+                      {singleTrackHeaderForRender?.modelBase && (
                         <>
                           <span className="wb-single-track-dot" aria-hidden="true">
                             ·
                           </span>
-                          <span>{singleTrackHeader.effort}</span>
+                          <span>{singleTrackHeaderForRender.modelBase}</span>
                         </>
                       )}
-                      {singleTrackHeader.worktreeSlug && (
+                      {singleTrackHeaderForRender?.effort && (
+                        <>
+                          <span className="wb-single-track-dot" aria-hidden="true">
+                            ·
+                          </span>
+                          <span>{singleTrackHeaderForRender.effort}</span>
+                        </>
+                      )}
+                      {singleTrackHeaderForRender?.worktreeSlug && (
                         <>
                           <span className="wb-single-track-dot" aria-hidden="true">
                             ·
@@ -2879,13 +2913,13 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
                           <button
                             type="button"
                             className={`wb-worktree-chip ${worktreeCopied ? "wb-worktree-chip-copied" : ""}`}
-                            disabled={!singleTrackHeader.canCopyWorktree}
+                            disabled={!singleTrackHeaderForRender.canCopyWorktree}
                             onClick={() => void copyWorktreeLocation()}
                             title="Copy worktree location"
                             aria-label="Copy worktree location"
                           >
                             <GitBranch size={13} />
-                            <span className="wb-worktree-chip-slug">{singleTrackHeader.worktreeSlug}</span>
+                            <span className="wb-worktree-chip-slug">{singleTrackHeaderForRender.worktreeSlug}</span>
                             <span className="wb-worktree-chip-copy" aria-hidden="true">
                               {worktreeCopied ? <Check size={13} /> : <Copy size={13} />}
                             </span>
@@ -2910,8 +2944,14 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
                   </div>
                 </div>
               ) : (
-                <div className="wb-trackbar">
-                  {tracks.map((tr) => {
+                <div className="wb-trackbar" aria-busy={tracks.length === 0 ? "true" : undefined}>
+                  {tracks.length === 0 ? (
+                    <>
+                      <div className="wb-trackcard wb-trackcard-skeleton" aria-hidden="true" />
+                      <div className="wb-trackcard wb-trackcard-skeleton" aria-hidden="true" />
+                    </>
+                  ) : (
+                    tracks.map((tr) => {
                     const trid = idToString(tr.id);
                     const selected = trid === activeTrackId;
                     const sessions = sessionsByTrack[trid] ?? [];
@@ -2932,7 +2972,8 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
                         <div className="wb-trackcard-sub">{status}</div>
                       </button>
                     );
-                  })}
+                  })
+                  )}
                 </div>
               )}
 

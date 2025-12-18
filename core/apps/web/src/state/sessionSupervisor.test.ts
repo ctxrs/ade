@@ -43,6 +43,7 @@ async function waitForCondition(cond: () => boolean, timeoutMs = 1000) {
 describe("SessionSupervisor", () => {
   afterEach(() => {
     vi.clearAllMocks();
+    vi.useRealTimers();
   });
 
   it("refreshes Messages when backfill observes done", async () => {
@@ -279,5 +280,37 @@ describe("SessionSupervisor", () => {
     } finally {
       (globalThis as any).WebSocket = originalWebSocket;
     }
+  });
+
+  it("polls visible sessions even when connected + idle (recovers from missed WS events)", async () => {
+    vi.useFakeTimers();
+    const { SessionSupervisor } = await import("./sessionSupervisor");
+
+    const sessionId = "session-1";
+    const trackId = "track-1";
+
+    (getSession as any).mockResolvedValue(mkSession(sessionId, trackId));
+    (listSessionEventsTail as any).mockResolvedValue([
+      {
+        seq: 1,
+        id: { 0: "e0" },
+        session_id: { 0: sessionId },
+        event_type: "done",
+        payload_json: {},
+        created_at: new Date().toISOString(),
+      } satisfies SessionEvent,
+    ]);
+    (listMessages as any).mockResolvedValue([]);
+    (listQueue as any).mockResolvedValue([]);
+    (listSessionEventsPage as any).mockResolvedValue([]);
+
+    const sup = new SessionSupervisor();
+    sup.openSession(sessionId);
+    await (sup as any).ensureLoaded(sessionId);
+    // Simulate an apparently healthy WS connection; polling should still run for visible sessions.
+    (sup as any).snapshot = { ...(sup as any).snapshot, connection: "connected" };
+
+    await vi.advanceTimersByTimeAsync(1600);
+    await waitForCondition(() => (listSessionEventsPage as any).mock.calls.length > 0);
   });
 });

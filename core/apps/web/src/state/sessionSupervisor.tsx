@@ -520,7 +520,19 @@ export class SessionSupervisor {
         return { session_id: sid, after_seq: entry.lastEventSeq ?? 0 };
       })
       .filter(Boolean);
-    ws.send(JSON.stringify({ type: "set", sessions }));
+    try {
+      ws.send(JSON.stringify({ type: "set", sessions }));
+    } catch {
+      // If send fails synchronously (e.g. socket transitioning), fall back to polling until reconnect.
+      this.snapshot = { ...this.snapshot, connection: "disconnected" };
+      this.publish();
+      try {
+        ws.close();
+      } catch {
+        // ignore
+      }
+      return;
+    }
 
     // Backfill deltas for subscribed sessions.
     for (const sid of ids) {
@@ -587,9 +599,10 @@ export class SessionSupervisor {
         if (!entry) continue;
         const lastType = entry.events.length > 0 ? String(entry.events[entry.events.length - 1].event_type ?? "") : "";
         const doneLike = this.isRefreshBoundaryEventType(lastType);
-        // When connected, only poll sessions that appear to be mid-turn to avoid unnecessary load.
-        // When disconnected, poll everything warm.
-        if (this.snapshot.connection === "connected" && doneLike) continue;
+        const visible = entry.refCount > 0;
+        // When connected, poll all *visible* warm sessions to guarantee we recover from missed WS events
+        // (e.g. broadcaster lag / dropped frames). Non-visible warm sessions still poll only mid-turn to keep load down.
+        if (this.snapshot.connection === "connected" && doneLike && !visible) continue;
         this.backfillSession(sid).catch(() => {});
       }
     }, POLL_INTERVAL_MS);
