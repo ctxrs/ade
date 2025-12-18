@@ -9,7 +9,7 @@ export function formatRelativeAgeShort(iso: string | null | undefined, nowMs: nu
   if (diffSec < 45) return "Now";
 
   const diffMin = Math.floor(diffSec / 60);
-  if (diffMin < 60) return `${diffMin}m`;
+  if (diffMin < 60) return `${Math.max(1, diffMin)}m`;
 
   const diffHr = Math.floor(diffMin / 60);
   if (diffHr < 24) return `${diffHr}h`;
