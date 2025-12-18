@@ -96,6 +96,42 @@ export type SessionEvent = {
   created_at: string;
 };
 
+export type SessionTurnStatus = "queued" | "running" | "completed" | "interrupted" | "failed";
+
+export type SessionTurn = {
+  turn_id: { 0: string } | string;
+  session_id: { 0: string } | string;
+  run_id?: { 0: string } | string | null;
+  user_message_id?: { 0: string } | string | null;
+  assistant_message_id?: { 0: string } | string | null;
+  status: SessionTurnStatus;
+  start_seq?: number | null;
+  end_seq?: number | null;
+  started_at: string;
+  updated_at: string;
+  assistant_partial?: string | null;
+  thought_partial?: string | null;
+  metrics_json?: any;
+  tool_total: number;
+  tool_pending: number;
+  tool_running: number;
+  tool_completed: number;
+  tool_failed: number;
+};
+
+export type SessionTurnTool = {
+  session_id: { 0: string } | string;
+  tool_call_id: string;
+  turn_id: { 0: string } | string;
+  tool_kind?: string | null;
+  title?: string | null;
+  status?: string | null;
+  input_json?: any;
+  output_text?: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 export type ProviderStatus = {
   provider_id: string;
   installed: boolean;
@@ -600,6 +636,17 @@ export const getWorktree = (worktreeId: string) =>
 
 export const listMessages = (sessionId: string) =>
   apiAny<Message[]>(`/api/sessions/${sessionId}/messages`);
+
+export const listSessionTurnsPage = (sessionId: string, beforeSeq?: number, limit?: number) => {
+  const qs = new URLSearchParams();
+  if (typeof beforeSeq === "number") qs.set("before_seq", String(beforeSeq));
+  if (limit) qs.set("limit", String(limit));
+  const suffix = qs.toString() ? `?${qs.toString()}` : "";
+  return apiAny<SessionTurn[]>(`/api/sessions/${sessionId}/turns${suffix}`);
+};
+
+export const listTurnTools = (sessionId: string, turnId: string) =>
+  apiAny<SessionTurnTool[]>(`/api/sessions/${sessionId}/turns/${turnId}/tools`);
 
 export const listSessionEvents = (sessionId: string) =>
   apiAny<SessionEvent[]>(`/api/sessions/${sessionId}/events`);

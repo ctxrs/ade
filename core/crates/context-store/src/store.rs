@@ -1,3 +1,4 @@
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::time::Duration;
 
@@ -5,6 +6,7 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use context_core::ids::*;
 use context_core::models::*;
+use serde_json::Value;
 use sqlx::{sqlite::SqlitePoolOptions, Pool, Row, Sqlite};
 
 #[derive(Clone)]
@@ -951,6 +953,546 @@ impl Store {
         Ok(())
     }
 
+    // Session Turn APIs
+    pub async fn insert_session_turn(&self, turn: SessionTurn) -> Result<SessionTurn> {
+        let metrics_json = turn
+            .metrics_json
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()
+            .context("serializing turn metrics")?;
+        sqlx::query(
+            r#"INSERT INTO session_turns (
+                    turn_id,
+                    session_id,
+                    run_id,
+                    user_message_id,
+                    assistant_message_id,
+                    status,
+                    start_seq,
+                    end_seq,
+                    started_at,
+                    updated_at,
+                    assistant_partial,
+                    thought_partial,
+                    metrics_json,
+                    tool_total,
+                    tool_pending,
+                    tool_running,
+                    tool_completed,
+                    tool_failed
+               )
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+        )
+        .bind(turn.turn_id.0.to_string())
+        .bind(turn.session_id.0.to_string())
+        .bind(turn.run_id.map(|r| r.0.to_string()))
+        .bind(turn.user_message_id.map(|m| m.0.to_string()))
+        .bind(turn.assistant_message_id.map(|m| m.0.to_string()))
+        .bind(session_turn_status_to_str(&turn.status))
+        .bind(turn.start_seq)
+        .bind(turn.end_seq)
+        .bind(turn.started_at.to_rfc3339())
+        .bind(turn.updated_at.to_rfc3339())
+        .bind(turn.assistant_partial.as_deref())
+        .bind(turn.thought_partial.as_deref())
+        .bind(metrics_json)
+        .bind(turn.tool_total)
+        .bind(turn.tool_pending)
+        .bind(turn.tool_running)
+        .bind(turn.tool_completed)
+        .bind(turn.tool_failed)
+        .execute(&self.pool)
+        .await?;
+        Ok(turn)
+    }
+
+    pub async fn get_session_turn(
+        &self,
+        session_id: SessionId,
+        turn_id: TurnId,
+    ) -> Result<Option<SessionTurn>> {
+        let row = sqlx::query(
+            r#"SELECT turn_id, session_id, run_id, user_message_id, assistant_message_id, status,
+                      start_seq, end_seq, started_at, updated_at, assistant_partial, thought_partial,
+                      metrics_json, tool_total, tool_pending, tool_running, tool_completed, tool_failed
+               FROM session_turns
+               WHERE session_id = ? AND turn_id = ?"#,
+        )
+        .bind(session_id.0.to_string())
+        .bind(turn_id.0.to_string())
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.and_then(|r| build_session_turn_from_row(r).ok()))
+    }
+
+    pub async fn delete_session_turn(
+        &self,
+        session_id: SessionId,
+        turn_id: TurnId,
+    ) -> Result<()> {
+        sqlx::query(
+            r#"DELETE FROM session_turns WHERE session_id = ? AND turn_id = ?"#,
+        )
+        .bind(session_id.0.to_string())
+        .bind(turn_id.0.to_string())
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn update_session_turn_partial(
+        &self,
+        session_id: SessionId,
+        turn_id: TurnId,
+        assistant_partial: Option<&str>,
+        thought_partial: Option<&str>,
+        updated_at: DateTime<Utc>,
+    ) -> Result<()> {
+        if assistant_partial.is_none() && thought_partial.is_none() {
+            return Ok(());
+        }
+        sqlx::query(
+            r#"UPDATE session_turns
+               SET assistant_partial = COALESCE(?, assistant_partial),
+                   thought_partial = COALESCE(?, thought_partial),
+                   updated_at = ?
+               WHERE session_id = ? AND turn_id = ?"#,
+        )
+        .bind(assistant_partial.map(|s| s.to_string()))
+        .bind(thought_partial.map(|s| s.to_string()))
+        .bind(updated_at.to_rfc3339())
+        .bind(session_id.0.to_string())
+        .bind(turn_id.0.to_string())
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn update_session_turn_status(
+        &self,
+        session_id: SessionId,
+        turn_id: TurnId,
+        status: SessionTurnStatus,
+        end_seq: Option<i64>,
+        metrics_json: Option<&serde_json::Value>,
+        updated_at: DateTime<Utc>,
+    ) -> Result<()> {
+        let metrics_json = metrics_json
+            .map(serde_json::to_string)
+            .transpose()
+            .context("serializing turn metrics")?;
+        sqlx::query(
+            r#"UPDATE session_turns
+               SET status = ?,
+                   end_seq = COALESCE(?, end_seq),
+                   metrics_json = COALESCE(?, metrics_json),
+                   updated_at = ?
+               WHERE session_id = ? AND turn_id = ?"#,
+        )
+        .bind(session_turn_status_to_str(&status))
+        .bind(end_seq)
+        .bind(metrics_json)
+        .bind(updated_at.to_rfc3339())
+        .bind(session_id.0.to_string())
+        .bind(turn_id.0.to_string())
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn update_session_turn_assistant_message(
+        &self,
+        session_id: SessionId,
+        turn_id: TurnId,
+        assistant_message_id: MessageId,
+        assistant_partial: Option<&str>,
+        updated_at: DateTime<Utc>,
+    ) -> Result<()> {
+        sqlx::query(
+            r#"UPDATE session_turns
+               SET assistant_message_id = ?,
+                   assistant_partial = COALESCE(?, assistant_partial),
+                   updated_at = ?
+               WHERE session_id = ? AND turn_id = ?"#,
+        )
+        .bind(assistant_message_id.0.to_string())
+        .bind(assistant_partial.map(|s| s.to_string()))
+        .bind(updated_at.to_rfc3339())
+        .bind(session_id.0.to_string())
+        .bind(turn_id.0.to_string())
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn update_session_turn_tool_counts(
+        &self,
+        session_id: SessionId,
+        turn_id: TurnId,
+        delta_total: i64,
+        delta_pending: i64,
+        delta_running: i64,
+        delta_completed: i64,
+        delta_failed: i64,
+        updated_at: DateTime<Utc>,
+    ) -> Result<()> {
+        sqlx::query(
+            r#"UPDATE session_turns
+               SET tool_total = tool_total + ?,
+                   tool_pending = tool_pending + ?,
+                   tool_running = tool_running + ?,
+                   tool_completed = tool_completed + ?,
+                   tool_failed = tool_failed + ?,
+                   updated_at = ?
+               WHERE session_id = ? AND turn_id = ?"#,
+        )
+        .bind(delta_total)
+        .bind(delta_pending)
+        .bind(delta_running)
+        .bind(delta_completed)
+        .bind(delta_failed)
+        .bind(updated_at.to_rfc3339())
+        .bind(session_id.0.to_string())
+        .bind(turn_id.0.to_string())
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn list_session_turns_page_by_seq(
+        &self,
+        session_id: SessionId,
+        before_seq: Option<i64>,
+        limit: Option<u32>,
+    ) -> Result<Vec<SessionTurn>> {
+        self.ensure_session_turns(session_id).await?;
+        let limit = limit.unwrap_or(50).clamp(1, 500) as i64;
+        let rows = if let Some(before_seq) = before_seq {
+            sqlx::query(
+                r#"SELECT turn_id, session_id, run_id, user_message_id, assistant_message_id, status,
+                          start_seq, end_seq, started_at, updated_at, assistant_partial, thought_partial,
+                          metrics_json, tool_total, tool_pending, tool_running, tool_completed, tool_failed
+                   FROM session_turns
+                   WHERE session_id = ? AND start_seq < ?
+                   ORDER BY start_seq DESC
+                   LIMIT ?"#,
+            )
+            .bind(session_id.0.to_string())
+            .bind(before_seq)
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await?
+        } else {
+            sqlx::query(
+                r#"SELECT turn_id, session_id, run_id, user_message_id, assistant_message_id, status,
+                          start_seq, end_seq, started_at, updated_at, assistant_partial, thought_partial,
+                          metrics_json, tool_total, tool_pending, tool_running, tool_completed, tool_failed
+                   FROM session_turns
+                   WHERE session_id = ?
+                   ORDER BY start_seq DESC
+                   LIMIT ?"#,
+            )
+            .bind(session_id.0.to_string())
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await?
+        };
+
+        let mut out = Vec::with_capacity(rows.len());
+        for r in rows {
+            if let Ok(turn) = build_session_turn_from_row(r) {
+                out.push(turn);
+            }
+        }
+        out.reverse();
+        Ok(out)
+    }
+
+    pub async fn list_turn_tools(
+        &self,
+        session_id: SessionId,
+        turn_id: TurnId,
+    ) -> Result<Vec<SessionTurnTool>> {
+        let rows = sqlx::query(
+            r#"SELECT session_id, tool_call_id, turn_id, tool_kind, title, status, input_json,
+                      output_text, created_at, updated_at
+               FROM session_turn_tools
+               WHERE session_id = ? AND turn_id = ?
+               ORDER BY created_at ASC"#,
+        )
+        .bind(session_id.0.to_string())
+        .bind(turn_id.0.to_string())
+        .fetch_all(&self.pool)
+        .await?;
+        if !rows.is_empty() {
+            let mut out = Vec::with_capacity(rows.len());
+            for r in rows {
+                if let Ok(tool) = build_session_turn_tool_from_row(r) {
+                    out.push(tool);
+                }
+            }
+            return Ok(out);
+        }
+
+        let events = self
+            .list_session_events_for_turn(session_id, turn_id)
+            .await?;
+        let tools = build_turn_tools_from_events(session_id, turn_id, &events);
+        for tool in &tools {
+            let _ = self.upsert_session_turn_tool(tool.clone()).await;
+        }
+        Ok(tools)
+    }
+
+    pub async fn get_session_turn_tool(
+        &self,
+        session_id: SessionId,
+        tool_call_id: &str,
+    ) -> Result<Option<SessionTurnTool>> {
+        let row = sqlx::query(
+            r#"SELECT session_id, tool_call_id, turn_id, tool_kind, title, status, input_json,
+                      output_text, created_at, updated_at
+               FROM session_turn_tools
+               WHERE session_id = ? AND tool_call_id = ?"#,
+        )
+        .bind(session_id.0.to_string())
+        .bind(tool_call_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.and_then(|r| build_session_turn_tool_from_row(r).ok()))
+    }
+
+    pub async fn upsert_session_turn_tool(&self, tool: SessionTurnTool) -> Result<SessionTurnTool> {
+        let input_json = tool
+            .input_json
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()
+            .context("serializing tool input")?;
+        sqlx::query(
+            r#"INSERT INTO session_turn_tools (
+                    session_id, tool_call_id, turn_id, tool_kind, title, status,
+                    input_json, output_text, created_at, updated_at
+               )
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(session_id, tool_call_id) DO UPDATE SET
+                   turn_id = excluded.turn_id,
+                   tool_kind = COALESCE(excluded.tool_kind, session_turn_tools.tool_kind),
+                   title = COALESCE(excluded.title, session_turn_tools.title),
+                   status = COALESCE(excluded.status, session_turn_tools.status),
+                   input_json = COALESCE(excluded.input_json, session_turn_tools.input_json),
+                   output_text = COALESCE(excluded.output_text, session_turn_tools.output_text),
+                   updated_at = excluded.updated_at"#,
+        )
+        .bind(tool.session_id.0.to_string())
+        .bind(&tool.tool_call_id)
+        .bind(tool.turn_id.0.to_string())
+        .bind(tool.tool_kind.as_deref())
+        .bind(tool.title.as_deref())
+        .bind(tool.status.as_deref())
+        .bind(input_json)
+        .bind(tool.output_text.as_deref())
+        .bind(tool.created_at.to_rfc3339())
+        .bind(tool.updated_at.to_rfc3339())
+        .execute(&self.pool)
+        .await?;
+        Ok(tool)
+    }
+
+    async fn ensure_session_turns(&self, session_id: SessionId) -> Result<()> {
+        let count: i64 = sqlx::query_scalar(
+            r#"SELECT COUNT(*) FROM session_turns WHERE session_id = ?"#,
+        )
+        .bind(session_id.0.to_string())
+        .fetch_one(&self.pool)
+        .await?;
+        if count > 0 {
+            return Ok(());
+        }
+        self.backfill_session_turns(session_id).await
+    }
+
+    async fn backfill_session_turns(&self, session_id: SessionId) -> Result<()> {
+        let messages = self.list_messages_for_session(session_id).await?;
+        let events = self.list_session_events(session_id).await?;
+
+        let mut user_by_turn: HashMap<TurnId, Message> = HashMap::new();
+        let mut assistant_by_turn: HashMap<TurnId, Message> = HashMap::new();
+        for m in messages {
+            let Some(turn_id) = m.turn_id else { continue };
+            match m.role {
+                MessageRole::User => {
+                    user_by_turn.insert(turn_id, m);
+                }
+                MessageRole::Assistant => {
+                    assistant_by_turn.insert(turn_id, m);
+                }
+                _ => {}
+            }
+        }
+
+        let mut events_by_turn: HashMap<TurnId, Vec<SessionEvent>> = HashMap::new();
+        for ev in events {
+            let Some(turn_id) = ev.turn_id else { continue };
+            events_by_turn.entry(turn_id).or_default().push(ev);
+        }
+
+        let mut turn_ids: HashSet<TurnId> = HashSet::new();
+        turn_ids.extend(user_by_turn.keys().cloned());
+        turn_ids.extend(events_by_turn.keys().cloned());
+
+        for turn_id in turn_ids {
+            let user = user_by_turn.get(&turn_id);
+            let assistant = assistant_by_turn.get(&turn_id);
+            let mut evs = events_by_turn.remove(&turn_id).unwrap_or_default();
+            evs.sort_by_key(|e| e.seq);
+
+            let mut start_seq: Option<i64> = None;
+            let mut end_seq: Option<i64> = None;
+            let mut assistant_partial = String::new();
+            let mut thought_partial = String::new();
+            let mut tool_statuses: HashMap<String, String> = HashMap::new();
+            let mut saw_turn_interrupted = false;
+            let mut saw_error = false;
+            let mut saw_assistant_complete = false;
+            let mut has_activity = false;
+            let mut metrics_json: Option<serde_json::Value> = None;
+
+            let mut last_event_at = user
+                .map(|m| m.created_at)
+                .or_else(|| evs.first().map(|e| e.created_at))
+                .unwrap_or_else(Utc::now);
+
+            for ev in &evs {
+                if ev.created_at > last_event_at {
+                    last_event_at = ev.created_at;
+                }
+                match ev.event_type {
+                    SessionEventType::UserMessage => {
+                        start_seq = start_seq.or(Some(ev.seq));
+                    }
+                    SessionEventType::AssistantChunk => {
+                        if let Some(fragment) = ev.payload_json.get("content_fragment").and_then(|v| v.as_str()) {
+                            assistant_partial.push_str(fragment);
+                        }
+                        has_activity = true;
+                    }
+                    SessionEventType::ThoughtChunk => {
+                        if let Some(fragment) = ev.payload_json.get("content_fragment").and_then(|v| v.as_str()) {
+                            thought_partial.push_str(fragment);
+                        }
+                        has_activity = true;
+                    }
+                    SessionEventType::AssistantComplete => {
+                        saw_assistant_complete = true;
+                        has_activity = true;
+                    }
+                    SessionEventType::ToolCall
+                    | SessionEventType::ToolCallUpdate
+                    | SessionEventType::ToolResult => {
+                        if let Some((tool_call_id, status)) =
+                            extract_tool_status_for_backfill(ev)
+                        {
+                            tool_statuses.insert(tool_call_id, status);
+                        }
+                        has_activity = true;
+                    }
+                    SessionEventType::TurnInterrupted => {
+                        saw_turn_interrupted = true;
+                        end_seq = Some(ev.seq);
+                        has_activity = true;
+                    }
+                    SessionEventType::Done => {
+                        end_seq = Some(ev.seq);
+                        metrics_json = ev
+                            .payload_json
+                            .get("context_window")
+                            .cloned()
+                            .or(metrics_json);
+                        has_activity = true;
+                    }
+                    SessionEventType::Error => {
+                        saw_error = true;
+                        has_activity = true;
+                    }
+                    SessionEventType::Init
+                    | SessionEventType::Notice
+                    | SessionEventType::AuthRequired
+                    | SessionEventType::InputQueued
+                    | SessionEventType::InterruptRequested
+                    | SessionEventType::Plan => {}
+                }
+            }
+
+            let (tool_pending, tool_running, tool_completed, tool_failed) =
+                tally_tool_statuses(&tool_statuses);
+
+            if start_seq.is_none() {
+                if let Some(first_ev) = evs.first() {
+                    start_seq = Some(first_ev.seq);
+                }
+            }
+
+            let status = if saw_turn_interrupted {
+                SessionTurnStatus::Interrupted
+            } else if saw_error && assistant.is_none() && !saw_assistant_complete {
+                SessionTurnStatus::Failed
+            } else if assistant.is_some() || saw_assistant_complete {
+                SessionTurnStatus::Completed
+            } else if user
+                .map(|m| matches!(m.delivery, MessageDelivery::Queued))
+                .unwrap_or(false)
+                && !has_activity
+            {
+                SessionTurnStatus::Queued
+            } else {
+                SessionTurnStatus::Running
+            };
+
+            let started_at = user
+                .map(|m| m.created_at)
+                .or_else(|| evs.first().map(|e| e.created_at))
+                .unwrap_or_else(Utc::now);
+            let updated_at = assistant
+                .map(|m| m.created_at)
+                .unwrap_or(last_event_at);
+
+            let turn = SessionTurn {
+                turn_id,
+                session_id,
+                run_id: user.and_then(|m| m.run_id),
+                user_message_id: user.map(|m| m.id),
+                assistant_message_id: assistant.map(|m| m.id),
+                status,
+                start_seq,
+                end_seq,
+                started_at,
+                updated_at,
+                assistant_partial: if assistant_partial.is_empty() {
+                    None
+                } else {
+                    Some(assistant_partial)
+                },
+                thought_partial: if thought_partial.is_empty() {
+                    None
+                } else {
+                    Some(thought_partial)
+                },
+                metrics_json,
+                tool_total: tool_statuses.len() as i64,
+                tool_pending,
+                tool_running,
+                tool_completed,
+                tool_failed,
+            };
+            let _ = self.insert_session_turn(turn).await;
+        }
+
+        Ok(())
+    }
+
     // Blob APIs
     pub async fn insert_blob(
         &self,
@@ -1132,6 +1674,80 @@ impl Store {
         Ok(out)
     }
 
+    pub async fn list_session_events_for_turn(
+        &self,
+        session_id: SessionId,
+        turn_id: TurnId,
+    ) -> Result<Vec<SessionEvent>> {
+        let rows = sqlx::query(
+            r#"SELECT seq, id, session_id, run_id, turn_id, event_type, payload_json, created_at
+               FROM session_events
+               WHERE session_id = ? AND turn_id = ?
+               ORDER BY seq ASC"#,
+        )
+        .bind(session_id.0.to_string())
+        .bind(turn_id.0.to_string())
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut out = Vec::with_capacity(rows.len());
+        for r in rows {
+            let id: String = r.try_get("id")?;
+            let session_id: String = r.try_get("session_id")?;
+            let created_at: String = r.try_get("created_at")?;
+            let run_id: Option<String> = r.try_get("run_id")?;
+            let turn_id: Option<String> = r.try_get("turn_id")?;
+            let payload_json: String = r.try_get("payload_json")?;
+            out.push(SessionEvent {
+                seq: r.try_get("seq")?,
+                id: SessionEventId(uuid::Uuid::parse_str(&id)?),
+                session_id: SessionId(uuid::Uuid::parse_str(&session_id)?),
+                run_id: run_id
+                    .as_deref()
+                    .and_then(|s| uuid::Uuid::parse_str(s).ok())
+                    .map(RunId),
+                turn_id: turn_id
+                    .as_deref()
+                    .and_then(|s| uuid::Uuid::parse_str(s).ok())
+                    .map(TurnId),
+                event_type: parse_session_event_type(r.try_get::<String, _>("event_type")?.as_str()),
+                payload_json: serde_json::from_str(&payload_json)
+                    .context("parsing session event payload")?,
+                created_at: parse_dt(&created_at)?,
+            });
+        }
+        Ok(out)
+    }
+
+    pub async fn delete_session_events_for_turn_types(
+        &self,
+        session_id: SessionId,
+        turn_id: TurnId,
+        event_types: &[SessionEventType],
+    ) -> Result<()> {
+        if event_types.is_empty() {
+            return Ok(());
+        }
+        let mut sql = String::from(
+            "DELETE FROM session_events WHERE session_id = ? AND turn_id = ? AND event_type IN (",
+        );
+        for i in 0..event_types.len() {
+            if i > 0 {
+                sql.push(',');
+            }
+            sql.push('?');
+        }
+        sql.push(')');
+        let mut q = sqlx::query(&sql)
+            .bind(session_id.0.to_string())
+            .bind(turn_id.0.to_string());
+        for t in event_types {
+            q = q.bind(session_event_type_to_str(t));
+        }
+        q.execute(&self.pool).await?;
+        Ok(())
+    }
+
     pub async fn list_session_events_tail_by_seq(
         &self,
         session_id: SessionId,
@@ -1280,6 +1896,27 @@ fn parse_message_delivery(value: &str) -> MessageDelivery {
     }
 }
 
+fn session_turn_status_to_str(status: &SessionTurnStatus) -> &'static str {
+    match status {
+        SessionTurnStatus::Queued => "queued",
+        SessionTurnStatus::Running => "running",
+        SessionTurnStatus::Completed => "completed",
+        SessionTurnStatus::Interrupted => "interrupted",
+        SessionTurnStatus::Failed => "failed",
+    }
+}
+
+fn parse_session_turn_status(value: &str) -> SessionTurnStatus {
+    match value {
+        "queued" => SessionTurnStatus::Queued,
+        "running" => SessionTurnStatus::Running,
+        "completed" => SessionTurnStatus::Completed,
+        "interrupted" => SessionTurnStatus::Interrupted,
+        "failed" => SessionTurnStatus::Failed,
+        _ => SessionTurnStatus::Running,
+    }
+}
+
 fn session_event_type_to_str(event_type: &SessionEventType) -> &'static str {
     match event_type {
         SessionEventType::Init => "init",
@@ -1321,4 +1958,322 @@ fn parse_session_event_type(value: &str) -> SessionEventType {
         "error" => SessionEventType::Error,
         _ => SessionEventType::Error,
     }
+}
+
+fn build_session_turn_from_row(
+    r: sqlx::sqlite::SqliteRow,
+) -> Result<SessionTurn> {
+    let turn_id: String = r.try_get("turn_id")?;
+    let session_id: String = r.try_get("session_id")?;
+    let run_id: Option<String> = r.try_get("run_id")?;
+    let user_message_id: Option<String> = r.try_get("user_message_id")?;
+    let assistant_message_id: Option<String> = r.try_get("assistant_message_id")?;
+    let status: String = r.try_get("status")?;
+    let started_at: String = r.try_get("started_at")?;
+    let updated_at: String = r.try_get("updated_at")?;
+    let metrics_json: Option<String> = r.try_get("metrics_json")?;
+    let metrics_json = metrics_json
+        .as_deref()
+        .and_then(|s| serde_json::from_str::<Value>(s).ok());
+
+    Ok(SessionTurn {
+        turn_id: TurnId(uuid::Uuid::parse_str(&turn_id)?),
+        session_id: SessionId(uuid::Uuid::parse_str(&session_id)?),
+        run_id: run_id
+            .as_deref()
+            .and_then(|s| uuid::Uuid::parse_str(s).ok())
+            .map(RunId),
+        user_message_id: user_message_id
+            .as_deref()
+            .and_then(|s| uuid::Uuid::parse_str(s).ok())
+            .map(MessageId),
+        assistant_message_id: assistant_message_id
+            .as_deref()
+            .and_then(|s| uuid::Uuid::parse_str(s).ok())
+            .map(MessageId),
+        status: parse_session_turn_status(status.as_str()),
+        start_seq: r.try_get("start_seq")?,
+        end_seq: r.try_get("end_seq")?,
+        started_at: parse_dt(&started_at)?,
+        updated_at: parse_dt(&updated_at)?,
+        assistant_partial: r.try_get("assistant_partial")?,
+        thought_partial: r.try_get("thought_partial")?,
+        metrics_json,
+        tool_total: r.try_get("tool_total")?,
+        tool_pending: r.try_get("tool_pending")?,
+        tool_running: r.try_get("tool_running")?,
+        tool_completed: r.try_get("tool_completed")?,
+        tool_failed: r.try_get("tool_failed")?,
+    })
+}
+
+fn build_session_turn_tool_from_row(
+    r: sqlx::sqlite::SqliteRow,
+) -> Result<SessionTurnTool> {
+    let session_id: String = r.try_get("session_id")?;
+    let tool_call_id: String = r.try_get("tool_call_id")?;
+    let turn_id: String = r.try_get("turn_id")?;
+    let created_at: String = r.try_get("created_at")?;
+    let updated_at: String = r.try_get("updated_at")?;
+    let input_json: Option<String> = r.try_get("input_json")?;
+    let input_json = input_json
+        .as_deref()
+        .and_then(|s| serde_json::from_str::<Value>(s).ok());
+
+    Ok(SessionTurnTool {
+        session_id: SessionId(uuid::Uuid::parse_str(&session_id)?),
+        tool_call_id,
+        turn_id: TurnId(uuid::Uuid::parse_str(&turn_id)?),
+        tool_kind: r.try_get("tool_kind")?,
+        title: r.try_get("title")?,
+        status: r.try_get("status")?,
+        input_json,
+        output_text: r.try_get("output_text")?,
+        created_at: parse_dt(&created_at)?,
+        updated_at: parse_dt(&updated_at)?,
+    })
+}
+
+fn extract_tool_status_for_backfill(ev: &SessionEvent) -> Option<(String, String)> {
+    let tool_call_id = tool_call_id_from_payload(&ev.payload_json)?;
+    let update = extract_tool_update(&ev.payload_json);
+    let raw_status = update
+        .get("status")
+        .and_then(|v| v.as_str())
+        .or_else(|| update.pointer("/toolCall/status").and_then(|v| v.as_str()));
+
+    let status = if let Some(raw) = raw_status {
+        normalize_tool_status(raw, ev.event_type.clone())
+    } else if matches!(ev.event_type, SessionEventType::ToolResult) {
+        "completed".to_string()
+    } else if matches!(ev.event_type, SessionEventType::ToolCall) {
+        "pending".to_string()
+    } else {
+        return None;
+    };
+
+    Some((tool_call_id, status))
+}
+
+fn tally_tool_statuses(statuses: &HashMap<String, String>) -> (i64, i64, i64, i64) {
+    let mut pending = 0;
+    let mut running = 0;
+    let mut completed = 0;
+    let mut failed = 0;
+    for status in statuses.values() {
+        match status.as_str() {
+            "pending" => pending += 1,
+            "in_progress" => running += 1,
+            "completed" => completed += 1,
+            "failed" => failed += 1,
+            _ => pending += 1,
+        }
+    }
+    (pending, running, completed, failed)
+}
+
+fn normalize_tool_status(status: &str, event_type: SessionEventType) -> String {
+    let s = status.trim().to_lowercase();
+    if s == "inprogress" || s == "in_progress" || s == "running" {
+        return "in_progress".to_string();
+    }
+    if s == "pending" || s == "queued" {
+        return "pending".to_string();
+    }
+    if s == "completed" || s == "complete" || s == "ok" || s == "succeeded" {
+        return "completed".to_string();
+    }
+    if s == "failed" || s == "error" {
+        return "failed".to_string();
+    }
+    if matches!(event_type, SessionEventType::ToolResult) {
+        return "completed".to_string();
+    }
+    if s.is_empty() {
+        return "pending".to_string();
+    }
+    s
+}
+
+fn extract_tool_update(payload: &Value) -> &Value {
+    payload.get("acp_update").unwrap_or(payload)
+}
+
+fn tool_call_id_from_payload(payload: &Value) -> Option<String> {
+    let direct = payload.get("tool_call_id").and_then(|v| v.as_str());
+    if let Some(v) = direct {
+        return Some(v.to_string());
+    }
+    let update = extract_tool_update(payload);
+    let direct = update
+        .get("toolCallId")
+        .and_then(|v| v.as_str())
+        .or_else(|| update.get("tool_call_id").and_then(|v| v.as_str()));
+    if let Some(v) = direct {
+        return Some(v.to_string());
+    }
+    let from_raw = update
+        .pointer("/rawInput/call_id")
+        .and_then(|v| v.as_str())
+        .or_else(|| update.pointer("/raw_input/call_id").and_then(|v| v.as_str()));
+    from_raw.map(|v| v.to_string())
+}
+
+fn extract_tool_output_text(update: &Value) -> Option<String> {
+    let direct = update
+        .get("outputText")
+        .and_then(|v| v.as_str())
+        .or_else(|| update.get("output_text").and_then(|v| v.as_str()))
+        .or_else(|| update.pointer("/toolCall/outputText").and_then(|v| v.as_str()))
+        .or_else(|| update.pointer("/toolCall/output_text").and_then(|v| v.as_str()))
+        .or_else(|| update.get("result").and_then(|v| v.as_str()))
+        .or_else(|| update.pointer("/rawOutput/aggregated_output").and_then(|v| v.as_str()))
+        .or_else(|| update.pointer("/rawOutput/output").and_then(|v| v.as_str()));
+    if let Some(v) = direct {
+        let trimmed = v.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+    }
+
+    let blocks = update.get("content").and_then(|v| v.as_array())?;
+    let mut out = String::new();
+    for b in blocks {
+        if let Some(t) = b.get("content").and_then(|c| c.get("text")).and_then(|v| v.as_str()) {
+            out.push_str(t);
+        } else if let Some(t) = b.get("text").and_then(|v| v.as_str()) {
+            out.push_str(t);
+        }
+    }
+    if out.trim().is_empty() {
+        None
+    } else {
+        Some(out.trim().to_string())
+    }
+}
+
+fn merge_streaming_text(prev: Option<&str>, next: &str) -> String {
+    let prev = prev.unwrap_or("");
+    if prev.is_empty() {
+        return next.to_string();
+    }
+    if next.is_empty() {
+        return prev.to_string();
+    }
+    if next.starts_with(prev) {
+        return next.to_string();
+    }
+    if prev.starts_with(next) {
+        return prev.to_string();
+    }
+    if next.len() >= prev.len() {
+        next.to_string()
+    } else {
+        prev.to_string()
+    }
+}
+
+fn build_turn_tools_from_events(
+    session_id: SessionId,
+    turn_id: TurnId,
+    events: &[SessionEvent],
+) -> Vec<SessionTurnTool> {
+    #[derive(Default)]
+    struct ToolAgg {
+        tool_kind: Option<String>,
+        title: Option<String>,
+        status: Option<String>,
+        input_json: Option<Value>,
+        output_text: Option<String>,
+        created_at: DateTime<Utc>,
+        updated_at: DateTime<Utc>,
+        initialized: bool,
+    }
+
+    let mut map: HashMap<String, ToolAgg> = HashMap::new();
+
+    for ev in events {
+        if !matches!(
+            ev.event_type,
+            SessionEventType::ToolCall
+                | SessionEventType::ToolCallUpdate
+                | SessionEventType::ToolResult
+        ) {
+            continue;
+        }
+        let tool_call_id = match tool_call_id_from_payload(&ev.payload_json) {
+            Some(v) => v,
+            None => continue,
+        };
+        let update = extract_tool_update(&ev.payload_json);
+        let entry = map.entry(tool_call_id.clone()).or_insert_with(ToolAgg::default);
+        if !entry.initialized {
+            entry.created_at = ev.created_at;
+            entry.updated_at = ev.created_at;
+            entry.initialized = true;
+        }
+        entry.updated_at = ev.created_at;
+
+        if let Some(kind) = update
+            .get("kind")
+            .and_then(|v| v.as_str())
+            .or_else(|| update.pointer("/toolCall/kind").and_then(|v| v.as_str()))
+        {
+            entry.tool_kind = Some(kind.to_string());
+        }
+        if let Some(title) = update
+            .get("title")
+            .and_then(|v| v.as_str())
+            .or_else(|| update.pointer("/toolCall/title").and_then(|v| v.as_str()))
+            .or_else(|| update.pointer("/toolCall/name").and_then(|v| v.as_str()))
+        {
+            entry.title = Some(title.to_string());
+        }
+
+        let raw_status = update
+            .get("status")
+            .and_then(|v| v.as_str())
+            .or_else(|| update.pointer("/toolCall/status").and_then(|v| v.as_str()));
+        if let Some(raw_status) = raw_status {
+            entry.status = Some(normalize_tool_status(raw_status, ev.event_type.clone()));
+        } else if matches!(ev.event_type, SessionEventType::ToolResult) {
+            entry.status = Some("completed".to_string());
+        } else if matches!(ev.event_type, SessionEventType::ToolCall) {
+            entry.status = entry.status.clone().or(Some("pending".to_string()));
+        }
+
+        let input = update
+            .pointer("/rawInput")
+            .or_else(|| update.pointer("/toolCall/rawInput"))
+            .or_else(|| update.pointer("/toolCall/input"))
+            .or_else(|| update.pointer("/input"))
+            .or_else(|| update.pointer("/args"));
+        if let Some(value) = input {
+            entry.input_json = Some(value.clone());
+        }
+
+        if let Some(output) = extract_tool_output_text(update) {
+            let merged = merge_streaming_text(entry.output_text.as_deref(), &output);
+            entry.output_text = Some(merged);
+        }
+    }
+
+    let mut out: Vec<SessionTurnTool> = map
+        .into_iter()
+        .map(|(tool_call_id, agg)| SessionTurnTool {
+            session_id,
+            tool_call_id,
+            turn_id,
+            tool_kind: agg.tool_kind,
+            title: agg.title,
+            status: agg.status,
+            input_json: agg.input_json,
+            output_text: agg.output_text,
+            created_at: agg.created_at,
+            updated_at: agg.updated_at,
+        })
+        .collect();
+
+    out.sort_by_key(|t| t.created_at);
+    out
 }

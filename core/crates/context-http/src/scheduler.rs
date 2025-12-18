@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -8,7 +8,15 @@ use serde_json::{json, Value};
 use tokio::sync::mpsc;
 
 use context_core::ids::{MessageId, RunId, TurnId};
-use context_core::models::{Message, MessageDelivery, MessageRole, Session, SessionEventType};
+use context_core::models::{
+    Message,
+    MessageDelivery,
+    MessageRole,
+    Session,
+    SessionEventType,
+    SessionTurnStatus,
+    SessionTurnTool,
+};
 use context_providers::adapters::{ProviderAdapter, RunHandle, TurnInput};
 use context_providers::events::NormalizedEvent;
 
@@ -158,6 +166,17 @@ async fn start_turn(
         message.delivery = MessageDelivery::Immediate;
         message.delivered_at = Some(Utc::now());
     }
+    let _ = state
+        .store
+        .update_session_turn_status(
+            session.id,
+            turn_id,
+            SessionTurnStatus::Running,
+            None,
+            None,
+            Utc::now(),
+        )
+        .await;
 
     let prompt = message.content.clone();
     let context_window_metrics =
@@ -234,6 +253,11 @@ async fn start_turn(
     let track_id = session.track_id;
 
     tokio::spawn(async move {
+        let mut assistant_partial = String::new();
+        let mut thought_partial = String::new();
+        let mut tool_cache: HashMap<String, SessionTurnTool> = HashMap::new();
+        let mut terminal_status: Option<SessionTurnStatus> = None;
+
         while let Some(ev) = ev_rx.recv().await {
             let mut payload = ev.payload_json.clone();
             if matches!(ev.event_type, SessionEventType::Init) {
@@ -266,30 +290,208 @@ async fn start_turn(
                 .await;
             if let Ok(event) = appended {
                 state_for_events.publish_event(event.clone()).await;
-                if matches!(event.event_type, SessionEventType::AssistantComplete) {
-                    let content = event
-                        .payload_json
-                        .get("full_content")
-                        .or_else(|| event.payload_json.get("content"))
-                        .and_then(Value::as_str);
-                    if let Some(content) = content
-                    {
-                        let msg = Message {
-                            id: context_core::ids::MessageId::new(),
-                            session_id,
-                            task_id,
-                            track_id,
-                            run_id: Some(run_id),
-                            turn_id: Some(turn_id),
-                            role: MessageRole::Assistant,
-                            content: content.to_string(),
-                            attachments: vec![],
-                            delivery: MessageDelivery::Immediate,
-                            delivered_at: Some(event.created_at),
-                            created_at: event.created_at,
-                        };
-                        let _ = store.insert_message(msg).await;
+
+                match event.event_type {
+                    SessionEventType::AssistantChunk => {
+                        if let Some(fragment) = event
+                            .payload_json
+                            .get("content_fragment")
+                            .and_then(Value::as_str)
+                        {
+                            assistant_partial.push_str(fragment);
+                            let _ = store
+                                .update_session_turn_partial(
+                                    session_id,
+                                    turn_id,
+                                    Some(&assistant_partial),
+                                    None,
+                                    event.created_at,
+                                )
+                                .await;
+                        }
                     }
+                    SessionEventType::ThoughtChunk => {
+                        if let Some(fragment) = event
+                            .payload_json
+                            .get("content_fragment")
+                            .and_then(Value::as_str)
+                        {
+                            thought_partial.push_str(fragment);
+                            let _ = store
+                                .update_session_turn_partial(
+                                    session_id,
+                                    turn_id,
+                                    None,
+                                    Some(&thought_partial),
+                                    event.created_at,
+                                )
+                                .await;
+                        }
+                    }
+                    SessionEventType::ToolCall
+                    | SessionEventType::ToolCallUpdate
+                    | SessionEventType::ToolResult => {
+                        if let Some(update) = build_turn_tool_update(&event) {
+                            let prev = if let Some(cached) =
+                                tool_cache.get(&update.tool_call_id).cloned()
+                            {
+                                Some(cached)
+                            } else {
+                                store
+                                    .get_session_turn_tool(session_id, &update.tool_call_id)
+                                    .await
+                                    .ok()
+                                    .flatten()
+                            };
+                            let merged = merge_tool_update(
+                                prev.as_ref(),
+                                update,
+                                session_id,
+                                turn_id,
+                                event.created_at,
+                            );
+                            let (delta_total, delta_pending, delta_running, delta_completed, delta_failed) =
+                                tool_count_deltas(prev.as_ref(), &merged);
+                            let _ = store.upsert_session_turn_tool(merged.clone()).await;
+                            if delta_total != 0
+                                || delta_pending != 0
+                                || delta_running != 0
+                                || delta_completed != 0
+                                || delta_failed != 0
+                            {
+                                let _ = store
+                                    .update_session_turn_tool_counts(
+                                        session_id,
+                                        turn_id,
+                                        delta_total,
+                                        delta_pending,
+                                        delta_running,
+                                        delta_completed,
+                                        delta_failed,
+                                        event.created_at,
+                                    )
+                                    .await;
+                            }
+                            tool_cache.insert(merged.tool_call_id.clone(), merged);
+                        }
+                    }
+                    SessionEventType::AssistantComplete => {
+                        let content = event
+                            .payload_json
+                            .get("full_content")
+                            .or_else(|| event.payload_json.get("content"))
+                            .and_then(Value::as_str)
+                            .map(|s| s.to_string())
+                            .or_else(|| {
+                                if assistant_partial.is_empty() {
+                                    None
+                                } else {
+                                    Some(assistant_partial.clone())
+                                }
+                            });
+                        if let Some(content) = content {
+                            assistant_partial = content.clone();
+                            let msg = Message {
+                                id: context_core::ids::MessageId::new(),
+                                session_id,
+                                task_id,
+                                track_id,
+                                run_id: Some(run_id),
+                                turn_id: Some(turn_id),
+                                role: MessageRole::Assistant,
+                                content: content.to_string(),
+                                attachments: vec![],
+                                delivery: MessageDelivery::Immediate,
+                                delivered_at: Some(event.created_at),
+                                created_at: event.created_at,
+                            };
+                            if let Ok(saved) = store.insert_message(msg).await {
+                                let _ = store
+                                    .update_session_turn_assistant_message(
+                                        session_id,
+                                        turn_id,
+                                        saved.id,
+                                        Some(&assistant_partial),
+                                        event.created_at,
+                                    )
+                                    .await;
+                            }
+                        }
+                        if terminal_status.is_none() {
+                            let _ = store
+                                .update_session_turn_status(
+                                    session_id,
+                                    turn_id,
+                                    SessionTurnStatus::Completed,
+                                    None,
+                                    None,
+                                    event.created_at,
+                                )
+                                .await;
+                        }
+                        let _ = store
+                            .delete_session_events_for_turn_types(
+                                session_id,
+                                turn_id,
+                                &[
+                                    SessionEventType::AssistantChunk,
+                                    SessionEventType::ThoughtChunk,
+                                ],
+                            )
+                            .await;
+                    }
+                    SessionEventType::Done => {
+                        let metrics = event.payload_json.get("context_window");
+                        if terminal_status.is_none() {
+                            let _ = store
+                                .update_session_turn_status(
+                                    session_id,
+                                    turn_id,
+                                    SessionTurnStatus::Completed,
+                                    Some(event.seq),
+                                    metrics,
+                                    event.created_at,
+                                )
+                                .await;
+                        }
+                    }
+                    SessionEventType::TurnInterrupted => {
+                        terminal_status = Some(SessionTurnStatus::Interrupted);
+                        let _ = store
+                            .update_session_turn_status(
+                                session_id,
+                                turn_id,
+                                SessionTurnStatus::Interrupted,
+                                Some(event.seq),
+                                None,
+                                event.created_at,
+                            )
+                            .await;
+                        let _ = store
+                            .delete_session_events_for_turn_types(
+                                session_id,
+                                turn_id,
+                                &[
+                                    SessionEventType::AssistantChunk,
+                                    SessionEventType::ThoughtChunk,
+                                ],
+                            )
+                            .await;
+                    }
+                    SessionEventType::Error => {
+                        terminal_status = Some(SessionTurnStatus::Failed);
+                        let _ = store
+                            .update_session_turn_status(
+                                session_id,
+                                turn_id,
+                                SessionTurnStatus::Failed,
+                                None,
+                                None,
+                                event.created_at,
+                            )
+                            .await;
+                    }
+                    _ => {}
                 }
             }
         }
@@ -393,4 +595,251 @@ fn model_context_window(provider_id: &str, model_id: &str) -> Option<usize> {
 fn estimate_tokens(text: &str) -> usize {
     let chars = text.chars().count();
     (chars + 3) / 4
+}
+
+#[derive(Clone, Debug)]
+struct TurnToolUpdate {
+    tool_call_id: String,
+    tool_kind: Option<String>,
+    title: Option<String>,
+    status: Option<String>,
+    input_json: Option<Value>,
+    output_text: Option<String>,
+}
+
+fn build_turn_tool_update(event: &context_core::models::SessionEvent) -> Option<TurnToolUpdate> {
+    let update = extract_tool_update(&event.payload_json);
+    let tool_call_id = tool_call_id_from_payload(&event.payload_json)?;
+    let tool_kind = update
+        .get("kind")
+        .and_then(|v| v.as_str())
+        .or_else(|| update.pointer("/toolCall/kind").and_then(|v| v.as_str()))
+        .map(|s| s.to_string());
+    let title = update
+        .get("title")
+        .and_then(|v| v.as_str())
+        .or_else(|| update.pointer("/toolCall/title").and_then(|v| v.as_str()))
+        .or_else(|| update.pointer("/toolCall/name").and_then(|v| v.as_str()))
+        .map(|s| s.to_string());
+    let raw_status = update
+        .get("status")
+        .and_then(|v| v.as_str())
+        .or_else(|| update.pointer("/toolCall/status").and_then(|v| v.as_str()));
+    let status = if let Some(raw) = raw_status {
+        Some(normalize_tool_status(raw, event.event_type.clone()))
+    } else if matches!(event.event_type, SessionEventType::ToolResult) {
+        Some("completed".to_string())
+    } else if matches!(event.event_type, SessionEventType::ToolCall) {
+        Some("pending".to_string())
+    } else {
+        None
+    };
+    let input_json = update
+        .pointer("/rawInput")
+        .or_else(|| update.pointer("/toolCall/rawInput"))
+        .or_else(|| update.pointer("/toolCall/input"))
+        .or_else(|| update.pointer("/input"))
+        .or_else(|| update.pointer("/args"))
+        .cloned();
+    let output_text = extract_tool_output_text(update);
+
+    Some(TurnToolUpdate {
+        tool_call_id,
+        tool_kind,
+        title,
+        status,
+        input_json,
+        output_text,
+    })
+}
+
+fn merge_tool_update(
+    prev: Option<&SessionTurnTool>,
+    update: TurnToolUpdate,
+    session_id: context_core::ids::SessionId,
+    turn_id: context_core::ids::TurnId,
+    now: chrono::DateTime<chrono::Utc>,
+) -> SessionTurnTool {
+    let created_at = prev.map(|t| t.created_at).unwrap_or(now);
+    let tool_kind = update
+        .tool_kind
+        .or_else(|| prev.and_then(|t| t.tool_kind.clone()));
+    let title = update.title.or_else(|| prev.and_then(|t| t.title.clone()));
+    let status = update
+        .status
+        .or_else(|| prev.and_then(|t| t.status.clone()));
+    let input_json = update
+        .input_json
+        .or_else(|| prev.and_then(|t| t.input_json.clone()));
+    let output_text = match update.output_text {
+        Some(next) => Some(merge_streaming_text(
+            prev.and_then(|t| t.output_text.as_deref()),
+            &next,
+        )),
+        None => prev.and_then(|t| t.output_text.clone()),
+    };
+    SessionTurnTool {
+        session_id,
+        tool_call_id: update.tool_call_id,
+        turn_id,
+        tool_kind,
+        title,
+        status,
+        input_json,
+        output_text,
+        created_at,
+        updated_at: now,
+    }
+}
+
+fn tool_count_deltas(
+    prev: Option<&SessionTurnTool>,
+    next: &SessionTurnTool,
+) -> (i64, i64, i64, i64, i64) {
+    let prev_bucket = tool_status_bucket(prev.and_then(|t| t.status.as_deref()));
+    let next_bucket = tool_status_bucket(next.status.as_deref());
+
+    let mut delta_total = 0;
+    let mut delta_pending = 0;
+    let mut delta_running = 0;
+    let mut delta_completed = 0;
+    let mut delta_failed = 0;
+
+    if prev.is_none() {
+        delta_total += 1;
+    }
+    if prev_bucket != next_bucket {
+        if let Some(bucket) = prev_bucket {
+            match bucket {
+                "pending" => delta_pending -= 1,
+                "in_progress" => delta_running -= 1,
+                "completed" => delta_completed -= 1,
+                "failed" => delta_failed -= 1,
+                _ => {}
+            }
+        }
+        if let Some(bucket) = next_bucket {
+            match bucket {
+                "pending" => delta_pending += 1,
+                "in_progress" => delta_running += 1,
+                "completed" => delta_completed += 1,
+                "failed" => delta_failed += 1,
+                _ => {}
+            }
+        }
+    }
+
+    (delta_total, delta_pending, delta_running, delta_completed, delta_failed)
+}
+
+fn tool_status_bucket(status: Option<&str>) -> Option<&'static str> {
+    let s = status.unwrap_or("").to_lowercase();
+    match s.as_str() {
+        "pending" | "queued" => Some("pending"),
+        "in_progress" | "inprogress" | "running" => Some("in_progress"),
+        "completed" | "complete" | "ok" | "succeeded" => Some("completed"),
+        "failed" | "error" => Some("failed"),
+        "" => Some("pending"),
+        _ => Some("pending"),
+    }
+}
+
+fn normalize_tool_status(status: &str, event_type: SessionEventType) -> String {
+    let s = status.trim().to_lowercase();
+    if s == "inprogress" || s == "in_progress" || s == "running" {
+        return "in_progress".to_string();
+    }
+    if s == "pending" || s == "queued" {
+        return "pending".to_string();
+    }
+    if s == "completed" || s == "complete" || s == "ok" || s == "succeeded" {
+        return "completed".to_string();
+    }
+    if s == "failed" || s == "error" {
+        return "failed".to_string();
+    }
+    if matches!(event_type, SessionEventType::ToolResult) {
+        return "completed".to_string();
+    }
+    if s.is_empty() {
+        return "pending".to_string();
+    }
+    s
+}
+
+fn extract_tool_update(payload: &Value) -> &Value {
+    payload.get("acp_update").unwrap_or(payload)
+}
+
+fn tool_call_id_from_payload(payload: &Value) -> Option<String> {
+    if let Some(v) = payload.get("tool_call_id").and_then(|v| v.as_str()) {
+        return Some(v.to_string());
+    }
+    let update = extract_tool_update(payload);
+    let direct = update
+        .get("toolCallId")
+        .and_then(|v| v.as_str())
+        .or_else(|| update.get("tool_call_id").and_then(|v| v.as_str()));
+    if let Some(v) = direct {
+        return Some(v.to_string());
+    }
+    let from_raw = update
+        .pointer("/rawInput/call_id")
+        .and_then(|v| v.as_str())
+        .or_else(|| update.pointer("/raw_input/call_id").and_then(|v| v.as_str()));
+    from_raw.map(|v| v.to_string())
+}
+
+fn extract_tool_output_text(update: &Value) -> Option<String> {
+    let direct = update
+        .get("outputText")
+        .and_then(|v| v.as_str())
+        .or_else(|| update.get("output_text").and_then(|v| v.as_str()))
+        .or_else(|| update.pointer("/toolCall/outputText").and_then(|v| v.as_str()))
+        .or_else(|| update.pointer("/toolCall/output_text").and_then(|v| v.as_str()))
+        .or_else(|| update.get("result").and_then(|v| v.as_str()))
+        .or_else(|| update.pointer("/rawOutput/aggregated_output").and_then(|v| v.as_str()))
+        .or_else(|| update.pointer("/rawOutput/output").and_then(|v| v.as_str()));
+    if let Some(v) = direct {
+        let trimmed = v.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+    }
+
+    let blocks = update.get("content").and_then(|v| v.as_array())?;
+    let mut out = String::new();
+    for b in blocks {
+        if let Some(t) = b.get("content").and_then(|c| c.get("text")).and_then(|v| v.as_str()) {
+            out.push_str(t);
+        } else if let Some(t) = b.get("text").and_then(|v| v.as_str()) {
+            out.push_str(t);
+        }
+    }
+    if out.trim().is_empty() {
+        None
+    } else {
+        Some(out.trim().to_string())
+    }
+}
+
+fn merge_streaming_text(prev: Option<&str>, next: &str) -> String {
+    let prev = prev.unwrap_or("");
+    if prev.is_empty() {
+        return next.to_string();
+    }
+    if next.is_empty() {
+        return prev.to_string();
+    }
+    if next.starts_with(prev) {
+        return next.to_string();
+    }
+    if prev.starts_with(next) {
+        return prev.to_string();
+    }
+    if next.len() >= prev.len() {
+        next.to_string()
+    } else {
+        prev.to_string()
+    }
 }
