@@ -20,7 +20,6 @@ import aiderLogo from "../assets/harness-logos/aider.png";
 import cagentLogo from "../assets/harness-logos/cagent.png";
 import codyLogo from "../assets/harness-logos/cody.png";
 import continueLogo from "../assets/harness-logos/continue.png";
-import codeAssistantLogo from "../assets/harness-logos/code-assistant.png";
 import junieLogo from "../assets/harness-logos/junie.png";
 import kiloLogo from "../assets/harness-logos/kilo.png";
 import openhandsLogo from "../assets/harness-logos/openhands.png";
@@ -64,7 +63,6 @@ export const HARNESS_CATALOG: HarnessCatalogEntry[] = [
   { id: "swe-agent", label: "SWE-agent", logoSrc: sweAgentLogo },
   { id: "tabby", label: "Tabby", logoSrc: tabbyLogo },
   { id: "cagent", label: "cagent", logoSrc: cagentLogo },
-  { id: "code-assistant", label: "code-assistant", logoSrc: codeAssistantLogo },
   { id: "kilo", label: "Kilo Code", logoSrc: kiloLogo },
   { id: "cody", label: "Cody", logoSrc: codyLogo },
   { id: "junie", label: "JetBrains Junie", logoSrc: junieLogo },

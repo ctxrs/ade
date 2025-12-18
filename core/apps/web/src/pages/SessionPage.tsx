@@ -1472,7 +1472,6 @@ function WorkbenchComposer({
     if (p === "codex") return "Codex";
     if (p === "claude") return "Claude";
     if (p === "gemini") return "Gemini";
-    if (p === "fake") return "Fake";
     return p.slice(0, 1).toUpperCase() + p.slice(1);
   }, [session?.provider_id]);
 

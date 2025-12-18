@@ -28,7 +28,7 @@ test("workbench: refresh keeps selection, even for older sessions", async ({ pag
   // Choose Fake harness so the test doesn't depend on external agents.
   await page.locator(".wb-new-composer-stack").getByTitle("Harness").click();
   await page.locator(".wb-harness-menu").getByLabel("Search agents").fill("fake");
-  await page.locator(".wb-harness-menu").getByRole("button", { name: "Fake" }).click();
+  await page.locator(".wb-harness-menu").getByRole("button", { name: /fake/i }).click();
   await expect(
     page.locator(".wb-new-composer-stack button[title=\"Harness\"] .wb-switcher-label"),
   ).toHaveText(/fake/i, { timeout: 20000 });

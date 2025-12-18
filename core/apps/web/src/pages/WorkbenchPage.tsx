@@ -639,10 +639,12 @@ export default function WorkbenchPage() {
   );
 
   useEffect(() => {
-    const running = Object.entries(providerInstallsById).flatMap(([providerId, s]) =>
-      s && s.state === "running" ? ([[providerId, s]] as const) : [],
+    // Keep polling after success so we can refresh provider status/options and transition the UI
+    // away from the "100%" install pill promptly.
+    const active = Object.entries(providerInstallsById).flatMap(([providerId, s]) =>
+      s && (s.state === "running" || s.state === "succeeded") ? ([[providerId, s]] as const) : [],
     );
-    if (running.length === 0) return;
+    if (active.length === 0) return;
 
     const stagePct: Record<string, number> = {
       start: 2,
@@ -667,7 +669,7 @@ export default function WorkbenchPage() {
       let needsProviderRefresh = false;
       const completedProviders: string[] = [];
       await Promise.all(
-        running.map(async ([providerId, s]) => {
+        active.map(async ([providerId, s]) => {
           try {
             const info = await getInstall(s.installId);
             const last = info.last_event;
@@ -2634,6 +2636,8 @@ export default function WorkbenchPage() {
                                   <span className="wb-toggle" aria-hidden="true" />
                                 </label>
                               </div>
+
+                              <div className="wb-harness-list">
                               {(() => {
                                 const q = harnessSearch.trim().toLowerCase();
                                 const all = HARNESS_CATALOG;
@@ -2790,6 +2794,7 @@ export default function WorkbenchPage() {
                                   );
                                 });
                               })()}
+                              </div>
                             </div>
                           )}
                         </div>

@@ -28,7 +28,7 @@ test("workbench: deep links + task switching never desync selection", async ({ p
   // Choose Fake harness so the test doesn't depend on external agents.
   await page.locator(".wb-new-composer-stack").getByTitle("Harness").click();
   await page.locator(".wb-harness-menu").getByLabel("Search agents").fill("fake");
-  await page.locator(".wb-harness-menu").getByRole("button", { name: "Fake" }).click();
+  await page.locator(".wb-harness-menu").getByRole("button", { name: /fake/i }).click();
   await expect(page.locator(".wb-new-composer-stack button[title=\"Harness\"] .wb-switcher-label")).toHaveText(/fake/i, {
     timeout: 20000,
   });
@@ -88,4 +88,3 @@ test("workbench: deep links + task switching never desync selection", async ({ p
   await expect(emptyState).toHaveCount(0);
   await expect(page.locator(".wb-session")).toContainText(`done: ${msg1}`, { timeout: 20000 });
 });
-

@@ -27,7 +27,6 @@ const OPENCODE_VERSION: &str = "1.0.150";
 const MISTRAL_VIBE_ACP_VERSION: &str = "1.1.2";
 const KIMI_CLI_VERSION: &str = "0.62";
 const GOOSE_VERSION: &str = "stable";
-const CODE_ASSISTANT_VERSION: &str = "0.1.20";
 
 const TYPESCRIPT_LS_VERSION: &str = "5.1.3";
 const TYPESCRIPT_VERSION: &str = "5.9.3";
@@ -113,7 +112,6 @@ pub fn is_supported_managed_provider(provider_id: &str) -> bool {
             | "qwen"
             | "auggie"
             | "cagent"
-            | "code-assistant"
             | "opencode"
             | "mistral"
             | "goose"
@@ -1355,49 +1353,6 @@ async fn install_provider_impl(
                         "acp".to_string(),
                         cfg_path.to_string_lossy().to_string(),
                     ],
-                    &mut stage,
-                )
-                .await?
-            }
-            "code-assistant" => {
-                let target = zed_target_key().context("resolving platform target")?;
-                let (url, bin_path) = match target {
-                    "darwin-aarch64" => (
-                        format!("https://github.com/stippi/code-assistant/releases/download/v{CODE_ASSISTANT_VERSION}/code-assistant-macos-aarch64.zip"),
-                        "code-assistant",
-                    ),
-                    "darwin-x86_64" => (
-                        format!("https://github.com/stippi/code-assistant/releases/download/v{CODE_ASSISTANT_VERSION}/code-assistant-macos-x86_64.zip"),
-                        "code-assistant",
-                    ),
-                    "linux-x86_64" => (
-                        format!("https://github.com/stippi/code-assistant/releases/download/v{CODE_ASSISTANT_VERSION}/code-assistant-linux-x86_64.zip"),
-                        "code-assistant",
-                    ),
-                    "windows-x86_64" => (
-                        format!("https://github.com/stippi/code-assistant/releases/download/v{CODE_ASSISTANT_VERSION}/code-assistant-windows-x86_64.zip"),
-                        "code-assistant.exe",
-                    ),
-                    other => anyhow::bail!(
-                        "unsupported code-assistant platform: {other} (no binary published for this platform)"
-                    ),
-                };
-
-                error_package = Some(url.clone());
-                error_version = Some(CODE_ASSISTANT_VERSION.to_string());
-                error_install_dir_rel = Some(format!(
-                    "providers/agent-servers/{}/{}",
-                    provider_id, CODE_ASSISTANT_VERSION
-                ));
-                install_managed_archive_provider(
-                    state,
-                    install_id,
-                    &provider_id,
-                    CODE_ASSISTANT_VERSION,
-                    &url,
-                    AgentServerArchive::Zip,
-                    bin_path,
-                    vec!["acp".to_string()],
                     &mut stage,
                 )
                 .await?

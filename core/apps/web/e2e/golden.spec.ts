@@ -28,7 +28,7 @@ test("golden path: workspace → task → session → message", async ({ page })
   // Workbench UI: choose Fake harness so the test doesn't depend on external agents.
   await page.locator(".wb-new-composer-stack").getByTitle("Harness").click();
   await page.locator(".wb-harness-menu").getByLabel("Search agents").fill("fake");
-  await page.locator(".wb-harness-menu").getByRole("button", { name: "Fake" }).click();
+  await page.locator(".wb-harness-menu").getByRole("button", { name: /fake/i }).click();
 
   await page.locator(".wb-new-composer-stack textarea.wb-composer-textarea").fill("hello");
   await page.locator(".wb-new-composer-stack button[aria-label=\"Send\"]").click();
