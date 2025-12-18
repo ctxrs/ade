@@ -1,0 +1,235 @@
+import { getDaemonBaseUrl } from "../api/client";
+import { clearWorkbenchSelectionV1, loadWorkbenchSelectionV1, uiStateDelete, uiStateGet, uiStateSet } from "../state/uiStateStore";
+import type {
+  LayoutNode,
+  PersistedWorkbenchDraftV1,
+  PersistedWorkbenchWindowV1,
+  SplitDirection,
+  WorkbenchDraft,
+  WorkbenchScrollState,
+  WorkbenchTab,
+} from "./types";
+
+const WINDOW_DB_VERSION = 1 as const;
+const DRAFT_DB_VERSION = 1 as const;
+
+export function workbenchDaemonKey(): string {
+  return String(getDaemonBaseUrl() || window.location.origin || "unknown").trim() || "unknown";
+}
+
+function safeKeyPart(v: string): string {
+  return encodeURIComponent(v);
+}
+
+export function workbenchWindowKeyV1(workspaceId: string, windowId: string): string {
+  return `wb.window.v${WINDOW_DB_VERSION}.${safeKeyPart(workbenchDaemonKey())}.${safeKeyPart(workspaceId)}.${safeKeyPart(windowId)}`;
+}
+
+export function workbenchDraftKeyV1(workspaceId: string, key: string): string {
+  return `wb.draft.v${DRAFT_DB_VERSION}.${safeKeyPart(workbenchDaemonKey())}.${safeKeyPart(workspaceId)}.${safeKeyPart(key)}`;
+}
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return !!v && typeof v === "object";
+}
+
+function isString(v: unknown): v is string {
+  return typeof v === "string";
+}
+
+function isNumber(v: unknown): v is number {
+  return typeof v === "number" && Number.isFinite(v);
+}
+
+function isBoolean(v: unknown): v is boolean {
+  return typeof v === "boolean";
+}
+
+function decodeSplitDirection(v: unknown): SplitDirection | null {
+  if (v === "horizontal" || v === "vertical") return v;
+  return null;
+}
+
+function decodeTab(raw: unknown): WorkbenchTab | null {
+  if (!isRecord(raw)) return null;
+  if (!isString(raw.id) || !raw.id.trim()) return null;
+  const kind = raw.kind;
+  if (kind === "new_task") {
+    const titleOverride = isString(raw.titleOverride) ? raw.titleOverride : undefined;
+    const viewMode =
+      raw.viewMode === "compact" || raw.viewMode === "normal" || raw.viewMode === "verbose" ? raw.viewMode : undefined;
+    return { id: raw.id, kind: "new_task", titleOverride, viewMode };
+  }
+  if (kind === "track") {
+    const ref = raw.ref;
+    if (!isRecord(ref)) return null;
+    if (!isString(ref.taskId) || !ref.taskId.trim()) return null;
+    const trackId = ref.trackId === null ? null : isString(ref.trackId) ? ref.trackId : null;
+    const sessionId = ref.sessionId === null ? null : isString(ref.sessionId) ? ref.sessionId : null;
+    const titleOverride = isString(raw.titleOverride) ? raw.titleOverride : undefined;
+    const viewMode =
+      raw.viewMode === "compact" || raw.viewMode === "normal" || raw.viewMode === "verbose" ? raw.viewMode : undefined;
+    return {
+      id: raw.id,
+      kind: "track",
+      ref: { taskId: ref.taskId, trackId, sessionId },
+      titleOverride,
+      viewMode,
+    };
+  }
+  return null;
+}
+
+function decodeLayoutNode(raw: unknown, depth: number): LayoutNode | null {
+  if (depth > 64) return null;
+  if (!isRecord(raw)) return null;
+  const kind = raw.kind;
+  if (kind === "split") {
+    if (!isString(raw.id) || !raw.id.trim()) return null;
+    const direction = decodeSplitDirection(raw.direction);
+    if (!direction) return null;
+    const ratioRaw = raw.ratio;
+    const ratio = isNumber(ratioRaw) ? ratioRaw : 0.5;
+    const clampedRatio = Math.min(0.9, Math.max(0.1, ratio));
+    const first = decodeLayoutNode(raw.first, depth + 1);
+    const second = decodeLayoutNode(raw.second, depth + 1);
+    if (!first || !second) return null;
+    return { kind: "split", id: raw.id, direction, ratio: clampedRatio, first, second };
+  }
+  if (kind === "leaf") {
+    if (!isString(raw.id) || !raw.id.trim()) return null;
+    const tabsRaw = raw.tabs;
+    if (!Array.isArray(tabsRaw)) return null;
+    const tabs: WorkbenchTab[] = [];
+    for (const t of tabsRaw) {
+      const decoded = decodeTab(t);
+      if (decoded) tabs.push(decoded);
+    }
+    if (tabs.length === 0) return null;
+    const activeTabIdRaw = raw.activeTabId;
+    const activeTabId = isString(activeTabIdRaw) ? activeTabIdRaw : "";
+    const activeExists = tabs.some((t) => t.id === activeTabId);
+    return { kind: "leaf", id: raw.id, tabs, activeTabId: activeExists ? activeTabId : tabs[0].id };
+  }
+  return null;
+}
+
+function decodeScrollState(raw: unknown): WorkbenchScrollState | null {
+  if (!isRecord(raw)) return null;
+  const stickToBottom = isBoolean(raw.stickToBottom) ? raw.stickToBottom : null;
+  if (stickToBottom === null) return null;
+  const anchorItemId = raw.anchorItemId === null ? null : isString(raw.anchorItemId) ? raw.anchorItemId : null;
+  const updatedAtMs = isNumber(raw.updatedAtMs) ? raw.updatedAtMs : 0;
+  return { stickToBottom, anchorItemId, updatedAtMs };
+}
+
+export function decodePersistedWorkbenchWindowV1(raw: unknown): PersistedWorkbenchWindowV1 | null {
+  if (!isRecord(raw)) return null;
+  if (raw.v !== 1) return null;
+  const layout = decodeLayoutNode(raw.layout, 0);
+  if (!layout) return null;
+  if (!isString(raw.focusedLeafId) || !raw.focusedLeafId.trim()) return null;
+  const scrollByKeyRaw = raw.scrollByKey;
+  const scrollByKey: Record<string, WorkbenchScrollState | undefined> = {};
+  if (isRecord(scrollByKeyRaw)) {
+    for (const [k, v] of Object.entries(scrollByKeyRaw)) {
+      if (!k) continue;
+      const decoded = decodeScrollState(v);
+      if (decoded) scrollByKey[k] = decoded;
+    }
+  }
+  return { v: 1, layout, focusedLeafId: raw.focusedLeafId, scrollByKey };
+}
+
+export async function loadWorkbenchWindowV1(workspaceId: string, windowId: string): Promise<PersistedWorkbenchWindowV1 | null> {
+  const raw = await uiStateGet(workbenchWindowKeyV1(workspaceId, windowId));
+  return decodePersistedWorkbenchWindowV1(raw);
+}
+
+export async function saveWorkbenchWindowV1(workspaceId: string, windowId: string, win: PersistedWorkbenchWindowV1): Promise<void> {
+  await uiStateSet(workbenchWindowKeyV1(workspaceId, windowId), win);
+}
+
+export async function deleteWorkbenchWindowV1(workspaceId: string, windowId: string): Promise<void> {
+  await uiStateDelete(workbenchWindowKeyV1(workspaceId, windowId));
+}
+
+export function decodePersistedWorkbenchDraftV1(raw: unknown): PersistedWorkbenchDraftV1 | null {
+  if (!isRecord(raw)) return null;
+  if (raw.v !== 1) return null;
+  if (!isString(raw.key) || !raw.key.trim()) return null;
+  const draftRaw = raw.draft;
+  if (!isRecord(draftRaw)) return null;
+  if (!isString(draftRaw.text)) return null;
+  const modeId = isString(draftRaw.modeId) ? draftRaw.modeId : "default";
+  if (modeId !== "default" && modeId !== "research" && modeId !== "plan" && modeId !== "review") return null;
+  const updatedAtMs = isNumber(draftRaw.updatedAtMs) ? draftRaw.updatedAtMs : 0;
+  const draft: WorkbenchDraft = { text: draftRaw.text, modeId, updatedAtMs };
+  return { v: 1, key: raw.key, draft };
+}
+
+export async function loadWorkbenchDraftV1(workspaceId: string, key: string): Promise<WorkbenchDraft | null> {
+  const raw = await uiStateGet(workbenchDraftKeyV1(workspaceId, key));
+  const decoded = decodePersistedWorkbenchDraftV1(raw);
+  return decoded?.draft ?? null;
+}
+
+export async function saveWorkbenchDraftV1(workspaceId: string, key: string, draft: WorkbenchDraft): Promise<void> {
+  const payload: PersistedWorkbenchDraftV1 = { v: 1, key, draft };
+  await uiStateSet(workbenchDraftKeyV1(workspaceId, key), payload);
+}
+
+export async function deleteWorkbenchDraftV1(workspaceId: string, key: string): Promise<void> {
+  await uiStateDelete(workbenchDraftKeyV1(workspaceId, key));
+}
+
+export async function migrateLegacySelectionToWindowV1(opts: {
+  workspaceId: string;
+  windowId: string;
+  defaultWindow: PersistedWorkbenchWindowV1;
+}): Promise<{ migrated: boolean; window: PersistedWorkbenchWindowV1 }> {
+  const { workspaceId, windowId, defaultWindow } = opts;
+  const legacy = await loadWorkbenchSelectionV1(workspaceId).catch(() => null);
+  const legacyTaskId = String(legacy?.taskId ?? "").trim();
+  if (!legacyTaskId) return { migrated: false, window: defaultWindow };
+  const legacyTrackId = legacy?.trackId ?? null;
+  const legacySessionId = legacy?.sessionId ?? null;
+
+  const firstLeaf = findFirstLeaf(defaultWindow.layout);
+  if (!firstLeaf) return { migrated: false, window: defaultWindow };
+
+  const next: PersistedWorkbenchWindowV1 = {
+    ...defaultWindow,
+    layout: replaceLeaf(defaultWindow.layout, firstLeaf.id, (leaf) => {
+      const existing = leaf.tabs[0];
+      const tab: WorkbenchTab = {
+        id: existing?.id ?? crypto.randomUUID(),
+        kind: "track",
+        ref: { taskId: legacyTaskId, trackId: legacyTrackId, sessionId: legacySessionId },
+      };
+      return { ...leaf, tabs: [tab], activeTabId: tab.id };
+    }),
+    focusedLeafId: firstLeaf.id,
+  };
+
+  await saveWorkbenchWindowV1(workspaceId, windowId, next).catch(() => {});
+  await clearWorkbenchSelectionV1(workspaceId).catch(() => {});
+  return { migrated: true, window: next };
+}
+
+function findFirstLeaf(node: LayoutNode): Extract<LayoutNode, { kind: "leaf" }> | null {
+  if (node.kind === "leaf") return node;
+  return findFirstLeaf(node.first) ?? findFirstLeaf(node.second);
+}
+
+function replaceLeaf(
+  node: LayoutNode,
+  leafId: string,
+  fn: (leaf: Extract<LayoutNode, { kind: "leaf" }>) => Extract<LayoutNode, { kind: "leaf" }>,
+): LayoutNode {
+  if (node.kind === "leaf") {
+    if (node.id !== leafId) return node;
+    return fn(node);
+  }
+  return { ...node, first: replaceLeaf(node.first, leafId, fn), second: replaceLeaf(node.second, leafId, fn) };
+}

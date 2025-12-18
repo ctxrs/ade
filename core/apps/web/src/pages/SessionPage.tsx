@@ -133,10 +133,22 @@ export function SessionView({
   sessionId,
   variant,
   showDiffPane,
+  draft,
+  draftUpdatedAtMs,
+  onDraftChange,
+  onModeChange,
+  scrollState,
+  onScrollStateChange,
 }: {
   sessionId: string;
   variant: SessionViewVariant;
   showDiffPane: boolean;
+  draft?: { text: string; modeId: WorkbenchModeId } | null;
+  draftUpdatedAtMs?: number | null;
+  onDraftChange?: ((text: string) => void) | null;
+  onModeChange?: ((modeId: WorkbenchModeId) => void) | null;
+  scrollState?: { stickToBottom: boolean; anchorItemId: string | null } | null;
+  onScrollStateChange?: ((next: { stickToBottom: boolean; anchorItemId: string | null }) => void) | null;
 }) {
   const id = sessionId;
   const supervisor = useSessionSupervisor();
@@ -156,10 +168,10 @@ export function SessionView({
     }
   }, [id]);
   const perfStartRef = useRef<number>(0);
-  const [input, setInput] = useState("");
+  const [inputInternal, setInputInternal] = useState("");
   const [draftAttachments, setDraftAttachments] = useState<MessageAttachment[]>([]);
   const [dropActive, setDropActive] = useState(false);
-  const [workbenchMode, setWorkbenchMode] = useState<WorkbenchModeId>("default");
+  const [workbenchModeInternal, setWorkbenchModeInternal] = useState<WorkbenchModeId>("default");
   const [sendBusy, setSendBusy] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [atBottom, setAtBottom] = useState(true);
@@ -174,11 +186,48 @@ export function SessionView({
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const didInitialScrollRef = useRef(false);
+  const lastScrollPersistedRef = useRef<{ stickToBottom: boolean; anchorItemId: string | null } | null>(null);
   const dropHideTimerRef = useRef<number | null>(null);
+
+  const input = variant === "workbench" ? (draft?.text ?? "") : inputInternal;
+  const setInput = useCallback(
+    (next: string) => {
+      if (variant === "workbench") {
+        onDraftChange?.(next);
+        return;
+      }
+      setInputInternal(next);
+    },
+    [onDraftChange, variant],
+  );
+  const workbenchMode = variant === "workbench" ? (draft?.modeId ?? "default") : workbenchModeInternal;
+  const setWorkbenchMode = useCallback(
+    (next: WorkbenchModeId) => {
+      if (variant === "workbench") {
+        onModeChange?.(next);
+        return;
+      }
+      setWorkbenchModeInternal(next);
+    },
+    [onModeChange, variant],
+  );
+
+  const persistScroll = useCallback(
+    (next: { stickToBottom: boolean; anchorItemId: string | null }) => {
+      if (!onScrollStateChange) return;
+      const prev = lastScrollPersistedRef.current;
+      if (prev && prev.stickToBottom === next.stickToBottom && prev.anchorItemId === next.anchorItemId) return;
+      lastScrollPersistedRef.current = next;
+      onScrollStateChange(next);
+    },
+    [onScrollStateChange],
+  );
+
   useOpenSession(id ?? "", { watchDiff: true });
 
   useEffect(() => {
     didInitialScrollRef.current = false;
+    lastScrollPersistedRef.current = null;
     setAtBottom(true);
     setHasNewActivity(false);
     setExpandedTurnHeaders({});
@@ -188,6 +237,8 @@ export function SessionView({
     setAuthMethodId("");
     setAuthError(null);
     setOptimisticAskAnswered({});
+    if (variant === "workbench") {
+    }
   }, [id]);
 
   const [dictationSettings, setDictationSettings] = useState<DictationSettings | null>(null);
@@ -265,11 +316,18 @@ export function SessionView({
   }, []);
 
   const stopDictation = useCallback(async (): Promise<string> => {
-    setDictationRecording(false);
-
     const ws = dictationWsRef.current;
-
     const mic = dictationMicRef.current;
+    const base = dictationBaseRef.current;
+    const committed = dictationCommittedRef.current;
+    const interim = dictationInterimRef.current;
+
+    const hasActiveDictation =
+      dictationRecording || !!mic || (ws ? ws.readyState !== WebSocket.CLOSED : false) || !!base || !!committed || !!interim;
+
+    if (!hasActiveDictation) return input;
+
+    setDictationRecording(false);
     dictationMicRef.current = null;
 
     try {
@@ -280,17 +338,14 @@ export function SessionView({
       ws?.send(JSON.stringify({ type: "stop" }));
     } catch { }
 
-    const base = dictationBaseRef.current;
-    const committed = dictationCommittedRef.current;
-    const interim = dictationInterimRef.current;
     const next = appendSegment(appendSegment(base, committed), interim);
-    setInput(next);
+    if (next !== input) setInput(next);
     dictationInterimRef.current = "";
     dictationReadyRef.current = false;
     dictationAudioStartedRef.current = false;
 
     return next;
-  }, []);
+  }, [dictationRecording, input, setInput]);
 
   const startDictation = useCallback(async () => {
     setDictationError(null);
@@ -403,11 +458,16 @@ export function SessionView({
     }
   }, [dictationSettings, dictationRecording, input, stopDictation]);
 
+  const stopDictationRef = useRef(stopDictation);
+  useEffect(() => {
+    stopDictationRef.current = stopDictation;
+  }, [stopDictation]);
+
   useEffect(() => {
     return () => {
-      stopDictation().catch(() => { });
+      stopDictationRef.current().catch(() => { });
     };
-  }, [stopDictation]);
+  }, []);
 
   useEffect(() => {
     if (!dictationDebugEnabled) return;
@@ -465,22 +525,26 @@ export function SessionView({
   }, [wbGroups]);
 
   useEffect(() => {
-    if (variant === "workbench") {
-      if (wbListItems.length === 0) return;
-      if (didInitialScrollRef.current) return;
-      requestAnimationFrame(() => {
-        virtuosoRef.current?.scrollToIndex({ index: wbListItems.length - 1, align: "end" });
-        didInitialScrollRef.current = true;
-      });
-      return;
-    }
-    if (threadItems.length === 0) return;
+    const items = variant === "workbench" ? wbListItems : threadItems;
+    if (items.length === 0) return;
     if (didInitialScrollRef.current) return;
+
+    const restoreAnchorId =
+      scrollState && !scrollState.stickToBottom ? (scrollState.anchorItemId ?? null) : null;
+
     requestAnimationFrame(() => {
-      virtuosoRef.current?.scrollToIndex({ index: threadItems.length - 1, align: "end" });
+      if (restoreAnchorId) {
+        const idx = items.findIndex((it) => it?.id === restoreAnchorId);
+        if (idx >= 0) {
+          virtuosoRef.current?.scrollToIndex({ index: idx, align: "start" });
+          didInitialScrollRef.current = true;
+          return;
+        }
+      }
+      virtuosoRef.current?.scrollToIndex({ index: items.length - 1, align: "end" });
       didInitialScrollRef.current = true;
     });
-  }, [id, variant, wbListItems.length, threadItems.length]);
+  }, [id, scrollState?.anchorItemId, scrollState?.stickToBottom, threadItems.length, variant, wbListItems.length]);
 
   const contextIndicator = useMemo(() => {
     const done = [...events]
@@ -1109,6 +1173,13 @@ export function SessionView({
                   atBottomStateChange={(b) => {
                     setAtBottom(b);
                     if (b) setHasNewActivity(false);
+                    if (b) persistScroll({ stickToBottom: true, anchorItemId: null });
+                  }}
+                  rangeChanged={(range) => {
+                    if (atBottom) return;
+                    const item = wbListItems[range.startIndex];
+                    if (!item) return;
+                    persistScroll({ stickToBottom: false, anchorItemId: item.id ?? null });
                   }}
                   components={{
                     List: forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>((props, ref) => (
@@ -1155,16 +1226,23 @@ export function SessionView({
 
           return (
             <div className="thread-stack">
-	                  <Virtuoso
-	                style={virtuosoStyle}
-	                data={threadItems}
-	                ref={virtuosoRef}
-	                followOutput="auto"
-	                computeItemKey={(index, item) => item?.id ?? `i:${index}`}
-	                atBottomStateChange={(b) => {
-	                  setAtBottom(b);
-	                  if (b) setHasNewActivity(false);
-	                }}
+              <Virtuoso
+                style={virtuosoStyle}
+                data={threadItems}
+                ref={virtuosoRef}
+                followOutput="auto"
+                computeItemKey={(index, item) => item?.id ?? `i:${index}`}
+                atBottomStateChange={(b) => {
+                  setAtBottom(b);
+                  if (b) setHasNewActivity(false);
+                  if (b) persistScroll({ stickToBottom: true, anchorItemId: null });
+                }}
+                rangeChanged={(range) => {
+                  if (atBottom) return;
+                  const item = threadItems[range.startIndex];
+                  if (!item) return;
+                  persistScroll({ stickToBottom: false, anchorItemId: item.id ?? null });
+                }}
                 components={{
                   List: forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>((props, ref) => (
                     <div {...props} ref={ref} role="list" />
