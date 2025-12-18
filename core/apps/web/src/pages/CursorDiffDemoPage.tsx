@@ -5,9 +5,10 @@ import { DiffReviewPane } from "../components/DiffReviewPane";
 export default function CursorDiffDemoPage() {
   const [params] = useSearchParams();
   const state = params.get("state") ?? "1";
+  const extraLines = clampInt(params.get("lines"), 0, 4000);
 
-  const { fullDiff, cursorMetaOnlyDiff } = useMemo(() => buildCursorDemoDiffs(), []);
-  const diff = state === "1" ? fullDiff : cursorMetaOnlyDiff;
+  const { fullDiff, cursorMetaOnlyDiff, longDiff } = useMemo(() => buildCursorDemoDiffs(extraLines), [extraLines]);
+  const diff = state === "big" ? longDiff : state === "1" ? fullDiff : cursorMetaOnlyDiff;
 
   return (
     <div className="cursor-demo">
@@ -38,7 +39,13 @@ export default function CursorDiffDemoPage() {
   );
 }
 
-function buildCursorDemoDiffs(): { fullDiff: string; cursorMetaOnlyDiff: string } {
+function clampInt(value: string | null, min: number, max: number): number {
+  const parsed = Number.parseInt(String(value ?? ""), 10);
+  if (!Number.isFinite(parsed)) return min;
+  return Math.min(max, Math.max(min, parsed));
+}
+
+function buildCursorDemoDiffs(extraLines: number): { fullDiff: string; cursorMetaOnlyDiff: string; longDiff: string } {
   const header = (path: string, added: number) => `diff --git a/dev/null b/${path}
 new file mode 100644
 index 0000000..e69de29
@@ -55,6 +62,8 @@ ${lines.map((l) => `+${l}`).join("\n")}
   const helloTxt = newFile("hello.txt", ["Hello, World!", "", ""]);
   const helloSh = newFile("hello.sh", ["#!/bin/bash", 'echo "Hello, World!"', "", ""]);
   const helloMd = newFile("hello.md", ["# Hello, World!", "", "Hello, World!", ""]);
+  const longLines = Array.from({ length: extraLines }, (_v, i) => `line ${String(i + 1).padStart(4, "0")}: ` + "x".repeat(80));
+  const longDiff = newFile("big.txt", longLines);
 
   const cursorMeta = `diff --git a/cursor-meta.json b/cursor-meta.json
 index 1111111..2222222 100644
@@ -74,5 +83,5 @@ index 1111111..2222222 100644
 `;
 
   const fullDiff = [helloPy, helloJs, helloTxt, helloSh, helloMd, cursorMeta].join("\n");
-  return { fullDiff, cursorMetaOnlyDiff: cursorMeta };
+  return { fullDiff, cursorMetaOnlyDiff: cursorMeta, longDiff };
 }

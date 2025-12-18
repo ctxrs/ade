@@ -406,9 +406,11 @@ function finalizeFile(
 function estimateDiffHeightPx(file: DiffFile): number {
   const visibleLines = Math.max(3, file.renderText ? file.renderText.split("\n").length : 0);
   const lineHeight = 22;
-  const topBottomPadding = 18;
-  const max = 580;
-  return Math.min(max, visibleLines * lineHeight + topBottomPadding);
+  // Expand the editor to the full diff height so scrolling happens at the page/container level,
+  // not inside the diff editor.
+  const paddingTopBottom = 20; // matches Monaco options padding { top: 10, bottom: 10 }
+  const safetyLines = 2; // avoid off-by-one vertical scrolling inside Monaco
+  return (visibleLines + safetyLines) * lineHeight + paddingTopBottom;
 }
 
 function fileAccentClass(file: DiffFile): string {
@@ -431,7 +433,12 @@ function DecoratedDiffEditor({ file }: { file: DiffFile }) {
       options={{
         readOnly: true,
         minimap: { enabled: false },
-        scrollbar: { vertical: "hidden", horizontal: "hidden" },
+        scrollbar: {
+          vertical: "hidden",
+          horizontal: "hidden",
+          handleMouseWheel: false,
+          alwaysConsumeMouseWheel: false,
+        },
         scrollBeyondLastLine: false,
         renderOverviewRuler: false,
         overviewRulerLanes: 0,
