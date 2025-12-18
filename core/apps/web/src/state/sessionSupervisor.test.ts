@@ -11,13 +11,13 @@ vi.mock("../api/client", () => {
     getSession: vi.fn(),
     listQueue: vi.fn(),
     listMessages: vi.fn(),
-    listSessionEvents: vi.fn(),
+    listSessionEventsTail: vi.fn(),
     listSessionEventsPage: vi.fn(),
     trackDiff: vi.fn(async () => ({ diff: "" })),
   };
 });
 
-import { getSession, listMessages, listQueue, listSessionEvents, listSessionEventsPage } from "../api/client";
+import { getSession, listMessages, listQueue, listSessionEventsTail, listSessionEventsPage } from "../api/client";
 
 const mkSession = (sessionId: string, trackId: string): Session => ({
   id: { 0: sessionId },
@@ -52,7 +52,7 @@ describe("SessionSupervisor", () => {
     const trackId = "track-1";
 
     (getSession as any).mockResolvedValue(mkSession(sessionId, trackId));
-    (listSessionEvents as any).mockResolvedValue([]);
+    (listSessionEventsTail as any).mockResolvedValue([]);
     (listQueue as any).mockResolvedValue([]);
 
     const initialMessages: Message[] = [
@@ -85,6 +85,7 @@ describe("SessionSupervisor", () => {
 
     (listSessionEventsPage as any).mockResolvedValue([
       {
+        seq: 1,
         id: { 0: "e1" },
         session_id: { 0: sessionId },
         event_type: "done",
@@ -109,7 +110,7 @@ describe("SessionSupervisor", () => {
     const trackId = "track-1";
 
     (getSession as any).mockResolvedValue(mkSession(sessionId, trackId));
-    (listSessionEvents as any).mockResolvedValue([]);
+    (listSessionEventsTail as any).mockResolvedValue([]);
     (listQueue as any).mockResolvedValue([]);
 
     const initialMessages: Message[] = [
@@ -142,6 +143,7 @@ describe("SessionSupervisor", () => {
 
     (listSessionEventsPage as any).mockResolvedValue([
       {
+        seq: 2,
         id: { 0: "e1" },
         session_id: { 0: sessionId },
         event_type: "assistant_complete",
@@ -167,7 +169,7 @@ describe("SessionSupervisor", () => {
     const trackId = "track-1";
 
     (getSession as any).mockResolvedValue(mkSession(sessionId, trackId));
-    (listSessionEvents as any).mockResolvedValue([]);
+    (listSessionEventsTail as any).mockResolvedValue([]);
     (listSessionEventsPage as any).mockResolvedValue([]);
     (listQueue as any).mockResolvedValue([]);
 
@@ -257,6 +259,7 @@ describe("SessionSupervisor", () => {
       const frame = {
         text: async () =>
           JSON.stringify({
+            seq: 3,
             id: { 0: "e1" },
             session_id: { 0: sessionId },
             event_type: "assistant_complete",

@@ -11,7 +11,7 @@ use chrono::Utc;
 use directories::BaseDirs;
 use fs2::FileExt;
 use serde_json::json;
-use tokio::sync::{broadcast, mpsc, Mutex};
+use tokio::sync::{broadcast, mpsc, watch, Mutex};
 
 use context_core::ids::{SessionId, WorkspaceId, WorktreeId};
 use context_core::models::{Session, SessionEvent};
@@ -68,6 +68,7 @@ pub struct AppState {
     pub shutdown_tx: broadcast::Sender<()>,
     schedulers: Mutex<HashMap<SessionId, mpsc::Sender<SchedulerCommand>>>,
     broadcasters: Mutex<HashMap<SessionId, broadcast::Sender<SessionEvent>>>,
+    session_event_heads: Mutex<HashMap<SessionId, watch::Sender<i64>>>,
     global_broadcaster: broadcast::Sender<SessionEvent>,
     lsp_diag_broadcaster: broadcast::Sender<serde_json::Value>,
     lsp_diag_forwarders: Mutex<HashSet<String>>,
@@ -173,6 +174,7 @@ impl AppState {
             shutdown_tx,
             schedulers: Mutex::new(HashMap::new()),
             broadcasters: Mutex::new(HashMap::new()),
+            session_event_heads: Mutex::new(HashMap::new()),
             global_broadcaster,
             lsp_diag_broadcaster,
             lsp_diag_forwarders: Mutex::new(HashSet::new()),
@@ -208,6 +210,16 @@ impl AppState {
             .clone()
     }
 
+    pub async fn subscribe_session_event_head(&self, session_id: SessionId) -> watch::Receiver<i64> {
+        let mut map = self.session_event_heads.lock().await;
+        if let Some(tx) = map.get(&session_id) {
+            return tx.subscribe();
+        }
+        let (tx, rx) = watch::channel::<i64>(0);
+        map.insert(session_id, tx);
+        rx
+    }
+
     pub fn global_broadcaster(&self) -> broadcast::Sender<SessionEvent> {
         self.global_broadcaster.clone()
     }
@@ -219,7 +231,13 @@ impl AppState {
     pub async fn publish_event(&self, event: SessionEvent) {
         let tx = self.get_broadcaster(event.session_id).await;
         let _ = tx.send(event.clone());
-        let _ = self.global_broadcaster.send(event);
+        let _ = self.global_broadcaster.send(event.clone());
+        let mut map = self.session_event_heads.lock().await;
+        let sender = map.entry(event.session_id).or_insert_with(|| {
+            let (tx, _rx) = watch::channel::<i64>(0);
+            tx
+        });
+        let _ = sender.send(event.seq);
     }
 
     pub async fn ensure_lsp_diagnostics_forwarder(self: &Arc<Self>, root: PathBuf, lang: LspLanguage) {

@@ -140,7 +140,7 @@ edition = "2021"
     let sid_str = session.id.0.to_string();
     ws_stream
         .send(tokio_tungstenite::tungstenite::Message::Text(
-            json!({"type":"set","session_ids":[sid_str.clone()]}).to_string().into(),
+            json!({"type":"set","sessions":[{"session_id":sid_str.clone(),"after_seq":0}]}).to_string().into(),
         ))
         .await
         .unwrap();

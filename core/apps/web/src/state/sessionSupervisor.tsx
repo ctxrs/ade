@@ -6,8 +6,8 @@ import {
   idToString,
   listQueue,
   listMessages,
-  listSessionEvents,
   listSessionEventsPage,
+  listSessionEventsTail,
   Session,
   SessionEvent,
   Message,
@@ -31,7 +31,7 @@ export type SessionCacheEntry = {
   queue: Message[];
   diff?: string;
   diagnosticsByPath?: Record<string, any[]>;
-  lastEventId?: string;
+  lastEventSeq?: number;
   loading: boolean;
   error?: string;
   subscribed: boolean;
@@ -47,7 +47,7 @@ type InternalEntry = SessionCacheEntry & {
   wantDiffCount: number;
   nextDiffPollAtMs: number;
   warmUntilMs: number;
-  eventIdSet: Set<string>;
+  seqSet: Set<number>;
   eventsHydrated: boolean;
   trackId?: string;
   diagnosticsByPath: Record<string, any[]>;
@@ -161,7 +161,7 @@ export class SessionSupervisor {
         queue: e.queue,
         diff: e.diff,
         diagnosticsByPath: e.diagnosticsByPath,
-        lastEventId: e.lastEventId,
+        lastEventSeq: e.lastEventSeq,
         loading: e.loading,
         error: e.error,
         subscribed: e.subscribed,
@@ -196,7 +196,7 @@ export class SessionSupervisor {
       queue: [],
       diff: undefined,
       diagnosticsByPath: {},
-      lastEventId: undefined,
+      lastEventSeq: undefined,
       loading: true,
       error: undefined,
       subscribed: false,
@@ -205,7 +205,7 @@ export class SessionSupervisor {
       wantDiffCount: 0,
       nextDiffPollAtMs: 0,
       warmUntilMs: Date.now() + WARM_TTL_MS,
-      eventIdSet: new Set(),
+      seqSet: new Set(),
       eventsHydrated: false,
       trackId: undefined,
       fetching: { session: false, events: false, messages: false, queue: false, diff: false },
@@ -220,7 +220,9 @@ export class SessionSupervisor {
     const ids: string[] = [];
     for (const [id, e] of this.entries) {
       const keepWarm = e.refCount > 0 || now < e.warmUntilMs;
-      if (keepWarm) ids.push(id);
+      // Only subscribe once we have a baseline cursor (tail hydration); otherwise we risk
+      // replaying an unbounded history over the stream.
+      if (keepWarm && e.eventsHydrated) ids.push(id);
     }
     return ids;
   }
@@ -246,9 +248,6 @@ export class SessionSupervisor {
     const entry = this.ensureEntry(sessionId);
 
     const needSession = !entry.session && !entry.fetching.session;
-    // Always hydrate events at least once via the full events endpoint.
-    // WebSocket/backfill can race and populate a partial event list that may miss prior user_message events,
-    // which would make the conversation header appear to “skip” a user turn.
     const needEvents = !entry.eventsHydrated && !entry.fetching.events;
     const needMessages = entry.messages.length === 0 && !entry.fetching.messages;
     const needQueue = entry.queue.length === 0 && !entry.fetching.queue;
@@ -272,7 +271,8 @@ export class SessionSupervisor {
 
       if (needEvents) {
         entry.fetching.events = true;
-        const evs = await listSessionEvents(sessionId);
+        // Hydrate with a bounded tail; the WS stream is resumable from the last seen seq.
+        const evs = await listSessionEventsTail(sessionId, MAX_EVENTS_PER_SESSION);
         this.upsertEvents(entry, evs);
         entry.eventsHydrated = true;
         entry.fetching.events = false;
@@ -307,45 +307,44 @@ export class SessionSupervisor {
       entry.loading = false;
       entry.updatedAtMs = Date.now();
       this.publish();
+      // Hydrating the event tail establishes a baseline cursor (lastEventSeq) which enables WS subscribe.
+      // Ensure we resubscribe after hydration completes.
+      this.scheduleResubscribe();
     }
   }
 
   private upsertEvents(entry: InternalEntry, incoming: SessionEvent[]) {
     if (incoming.length === 0) return;
+    const sorted = [...incoming].sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0));
 
-    const lastExistingCreatedAt =
-      entry.events.length > 0 ? String(entry.events[entry.events.length - 1]?.created_at ?? "") : null;
-
-    let prevCreatedAt = lastExistingCreatedAt;
     let needsSort = false;
+    const lastExistingSeq = entry.events.length > 0 ? (entry.events[entry.events.length - 1]?.seq ?? 0) : 0;
+    let prevSeq = lastExistingSeq;
+
     const toAdd: SessionEvent[] = [];
-
-    for (const ev of incoming) {
-      const eid = idToString(ev.id) || `${ev.created_at}-${ev.event_type}`;
-      if (entry.eventIdSet.has(eid)) continue;
-      entry.eventIdSet.add(eid);
-
-      const createdAt = String(ev.created_at ?? "");
-      if (prevCreatedAt && createdAt.localeCompare(prevCreatedAt) < 0) needsSort = true;
-      prevCreatedAt = createdAt;
-
+    for (const ev of sorted) {
+      const seq = Number(ev.seq ?? 0);
+      if (!Number.isFinite(seq) || seq <= 0) continue;
+      if (entry.seqSet.has(seq)) continue;
+      entry.seqSet.add(seq);
+      if (prevSeq && seq < prevSeq) needsSort = true;
+      prevSeq = seq;
       toAdd.push(ev);
     }
 
     if (toAdd.length === 0) return;
-
     entry.events.push(...toAdd);
     if (needsSort) {
-      entry.events.sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
+      entry.events.sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0));
     }
     while (entry.events.length > MAX_EVENTS_PER_SESSION) {
       const first = entry.events.shift();
       if (!first) break;
-      const fid = idToString(first.id) || `${first.created_at}-${first.event_type}`;
-      entry.eventIdSet.delete(fid);
+      const seq = Number(first.seq ?? 0);
+      if (Number.isFinite(seq)) entry.seqSet.delete(seq);
     }
     const last = entry.events[entry.events.length - 1];
-    if (last) entry.lastEventId = idToString(last.id) || entry.lastEventId;
+    if (last && Number.isFinite(last.seq)) entry.lastEventSeq = Number(last.seq);
   }
 
   // We only refresh durable data (Messages/Queue) once the turn is fully finalized.
@@ -514,7 +513,14 @@ export class SessionSupervisor {
     }
     this.publish();
 
-    ws.send(JSON.stringify({ type: "set", session_ids: ids }));
+    const sessions = ids
+      .map((sid) => {
+        const entry = this.entries.get(sid);
+        if (!entry) return null;
+        return { session_id: sid, after_seq: entry.lastEventSeq ?? 0 };
+      })
+      .filter(Boolean);
+    ws.send(JSON.stringify({ type: "set", sessions }));
 
     // Backfill deltas for subscribed sessions.
     for (const sid of ids) {
@@ -525,9 +531,9 @@ export class SessionSupervisor {
   private async backfillSession(sessionId: string) {
     const entry = this.entries.get(sessionId);
     if (!entry) return;
-    const after = entry.lastEventId;
     try {
-      const evs = await listSessionEventsPage(sessionId, after, 500);
+      const afterSeq = entry.lastEventSeq;
+      const evs = await listSessionEventsPage(sessionId, afterSeq, 500);
       const sawRefreshBoundary = evs.some((e) => this.isRefreshBoundaryEventType(e.event_type));
       this.upsertEvents(entry, evs);
       entry.updatedAtMs = Date.now();

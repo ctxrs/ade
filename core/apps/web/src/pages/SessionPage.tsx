@@ -271,7 +271,7 @@ export function SessionView({
   const messages: Message[] = entry?.messages ?? [];
   const queue: Message[] = entry?.queue ?? [];
   const diff = entry?.diff ?? "";
-  const eventsKey = `${entry?.lastEventId ?? ""}:${events.length}`;
+  const eventsKey = `${entry?.lastEventSeq ?? 0}:${events.length}`;
   const messagesKey = deriveMessagesKey(messages);
   const streamConnected = supervisorSnap.connection === "connected";
 

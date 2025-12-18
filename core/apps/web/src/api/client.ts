@@ -86,6 +86,7 @@ export type BlobUploadResp = {
 };
 
 export type SessionEvent = {
+  seq: number;
   id: { 0: string } | string;
   session_id: { 0: string } | string;
   run_id?: { 0: string } | string | null;
@@ -603,11 +604,18 @@ export const listMessages = (sessionId: string) =>
 export const listSessionEvents = (sessionId: string) =>
   apiAny<SessionEvent[]>(`/api/sessions/${sessionId}/events`);
 
-export const listSessionEventsPage = (sessionId: string, after?: string, limit?: number) => {
+export const listSessionEventsPage = (sessionId: string, afterSeq?: number, limit?: number) => {
   const qs = new URLSearchParams();
-  if (after) qs.set("after", after);
+  if (typeof afterSeq === "number") qs.set("after_seq", String(afterSeq));
   if (limit) qs.set("limit", String(limit));
   const suffix = qs.toString() ? `?${qs.toString()}` : "";
+  return apiAny<SessionEvent[]>(`/api/sessions/${sessionId}/events${suffix}`);
+};
+
+export const listSessionEventsTail = (sessionId: string, tail: number) => {
+  const qs = new URLSearchParams();
+  qs.set("tail", String(tail));
+  const suffix = `?${qs.toString()}`;
   return apiAny<SessionEvent[]>(`/api/sessions/${sessionId}/events${suffix}`);
 };
 

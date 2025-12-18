@@ -1008,7 +1008,8 @@ impl Store {
         event_type: SessionEventType,
         payload_json: serde_json::Value,
     ) -> Result<SessionEvent> {
-        let event = SessionEvent {
+        let mut event = SessionEvent {
+            seq: 0,
             id: SessionEventId::new(),
             session_id,
             run_id,
@@ -1017,9 +1018,10 @@ impl Store {
             payload_json: payload_json.clone(),
             created_at: Utc::now(),
         };
-        sqlx::query(
+        let seq: i64 = sqlx::query_scalar(
             r#"INSERT INTO session_events (id, session_id, run_id, turn_id, event_type, payload_json, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?)"#,
+               VALUES (?, ?, ?, ?, ?, ?, ?)
+               RETURNING seq"#,
         )
         .bind(event.id.0.to_string())
         .bind(event.session_id.0.to_string())
@@ -1028,81 +1030,79 @@ impl Store {
         .bind(session_event_type_to_str(&event.event_type))
         .bind(payload_json.to_string())
         .bind(event.created_at.to_rfc3339())
-        .execute(&self.pool)
+        .fetch_one(&self.pool)
         .await?;
+        event.seq = seq;
         Ok(event)
     }
 
     pub async fn list_session_events(&self, session_id: SessionId) -> Result<Vec<SessionEvent>> {
-        self.list_session_events_page(session_id, None, None).await
+        self.list_session_events_page_by_seq(session_id, None, None).await
     }
 
-    pub async fn list_session_events_page(
+    pub async fn list_session_events_page_by_seq(
         &self,
         session_id: SessionId,
-        after: Option<SessionEventId>,
+        after_seq: Option<i64>,
         limit: Option<u32>,
     ) -> Result<Vec<SessionEvent>> {
         let session_id_str = session_id.0.to_string();
         let limit_i64 = limit.map(|n| n as i64);
-
-        let (query, binds): (String, Vec<String>) = if let Some(after_id) = after {
-            let after_id_str = after_id.0.to_string();
-            let row = sqlx::query(
-                r#"SELECT created_at FROM session_events WHERE id = ? AND session_id = ?"#,
-            )
-            .bind(&after_id_str)
-            .bind(&session_id_str)
-            .fetch_optional(&self.pool)
-            .await?;
-            let Some(row) = row else {
-                anyhow::bail!("after event not found for session");
-            };
-            let after_created_at: String = row.try_get("created_at")?;
-
-            let mut q = String::from(
-                r#"SELECT id, session_id, run_id, turn_id, event_type, payload_json, created_at
+        let rows = if let Some(after_seq) = after_seq {
+            if let Some(limit) = limit_i64 {
+                sqlx::query(
+                    r#"SELECT seq, id, session_id, run_id, turn_id, event_type, payload_json, created_at
+                       FROM session_events
+                       WHERE session_id = ?
+                         AND seq > ?
+                       ORDER BY seq ASC
+                       LIMIT ?"#,
+                )
+                .bind(&session_id_str)
+                .bind(after_seq)
+                .bind(limit)
+                .fetch_all(&self.pool)
+                .await?
+            } else {
+                sqlx::query(
+                    r#"SELECT seq, id, session_id, run_id, turn_id, event_type, payload_json, created_at
+                       FROM session_events
+                       WHERE session_id = ?
+                         AND seq > ?
+                       ORDER BY seq ASC"#,
+                )
+                .bind(&session_id_str)
+                .bind(after_seq)
+                .fetch_all(&self.pool)
+                .await?
+            }
+        } else if let Some(limit) = limit_i64 {
+            sqlx::query(
+                r#"SELECT seq, id, session_id, run_id, turn_id, event_type, payload_json, created_at
                    FROM session_events
                    WHERE session_id = ?
-                     AND (created_at > ? OR (created_at = ? AND id > ?))
-                   ORDER BY created_at ASC, id ASC"#,
-            );
-            if limit_i64.is_some() {
-                q.push_str(" LIMIT ?");
-            }
-            (
-                q,
-                vec![
-                    session_id_str.clone(),
-                    after_created_at.clone(),
-                    after_created_at,
-                    after_id_str,
-                ],
+                   ORDER BY seq ASC
+                   LIMIT ?"#,
             )
+            .bind(&session_id_str)
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await?
         } else {
-            let mut q = String::from(
-                r#"SELECT id, session_id, run_id, turn_id, event_type, payload_json, created_at
-                   FROM session_events WHERE session_id = ?
-                   ORDER BY created_at ASC, id ASC"#,
-            );
-            if limit_i64.is_some() {
-                q.push_str(" LIMIT ?");
-            }
-            (q, vec![session_id_str.clone()])
+            sqlx::query(
+                r#"SELECT seq, id, session_id, run_id, turn_id, event_type, payload_json, created_at
+                   FROM session_events
+                   WHERE session_id = ?
+                   ORDER BY seq ASC"#,
+            )
+            .bind(&session_id_str)
+            .fetch_all(&self.pool)
+            .await?
         };
-
-        let mut sql = sqlx::query(&query);
-        for b in binds {
-            sql = sql.bind(b);
-        }
-        if let Some(l) = limit_i64 {
-            sql = sql.bind(l);
-        }
-
-        let rows = sql.fetch_all(&self.pool).await?;
 
         let mut out = Vec::with_capacity(rows.len());
         for r in rows {
+            let seq: i64 = r.try_get("seq")?;
             let id: String = r.try_get("id")?;
             let session_id: String = r.try_get("session_id")?;
             let run_id: Option<String> = r.try_get("run_id")?;
@@ -1110,6 +1110,7 @@ impl Store {
             let created_at: String = r.try_get("created_at")?;
             let payload_json: String = r.try_get("payload_json")?;
             out.push(SessionEvent {
+                seq,
                 id: SessionEventId(uuid::Uuid::parse_str(&id)?),
                 session_id: SessionId(uuid::Uuid::parse_str(&session_id)?),
                 run_id: run_id
@@ -1128,6 +1129,56 @@ impl Store {
                 created_at: parse_dt(&created_at)?,
             });
         }
+        Ok(out)
+    }
+
+    pub async fn list_session_events_tail_by_seq(
+        &self,
+        session_id: SessionId,
+        limit: u32,
+    ) -> Result<Vec<SessionEvent>> {
+        let session_id_str = session_id.0.to_string();
+        let rows = sqlx::query(
+            r#"SELECT seq, id, session_id, run_id, turn_id, event_type, payload_json, created_at
+               FROM session_events
+               WHERE session_id = ?
+               ORDER BY seq DESC
+               LIMIT ?"#,
+        )
+        .bind(session_id_str)
+        .bind(limit as i64)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut out = Vec::with_capacity(rows.len());
+        for r in rows {
+            let seq: i64 = r.try_get("seq")?;
+            let id: String = r.try_get("id")?;
+            let session_id: String = r.try_get("session_id")?;
+            let run_id: Option<String> = r.try_get("run_id")?;
+            let turn_id: Option<String> = r.try_get("turn_id")?;
+            let created_at: String = r.try_get("created_at")?;
+            let payload_json: String = r.try_get("payload_json")?;
+            out.push(SessionEvent {
+                seq,
+                id: SessionEventId(uuid::Uuid::parse_str(&id)?),
+                session_id: SessionId(uuid::Uuid::parse_str(&session_id)?),
+                run_id: run_id
+                    .as_deref()
+                    .and_then(|s| uuid::Uuid::parse_str(s).ok())
+                    .map(RunId),
+                turn_id: turn_id
+                    .as_deref()
+                    .and_then(|s| uuid::Uuid::parse_str(s).ok())
+                    .map(TurnId),
+                event_type: parse_session_event_type(
+                    r.try_get::<String, _>("event_type")?.as_str(),
+                ),
+                payload_json: serde_json::from_str(&payload_json).context("parsing payload_json")?,
+                created_at: parse_dt(&created_at)?,
+            });
+        }
+        out.reverse(); // return ASC
         Ok(out)
     }
 }

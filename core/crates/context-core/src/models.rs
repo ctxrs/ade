@@ -176,6 +176,7 @@ pub enum SessionEventType {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionEvent {
+    pub seq: i64,
     pub id: SessionEventId,
     pub session_id: SessionId,
     pub run_id: Option<RunId>,

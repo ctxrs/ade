@@ -4711,24 +4711,20 @@ async fn list_session_events(
     let perf = std::env::var_os("CONTEXT_PERF").is_some();
     let t0 = Instant::now();
     let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    let after = q
-        .after
-        .as_deref()
-        .and_then(|s| uuid::Uuid::parse_str(s).ok())
-        .map(SessionEventId);
-    let out = match state
-        .store
-        .list_session_events_page(session_id, after, q.limit)
-        .await
-    {
-        Ok(events) => Ok(Json(events)),
-        Err(e) => {
-            let msg = e.to_string().to_lowercase();
-            if msg.contains("after event not found") {
-                Err(StatusCode::BAD_REQUEST)
-            } else {
-                Err(StatusCode::INTERNAL_SERVER_ERROR)
-            }
+    let limit = q.limit;
+    let out = if let Some(tail) = q.tail {
+        match state.store.list_session_events_tail_by_seq(session_id, tail).await {
+            Ok(events) => Ok(Json(events)),
+            Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+        }
+    } else {
+        match state
+            .store
+            .list_session_events_page_by_seq(session_id, q.after_seq, limit)
+            .await
+        {
+            Ok(events) => Ok(Json(events)),
+            Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
         }
     };
     if perf {
@@ -4744,7 +4740,8 @@ async fn list_session_events(
 
 #[derive(Debug, Deserialize, Default)]
 struct ListSessionEventsQuery {
-    after: Option<String>,
+    after_seq: Option<i64>,
+    tail: Option<u32>,
     limit: Option<u32>,
 }
 
@@ -5743,11 +5740,16 @@ async fn session_stream_ws(
 }
 
 #[derive(Debug, Deserialize)]
+struct StreamSessionSpec {
+    session_id: String,
+    #[serde(default)]
+    after_seq: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum GlobalStreamClientMsg {
-    Subscribe { session_ids: Vec<String> },
-    Unsubscribe { session_ids: Vec<String> },
-    Set { session_ids: Vec<String> },
+    Set { sessions: Vec<StreamSessionSpec> },
 }
 
 async fn global_stream_ws(
@@ -5757,72 +5759,183 @@ async fn global_stream_ws(
     ws.on_upgrade(move |socket| handle_global_ws(socket, state))
 }
 
-async fn handle_global_ws(mut socket: WebSocket, state: Arc<AppState>) {
+async fn handle_global_ws(socket: WebSocket, state: Arc<AppState>) {
+    use futures::{SinkExt, StreamExt};
+    use std::collections::{HashMap, HashSet};
     use tokio::select;
+    use tokio::sync::broadcast::error::RecvError;
+    use tokio::sync::Mutex;
+    use tokio::time::{timeout, Duration};
+    use tokio_util::sync::CancellationToken;
 
-    let mut rx = state.global_broadcaster().subscribe();
+    let (ws_tx, mut ws_rx) = socket.split();
+    let ws_tx = Arc::new(Mutex::new(ws_tx));
+
     let mut diag_rx = state.lsp_diag_broadcaster().subscribe();
-    let mut subscribed: std::collections::HashSet<SessionId> = std::collections::HashSet::new();
+
+    let conn_cancel = CancellationToken::new();
+    let mut subscribed: HashMap<SessionId, i64> = HashMap::new();
+    let mut tasks: HashMap<SessionId, (CancellationToken, tokio::task::JoinHandle<()>)> = HashMap::new();
+
+    let stop_all = |tasks: &mut HashMap<SessionId, (CancellationToken, tokio::task::JoinHandle<()>)>| {
+        for (_sid, (tok, handle)) in tasks.drain() {
+            tok.cancel();
+            handle.abort();
+        }
+    };
+
+    let spawn_session_task = |session_id: SessionId,
+                             mut after_seq: i64,
+                             ws_tx: Arc<Mutex<futures::stream::SplitSink<WebSocket, WsMessage>>>,
+                             state: Arc<AppState>,
+                             conn_cancel: CancellationToken| {
+        let task_cancel = CancellationToken::new();
+        let task_cancel_child = task_cancel.clone();
+        let conn_cancel_child = conn_cancel.clone();
+        let join = tokio::spawn(async move {
+            let mut head_rx = state.subscribe_session_event_head(session_id).await;
+            let page_limit: u32 = 500;
+
+            loop {
+                if task_cancel_child.is_cancelled() || conn_cancel_child.is_cancelled() {
+                    break;
+                }
+
+                // Catch up to current DB head.
+                loop {
+                    if task_cancel_child.is_cancelled() || conn_cancel_child.is_cancelled() {
+                        return;
+                    }
+                    let page = match state
+                        .store
+                        .list_session_events_page_by_seq(session_id, Some(after_seq), Some(page_limit))
+                        .await
+                    {
+                        Ok(v) => v,
+                        Err(e) => {
+                            tracing::warn!(session_id = %session_id.0, "stream replay failed: {e}");
+                            conn_cancel_child.cancel();
+                            return;
+                        }
+                    };
+                    if page.is_empty() {
+                        break;
+                    }
+
+                    for ev in page {
+                        after_seq = ev.seq;
+                        let text = match serde_json::to_string(&ev) {
+                            Ok(t) => t,
+                            Err(_) => continue,
+                        };
+                        let send_res = timeout(Duration::from_secs(2), async {
+                            let mut locked = ws_tx.lock().await;
+                            locked.send(WsMessage::Text(text)).await
+                        })
+                        .await;
+
+                        match send_res {
+                            Ok(Ok(())) => {}
+                            Ok(Err(_)) => {
+                                conn_cancel_child.cancel();
+                                return;
+                            }
+                            Err(_) => {
+                                // Slow consumer: force reconnect/resume.
+                                conn_cancel_child.cancel();
+                                return;
+                            }
+                        }
+                    }
+                }
+
+                // Wait for the session head to advance, then loop to fetch from DB.
+                // `watch` is level-triggered (stores latest), so we can't miss a signal.
+                let head = *head_rx.borrow();
+                if after_seq >= head {
+                    select! {
+                        _ = task_cancel_child.cancelled() => break,
+                        _ = conn_cancel_child.cancelled() => break,
+                        _ = head_rx.changed() => {}
+                    }
+                }
+            }
+        });
+
+        (task_cancel, join)
+    };
 
     loop {
         select! {
-            msg = socket.recv() => {
+            _ = conn_cancel.cancelled() => break,
+            msg = ws_rx.next() => {
                 let Some(Ok(msg)) = msg else { break };
                 let WsMessage::Text(text) = msg else { continue };
-                let parsed: Result<GlobalStreamClientMsg, _> = serde_json::from_str(&text);
-                let Ok(parsed) = parsed else { continue };
+                let Ok(parsed) = serde_json::from_str::<GlobalStreamClientMsg>(&text) else { continue };
 
-                let ids = match parsed {
-                    GlobalStreamClientMsg::Subscribe { session_ids } => {
-                        for s in session_ids {
-                            if let Ok(u) = uuid::Uuid::parse_str(&s) {
-                                subscribed.insert(SessionId(u));
-                            }
-                        }
-                        continue;
-                    }
-                    GlobalStreamClientMsg::Unsubscribe { session_ids } => {
-                        for s in session_ids {
-                            if let Ok(u) = uuid::Uuid::parse_str(&s) {
-                                subscribed.remove(&SessionId(u));
-                            }
-                        }
-                        continue;
-                    }
-                    GlobalStreamClientMsg::Set { session_ids } => session_ids,
-                };
+                let GlobalStreamClientMsg::Set { sessions } = parsed;
+                let mut next: HashMap<SessionId, i64> = HashMap::new();
+                for s in sessions {
+                    let Ok(u) = uuid::Uuid::parse_str(&s.session_id) else { continue };
+                    next.insert(SessionId(u), s.after_seq.unwrap_or(0));
+                }
 
-                subscribed.clear();
-                for s in ids {
-                    if let Ok(u) = uuid::Uuid::parse_str(&s) {
-                        subscribed.insert(SessionId(u));
+                // Remove old sessions.
+                let next_ids: HashSet<SessionId> = next.keys().cloned().collect();
+                for sid in subscribed.keys().cloned().collect::<Vec<_>>() {
+                    if next_ids.contains(&sid) { continue; }
+                    if let Some((tok, handle)) = tasks.remove(&sid) {
+                        tok.cancel();
+                        handle.abort();
                     }
                 }
-            }
-            ev = rx.recv() => {
-                let Ok(event) = ev else { continue };
-                if subscribed.is_empty() { continue; }
-                if !subscribed.contains(&event.session_id) { continue; }
-                if let Ok(text) = serde_json::to_string(&event) {
-                    if socket.send(WsMessage::Text(text)).await.is_err() {
-                        break;
+
+                // Start/update tasks.
+                for (sid, after_seq) in next.iter() {
+                    let current = subscribed.get(sid).copied();
+                    if current == Some(*after_seq) && tasks.contains_key(sid) {
+                        continue;
                     }
+                    if let Some((tok, handle)) = tasks.remove(sid) {
+                        tok.cancel();
+                        handle.abort();
+                    }
+                    let (tok, handle) = spawn_session_task(
+                        *sid,
+                        *after_seq,
+                        ws_tx.clone(),
+                        state.clone(),
+                        conn_cancel.clone(),
+                    );
+                    tasks.insert(*sid, (tok, handle));
                 }
+
+                subscribed = next;
             }
             dev = diag_rx.recv() => {
-                let Ok(msg) = dev else { continue };
+                let msg = match dev {
+                    Ok(msg) => msg,
+                    Err(RecvError::Lagged(_)) => continue,
+                    Err(RecvError::Closed) => break,
+                };
                 if subscribed.is_empty() { continue; }
                 let sid = msg.get("session_id").and_then(|v| v.as_str()).and_then(|s| uuid::Uuid::parse_str(s).ok()).map(SessionId);
                 let Some(sid) = sid else { continue };
-                if !subscribed.contains(&sid) { continue; }
-                if let Ok(text) = serde_json::to_string(&msg) {
-                    if socket.send(WsMessage::Text(text)).await.is_err() {
-                        break;
-                    }
+                if !subscribed.contains_key(&sid) { continue; }
+                let Ok(text) = serde_json::to_string(&msg) else { continue };
+                let send_res = timeout(Duration::from_secs(2), async {
+                    let mut locked = ws_tx.lock().await;
+                    locked.send(WsMessage::Text(text)).await
+                }).await;
+                match send_res {
+                    Ok(Ok(())) => {}
+                    _ => conn_cancel.cancel(),
                 }
             }
         }
     }
+
+    stop_all(&mut tasks);
 }
 
 async fn handle_ws(mut socket: WebSocket, state: Arc<AppState>, session_id: SessionId) {
