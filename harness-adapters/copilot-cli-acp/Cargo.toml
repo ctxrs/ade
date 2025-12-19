@@ -1,0 +1,12 @@
+[package]
+name = "copilot-cli-acp"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+
+[dependencies]
+anyhow = "1.0"
+clap = { version = "4.5.20", features = ["derive", "env"] }
+
+[dev-dependencies]
+pretty_assertions = "1.4"

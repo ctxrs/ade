@@ -17,7 +17,7 @@ use context_providers::tier1::Tier1AcpAdapter;
 use context_lsp::LspManagerConfig;
 
 const NODE_VERSION: &str = "22.11.0";
-const CODEX_ACP_VERSION: &str = "0.7.1";
+const CODEX_ACP_VERSION: &str = "0.7.4";
 const CLAUDE_CODE_ACP_VERSION: &str = "0.12.4";
 const GEMINI_CLI_VERSION: &str = "0.19.0";
 const QWEN_CODE_VERSION: &str = "0.4.1";
