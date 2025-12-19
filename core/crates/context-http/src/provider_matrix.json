@@ -84,6 +84,429 @@
       ]
     },
     {
+      "id": "amp",
+      "display_name": "Amp",
+      "tier": "tier2",
+      "command": { "command": "amp-acp", "args": [] },
+      "managed_install": {
+        "kind": "archive",
+        "version": "0.1.0",
+        "args": [],
+        "targets": {
+          "darwin-aarch64": {
+            "url": "https://api.context.rs/functions/v1/download/agent-servers/0.1.0/amp-acp-darwin-aarch64.tar.gz",
+            "archive": "tar_gz",
+            "bin_path": "amp-acp"
+          },
+          "darwin-x86_64": {
+            "url": "https://api.context.rs/functions/v1/download/agent-servers/0.1.0/amp-acp-darwin-x86_64.tar.gz",
+            "archive": "tar_gz",
+            "bin_path": "amp-acp"
+          },
+          "linux-aarch64": {
+            "url": "https://api.context.rs/functions/v1/download/agent-servers/0.1.0/amp-acp-linux-aarch64.tar.gz",
+            "archive": "tar_gz",
+            "bin_path": "amp-acp"
+          },
+          "linux-x86_64": {
+            "url": "https://api.context.rs/functions/v1/download/agent-servers/0.1.0/amp-acp-linux-x86_64.tar.gz",
+            "archive": "tar_gz",
+            "bin_path": "amp-acp"
+          },
+          "windows-x86_64": {
+            "url": "https://api.context.rs/functions/v1/download/agent-servers/0.1.0/amp-acp-windows-x86_64.zip",
+            "archive": "zip",
+            "bin_path": "amp-acp.exe"
+          },
+          "windows-aarch64": {
+            "url": "https://api.context.rs/functions/v1/download/agent-servers/0.1.0/amp-acp-windows-aarch64.zip",
+            "archive": "zip",
+            "bin_path": "amp-acp.exe"
+          }
+        }
+      },
+      "version_probe": { "kind": "command", "args": ["--version"] },
+      "releases": [
+        { "version": "0.1.0", "status": "supported", "context_min": "0.1.0" }
+      ]
+    },
+    {
+      "id": "droid",
+      "display_name": "Droid",
+      "tier": "tier2",
+      "command": { "command": "droid-acp", "args": [] },
+      "managed_install": {
+        "kind": "archive",
+        "version": "0.1.0",
+        "args": [],
+        "targets": {
+          "darwin-aarch64": {
+            "url": "https://api.context.rs/functions/v1/download/agent-servers/0.1.0/droid-acp-darwin-aarch64.tar.gz",
+            "archive": "tar_gz",
+            "bin_path": "droid-acp"
+          },
+          "darwin-x86_64": {
+            "url": "https://api.context.rs/functions/v1/download/agent-servers/0.1.0/droid-acp-darwin-x86_64.tar.gz",
+            "archive": "tar_gz",
+            "bin_path": "droid-acp"
+          },
+          "linux-aarch64": {
+            "url": "https://api.context.rs/functions/v1/download/agent-servers/0.1.0/droid-acp-linux-aarch64.tar.gz",
+            "archive": "tar_gz",
+            "bin_path": "droid-acp"
+          },
+          "linux-x86_64": {
+            "url": "https://api.context.rs/functions/v1/download/agent-servers/0.1.0/droid-acp-linux-x86_64.tar.gz",
+            "archive": "tar_gz",
+            "bin_path": "droid-acp"
+          },
+          "windows-x86_64": {
+            "url": "https://api.context.rs/functions/v1/download/agent-servers/0.1.0/droid-acp-windows-x86_64.zip",
+            "archive": "zip",
+            "bin_path": "droid-acp.exe"
+          },
+          "windows-aarch64": {
+            "url": "https://api.context.rs/functions/v1/download/agent-servers/0.1.0/droid-acp-windows-aarch64.zip",
+            "archive": "zip",
+            "bin_path": "droid-acp.exe"
+          }
+        }
+      },
+      "version_probe": { "kind": "command", "args": ["--version"] },
+      "releases": [
+        { "version": "0.1.0", "status": "supported", "context_min": "0.1.0" }
+      ]
+    },
+    {
+      "id": "copilot",
+      "display_name": "Copilot",
+      "tier": "tier2",
+      "command": { "command": "copilot-cli-acp", "args": [] },
+      "managed_install": {
+        "kind": "archive",
+        "version": "0.1.0",
+        "args": [],
+        "targets": {
+          "darwin-aarch64": {
+            "url": "https://api.context.rs/functions/v1/download/agent-servers/0.1.0/copilot-cli-acp-darwin-aarch64.tar.gz",
+            "archive": "tar_gz",
+            "bin_path": "copilot-cli-acp"
+          },
+          "darwin-x86_64": {
+            "url": "https://api.context.rs/functions/v1/download/agent-servers/0.1.0/copilot-cli-acp-darwin-x86_64.tar.gz",
+            "archive": "tar_gz",
+            "bin_path": "copilot-cli-acp"
+          },
+          "linux-aarch64": {
+            "url": "https://api.context.rs/functions/v1/download/agent-servers/0.1.0/copilot-cli-acp-linux-aarch64.tar.gz",
+            "archive": "tar_gz",
+            "bin_path": "copilot-cli-acp"
+          },
+          "linux-x86_64": {
+            "url": "https://api.context.rs/functions/v1/download/agent-servers/0.1.0/copilot-cli-acp-linux-x86_64.tar.gz",
+            "archive": "tar_gz",
+            "bin_path": "copilot-cli-acp"
+          },
+          "windows-x86_64": {
+            "url": "https://api.context.rs/functions/v1/download/agent-servers/0.1.0/copilot-cli-acp-windows-x86_64.zip",
+            "archive": "zip",
+            "bin_path": "copilot-cli-acp.exe"
+          },
+          "windows-aarch64": {
+            "url": "https://api.context.rs/functions/v1/download/agent-servers/0.1.0/copilot-cli-acp-windows-aarch64.zip",
+            "archive": "zip",
+            "bin_path": "copilot-cli-acp.exe"
+          }
+        }
+      },
+      "version_probe": { "kind": "command", "args": ["--version"] },
+      "releases": [
+        { "version": "0.1.0", "status": "supported", "context_min": "0.1.0" }
+      ]
+    },
+    {
+      "id": "kiro",
+      "display_name": "Kiro",
+      "tier": "tier2",
+      "command": { "command": "kiro-acp", "args": [] },
+      "managed_install": {
+        "kind": "archive",
+        "version": "0.1.0",
+        "args": [],
+        "targets": {
+          "darwin-aarch64": {
+            "url": "https://api.context.rs/functions/v1/download/agent-servers/0.1.0/kiro-acp-darwin-aarch64.tar.gz",
+            "archive": "tar_gz",
+            "bin_path": "kiro-acp"
+          },
+          "darwin-x86_64": {
+            "url": "https://api.context.rs/functions/v1/download/agent-servers/0.1.0/kiro-acp-darwin-x86_64.tar.gz",
+            "archive": "tar_gz",
+            "bin_path": "kiro-acp"
+          },
+          "linux-aarch64": {
+            "url": "https://api.context.rs/functions/v1/download/agent-servers/0.1.0/kiro-acp-linux-aarch64.tar.gz",
+            "archive": "tar_gz",
+            "bin_path": "kiro-acp"
+          },
+          "linux-x86_64": {
+            "url": "https://api.context.rs/functions/v1/download/agent-servers/0.1.0/kiro-acp-linux-x86_64.tar.gz",
+            "archive": "tar_gz",
+            "bin_path": "kiro-acp"
+          },
+          "windows-x86_64": {
+            "url": "https://api.context.rs/functions/v1/download/agent-servers/0.1.0/kiro-acp-windows-x86_64.zip",
+            "archive": "zip",
+            "bin_path": "kiro-acp.exe"
+          },
+          "windows-aarch64": {
+            "url": "https://api.context.rs/functions/v1/download/agent-servers/0.1.0/kiro-acp-windows-aarch64.zip",
+            "archive": "zip",
+            "bin_path": "kiro-acp.exe"
+          }
+        }
+      },
+      "version_probe": { "kind": "command", "args": ["--version"] },
+      "releases": [
+        { "version": "0.1.0", "status": "supported", "context_min": "0.1.0" }
+      ]
+    },
+    {
+      "id": "rovo",
+      "display_name": "Rovo Dev",
+      "tier": "tier2",
+      "command": { "command": "rovo-dev-acp", "args": [] },
+      "managed_install": {
+        "kind": "archive",
+        "version": "0.1.0",
+        "args": [],
+        "targets": {
+          "darwin-aarch64": {
+            "url": "https://api.context.rs/functions/v1/download/agent-servers/0.1.0/rovo-dev-acp-darwin-aarch64.tar.gz",
+            "archive": "tar_gz",
+            "bin_path": "rovo-dev-acp"
+          },
+          "darwin-x86_64": {
+            "url": "https://api.context.rs/functions/v1/download/agent-servers/0.1.0/rovo-dev-acp-darwin-x86_64.tar.gz",
+            "archive": "tar_gz",
+            "bin_path": "rovo-dev-acp"
+          },
+          "linux-aarch64": {
+            "url": "https://api.context.rs/functions/v1/download/agent-servers/0.1.0/rovo-dev-acp-linux-aarch64.tar.gz",
+            "archive": "tar_gz",
+            "bin_path": "rovo-dev-acp"
+          },
+          "linux-x86_64": {
+            "url": "https://api.context.rs/functions/v1/download/agent-servers/0.1.0/rovo-dev-acp-linux-x86_64.tar.gz",
+            "archive": "tar_gz",
+            "bin_path": "rovo-dev-acp"
+          },
+          "windows-x86_64": {
+            "url": "https://api.context.rs/functions/v1/download/agent-servers/0.1.0/rovo-dev-acp-windows-x86_64.zip",
+            "archive": "zip",
+            "bin_path": "rovo-dev-acp.exe"
+          },
+          "windows-aarch64": {
+            "url": "https://api.context.rs/functions/v1/download/agent-servers/0.1.0/rovo-dev-acp-windows-aarch64.zip",
+            "archive": "zip",
+            "bin_path": "rovo-dev-acp.exe"
+          }
+        }
+      },
+      "version_probe": { "kind": "command", "args": ["--version"] },
+      "releases": [
+        { "version": "0.1.0", "status": "supported", "context_min": "0.1.0" }
+      ]
+    },
+    {
+      "id": "cody",
+      "display_name": "Cody",
+      "tier": "tier2",
+      "command": { "command": "cody-acp", "args": [] },
+      "managed_install": {
+        "kind": "archive",
+        "version": "0.1.0",
+        "args": [],
+        "targets": {
+          "darwin-aarch64": {
+            "url": "https://api.context.rs/functions/v1/download/agent-servers/0.1.0/cody-acp-darwin-aarch64.tar.gz",
+            "archive": "tar_gz",
+            "bin_path": "cody-acp"
+          },
+          "darwin-x86_64": {
+            "url": "https://api.context.rs/functions/v1/download/agent-servers/0.1.0/cody-acp-darwin-x86_64.tar.gz",
+            "archive": "tar_gz",
+            "bin_path": "cody-acp"
+          },
+          "linux-aarch64": {
+            "url": "https://api.context.rs/functions/v1/download/agent-servers/0.1.0/cody-acp-linux-aarch64.tar.gz",
+            "archive": "tar_gz",
+            "bin_path": "cody-acp"
+          },
+          "linux-x86_64": {
+            "url": "https://api.context.rs/functions/v1/download/agent-servers/0.1.0/cody-acp-linux-x86_64.tar.gz",
+            "archive": "tar_gz",
+            "bin_path": "cody-acp"
+          },
+          "windows-x86_64": {
+            "url": "https://api.context.rs/functions/v1/download/agent-servers/0.1.0/cody-acp-windows-x86_64.zip",
+            "archive": "zip",
+            "bin_path": "cody-acp.exe"
+          },
+          "windows-aarch64": {
+            "url": "https://api.context.rs/functions/v1/download/agent-servers/0.1.0/cody-acp-windows-aarch64.zip",
+            "archive": "zip",
+            "bin_path": "cody-acp.exe"
+          }
+        }
+      },
+      "version_probe": { "kind": "command", "args": ["--version"] },
+      "releases": [
+        { "version": "0.1.0", "status": "supported", "context_min": "0.1.0" }
+      ]
+    },
+    {
+      "id": "continue",
+      "display_name": "Continue",
+      "tier": "tier2",
+      "command": { "command": "cn", "args": ["acp"] },
+      "managed_install": {
+        "kind": "archive",
+        "version": "0.0.0-dev",
+        "args": ["acp"],
+        "targets": {
+          "darwin-aarch64": {
+            "url": "https://api.context.rs/functions/v1/download/agent-servers/0.0.0-dev/continue-acp-darwin-aarch64.tar.gz",
+            "archive": "tar_gz",
+            "bin_path": "cn"
+          },
+          "darwin-x86_64": {
+            "url": "https://api.context.rs/functions/v1/download/agent-servers/0.0.0-dev/continue-acp-darwin-x86_64.tar.gz",
+            "archive": "tar_gz",
+            "bin_path": "cn"
+          },
+          "linux-aarch64": {
+            "url": "https://api.context.rs/functions/v1/download/agent-servers/0.0.0-dev/continue-acp-linux-aarch64.tar.gz",
+            "archive": "tar_gz",
+            "bin_path": "cn"
+          },
+          "linux-x86_64": {
+            "url": "https://api.context.rs/functions/v1/download/agent-servers/0.0.0-dev/continue-acp-linux-x86_64.tar.gz",
+            "archive": "tar_gz",
+            "bin_path": "cn"
+          },
+          "windows-x86_64": {
+            "url": "https://api.context.rs/functions/v1/download/agent-servers/0.0.0-dev/continue-acp-windows-x86_64.zip",
+            "archive": "zip",
+            "bin_path": "cn.exe"
+          },
+          "windows-aarch64": {
+            "url": "https://api.context.rs/functions/v1/download/agent-servers/0.0.0-dev/continue-acp-windows-aarch64.zip",
+            "archive": "zip",
+            "bin_path": "cn.exe"
+          }
+        }
+      },
+      "version_probe": { "kind": "command", "args": ["--version"] },
+      "releases": [
+        { "version": "0.0.0-dev", "status": "supported", "context_min": "0.1.0", "notes": "ACP requires patched CLI" }
+      ]
+    },
+    {
+      "id": "cline",
+      "display_name": "Cline",
+      "tier": "tier2",
+      "command": { "command": "cline-acp", "args": [] },
+      "managed_install": {
+        "kind": "archive",
+        "version": "3.41.0",
+        "args": [],
+        "targets": {
+          "darwin-aarch64": {
+            "url": "https://api.context.rs/functions/v1/download/agent-servers/3.41.0/cline-acp-darwin-aarch64.tar.gz",
+            "archive": "tar_gz",
+            "bin_path": "cline-acp"
+          },
+          "darwin-x86_64": {
+            "url": "https://api.context.rs/functions/v1/download/agent-servers/3.41.0/cline-acp-darwin-x86_64.tar.gz",
+            "archive": "tar_gz",
+            "bin_path": "cline-acp"
+          },
+          "linux-aarch64": {
+            "url": "https://api.context.rs/functions/v1/download/agent-servers/3.41.0/cline-acp-linux-aarch64.tar.gz",
+            "archive": "tar_gz",
+            "bin_path": "cline-acp"
+          },
+          "linux-x86_64": {
+            "url": "https://api.context.rs/functions/v1/download/agent-servers/3.41.0/cline-acp-linux-x86_64.tar.gz",
+            "archive": "tar_gz",
+            "bin_path": "cline-acp"
+          },
+          "windows-x86_64": {
+            "url": "https://api.context.rs/functions/v1/download/agent-servers/3.41.0/cline-acp-windows-x86_64.zip",
+            "archive": "zip",
+            "bin_path": "cline-acp.exe"
+          },
+          "windows-aarch64": {
+            "url": "https://api.context.rs/functions/v1/download/agent-servers/3.41.0/cline-acp-windows-aarch64.zip",
+            "archive": "zip",
+            "bin_path": "cline-acp.exe"
+          }
+        }
+      },
+      "version_probe": { "kind": "command", "args": ["--version"] },
+      "releases": [
+        { "version": "3.41.0", "status": "supported", "context_min": "0.1.0", "notes": "ACP requires patched CLI entrypoint" }
+      ]
+    },
+    {
+      "id": "swe-agent",
+      "display_name": "SWE-agent",
+      "tier": "tier2",
+      "command": { "command": "sweagent", "args": ["acp"] },
+      "managed_install": {
+        "kind": "archive",
+        "version": "1.1.0",
+        "args": ["acp"],
+        "targets": {
+          "darwin-aarch64": {
+            "url": "https://api.context.rs/functions/v1/download/agent-servers/1.1.0/sweagent-acp-darwin-aarch64.tar.gz",
+            "archive": "tar_gz",
+            "bin_path": "sweagent"
+          },
+          "darwin-x86_64": {
+            "url": "https://api.context.rs/functions/v1/download/agent-servers/1.1.0/sweagent-acp-darwin-x86_64.tar.gz",
+            "archive": "tar_gz",
+            "bin_path": "sweagent"
+          },
+          "linux-aarch64": {
+            "url": "https://api.context.rs/functions/v1/download/agent-servers/1.1.0/sweagent-acp-linux-aarch64.tar.gz",
+            "archive": "tar_gz",
+            "bin_path": "sweagent"
+          },
+          "linux-x86_64": {
+            "url": "https://api.context.rs/functions/v1/download/agent-servers/1.1.0/sweagent-acp-linux-x86_64.tar.gz",
+            "archive": "tar_gz",
+            "bin_path": "sweagent"
+          },
+          "windows-x86_64": {
+            "url": "https://api.context.rs/functions/v1/download/agent-servers/1.1.0/sweagent-acp-windows-x86_64.zip",
+            "archive": "zip",
+            "bin_path": "sweagent.exe"
+          },
+          "windows-aarch64": {
+            "url": "https://api.context.rs/functions/v1/download/agent-servers/1.1.0/sweagent-acp-windows-aarch64.zip",
+            "archive": "zip",
+            "bin_path": "sweagent.exe"
+          }
+        }
+      },
+      "version_probe": { "kind": "command", "args": ["--version"] },
+      "releases": [
+        { "version": "1.1.0", "status": "supported", "context_min": "0.1.0", "notes": "ACP requires patched CLI" }
+      ]
+    },
+    {
       "id": "cagent",
       "display_name": "cagent",
       "tier": "tier2",

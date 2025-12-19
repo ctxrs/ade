@@ -1,6 +1,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Instant;
 
 use anyhow::{anyhow, Result};
 use chrono::Utc;
@@ -21,6 +22,7 @@ use context_providers::adapters::{ProviderAdapter, RunHandle, TurnInput};
 use context_providers::events::NormalizedEvent;
 
 use crate::daemon::AppState;
+use crate::telemetry::TelemetryEvent;
 
 #[derive(Debug)]
 pub enum SchedulerCommand {
@@ -60,11 +62,16 @@ pub async fn session_worker(
         _ => return,
     };
     let workdir = PathBuf::from(worktree.root_path.clone());
+    let env_target = if worktree.git_branch.is_some() {
+        "worktree".to_string()
+    } else {
+        "local".to_string()
+    };
 
     loop {
         if running.is_none() && !suspend_queue {
             if let Some(msg) = queue.pop_front() {
-                match start_turn(&state, &session, &workdir, msg).await {
+                match start_turn(&state, &session, &workdir, &env_target, msg).await {
                     Ok(turn) => {
                         state.set_running(session.id, true).await;
                         running = Some(turn);
@@ -148,6 +155,7 @@ async fn start_turn(
     state: &Arc<AppState>,
     session: &Session,
     workdir: &PathBuf,
+    env_target: &str,
     message: Message,
 ) -> Result<RunningTurn> {
     let adapter = {
@@ -166,49 +174,6 @@ async fn start_turn(
         message.delivery = MessageDelivery::Immediate;
         message.delivered_at = Some(Utc::now());
     }
-
-    let provider_status = state
-        .provider_statuses
-        .lock()
-        .await
-        .get(&session.provider_id)
-        .cloned();
-    if let Some(st) = provider_status {
-        if !st.installed || !matches!(st.health, context_providers::adapters::ProviderHealth::Ok) {
-            let message = if st.installed {
-                format!(
-                    "Provider {} is unhealthy ({:?}): {}",
-                    session.provider_id,
-                    st.health,
-                    st.diagnostics.join("; ")
-                )
-            } else {
-                format!("Provider {} is not installed", session.provider_id)
-            };
-            let _ = emit_event(
-                state,
-                session.id,
-                Some(run_id),
-                Some(turn_id),
-                SessionEventType::Error,
-                json!({"message": message}),
-            )
-            .await;
-            let _ = state
-                .store
-                .update_session_turn_status(
-                    session.id,
-                    turn_id,
-                    SessionTurnStatus::Failed,
-                    None,
-                    None,
-                    Utc::now(),
-                )
-                .await;
-            return Err(anyhow!("provider unavailable: {}", session.provider_id));
-        }
-    }
-
     let _ = state
         .store
         .update_session_turn_status(
@@ -276,7 +241,8 @@ async fn start_turn(
         }
     }
 
-    let handle = adapter
+    let run_started_at = Instant::now();
+    let handle = match adapter
         .run(
             TurnInput {
                 content: prompt,
@@ -287,13 +253,34 @@ async fn start_turn(
             provider_env,
             ev_tx,
         )
-        .await?;
+        .await
+    {
+        Ok(handle) => handle,
+        Err(err) => {
+            let duration_ms = run_started_at.elapsed().as_millis() as u64;
+            state
+                .telemetry
+                .emit(TelemetryEvent::provider_call(
+                    session.provider_id.clone(),
+                    session.model_id.clone(),
+                    Some(env_target.to_string()),
+                    false,
+                    duration_ms,
+                ))
+                .await;
+            return Err(err);
+        }
+    };
 
     let state_for_events = state.clone();
     let store = state.store.clone();
     let session_id = session.id;
     let task_id = session.task_id;
     let track_id = session.track_id;
+    let provider_id = session.provider_id.clone();
+    let model_id = session.model_id.clone();
+    let env_target = env_target.to_string();
+    let mut telemetry_emitted = false;
 
     tokio::spawn(async move {
         let mut assistant_partial = String::new();
@@ -484,6 +471,30 @@ async fn start_turn(
                             .await;
                     }
                     SessionEventType::Done => {
+                        if !telemetry_emitted {
+                            telemetry_emitted = true;
+                            let duration_ms = run_started_at.elapsed().as_millis() as u64;
+                            state_for_events
+                                .telemetry
+                                .emit(TelemetryEvent::provider_call(
+                                    provider_id.clone(),
+                                    model_id.clone(),
+                                    Some(env_target.clone()),
+                                    true,
+                                    duration_ms,
+                                ))
+                                .await;
+                            state_for_events
+                                .telemetry
+                                .emit(TelemetryEvent::session_completed(
+                                    provider_id.clone(),
+                                    model_id.clone(),
+                                    Some(env_target.clone()),
+                                    "completed".to_string(),
+                                    duration_ms,
+                                ))
+                                .await;
+                        }
                         let metrics = event.payload_json.get("context_window");
                         if terminal_status.is_none() {
                             let _ = store
@@ -499,6 +510,30 @@ async fn start_turn(
                         }
                     }
                     SessionEventType::TurnInterrupted => {
+                        if !telemetry_emitted {
+                            telemetry_emitted = true;
+                            let duration_ms = run_started_at.elapsed().as_millis() as u64;
+                            state_for_events
+                                .telemetry
+                                .emit(TelemetryEvent::provider_call(
+                                    provider_id.clone(),
+                                    model_id.clone(),
+                                    Some(env_target.clone()),
+                                    false,
+                                    duration_ms,
+                                ))
+                                .await;
+                            state_for_events
+                                .telemetry
+                                .emit(TelemetryEvent::session_completed(
+                                    provider_id.clone(),
+                                    model_id.clone(),
+                                    Some(env_target.clone()),
+                                    "interrupted".to_string(),
+                                    duration_ms,
+                                ))
+                                .await;
+                        }
                         terminal_status = Some(SessionTurnStatus::Interrupted);
                         let _ = store
                             .update_session_turn_status(
@@ -522,6 +557,30 @@ async fn start_turn(
                             .await;
                     }
                     SessionEventType::Error => {
+                        if !telemetry_emitted {
+                            telemetry_emitted = true;
+                            let duration_ms = run_started_at.elapsed().as_millis() as u64;
+                            state_for_events
+                                .telemetry
+                                .emit(TelemetryEvent::provider_call(
+                                    provider_id.clone(),
+                                    model_id.clone(),
+                                    Some(env_target.clone()),
+                                    false,
+                                    duration_ms,
+                                ))
+                                .await;
+                            state_for_events
+                                .telemetry
+                                .emit(TelemetryEvent::session_completed(
+                                    provider_id.clone(),
+                                    model_id.clone(),
+                                    Some(env_target.clone()),
+                                    "failed".to_string(),
+                                    duration_ms,
+                                ))
+                                .await;
+                        }
                         terminal_status = Some(SessionTurnStatus::Failed);
                         let _ = store
                             .update_session_turn_status(

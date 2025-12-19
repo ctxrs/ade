@@ -11,6 +11,7 @@ pub mod logs;
 pub mod provider_matrix;
 pub mod scheduler;
 pub mod settings;
+pub mod telemetry;
 pub mod updates;
 
 #[cfg(test)]

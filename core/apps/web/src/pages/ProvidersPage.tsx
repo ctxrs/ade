@@ -342,8 +342,13 @@ export default function ProvidersPage() {
       </div>
 
       <ul className="list">
-        {providers.map((p) => (
-          <li key={p.provider_id} className="card">
+        {providers.map((p) => {
+          const installSupported = p.details?.install_supported === "true";
+          const installRunning = installs[p.provider_id]?.state === "running";
+          const installDisabled = busy !== null || installRunning || !installSupported;
+
+          return (
+            <li key={p.provider_id} className="card">
             {workspaceId && (
               <>
                 {(() => {
@@ -511,9 +516,10 @@ export default function ProvidersPage() {
               <button
                 type="button"
                 onClick={() => onInstall(p.provider_id)}
-                disabled={busy !== null || installs[p.provider_id]?.state === "running"}
+                disabled={installDisabled}
+                title={installSupported ? "Install this provider" : "Install not supported yet"}
               >
-                {busy === p.provider_id || installs[p.provider_id]?.state === "running"
+                {busy === p.provider_id || installRunning
                   ? "Installing…"
                   : p.installed && p.health === "unsupported_version"
                     ? "Update"
@@ -523,7 +529,8 @@ export default function ProvidersPage() {
               </button>
             </div>
           </li>
-        ))}
+          );
+        })}
         {providers.length === 0 && <li className="muted">No providers.</li>}
       </ul>
     </div>

@@ -41,7 +41,10 @@ export default function WorkspacesPage() {
         <Link to="/providers" style={{ marginLeft: 12 }}>Providers</Link>
       </div>
 
-      {providers.some((p) => !p.installed || p.health !== "ok") && (
+      {providers.some(
+        (p) =>
+          p.details?.install_supported === "true" && (!p.installed || p.health !== "ok"),
+      ) && (
         <div className="banner">
           Some providers are not ready. <Link to="/providers">Install or update providers</Link>.
         </div>

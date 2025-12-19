@@ -223,4 +223,38 @@ export default function SettingsPage() {
             <div className="muted">LiveKit API Key</div>
             <input
               value={apiKey}
-              onChange={(e) => se
+              onChange={(e) => setApiKey(e.target.value)}
+              disabled={!dictationEnabled}
+              placeholder="APIK…"
+              style={{ width: "100%", marginTop: 6 }}
+            />
+          </label>
+
+          <label>
+            <div className="muted">LiveKit API Secret</div>
+            <input
+              value={apiSecret}
+              onChange={(e) => setApiSecret(e.target.value)}
+              disabled={!dictationEnabled}
+              placeholder={apiSecretSet ? "(set)" : "MAB…"}
+              type="password"
+              style={{ width: "100%", marginTop: 6 }}
+            />
+            <div className="muted" style={{ marginTop: 6 }}>
+              {apiSecretSet ? "Secret is stored; enter a new value to rotate." : "Required."}
+            </div>
+          </label>
+        </div>
+
+        {error && <div className="error" style={{ marginTop: 12 }}>{error}</div>}
+
+        <div className="row" style={{ marginTop: 12 }}>
+          <button type="button" onClick={onSave} disabled={!loaded || saving || !canSave}>
+            {saving ? "Saving…" : "Save"}
+          </button>
+          {!loaded && <div className="muted">Loading…</div>}
+        </div>
+      </div>
+    </div>
+  );
+}

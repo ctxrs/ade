@@ -8,6 +8,8 @@ const SETTINGS_FILE_NAME: &str = "settings.json";
 pub struct Settings {
     #[serde(default)]
     pub dictation: Option<DictationSettings>,
+    #[serde(default)]
+    pub telemetry: Option<TelemetrySettings>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -46,6 +48,22 @@ pub struct LiveKitDictationSettings {
     pub language: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TelemetrySettings {
+    pub enabled: bool,
+    #[serde(default = "crate::telemetry::default_telemetry_endpoint")]
+    pub endpoint: String,
+}
+
+impl Default for TelemetrySettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            endpoint: crate::telemetry::default_telemetry_endpoint(),
+        }
+    }
+}
+
 impl Default for LiveKitDictationSettings {
     fn default() -> Self {
         Self {
@@ -62,6 +80,8 @@ impl Default for LiveKitDictationSettings {
 pub struct PublicSettings {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dictation: Option<PublicDictationSettings>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub telemetry: Option<PublicTelemetrySettings>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -81,10 +101,18 @@ pub struct PublicLiveKitDictationSettings {
     pub language: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct PublicTelemetrySettings {
+    pub enabled: bool,
+    pub endpoint: String,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct UpdateSettingsReq {
     #[serde(default)]
     pub dictation: Option<UpdateDictationSettingsReq>,
+    #[serde(default)]
+    pub telemetry: Option<UpdateTelemetrySettingsReq>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -102,6 +130,12 @@ pub struct UpdateLiveKitDictationSettingsReq {
     pub api_secret: Option<String>,
     pub model: String,
     pub language: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct UpdateTelemetrySettingsReq {
+    pub enabled: bool,
+    pub endpoint: String,
 }
 
 fn settings_path(data_root: &Path) -> PathBuf {
@@ -185,7 +219,17 @@ pub fn to_public(settings: &Settings) -> PublicSettings {
             language: lk.language.clone(),
         }),
     });
-    PublicSettings { dictation }
+    let telemetry = Some(match settings.telemetry.as_ref() {
+        Some(t) => PublicTelemetrySettings {
+            enabled: t.enabled,
+            endpoint: t.endpoint.clone(),
+        },
+        None => PublicTelemetrySettings {
+            enabled: true,
+            endpoint: crate::telemetry::default_telemetry_endpoint(),
+        },
+    });
+    PublicSettings { dictation, telemetry }
 }
 
 pub fn apply_update(mut current: Settings, req: UpdateSettingsReq) -> Settings {
@@ -207,6 +251,14 @@ pub fn apply_update(mut current: Settings, req: UpdateSettingsReq) -> Settings {
             next.livekit = Some(cur_lk);
         }
         current.dictation = Some(next);
+    }
+    if let Some(t) = req.telemetry {
+        let mut next = current.telemetry.unwrap_or_default();
+        next.enabled = t.enabled;
+        if !t.endpoint.trim().is_empty() {
+            next.endpoint = t.endpoint;
+        }
+        current.telemetry = Some(next);
     }
     current
 }

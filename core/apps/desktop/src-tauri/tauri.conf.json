@@ -22,7 +22,12 @@
       "identifier": "rs.context.desktop",
       "resources": ["bin/*", "web/dist/*", "web/dist/**"],
       "externalBin": ["bin/context", "bin/context-mcp"],
-      "targets": "all"
+      "targets": "all",
+      "macOS": {
+        "infoPlist": {
+          "NSMicrophoneUsageDescription": "Context needs microphone access for dictation."
+        }
+      }
     },
     "security": {
       "csp": null

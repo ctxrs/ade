@@ -30,6 +30,8 @@ use crate::api;
 use crate::installs::{InstallId, InstallProgressEvent, InstallState, InstallStateKind};
 use crate::installer;
 use crate::scheduler::{session_worker, SchedulerCommand};
+use crate::telemetry::{Telemetry, TelemetryConfig};
+use crate::settings;
 
 fn acquire_daemon_lock(data_root: &Path) -> Result<std::fs::File> {
     let path = data_root.join("daemon.lock");
@@ -67,6 +69,7 @@ pub struct AppState {
     pub buffers: BufferStore,
     pub ask_user_question: Arc<AskUserQuestionBroker>,
     pub shutdown_tx: broadcast::Sender<()>,
+    pub telemetry: Telemetry,
     schedulers: Mutex<HashMap<SessionId, mpsc::Sender<SchedulerCommand>>>,
     broadcasters: Mutex<HashMap<SessionId, broadcast::Sender<SessionEvent>>>,
     session_event_heads: Mutex<HashMap<SessionId, watch::Sender<i64>>>,
@@ -156,6 +159,7 @@ impl AppState {
         let (lsp_diag_broadcaster, _) = broadcast::channel(2048);
         let ask_user_question = Arc::new(AskUserQuestionBroker::new());
         let lsp = Arc::new(LspManager::new(lsp_cfg.clone()));
+        let telemetry = Telemetry::new(data_root.clone());
         Self {
             data_root,
             store,
@@ -174,6 +178,7 @@ impl AppState {
             buffers: BufferStore::default(),
             ask_user_question,
             shutdown_tx,
+            telemetry,
             schedulers: Mutex::new(HashMap::new()),
             broadcasters: Mutex::new(HashMap::new()),
             session_event_heads: Mutex::new(HashMap::new()),
@@ -578,7 +583,11 @@ pub async fn serve(
             .get("cagent")
             .map(|c| Tier1AcpAdapter::from_raw("cagent", c.command.clone(), c.args.clone()))
             .unwrap_or_else(|| {
-                let cfg = installer::cagent_config_path(&data_root)
+                let cfg = data_root
+                    .join("providers")
+                    .join("agent-servers")
+                    .join("cagent")
+                    .join("config.yaml")
                     .to_string_lossy()
                     .to_string();
                 Tier1AcpAdapter::from_raw("cagent", "cagent".to_string(), vec!["acp".to_string(), cfg])
@@ -607,6 +616,15 @@ pub async fn serve(
         ("openhands", "openhands", vec!["acp"]),
         ("goose", "goose", vec!["acp"]),
         ("mistral", "vibe-acp", vec![]),
+        ("amp", "amp-acp", vec![]),
+        ("droid", "droid-acp", vec![]),
+        ("copilot", "copilot-cli-acp", vec![]),
+        ("kiro", "kiro-acp", vec![]),
+        ("rovo", "rovo-dev-acp", vec![]),
+        ("cody", "cody-acp", vec![]),
+        ("continue", "cn", vec!["acp"]),
+        ("cline", "cline-acp", vec![]),
+        ("swe-agent", "sweagent", vec!["acp"]),
     ] {
         let adapter: Arc<Tier1AcpAdapter> = Arc::new(
             agent_cfg
@@ -652,6 +670,15 @@ pub async fn serve(
         auth_token,
         lsp_cfg,
     ));
+    let settings = settings::load_settings(&state.data_root).await;
+    let mut telemetry_cfg = TelemetryConfig::default();
+    if let Some(telemetry) = settings.telemetry.as_ref() {
+        telemetry_cfg.enabled = telemetry.enabled;
+        if !telemetry.endpoint.trim().is_empty() {
+            telemetry_cfg.endpoint = telemetry.endpoint.clone();
+        }
+    }
+    state.telemetry.update_config(telemetry_cfg).await;
 
     // Claude-only extension plumbing: AskUserQuestion is implemented via a Claude-specific ACP
     // extension method and should not be threaded into other providers.

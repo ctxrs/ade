@@ -34,6 +34,7 @@ use crate::installs::{InstallId, InstallInfo, InstallProgressEvent};
 use crate::installer;
 use crate::logs;
 use crate::scheduler::SchedulerCommand;
+use crate::telemetry::{TelemetryConfig, TelemetryEvent};
 use crate::updates;
 use crate::buffers::{BufferCloseReq, BufferConflictResp, BufferId, BufferOpenReq, BufferOpenResp, BufferUpdateReq, BufferUpdateResp};
 use context_providers::adapters::ProviderStatus;
@@ -416,6 +417,14 @@ async fn update_settings(
     user_settings::save_settings(&state.data_root, &next)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let mut telemetry_cfg = TelemetryConfig::default();
+    if let Some(telemetry) = next.telemetry.as_ref() {
+        telemetry_cfg.enabled = telemetry.enabled;
+        if !telemetry.endpoint.trim().is_empty() {
+            telemetry_cfg.endpoint = telemetry.endpoint.clone();
+        }
+    }
+    state.telemetry.update_config(telemetry_cfg).await;
     Ok(Json(user_settings::to_public(&next)))
 }
 
@@ -3842,7 +3851,13 @@ async fn get_workspace(
 ) -> Result<Json<Workspace>, StatusCode> {
     let id = WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
     match state.store.get_workspace(id).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)? {
-        Some(ws) => Ok(Json(ws)),
+        Some(ws) => {
+            state
+                .telemetry
+                .emit(TelemetryEvent::workspace_opened())
+                .await;
+            Ok(Json(ws))
+        }
         None => Err(StatusCode::NOT_FOUND),
     }
 }
@@ -3909,11 +3924,10 @@ async fn create_workspace(
             .unwrap_or("workspace")
             .to_string()
     });
-    state
+    let workspace = state
         .store
         .create_workspace(name, root_path_str)
         .await
-        .map(Json)
         .map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -3921,7 +3935,12 @@ async fn create_workspace(
                     error: e.to_string(),
                 }),
             )
-        })
+        })?;
+    state
+        .telemetry
+        .emit(TelemetryEvent::workspace_registered())
+        .await;
+    Ok(Json(workspace))
 }
 
 async fn delete_workspace(
@@ -4644,8 +4663,17 @@ async fn create_session_for_track(
         .await
         .ok()
         .flatten();
+    let env_target = env_target_for_worktree(worktree.as_ref());
+    state
+        .telemetry
+        .emit(TelemetryEvent::session_started(
+            session.provider_id.clone(),
+            session.model_id.clone(),
+            Some(env_target.clone()),
+        ))
+        .await;
     Ok(Json(SessionWithEnv {
-        env_target: env_target_for_worktree(worktree.as_ref()),
+        env_target,
         session,
     }))
 }
