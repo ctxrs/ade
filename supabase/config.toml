@@ -21,6 +21,3 @@ enabled = true
 [auth]
 enabled = true
 
-[functions]
-enabled = true
-

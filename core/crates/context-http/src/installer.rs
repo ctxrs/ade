@@ -1380,7 +1380,13 @@ async fn install_provider_impl(
         }
 
         stage = "refresh";
-        refresh_provider_statuses(state).await?;
+        let mut status_cfg = load_agent_server_config(&state.data_root)
+            .await
+            .unwrap_or_default();
+        status_cfg
+            .managed_installs
+            .insert(provider_id.clone(), managed.meta.clone());
+        refresh_provider_statuses_with_cfg(state, status_cfg).await?;
 
         let status = state
             .provider_statuses
@@ -1602,6 +1608,13 @@ pub async fn refresh_provider_statuses(state: &AppState) -> Result<()> {
     let cfg = load_agent_server_config(&state.data_root)
         .await
         .unwrap_or_default();
+    refresh_provider_statuses_with_cfg(state, cfg).await
+}
+
+async fn refresh_provider_statuses_with_cfg(
+    state: &AppState,
+    cfg: AgentServerConfigFile,
+) -> Result<()> {
     let matrix = provider_matrix::load_matrix_cached(
         &state.data_root,
         &state.provider_matrix_cache,

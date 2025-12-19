@@ -12,8 +12,8 @@ fi
 BUCKET="${SUPABASE_STORAGE_BUCKET:-releases}"
 
 status_json="$(supabase status --output json)"
-api_url="$(node -e 'const j=JSON.parse(process.argv[1]); console.log(j.api_url);' "$status_json")"
-service_role_key="$(node -e 'const j=JSON.parse(process.argv[1]); console.log(j.service_role_key);' "$status_json")"
+api_url="$(node -e 'const j=JSON.parse(process.argv[1]); console.log(j.api_url ?? j.API_URL ?? "");' "$status_json")"
+service_role_key="$(node -e 'const j=JSON.parse(process.argv[1]); console.log(j.service_role_key ?? j.SERVICE_ROLE_KEY ?? "");' "$status_json")"
 
 echo "Ensuring Storage bucket '$BUCKET' exists and is public..."
 curl -fsS -X POST "$api_url/storage/v1/bucket" \
@@ -30,4 +30,3 @@ echo "- Bucket:    $BUCKET"
 echo
 echo "Example (after you upload an object):"
 echo "  curl -I \"$api_url/functions/v1/releases/stable/latest.json\""
-
