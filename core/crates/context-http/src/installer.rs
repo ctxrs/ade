@@ -13,21 +13,12 @@ use tokio::time::timeout;
 use crate::daemon::AppState;
 use crate::installs::{truncate_for_storage, InstallEventLevel, InstallId, InstallProgressEvent};
 use crate::lsp_catalog::{LspCatalogArchive, LspCatalogInstall};
+use crate::provider_matrix;
+use crate::updates;
 use context_providers::tier1::Tier1AcpAdapter;
 use context_lsp::LspManagerConfig;
 
 const NODE_VERSION: &str = "22.11.0";
-const CODEX_ACP_VERSION: &str = "0.7.4";
-const CLAUDE_CODE_ACP_VERSION: &str = "0.12.4";
-const GEMINI_CLI_VERSION: &str = "0.19.0";
-const QWEN_CODE_VERSION: &str = "0.4.1";
-const AUGGIE_VERSION: &str = "0.12.0";
-const CAGENT_VERSION: &str = "1.15.3";
-const OPENCODE_VERSION: &str = "1.0.150";
-const MISTRAL_VIBE_ACP_VERSION: &str = "1.1.2";
-const KIMI_CLI_VERSION: &str = "0.62";
-const GOOSE_VERSION: &str = "stable";
-const OPENHANDS_CLI_VERSION: &str = "1.0.1-cli";
 
 const TYPESCRIPT_LS_VERSION: &str = "5.1.3";
 const TYPESCRIPT_VERSION: &str = "5.9.3";
@@ -104,21 +95,11 @@ pub async fn install_provider(state: &AppState, provider_id: &str) -> Result<()>
     install_provider_impl(state, provider_id, None).await
 }
 
-pub fn is_supported_managed_provider(provider_id: &str) -> bool {
-    matches!(
-        provider_id,
-        "codex"
-            | "claude"
-            | "gemini"
-            | "qwen"
-            | "auggie"
-            | "cagent"
-            | "opencode"
-            | "mistral"
-            | "goose"
-            | "kimi"
-            | "openhands"
-    )
+pub fn is_supported_managed_provider(
+    matrix: &provider_matrix::ProviderMatrix,
+    provider_id: &str,
+) -> bool {
+    provider_matrix::is_managed_supported(matrix, provider_id)
 }
 
 pub fn is_supported_managed_lsp_server(server_id: &str) -> bool {
@@ -326,6 +307,7 @@ fn zed_target_key() -> Result<&'static str> {
         ("macos", "x86_64") => Ok("darwin-x86_64"),
         ("macos", "aarch64") => Ok("darwin-aarch64"),
         ("windows", "x86_64") => Ok("windows-x86_64"),
+        ("windows", "aarch64") => Ok("windows-aarch64"),
         _ => anyhow::bail!("unsupported platform: {os}/{arch}"),
     }
 }
@@ -1169,6 +1151,64 @@ async fn install_managed_python_provider(
     })
 }
 
+fn resolve_install_args(args: &[String], data_root: &Path) -> Vec<String> {
+    args.iter()
+        .map(|arg| {
+            if arg == "{{cagent_config}}" {
+                cagent_config_path(data_root).to_string_lossy().to_string()
+            } else {
+                arg.clone()
+            }
+        })
+        .collect()
+}
+
+fn map_archive_kind(kind: provider_matrix::ProviderArchiveKind) -> AgentServerArchive {
+    match kind {
+        provider_matrix::ProviderArchiveKind::None => AgentServerArchive::None,
+        provider_matrix::ProviderArchiveKind::TarGz => AgentServerArchive::TarGz,
+        provider_matrix::ProviderArchiveKind::TarBz2 => AgentServerArchive::TarBz2,
+        provider_matrix::ProviderArchiveKind::Zip => AgentServerArchive::Zip,
+    }
+}
+
+async fn ensure_cagent_config(
+    state: &AppState,
+    install_id: Option<InstallId>,
+    provider_id: &str,
+    stage: &mut &'static str,
+) -> Result<PathBuf> {
+    let cfg_path = cagent_config_path(&state.data_root);
+    if cfg_path.exists() {
+        return Ok(cfg_path);
+    }
+    *stage = "prepare";
+    emit_install(
+        state,
+        install_id,
+        provider_id,
+        InstallEventLevel::Info,
+        "prepare",
+        "Writing default cagent config".to_string(),
+        None,
+        None,
+        None,
+    )
+    .await;
+    if let Some(parent) = cfg_path.parent() {
+        tokio::fs::create_dir_all(parent).await.ok();
+    }
+    let cfg = r#"agents:
+  root:
+    model: openai/gpt-5-mini
+    description: Context default agent
+    instruction: |
+      You are a helpful coding assistant.
+"#;
+    tokio::fs::write(&cfg_path, cfg).await.ok();
+    Ok(cfg_path)
+}
+
 async fn install_provider_impl(
     state: &AppState,
     provider_id: &str,
@@ -1194,349 +1234,119 @@ async fn install_provider_impl(
         )
         .await;
 
-        let managed = match provider_id.as_str() {
-            "codex" => {
-                error_package = Some("@zed-industries/codex-acp".to_string());
-                error_version = Some(CODEX_ACP_VERSION.to_string());
-                error_install_dir_rel = Some(format!(
-                    "providers/agent-servers/{}/{}",
-                    provider_id, CODEX_ACP_VERSION
-                ));
-                install_managed_npm_provider(
-                    state,
-                    install_id,
-                    &provider_id,
-                    "@zed-industries/codex-acp",
-                    CODEX_ACP_VERSION,
-                    "node_modules/@zed-industries/codex-acp/bin/codex-acp.js",
-                    vec![],
-                    &mut stage,
-                )
-                .await?
-            }
-            "claude" => {
-                error_package = Some("@zed-industries/claude-code-acp".to_string());
-                error_version = Some(CLAUDE_CODE_ACP_VERSION.to_string());
-                error_install_dir_rel = Some(format!(
-                    "providers/agent-servers/{}/{}",
-                    provider_id, CLAUDE_CODE_ACP_VERSION
-                ));
-                install_managed_npm_provider(
-                    state,
-                    install_id,
-                    &provider_id,
-                    "@zed-industries/claude-code-acp",
-                    CLAUDE_CODE_ACP_VERSION,
-                    "node_modules/@zed-industries/claude-code-acp/dist/index.js",
-                    vec![],
-                    &mut stage,
-                )
-                .await?
-            }
-            "gemini" => {
-                error_package = Some("@google/gemini-cli".to_string());
-                error_version = Some(GEMINI_CLI_VERSION.to_string());
-                error_install_dir_rel = Some(format!(
-                    "providers/agent-servers/{}/{}",
-                    provider_id, GEMINI_CLI_VERSION
-                ));
-                install_managed_npm_provider(
-                    state,
-                    install_id,
-                    &provider_id,
-                    "@google/gemini-cli",
-                    GEMINI_CLI_VERSION,
-                    "node_modules/.bin/gemini",
-                    vec!["--experimental-acp".to_string()],
-                    &mut stage,
-                )
-                .await?
-            }
-            "qwen" => {
-                error_package = Some("@qwen-code/qwen-code".to_string());
-                error_version = Some(QWEN_CODE_VERSION.to_string());
-                error_install_dir_rel = Some(format!(
-                    "providers/agent-servers/{}/{}",
-                    provider_id, QWEN_CODE_VERSION
-                ));
-                install_managed_npm_provider(
-                    state,
-                    install_id,
-                    &provider_id,
-                    "@qwen-code/qwen-code",
-                    QWEN_CODE_VERSION,
-                    "node_modules/.bin/qwen",
-                    vec!["--experimental-acp".to_string()],
-                    &mut stage,
-                )
-                .await?
-            }
-            "auggie" => {
-                error_package = Some("@augmentcode/auggie".to_string());
-                error_version = Some(AUGGIE_VERSION.to_string());
-                error_install_dir_rel = Some(format!(
-                    "providers/agent-servers/{}/{}",
-                    provider_id, AUGGIE_VERSION
-                ));
-                install_managed_npm_provider(
-                    state,
-                    install_id,
-                    &provider_id,
-                    "@augmentcode/auggie",
-                    AUGGIE_VERSION,
-                    "node_modules/.bin/auggie",
-                    vec!["--acp".to_string()],
-                    &mut stage,
-                )
-                .await?
-            }
-            "cagent" => {
-                let os = std::env::consts::OS;
-                let arch = std::env::consts::ARCH;
-                let (file, bin_path) = match (os, arch) {
-                    ("macos", "aarch64") => ("cagent-darwin-arm64", "cagent"),
-                    ("macos", "x86_64") => ("cagent-darwin-amd64", "cagent"),
-                    ("linux", "aarch64") => ("cagent-linux-arm64", "cagent"),
-                    ("linux", "x86_64") => ("cagent-linux-amd64", "cagent"),
-                    ("windows", "x86_64") => ("cagent-windows-amd64.exe", "cagent.exe"),
-                    ("windows", "aarch64") => ("cagent-windows-arm64.exe", "cagent.exe"),
-                    _ => anyhow::bail!("unsupported cagent platform: {os}/{arch}"),
-                };
-                let url = format!("https://github.com/docker/cagent/releases/download/v{CAGENT_VERSION}/{file}");
+        let matrix = provider_matrix::load_matrix_cached(
+            &state.data_root,
+            &state.provider_matrix_cache,
+        )
+        .await;
+        let entry = provider_matrix::get_entry(&matrix, &provider_id)
+            .ok_or_else(|| anyhow::anyhow!("unsupported provider for install: {provider_id}"))?;
+        let Some(install) = entry.managed_install.as_ref() else {
+            anyhow::bail!("provider has no managed install: {provider_id}");
+        };
+        let context_version = updates::normalize_version_str(env!("CARGO_PKG_VERSION"));
+        let release = provider_matrix::recommended_release(entry, context_version.as_ref())
+            .ok_or_else(|| anyhow::anyhow!("no compatible release for provider: {provider_id}"))?;
 
-                let cfg_path = state
-                    .data_root
-                    .join("providers")
-                    .join("agent-servers")
-                    .join("cagent")
-                    .join("config.yaml");
-                if !cfg_path.exists() {
-                    stage = "prepare";
-                    emit_install(
-                        state,
-                        install_id,
-                        &provider_id,
-                        InstallEventLevel::Info,
-                        "prepare",
-                        "Writing default cagent config".to_string(),
-                        None,
-                        None,
-                        None,
-                    )
-                    .await;
-                    if let Some(parent) = cfg_path.parent() {
-                        tokio::fs::create_dir_all(parent).await.ok();
-                    }
-                    let cfg = r#"agents:
-  root:
-    model: openai/gpt-5-mini
-    description: Context default agent
-    instruction: |
-      You are a helpful coding assistant.
-"#;
-                    tokio::fs::write(&cfg_path, cfg).await.ok();
+        if provider_id == "cagent" {
+            let _ = ensure_cagent_config(state, install_id, &provider_id, &mut stage).await?;
+        }
+
+        let managed = match install {
+            provider_matrix::ProviderInstall::Npm {
+                package,
+                entrypoint,
+                args,
+            } => {
+                let version = release.version.clone();
+                error_package = Some(package.clone());
+                error_version = Some(version.clone());
+                error_install_dir_rel = Some(format!(
+                    "providers/agent-servers/{}/{}",
+                    provider_id, version
+                ));
+                install_managed_npm_provider(
+                    state,
+                    install_id,
+                    &provider_id,
+                    package,
+                    &version,
+                    entrypoint,
+                    resolve_install_args(args, &state.data_root),
+                    &mut stage,
+                )
+                .await?
+            }
+            provider_matrix::ProviderInstall::Python {
+                package,
+                version,
+                entrypoint,
+                args,
+            } => {
+                if provider_matrix::normalize_version(version)
+                    != provider_matrix::normalize_version(&release.version)
+                {
+                    anyhow::bail!(
+                        "provider matrix version mismatch for {provider_id}: release={} install={}",
+                        release.version,
+                        version
+                    );
                 }
-
-                error_package = Some(url.clone());
-                error_version = Some(CAGENT_VERSION.to_string());
+                error_package = Some(package.clone());
+                error_version = Some(version.clone());
                 error_install_dir_rel = Some(format!(
                     "providers/agent-servers/{}/{}",
-                    provider_id, CAGENT_VERSION
-                ));
-                install_managed_archive_provider(
-                    state,
-                    install_id,
-                    &provider_id,
-                    CAGENT_VERSION,
-                    &url,
-                    AgentServerArchive::None,
-                    bin_path,
-                    vec![
-                        "acp".to_string(),
-                        cfg_path.to_string_lossy().to_string(),
-                    ],
-                    &mut stage,
-                )
-                .await?
-            }
-            "opencode" => {
-                let target = zed_target_key().context("resolving platform target")?;
-                let (url, archive, bin_path) = match target {
-                    "darwin-aarch64" => (
-                        format!("https://github.com/sst/opencode/releases/download/v{OPENCODE_VERSION}/opencode-darwin-arm64.zip"),
-                        AgentServerArchive::Zip,
-                        "opencode",
-                    ),
-                    "darwin-x86_64" => (
-                        format!("https://github.com/sst/opencode/releases/download/v{OPENCODE_VERSION}/opencode-darwin-x64.zip"),
-                        AgentServerArchive::Zip,
-                        "opencode",
-                    ),
-                    "linux-aarch64" => (
-                        format!("https://github.com/sst/opencode/releases/download/v{OPENCODE_VERSION}/opencode-linux-arm64.tar.gz"),
-                        AgentServerArchive::TarGz,
-                        "opencode",
-                    ),
-                    "linux-x86_64" => (
-                        format!("https://github.com/sst/opencode/releases/download/v{OPENCODE_VERSION}/opencode-linux-x64.tar.gz"),
-                        AgentServerArchive::TarGz,
-                        "opencode",
-                    ),
-                    "windows-x86_64" => (
-                        format!("https://github.com/sst/opencode/releases/download/v{OPENCODE_VERSION}/opencode-windows-x64.zip"),
-                        AgentServerArchive::Zip,
-                        "opencode.exe",
-                    ),
-                    other => anyhow::bail!("unsupported OpenCode target: {other}"),
-                };
-
-                error_package = Some(url.clone());
-                error_version = Some(OPENCODE_VERSION.to_string());
-                error_install_dir_rel = Some(format!(
-                    "providers/agent-servers/{}/{}",
-                    provider_id, OPENCODE_VERSION
-                ));
-                install_managed_archive_provider(
-                    state,
-                    install_id,
-                    &provider_id,
-                    OPENCODE_VERSION,
-                    &url,
-                    archive,
-                    bin_path,
-                    vec!["acp".to_string()],
-                    &mut stage,
-                )
-                .await?
-            }
-            "openhands" => {
-                let os = std::env::consts::OS;
-                let url = match os {
-                    "linux" => format!(
-                        "https://github.com/OpenHands/OpenHands/releases/download/{OPENHANDS_CLI_VERSION}/openhands-linux"
-                    ),
-                    "macos" => format!(
-                        "https://github.com/OpenHands/OpenHands/releases/download/{OPENHANDS_CLI_VERSION}/openhands-macos"
-                    ),
-                    other => anyhow::bail!(
-                        "unsupported OpenHands CLI platform: {other} (no binary published for this platform)"
-                    ),
-                };
-
-                error_package = Some(url.clone());
-                error_version = Some(OPENHANDS_CLI_VERSION.to_string());
-                error_install_dir_rel = Some(format!(
-                    "providers/agent-servers/{}/{}",
-                    provider_id, OPENHANDS_CLI_VERSION
-                ));
-                install_managed_archive_provider(
-                    state,
-                    install_id,
-                    &provider_id,
-                    OPENHANDS_CLI_VERSION,
-                    &url,
-                    AgentServerArchive::None,
-                    "openhands",
-                    vec!["acp".to_string()],
-                    &mut stage,
-                )
-                .await?
-            }
-            "mistral" => {
-                let target = zed_target_key().context("resolving platform target")?;
-                let (url, bin_path) = match target {
-                    "darwin-aarch64" => (
-                        format!("https://github.com/mistralai/mistral-vibe/releases/download/v{MISTRAL_VIBE_ACP_VERSION}/vibe-acp-darwin-aarch64-{MISTRAL_VIBE_ACP_VERSION}.zip"),
-                        "vibe-acp",
-                    ),
-                    "darwin-x86_64" => (
-                        format!("https://github.com/mistralai/mistral-vibe/releases/download/v{MISTRAL_VIBE_ACP_VERSION}/vibe-acp-darwin-x86_64-{MISTRAL_VIBE_ACP_VERSION}.zip"),
-                        "vibe-acp",
-                    ),
-                    "linux-x86_64" => (
-                        format!("https://github.com/mistralai/mistral-vibe/releases/download/v{MISTRAL_VIBE_ACP_VERSION}/vibe-acp-linux-x86_64-{MISTRAL_VIBE_ACP_VERSION}.zip"),
-                        "vibe-acp",
-                    ),
-                    "windows-x86_64" => (
-                        format!("https://github.com/mistralai/mistral-vibe/releases/download/v{MISTRAL_VIBE_ACP_VERSION}/vibe-acp-windows-x86_64-{MISTRAL_VIBE_ACP_VERSION}.zip"),
-                        "vibe-acp.exe",
-                    ),
-                    other => anyhow::bail!(
-                        "unsupported Mistral Vibe ACP target: {other} (no binary published for this platform)"
-                    ),
-                };
-
-                error_package = Some(url.clone());
-                error_version = Some(MISTRAL_VIBE_ACP_VERSION.to_string());
-                error_install_dir_rel = Some(format!(
-                    "providers/agent-servers/{}/{}",
-                    provider_id, MISTRAL_VIBE_ACP_VERSION
-                ));
-                install_managed_archive_provider(
-                    state,
-                    install_id,
-                    &provider_id,
-                    MISTRAL_VIBE_ACP_VERSION,
-                    &url,
-                    AgentServerArchive::Zip,
-                    bin_path,
-                    vec![],
-                    &mut stage,
-                )
-                .await?
-            }
-            "goose" => {
-                let os = std::env::consts::OS;
-                let arch = std::env::consts::ARCH;
-                let (file, archive, bin_path) = match (os, arch) {
-                    ("macos", "aarch64") => ("goose-aarch64-apple-darwin.tar.bz2", AgentServerArchive::TarBz2, "goose"),
-                    ("macos", "x86_64") => ("goose-x86_64-apple-darwin.tar.bz2", AgentServerArchive::TarBz2, "goose"),
-                    ("linux", "aarch64") => ("goose-aarch64-unknown-linux-gnu.tar.bz2", AgentServerArchive::TarBz2, "goose"),
-                    ("linux", "x86_64") => ("goose-x86_64-unknown-linux-gnu.tar.bz2", AgentServerArchive::TarBz2, "goose"),
-                    ("windows", "x86_64") => ("goose-x86_64-pc-windows-gnu.zip", AgentServerArchive::Zip, "goose.exe"),
-                    _ => anyhow::bail!("unsupported Goose platform: {os}/{arch}"),
-                };
-                let url = format!("https://github.com/block/goose/releases/download/{GOOSE_VERSION}/{file}");
-
-                error_package = Some(url.clone());
-                error_version = Some(GOOSE_VERSION.to_string());
-                error_install_dir_rel = Some(format!(
-                    "providers/agent-servers/{}/{}",
-                    provider_id, GOOSE_VERSION
-                ));
-                install_managed_archive_provider(
-                    state,
-                    install_id,
-                    &provider_id,
-                    GOOSE_VERSION,
-                    &url,
-                    archive,
-                    bin_path,
-                    vec!["acp".to_string()],
-                    &mut stage,
-                )
-                .await?
-            }
-            "kimi" => {
-                error_package = Some("kimi-cli".to_string());
-                error_version = Some(KIMI_CLI_VERSION.to_string());
-                error_install_dir_rel = Some(format!(
-                    "providers/agent-servers/{}/{}",
-                    provider_id, KIMI_CLI_VERSION
+                    provider_id, version
                 ));
                 install_managed_python_provider(
                     state,
                     install_id,
                     &provider_id,
-                    "kimi-cli",
-                    KIMI_CLI_VERSION,
-                    "kimi",
-                    vec!["--acp".to_string()],
+                    package,
+                    version,
+                    entrypoint,
+                    resolve_install_args(args, &state.data_root),
                     &mut stage,
                 )
                 .await?
             }
-            other => anyhow::bail!("unsupported provider for install: {other}"),
+            provider_matrix::ProviderInstall::Archive {
+                version,
+                args,
+                targets,
+            } => {
+                if provider_matrix::normalize_version(version)
+                    != provider_matrix::normalize_version(&release.version)
+                {
+                    anyhow::bail!(
+                        "provider matrix version mismatch for {provider_id}: release={} install={}",
+                        release.version,
+                        version
+                    );
+                }
+                let target = zed_target_key().context("resolving platform target")?;
+                let target_entry = targets.get(target).ok_or_else(|| {
+                    anyhow::anyhow!("unsupported provider target {provider_id}: {target}")
+                })?;
+                error_package = Some(target_entry.url.clone());
+                error_version = Some(version.clone());
+                error_install_dir_rel = Some(format!(
+                    "providers/agent-servers/{}/{}",
+                    provider_id, version
+                ));
+                install_managed_archive_provider(
+                    state,
+                    install_id,
+                    &provider_id,
+                    version,
+                    &target_entry.url,
+                    map_archive_kind(target_entry.archive),
+                    &target_entry.bin_path,
+                    resolve_install_args(args, &state.data_root),
+                    &mut stage,
+                )
+                .await?
+            }
         };
 
         stage = "inspect";
@@ -1792,6 +1602,11 @@ pub async fn refresh_provider_statuses(state: &AppState) -> Result<()> {
     let cfg = load_agent_server_config(&state.data_root)
         .await
         .unwrap_or_default();
+    let matrix = provider_matrix::load_matrix_cached(
+        &state.data_root,
+        &state.provider_matrix_cache,
+    )
+    .await;
 
     let map = state.providers.lock().await;
     let mut statuses = HashMap::new();
@@ -1799,6 +1614,10 @@ pub async fn refresh_provider_statuses(state: &AppState) -> Result<()> {
         match adapter.inspect().await {
             Ok(mut status) => {
                 apply_managed_install_details(&mut status, &cfg);
+                if let Some(entry) = provider_matrix::get_entry(&matrix, id) {
+                    provider_matrix::apply_matrix_to_status(&state.data_root, &cfg, entry, &mut status)
+                        .await;
+                }
                 statuses.insert(id.clone(), status);
             }
             Err(e) => {
@@ -1828,6 +1647,14 @@ pub fn agent_server_config_path(data_root: &Path) -> PathBuf {
         .join("providers")
         .join("agent-servers")
         .join("agent_servers.json")
+}
+
+pub fn cagent_config_path(data_root: &Path) -> PathBuf {
+    data_root
+        .join("providers")
+        .join("agent-servers")
+        .join("cagent")
+        .join("config.yaml")
 }
 
 pub async fn load_agent_server_config(data_root: &Path) -> Result<AgentServerConfigFile> {

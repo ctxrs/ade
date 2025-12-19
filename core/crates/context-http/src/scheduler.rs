@@ -166,6 +166,49 @@ async fn start_turn(
         message.delivery = MessageDelivery::Immediate;
         message.delivered_at = Some(Utc::now());
     }
+
+    let provider_status = state
+        .provider_statuses
+        .lock()
+        .await
+        .get(&session.provider_id)
+        .cloned();
+    if let Some(st) = provider_status {
+        if !st.installed || !matches!(st.health, context_providers::adapters::ProviderHealth::Ok) {
+            let message = if st.installed {
+                format!(
+                    "Provider {} is unhealthy ({:?}): {}",
+                    session.provider_id,
+                    st.health,
+                    st.diagnostics.join("; ")
+                )
+            } else {
+                format!("Provider {} is not installed", session.provider_id)
+            };
+            let _ = emit_event(
+                state,
+                session.id,
+                Some(run_id),
+                Some(turn_id),
+                SessionEventType::Error,
+                json!({"message": message}),
+            )
+            .await;
+            let _ = state
+                .store
+                .update_session_turn_status(
+                    session.id,
+                    turn_id,
+                    SessionTurnStatus::Failed,
+                    None,
+                    None,
+                    Utc::now(),
+                )
+                .await;
+            return Err(anyhow!("provider unavailable: {}", session.provider_id));
+        }
+    }
+
     let _ = state
         .store
         .update_session_turn_status(

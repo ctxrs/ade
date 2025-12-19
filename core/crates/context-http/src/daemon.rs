@@ -54,6 +54,7 @@ pub struct AppState {
     pub store: Store,
     pub providers: Mutex<HashMap<String, Arc<dyn ProviderAdapter>>>,
     pub provider_statuses: Mutex<HashMap<String, ProviderStatus>>,
+    pub provider_matrix_cache: Mutex<crate::provider_matrix::ProviderMatrixCache>,
     pub provider_options_cache: Mutex<HashMap<String, CachedProviderOptions>>,
     pub provider_verify_cache: Mutex<HashMap<String, CachedProviderVerify>>,
     pub file_completions_cache: Mutex<HashMap<WorktreeId, CachedFileCompletions>>,
@@ -160,6 +161,7 @@ impl AppState {
             store,
             providers: Mutex::new(providers),
             provider_statuses: Mutex::new(HashMap::new()),
+            provider_matrix_cache: Mutex::new(crate::provider_matrix::ProviderMatrixCache::default()),
             provider_options_cache: Mutex::new(HashMap::new()),
             provider_verify_cache: Mutex::new(HashMap::new()),
             file_completions_cache: Mutex::new(HashMap::new()),
@@ -576,11 +578,7 @@ pub async fn serve(
             .get("cagent")
             .map(|c| Tier1AcpAdapter::from_raw("cagent", c.command.clone(), c.args.clone()))
             .unwrap_or_else(|| {
-                let cfg = data_root
-                    .join("providers")
-                    .join("agent-servers")
-                    .join("cagent")
-                    .join("config.yaml")
+                let cfg = installer::cagent_config_path(&data_root)
                     .to_string_lossy()
                     .to_string();
                 Tier1AcpAdapter::from_raw("cagent", "cagent".to_string(), vec!["acp".to_string(), cfg])
@@ -669,33 +667,7 @@ pub async fn serve(
         let mut map = state.providers.lock().await;
         map.insert("claude".into(), claude_adapter.clone());
     }
-    {
-        let mut statuses = HashMap::new();
-        let map = state.providers.lock().await;
-        for (id, adapter) in map.iter() {
-            match adapter.inspect().await {
-                Ok(status) => {
-                    statuses.insert(id.clone(), status);
-                }
-                Err(e) => {
-                    statuses.insert(
-                        id.clone(),
-                        ProviderStatus {
-                            provider_id: id.clone(),
-                            installed: false,
-                            detected_path: None,
-                            version: None,
-                            capabilities: None,
-                            health: context_providers::adapters::ProviderHealth::Error,
-                            diagnostics: vec![e.to_string()],
-                            details: HashMap::new(),
-                        },
-                    );
-                }
-            }
-        }
-        *state.provider_statuses.lock().await = statuses;
-    }
+    installer::refresh_provider_statuses(&state).await?;
 
     // Pinned ACP provider warming:
     // - Always keep these providers warm today: codex, gemini, claude

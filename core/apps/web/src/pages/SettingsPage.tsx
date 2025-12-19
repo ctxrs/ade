@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { DictationSettings, getSettings, updateSettings } from "../api/client";
+import { DictationSettings, TelemetrySettings, getSettings, updateSettings } from "../api/client";
 
 const MODEL_OPTIONS: Array<{ value: string; label: string }> = [
   { value: "auto", label: "Default (Deepgram Nova-3)" },
@@ -29,6 +29,10 @@ export default function SettingsPage() {
   const [apiKey, setApiKey] = useState("");
   const [apiSecret, setApiSecret] = useState("");
   const [apiSecretSet, setApiSecretSet] = useState(false);
+  const [telemetryEnabled, setTelemetryEnabled] = useState(false);
+  const [telemetryEndpoint, setTelemetryEndpoint] = useState("");
+  const [telemetrySaving, setTelemetrySaving] = useState(false);
+  const [telemetryError, setTelemetryError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -53,6 +57,14 @@ export default function SettingsPage() {
           setApiKey(d.livekit?.api_key ?? "");
           setApiSecretSet(Boolean(d.livekit?.api_secret_set));
         }
+        const t = s.telemetry ?? null;
+        if (t) {
+          setTelemetryEnabled(t.enabled);
+          setTelemetryEndpoint(t.endpoint ?? "");
+        } else {
+          setTelemetryEnabled(false);
+          setTelemetryEndpoint("");
+        }
         setLoaded(true);
       } catch (e: any) {
         if (cancelled) return;
@@ -64,6 +76,22 @@ export default function SettingsPage() {
       cancelled = true;
     };
   }, []);
+
+  const onSaveTelemetry = async () => {
+    setTelemetryError(null);
+    setTelemetrySaving(true);
+    try {
+      const next: TelemetrySettings = {
+        enabled: telemetryEnabled,
+        endpoint: telemetryEndpoint.trim() || telemetryEndpoint,
+      };
+      await updateSettings({ telemetry: next });
+    } catch (e: any) {
+      setTelemetryError(e?.message ?? String(e));
+    } finally {
+      setTelemetrySaving(false);
+    }
+  };
 
   const canSave = useMemo(() => {
     if (!dictationEnabled) return true;
@@ -110,6 +138,29 @@ export default function SettingsPage() {
           <strong>Providers / BYOK</strong>
         </div>
         <div className="muted">Configure credentials for cloud services used by Context.</div>
+      </div>
+
+      <div className="card">
+        <div className="row">
+          <strong>Telemetry</strong>
+          <label className="muted" style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+            <input
+              type="checkbox"
+              checked={telemetryEnabled}
+              onChange={(e) => setTelemetryEnabled(e.target.checked)}
+            />
+            Enabled
+          </label>
+        </div>
+        <div className="muted" style={{ marginTop: 8 }}>
+          Share anonymous usage metrics (no code, prompts, or file paths). Enabled by default; disable to opt out.
+        </div>
+        {telemetryError && <div className="error" style={{ marginTop: 12 }}>{telemetryError}</div>}
+        <div className="row" style={{ marginTop: 12 }}>
+          <button type="button" onClick={onSaveTelemetry} disabled={!loaded || telemetrySaving}>
+            {telemetrySaving ? "Saving…" : "Save"}
+          </button>
+        </div>
       </div>
 
       <div className="card">
@@ -172,38 +223,4 @@ export default function SettingsPage() {
             <div className="muted">LiveKit API Key</div>
             <input
               value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-              disabled={!dictationEnabled}
-              placeholder="APIK…"
-              style={{ width: "100%", marginTop: 6 }}
-            />
-          </label>
-
-          <label>
-            <div className="muted">LiveKit API Secret</div>
-            <input
-              value={apiSecret}
-              onChange={(e) => setApiSecret(e.target.value)}
-              disabled={!dictationEnabled}
-              placeholder={apiSecretSet ? "(set)" : "MAB…"}
-              type="password"
-              style={{ width: "100%", marginTop: 6 }}
-            />
-            <div className="muted" style={{ marginTop: 6 }}>
-              {apiSecretSet ? "Secret is stored; enter a new value to rotate." : "Required."}
-            </div>
-          </label>
-        </div>
-
-        {error && <div className="error" style={{ marginTop: 12 }}>{error}</div>}
-
-        <div className="row" style={{ marginTop: 12 }}>
-          <button type="button" onClick={onSave} disabled={!loaded || saving || !canSave}>
-            {saving ? "Saving…" : "Save"}
-          </button>
-          {!loaded && <div className="muted">Loading…</div>}
-        </div>
-      </div>
-    </div>
-  );
-}
+              onChange={(e) => se

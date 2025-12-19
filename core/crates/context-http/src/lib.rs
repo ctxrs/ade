@@ -8,6 +8,7 @@ pub mod installs;
 pub mod installer;
 pub mod lsp_catalog;
 pub mod logs;
+pub mod provider_matrix;
 pub mod scheduler;
 pub mod settings;
 pub mod updates;

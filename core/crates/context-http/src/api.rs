@@ -3136,6 +3136,11 @@ async fn list_providers(
     let managed = installer::load_agent_server_config(&state.data_root)
         .await
         .unwrap_or_default();
+    let matrix = crate::provider_matrix::load_matrix_cached(
+        &state.data_root,
+        &state.provider_matrix_cache,
+    )
+    .await;
 
     let show_fake = std::env::var("CONTEXT_SHOW_FAKE_PROVIDER").ok().as_deref() == Some("1");
     for status in out.iter_mut() {
@@ -3147,7 +3152,7 @@ async fn list_providers(
         }
         status.details.insert(
             "install_supported".into(),
-            if installer::is_supported_managed_provider(&status.provider_id) {
+            if installer::is_supported_managed_provider(&matrix, &status.provider_id) {
                 "true".into()
             } else {
                 "false".into()
@@ -3176,10 +3181,15 @@ async fn get_provider(
     let managed = installer::load_agent_server_config(&state.data_root)
         .await
         .unwrap_or_default();
+    let matrix = crate::provider_matrix::load_matrix_cached(
+        &state.data_root,
+        &state.provider_matrix_cache,
+    )
+    .await;
     installer::apply_managed_install_details(&mut status, &managed);
     status.details.insert(
         "install_supported".into(),
-        if installer::is_supported_managed_provider(&status.provider_id) {
+        if installer::is_supported_managed_provider(&matrix, &status.provider_id) {
             "true".into()
         } else {
             "false".into()
@@ -3200,21 +3210,18 @@ struct InstallStartResponse {
     install_id: InstallId,
 }
 
-fn default_agent_server_command(provider_id: &str) -> Option<(String, Vec<String>)> {
-    match provider_id {
-        "codex" => Some(("codex-acp".to_string(), vec![])),
-        "claude" => Some(("claude-code-acp".to_string(), vec![])),
-        "gemini" => Some(("gemini".to_string(), vec!["--experimental-acp".to_string()])),
-        "qwen" => Some(("qwen".to_string(), vec!["--experimental-acp".to_string()])),
-        "auggie" => Some(("auggie".to_string(), vec!["--acp".to_string()])),
-        "cagent" => Some(("cagent".to_string(), vec!["acp".to_string()])),
-        "opencode" => Some(("opencode".to_string(), vec!["acp".to_string()])),
-        "openhands" => Some(("openhands".to_string(), vec!["acp".to_string()])),
-        "mistral" => Some(("vibe-acp".to_string(), vec![])),
-        "goose" => Some(("goose".to_string(), vec!["acp".to_string()])),
-        "kimi" => Some(("kimi".to_string(), vec!["--acp".to_string()])),
-        _ => None,
+fn default_agent_server_command(
+    matrix: &crate::provider_matrix::ProviderMatrix,
+    data_root: &std::path::Path,
+    provider_id: &str,
+) -> Option<(String, Vec<String>)> {
+    let entry = crate::provider_matrix::get_entry(matrix, provider_id)?;
+    let mut cmd = entry.command.clone()?;
+    if provider_id == "cagent" {
+        cmd.args
+            .push(crate::installer::cagent_config_path(data_root).to_string_lossy().to_string());
     }
+    Some((cmd.command, cmd.args))
 }
 
 async fn get_provider_options(
@@ -3334,12 +3341,17 @@ async fn get_provider_options(
     let cfg = installer::load_agent_server_config(&state.data_root)
         .await
         .unwrap_or_default();
+    let matrix = crate::provider_matrix::load_matrix_cached(
+        &state.data_root,
+        &state.provider_matrix_cache,
+    )
+    .await;
 
     let (command, args) = cfg
         .providers
         .get(&provider_id)
         .map(|c| (c.command.clone(), c.args.clone()))
-        .or_else(|| default_agent_server_command(&provider_id))
+        .or_else(|| default_agent_server_command(&matrix, &state.data_root, &provider_id))
         .ok_or((
             StatusCode::BAD_REQUEST,
             Json(ApiErrorResp {
@@ -3472,11 +3484,16 @@ async fn authenticate_provider_for_workspace(
     let cfg = installer::load_agent_server_config(&state.data_root)
         .await
         .unwrap_or_default();
+    let matrix = crate::provider_matrix::load_matrix_cached(
+        &state.data_root,
+        &state.provider_matrix_cache,
+    )
+    .await;
     let (command, args) = cfg
         .providers
         .get(&provider_id)
         .map(|c| (c.command.clone(), c.args.clone()))
-        .or_else(|| default_agent_server_command(&provider_id))
+        .or_else(|| default_agent_server_command(&matrix, &state.data_root, &provider_id))
         .ok_or((
             StatusCode::BAD_REQUEST,
             Json(ApiErrorResp {
@@ -3562,11 +3579,16 @@ async fn verify_provider_for_workspace(
     let cfg = installer::load_agent_server_config(&state.data_root)
         .await
         .unwrap_or_default();
+    let matrix = crate::provider_matrix::load_matrix_cached(
+        &state.data_root,
+        &state.provider_matrix_cache,
+    )
+    .await;
     let (command, args) = cfg
         .providers
         .get(&provider_id)
         .map(|c| (c.command.clone(), c.args.clone()))
-        .or_else(|| default_agent_server_command(&provider_id))
+        .or_else(|| default_agent_server_command(&matrix, &state.data_root, &provider_id))
         .ok_or((
             StatusCode::BAD_REQUEST,
             Json(ApiErrorResp {
@@ -3635,7 +3657,12 @@ async fn install_provider(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<Json<InstallStartResponse>, StatusCode> {
-    if !installer::is_supported_managed_provider(&id) {
+    let matrix = crate::provider_matrix::load_matrix_cached(
+        &state.data_root,
+        &state.provider_matrix_cache,
+    )
+    .await;
+    if !installer::is_supported_managed_provider(&matrix, &id) {
         return Err(StatusCode::BAD_REQUEST);
     }
 
@@ -3694,19 +3721,16 @@ async fn install_all_providers(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<InstallStartResponse>>, StatusCode> {
     let mut out = Vec::new();
-    for id in [
-        "codex",
-        "claude",
-        "gemini",
-        "qwen",
-        "auggie",
-        "cagent",
-        "opencode",
-        "openhands",
-        "mistral",
-        "goose",
-        "kimi",
-    ] {
+    let matrix = crate::provider_matrix::load_matrix_cached(
+        &state.data_root,
+        &state.provider_matrix_cache,
+    )
+    .await;
+    for entry in matrix.providers.iter() {
+        if !installer::is_supported_managed_provider(&matrix, &entry.id) {
+            continue;
+        }
+        let id = entry.id.as_str();
         if let Some(install_id) = state.find_running_install(id).await {
             out.push(InstallStartResponse {
                 provider_id: id.to_string(),

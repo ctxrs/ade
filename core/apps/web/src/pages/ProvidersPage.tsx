@@ -421,6 +421,21 @@ export default function ProvidersPage() {
               </div>
             )}
 
+            {(p.version ||
+              p.details?.matrix_recommended_version ||
+              p.details?.matrix_latest_version ||
+              p.details?.matrix_update_available === "true" ||
+              p.details?.matrix_update_requires_context === "true") && (
+              <div className="muted">
+                {p.version ? `Detected: ${p.version}` : "Detected: unknown"}
+                {p.details?.matrix_recommended_version
+                  ? ` · Recommended: ${p.details.matrix_recommended_version}`
+                  : ""}
+                {p.details?.matrix_update_available === "true" ? " · Update available" : ""}
+                {p.details?.matrix_update_requires_context === "true" ? " · Requires Context update" : ""}
+              </div>
+            )}
+
             {p.diagnostics?.length > 0 && (
               <ul className="sublist">
                 {p.diagnostics.map((d, i) => (
@@ -500,8 +515,10 @@ export default function ProvidersPage() {
               >
                 {busy === p.provider_id || installs[p.provider_id]?.state === "running"
                   ? "Installing…"
-                  : p.installed
-                    ? "Reinstall"
+                  : p.installed && p.health === "unsupported_version"
+                    ? "Update"
+                    : p.installed
+                      ? "Reinstall"
                     : "Install"}
               </button>
             </div>

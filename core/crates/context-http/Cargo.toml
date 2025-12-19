@@ -43,13 +43,13 @@ similar = "2"
 jsonwebtoken = "9"
 tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
 fs2 = "0.4"
+which = "7"
 
 [dev-dependencies]
 tempfile = "3"
 tower = "0.5"
 hyper = { version = "1", features = ["full"] }
 reqwest.workspace = true
-which = "7"
 
 [[bin]]
 name = "context"

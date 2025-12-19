@@ -251,8 +251,14 @@ export type DictationSettings = {
   livekit?: LiveKitDictationSettings | null;
 };
 
+export type TelemetrySettings = {
+  enabled: boolean;
+  endpoint: string;
+};
+
 export type Settings = {
   dictation?: DictationSettings | null;
+  telemetry?: TelemetrySettings | null;
 };
 
 export type EditPlanSummary = {

@@ -78,8 +78,12 @@ export default function TaskPage() {
               {providers
                 .filter((p) => p.details?.ui_hidden !== "true")
                 .map((p) => (
-                  <option key={p.provider_id} value={p.provider_id} disabled={!p.installed}>
-                    {p.provider_id} {p.installed ? "" : "(missing)"}
+                  <option
+                    key={p.provider_id}
+                    value={p.provider_id}
+                    disabled={!p.installed || p.health !== "ok"}
+                  >
+                    {p.provider_id} {p.installed && p.health === "ok" ? "" : "(missing)"}
                   </option>
                 ))}
             </select>

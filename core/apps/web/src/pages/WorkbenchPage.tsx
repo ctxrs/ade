@@ -242,7 +242,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   );
   const defaultProviderId = useMemo(() => {
     const installed = providers
-      .filter((p) => p.installed && p.details?.ui_hidden !== "true")
+      .filter((p) => p.installed && p.health === "ok" && p.details?.ui_hidden !== "true")
       .map((p) => p.provider_id);
     if (installed.includes("codex")) return "codex";
     if (installed.includes("claude")) return "claude";
@@ -702,7 +702,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       for (const [providerId, s] of Object.entries(prev)) {
         const st = providersById[providerId];
         const stillRunning = st?.details?.install_running === "true";
-        if (s?.state === "succeeded" && st?.installed && !stillRunning) {
+        if (s?.state === "succeeded" && st?.installed && st.health === "ok" && !stillRunning) {
           delete next[providerId];
           changed = true;
         }
@@ -734,7 +734,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
 
   useEffect(() => {
     if (!providers.length) return;
-    const codexInstalled = providersById["codex"]?.installed ?? false;
+    const codexInstalled = providersById["codex"]?.installed === true && providersById["codex"]?.health === "ok";
     if (codexInstalled) return;
     if (defaultProviderId === "codex") return;
     setDraftTracks((prev) => {
@@ -1200,7 +1200,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const ensureProviderOptions = useCallback(
     async (providerId: string, opts?: { force?: boolean }): Promise<ProviderOptions | undefined> => {
       if (!workspaceId) return;
-      const installed = providersById[providerId]?.installed ?? false;
+      const installed = providersById[providerId]?.installed === true && providersById[providerId]?.health === "ok";
       if (!installed) return;
 
       const force = opts?.force ?? false;
@@ -1241,10 +1241,14 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const startBlockedReason = useMemo(() => {
     if (draftPrompt.trim().length === 0) return "Enter a prompt to start.";
     if (startBusy) return "Starting…";
-    const missing = draftTracks.find((t) => (providersById[t.providerId]?.installed ?? false) === false);
+    const missing = draftTracks.find(
+      (t) => !(providersById[t.providerId]?.installed === true && providersById[t.providerId]?.health === "ok"),
+    );
     if (missing) {
       const diag = providersById[missing.providerId]?.diagnostics?.[0];
-      return diag ? `Harness “${missing.providerId}” not installed: ${diag}` : `Harness “${missing.providerId}” not installed.`;
+      return diag
+        ? `Harness “${missing.providerId}” unavailable: ${diag}`
+        : `Harness “${missing.providerId}” unavailable.`;
     }
     return null;
   }, [draftPrompt, startBusy, draftTracks, providersById]);
@@ -1437,13 +1441,11 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
 
       for (let i = 0; i < toStart.length; i++) {
         const dt = toStart[i];
-        const installed = providersById[dt.providerId]?.installed ?? false;
+        const installed = providersById[dt.providerId]?.installed === true && providersById[dt.providerId]?.health === "ok";
         if (!installed) {
           const diag = providersById[dt.providerId]?.diagnostics?.[0];
           throw new Error(
-            diag
-              ? `Harness “${dt.providerId}” not installed: ${diag}`
-              : `Harness “${dt.providerId}” not installed.`,
+            diag ? `Harness “${dt.providerId}” unavailable: ${diag}` : `Harness “${dt.providerId}” unavailable.`,
           );
         }
         const label = workbenchLabelForTrack(dt);
@@ -2543,9 +2545,10 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
                                   const label = String(h.label);
                                   const count = harnessCounts[id] ?? 0;
                                   const checked = count > 0;
-                                  const installed = providersById[id]?.installed ?? false;
-                                  const installSupported = providersById[id]?.details?.install_supported === "true";
-                                  const installRunning = providersById[id]?.details?.install_running === "true";
+                                  const providerStatus = providersById[id];
+                                  const installed = providerStatus?.installed === true && providerStatus?.health === "ok";
+                                  const installSupported = providerStatus?.details?.install_supported === "true";
+                                  const installRunning = providerStatus?.details?.install_running === "true";
                                   const installBusy = providerInstallsById[id]?.state === "running";
                                   const expanded = expandedHarnessId === id;
                                   const canConfigureModels = useMultipleAgents && draftTracks.length > 1;
@@ -2590,9 +2593,9 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
                                                 installProviderFromMenu(id);
                                               }}
                                               disabled={installRunning || installBusy}
-                                              title="Install this harness"
+                                              title={providerStatus?.installed ? "Update this harness" : "Install this harness"}
                                             >
-                                              {installRunning || installBusy ? "Installing…" : "Install"}
+                                              {installRunning || installBusy ? "Installing…" : providerStatus?.installed ? "Update" : "Install"}
                                             </button>
                                           ) : (
                                             <button
