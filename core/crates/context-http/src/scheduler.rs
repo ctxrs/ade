@@ -22,6 +22,7 @@ use context_providers::adapters::{ProviderAdapter, RunHandle, TurnInput};
 use context_providers::events::NormalizedEvent;
 
 use crate::daemon::AppState;
+use crate::installer;
 use crate::telemetry::TelemetryEvent;
 
 #[derive(Debug)]
@@ -217,6 +218,31 @@ async fn start_turn(
     }
     if let Ok(v) = std::env::var("CONTEXT_MCP_DISABLED") {
         provider_env.insert("CONTEXT_MCP_DISABLED".to_string(), v);
+    }
+
+    if let Ok(cfg) = installer::load_agent_server_config(&state.data_root).await {
+        if let Some(cmd) = cfg.providers.get(&session.provider_id) {
+            let mut bin_dirs: Vec<std::path::PathBuf> = Vec::new();
+            for dep in &cmd.dependencies {
+                if let Some(meta) = cfg.managed_installs.get(dep) {
+                    if let Some(rel) = meta.bin_dir_rel.as_ref() {
+                        bin_dirs.push(state.data_root.join(rel));
+                    }
+                }
+            }
+            if !bin_dirs.is_empty() {
+                let mut path_parts: Vec<std::path::PathBuf> = bin_dirs;
+                if let Some(current) = std::env::var_os("PATH") {
+                    path_parts.extend(std::env::split_paths(&current));
+                }
+                if let Ok(joined) = std::env::join_paths(path_parts) {
+                    provider_env.insert(
+                        "PATH".to_string(),
+                        joined.to_string_lossy().to_string(),
+                    );
+                }
+            }
+        }
     }
 
     let session_key = session.id.0.to_string();

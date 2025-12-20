@@ -18,7 +18,9 @@ use crate::updates;
 use context_providers::tier1::Tier1AcpAdapter;
 use context_lsp::LspManagerConfig;
 
-const NODE_VERSION: &str = "22.11.0";
+const NODE_VERSION: &str = "24.12.0";
+const PYTHON_VERSION: &str = "3.13.11";
+const PYTHON_BUILD_TAG: &str = "20251217";
 
 const TYPESCRIPT_LS_VERSION: &str = "5.1.3";
 const TYPESCRIPT_VERSION: &str = "5.9.3";
@@ -37,9 +39,14 @@ const LAST_ERROR_MAX_LEN: usize = 8000;
 const INSTALL_EVENT_ERROR_MAX_LEN: usize = 6000;
 
 static NODE_RUNTIME_INSTALL_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+static PYTHON_RUNTIME_INSTALL_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 fn node_runtime_install_lock() -> &'static Mutex<()> {
     NODE_RUNTIME_INSTALL_LOCK.get_or_init(|| Mutex::new(()))
+}
+
+fn python_runtime_install_lock() -> &'static Mutex<()> {
+    PYTHON_RUNTIME_INSTALL_LOCK.get_or_init(|| Mutex::new(()))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -58,6 +65,8 @@ pub struct ManagedInstallMetadata {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub install_dir_rel: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bin_dir_rel: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_success_at: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_error: Option<ManagedInstallError>,
@@ -68,6 +77,8 @@ pub struct AgentServerCommand {
     pub command: String,
     #[serde(default)]
     pub args: Vec<String>,
+    #[serde(default)]
+    pub dependencies: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub managed: Option<ManagedInstallMetadata>,
 }
@@ -133,6 +144,9 @@ pub fn apply_managed_install_details(
             .details
             .insert("managed_install_dir".to_string(), d.clone());
     }
+    if let Some(d) = &meta.bin_dir_rel {
+        status.details.insert("managed_bin_dir".to_string(), d.clone());
+    }
     if let Some(ts) = &meta.last_success_at {
         status
             .details
@@ -190,16 +204,6 @@ fn resolve_command_path(command: &str) -> (bool, Option<PathBuf>) {
         }
     }
     (false, None)
-}
-
-fn resolve_python_command() -> Result<String> {
-    for candidate in ["python3", "python"] {
-        let (ok, _path) = resolve_command_path(candidate);
-        if ok {
-            return Ok(candidate.to_string());
-        }
-    }
-    anyhow::bail!("Python not found in PATH (tried: python3, python)");
 }
 
 fn venv_bin_dir(venv_dir: &Path) -> PathBuf {
@@ -325,6 +329,7 @@ async fn install_agent_server_url_binary(
     state: &AppState,
     install_id: Option<InstallId>,
     provider_id: &str,
+    event_provider_id: &str,
     version: &str,
     url: &str,
     archive: AgentServerArchive,
@@ -344,13 +349,13 @@ async fn install_agent_server_url_binary(
     let tmp = tmp_dir.join(format!("{provider_id}-{version}.download"));
 
     *stage = "download";
-    download_to_file(state, install_id, provider_id, "download", url, &tmp).await?;
+    download_to_file(state, install_id, event_provider_id, "download", url, &tmp).await?;
 
     *stage = "extract";
     emit_install(
         state,
         install_id,
-        provider_id,
+        event_provider_id,
         InstallEventLevel::Info,
         "extract",
         "Extracting…".to_string(),
@@ -512,6 +517,7 @@ async fn enable_managed_lsp_server(
         AgentServerCommand {
             command: command.to_string(),
             args,
+            dependencies: Vec::new(),
             managed: Some(meta),
         },
     );
@@ -596,6 +602,7 @@ async fn install_lsp_catalog_server_impl(
                 package: Some("system".to_string()),
                 version: None,
                 install_dir_rel: None,
+                bin_dir_rel: None,
                 last_success_at: Some(Utc::now().to_rfc3339()),
                 last_error: None,
             };
@@ -664,6 +671,7 @@ async fn install_lsp_catalog_server_impl(
                 package: Some(module),
                 version: Some(version.clone()),
                 install_dir_rel: Some(install_dir_rel(&data_root, &install_dir)),
+                bin_dir_rel: None,
                 last_success_at: Some(Utc::now().to_rfc3339()),
                 last_error: None,
             };
@@ -713,6 +721,7 @@ async fn install_lsp_catalog_server_impl(
                     &data_root,
                     bin.parent().unwrap_or(&bin),
                 )),
+                bin_dir_rel: None,
                 last_success_at: Some(Utc::now().to_rfc3339()),
                 last_error: None,
             };
@@ -783,6 +792,10 @@ struct ManagedProviderInstall {
     meta: ManagedInstallMetadata,
 }
 
+struct ManagedDependencyInstall {
+    meta: ManagedInstallMetadata,
+}
+
 async fn install_managed_npm_provider(
     state: &AppState,
     install_id: Option<InstallId>,
@@ -845,6 +858,7 @@ async fn install_managed_npm_provider(
         package: Some(package.to_string()),
         version: Some(version.to_string()),
         install_dir_rel: Some(install_dir_rel),
+        bin_dir_rel: None,
         last_success_at: Some(Utc::now().to_rfc3339()),
         last_error: None,
     };
@@ -989,6 +1003,7 @@ async fn install_managed_archive_provider(
         state,
         install_id,
         provider_id,
+        provider_id,
         version,
         url,
         archive,
@@ -1008,6 +1023,7 @@ async fn install_managed_archive_provider(
         package: Some(url.to_string()),
         version: Some(version.to_string()),
         install_dir_rel: Some(install_dir_rel(&state.data_root, &install_dir)),
+        bin_dir_rel: None,
         last_success_at: Some(Utc::now().to_rfc3339()),
         last_error: None,
     };
@@ -1029,7 +1045,11 @@ async fn install_managed_python_provider(
     args: Vec<String>,
     stage: &mut &'static str,
 ) -> Result<ManagedProviderInstall> {
-    let python = resolve_python_command().context("resolving python")?;
+    *stage = "python";
+    let python = ensure_python_runtime(state, install_id, provider_id, &state.data_root)
+        .await
+        .context("ensuring managed Python runtime")?
+        .python_bin;
     let data_root = state.data_root.clone();
     let install_dir = data_root
         .join("providers")
@@ -1089,6 +1109,16 @@ async fn install_managed_python_provider(
 
     let venv_python = venv_exe(&venv_dir, "python");
 
+    ensure_python_pip(&venv_python)
+        .await
+        .context("ensuring pip in virtualenv")?;
+
+    let package_spec = if package.starts_with("https://") || package.starts_with("http://") {
+        package.to_string()
+    } else {
+        format!("{package}=={version}")
+    };
+
     *stage = "pip_install";
     emit_install(
         state,
@@ -1096,7 +1126,7 @@ async fn install_managed_python_provider(
         provider_id,
         InstallEventLevel::Info,
         "pip_install",
-        format!("Installing {package}=={version}…"),
+        format!("Installing {package_spec}…"),
         None,
         None,
         None,
@@ -1110,7 +1140,7 @@ async fn install_managed_python_provider(
         .arg("install")
         .arg("--disable-pip-version-check")
         .arg("--no-input")
-        .arg(format!("{package}=={version}"))
+        .arg(&package_spec)
         .env("PIP_DISABLE_PIP_VERSION_CHECK", "1")
         .kill_on_drop(true);
     let out = run_command_with_timeout(pip_cmd, PIP_INSTALL_TIMEOUT)
@@ -1118,9 +1148,8 @@ async fn install_managed_python_provider(
         .context("running pip install")?;
     if !out.status.success() {
         anyhow::bail!(
-            "pip install failed ({}=={}) status={}\nstdout:\n{}\nstderr:\n{}",
-            package,
-            version,
+            "pip install failed ({}) status={}\nstdout:\n{}\nstderr:\n{}",
+            package_spec,
             out.status,
             String::from_utf8_lossy(&out.stdout),
             String::from_utf8_lossy(&out.stderr)
@@ -1140,6 +1169,7 @@ async fn install_managed_python_provider(
         package: Some(package.to_string()),
         version: Some(version.to_string()),
         install_dir_rel: Some(install_dir_rel),
+        bin_dir_rel: None,
         last_success_at: Some(Utc::now().to_rfc3339()),
         last_error: None,
     };
@@ -1149,6 +1179,159 @@ async fn install_managed_python_provider(
         args,
         meta,
     })
+}
+
+async fn install_managed_npm_dependency(
+    state: &AppState,
+    install_id: Option<InstallId>,
+    provider_id: &str,
+    dependency_id: &str,
+    package: &str,
+    version: &str,
+    stage: &mut &'static str,
+) -> Result<ManagedDependencyInstall> {
+    let data_root = state.data_root.clone();
+    let install_dir = data_root
+        .join("providers")
+        .join("agent-servers")
+        .join(dependency_id)
+        .join(version);
+    let install_dir_rel_value = install_dir_rel(&data_root, &install_dir);
+    let bin_dir = install_dir.join("node_modules").join(".bin");
+    let bin_dir_rel_value = install_dir_rel(&data_root, &bin_dir);
+
+    if install_dir.exists() {
+        if npm_dependency_matches(&install_dir, package, version)
+            .await
+            .unwrap_or(false)
+            && bin_dir.exists()
+        {
+            let meta = ManagedInstallMetadata {
+                package: Some(package.to_string()),
+                version: Some(version.to_string()),
+                install_dir_rel: Some(install_dir_rel_value.clone()),
+                bin_dir_rel: Some(bin_dir_rel_value.clone()),
+                last_success_at: Some(Utc::now().to_rfc3339()),
+                last_error: None,
+            };
+            return Ok(ManagedDependencyInstall { meta });
+        }
+        tokio::fs::remove_dir_all(&install_dir).await.ok();
+    }
+
+    *stage = "dependency_node";
+    let node = ensure_node_runtime(state, install_id, provider_id, &data_root)
+        .await
+        .context("ensuring managed Node runtime")?;
+
+    *stage = "dependency_prepare";
+    emit_install(
+        state,
+        install_id,
+        provider_id,
+        InstallEventLevel::Info,
+        "dependency_prepare",
+        format!("Preparing dependency {dependency_id}…"),
+        None,
+        None,
+        None,
+    )
+    .await;
+    tokio::fs::create_dir_all(&install_dir)
+        .await
+        .with_context(|| format!("creating install dir: {}", install_dir.display()))?;
+
+    *stage = "dependency_npm_install";
+    npm_install(
+        state,
+        install_id,
+        provider_id,
+        &node,
+        &install_dir,
+        &format!("{package}@{version}"),
+    )
+    .await
+    .context("running npm install for dependency")?;
+
+    if !bin_dir.exists() {
+        tokio::fs::remove_dir_all(&install_dir).await.ok();
+        anyhow::bail!(
+            "dependency install completed but bin dir missing: {}",
+            bin_dir.display()
+        );
+    }
+
+    let meta = ManagedInstallMetadata {
+        package: Some(package.to_string()),
+        version: Some(version.to_string()),
+        install_dir_rel: Some(install_dir_rel_value),
+        bin_dir_rel: Some(bin_dir_rel_value),
+        last_success_at: Some(Utc::now().to_rfc3339()),
+        last_error: None,
+    };
+
+    Ok(ManagedDependencyInstall { meta })
+}
+
+async fn install_managed_archive_dependency(
+    state: &AppState,
+    install_id: Option<InstallId>,
+    provider_id: &str,
+    dependency_id: &str,
+    version: &str,
+    url: &str,
+    archive: AgentServerArchive,
+    bin_path: &str,
+    stage: &mut &'static str,
+) -> Result<ManagedDependencyInstall> {
+    let data_root = state.data_root.clone();
+    let install_dir = data_root
+        .join("providers")
+        .join("agent-servers")
+        .join(dependency_id)
+        .join(version);
+
+    let existing = if install_dir.exists() {
+        let direct = install_dir.join(bin_path);
+        if direct.exists() {
+            Some(direct)
+        } else {
+            find_unique_path_ending_with(&install_dir, bin_path).ok()
+        }
+    } else {
+        None
+    };
+
+    let bin = if let Some(bin) = existing {
+        ensure_executable(&bin)?;
+        bin
+    } else {
+        install_agent_server_url_binary(
+            state,
+            install_id,
+            dependency_id,
+            provider_id,
+            version,
+            url,
+            archive,
+            bin_path,
+            stage,
+        )
+        .await
+        .context("installing dependency binary")?
+    };
+
+    let bin_dir = bin.parent().unwrap_or(&install_dir).to_path_buf();
+    let meta = ManagedInstallMetadata {
+        package: Some(url.to_string()),
+        version: Some(version.to_string()),
+        install_dir_rel: Some(install_dir_rel(&data_root, &install_dir)),
+        bin_dir_rel: Some(install_dir_rel(&data_root, &bin_dir)),
+        last_success_at: Some(Utc::now().to_rfc3339()),
+        last_error: None,
+    };
+
+    Ok(ManagedDependencyInstall { meta })
 }
 
 fn resolve_install_args(args: &[String], data_root: &Path) -> Vec<String> {
@@ -1250,6 +1433,83 @@ async fn install_provider_impl(
 
         if provider_id == "cagent" {
             let _ = ensure_cagent_config(state, install_id, &provider_id, &mut stage).await?;
+        }
+
+        let mut dependency_ids: Vec<String> = Vec::new();
+        if !entry.dependencies.is_empty() {
+            stage = "dependencies";
+            emit_install(
+                state,
+                install_id,
+                &provider_id,
+                InstallEventLevel::Info,
+                "dependencies",
+                format!("Installing dependencies for {provider_id}"),
+                None,
+                None,
+                None,
+            )
+            .await;
+
+            for dep in &entry.dependencies {
+                dependency_ids.push(dep.id.clone());
+                let managed = match &dep.install {
+                    provider_matrix::DependencyInstall::Npm { package, version } => {
+                        error_package = Some(package.clone());
+                        error_version = Some(version.clone());
+                        error_install_dir_rel = Some(format!(
+                            "providers/agent-servers/{}/{}",
+                            dep.id, version
+                        ));
+                        install_managed_npm_dependency(
+                            state,
+                            install_id,
+                            &provider_id,
+                            &dep.id,
+                            package,
+                            version,
+                            &mut stage,
+                        )
+                        .await?
+                    }
+                    provider_matrix::DependencyInstall::Archive { version, targets } => {
+                        let target = zed_target_key().context("resolving platform target")?;
+                        let target_entry = targets.get(target).ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "unsupported dependency target {}: {target}",
+                                dep.id
+                            )
+                        })?;
+                        error_package = Some(target_entry.url.clone());
+                        error_version = Some(version.clone());
+                        error_install_dir_rel = Some(format!(
+                            "providers/agent-servers/{}/{}",
+                            dep.id, version
+                        ));
+                        install_managed_archive_dependency(
+                            state,
+                            install_id,
+                            &provider_id,
+                            &dep.id,
+                            version,
+                            &target_entry.url,
+                            map_archive_kind(target_entry.archive),
+                            &target_entry.bin_path,
+                            &mut stage,
+                        )
+                        .await?
+                    }
+                };
+
+                let mut cfg = load_agent_server_config(&state.data_root)
+                    .await
+                    .unwrap_or_default();
+                cfg.managed_installs
+                    .insert(dep.id.clone(), managed.meta.clone());
+                save_agent_server_config(&state.data_root, &cfg)
+                    .await
+                    .context("saving managed install registry")?;
+            }
         }
 
         let managed = match install {
@@ -1427,6 +1687,7 @@ async fn install_provider_impl(
             AgentServerCommand {
                 command: managed.command.clone(),
                 args: managed.args.clone(),
+                dependencies: dependency_ids.clone(),
                 managed: Some(managed.meta.clone()),
             },
         );
@@ -1542,6 +1803,7 @@ async fn update_registry_last_error(
             package: package.map(|s| s.to_string()),
             version: version.map(|s| s.to_string()),
             install_dir_rel: install_dir_rel_clone,
+            bin_dir_rel: None,
             last_success_at: None,
             last_error: None,
         });
@@ -1676,6 +1938,9 @@ pub async fn load_agent_server_config(data_root: &Path) -> Result<AgentServerCon
         return Ok(AgentServerConfigFile::default());
     }
     let txt = tokio::fs::read_to_string(&path).await?;
+    if txt.trim().is_empty() {
+        return Ok(AgentServerConfigFile::default());
+    }
     Ok(serde_json::from_str(&txt).context("parsing agent server config")?)
 }
 
@@ -1687,7 +1952,25 @@ pub async fn save_agent_server_config(
     if let Some(parent) = path.parent() {
         tokio::fs::create_dir_all(parent).await?;
     }
-    tokio::fs::write(&path, serde_json::to_string_pretty(cfg)?).await?;
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let tmp_path = path.with_file_name(format!(
+        "{}.tmp-{}",
+        path.file_name()
+            .unwrap_or_default()
+            .to_string_lossy(),
+        nanos
+    ));
+    tokio::fs::write(&tmp_path, serde_json::to_string_pretty(cfg)?).await?;
+    if let Err(err) = tokio::fs::rename(&tmp_path, &path).await {
+        let _ = tokio::fs::remove_file(&path).await;
+        tokio::fs::rename(&tmp_path, &path).await?;
+        if !matches!(err.kind(), std::io::ErrorKind::AlreadyExists) {
+            return Err(err.into());
+        }
+    }
     Ok(())
 }
 
@@ -1701,6 +1984,9 @@ pub async fn load_lsp_server_config(data_root: &Path) -> Result<LspServerConfigF
         return Ok(LspServerConfigFile::default());
     }
     let txt = tokio::fs::read_to_string(&path).await?;
+    if txt.trim().is_empty() {
+        return Ok(LspServerConfigFile::default());
+    }
     Ok(serde_json::from_str(&txt).context("parsing lsp server config")?)
 }
 
@@ -1709,7 +1995,25 @@ pub async fn save_lsp_server_config(data_root: &Path, cfg: &LspServerConfigFile)
     if let Some(parent) = path.parent() {
         tokio::fs::create_dir_all(parent).await?;
     }
-    tokio::fs::write(&path, serde_json::to_string_pretty(cfg)?).await?;
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let tmp_path = path.with_file_name(format!(
+        "{}.tmp-{}",
+        path.file_name()
+            .unwrap_or_default()
+            .to_string_lossy(),
+        nanos
+    ));
+    tokio::fs::write(&tmp_path, serde_json::to_string_pretty(cfg)?).await?;
+    if let Err(err) = tokio::fs::rename(&tmp_path, &path).await {
+        let _ = tokio::fs::remove_file(&path).await;
+        tokio::fs::rename(&tmp_path, &path).await?;
+        if !matches!(err.kind(), std::io::ErrorKind::AlreadyExists) {
+            return Err(err.into());
+        }
+    }
     Ok(())
 }
 
@@ -1996,6 +2300,12 @@ pub struct NodeRuntime {
     pub npm_cli_js: PathBuf,
 }
 
+#[derive(Debug, Clone)]
+pub struct PythonRuntime {
+    pub python_root: PathBuf,
+    pub python_bin: PathBuf,
+}
+
 fn install_dir_rel(data_root: &Path, install_dir: &Path) -> String {
     install_dir
         .strip_prefix(data_root)
@@ -2012,13 +2322,7 @@ async fn ensure_node_runtime(
     let target = node_target_triple()?;
     let folder = format!("node-v{NODE_VERSION}-{target}");
     let node_root = data_root.join("runtimes").join("node").join(&folder);
-    let node_bin = node_root.join("bin").join("node");
-    let npm_cli_js = node_root
-        .join("lib")
-        .join("node_modules")
-        .join("npm")
-        .join("bin")
-        .join("npm-cli.js");
+    let (node_bin, npm_cli_js) = node_runtime_paths(&node_root);
 
     if node_bin.exists() && npm_cli_js.exists() {
         emit_install(
@@ -2069,10 +2373,18 @@ async fn ensure_node_runtime(
         tokio::fs::create_dir_all(parent).await?;
     }
 
+    let (archive_ext, archive_label) = if cfg!(windows) {
+        ("zip", "zip")
+    } else {
+        ("tar.gz", "tar_gz")
+    };
     let url = format!(
-        "https://nodejs.org/dist/v{NODE_VERSION}/{folder}.tar.gz"
+        "https://nodejs.org/dist/v{NODE_VERSION}/{folder}.{archive_ext}"
     );
-    let tmp = data_root.join("runtimes").join("node").join(format!("{folder}.tar.gz"));
+    let tmp = data_root
+        .join("runtimes")
+        .join("node")
+        .join(format!("{folder}.{archive_ext}"));
     emit_install(
         state,
         install_id,
@@ -2109,10 +2421,14 @@ async fn ensure_node_runtime(
     let tmp2 = tmp.clone();
     let extract_root2 = extract_root.clone();
     tokio::task::spawn_blocking(move || -> Result<()> {
-        let tar_gz = std::fs::File::open(&tmp2)?;
-        let dec = flate2::read::GzDecoder::new(tar_gz);
-        let mut archive = tar::Archive::new(dec);
-        archive.unpack(&extract_root2)?;
+        if archive_label == "zip" {
+            extract_zip_to_dir(&tmp2, &extract_root2)?;
+        } else {
+            let tar_gz = std::fs::File::open(&tmp2)?;
+            let dec = flate2::read::GzDecoder::new(tar_gz);
+            let mut archive = tar::Archive::new(dec);
+            archive.unpack(&extract_root2)?;
+        }
         Ok(())
     })
     .await??;
@@ -2158,6 +2474,29 @@ async fn ensure_node_runtime(
     })
 }
 
+fn node_runtime_paths(node_root: &Path) -> (PathBuf, PathBuf) {
+    if cfg!(windows) {
+        (
+            node_root.join("node.exe"),
+            node_root
+                .join("node_modules")
+                .join("npm")
+                .join("bin")
+                .join("npm-cli.js"),
+        )
+    } else {
+        (
+            node_root.join("bin").join("node"),
+            node_root
+                .join("lib")
+                .join("node_modules")
+                .join("npm")
+                .join("bin")
+                .join("npm-cli.js"),
+        )
+    }
+}
+
 fn node_target_triple() -> Result<&'static str> {
     let os = std::env::consts::OS;
     let arch = std::env::consts::ARCH;
@@ -2166,10 +2505,230 @@ fn node_target_triple() -> Result<&'static str> {
         ("macos", "x86_64") => Ok("darwin-x64"),
         ("linux", "aarch64") => Ok("linux-arm64"),
         ("linux", "x86_64") => Ok("linux-x64"),
+        ("windows", "x86_64") => Ok("win-x64"),
+        ("windows", "aarch64") => Ok("win-arm64"),
         _ => anyhow::bail!(
-            "unsupported platform for managed node install: {os}/{arch}. Supported: macos (aarch64/x86_64), linux (aarch64/x86_64)."
+            "unsupported platform for managed node install: {os}/{arch}. Supported: macos (aarch64/x86_64), linux (aarch64/x86_64), windows (aarch64/x86_64)."
         ),
     }
+}
+
+async fn ensure_python_runtime(
+    state: &AppState,
+    install_id: Option<InstallId>,
+    provider_id: &str,
+    data_root: &Path,
+) -> Result<PythonRuntime> {
+    let target = python_target_triple()?;
+    let folder = format!("cpython-{PYTHON_VERSION}+{PYTHON_BUILD_TAG}-{target}");
+    let python_root = data_root.join("runtimes").join("python").join(&folder);
+    let python_bin = resolve_python_bin(&python_root);
+
+    if python_bin.exists() {
+        emit_install(
+            state,
+            install_id,
+            provider_id,
+            InstallEventLevel::Info,
+            "python",
+            format!(
+                "Using existing Python runtime {PYTHON_VERSION} ({target})"
+            ),
+            None,
+            None,
+            None,
+        )
+        .await;
+        return Ok(PythonRuntime {
+            python_root,
+            python_bin,
+        });
+    }
+
+    let _lock = python_runtime_install_lock().lock().await;
+    let python_bin = resolve_python_bin(&python_root);
+    if python_bin.exists() {
+        emit_install(
+            state,
+            install_id,
+            provider_id,
+            InstallEventLevel::Info,
+            "python",
+            format!(
+                "Using existing Python runtime {PYTHON_VERSION} ({target})"
+            ),
+            None,
+            None,
+            None,
+        )
+        .await;
+        return Ok(PythonRuntime {
+            python_root,
+            python_bin,
+        });
+    }
+
+    if let Some(parent) = python_root.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+
+    let asset = format!(
+        "cpython-{PYTHON_VERSION}+{PYTHON_BUILD_TAG}-{target}-install_only.tar.gz"
+    );
+    let url = format!(
+        "https://github.com/indygreg/python-build-standalone/releases/download/{PYTHON_BUILD_TAG}/{asset}"
+    );
+    let tmp = data_root
+        .join("runtimes")
+        .join("python")
+        .join(&asset);
+
+    emit_install(
+        state,
+        install_id,
+        provider_id,
+        InstallEventLevel::Info,
+        "python_download",
+        format!("Downloading Python runtime from {url}"),
+        None,
+        None,
+        None,
+    )
+    .await;
+    download_to_file(state, install_id, provider_id, "python_download", &url, &tmp).await?;
+
+    let extract_root = data_root
+        .join("runtimes")
+        .join("python")
+        .join(format!("{folder}.extract"));
+    if extract_root.exists() {
+        tokio::fs::remove_dir_all(&extract_root).await.ok();
+    }
+    tokio::fs::create_dir_all(&extract_root).await?;
+
+    emit_install(
+        state,
+        install_id,
+        provider_id,
+        InstallEventLevel::Info,
+        "python_extract",
+        "Extracting Python runtime".to_string(),
+        None,
+        None,
+        None,
+    )
+    .await;
+
+    let tmp2 = tmp.clone();
+    let extract_root2 = extract_root.clone();
+    tokio::task::spawn_blocking(move || -> Result<()> {
+        let tar_gz = std::fs::File::open(&tmp2)?;
+        let dec = flate2::read::GzDecoder::new(tar_gz);
+        let mut archive = tar::Archive::new(dec);
+        archive.unpack(&extract_root2)?;
+        Ok(())
+    })
+    .await??;
+
+    let extracted = extract_root.join("python");
+    if !extracted.exists() {
+        anyhow::bail!(
+            "python extraction failed: missing python/ in {}",
+            extract_root.display()
+        );
+    }
+
+    if python_root.exists() {
+        tokio::fs::remove_dir_all(&python_root).await.ok();
+    }
+    tokio::fs::rename(&extracted, &python_root).await?;
+
+    let python_bin = resolve_python_bin(&python_root);
+    if !python_bin.exists() {
+        anyhow::bail!(
+            "python runtime incomplete after install (python: {})",
+            python_bin.display()
+        );
+    }
+
+    emit_install(
+        state,
+        install_id,
+        provider_id,
+        InstallEventLevel::Success,
+        "python_extract",
+        format!(
+            "Installed Python runtime {PYTHON_VERSION} ({target})"
+        ),
+        None,
+        None,
+        None,
+    )
+    .await;
+
+    Ok(PythonRuntime {
+        python_root,
+        python_bin,
+    })
+}
+
+fn python_target_triple() -> Result<&'static str> {
+    let os = std::env::consts::OS;
+    let arch = std::env::consts::ARCH;
+    match (os, arch) {
+        ("macos", "aarch64") => Ok("aarch64-apple-darwin"),
+        ("macos", "x86_64") => Ok("x86_64-apple-darwin"),
+        ("linux", "aarch64") => Ok("aarch64-unknown-linux-gnu"),
+        ("linux", "x86_64") => Ok("x86_64-unknown-linux-gnu"),
+        ("windows", "x86_64") => Ok("x86_64-pc-windows-msvc"),
+        ("windows", "aarch64") => Ok("aarch64-pc-windows-msvc"),
+        _ => anyhow::bail!(
+            "unsupported platform for managed python install: {os}/{arch}. Supported: macos (aarch64/x86_64), linux (aarch64/x86_64), windows (aarch64/x86_64)."
+        ),
+    }
+}
+
+fn resolve_python_bin(python_root: &Path) -> PathBuf {
+    if cfg!(windows) {
+        python_root.join("python.exe")
+    } else {
+        let primary = python_root.join("bin").join("python3");
+        if primary.exists() {
+            primary
+        } else {
+            python_root.join("bin").join("python")
+        }
+    }
+}
+
+async fn ensure_python_pip(python: &Path) -> Result<()> {
+    let mut pip_check = Command::new(python);
+    pip_check.arg("-m").arg("pip").arg("--version").kill_on_drop(true);
+    let out = run_command_with_timeout(pip_check, Duration::from_secs(60))
+        .await
+        .context("checking pip availability")?;
+    if out.status.success() {
+        return Ok(());
+    }
+
+    let mut ensure = Command::new(python);
+    ensure
+        .arg("-m")
+        .arg("ensurepip")
+        .arg("--upgrade")
+        .kill_on_drop(true);
+    let out = run_command_with_timeout(ensure, Duration::from_secs(5 * 60))
+        .await
+        .context("running ensurepip")?;
+    if !out.status.success() {
+        anyhow::bail!(
+            "ensurepip failed status={}\nstdout:\n{}\nstderr:\n{}",
+            out.status,
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    Ok(())
 }
 
 async fn npm_install(
@@ -2182,6 +2741,17 @@ async fn npm_install(
 ) -> Result<()> {
     let cache_dir = install_dir.join(".npm-cache");
     tokio::fs::create_dir_all(&cache_dir).await.ok();
+    let node_bin_dir = node
+        .node_bin
+        .parent()
+        .unwrap_or_else(|| node.node_root.as_path());
+    let path_sep = if cfg!(windows) { ";" } else { ":" };
+    let mut combined_path = std::ffi::OsString::new();
+    combined_path.push(node_bin_dir);
+    combined_path.push(path_sep);
+    if let Some(existing) = std::env::var_os("PATH") {
+        combined_path.push(existing);
+    }
 
     for attempt in 1..=RETRY_COUNT {
         emit_install(
@@ -2206,6 +2776,7 @@ async fn npm_install(
             .arg("--no-fund")
             .arg("--silent")
             .arg(package_spec)
+            .env("PATH", combined_path.clone())
             .env("npm_config_update_notifier", "false")
             .env("npm_config_fund", "false")
             .env("npm_config_audit", "false")
@@ -2423,6 +2994,27 @@ async fn npm_install_one(
     npm_install(state, install_id, provider_id, node, install_dir, &package_spec).await
 }
 
+async fn npm_dependency_matches(
+    install_dir: &Path,
+    package: &str,
+    version: &str,
+) -> Result<bool> {
+    let pkg_dir = install_dir.join("node_modules").join(package);
+    let pkg_json_path = pkg_dir.join("package.json");
+    if !pkg_json_path.exists() {
+        return Ok(false);
+    }
+    let txt = tokio::fs::read_to_string(&pkg_json_path)
+        .await
+        .with_context(|| format!("reading {}", pkg_json_path.display()))?;
+    let v: serde_json::Value = serde_json::from_str(&txt).context("parsing package.json")?;
+    Ok(v
+        .get("version")
+        .and_then(|v| v.as_str())
+        .map(|v| v == version)
+        .unwrap_or(false))
+}
+
 async fn resolve_node_package_bin(
     install_dir: &Path,
     package: &str,
@@ -2519,6 +3111,7 @@ async fn install_lsp_server_impl(
                 package: Some(package.to_string()),
                 version: Some(version.to_string()),
                 install_dir_rel: Some(install_dir_rel),
+                bin_dir_rel: None,
                 last_success_at: Some(Utc::now().to_rfc3339()),
                 last_error: None,
             };
@@ -2530,6 +3123,7 @@ async fn install_lsp_server_impl(
                     args: std::iter::once(entry.to_string_lossy().to_string())
                         .chain(args.into_iter())
                         .collect(),
+                    dependencies: Vec::new(),
                     managed: Some(meta),
                 },
             );
@@ -2903,6 +3497,7 @@ async fn install_lsp_server_impl(
                 package: None,
                 version: None,
                 install_dir_rel: None,
+                bin_dir_rel: None,
                 last_success_at: None,
                 last_error: Some(ManagedInstallError {
                     at: Utc::now().to_rfc3339(),

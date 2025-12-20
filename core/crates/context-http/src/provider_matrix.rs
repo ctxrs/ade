@@ -13,7 +13,7 @@ use crate::updates;
 
 const MATRIX_CACHE_TTL: Duration = Duration::from_secs(6 * 60 * 60);
 const MATRIX_CACHE_FILENAME: &str = "provider_matrix.json";
-const MATRIX_SCHEMA_VERSION: u32 = 1;
+const MATRIX_SCHEMA_VERSION: u32 = 2;
 const VERSION_PROBE_TIMEOUT: Duration = Duration::from_secs(4);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -46,6 +46,8 @@ pub struct ProviderMatrixEntry {
     pub command: Option<ProviderCommand>,
     #[serde(default, rename = "managed_install")]
     pub managed_install: Option<ProviderInstall>,
+    #[serde(default)]
+    pub dependencies: Vec<ProviderDependency>,
     #[serde(default)]
     pub version_probe: Option<VersionProbe>,
     #[serde(default)]
@@ -80,6 +82,26 @@ pub enum ProviderInstall {
         entrypoint: String,
         #[serde(default)]
         args: Vec<String>,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderDependency {
+    pub id: String,
+    #[serde(rename = "install")]
+    pub install: DependencyInstall,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum DependencyInstall {
+    Npm {
+        package: String,
+        version: String,
+    },
+    Archive {
+        version: String,
+        targets: HashMap<String, ProviderArchiveTarget>,
     },
 }
 

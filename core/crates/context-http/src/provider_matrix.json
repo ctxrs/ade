@@ -1,93 +1,200 @@
 {
-  "version": 1,
+  "version": 2,
   "generated_at": "2025-02-19T00:00:00Z",
   "providers": [
     {
       "id": "codex",
       "display_name": "Codex",
       "tier": "tier1",
-      "command": { "command": "codex-acp", "args": [] },
-      "managed_install": {
-        "kind": "npm",
-        "package": "@zed-industries/codex-acp",
-        "entrypoint": "node_modules/@zed-industries/codex-acp/bin/codex-acp.js",
+      "command": {
+        "command": "codex-acp",
         "args": []
       },
-      "version_probe": { "kind": "command", "args": ["--version"] },
+      "managed_install": {
+        "kind": "archive",
+        "version": "0.7.4",
+        "args": [],
+        "targets": {
+          "darwin-aarch64": {
+            "url": "https://github.com/zed-industries/codex-acp/releases/download/v0.7.4/codex-acp-0.7.4-aarch64-apple-darwin.tar.gz",
+            "archive": "tar_gz",
+            "bin_path": "codex-acp"
+          },
+          "darwin-x86_64": {
+            "url": "https://github.com/zed-industries/codex-acp/releases/download/v0.7.4/codex-acp-0.7.4-x86_64-apple-darwin.tar.gz",
+            "archive": "tar_gz",
+            "bin_path": "codex-acp"
+          },
+          "linux-aarch64": {
+            "url": "https://github.com/zed-industries/codex-acp/releases/download/v0.7.4/codex-acp-0.7.4-aarch64-unknown-linux-gnu.tar.gz",
+            "archive": "tar_gz",
+            "bin_path": "codex-acp"
+          },
+          "linux-x86_64": {
+            "url": "https://github.com/zed-industries/codex-acp/releases/download/v0.7.4/codex-acp-0.7.4-x86_64-unknown-linux-gnu.tar.gz",
+            "archive": "tar_gz",
+            "bin_path": "codex-acp"
+          },
+          "windows-x86_64": {
+            "url": "https://github.com/zed-industries/codex-acp/releases/download/v0.7.4/codex-acp-0.7.4-x86_64-pc-windows-msvc.zip",
+            "archive": "zip",
+            "bin_path": "codex-acp.exe"
+          },
+          "windows-aarch64": {
+            "url": "https://github.com/zed-industries/codex-acp/releases/download/v0.7.4/codex-acp-0.7.4-aarch64-pc-windows-msvc.zip",
+            "archive": "zip",
+            "bin_path": "codex-acp.exe"
+          }
+        }
+      },
+      "version_probe": {
+        "kind": "command",
+        "args": [
+          "--version"
+        ]
+      },
       "releases": [
-        { "version": "0.7.1", "status": "supported", "context_min": "0.1.0" },
-        { "version": "0.7.3", "status": "supported", "context_min": "0.1.0" }
+        {
+          "version": "0.7.1",
+          "status": "supported",
+          "context_min": "0.1.0"
+        },
+        {
+          "version": "0.7.3",
+          "status": "supported",
+          "context_min": "0.1.0"
+        },
+        {
+          "version": "0.7.4",
+          "status": "supported",
+          "context_min": "0.1.0"
+        }
       ]
     },
     {
       "id": "claude",
       "display_name": "Claude Code",
       "tier": "tier1",
-      "command": { "command": "claude-code-acp", "args": [] },
+      "command": {
+        "command": "claude-code-acp",
+        "args": []
+      },
       "managed_install": {
         "kind": "npm",
         "package": "@zed-industries/claude-code-acp",
         "entrypoint": "node_modules/@zed-industries/claude-code-acp/dist/index.js",
         "args": []
       },
-      "version_probe": { "kind": "node_package", "package": "@zed-industries/claude-code-acp" },
+      "version_probe": {
+        "kind": "node_package",
+        "package": "@zed-industries/claude-code-acp"
+      },
       "releases": [
-        { "version": "0.12.4", "status": "supported", "context_min": "0.1.0" }
+        {
+          "version": "0.12.4",
+          "status": "supported",
+          "context_min": "0.1.0"
+        }
       ]
     },
     {
       "id": "gemini",
       "display_name": "Gemini",
       "tier": "tier1",
-      "command": { "command": "gemini", "args": ["--experimental-acp"] },
+      "command": {
+        "command": "gemini",
+        "args": [
+          "--experimental-acp"
+        ]
+      },
       "managed_install": {
         "kind": "npm",
         "package": "@google/gemini-cli",
         "entrypoint": "node_modules/.bin/gemini",
-        "args": ["--experimental-acp"]
+        "args": [
+          "--experimental-acp"
+        ]
       },
-      "version_probe": { "kind": "node_package", "package": "@google/gemini-cli" },
+      "version_probe": {
+        "kind": "node_package",
+        "package": "@google/gemini-cli"
+      },
       "releases": [
-        { "version": "0.19.0", "status": "supported", "context_min": "0.1.0" }
+        {
+          "version": "0.19.0",
+          "status": "supported",
+          "context_min": "0.1.0"
+        }
       ]
     },
     {
       "id": "qwen",
       "display_name": "Qwen Code",
       "tier": "tier2",
-      "command": { "command": "qwen", "args": ["--experimental-acp"] },
+      "command": {
+        "command": "qwen",
+        "args": [
+          "--experimental-acp"
+        ]
+      },
       "managed_install": {
         "kind": "npm",
         "package": "@qwen-code/qwen-code",
         "entrypoint": "node_modules/.bin/qwen",
-        "args": ["--experimental-acp"]
+        "args": [
+          "--experimental-acp"
+        ]
       },
-      "version_probe": { "kind": "node_package", "package": "@qwen-code/qwen-code" },
+      "version_probe": {
+        "kind": "node_package",
+        "package": "@qwen-code/qwen-code"
+      },
       "releases": [
-        { "version": "0.4.1", "status": "supported", "context_min": "0.1.0" }
+        {
+          "version": "0.4.1",
+          "status": "supported",
+          "context_min": "0.1.0"
+        }
       ]
     },
     {
       "id": "auggie",
       "display_name": "Auggie",
       "tier": "tier2",
-      "command": { "command": "auggie", "args": ["--acp"] },
+      "command": {
+        "command": "auggie",
+        "args": [
+          "--acp"
+        ]
+      },
       "managed_install": {
         "kind": "npm",
         "package": "@augmentcode/auggie",
         "entrypoint": "node_modules/.bin/auggie",
-        "args": ["--acp"]
+        "args": [
+          "--acp"
+        ]
       },
-      "version_probe": { "kind": "node_package", "package": "@augmentcode/auggie" },
+      "version_probe": {
+        "kind": "node_package",
+        "package": "@augmentcode/auggie"
+      },
       "releases": [
-        { "version": "0.12.0", "status": "supported", "context_min": "0.1.0" }
+        {
+          "version": "0.12.0",
+          "status": "supported",
+          "context_min": "0.1.0"
+        }
       ]
     },
     {
       "id": "amp",
       "display_name": "Amp",
       "tier": "tier2",
-      "command": { "command": "amp-acp", "args": [] },
+      "command": {
+        "command": "amp-acp",
+        "args": []
+      },
       "managed_install": {
         "kind": "archive",
         "version": "0.1.0",
@@ -125,16 +232,28 @@
           }
         }
       },
-      "version_probe": { "kind": "command", "args": ["--version"] },
+      "version_probe": {
+        "kind": "command",
+        "args": [
+          "--version"
+        ]
+      },
       "releases": [
-        { "version": "0.1.0", "status": "supported", "context_min": "0.1.0" }
+        {
+          "version": "0.1.0",
+          "status": "supported",
+          "context_min": "0.1.0"
+        }
       ]
     },
     {
       "id": "droid",
       "display_name": "Droid",
       "tier": "tier2",
-      "command": { "command": "droid-acp", "args": [] },
+      "command": {
+        "command": "droid-acp",
+        "args": []
+      },
       "managed_install": {
         "kind": "archive",
         "version": "0.1.0",
@@ -172,16 +291,98 @@
           }
         }
       },
-      "version_probe": { "kind": "command", "args": ["--version"] },
+      "version_probe": {
+        "kind": "command",
+        "args": [
+          "--version"
+        ]
+      },
       "releases": [
-        { "version": "0.1.0", "status": "supported", "context_min": "0.1.0" }
+        {
+          "version": "0.1.0",
+          "status": "supported",
+          "context_min": "0.1.0"
+        }
+      ],
+      "dependencies": [
+        {
+          "id": "droid-cli",
+          "install": {
+            "kind": "archive",
+            "version": "0.38.0",
+            "targets": {
+              "darwin-aarch64": {
+                "url": "https://downloads.factory.ai/factory-cli/releases/0.38.0/darwin/arm64/droid",
+                "archive": "none",
+                "bin_path": "droid"
+              },
+              "darwin-x86_64": {
+                "url": "https://downloads.factory.ai/factory-cli/releases/0.38.0/darwin/x64/droid",
+                "archive": "none",
+                "bin_path": "droid"
+              },
+              "linux-aarch64": {
+                "url": "https://downloads.factory.ai/factory-cli/releases/0.38.0/linux/arm64/droid",
+                "archive": "none",
+                "bin_path": "droid"
+              },
+              "linux-x86_64": {
+                "url": "https://downloads.factory.ai/factory-cli/releases/0.38.0/linux/x64/droid",
+                "archive": "none",
+                "bin_path": "droid"
+              },
+              "windows-x86_64": {
+                "url": "https://downloads.factory.ai/factory-cli/releases/0.38.0/windows/x64-baseline/droid.exe",
+                "archive": "none",
+                "bin_path": "droid.exe"
+              }
+            }
+          }
+        },
+        {
+          "id": "ripgrep",
+          "install": {
+            "kind": "archive",
+            "version": "latest",
+            "targets": {
+              "darwin-aarch64": {
+                "url": "https://downloads.factory.ai/ripgrep/darwin/arm64/rg",
+                "archive": "none",
+                "bin_path": "rg"
+              },
+              "darwin-x86_64": {
+                "url": "https://downloads.factory.ai/ripgrep/darwin/x64/rg",
+                "archive": "none",
+                "bin_path": "rg"
+              },
+              "linux-aarch64": {
+                "url": "https://downloads.factory.ai/ripgrep/linux/arm64/rg",
+                "archive": "none",
+                "bin_path": "rg"
+              },
+              "linux-x86_64": {
+                "url": "https://downloads.factory.ai/ripgrep/linux/x64/rg",
+                "archive": "none",
+                "bin_path": "rg"
+              },
+              "windows-x86_64": {
+                "url": "https://downloads.factory.ai/ripgrep/windows/x64/rg.exe",
+                "archive": "none",
+                "bin_path": "rg.exe"
+              }
+            }
+          }
+        }
       ]
     },
     {
       "id": "copilot",
       "display_name": "Copilot",
       "tier": "tier2",
-      "command": { "command": "copilot-cli-acp", "args": [] },
+      "command": {
+        "command": "copilot-cli-acp",
+        "args": []
+      },
       "managed_install": {
         "kind": "archive",
         "version": "0.1.0",
@@ -219,16 +420,38 @@
           }
         }
       },
-      "version_probe": { "kind": "command", "args": ["--version"] },
+      "version_probe": {
+        "kind": "command",
+        "args": [
+          "--version"
+        ]
+      },
       "releases": [
-        { "version": "0.1.0", "status": "supported", "context_min": "0.1.0" }
+        {
+          "version": "0.1.0",
+          "status": "supported",
+          "context_min": "0.1.0"
+        }
+      ],
+      "dependencies": [
+        {
+          "id": "copilot-cli",
+          "install": {
+            "kind": "npm",
+            "package": "@github/copilot",
+            "version": "0.0.371"
+          }
+        }
       ]
     },
     {
       "id": "kiro",
       "display_name": "Kiro",
       "tier": "tier2",
-      "command": { "command": "kiro-acp", "args": [] },
+      "command": {
+        "command": "kiro-acp",
+        "args": []
+      },
       "managed_install": {
         "kind": "archive",
         "version": "0.1.0",
@@ -266,16 +489,49 @@
           }
         }
       },
-      "version_probe": { "kind": "command", "args": ["--version"] },
+      "version_probe": {
+        "kind": "command",
+        "args": [
+          "--version"
+        ]
+      },
       "releases": [
-        { "version": "0.1.0", "status": "supported", "context_min": "0.1.0" }
+        {
+          "version": "0.1.0",
+          "status": "supported",
+          "context_min": "0.1.0"
+        }
+      ],
+      "dependencies": [
+        {
+          "id": "kiro-cli",
+          "install": {
+            "kind": "archive",
+            "version": "1.23.0",
+            "targets": {
+              "linux-x86_64": {
+                "url": "https://desktop-release.q.us-east-1.amazonaws.com/1.23.0/kirocli-x86_64-linux.tar.gz",
+                "archive": "tar_gz",
+                "bin_path": "kirocli/bin/kiro-cli"
+              },
+              "linux-aarch64": {
+                "url": "https://desktop-release.q.us-east-1.amazonaws.com/1.23.0/kirocli-aarch64-linux.tar.gz",
+                "archive": "tar_gz",
+                "bin_path": "kirocli/bin/kiro-cli"
+              }
+            }
+          }
+        }
       ]
     },
     {
       "id": "rovo",
       "display_name": "Rovo Dev",
       "tier": "tier2",
-      "command": { "command": "rovo-dev-acp", "args": [] },
+      "command": {
+        "command": "rovo-dev-acp",
+        "args": []
+      },
       "managed_install": {
         "kind": "archive",
         "version": "0.1.0",
@@ -313,16 +569,69 @@
           }
         }
       },
-      "version_probe": { "kind": "command", "args": ["--version"] },
+      "version_probe": {
+        "kind": "command",
+        "args": [
+          "--version"
+        ]
+      },
       "releases": [
-        { "version": "0.1.0", "status": "supported", "context_min": "0.1.0" }
+        {
+          "version": "0.1.0",
+          "status": "supported",
+          "context_min": "0.1.0"
+        }
+      ],
+      "dependencies": [
+        {
+          "id": "acli",
+          "install": {
+            "kind": "archive",
+            "version": "latest",
+            "targets": {
+              "darwin-aarch64": {
+                "url": "https://acli.atlassian.com/darwin/latest/acli_darwin_arm64/acli",
+                "archive": "none",
+                "bin_path": "acli"
+              },
+              "darwin-x86_64": {
+                "url": "https://acli.atlassian.com/darwin/latest/acli_darwin_amd64/acli",
+                "archive": "none",
+                "bin_path": "acli"
+              },
+              "linux-aarch64": {
+                "url": "https://acli.atlassian.com/linux/latest/acli_linux_arm64/acli",
+                "archive": "none",
+                "bin_path": "acli"
+              },
+              "linux-x86_64": {
+                "url": "https://acli.atlassian.com/linux/latest/acli_linux_amd64/acli",
+                "archive": "none",
+                "bin_path": "acli"
+              },
+              "windows-x86_64": {
+                "url": "https://acli.atlassian.com/windows/latest/acli_windows_amd64/acli.exe",
+                "archive": "none",
+                "bin_path": "acli.exe"
+              },
+              "windows-aarch64": {
+                "url": "https://acli.atlassian.com/windows/latest/acli_windows_arm64/acli.exe",
+                "archive": "none",
+                "bin_path": "acli.exe"
+              }
+            }
+          }
+        }
       ]
     },
     {
       "id": "cody",
       "display_name": "Cody",
       "tier": "tier2",
-      "command": { "command": "cody-acp", "args": [] },
+      "command": {
+        "command": "cody-acp",
+        "args": []
+      },
       "managed_install": {
         "kind": "archive",
         "version": "0.1.0",
@@ -360,161 +669,287 @@
           }
         }
       },
-      "version_probe": { "kind": "command", "args": ["--version"] },
+      "version_probe": {
+        "kind": "command",
+        "args": [
+          "--version"
+        ]
+      },
       "releases": [
-        { "version": "0.1.0", "status": "supported", "context_min": "0.1.0" }
+        {
+          "version": "0.1.0",
+          "status": "supported",
+          "context_min": "0.1.0"
+        }
+      ],
+      "dependencies": [
+        {
+          "id": "cody-cli",
+          "install": {
+            "kind": "npm",
+            "package": "@sourcegraph/cody",
+            "version": "5.5.21"
+          }
+        }
       ]
     },
     {
       "id": "continue",
       "display_name": "Continue",
       "tier": "tier2",
-      "command": { "command": "cn", "args": ["acp"] },
+      "command": {
+        "command": "cn",
+        "args": [
+          "acp"
+        ]
+      },
       "managed_install": {
         "kind": "archive",
         "version": "0.0.0-dev",
-        "args": ["acp"],
+        "args": [
+          "acp"
+        ],
         "targets": {
           "darwin-aarch64": {
-            "url": "https://api.context.rs/functions/v1/download/agent-servers/0.0.0-dev/continue-acp-darwin-aarch64.tar.gz",
+            "url": "https://github.com/contextrs/continue/releases/download/v0.0.0-dev/continue-acp-darwin-aarch64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "cn"
           },
           "darwin-x86_64": {
-            "url": "https://api.context.rs/functions/v1/download/agent-servers/0.0.0-dev/continue-acp-darwin-x86_64.tar.gz",
+            "url": "https://github.com/contextrs/continue/releases/download/v0.0.0-dev/continue-acp-darwin-x86_64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "cn"
           },
           "linux-aarch64": {
-            "url": "https://api.context.rs/functions/v1/download/agent-servers/0.0.0-dev/continue-acp-linux-aarch64.tar.gz",
+            "url": "https://github.com/contextrs/continue/releases/download/v0.0.0-dev/continue-acp-linux-aarch64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "cn"
           },
           "linux-x86_64": {
-            "url": "https://api.context.rs/functions/v1/download/agent-servers/0.0.0-dev/continue-acp-linux-x86_64.tar.gz",
+            "url": "https://github.com/contextrs/continue/releases/download/v0.0.0-dev/continue-acp-linux-x86_64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "cn"
           },
           "windows-x86_64": {
-            "url": "https://api.context.rs/functions/v1/download/agent-servers/0.0.0-dev/continue-acp-windows-x86_64.zip",
+            "url": "https://github.com/contextrs/continue/releases/download/v0.0.0-dev/continue-acp-windows-x86_64.zip",
             "archive": "zip",
-            "bin_path": "cn.exe"
+            "bin_path": "cn.cmd"
           },
           "windows-aarch64": {
-            "url": "https://api.context.rs/functions/v1/download/agent-servers/0.0.0-dev/continue-acp-windows-aarch64.zip",
+            "url": "https://github.com/contextrs/continue/releases/download/v0.0.0-dev/continue-acp-windows-aarch64.zip",
             "archive": "zip",
-            "bin_path": "cn.exe"
+            "bin_path": "cn.cmd"
           }
         }
       },
-      "version_probe": { "kind": "command", "args": ["--version"] },
+      "version_probe": {
+        "kind": "command",
+        "args": [
+          "--version"
+        ]
+      },
       "releases": [
-        { "version": "0.0.0-dev", "status": "supported", "context_min": "0.1.0", "notes": "ACP requires patched CLI" }
+        {
+          "version": "0.0.0-dev",
+          "status": "supported",
+          "context_min": "0.1.0",
+          "notes": "ACP requires patched CLI"
+        }
+      ],
+      "dependencies": [
+        {
+          "id": "node-runtime",
+          "install": {
+            "kind": "archive",
+            "version": "24.12.0",
+            "targets": {
+              "darwin-aarch64": {
+                "url": "https://nodejs.org/dist/v24.12.0/node-v24.12.0-darwin-arm64.tar.gz",
+                "archive": "tar_gz",
+                "bin_path": "bin/node"
+              },
+              "darwin-x86_64": {
+                "url": "https://nodejs.org/dist/v24.12.0/node-v24.12.0-darwin-x64.tar.gz",
+                "archive": "tar_gz",
+                "bin_path": "bin/node"
+              },
+              "linux-aarch64": {
+                "url": "https://nodejs.org/dist/v24.12.0/node-v24.12.0-linux-arm64.tar.gz",
+                "archive": "tar_gz",
+                "bin_path": "bin/node"
+              },
+              "linux-x86_64": {
+                "url": "https://nodejs.org/dist/v24.12.0/node-v24.12.0-linux-x64.tar.gz",
+                "archive": "tar_gz",
+                "bin_path": "bin/node"
+              },
+              "windows-x86_64": {
+                "url": "https://nodejs.org/dist/v24.12.0/node-v24.12.0-win-x64.zip",
+                "archive": "zip",
+                "bin_path": "node.exe"
+              },
+              "windows-aarch64": {
+                "url": "https://nodejs.org/dist/v24.12.0/node-v24.12.0-win-arm64.zip",
+                "archive": "zip",
+                "bin_path": "node.exe"
+              }
+            }
+          }
+        }
       ]
     },
     {
       "id": "cline",
       "display_name": "Cline",
       "tier": "tier2",
-      "command": { "command": "cline-acp", "args": [] },
+      "command": {
+        "command": "cline-acp",
+        "args": []
+      },
       "managed_install": {
         "kind": "archive",
         "version": "3.41.0",
         "args": [],
         "targets": {
           "darwin-aarch64": {
-            "url": "https://api.context.rs/functions/v1/download/agent-servers/3.41.0/cline-acp-darwin-aarch64.tar.gz",
+            "url": "https://github.com/contextrs/cline/releases/download/v3.41.0/cline-acp-darwin-aarch64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "cline-acp"
           },
           "darwin-x86_64": {
-            "url": "https://api.context.rs/functions/v1/download/agent-servers/3.41.0/cline-acp-darwin-x86_64.tar.gz",
+            "url": "https://github.com/contextrs/cline/releases/download/v3.41.0/cline-acp-darwin-x86_64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "cline-acp"
           },
           "linux-aarch64": {
-            "url": "https://api.context.rs/functions/v1/download/agent-servers/3.41.0/cline-acp-linux-aarch64.tar.gz",
+            "url": "https://github.com/contextrs/cline/releases/download/v3.41.0/cline-acp-linux-aarch64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "cline-acp"
           },
           "linux-x86_64": {
-            "url": "https://api.context.rs/functions/v1/download/agent-servers/3.41.0/cline-acp-linux-x86_64.tar.gz",
+            "url": "https://github.com/contextrs/cline/releases/download/v3.41.0/cline-acp-linux-x86_64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "cline-acp"
           },
           "windows-x86_64": {
-            "url": "https://api.context.rs/functions/v1/download/agent-servers/3.41.0/cline-acp-windows-x86_64.zip",
+            "url": "https://github.com/contextrs/cline/releases/download/v3.41.0/cline-acp-windows-x86_64.zip",
             "archive": "zip",
-            "bin_path": "cline-acp.exe"
+            "bin_path": "cline-acp.cmd"
           },
           "windows-aarch64": {
-            "url": "https://api.context.rs/functions/v1/download/agent-servers/3.41.0/cline-acp-windows-aarch64.zip",
+            "url": "https://github.com/contextrs/cline/releases/download/v3.41.0/cline-acp-windows-aarch64.zip",
             "archive": "zip",
-            "bin_path": "cline-acp.exe"
+            "bin_path": "cline-acp.cmd"
           }
         }
       },
-      "version_probe": { "kind": "command", "args": ["--version"] },
+      "version_probe": {
+        "kind": "command",
+        "args": [
+          "--version"
+        ]
+      },
       "releases": [
-        { "version": "3.41.0", "status": "supported", "context_min": "0.1.0", "notes": "ACP requires patched CLI entrypoint" }
+        {
+          "version": "3.41.0",
+          "status": "supported",
+          "context_min": "0.1.0",
+          "notes": "ACP requires patched CLI entrypoint"
+        }
+      ],
+      "dependencies": [
+        {
+          "id": "node-runtime",
+          "install": {
+            "kind": "archive",
+            "version": "24.12.0",
+            "targets": {
+              "darwin-aarch64": {
+                "url": "https://nodejs.org/dist/v24.12.0/node-v24.12.0-darwin-arm64.tar.gz",
+                "archive": "tar_gz",
+                "bin_path": "bin/node"
+              },
+              "darwin-x86_64": {
+                "url": "https://nodejs.org/dist/v24.12.0/node-v24.12.0-darwin-x64.tar.gz",
+                "archive": "tar_gz",
+                "bin_path": "bin/node"
+              },
+              "linux-aarch64": {
+                "url": "https://nodejs.org/dist/v24.12.0/node-v24.12.0-linux-arm64.tar.gz",
+                "archive": "tar_gz",
+                "bin_path": "bin/node"
+              },
+              "linux-x86_64": {
+                "url": "https://nodejs.org/dist/v24.12.0/node-v24.12.0-linux-x64.tar.gz",
+                "archive": "tar_gz",
+                "bin_path": "bin/node"
+              },
+              "windows-x86_64": {
+                "url": "https://nodejs.org/dist/v24.12.0/node-v24.12.0-win-x64.zip",
+                "archive": "zip",
+                "bin_path": "node.exe"
+              },
+              "windows-aarch64": {
+                "url": "https://nodejs.org/dist/v24.12.0/node-v24.12.0-win-arm64.zip",
+                "archive": "zip",
+                "bin_path": "node.exe"
+              }
+            }
+          }
+        }
       ]
     },
     {
       "id": "swe-agent",
       "display_name": "SWE-agent",
       "tier": "tier2",
-      "command": { "command": "sweagent", "args": ["acp"] },
-      "managed_install": {
-        "kind": "archive",
-        "version": "1.1.0",
-        "args": ["acp"],
-        "targets": {
-          "darwin-aarch64": {
-            "url": "https://api.context.rs/functions/v1/download/agent-servers/1.1.0/sweagent-acp-darwin-aarch64.tar.gz",
-            "archive": "tar_gz",
-            "bin_path": "sweagent"
-          },
-          "darwin-x86_64": {
-            "url": "https://api.context.rs/functions/v1/download/agent-servers/1.1.0/sweagent-acp-darwin-x86_64.tar.gz",
-            "archive": "tar_gz",
-            "bin_path": "sweagent"
-          },
-          "linux-aarch64": {
-            "url": "https://api.context.rs/functions/v1/download/agent-servers/1.1.0/sweagent-acp-linux-aarch64.tar.gz",
-            "archive": "tar_gz",
-            "bin_path": "sweagent"
-          },
-          "linux-x86_64": {
-            "url": "https://api.context.rs/functions/v1/download/agent-servers/1.1.0/sweagent-acp-linux-x86_64.tar.gz",
-            "archive": "tar_gz",
-            "bin_path": "sweagent"
-          },
-          "windows-x86_64": {
-            "url": "https://api.context.rs/functions/v1/download/agent-servers/1.1.0/sweagent-acp-windows-x86_64.zip",
-            "archive": "zip",
-            "bin_path": "sweagent.exe"
-          },
-          "windows-aarch64": {
-            "url": "https://api.context.rs/functions/v1/download/agent-servers/1.1.0/sweagent-acp-windows-aarch64.zip",
-            "archive": "zip",
-            "bin_path": "sweagent.exe"
-          }
-        }
+      "command": {
+        "command": "sweagent",
+        "args": [
+          "acp"
+        ]
       },
-      "version_probe": { "kind": "command", "args": ["--version"] },
+      "managed_install": {
+        "kind": "python",
+        "package": "https://github.com/contextrs/SWE-agent/releases/download/v1.1.0-contextrs.1/sweagent-1.1.0+contextrs.1-py3-none-any.whl",
+        "version": "1.1.0+contextrs.1",
+        "entrypoint": "sweagent",
+        "args": [
+          "acp"
+        ]
+      },
+      "version_probe": {
+        "kind": "command",
+        "args": [
+          "--version"
+        ]
+      },
       "releases": [
-        { "version": "1.1.0", "status": "supported", "context_min": "0.1.0", "notes": "ACP requires patched CLI" }
+        {
+          "version": "1.1.0+contextrs.1",
+          "status": "supported",
+          "context_min": "0.1.0",
+          "notes": "ACP requires patched CLI"
+        }
       ]
     },
     {
       "id": "cagent",
       "display_name": "cagent",
       "tier": "tier2",
-      "command": { "command": "cagent", "args": ["acp"] },
+      "command": {
+        "command": "cagent",
+        "args": [
+          "acp"
+        ]
+      },
       "managed_install": {
         "kind": "archive",
         "version": "1.15.3",
-        "args": ["acp", "{{cagent_config}}"],
+        "args": [
+          "acp",
+          "{{cagent_config}}"
+        ],
         "targets": {
           "darwin-aarch64": {
             "url": "https://github.com/docker/cagent/releases/download/v1.15.3/cagent-darwin-arm64",
@@ -548,20 +983,36 @@
           }
         }
       },
-      "version_probe": { "kind": "command", "args": ["--version"] },
+      "version_probe": {
+        "kind": "command",
+        "args": [
+          "--version"
+        ]
+      },
       "releases": [
-        { "version": "1.15.3", "status": "supported", "context_min": "0.1.0" }
+        {
+          "version": "1.15.3",
+          "status": "supported",
+          "context_min": "0.1.0"
+        }
       ]
     },
     {
       "id": "opencode",
       "display_name": "OpenCode",
       "tier": "tier2",
-      "command": { "command": "opencode", "args": ["acp"] },
+      "command": {
+        "command": "opencode",
+        "args": [
+          "acp"
+        ]
+      },
       "managed_install": {
         "kind": "archive",
         "version": "1.0.150",
-        "args": ["acp"],
+        "args": [
+          "acp"
+        ],
         "targets": {
           "darwin-aarch64": {
             "url": "https://github.com/sst/opencode/releases/download/v1.0.150/opencode-darwin-arm64.zip",
@@ -590,20 +1041,36 @@
           }
         }
       },
-      "version_probe": { "kind": "command", "args": ["--version"] },
+      "version_probe": {
+        "kind": "command",
+        "args": [
+          "--version"
+        ]
+      },
       "releases": [
-        { "version": "1.0.150", "status": "supported", "context_min": "0.1.0" }
+        {
+          "version": "1.0.150",
+          "status": "supported",
+          "context_min": "0.1.0"
+        }
       ]
     },
     {
       "id": "openhands",
       "display_name": "OpenHands",
       "tier": "tier2",
-      "command": { "command": "openhands", "args": ["acp"] },
+      "command": {
+        "command": "openhands",
+        "args": [
+          "acp"
+        ]
+      },
       "managed_install": {
         "kind": "archive",
         "version": "1.0.1-cli",
-        "args": ["acp"],
+        "args": [
+          "acp"
+        ],
         "targets": {
           "darwin-aarch64": {
             "url": "https://github.com/OpenHands/OpenHands/releases/download/1.0.1-cli/openhands-macos",
@@ -627,16 +1094,28 @@
           }
         }
       },
-      "version_probe": { "kind": "command", "args": ["--version"] },
+      "version_probe": {
+        "kind": "command",
+        "args": [
+          "--version"
+        ]
+      },
       "releases": [
-        { "version": "1.0.1-cli", "status": "supported", "context_min": "0.1.0" }
+        {
+          "version": "1.0.1-cli",
+          "status": "supported",
+          "context_min": "0.1.0"
+        }
       ]
     },
     {
       "id": "mistral",
       "display_name": "Mistral Vibe",
       "tier": "tier2",
-      "command": { "command": "vibe-acp", "args": [] },
+      "command": {
+        "command": "vibe-acp",
+        "args": []
+      },
       "managed_install": {
         "kind": "archive",
         "version": "1.1.2",
@@ -664,20 +1143,36 @@
           }
         }
       },
-      "version_probe": { "kind": "command", "args": ["--version"] },
+      "version_probe": {
+        "kind": "command",
+        "args": [
+          "--version"
+        ]
+      },
       "releases": [
-        { "version": "1.1.2", "status": "supported", "context_min": "0.1.0" }
+        {
+          "version": "1.1.2",
+          "status": "supported",
+          "context_min": "0.1.0"
+        }
       ]
     },
     {
       "id": "goose",
       "display_name": "Goose",
       "tier": "tier2",
-      "command": { "command": "goose", "args": ["acp"] },
+      "command": {
+        "command": "goose",
+        "args": [
+          "acp"
+        ]
+      },
       "managed_install": {
         "kind": "archive",
         "version": "stable",
-        "args": ["acp"],
+        "args": [
+          "acp"
+        ],
         "targets": {
           "darwin-aarch64": {
             "url": "https://github.com/block/goose/releases/download/stable/goose-aarch64-apple-darwin.tar.bz2",
@@ -706,26 +1201,56 @@
           }
         }
       },
-      "version_probe": { "kind": "command", "args": ["--version"] },
+      "version_probe": {
+        "kind": "command",
+        "args": [
+          "--version"
+        ]
+      },
       "releases": [
-        { "version": "stable", "status": "supported", "context_min": "0.1.0" }
+        {
+          "version": "stable",
+          "status": "supported",
+          "context_min": "0.1.0"
+        }
       ]
     },
     {
       "id": "kimi",
       "display_name": "Kimi",
       "tier": "tier2",
-      "command": { "command": "kimi", "args": ["--acp"] },
+      "command": {
+        "command": "kimi",
+        "args": [
+          "--acp"
+        ]
+      },
       "managed_install": {
         "kind": "python",
         "package": "kimi-cli",
-        "version": "0.62",
+        "version": "0.66",
         "entrypoint": "kimi",
-        "args": ["--acp"]
+        "args": [
+          "--acp"
+        ]
       },
-      "version_probe": { "kind": "command", "args": ["--version"] },
+      "version_probe": {
+        "kind": "command",
+        "args": [
+          "--version"
+        ]
+      },
       "releases": [
-        { "version": "0.62", "status": "supported", "context_min": "0.1.0" }
+        {
+          "version": "0.62",
+          "status": "supported",
+          "context_min": "0.1.0"
+        },
+        {
+          "version": "0.66",
+          "status": "supported",
+          "context_min": "0.1.0"
+        }
       ]
     }
   ]
