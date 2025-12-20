@@ -67,6 +67,13 @@ type ThreadItem =
     thought_seconds?: number;
   }
   | {
+    kind: "thought";
+    id: string;
+    turn_id: string;
+    created_at: string;
+    content: string;
+  }
+  | {
     kind: "tool_group";
     id: string;
     turn_id: string;
@@ -912,6 +919,9 @@ export function SessionView({
   const renderThreadItem = (item: ThreadItem) => {
     if (item.kind === "spacer") {
       return <div style={{ height: 1 }} />;
+    }
+    if (item.kind === "thought") {
+      return <WorkbenchThoughtRow item={item} />;
     }
     if (item.kind === "assistant") {
       const thoughtExpanded =
@@ -2049,6 +2059,10 @@ function WorkbenchToolRow({
   );
 }
 
+function WorkbenchThoughtRow({ item }: { item: Extract<ThreadItem, { kind: "thought" }> }) {
+  return <div className="wb-thought-row">{item.content}</div>;
+}
+
 function WorkbenchToolGroupRow({
   item,
   variant,
@@ -2613,10 +2627,11 @@ function buildWorkbenchThreadViewModelFromTurns(
     });
 
     const thought = String(turn.thought_partial ?? "");
-    const hasDetails = (turn.tool_total ?? 0) > 0 || thought.trim().length > 0;
+    const hasTools = tools.length > 0 || (turn.tool_total ?? 0) > 0;
+    const hasThought = thought.trim().length > 0;
 
     const items: ThreadItem[] = [];
-    if (hasDetails) {
+    if (hasTools) {
       items.push({
         kind: "tool_group",
         id: `tool-group-${turnId}`,
@@ -2629,7 +2644,16 @@ function buildWorkbenchThreadViewModelFromTurns(
         tool_completed: turn.tool_completed ?? 0,
         tool_failed: turn.tool_failed ?? 0,
         tools,
-        thought,
+        thought: "",
+      });
+    }
+    if (hasThought) {
+      items.push({
+        kind: "thought",
+        id: `thought-${turnId}`,
+        turn_id: turnId,
+        created_at: turn.updated_at ?? turn.started_at,
+        content: thought,
       });
     }
 
@@ -2744,14 +2768,33 @@ function buildWorkbenchThreadViewModelFromEvents(events: SessionEvent[], message
         assistant_first_at: null,
         assistant_complete_at: null,
       };
+      let thought = "";
+      let thoughtAt: string | null = null;
       for (const ev of events) {
+        if (ev.event_type === "thought_chunk") {
+          const fragment = String(ev.payload_json?.content_fragment ?? "");
+          if (fragment) {
+            thought += fragment;
+            thoughtAt = thoughtAt ?? ev.created_at;
+          }
+        }
         const update = ev.payload_json?.acp_update ?? ev.payload_json ?? {};
         const toolCallId =
           String(ev.payload_json?.tool_call_id ?? update?.toolCallId ?? update?.rawInput?.call_id ?? "").trim();
         if (!toolCallId) continue;
         ensureTool(g, toolCallId, ev.created_at);
       }
-      const items: ThreadItem[] = [...g.toolItems];
+      const items: ThreadItem[] = [];
+      if (thought.trim()) {
+        items.push({
+          kind: "thought",
+          id: `thought-${g.key}`,
+          turn_id: g.key,
+          created_at: thoughtAt ?? g.first_at,
+          content: thought,
+        });
+      }
+      items.push(...g.toolItems);
       if (items.length === 0) items.push({ kind: "spacer", id: `spacer-${g.key}`, created_at: g.first_at });
       groups.push({ key: g.key, header: g.header, items });
       return { groups, debugEvents };
@@ -2915,6 +2958,15 @@ function buildWorkbenchThreadViewModelFromEvents(events: SessionEvent[], message
 
       const items: ThreadItem[] = [];
       items.push(...g.toolItems);
+      if (g.assistant?.thought.trim()) {
+        items.push({
+          kind: "thought",
+          id: `thought-${g.key}`,
+          turn_id: g.key,
+          created_at: g.thought_first_at ?? g.assistant_first_at ?? g.first_at,
+          content: g.assistant.thought,
+        });
+      }
       if (g.assistant) {
         items.push({
           ...g.assistant,
@@ -3129,6 +3181,15 @@ function buildWorkbenchThreadViewModelFromEvents(events: SessionEvent[], message
 
     const items: ThreadItem[] = [];
     items.push(...g.toolItems);
+    if (g.assistant?.thought.trim()) {
+      items.push({
+        kind: "thought",
+        id: `thought-${g.key}`,
+        turn_id: g.key,
+        created_at: g.thought_first_at ?? g.assistant_first_at ?? g.first_at,
+        content: g.assistant.thought,
+      });
+    }
     if (g.assistant) {
       items.push({
         ...g.assistant,

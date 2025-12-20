@@ -3087,6 +3087,13 @@ button.linklike:hover {
   overflow-wrap: anywhere;
 }
 
+.wb-thought-row {
+  padding: 2px 4px 6px 4px;
+  color: var(--muted);
+  font-style: italic;
+  white-space: pre-wrap;
+}
+
 .wb-thought {
   display: grid;
   gap: 6px;
