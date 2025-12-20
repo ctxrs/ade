@@ -144,6 +144,8 @@ pub struct Message {
     pub track_id: TrackId,
     pub run_id: Option<RunId>,
     pub turn_id: Option<TurnId>,
+    #[serde(default)]
+    pub turn_sequence: Option<i64>,
     pub role: MessageRole,
     pub content: String,
     #[serde(default)]
@@ -169,7 +171,6 @@ pub struct SessionTurn {
     pub session_id: SessionId,
     pub run_id: Option<RunId>,
     pub user_message_id: Option<MessageId>,
-    pub assistant_message_id: Option<MessageId>,
     pub status: SessionTurnStatus,
     pub start_seq: Option<i64>,
     pub end_seq: Option<i64>,
@@ -210,6 +211,7 @@ pub enum SessionEventType {
     AssistantChunk,
     ThoughtChunk,
     AssistantComplete,
+    AssistantMessageInserted,
     ToolCall,
     ToolCallUpdate,
     ToolResult,

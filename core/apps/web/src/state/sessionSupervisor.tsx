@@ -441,7 +441,8 @@ export class SessionSupervisor {
 
   private mergeTurn(prev: SessionTurn | undefined, next: SessionTurn): SessionTurn {
     if (!prev) return next;
-    const assistant_partial = mergeStreamingText(prev.assistant_partial, next.assistant_partial);
+    const assistant_partial =
+      next.assistant_partial === "" ? "" : mergeStreamingText(prev.assistant_partial, next.assistant_partial);
     const thought_partial = mergeStreamingText(prev.thought_partial, next.thought_partial);
     const status =
       this.turnStatusRank(next.status) >= this.turnStatusRank(prev.status)
@@ -510,11 +511,17 @@ export class SessionSupervisor {
         break;
       }
       case "thought_chunk": {
+        if (!shouldRenderThoughtChunk(event)) break;
         const fragment = String(event.payload_json?.content_fragment ?? "");
         if (fragment) {
           turn.thought_partial = appendFragment(turn.thought_partial, fragment);
           changed = true;
         }
+        break;
+      }
+      case "assistant_message_inserted": {
+        turn.assistant_partial = "";
+        changed = true;
         break;
       }
       case "assistant_complete": {
@@ -792,10 +799,14 @@ export class SessionSupervisor {
 
             if (
               event.event_type === "user_message" ||
+              event.event_type === "assistant_message_inserted" ||
               event.event_type === "assistant_complete" ||
               this.isRefreshBoundaryEventType(event.event_type)
             ) {
               this.refreshTurns(entry).catch(() => {});
+            }
+            if (event.event_type === "user_message" || event.event_type === "assistant_message_inserted") {
+              this.refreshMessages(entry).catch(() => {});
             }
 
             if (this.isRefreshBoundaryEventType(event.event_type)) {
@@ -871,6 +882,9 @@ export class SessionSupervisor {
           e.event_type === "assistant_complete" ||
           this.isRefreshBoundaryEventType(e.event_type),
       );
+      const sawMessageRefresh = evs.some(
+        (e) => e.event_type === "user_message" || e.event_type === "assistant_message_inserted",
+      );
       this.upsertEvents(entry, evs);
       for (const ev of evs) {
         this.applyEventToTurns(entry, ev);
@@ -881,6 +895,9 @@ export class SessionSupervisor {
       // Refreshing here ensures assistant replies show up after daemon/webapp restarts.
       if (sawTurnRefresh) {
         await this.refreshTurns(entry);
+      }
+      if (sawMessageRefresh) {
+        await this.refreshMessages(entry);
       }
       if (sawRefreshBoundary) {
         await this.refreshQueueAndDiff(entry);
@@ -901,6 +918,18 @@ export class SessionSupervisor {
     await this.refreshDiff(entry);
     entry.updatedAtMs = Date.now();
     this.publish();
+  }
+
+  private async refreshMessages(entry: InternalEntry) {
+    if (entry.fetching.messages) return;
+    entry.fetching.messages = true;
+    try {
+      entry.messages = await listMessages(entry.sessionId);
+      entry.updatedAtMs = Date.now();
+      this.publish();
+    } finally {
+      entry.fetching.messages = false;
+    }
   }
 
   private async refreshTurns(entry: InternalEntry) {
@@ -1019,6 +1048,15 @@ const appendFragment = (prev?: string | null, fragment?: string | null) => {
   if (f.startsWith(p)) return f;
   if (p.endsWith(f)) return p;
   return `${p}${f}`;
+};
+
+const shouldRenderThoughtChunk = (event: SessionEvent): boolean => {
+  const payload = event.payload_json ?? {};
+  const meta = payload?.acp_update?.meta ?? payload?.meta ?? {};
+  if (meta?.heartbeat === true) return false;
+  const reasoningKind = meta?.codex?.reasoning_kind ?? meta?.codex?.reasoningKind;
+  if (reasoningKind === "summary") return false;
+  return true;
 };
 
 const extractToolCallId = (event: SessionEvent): string | null => {

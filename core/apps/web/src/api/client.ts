@@ -56,6 +56,8 @@ export type Session = {
 export type Message = {
   id: { 0: string } | string;
   session_id: { 0: string } | string;
+  turn_id?: { 0: string } | string | null;
+  turn_sequence?: number | null;
   role: "user" | "assistant" | "system";
   content: string;
   attachments?: MessageAttachment[];
@@ -103,7 +105,6 @@ export type SessionTurn = {
   session_id: { 0: string } | string;
   run_id?: { 0: string } | string | null;
   user_message_id?: { 0: string } | string | null;
-  assistant_message_id?: { 0: string } | string | null;
   status: SessionTurnStatus;
   start_seq?: number | null;
   end_seq?: number | null;

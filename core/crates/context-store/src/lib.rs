@@ -145,6 +145,7 @@ mod tests {
                                 track_id,
                                 run_id: Some(run_id),
                                 turn_id: Some(turn_id),
+                                turn_sequence: None,
                                 role: MessageRole::User,
                                 content: format!("hello {worker} {i}"),
                                 attachments: vec![],

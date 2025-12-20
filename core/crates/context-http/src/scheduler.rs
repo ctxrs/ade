@@ -310,6 +310,7 @@ async fn start_turn(
 
     tokio::spawn(async move {
         let mut assistant_partial = String::new();
+        let mut assistant_sequence: i64 = 0;
         let mut thought_partial = String::new();
         let mut tool_cache: HashMap<String, SessionTurnTool> = HashMap::new();
         let mut terminal_status: Option<SessionTurnStatus> = None;
@@ -367,26 +368,67 @@ async fn start_turn(
                         }
                     }
                     SessionEventType::ThoughtChunk => {
-                        if let Some(fragment) = event
-                            .payload_json
-                            .get("content_fragment")
-                            .and_then(Value::as_str)
-                        {
-                            thought_partial.push_str(fragment);
-                            let _ = store
-                                .update_session_turn_partial(
-                                    session_id,
-                                    turn_id,
-                                    None,
-                                    Some(&thought_partial),
-                                    event.created_at,
-                                )
-                                .await;
+                        if should_track_thought_chunk(&event.payload_json) {
+                            if let Some(fragment) = event
+                                .payload_json
+                                .get("content_fragment")
+                                .and_then(Value::as_str)
+                            {
+                                thought_partial.push_str(fragment);
+                                let _ = store
+                                    .update_session_turn_partial(
+                                        session_id,
+                                        turn_id,
+                                        None,
+                                        Some(&thought_partial),
+                                        event.created_at,
+                                    )
+                                    .await;
+                            }
                         }
                     }
                     SessionEventType::ToolCall
                     | SessionEventType::ToolCallUpdate
                     | SessionEventType::ToolResult => {
+                        if !assistant_partial.is_empty() {
+                            if let Ok(saved) = persist_assistant_message(
+                                &store,
+                                session_id,
+                                task_id,
+                                track_id,
+                                run_id,
+                                turn_id,
+                                assistant_partial.clone(),
+                                assistant_sequence + 1,
+                                event.created_at,
+                            )
+                            .await
+                            {
+                                assistant_sequence += 1;
+                                assistant_partial.clear();
+                                let _ = store
+                                    .update_session_turn_partial(
+                                        session_id,
+                                        turn_id,
+                                        Some(""),
+                                        None,
+                                        event.created_at,
+                                    )
+                                    .await;
+                                let _ = emit_event(
+                                    &state_for_events,
+                                    session_id,
+                                    Some(run_id),
+                                    Some(turn_id),
+                                    SessionEventType::AssistantMessageInserted,
+                                    json!({
+                                        "message_id": saved.id.0,
+                                        "turn_sequence": saved.turn_sequence,
+                                    }),
+                                )
+                                .await;
+                            }
+                        }
                         if let Some(update) = build_turn_tool_update(&event) {
                             let prev = if let Some(cached) =
                                 tool_cache.get(&update.tool_call_id).cloned()
@@ -446,31 +488,44 @@ async fn start_turn(
                                 }
                             });
                         if let Some(content) = content {
-                            assistant_partial = content.clone();
-                            let msg = Message {
-                                id: context_core::ids::MessageId::new(),
-                                session_id,
-                                task_id,
-                                track_id,
-                                run_id: Some(run_id),
-                                turn_id: Some(turn_id),
-                                role: MessageRole::Assistant,
-                                content: content.to_string(),
-                                attachments: vec![],
-                                delivery: MessageDelivery::Immediate,
-                                delivered_at: Some(event.created_at),
-                                created_at: event.created_at,
-                            };
-                            if let Ok(saved) = store.insert_message(msg).await {
-                                let _ = store
-                                    .update_session_turn_assistant_message(
+                            if !content.is_empty() {
+                                if let Ok(saved) = persist_assistant_message(
+                                    &store,
+                                    session_id,
+                                    task_id,
+                                    track_id,
+                                    run_id,
+                                    turn_id,
+                                    content,
+                                    assistant_sequence + 1,
+                                    event.created_at,
+                                )
+                                .await
+                                {
+                                    assistant_sequence += 1;
+                                    assistant_partial.clear();
+                                    let _ = store
+                                        .update_session_turn_partial(
+                                            session_id,
+                                            turn_id,
+                                            Some(""),
+                                            None,
+                                            event.created_at,
+                                        )
+                                        .await;
+                                    let _ = emit_event(
+                                        &state_for_events,
                                         session_id,
-                                        turn_id,
-                                        saved.id,
-                                        Some(&assistant_partial),
-                                        event.created_at,
+                                        Some(run_id),
+                                        Some(turn_id),
+                                        SessionEventType::AssistantMessageInserted,
+                                        json!({
+                                            "message_id": saved.id.0,
+                                            "turn_sequence": saved.turn_sequence,
+                                        }),
                                     )
                                     .await;
+                                }
                             }
                         }
                         if terminal_status.is_none() {
@@ -491,7 +546,6 @@ async fn start_turn(
                                 turn_id,
                                 &[
                                     SessionEventType::AssistantChunk,
-                                    SessionEventType::ThoughtChunk,
                                 ],
                             )
                             .await;
@@ -577,7 +631,6 @@ async fn start_turn(
                                 turn_id,
                                 &[
                                     SessionEventType::AssistantChunk,
-                                    SessionEventType::ThoughtChunk,
                                 ],
                             )
                             .await;
@@ -693,6 +746,57 @@ async fn emit_event(
         .await?;
     state.publish_event(event).await;
     Ok(())
+}
+
+fn should_track_thought_chunk(payload: &serde_json::Value) -> bool {
+    let meta = payload
+        .get("acp_update")
+        .and_then(|v| v.get("meta"))
+        .or_else(|| payload.get("meta"));
+    if meta
+        .and_then(|v| v.get("heartbeat"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        return false;
+    }
+    let reasoning_kind = meta
+        .and_then(|v| v.get("codex"))
+        .and_then(|v| v.get("reasoning_kind"))
+        .and_then(Value::as_str);
+    reasoning_kind != Some("summary")
+}
+
+async fn persist_assistant_message(
+    store: &context_store::Store,
+    session_id: context_core::ids::SessionId,
+    task_id: context_core::ids::TaskId,
+    track_id: context_core::ids::TrackId,
+    run_id: RunId,
+    turn_id: TurnId,
+    content: String,
+    turn_sequence: i64,
+    created_at: chrono::DateTime<chrono::Utc>,
+) -> Result<Message> {
+    if content.is_empty() {
+        return Err(anyhow!("assistant message content empty"));
+    }
+    let msg = Message {
+        id: context_core::ids::MessageId::new(),
+        session_id,
+        task_id,
+        track_id,
+        run_id: Some(run_id),
+        turn_id: Some(turn_id),
+        turn_sequence: Some(turn_sequence),
+        role: MessageRole::Assistant,
+        content,
+        attachments: vec![],
+        delivery: MessageDelivery::Immediate,
+        delivered_at: Some(created_at),
+        created_at,
+    };
+    store.insert_message(msg).await
 }
 
 fn compute_context_window_metrics(

@@ -686,6 +686,17 @@ export function SessionView({
   const threadActivityCount = variant === "workbench" ? wbListItems.length : threadItems.length;
 
   useEffect(() => {
+    if (!id || variant !== "workbench") return;
+    for (const turn of turns) {
+      const turnId = idToString(turn.turn_id);
+      if (!turnId) continue;
+      if ((turn.tool_total ?? 0) <= 0) continue;
+      if (turnToolsByTurnId[turnId]) continue;
+      supervisor.loadTurnTools(id, turnId);
+    }
+  }, [id, variant, turnsKey, turnToolsByTurnId, supervisor, turns]);
+
+  useEffect(() => {
     if (!atBottom && threadActivityCount > 0) {
       setHasNewActivity(true);
     }
@@ -2573,6 +2584,15 @@ export function buildWorkbenchThreadViewModel(
   return buildWorkbenchThreadViewModelFromEvents(events, messages);
 }
 
+function shouldRenderThoughtChunk(ev: SessionEvent): boolean {
+  const payload = ev.payload_json ?? {};
+  const meta = payload?.acp_update?.meta ?? payload?.meta ?? {};
+  if (meta?.heartbeat === true) return false;
+  const reasoningKind = meta?.codex?.reasoning_kind ?? meta?.codex?.reasoningKind;
+  if (reasoningKind === "summary") return false;
+  return true;
+}
+
 function buildWorkbenchThreadViewModelFromTurns(
   turns: SessionTurn[],
   messages: Message[],
@@ -2582,18 +2602,23 @@ function buildWorkbenchThreadViewModelFromTurns(
   const groups: WorkbenchThreadView["groups"] = [];
 
   const messageById = new Map<string, Message>();
+  const messagesByTurnId = new Map<string, Message[]>();
   for (const m of messages) {
     const mid = idToString(m.id);
     if (mid) messageById.set(mid, m);
+    const turnId = idToString(m.turn_id);
+    if (turnId) {
+      const list = messagesByTurnId.get(turnId) ?? [];
+      list.push(m);
+      messagesByTurnId.set(turnId, list);
+    }
   }
 
   for (const turn of turns) {
     const turnId = idToString(turn.turn_id) || `turn-${turn.started_at}`;
     const userMessageId = turn.user_message_id ? idToString(turn.user_message_id) : "";
-    const assistantMessageId = turn.assistant_message_id ? idToString(turn.assistant_message_id) : "";
 
     const userMessage = userMessageId ? messageById.get(userMessageId) : undefined;
-    const assistantMessage = assistantMessageId ? messageById.get(assistantMessageId) : undefined;
 
     const header: WorkbenchTurnHeader | null = userMessage
       ? {
@@ -2627,12 +2652,89 @@ function buildWorkbenchThreadViewModelFromTurns(
     });
 
     const thought = String(turn.thought_partial ?? "");
-    const hasTools = tools.length > 0 || (turn.tool_total ?? 0) > 0;
     const hasThought = thought.trim().length > 0;
+    const hasToolDetails = tools.length > 0;
 
-    const items: ThreadItem[] = [];
-    if (hasTools) {
-      items.push({
+    const assistantMessages = (messagesByTurnId.get(turnId) ?? [])
+      .filter((m) => m.role === "assistant")
+      .slice()
+      .sort((a, b) => {
+        const sa = Number(a.turn_sequence ?? Number.NaN);
+        const sb = Number(b.turn_sequence ?? Number.NaN);
+        if (Number.isFinite(sa) && Number.isFinite(sb) && sa !== sb) return sa - sb;
+        if (Number.isFinite(sa) && !Number.isFinite(sb)) return -1;
+        if (!Number.isFinite(sa) && Number.isFinite(sb)) return 1;
+        return String(a.created_at).localeCompare(String(b.created_at));
+      });
+
+    type TimelineEntry = {
+      item: ThreadItem;
+      created_at: string;
+      kind: "assistant" | "tool";
+      turn_sequence?: number;
+    };
+
+    const timeline: TimelineEntry[] = [];
+    for (const m of assistantMessages) {
+      timeline.push({
+        item: {
+          kind: "assistant",
+          id: `assistant-${turnId}-${m.turn_sequence ?? m.created_at}`,
+          turn_id: turnId,
+          created_at: m.created_at,
+          content: m.content ?? "",
+          thought: "",
+          is_complete: true,
+        },
+        created_at: m.created_at,
+        kind: "assistant",
+        turn_sequence: Number(m.turn_sequence ?? Number.NaN),
+      });
+    }
+
+    const pendingContent = String(turn.assistant_partial ?? "");
+    if (pendingContent.trim().length > 0) {
+      timeline.push({
+        item: {
+          kind: "assistant",
+          id: `assistant-${turnId}-pending`,
+          turn_id: turnId,
+          created_at: turn.updated_at ?? turn.started_at,
+          content: pendingContent,
+          thought: "",
+          is_complete: false,
+        },
+        created_at: turn.updated_at ?? turn.started_at,
+        kind: "assistant",
+        turn_sequence: Number.MAX_SAFE_INTEGER,
+      });
+    }
+
+    for (const tool of tools) {
+      timeline.push({
+        item: tool,
+        created_at: tool.created_at,
+        kind: "tool",
+      });
+    }
+
+    timeline.sort((a, b) => {
+      const tcmp = String(a.created_at).localeCompare(String(b.created_at));
+      if (tcmp !== 0) return tcmp;
+      if (a.kind === "assistant" && b.kind === "assistant") {
+        const sa = Number(a.turn_sequence ?? Number.NaN);
+        const sb = Number(b.turn_sequence ?? Number.NaN);
+        if (Number.isFinite(sa) && Number.isFinite(sb) && sa !== sb) return sa - sb;
+      }
+      if (a.kind === "assistant" && b.kind === "tool") return -1;
+      if (a.kind === "tool" && b.kind === "assistant") return 1;
+      return String(a.item.id).localeCompare(String(b.item.id));
+    });
+
+    const items: ThreadItem[] = timeline.map((entry) => entry.item);
+
+    if (!hasToolDetails && (turn.tool_total ?? 0) > 0) {
+      items.unshift({
         kind: "tool_group",
         id: `tool-group-${turnId}`,
         turn_id: turnId,
@@ -2643,35 +2745,31 @@ function buildWorkbenchThreadViewModelFromTurns(
         tool_running: turn.tool_running ?? 0,
         tool_completed: turn.tool_completed ?? 0,
         tool_failed: turn.tool_failed ?? 0,
-        tools,
+        tools: [],
         thought: "",
       });
     }
+
     if (hasThought) {
-      items.push({
+      const thoughtItem: ThreadItem = {
         kind: "thought",
         id: `thought-${turnId}`,
         turn_id: turnId,
         created_at: turn.updated_at ?? turn.started_at,
         content: thought,
-      });
-    }
-
-    const assistantContent = String(assistantMessage?.content ?? turn.assistant_partial ?? "");
-    const isComplete =
-      turn.status === "completed" ||
-      turn.status === "interrupted" ||
-      turn.status === "failed";
-    if (assistantContent.trim() || isComplete) {
-      items.push({
-        kind: "assistant",
-        id: `assistant-${turnId}`,
-        turn_id: turnId,
-        created_at: assistantMessage?.created_at ?? turn.updated_at ?? turn.started_at,
-        content: assistantContent,
-        thought,
-        is_complete: isComplete,
-      });
+      };
+      let insertAt = -1;
+      for (let i = items.length - 1; i >= 0; i--) {
+        if (items[i]?.kind === "assistant") {
+          insertAt = i;
+          break;
+        }
+      }
+      if (insertAt >= 0) {
+        items.splice(insertAt, 0, thoughtItem);
+      } else {
+        items.push(thoughtItem);
+      }
     }
 
     if (items.length === 0) {
@@ -2888,6 +2986,7 @@ function buildWorkbenchThreadViewModelFromEvents(events: SessionEvent[], message
             break;
           }
           case "thought_chunk": {
+            if (!shouldRenderThoughtChunk(ev)) break;
             const fragment = String(ev.payload_json?.content_fragment ?? "");
             if (!fragment) break;
             if (!g.assistant) {
@@ -3093,12 +3192,13 @@ function buildWorkbenchThreadViewModelFromEvents(events: SessionEvent[], message
           g.assistant.is_complete = true;
           break;
         }
-        case "thought_chunk": {
-          const fragment = String(ev.payload_json?.content_fragment ?? "");
-          if (!fragment) break;
-          if (!g.assistant) {
-            g.assistant = {
-              kind: "assistant",
+          case "thought_chunk": {
+            if (!shouldRenderThoughtChunk(ev)) break;
+            const fragment = String(ev.payload_json?.content_fragment ?? "");
+            if (!fragment) break;
+            if (!g.assistant) {
+              g.assistant = {
+                kind: "assistant",
               id: `assistant-${g.key}`,
               turn_id: g.key,
               created_at: ev.created_at,
@@ -3346,6 +3446,7 @@ function buildThreadViewModel(events: SessionEvent[]): {
         break;
       }
       case "thought_chunk": {
+        if (!shouldRenderThoughtChunk(ev)) break;
         const fragment = String(ev.payload_json?.content_fragment ?? "");
         if (!fragment) break;
         const item = upsertAssistant(turnId, ev.created_at);

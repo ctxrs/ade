@@ -765,8 +765,8 @@ impl Store {
             )
         };
         sqlx::query(
-            r#"INSERT INTO messages (id, session_id, task_id, track_id, run_id, turn_id, role, content, attachments_json, delivery, delivered_at, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+            r#"INSERT INTO messages (id, session_id, task_id, track_id, run_id, turn_id, turn_sequence, role, content, attachments_json, delivery, delivered_at, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
         )
         .bind(message.id.0.to_string())
         .bind(message.session_id.0.to_string())
@@ -774,6 +774,7 @@ impl Store {
         .bind(message.track_id.0.to_string())
         .bind(message.run_id.map(|r| r.0.to_string()))
         .bind(message.turn_id.map(|t| t.0.to_string()))
+        .bind(message.turn_sequence)
         .bind(message_role_to_str(&message.role))
         .bind(&message.content)
         .bind(attachments_json)
@@ -787,8 +788,10 @@ impl Store {
 
     pub async fn list_messages_for_session(&self, session_id: SessionId) -> Result<Vec<Message>> {
         let rows = sqlx::query(
-            r#"SELECT id, session_id, task_id, track_id, run_id, turn_id, role, content, attachments_json, delivery, delivered_at, created_at
-               FROM messages WHERE session_id = ? ORDER BY created_at ASC"#,
+            r#"SELECT id, session_id, task_id, track_id, run_id, turn_id, turn_sequence, role, content, attachments_json, delivery, delivered_at, created_at
+               FROM messages
+               WHERE session_id = ?
+               ORDER BY created_at ASC, turn_sequence ASC"#,
         )
         .bind(session_id.0.to_string())
         .fetch_all(&self.pool)
@@ -804,6 +807,7 @@ impl Store {
             let delivered_at: Option<String> = r.try_get("delivered_at")?;
             let run_id: Option<String> = r.try_get("run_id")?;
             let turn_id: Option<String> = r.try_get("turn_id")?;
+            let turn_sequence: Option<i64> = r.try_get("turn_sequence")?;
             let attachments_json: Option<String> = r.try_get("attachments_json")?;
             let attachments = attachments_json
                 .as_deref()
@@ -822,6 +826,7 @@ impl Store {
                     .as_deref()
                     .and_then(|s| uuid::Uuid::parse_str(s).ok())
                     .map(TurnId),
+                turn_sequence,
                 role: parse_message_role(r.try_get::<String, _>("role")?.as_str()),
                 content: r.try_get("content")?,
                 attachments,
@@ -838,10 +843,10 @@ impl Store {
         session_id: SessionId,
     ) -> Result<Vec<Message>> {
         let rows = sqlx::query(
-            r#"SELECT id, session_id, task_id, track_id, run_id, turn_id, role, content, attachments_json, delivery, delivered_at, created_at
+            r#"SELECT id, session_id, task_id, track_id, run_id, turn_id, turn_sequence, role, content, attachments_json, delivery, delivered_at, created_at
                FROM messages
                WHERE session_id = ? AND delivery = 'queued' AND delivered_at IS NULL
-               ORDER BY created_at ASC"#,
+               ORDER BY created_at ASC, turn_sequence ASC"#,
         )
         .bind(session_id.0.to_string())
         .fetch_all(&self.pool)
@@ -856,6 +861,7 @@ impl Store {
             let created_at: String = r.try_get("created_at")?;
             let run_id: Option<String> = r.try_get("run_id")?;
             let turn_id: Option<String> = r.try_get("turn_id")?;
+            let turn_sequence: Option<i64> = r.try_get("turn_sequence")?;
             let attachments_json: Option<String> = r.try_get("attachments_json")?;
             let attachments = attachments_json
                 .as_deref()
@@ -874,6 +880,7 @@ impl Store {
                     .as_deref()
                     .and_then(|s| uuid::Uuid::parse_str(s).ok())
                     .map(TurnId),
+                turn_sequence,
                 role: parse_message_role(r.try_get::<String, _>("role")?.as_str()),
                 content: r.try_get("content")?,
                 attachments,
@@ -887,7 +894,7 @@ impl Store {
 
     pub async fn get_message(&self, id: MessageId) -> Result<Option<Message>> {
         let row = sqlx::query(
-            r#"SELECT id, session_id, task_id, track_id, run_id, turn_id, role, content, attachments_json, delivery, delivered_at, created_at
+            r#"SELECT id, session_id, task_id, track_id, run_id, turn_id, turn_sequence, role, content, attachments_json, delivery, delivered_at, created_at
                FROM messages WHERE id = ?"#,
         )
         .bind(id.0.to_string())
@@ -903,6 +910,7 @@ impl Store {
             let delivered_at: Option<String> = r.try_get("delivered_at").ok()?;
             let run_id: Option<String> = r.try_get("run_id").ok()?;
             let turn_id: Option<String> = r.try_get("turn_id").ok()?;
+            let turn_sequence: Option<i64> = r.try_get("turn_sequence").ok()?;
             let attachments_json: Option<String> = r.try_get("attachments_json").ok()?;
             let attachments = attachments_json
                 .as_deref()
@@ -921,6 +929,7 @@ impl Store {
                     .as_deref()
                     .and_then(|s| uuid::Uuid::parse_str(s).ok())
                     .map(TurnId),
+                turn_sequence,
                 role: parse_message_role(r.try_get::<String, _>("role").ok()?.as_str()),
                 content: r.try_get("content").ok()?,
                 attachments,
@@ -967,7 +976,6 @@ impl Store {
                     session_id,
                     run_id,
                     user_message_id,
-                    assistant_message_id,
                     status,
                     start_seq,
                     end_seq,
@@ -982,13 +990,12 @@ impl Store {
                     tool_completed,
                     tool_failed
                )
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
         )
         .bind(turn.turn_id.0.to_string())
         .bind(turn.session_id.0.to_string())
         .bind(turn.run_id.map(|r| r.0.to_string()))
         .bind(turn.user_message_id.map(|m| m.0.to_string()))
-        .bind(turn.assistant_message_id.map(|m| m.0.to_string()))
         .bind(session_turn_status_to_str(&turn.status))
         .bind(turn.start_seq)
         .bind(turn.end_seq)
@@ -1013,7 +1020,7 @@ impl Store {
         turn_id: TurnId,
     ) -> Result<Option<SessionTurn>> {
         let row = sqlx::query(
-            r#"SELECT turn_id, session_id, run_id, user_message_id, assistant_message_id, status,
+            r#"SELECT turn_id, session_id, run_id, user_message_id, status,
                       start_seq, end_seq, started_at, updated_at, assistant_partial, thought_partial,
                       metrics_json, tool_total, tool_pending, tool_running, tool_completed, tool_failed
                FROM session_turns
@@ -1102,31 +1109,6 @@ impl Store {
         Ok(())
     }
 
-    pub async fn update_session_turn_assistant_message(
-        &self,
-        session_id: SessionId,
-        turn_id: TurnId,
-        assistant_message_id: MessageId,
-        assistant_partial: Option<&str>,
-        updated_at: DateTime<Utc>,
-    ) -> Result<()> {
-        sqlx::query(
-            r#"UPDATE session_turns
-               SET assistant_message_id = ?,
-                   assistant_partial = COALESCE(?, assistant_partial),
-                   updated_at = ?
-               WHERE session_id = ? AND turn_id = ?"#,
-        )
-        .bind(assistant_message_id.0.to_string())
-        .bind(assistant_partial.map(|s| s.to_string()))
-        .bind(updated_at.to_rfc3339())
-        .bind(session_id.0.to_string())
-        .bind(turn_id.0.to_string())
-        .execute(&self.pool)
-        .await?;
-        Ok(())
-    }
-
     pub async fn update_session_turn_tool_counts(
         &self,
         session_id: SessionId,
@@ -1171,7 +1153,7 @@ impl Store {
         let limit = limit.unwrap_or(50).clamp(1, 500) as i64;
         let rows = if let Some(before_seq) = before_seq {
             sqlx::query(
-                r#"SELECT turn_id, session_id, run_id, user_message_id, assistant_message_id, status,
+                r#"SELECT turn_id, session_id, run_id, user_message_id, status,
                           start_seq, end_seq, started_at, updated_at, assistant_partial, thought_partial,
                           metrics_json, tool_total, tool_pending, tool_running, tool_completed, tool_failed
                    FROM session_turns
@@ -1186,7 +1168,7 @@ impl Store {
             .await?
         } else {
             sqlx::query(
-                r#"SELECT turn_id, session_id, run_id, user_message_id, assistant_message_id, status,
+                r#"SELECT turn_id, session_id, run_id, user_message_id, status,
                           start_seq, end_seq, started_at, updated_at, assistant_partial, thought_partial,
                           metrics_json, tool_total, tool_pending, tool_running, tool_completed, tool_failed
                    FROM session_turns
@@ -1319,7 +1301,7 @@ impl Store {
         let events = self.list_session_events(session_id).await?;
 
         let mut user_by_turn: HashMap<TurnId, Message> = HashMap::new();
-        let mut assistant_by_turn: HashMap<TurnId, Message> = HashMap::new();
+        let mut assistant_last_by_turn: HashMap<TurnId, Message> = HashMap::new();
         for m in messages {
             let Some(turn_id) = m.turn_id else { continue };
             match m.role {
@@ -1327,7 +1309,13 @@ impl Store {
                     user_by_turn.insert(turn_id, m);
                 }
                 MessageRole::Assistant => {
-                    assistant_by_turn.insert(turn_id, m);
+                    let update = match assistant_last_by_turn.get(&turn_id) {
+                        Some(existing) => m.created_at > existing.created_at,
+                        None => true,
+                    };
+                    if update {
+                        assistant_last_by_turn.insert(turn_id, m);
+                    }
                 }
                 _ => {}
             }
@@ -1345,7 +1333,7 @@ impl Store {
 
         for turn_id in turn_ids {
             let user = user_by_turn.get(&turn_id);
-            let assistant = assistant_by_turn.get(&turn_id);
+            let assistant = assistant_last_by_turn.get(&turn_id);
             let mut evs = events_by_turn.remove(&turn_id).unwrap_or_default();
             evs.sort_by_key(|e| e.seq);
 
@@ -1386,6 +1374,10 @@ impl Store {
                         has_activity = true;
                     }
                     SessionEventType::AssistantComplete => {
+                        saw_assistant_complete = true;
+                        has_activity = true;
+                    }
+                    SessionEventType::AssistantMessageInserted => {
                         saw_assistant_complete = true;
                         has_activity = true;
                     }
@@ -1464,7 +1456,6 @@ impl Store {
                 session_id,
                 run_id: user.and_then(|m| m.run_id),
                 user_message_id: user.map(|m| m.id),
-                assistant_message_id: assistant.map(|m| m.id),
                 status,
                 start_seq,
                 end_seq,
@@ -1927,6 +1918,7 @@ fn session_event_type_to_str(event_type: &SessionEventType) -> &'static str {
         SessionEventType::AssistantChunk => "assistant_chunk",
         SessionEventType::ThoughtChunk => "thought_chunk",
         SessionEventType::AssistantComplete => "assistant_complete",
+        SessionEventType::AssistantMessageInserted => "assistant_message_inserted",
         SessionEventType::ToolCall => "tool_call",
         SessionEventType::ToolCallUpdate => "tool_call_update",
         SessionEventType::ToolResult => "tool_result",
@@ -1948,6 +1940,7 @@ fn parse_session_event_type(value: &str) -> SessionEventType {
         "assistant_chunk" => SessionEventType::AssistantChunk,
         "thought_chunk" => SessionEventType::ThoughtChunk,
         "assistant_complete" => SessionEventType::AssistantComplete,
+        "assistant_message_inserted" => SessionEventType::AssistantMessageInserted,
         "tool_call" => SessionEventType::ToolCall,
         "tool_call_update" => SessionEventType::ToolCallUpdate,
         "tool_result" => SessionEventType::ToolResult,
@@ -1967,7 +1960,6 @@ fn build_session_turn_from_row(
     let session_id: String = r.try_get("session_id")?;
     let run_id: Option<String> = r.try_get("run_id")?;
     let user_message_id: Option<String> = r.try_get("user_message_id")?;
-    let assistant_message_id: Option<String> = r.try_get("assistant_message_id")?;
     let status: String = r.try_get("status")?;
     let started_at: String = r.try_get("started_at")?;
     let updated_at: String = r.try_get("updated_at")?;
@@ -1984,10 +1976,6 @@ fn build_session_turn_from_row(
             .and_then(|s| uuid::Uuid::parse_str(s).ok())
             .map(RunId),
         user_message_id: user_message_id
-            .as_deref()
-            .and_then(|s| uuid::Uuid::parse_str(s).ok())
-            .map(MessageId),
-        assistant_message_id: assistant_message_id
             .as_deref()
             .and_then(|s| uuid::Uuid::parse_str(s).ok())
             .map(MessageId),
