@@ -1974,63 +1974,73 @@ function WorkbenchToolRow({
     return truncateMiddle(first, 80);
   };
 
-  const preferTitle =
-    title.length > 0 &&
-    title.length <= 90 &&
-    /^(Read|Wrote|Edited|List|Listed|Explore|Explored|Planning|Plan|Thought|Run)\b/.test(title);
+  const makeParts = (verb: string, rest?: string) => {
+    const trimmedRest = String(rest ?? "").trim();
+    return {
+      verb,
+      rest: trimmedRest,
+      label: trimmedRest ? `${verb} ${trimmedRest}` : verb,
+    };
+  };
 
-  const label = (() => {
+  const parsePrefixed = (value: string, verbs: string[]) => {
+    const trimmed = String(value ?? "").trim();
+    if (!trimmed) return null;
+    for (const verb of verbs) {
+      if (trimmed === verb) return makeParts(verb);
+      if (trimmed.startsWith(`${verb} `)) return makeParts(verb, trimmed.slice(verb.length + 1));
+    }
+    return null;
+  };
+
+  const labelParts = (() => {
     const parsed = Array.isArray((item.input as any)?.parsed_cmd) ? ((item.input as any).parsed_cmd as any[]) : [];
     if (parsed.length > 0) {
       const c0 = parsed[0] ?? {};
-      if (c0.type === "list_files" && c0.path) return `Explored ${shortPath(c0.path)}`;
-      if (c0.type === "read_file" && c0.path) return `Read ${shortPath(c0.path)}`;
-    }
-
-    if (preferTitle) {
-      if (/^Run\b/.test(title)) {
-        const cmd = Array.isArray(item.input?.command) ? item.input.command.join(" ") : item.input?.command;
-        const short = shortCommand(cmd ?? title.replace(/^Run\s+/, ""));
-        if (!short) return title;
-        if (/^(Read|Explored|Searched|Wrote|Edited)\b/.test(short)) return short;
-        return `Run ${short}`;
-      }
-      return title;
-    }
-
-    if (/^Run\b/.test(title)) {
-      const cmd = Array.isArray(item.input?.command) ? item.input.command.join(" ") : item.input?.command;
-      const short = shortCommand(cmd ?? title.replace(/^Run\s+/, ""));
-      if (!short) return truncateMiddle(title, 90);
-      if (/^(Read|Explored|Searched|Wrote|Edited)\b/.test(short)) return short;
-      return `Run ${short}`;
+      if (c0.type === "list_files" && c0.path) return makeParts("Explored", shortPath(c0.path));
+      if (c0.type === "read_file" && c0.path) return makeParts("Read", shortPath(c0.path));
     }
 
     if (kind === "search") {
-      if (/^List\b/.test(title)) return `Explored ${shortPath(title.replace(/^List\s+/, ""))}`;
       const q = String(item.input?.query ?? item.input?.pattern ?? item.input?.text ?? summary ?? "").trim();
-      if (/^(List|Listed|Explore|Explored)\b/.test(q)) return truncateMiddle(q, 90);
-      return q ? `Searched ${truncateMiddle(q, 90)}` : "Searched";
+      return q ? makeParts("Searched", truncateMiddle(q, 90)) : makeParts("Searched");
     }
     if (kind === "execute") {
       const cmd = Array.isArray(item.input?.command) ? item.input.command.join(" ") : item.input?.command;
       const short = shortCommand(cmd ?? "");
-      if (!short) return "Run";
-      if (/^(Read|Explored|Searched|Wrote|Edited)\b/.test(short)) return short;
-      return `Run ${short}`;
+      const parsedShort = parsePrefixed(short, ["Read", "Explored", "Searched", "Wrote", "Edited"]);
+      if (parsedShort) return parsedShort;
+      return short ? makeParts("Run", short) : makeParts("Run");
     }
     if (kind === "read_file" || kind === "read") {
       const p = pathFromLoc ?? summary;
-      return p ? `Read ${shortPath(p)}` : "Read";
+      return p ? makeParts("Read", shortPath(p)) : makeParts("Read");
     }
     if (kind === "write" || kind === "edit") {
       const p = summary || pathFromLoc;
-      return p ? `${kind === "write" ? "Wrote" : "Edited"} ${shortPath(p)}` : kind === "write" ? "Wrote" : "Edited";
+      const verb = kind === "write" ? "Wrote" : "Edited";
+      return p ? makeParts(verb, shortPath(p)) : makeParts(verb);
     }
-    if (kind === "error") return `Error`;
-    return normalizeWorktreePath(title) || humanToolKind(item.tool_kind);
+    if (kind === "error") return makeParts("Error");
+
+    const fallbackLabel = normalizeWorktreePath(title) || humanToolKind(item.tool_kind);
+    const parsedLabel = parsePrefixed(fallbackLabel, [
+      "Read",
+      "Explored",
+      "Searched",
+      "Wrote",
+      "Edited",
+      "Run",
+    ]);
+    if (parsedLabel) return parsedLabel;
+    const fallbackVerb = humanToolKind(item.tool_kind);
+    if (fallbackLabel && fallbackLabel !== fallbackVerb) {
+      return makeParts(fallbackVerb, fallbackLabel);
+    }
+    return makeParts(fallbackVerb);
   })();
 
+  const { verb, rest, label } = labelParts;
   const hasDetails = !!(item.input || item.output_text?.trim());
 
   return (
@@ -2042,7 +2052,10 @@ function WorkbenchToolRow({
         aria-expanded={hasDetails ? expanded : undefined}
         title={label}
       >
-        <span className="wb-event-text">{label}</span>
+        <span className="wb-event-text">
+          <span className="wb-tool-verb">{verb}</span>
+          {rest ? <span className="wb-tool-rest"> {rest}</span> : null}
+        </span>
       </button>
       {hasDetails && expanded && (
         <div className="wb-tool-details">

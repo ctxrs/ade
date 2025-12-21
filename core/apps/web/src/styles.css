@@ -3053,9 +3053,13 @@ button.linklike:hover {
   gap: 4px;
 }
 
-.wb-tool-row .wb-event-row {
+.wb-tool-verb {
   color: var(--text);
   font-weight: 600;
+}
+
+.wb-tool-rest {
+  color: var(--muted);
 }
 
 .wb-tool-details {
