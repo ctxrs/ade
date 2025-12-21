@@ -1052,7 +1052,12 @@ const appendFragment = (prev?: string | null, fragment?: string | null) => {
 
 const shouldRenderThoughtChunk = (event: SessionEvent): boolean => {
   const payload = event.payload_json ?? {};
-  const meta = payload?.acp_update?.meta ?? payload?.meta ?? {};
+  const meta =
+    payload?.acp_update?._meta ??
+    payload?.acp_update?.meta ??
+    payload?._meta ??
+    payload?.meta ??
+    {};
   if (meta?.heartbeat === true) return false;
   const reasoningKind = meta?.codex?.reasoning_kind ?? meta?.codex?.reasoningKind;
   if (reasoningKind === "summary") return false;

@@ -3053,6 +3053,11 @@ button.linklike:hover {
   gap: 4px;
 }
 
+.wb-tool-row .wb-event-row {
+  color: var(--text);
+  font-weight: 600;
+}
+
 .wb-tool-details {
   border-radius: 10px;
   border: 1px solid var(--border);

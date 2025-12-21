@@ -2579,14 +2579,19 @@ export function buildWorkbenchThreadViewModel(
   events: SessionEvent[],
 ): WorkbenchThreadView {
   if (turns.length > 0) {
-    return buildWorkbenchThreadViewModelFromTurns(turns, messages, toolsByTurnId);
+    return buildWorkbenchThreadViewModelFromTurns(turns, messages, toolsByTurnId, events);
   }
   return buildWorkbenchThreadViewModelFromEvents(events, messages);
 }
 
 function shouldRenderThoughtChunk(ev: SessionEvent): boolean {
   const payload = ev.payload_json ?? {};
-  const meta = payload?.acp_update?.meta ?? payload?.meta ?? {};
+  const meta =
+    payload?.acp_update?._meta ??
+    payload?.acp_update?.meta ??
+    payload?._meta ??
+    payload?.meta ??
+    {};
   if (meta?.heartbeat === true) return false;
   const reasoningKind = meta?.codex?.reasoning_kind ?? meta?.codex?.reasoningKind;
   if (reasoningKind === "summary") return false;
@@ -2597,6 +2602,7 @@ function buildWorkbenchThreadViewModelFromTurns(
   turns: SessionTurn[],
   messages: Message[],
   toolsByTurnId: Record<string, SessionTurnTool[]>,
+  events: SessionEvent[],
 ): WorkbenchThreadView {
   const debugEvents: SessionEvent[] = [];
   const groups: WorkbenchThreadView["groups"] = [];
@@ -2650,6 +2656,30 @@ function buildWorkbenchThreadViewModelFromTurns(
         updates_seen: 1,
       } satisfies Extract<ThreadItem, { kind: "tool" }>;
     });
+
+    const eventTools = buildToolItemsFromEventsForTurn(events, turnId);
+    if (eventTools.length > 0) {
+      const mergedById = new Map<string, Extract<ThreadItem, { kind: "tool" }>>();
+      for (const tool of tools) mergedById.set(tool.tool_call_id, tool);
+      for (const tool of eventTools) {
+        const existing = mergedById.get(tool.tool_call_id);
+        if (!existing) {
+          mergedById.set(tool.tool_call_id, tool);
+          continue;
+        }
+        existing.updated_at = tool.updated_at ?? existing.updated_at;
+        existing.status = tool.status || existing.status;
+        existing.tool_kind = tool.tool_kind || existing.tool_kind;
+        existing.title = tool.title || existing.title;
+        existing.input ??= tool.input;
+        if (tool.output_text?.trim()) existing.output_text = tool.output_text;
+        existing.locations = tool.locations?.length ? tool.locations : existing.locations;
+        existing.raw = tool.raw ?? existing.raw;
+        existing.updates_seen = Math.max(existing.updates_seen, tool.updates_seen);
+      }
+      tools.length = 0;
+      tools.push(...Array.from(mergedById.values()).sort((a, b) => String(a.created_at).localeCompare(String(b.created_at))));
+    }
 
     const thought = String(turn.thought_partial ?? "");
     const hasThought = thought.trim().length > 0;
@@ -2780,6 +2810,86 @@ function buildWorkbenchThreadViewModelFromTurns(
   }
 
   return { groups, debugEvents };
+}
+
+function buildToolItemsFromEventsForTurn(
+  events: SessionEvent[],
+  turnId: string,
+): Array<Extract<ThreadItem, { kind: "tool" }>> {
+  const toolById = new Map<string, Extract<ThreadItem, { kind: "tool" }>>();
+
+  for (const ev of events) {
+    const evTurnId = idToString((ev as any).turn_id);
+    if (evTurnId !== turnId) continue;
+    if (!["tool_call", "tool_call_update", "tool_result"].includes(String(ev.event_type))) continue;
+
+    const update = ev.payload_json?.acp_update ?? ev.payload_json ?? {};
+    const toolCallId =
+      String(
+        ev.payload_json?.tool_call_id ??
+          update?.toolCallId ??
+          update?.tool_call_id ??
+          update?.rawInput?.call_id ??
+          update?.raw_input?.call_id ??
+          update?.toolCall?.rawInput?.call_id ??
+          "",
+      ).trim();
+    if (!toolCallId) continue;
+
+    let tool = toolById.get(toolCallId);
+    if (!tool) {
+      tool = {
+        kind: "tool",
+        id: `tool-${turnId}-${toolCallId}`,
+        tool_call_id: toolCallId,
+        created_at: ev.created_at,
+        updated_at: ev.created_at,
+        tool_kind: "tool",
+        title: "Tool",
+        status: "pending",
+        locations: [],
+        input: null,
+        output_text: "",
+        raw: null,
+        updates_seen: 0,
+      };
+      toolById.set(toolCallId, tool);
+    }
+
+    tool.updated_at = ev.created_at;
+    tool.updates_seen += 1;
+    tool.raw = ev.payload_json ?? tool.raw;
+
+    const nextKind = String(update?.kind ?? update?.toolCall?.kind ?? "").trim();
+    if (nextKind) tool.tool_kind = nextKind;
+
+    const nextTitle = String(update?.title ?? update?.toolCall?.title ?? update?.toolCall?.name ?? "").trim();
+    if (nextTitle) tool.title = nextTitle;
+    else if (tool.tool_kind && tool.title === "Tool") tool.title = humanToolKind(tool.tool_kind);
+
+    const nextStatus = String(update?.status ?? update?.toolCall?.status ?? "").trim();
+    if (nextStatus) tool.status = normalizeToolStatus(nextStatus, ev.event_type);
+    else if (ev.event_type === "tool_result") tool.status = "completed";
+
+    const locs = Array.isArray(update?.locations) ? update.locations : [];
+    tool.locations = locs.map((l: any) => ({ path: l?.path, range: l?.range }));
+
+    const input = update?.rawInput ?? update?.toolCall?.rawInput ?? update?.toolCall?.input ?? update?.input ?? null;
+    if (input != null) tool.input = input;
+
+    const nextOutput =
+      update?.outputText ??
+      update?.output_text ??
+      update?.toolCall?.outputText ??
+      update?.toolCall?.output_text ??
+      update?.result ??
+      null;
+    if (typeof nextOutput === "string" && nextOutput.trim()) {
+      tool.output_text = mergeStreamingText(tool.output_text, nextOutput);
+    }
+  }
+
+  return Array.from(toolById.values()).sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
 }
 
 function buildWorkbenchThreadViewModelFromEvents(events: SessionEvent[], messages: Message[]): WorkbenchThreadView {

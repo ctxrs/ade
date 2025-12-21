@@ -751,7 +751,9 @@ async fn emit_event(
 fn should_track_thought_chunk(payload: &serde_json::Value) -> bool {
     let meta = payload
         .get("acp_update")
-        .and_then(|v| v.get("meta"))
+        .and_then(|v| v.get("_meta"))
+        .or_else(|| payload.get("acp_update").and_then(|v| v.get("meta")))
+        .or_else(|| payload.get("_meta"))
         .or_else(|| payload.get("meta"));
     if meta
         .and_then(|v| v.get("heartbeat"))

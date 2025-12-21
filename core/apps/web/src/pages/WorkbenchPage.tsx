@@ -1751,7 +1751,12 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       (sess?.provider_id ?? "Provider");
     const parsedModel = parseModelId(sess?.model_id ?? "");
 
-    const thread = buildWorkbenchThreadViewModel(activeEntry.events ?? [], activeEntry.messages ?? []);
+    const thread = buildWorkbenchThreadViewModel(
+      activeEntry.turns ?? [],
+      activeEntry.messages ?? [],
+      activeEntry.turnToolsByTurnId ?? {},
+      activeEntry.events ?? [],
+    );
     const exportedAt = new Date().toISOString();
 
     const lines: string[] = [];
