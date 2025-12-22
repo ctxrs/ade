@@ -11,6 +11,12 @@ import { loadConnectionConfig } from "../state/connectionStorage";
 const TASK_NAME = "contextQueueWatcher";
 const isExpoGo = Constants.appOwnership === "expo";
 
+if (isExpoGo) {
+  void BackgroundFetch.unregisterTaskAsync(TASK_NAME).catch((err) =>
+    console.warn("[queueWatcher] failed to unregister Expo Go task", err),
+  );
+}
+
 TaskManager.defineTask(TASK_NAME, async () => {
   if (isExpoGo) return BackgroundFetchResult.NoData;
   const conn = await loadConnectionConfig();
@@ -28,8 +34,8 @@ TaskManager.defineTask(TASK_NAME, async () => {
       }
     }
     if (needsAttention > 0) {
-      const soundSetting = Platform.select<boolean | string | undefined>({
-        ios: "default",
+      const soundSetting = Platform.select<boolean | undefined>({
+        ios: true,
         android: true,
         default: undefined,
       });
