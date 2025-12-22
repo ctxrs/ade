@@ -1,0 +1,100 @@
+import "react-native-get-random-values";
+import { NavigationContainer } from "@react-navigation/native";
+import { createNativeStackNavigator } from "@react-navigation/native-stack";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import * as Notifications from "expo-notifications";
+import React from "react";
+import { TouchableOpacity, Text, View } from "react-native";
+import { SafeAreaProvider } from "react-native-safe-area-context";
+
+import { ConnectionScreen } from "./src/screens/ConnectionScreen";
+import { WorkspaceListScreen } from "./src/screens/WorkspaceListScreen";
+import { TaskListScreen } from "./src/screens/TaskListScreen";
+import { TrackListScreen } from "./src/screens/TrackListScreen";
+import { SessionListScreen } from "./src/screens/SessionListScreen";
+import { SessionDetailScreen } from "./src/screens/SessionDetailScreen";
+import { TrackDiffScreen } from "./src/screens/TrackDiffScreen";
+import { DiagnosticsScreen } from "./src/screens/DiagnosticsScreen";
+import { SettingsScreen } from "./src/screens/SettingsScreen";
+import { QrScannerScreen } from "./src/screens/QrScannerScreen";
+import type { RootStackParamList } from "./src/navigation/types";
+import { ConnectionProvider, useConnection } from "./src/state/ConnectionProvider";
+import { LoadingView } from "./src/components/LoadingView";
+import { tokens } from "./src/theme";
+
+const Stack = createNativeStackNavigator<RootStackParamList>();
+const queryClient = new QueryClient();
+
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldPlaySound: true,
+    shouldSetBadge: false,
+    shouldShowAlert: true,
+    shouldShowBanner: true,
+    shouldShowList: true,
+  }),
+});
+
+export default function App(): React.JSX.Element {
+  return (
+    <SafeAreaProvider>
+      <QueryClientProvider client={queryClient}>
+        <ConnectionProvider>
+          <NavigationContainer>
+            <RootNavigator />
+          </NavigationContainer>
+        </ConnectionProvider>
+      </QueryClientProvider>
+    </SafeAreaProvider>
+  );
+}
+
+function RootNavigator(): React.JSX.Element {
+  const { loading, config } = useConnection();
+
+  if (loading) return <LoadingView />;
+
+  return (
+    <Stack.Navigator
+      screenOptions={{
+        headerStyle: { backgroundColor: tokens.colors.surface },
+        headerTintColor: tokens.colors.text,
+      }}
+    >
+      {!config ? (
+        <Stack.Screen name="Connection" component={ConnectionScreen} options={{ headerShown: false }} />
+      ) : (
+        <>
+          <Stack.Screen
+            name="Workspaces"
+            component={WorkspaceListScreen}
+            options={({ navigation }) => ({
+              headerRight: () => (
+                <View style={{ flexDirection: "row", gap: 12 }}>
+                  <TouchableOpacity onPress={() => navigation.navigate("Diagnostics")}>
+                    <Text style={{ color: tokens.colors.accent, fontWeight: "600" }}>Diagnostics</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => navigation.navigate("Settings")}>
+                    <Text style={{ color: tokens.colors.accent, fontWeight: "600" }}>Settings</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => navigation.navigate("Connection")}>
+                    <Text style={{ color: tokens.colors.accent, fontWeight: "600" }}>Connection</Text>
+                  </TouchableOpacity>
+                </View>
+              ),
+            })}
+          />
+          <Stack.Screen name="Tasks" component={TaskListScreen} options={({ route }) => ({ title: route.params.workspaceName })} />
+          <Stack.Screen name="Tracks" component={TrackListScreen} options={({ route }) => ({ title: route.params.taskTitle })} />
+          <Stack.Screen name="Sessions" component={SessionListScreen} options={({ route }) => ({ title: route.params.trackLabel })} />
+          <Stack.Screen name="SessionDetail" component={SessionDetailScreen} options={({ route }) => ({ title: route.params.sessionTitle })} />
+          <Stack.Screen name="TrackDiff" component={TrackDiffScreen} options={({ route }) => ({ title: `${route.params.trackLabel} diff` })} />
+          <Stack.Screen name="Diagnostics" component={DiagnosticsScreen} />
+          <Stack.Screen name="Settings" component={SettingsScreen} />
+          <Stack.Screen name="Connection" component={ConnectionScreen} options={{ presentation: "modal" }} />
+          <Stack.Screen name="QrScanner" component={QrScannerScreen} options={{ presentation: "fullScreenModal", title: "Scan QR" }} />
+        </>
+      )}
+    </Stack.Navigator>
+  );
+}

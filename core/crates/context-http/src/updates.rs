@@ -134,7 +134,8 @@ pub async fn atomic_replace_exe(current_exe: &Path, new_file: &Path) -> Result<(
     if let Err(e) = tokio::fs::rename(new_file, current_exe).await {
         // Attempt rollback.
         let _ = tokio::fs::rename(&backup, current_exe).await;
-        return Err(e).with_context(|| format!("moving new exe into place: {}", current_exe.display()));
+        return Err(e)
+            .with_context(|| format!("moving new exe into place: {}", current_exe.display()));
     }
 
     Ok(())
@@ -154,8 +155,8 @@ pub async fn self_update_daemon(
         );
     };
 
-    let current_version = normalize_version_str(env!("CARGO_PKG_VERSION"))
-        .context("parsing current version")?;
+    let current_version =
+        normalize_version_str(env!("CARGO_PKG_VERSION")).context("parsing current version")?;
 
     let manifest = fetch_latest_manifest(base_url, channel).await?;
     let latest_version = normalize_version_str(&manifest.latest_version)
@@ -167,7 +168,11 @@ pub async fn self_update_daemon(
         current_version,
         latest_version,
         channel,
-        if update_available { "available" } else { "none" }
+        if update_available {
+            "available"
+        } else {
+            "none"
+        }
     );
 
     if !update_available || check_only {
@@ -219,7 +224,10 @@ pub async fn self_update_daemon(
     let current_exe = std::env::current_exe().context("resolving current executable path")?;
     atomic_replace_exe(&current_exe, &tmp_path).await?;
 
-    println!("Updated successfully. New binary is in place at {}", current_exe.display());
+    println!(
+        "Updated successfully. New binary is in place at {}",
+        current_exe.display()
+    );
     Ok(())
 }
 
@@ -228,18 +236,16 @@ pub fn updates_dir(data_root: &Path) -> PathBuf {
 }
 
 pub fn appimage_path_env() -> Option<PathBuf> {
-    std::env::var("CONTEXT_APPIMAGE_PATH").ok().map(PathBuf::from)
+    std::env::var("CONTEXT_APPIMAGE_PATH")
+        .ok()
+        .map(PathBuf::from)
 }
 
 pub fn join_url(base_url: &str, url_path: &str) -> String {
     format!("{}{}", base_url.trim_end_matches('/'), url_path)
 }
 
-pub async fn download_and_verify(
-    url: &str,
-    expected_sha256: &str,
-    dest: &Path,
-) -> Result<()> {
+pub async fn download_and_verify(url: &str, expected_sha256: &str, dest: &Path) -> Result<()> {
     download_to_path(url, dest).await?;
     let got = sha256_hex_file(dest).await?;
     if got.to_ascii_lowercase() != expected_sha256.to_ascii_lowercase() {

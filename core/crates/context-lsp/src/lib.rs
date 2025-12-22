@@ -3,22 +3,24 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{anyhow, Context, Result};
 use lsp_types::{
-    ApplyWorkspaceEditParams, ApplyWorkspaceEditResponse, CallHierarchyPrepareParams, CodeActionContext, CodeActionKind,
-    CodeActionOrCommand, CodeActionParams, CodeLensParams, CompletionParams, Diagnostic, DidChangeTextDocumentParams,
-    DidOpenTextDocumentParams, DocumentFormattingParams, DocumentHighlightParams, DocumentSymbolParams, ExecuteCommandParams,
-    HoverParams, InlayHintParams, InitializeParams, InitializedParams, Location, Position, PublishDiagnosticsParams, Range,
-    ReferenceContext, ReferenceParams, RenameParams, SelectionRangeParams, SignatureHelpParams, SymbolInformation,
-    DocumentLinkParams, SemanticTokensParams, TextDocumentContentChangeEvent, TextDocumentIdentifier, TextDocumentItem,
+    ApplyWorkspaceEditParams, ApplyWorkspaceEditResponse, CallHierarchyPrepareParams,
+    CodeActionContext, CodeActionKind, CodeActionOrCommand, CodeActionParams, CodeLensParams,
+    CompletionParams, Diagnostic, DidChangeTextDocumentParams, DidOpenTextDocumentParams,
+    DocumentFormattingParams, DocumentHighlightParams, DocumentLinkParams, DocumentSymbolParams,
+    ExecuteCommandParams, HoverParams, InitializeParams, InitializedParams, InlayHintParams,
+    Location, Position, PublishDiagnosticsParams, Range, ReferenceContext, ReferenceParams,
+    RenameParams, SelectionRangeParams, SemanticTokensParams, SignatureHelpParams,
+    SymbolInformation, TextDocumentContentChangeEvent, TextDocumentIdentifier, TextDocumentItem,
     TextDocumentPositionParams, TextEdit, TypeHierarchyPrepareParams, TypeHierarchySubtypesParams,
-    TypeHierarchySupertypesParams, Uri, VersionedTextDocumentIdentifier, WorkspaceEdit, WorkspaceFolder,
-    WorkspaceSymbolParams,
+    TypeHierarchySupertypesParams, Uri, VersionedTextDocumentIdentifier, WorkspaceEdit,
+    WorkspaceFolder, WorkspaceSymbolParams,
 };
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
-use tokio::sync::{Mutex, Notify, broadcast, mpsc, oneshot};
+use tokio::sync::{broadcast, mpsc, oneshot, Mutex, Notify};
 
 #[derive(Debug, Clone)]
 pub struct LspManagerConfig {
@@ -69,8 +71,8 @@ impl Default for LspManagerConfig {
             .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
             .unwrap_or(false);
 
-        let rust_command =
-            std::env::var("CONTEXT_LSP_RUST_COMMAND").unwrap_or_else(|_| "rust-analyzer".to_string());
+        let rust_command = std::env::var("CONTEXT_LSP_RUST_COMMAND")
+            .unwrap_or_else(|_| "rust-analyzer".to_string());
         let rust_args = vec!["--stdio".to_string()];
 
         let ts_command = std::env::var("CONTEXT_LSP_TS_COMMAND")
@@ -113,15 +115,16 @@ impl Default for LspManagerConfig {
             std::env::var("CONTEXT_LSP_CLANGD_COMMAND").unwrap_or_else(|_| "clangd".to_string());
         let clangd_args = vec!["--stdio".to_string()];
 
-        let lua_command =
-            std::env::var("CONTEXT_LSP_LUA_COMMAND").unwrap_or_else(|_| "lua-language-server".to_string());
+        let lua_command = std::env::var("CONTEXT_LSP_LUA_COMMAND")
+            .unwrap_or_else(|_| "lua-language-server".to_string());
         let lua_args = vec![];
 
-        let toml_command = std::env::var("CONTEXT_LSP_TOML_COMMAND").unwrap_or_else(|_| "taplo".to_string());
+        let toml_command =
+            std::env::var("CONTEXT_LSP_TOML_COMMAND").unwrap_or_else(|_| "taplo".to_string());
         let toml_args = vec!["lsp".to_string(), "stdio".to_string()];
 
-        let markdown_command =
-            std::env::var("CONTEXT_LSP_MARKDOWN_COMMAND").unwrap_or_else(|_| "marksman".to_string());
+        let markdown_command = std::env::var("CONTEXT_LSP_MARKDOWN_COMMAND")
+            .unwrap_or_else(|_| "marksman".to_string());
         let markdown_args = vec!["server".to_string()];
 
         let diagnostics_wait = Duration::from_secs(
@@ -327,17 +330,15 @@ impl LspManager {
         if !self.cfg.enabled {
             anyhow::bail!("LSP disabled (set CONTEXT_LSP_ENABLED=1)");
         }
-        let lang = Language::detect(file, &self.cfg).ok_or_else(|| anyhow!("no LSP language for file"))?;
+        let lang =
+            Language::detect(file, &self.cfg).ok_or_else(|| anyhow!("no LSP language for file"))?;
         let session = self.get_or_spawn(root, lang).await?;
-        session.diagnostics_for_file(file, self.cfg.diagnostics_wait).await
+        session
+            .diagnostics_for_file(file, self.cfg.diagnostics_wait)
+            .await
     }
 
-    pub async fn definition(
-        &self,
-        root: &Path,
-        file: &Path,
-        position: Position,
-    ) -> Result<Value> {
+    pub async fn definition(&self, root: &Path, file: &Path, position: Position) -> Result<Value> {
         self.with_open_doc(root, file, |session, doc| async move {
             let params = TextDocumentPositionParams {
                 text_document: TextDocumentIdentifier { uri: doc.uri },
@@ -359,7 +360,9 @@ impl LspManager {
                 text_document: TextDocumentIdentifier { uri: doc.uri },
                 position,
             };
-            session.request("textDocument/typeDefinition", &params).await
+            session
+                .request("textDocument/typeDefinition", &params)
+                .await
         })
         .await
     }
@@ -375,7 +378,9 @@ impl LspManager {
                 text_document: TextDocumentIdentifier { uri: doc.uri },
                 position,
             };
-            session.request("textDocument/implementation", &params).await
+            session
+                .request("textDocument/implementation", &params)
+                .await
         })
         .await
     }
@@ -393,21 +398,20 @@ impl LspManager {
                     text_document: TextDocumentIdentifier { uri: doc.uri },
                     position,
                 },
-                context: ReferenceContext { include_declaration },
+                context: ReferenceContext {
+                    include_declaration,
+                },
                 work_done_progress_params: Default::default(),
                 partial_result_params: Default::default(),
             };
-            session.request_typed("textDocument/references", &params).await
+            session
+                .request_typed("textDocument/references", &params)
+                .await
         })
         .await
     }
 
-    pub async fn hover(
-        &self,
-        root: &Path,
-        file: &Path,
-        position: Position,
-    ) -> Result<Value> {
+    pub async fn hover(&self, root: &Path, file: &Path, position: Position) -> Result<Value> {
         self.with_open_doc(root, file, |session, doc| async move {
             let params = HoverParams {
                 text_document_position_params: TextDocumentPositionParams {
@@ -441,12 +445,7 @@ impl LspManager {
         .await
     }
 
-    pub async fn completion(
-        &self,
-        root: &Path,
-        file: &Path,
-        position: Position,
-    ) -> Result<Value> {
+    pub async fn completion(&self, root: &Path, file: &Path, position: Position) -> Result<Value> {
         self.with_open_doc(root, file, |session, doc| async move {
             let params = CompletionParams {
                 text_document_position: TextDocumentPositionParams {
@@ -488,12 +487,7 @@ impl LspManager {
         .await
     }
 
-    pub async fn inlay_hints(
-        &self,
-        root: &Path,
-        file: &Path,
-        range: Range,
-    ) -> Result<Value> {
+    pub async fn inlay_hints(&self, root: &Path, file: &Path, range: Range) -> Result<Value> {
         self.with_open_doc(root, file, |session, doc| async move {
             let params = InlayHintParams {
                 work_done_progress_params: Default::default(),
@@ -540,7 +534,9 @@ impl LspManager {
                 work_done_progress_params: Default::default(),
                 partial_result_params: Default::default(),
             };
-            session.request("textDocument/selectionRange", &params).await
+            session
+                .request("textDocument/selectionRange", &params)
+                .await
         })
         .await
     }
@@ -574,7 +570,9 @@ impl LspManager {
     ) -> Result<Value> {
         self.with_open_doc(root, file, |session, _doc| async move {
             let params = json!({ "item": item });
-            session.request("callHierarchy/incomingCalls", &params).await
+            session
+                .request("callHierarchy/incomingCalls", &params)
+                .await
         })
         .await
     }
@@ -587,16 +585,14 @@ impl LspManager {
     ) -> Result<Value> {
         self.with_open_doc(root, file, |session, _doc| async move {
             let params = json!({ "item": item });
-            session.request("callHierarchy/outgoingCalls", &params).await
+            session
+                .request("callHierarchy/outgoingCalls", &params)
+                .await
         })
         .await
     }
 
-    pub async fn code_lens(
-        &self,
-        root: &Path,
-        file: &Path,
-    ) -> Result<Value> {
+    pub async fn code_lens(&self, root: &Path, file: &Path) -> Result<Value> {
         self.with_open_doc(root, file, |session, doc| async move {
             let params = CodeLensParams {
                 text_document: TextDocumentIdentifier { uri: doc.uri },
@@ -786,10 +782,16 @@ impl LspManager {
             anyhow::bail!("LSP disabled (set CONTEXT_LSP_ENABLED=1)");
         }
         if !self.cfg.execute_commands_enabled {
-            anyhow::bail!("LSP executeCommand disabled (set CONTEXT_LSP_EXECUTE_COMMANDS_ENABLED=1)");
+            anyhow::bail!(
+                "LSP executeCommand disabled (set CONTEXT_LSP_EXECUTE_COMMANDS_ENABLED=1)"
+            );
         }
         if self.cfg.execute_command_allowlist.is_empty()
-            || !self.cfg.execute_command_allowlist.iter().any(|c| c == &command)
+            || !self
+                .cfg
+                .execute_command_allowlist
+                .iter()
+                .any(|c| c == &command)
         {
             anyhow::bail!("executeCommand not allowlisted: {command}");
         }
@@ -809,7 +811,8 @@ impl LspManager {
         if !self.cfg.enabled {
             anyhow::bail!("LSP disabled (set CONTEXT_LSP_ENABLED=1)");
         }
-        let lang = Language::detect(file, &self.cfg).ok_or_else(|| anyhow!("no LSP language for file"))?;
+        let lang =
+            Language::detect(file, &self.cfg).ok_or_else(|| anyhow!("no LSP language for file"))?;
         let session = self.get_or_spawn(root, lang).await?;
         let _ = session.open_doc_with_text(file, text).await?;
         Ok(())
@@ -823,7 +826,8 @@ impl LspManager {
         if !self.cfg.enabled {
             anyhow::bail!("LSP disabled (set CONTEXT_LSP_ENABLED=1)");
         }
-        let lang = Language::detect(file, &self.cfg).ok_or_else(|| anyhow!("no LSP language for file"))?;
+        let lang =
+            Language::detect(file, &self.cfg).ok_or_else(|| anyhow!("no LSP language for file"))?;
         let session = self.get_or_spawn(root, lang).await?;
         Ok(session.subscribe_diagnostics())
     }
@@ -840,18 +844,16 @@ impl LspManager {
         Ok(session.subscribe_diagnostics())
     }
 
-    pub async fn document_symbols(
-        &self,
-        root: &Path,
-        file: &Path,
-    ) -> Result<Value> {
+    pub async fn document_symbols(&self, root: &Path, file: &Path) -> Result<Value> {
         self.with_open_doc(root, file, |session, doc| async move {
             let params = DocumentSymbolParams {
                 text_document: TextDocumentIdentifier { uri: doc.uri },
                 work_done_progress_params: Default::default(),
                 partial_result_params: Default::default(),
             };
-            session.request("textDocument/documentSymbol", &params).await
+            session
+                .request("textDocument/documentSymbol", &params)
+                .await
         })
         .await
     }
@@ -884,11 +886,7 @@ impl LspManager {
         Err(last_err.unwrap_or_else(|| anyhow!("no LSP language for workspace")))
     }
 
-    pub async fn workspace_symbol_resolve(
-        &self,
-        root: &Path,
-        item: Value,
-    ) -> Result<Value> {
+    pub async fn workspace_symbol_resolve(&self, root: &Path, item: Value) -> Result<Value> {
         if !self.cfg.enabled {
             anyhow::bail!("LSP disabled (set CONTEXT_LSP_ENABLED=1)");
         }
@@ -928,11 +926,7 @@ impl LspManager {
         .await
     }
 
-    pub async fn format_document(
-        &self,
-        root: &Path,
-        file: &Path,
-    ) -> Result<Vec<TextEdit>> {
+    pub async fn format_document(&self, root: &Path, file: &Path) -> Result<Vec<TextEdit>> {
         self.with_open_doc(root, file, |session, doc| async move {
             let params = DocumentFormattingParams {
                 text_document: TextDocumentIdentifier { uri: doc.uri },
@@ -943,7 +937,9 @@ impl LspManager {
                 },
                 work_done_progress_params: Default::default(),
             };
-            session.request_typed("textDocument/formatting", &params).await
+            session
+                .request_typed("textDocument/formatting", &params)
+                .await
         })
         .await
     }
@@ -992,7 +988,9 @@ impl LspManager {
                 work_done_progress_params: Default::default(),
                 partial_result_params: Default::default(),
             };
-            session.request_typed("textDocument/codeAction", &params).await
+            session
+                .request_typed("textDocument/codeAction", &params)
+                .await
         })
         .await
     }
@@ -1008,12 +1006,7 @@ impl LspManager {
         Ok(created)
     }
 
-    async fn with_open_doc<F, Fut, T>(
-        &self,
-        root: &Path,
-        file: &Path,
-        f: F,
-    ) -> Result<T>
+    async fn with_open_doc<F, Fut, T>(&self, root: &Path, file: &Path, f: F) -> Result<T>
     where
         F: FnOnce(Arc<LspSession>, OpenDoc) -> Fut,
         Fut: std::future::Future<Output = Result<T>>,
@@ -1021,7 +1014,8 @@ impl LspManager {
         if !self.cfg.enabled {
             anyhow::bail!("LSP disabled (set CONTEXT_LSP_ENABLED=1)");
         }
-        let lang = Language::detect(file, &self.cfg).ok_or_else(|| anyhow!("no LSP language for file"))?;
+        let lang =
+            Language::detect(file, &self.cfg).ok_or_else(|| anyhow!("no LSP language for file"))?;
         let session = self.get_or_spawn(root, lang).await?;
         let doc = session.open_doc(file).await?;
         f(session, doc).await
@@ -1098,7 +1092,10 @@ fn uri_to_abs_path_under_root(root: &Path, uri: &Uri) -> Result<PathBuf> {
         .map_err(|_| anyhow!("unsupported URI (expected file://): {:?}", uri.as_str()))?;
     let p = normalize_path(&p);
     if !p.starts_with(root) {
-        anyhow::bail!("refusing to apply edit outside root: {}", p.to_string_lossy());
+        anyhow::bail!(
+            "refusing to apply edit outside root: {}",
+            p.to_string_lossy()
+        );
     }
     Ok(p)
 }
@@ -1113,7 +1110,11 @@ fn build_line_starts(text: &str) -> Vec<usize> {
     out
 }
 
-fn byte_offset_for_position_utf16(text: &str, line_starts: &[usize], pos: Position) -> Result<usize> {
+fn byte_offset_for_position_utf16(
+    text: &str,
+    line_starts: &[usize],
+    pos: Position,
+) -> Result<usize> {
     let line = pos.line as usize;
     let character_u16 = pos.character as usize;
     if line >= line_starts.len() {
@@ -1182,7 +1183,9 @@ async fn apply_workspace_edit_to_disk(
             let before = match tokio::fs::read_to_string(&path).await {
                 Ok(s) => s,
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
-                Err(e) => return Err(e).with_context(|| format!("reading {}", path.to_string_lossy())),
+                Err(e) => {
+                    return Err(e).with_context(|| format!("reading {}", path.to_string_lossy()))
+                }
             };
             let after = apply_text_edits_to_string(&before, edits)?;
             if let Some(parent) = path.parent() {
@@ -1206,7 +1209,8 @@ async fn apply_workspace_edit_to_disk(
                         Ok(s) => s,
                         Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
                         Err(e) => {
-                            return Err(e).with_context(|| format!("reading {}", path.to_string_lossy()))
+                            return Err(e)
+                                .with_context(|| format!("reading {}", path.to_string_lossy()))
                         }
                     };
                     let edits: Vec<TextEdit> = tde
@@ -1237,8 +1241,9 @@ async fn apply_workspace_edit_to_disk(
                                 Ok(s) => s,
                                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
                                 Err(e) => {
-                                    return Err(e)
-                                        .with_context(|| format!("reading {}", path.to_string_lossy()))
+                                    return Err(e).with_context(|| {
+                                        format!("reading {}", path.to_string_lossy())
+                                    })
                                 }
                             };
                             let edits: Vec<TextEdit> = tde
@@ -1263,7 +1268,11 @@ async fn apply_workspace_edit_to_disk(
                                 let uri = &cf.uri;
                                 let path = uri_to_abs_path_under_root(root, uri)?;
                                 if path.exists()
-                                    && !cf.options.as_ref().and_then(|o| o.overwrite).unwrap_or(false)
+                                    && !cf
+                                        .options
+                                        .as_ref()
+                                        .and_then(|o| o.overwrite)
+                                        .unwrap_or(false)
                                 {
                                     anyhow::bail!(
                                         "refusing to overwrite existing file {}",
@@ -1271,13 +1280,13 @@ async fn apply_workspace_edit_to_disk(
                                     );
                                 }
                                 if let Some(parent) = path.parent() {
-                                    tokio::fs::create_dir_all(parent)
-                                        .await
-                                        .with_context(|| format!("creating {}", parent.to_string_lossy()))?;
+                                    tokio::fs::create_dir_all(parent).await.with_context(|| {
+                                        format!("creating {}", parent.to_string_lossy())
+                                    })?;
                                 }
-                                tokio::fs::write(&path, "")
-                                    .await
-                                    .with_context(|| format!("creating {}", path.to_string_lossy()))?;
+                                tokio::fs::write(&path, "").await.with_context(|| {
+                                    format!("creating {}", path.to_string_lossy())
+                                })?;
                             }
                             lsp_types::ResourceOp::Rename(rf) => {
                                 let old_path = uri_to_abs_path_under_root(root, &rf.old_uri)?;
@@ -1297,9 +1306,9 @@ async fn apply_workspace_edit_to_disk(
                                 if let Some(parent) = new_path.parent() {
                                     let _ = tokio::fs::create_dir_all(parent).await;
                                 }
-                                tokio::fs::rename(&old_path, &new_path)
-                                    .await
-                                    .with_context(|| format!("renaming {}", old_path.to_string_lossy()))?;
+                                tokio::fs::rename(&old_path, &new_path).await.with_context(
+                                    || format!("renaming {}", old_path.to_string_lossy()),
+                                )?;
                             }
                             lsp_types::ResourceOp::Delete(df) => {
                                 let path = uri_to_abs_path_under_root(root, &df.uri)?;
@@ -1312,9 +1321,9 @@ async fn apply_workspace_edit_to_disk(
                                 {
                                     continue;
                                 }
-                                tokio::fs::remove_file(&path)
-                                    .await
-                                    .with_context(|| format!("deleting {}", path.to_string_lossy()))?;
+                                tokio::fs::remove_file(&path).await.with_context(|| {
+                                    format!("deleting {}", path.to_string_lossy())
+                                })?;
                             }
                         },
                     }
@@ -1348,7 +1357,10 @@ async fn sync_open_doc_text(
                     text,
                 }],
             };
-            ("textDocument/didChange", serde_json::to_value(params).unwrap_or(Value::Null))
+            (
+                "textDocument/didChange",
+                serde_json::to_value(params).unwrap_or(Value::Null),
+            )
         } else {
             docs.insert(uri.clone(), 1);
             let params = DidOpenTextDocumentParams {
@@ -1359,7 +1371,10 @@ async fn sync_open_doc_text(
                     text,
                 },
             };
-            ("textDocument/didOpen", serde_json::to_value(params).unwrap_or(Value::Null))
+            (
+                "textDocument/didOpen",
+                serde_json::to_value(params).unwrap_or(Value::Null),
+            )
         }
     };
     let _ = tx
@@ -1456,65 +1471,69 @@ impl LspSession {
                 let method = msg.get("method").and_then(|v| v.as_str()).unwrap_or("");
 
                 // Server -> client request (has both id and method).
-	                if let Some(id) = id {
-	                    if !method.is_empty() {
-	                        if method == "workspace/applyEdit" {
-	                            let mut applied = false;
-	                            let mut failure_reason: Option<String> = None;
-	                            if let Some(params) = msg.get("params") {
-	                                match serde_json::from_value::<ApplyWorkspaceEditParams>(params.clone()) {
-	                                    Ok(p) => {
-	                                        let edit = p.edit;
-	                                        let capture = apply_edit_capture_r.lock().await.take();
-	                                        if let Some(tx) = capture {
-	                                            if tx.send(edit).is_ok() {
-	                                                applied = true;
-	                                            } else {
-	                                                failure_reason = Some(
+                if let Some(id) = id {
+                    if !method.is_empty() {
+                        if method == "workspace/applyEdit" {
+                            let mut applied = false;
+                            let mut failure_reason: Option<String> = None;
+                            if let Some(params) = msg.get("params") {
+                                match serde_json::from_value::<ApplyWorkspaceEditParams>(
+                                    params.clone(),
+                                ) {
+                                    Ok(p) => {
+                                        let edit = p.edit;
+                                        let capture = apply_edit_capture_r.lock().await.take();
+                                        if let Some(tx) = capture {
+                                            if tx.send(edit).is_ok() {
+                                                applied = true;
+                                            } else {
+                                                failure_reason = Some(
 	                                                    "failed to deliver WorkspaceEdit to capture consumer".to_string(),
 	                                                );
-	                                            }
-	                                        } else {
-	                                            match apply_workspace_edit_to_disk(&root_r, &edit).await {
-	                                                Ok(changed) => {
-	                                                    for (uri, text) in changed {
-	                                                        sync_open_doc_text(
-	                                                            &open_docs_r,
-	                                                            &tx_r,
-	                                                            &lang_id_r,
-	                                                            uri,
-	                                                            text,
-	                                                        )
-	                                                        .await;
-	                                                    }
-	                                                    applied = true;
-	                                                }
-	                                                Err(e) => {
-	                                                    failure_reason = Some(format!(
-	                                                        "failed to apply WorkspaceEdit: {e:#}"
-	                                                    ));
-	                                                }
-	                                            }
-	                                        }
-	                                    }
-	                                    Err(e) => {
-	                                        failure_reason = Some(format!(
-	                                            "invalid workspace/applyEdit params: {e}"
-	                                        ));
-	                                    }
-	                                }
-	                            } else {
-	                                failure_reason = Some("missing workspace/applyEdit params".to_string());
-	                            }
-	                            let _ = tx_r
+                                            }
+                                        } else {
+                                            match apply_workspace_edit_to_disk(&root_r, &edit).await
+                                            {
+                                                Ok(changed) => {
+                                                    for (uri, text) in changed {
+                                                        sync_open_doc_text(
+                                                            &open_docs_r,
+                                                            &tx_r,
+                                                            &lang_id_r,
+                                                            uri,
+                                                            text,
+                                                        )
+                                                        .await;
+                                                    }
+                                                    applied = true;
+                                                }
+                                                Err(e) => {
+                                                    failure_reason = Some(format!(
+                                                        "failed to apply WorkspaceEdit: {e:#}"
+                                                    ));
+                                                }
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        failure_reason = Some(format!(
+                                            "invalid workspace/applyEdit params: {e}"
+                                        ));
+                                    }
+                                }
+                            } else {
+                                failure_reason =
+                                    Some("missing workspace/applyEdit params".to_string());
+                            }
+                            let _ = tx_r
 	                                .send(json!({
 	                                    "jsonrpc": "2.0",
 	                                    "id": id,
 	                                    "result": ApplyWorkspaceEditResponse { applied, failure_reason, failed_change: None }
 	                                }))
 	                                .await;
-	                        } else {
-	                            let _ = tx_r
+                        } else {
+                            let _ = tx_r
                                 .send(json!({
                                     "jsonrpc": "2.0",
                                     "id": id,
@@ -1534,7 +1553,9 @@ impl LspSession {
 
                 if method == "textDocument/publishDiagnostics" {
                     if let Some(params) = msg.get("params") {
-                        if let Ok(pd) = serde_json::from_value::<PublishDiagnosticsParams>(params.clone()) {
+                        if let Ok(pd) =
+                            serde_json::from_value::<PublishDiagnosticsParams>(params.clone())
+                        {
                             let uri = pd.uri;
                             let diagnostics = pd.diagnostics;
                             diagnostics_r
@@ -1608,9 +1629,12 @@ impl LspSession {
                 return Ok(vec![]);
             }
             let remaining = deadline - now;
-            tokio::time::timeout(remaining.min(Duration::from_millis(250)), self.notify.notified())
-                .await
-                .ok();
+            tokio::time::timeout(
+                remaining.min(Duration::from_millis(250)),
+                self.notify.notified(),
+            )
+            .await
+            .ok();
         }
     }
 
@@ -1619,8 +1643,12 @@ impl LspSession {
         if !abs.starts_with(&self.root) {
             anyhow::bail!("file outside LSP root");
         }
-        let url = url::Url::from_file_path(&abs).map_err(|_| anyhow!("invalid file path for URL"))?;
-        let uri: Uri = url.as_str().parse().map_err(|_| anyhow!("invalid file URI"))?;
+        let url =
+            url::Url::from_file_path(&abs).map_err(|_| anyhow!("invalid file path for URL"))?;
+        let uri: Uri = url
+            .as_str()
+            .parse()
+            .map_err(|_| anyhow!("invalid file URI"))?;
 
         // If the document is already open, do not overwrite server state with a disk read.
         // Buffer-backed callers keep the doc in sync via `open_doc_with_text`.
@@ -1657,8 +1685,12 @@ impl LspSession {
         if !abs.starts_with(&self.root) {
             anyhow::bail!("file outside LSP root");
         }
-        let url = url::Url::from_file_path(&abs).map_err(|_| anyhow!("invalid file path for URL"))?;
-        let uri: Uri = url.as_str().parse().map_err(|_| anyhow!("invalid file URI"))?;
+        let url =
+            url::Url::from_file_path(&abs).map_err(|_| anyhow!("invalid file path for URL"))?;
+        let uri: Uri = url
+            .as_str()
+            .parse()
+            .map_err(|_| anyhow!("invalid file URI"))?;
 
         let mut open_docs = self.open_docs.lock().await;
         if let Some(v) = open_docs.get_mut(&uri) {
@@ -1772,10 +1804,16 @@ async fn spawn_server(
     cfg: &LspManagerConfig,
     lang: Language,
     root: &Path,
-) -> Result<(Child, tokio::process::ChildStdin, tokio::process::ChildStdout)> {
+) -> Result<(
+    Child,
+    tokio::process::ChildStdin,
+    tokio::process::ChildStdout,
+)> {
     let (cmd, args) = match &lang {
         Language::Rust => (cfg.rust_command.clone(), cfg.rust_args.clone()),
-        Language::TypeScript | Language::JavaScript => (cfg.ts_command.clone(), cfg.ts_args.clone()),
+        Language::TypeScript | Language::JavaScript => {
+            (cfg.ts_command.clone(), cfg.ts_args.clone())
+        }
         Language::Python => (cfg.py_command.clone(), cfg.py_args.clone()),
         Language::Go => (cfg.go_command.clone(), cfg.go_args.clone()),
         Language::Html => (cfg.html_command.clone(), cfg.html_args.clone()),
@@ -1802,7 +1840,9 @@ async fn spawn_server(
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
 
-    let mut child = c.spawn().with_context(|| format!("spawning LSP server: {cmd}"))?;
+    let mut child = c
+        .spawn()
+        .with_context(|| format!("spawning LSP server: {cmd}"))?;
     let stdin = child.stdin.take().context("missing LSP stdin")?;
     let stdout = child.stdout.take().context("missing LSP stdout")?;
     if let Some(stderr) = child.stderr.take() {

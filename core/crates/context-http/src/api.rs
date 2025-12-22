@@ -1,9 +1,9 @@
 use std::path::{Path as StdPath, PathBuf};
 use std::sync::Arc;
 
-use axum::extract::ws::{Message as WsMessage, WebSocket, WebSocketUpgrade};
-use axum::extract::{Multipart, Path, Query, State};
 use axum::body::{Body, Bytes};
+use axum::extract::ws::{Message as WsMessage, WebSocket, WebSocketUpgrade};
+use axum::extract::{Extension, Multipart, Path, Query, State};
 use axum::http::header;
 use axum::http::Request;
 use axum::http::StatusCode;
@@ -13,30 +13,36 @@ use axum::response::IntoResponse;
 use axum::response::Response;
 use axum::routing::{delete, get, post};
 use axum::Json;
+use base64::Engine;
 use futures::{Stream, StreamExt};
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
-use base64::Engine;
+use std::time::Instant;
 use tokio::process::Command;
 use tokio::sync::mpsc;
 use tokio_util::io::ReaderStream;
 use tower_http::services::{ServeDir, ServeFile};
-use std::time::Instant;
+use url::Url;
 
 use context_core::ids::*;
 use context_core::models::*;
 use context_fs::git::{assert_git_repo, list_tracked_files, list_untracked_files, rev_parse_head};
 use context_fs::worktrees::{create_worktree, managed_worktree_path};
 
+use crate::buffers::{
+    BufferCloseReq, BufferConflictResp, BufferId, BufferOpenReq, BufferOpenResp, BufferUpdateReq,
+    BufferUpdateResp,
+};
 use crate::completions;
 use crate::daemon::AppState;
-use crate::installs::{InstallId, InstallInfo, InstallProgressEvent};
+use crate::dictation_livekit;
 use crate::installer;
+use crate::installs::{InstallId, InstallInfo, InstallProgressEvent};
 use crate::logs;
 use crate::scheduler::SchedulerCommand;
+use crate::settings as user_settings;
 use crate::telemetry::{TelemetryConfig, TelemetryEvent};
 use crate::updates;
-use crate::buffers::{BufferCloseReq, BufferConflictResp, BufferId, BufferOpenReq, BufferOpenResp, BufferUpdateReq, BufferUpdateResp};
 use context_providers::adapters::ProviderStatus;
 use context_providers::events::NormalizedEvent;
 use context_providers::{
@@ -46,8 +52,6 @@ use context_providers::{
     },
     ask_user_question::{AskUserQuestionAnswer, AskUserQuestionOutcome},
 };
-use crate::settings as user_settings;
-use crate::dictation_livekit;
 
 fn is_sensitive_key(key: &str) -> bool {
     let key = key.to_ascii_lowercase();
@@ -90,7 +94,10 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
         .route("/api/logs/open", post(open_logs_folder))
         .route("/api/desktop/log", post(append_desktop_log))
         .route("/api/updates/check", get(check_updates))
-        .route("/api/updates/appimage/download", post(download_appimage_update))
+        .route(
+            "/api/updates/appimage/download",
+            post(download_appimage_update),
+        )
         .route("/api/updates/appimage/apply", post(apply_appimage_update))
         .route("/api/providers", get(list_providers))
         .route("/api/providers/install_all", post(install_all_providers))
@@ -107,7 +114,10 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
         )
         .route("/api/lsp/status", get(lsp_status))
         .route("/api/lsp/catalog", get(lsp_catalog_list))
-        .route("/api/lsp/catalog/:id/install", post(install_lsp_catalog_server))
+        .route(
+            "/api/lsp/catalog/:id/install",
+            post(install_lsp_catalog_server),
+        )
         .route("/api/lsp/servers/:id/install", post(install_lsp_server))
         .route("/api/lsp/diagnostics", post(lsp_diagnostics))
         .route("/api/lsp/definition", post(lsp_definition))
@@ -118,35 +128,80 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
         .route("/api/lsp/signature_help", post(lsp_signature_help))
         .route("/api/lsp/completion", post(lsp_completion))
         .route("/api/lsp/completion/resolve", post(lsp_completion_resolve))
-        .route("/api/lsp/code_action/resolve", post(lsp_code_action_resolve))
+        .route(
+            "/api/lsp/code_action/resolve",
+            post(lsp_code_action_resolve),
+        )
         .route("/api/lsp/inlay_hints", post(lsp_inlay_hints))
         .route("/api/lsp/document_highlight", post(lsp_document_highlight))
         .route("/api/lsp/selection_ranges", post(lsp_selection_ranges))
-        .route("/api/lsp/call_hierarchy/prepare", post(lsp_call_hierarchy_prepare))
-        .route("/api/lsp/call_hierarchy/incoming", post(lsp_call_hierarchy_incoming))
-        .route("/api/lsp/call_hierarchy/outgoing", post(lsp_call_hierarchy_outgoing))
+        .route(
+            "/api/lsp/call_hierarchy/prepare",
+            post(lsp_call_hierarchy_prepare),
+        )
+        .route(
+            "/api/lsp/call_hierarchy/incoming",
+            post(lsp_call_hierarchy_incoming),
+        )
+        .route(
+            "/api/lsp/call_hierarchy/outgoing",
+            post(lsp_call_hierarchy_outgoing),
+        )
         .route("/api/lsp/code_lens", post(lsp_code_lens))
         .route("/api/lsp/code_lens/resolve", post(lsp_code_lens_resolve))
         .route("/api/lsp/prepare_rename", post(lsp_prepare_rename))
         .route("/api/lsp/document_links", post(lsp_document_links))
-        .route("/api/lsp/document_links/resolve", post(lsp_document_link_resolve))
-        .route("/api/lsp/semantic_tokens/full", post(lsp_semantic_tokens_full))
-        .route("/api/lsp/semantic_tokens/delta", post(lsp_semantic_tokens_delta))
+        .route(
+            "/api/lsp/document_links/resolve",
+            post(lsp_document_link_resolve),
+        )
+        .route(
+            "/api/lsp/semantic_tokens/full",
+            post(lsp_semantic_tokens_full),
+        )
+        .route(
+            "/api/lsp/semantic_tokens/delta",
+            post(lsp_semantic_tokens_delta),
+        )
         .route("/api/lsp/folding_ranges", post(lsp_folding_ranges))
-        .route("/api/lsp/linked_editing_range", post(lsp_linked_editing_range))
-        .route("/api/lsp/type_hierarchy/prepare", post(lsp_type_hierarchy_prepare))
-        .route("/api/lsp/type_hierarchy/supertypes", post(lsp_type_hierarchy_supertypes))
-        .route("/api/lsp/type_hierarchy/subtypes", post(lsp_type_hierarchy_subtypes))
+        .route(
+            "/api/lsp/linked_editing_range",
+            post(lsp_linked_editing_range),
+        )
+        .route(
+            "/api/lsp/type_hierarchy/prepare",
+            post(lsp_type_hierarchy_prepare),
+        )
+        .route(
+            "/api/lsp/type_hierarchy/supertypes",
+            post(lsp_type_hierarchy_supertypes),
+        )
+        .route(
+            "/api/lsp/type_hierarchy/subtypes",
+            post(lsp_type_hierarchy_subtypes),
+        )
         .route("/api/lsp/execute_command", post(lsp_execute_command))
-        .route("/api/lsp/execute_command/plan", post(lsp_execute_command_plan))
+        .route(
+            "/api/lsp/execute_command/plan",
+            post(lsp_execute_command_plan),
+        )
         .route("/api/lsp/document_symbols", post(lsp_document_symbols))
         .route("/api/lsp/workspace_symbols", post(lsp_workspace_symbols))
-        .route("/api/lsp/workspace_symbols/resolve", post(lsp_workspace_symbol_resolve))
+        .route(
+            "/api/lsp/workspace_symbols/resolve",
+            post(lsp_workspace_symbol_resolve),
+        )
         .route("/api/lsp/code_actions", post(lsp_code_actions))
-        .route("/api/lsp/code_actions/by_diagnostic/plan", post(lsp_code_actions_by_diagnostic_plan))
+        .route(
+            "/api/lsp/code_actions/by_diagnostic/plan",
+            post(lsp_code_actions_by_diagnostic_plan),
+        )
         .route("/api/lsp/rename/plan", post(lsp_rename_plan))
         .route("/api/lsp/format/plan", post(lsp_format_plan))
-        .route("/api/lsp/organize_imports/plan", post(lsp_organize_imports_plan))
+        .route(
+            "/api/lsp/organize_imports/plan",
+            post(lsp_organize_imports_plan),
+        )
         .route("/api/lsp/code_actions/plan", post(lsp_code_actions_plan))
         .route("/api/tracks/:id/edit_plans", get(list_edit_plans_for_track))
         .route("/api/edit_plans/:id", get(get_edit_plan))
@@ -155,12 +210,31 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
         .route("/api/buffers/open", post(open_buffer))
         .route("/api/buffers/update", post(update_buffer))
         .route("/api/buffers/close", post(close_buffer))
-        .route("/api/workspaces", get(list_workspaces).post(create_workspace))
-        .route("/api/workspaces/:id", delete(delete_workspace).get(get_workspace))
+        .route(
+            "/api/workspaces",
+            get(list_workspaces).post(create_workspace),
+        )
+        .route(
+            "/api/workspaces/:id",
+            delete(delete_workspace).get(get_workspace),
+        )
         .route(
             "/api/workspaces/:id/completions/files",
             get(workspace_file_completions),
         )
+        .route(
+            "/api/mobile/connection_profiles",
+            get(list_mobile_connection_profiles).post(create_mobile_connection_profile),
+        )
+        .route(
+            "/api/mobile/connection_profiles/:id",
+            delete(delete_mobile_connection_profile),
+        )
+        .route(
+            "/api/mobile/connection_profiles/:id/devices",
+            get(list_mobile_devices_for_profile),
+        )
+        .route("/api/mobile/register", post(register_mobile_device))
         .route(
             "/api/workspaces/:id/providers/:provider_id/options",
             get(get_provider_options),
@@ -190,13 +264,22 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
             get(list_sessions_for_track).post(create_session_for_track),
         )
         .route("/api/sessions/:id", get(get_session))
-        .route("/api/sessions/:id/messages", get(list_messages).post(post_message))
+        .route(
+            "/api/sessions/:id/messages",
+            get(list_messages).post(post_message),
+        )
         .route("/api/sessions/:id/model", post(set_session_model))
         .route("/api/sessions/:id/mode", post(set_session_mode))
         .route("/api/sessions/:id/turns", get(list_session_turns))
-        .route("/api/sessions/:id/turns/:turn_id/tools", get(list_session_turn_tools))
+        .route(
+            "/api/sessions/:id/turns/:turn_id/tools",
+            get(list_session_turn_tools),
+        )
         .route("/api/sessions/:id/events", get(list_session_events))
-        .route("/api/sessions/:id/completions/files", get(session_file_completions))
+        .route(
+            "/api/sessions/:id/completions/files",
+            get(session_file_completions),
+        )
         .route("/api/sessions/:id/queue", get(list_queue))
         .route("/api/messages/:id", delete(delete_message))
         .route("/api/sessions/:id/cancel", post(cancel_session))
@@ -208,18 +291,18 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
         )
         .route("/api/tracks/:id/diff", get(track_diff))
         .route("/api/tracks/:id/diff/apply", post(track_diff_apply))
-        .route("/api/dictation/livekit/stream", get(dictation_livekit_stream_ws))
+        .route(
+            "/api/dictation/livekit/stream",
+            get(dictation_livekit_stream_ws),
+        )
         .route("/api/stream", get(global_stream_ws))
         .route("/api/sessions/:id/stream", get(session_stream_ws))
         .layer(middleware::from_fn_with_state(auth_state, auth_middleware))
-        .with_state(state)
-        ;
+        .with_state(state);
 
     let dist_dir = std::env::var("CONTEXT_WEB_DIST").unwrap_or_else(|_| "apps/web/dist".into());
     let index_path = format!("{}/index.html", dist_dir);
-    api.fallback_service(
-        ServeDir::new(dist_dir).not_found_service(ServeFile::new(index_path)),
-    )
+    api.fallback_service(ServeDir::new(dist_dir).not_found_service(ServeFile::new(index_path)))
 }
 
 async fn get_worktree(
@@ -250,6 +333,43 @@ struct HealthResp {
 #[derive(Debug, Serialize)]
 struct ApiErrorResp {
     error: String,
+}
+
+#[derive(Clone, Copy)]
+struct MobileAuthContext {
+    profile_id: ConnectionProfileId,
+}
+
+#[derive(Debug, Deserialize)]
+struct CreateMobileConnectionProfileReq {
+    label: String,
+    base_url: String,
+    #[serde(default)]
+    scopes: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct CreateMobileConnectionProfileResp {
+    profile: MobileConnectionProfile,
+    token: String,
+    qr_payload: serde_json::Value,
+}
+
+#[derive(Debug, Deserialize)]
+struct RegisterMobileDeviceReq {
+    device_id: String,
+    #[serde(default)]
+    device_label: Option<String>,
+    #[serde(default)]
+    platform: Option<String>,
+    #[serde(default)]
+    push_token: Option<String>,
+    #[serde(default)]
+    push_provider: Option<String>,
+    #[serde(default)]
+    public_key: Option<String>,
+    #[serde(default)]
+    app_version: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -361,8 +481,7 @@ async fn upload_blob(
         return Err(StatusCode::BAD_REQUEST);
     };
     let mime_type = mime_type.unwrap_or_else(|| "application/octet-stream".to_string());
-    let resp =
-        persist_blob_bytes(&state, &bytes, &mime_type, file_name.as_deref()).await?;
+    let resp = persist_blob_bytes(&state, &bytes, &mime_type, file_name.as_deref()).await?;
     Ok(Json(resp))
 }
 
@@ -437,7 +556,9 @@ struct DiagnosticsResp {
     managed_installs: serde_json::Value,
 }
 
-async fn diagnostics(State(state): State<Arc<AppState>>) -> Result<Json<DiagnosticsResp>, StatusCode> {
+async fn diagnostics(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<DiagnosticsResp>, StatusCode> {
     let providers = {
         let map = state.provider_statuses.lock().await;
         map.values()
@@ -530,11 +651,19 @@ async fn lsp_status(State(state): State<Arc<AppState>>) -> Result<Json<LspStatus
         ("json", cfg.json_command.clone(), cfg.json_args.clone()),
         ("yaml", cfg.yaml_command.clone(), cfg.yaml_args.clone()),
         ("bash", cfg.bash_command.clone(), cfg.bash_args.clone()),
-        ("dockerfile", cfg.dockerfile_command.clone(), cfg.dockerfile_args.clone()),
+        (
+            "dockerfile",
+            cfg.dockerfile_command.clone(),
+            cfg.dockerfile_args.clone(),
+        ),
         ("cpp", cfg.clangd_command.clone(), cfg.clangd_args.clone()),
         ("lua", cfg.lua_command.clone(), cfg.lua_args.clone()),
         ("toml", cfg.toml_command.clone(), cfg.toml_args.clone()),
-        ("markdown", cfg.markdown_command.clone(), cfg.markdown_args.clone()),
+        (
+            "markdown",
+            cfg.markdown_command.clone(),
+            cfg.markdown_args.clone(),
+        ),
     ];
 
     let mut out = Vec::new();
@@ -575,7 +704,8 @@ async fn lsp_status(State(state): State<Arc<AppState>>) -> Result<Json<LspStatus
             resolved_path: resolved_path.map(|p| p.to_string_lossy().to_string()),
             version,
             install_hints: vec![
-                "Configured via data_root/lsp/user_servers.json (restart daemon after edits).".to_string(),
+                "Configured via data_root/lsp/user_servers.json (restart daemon after edits)."
+                    .to_string(),
             ],
         });
     }
@@ -835,9 +965,8 @@ async fn resolve_lsp_target(
     req: LspFileReq,
 ) -> Result<(PathBuf, PathBuf), StatusCode> {
     let root = if let Some(session_id) = req.session_id.as_deref() {
-        let sid = SessionId(
-            uuid::Uuid::parse_str(session_id).map_err(|_| StatusCode::BAD_REQUEST)?,
-        );
+        let sid =
+            SessionId(uuid::Uuid::parse_str(session_id).map_err(|_| StatusCode::BAD_REQUEST)?);
         let session = state
             .store
             .get_session(sid)
@@ -863,7 +992,9 @@ async fn resolve_lsp_target(
     } else {
         root.join(&req.path)
     };
-    let file = candidate.canonicalize().map_err(|_| StatusCode::BAD_REQUEST)?;
+    let file = candidate
+        .canonicalize()
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
     if !file.starts_with(&root) {
         return Err(StatusCode::BAD_REQUEST);
     }
@@ -892,8 +1023,9 @@ async fn resolve_session_root_and_file(
     let root = PathBuf::from(wt.root_path)
         .canonicalize()
         .map_err(|_| StatusCode::BAD_REQUEST)?;
-    let file =
-        crate::buffers::BufferStore::resolve_path(&root, path).await.map_err(|_| StatusCode::BAD_REQUEST)?;
+    let file = crate::buffers::BufferStore::resolve_path(&root, path)
+        .await
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
     Ok((sid, session.worktree_id, root, file))
 }
 
@@ -909,13 +1041,25 @@ async fn open_buffer(
     let disk_sha = sha256_hex(&text);
     let st = state
         .buffers
-        .open_or_reuse(sid, worktree_id, root.clone(), file.clone(), text.clone(), disk_sha.clone())
+        .open_or_reuse(
+            sid,
+            worktree_id,
+            root.clone(),
+            file.clone(),
+            text.clone(),
+            disk_sha.clone(),
+        )
         .await;
     if state.lsp.enabled() {
         if let Some(lang) = context_lsp::Language::detect(&file, &state.lsp_cfg) {
-            state.ensure_lsp_diagnostics_forwarder(root.clone(), lang).await;
+            state
+                .ensure_lsp_diagnostics_forwarder(root.clone(), lang)
+                .await;
         }
-        let _ = state.lsp.sync_document_text(&root, &file, st.text.clone()).await;
+        let _ = state
+            .lsp
+            .sync_document_text(&root, &file, st.text.clone())
+            .await;
     }
     Ok(Json(BufferOpenResp {
         buffer_id: st.id.0.to_string(),
@@ -951,16 +1095,18 @@ async fn update_buffer(
 
     let new_sha = if req.persist {
         // Detect external changes on disk.
-        let disk_text = tokio::fs::read_to_string(&current.path).await.map_err(|_| {
-            (
-                StatusCode::BAD_REQUEST,
-                Json(BufferConflictResp {
-                    error: "failed to read file".to_string(),
-                    disk_sha256: "".to_string(),
-                    disk_text: "".to_string(),
-                }),
-            )
-        })?;
+        let disk_text = tokio::fs::read_to_string(&current.path)
+            .await
+            .map_err(|_| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(BufferConflictResp {
+                        error: "failed to read file".to_string(),
+                        disk_sha256: "".to_string(),
+                        disk_text: "".to_string(),
+                    }),
+                )
+            })?;
         let disk_sha = sha256_hex(&disk_text);
         if !req.force && disk_sha != current.last_disk_sha256 {
             return Err((
@@ -1007,7 +1153,9 @@ async fn update_buffer(
 
     if state.lsp.enabled() {
         if let Some(lang) = context_lsp::Language::detect(&st.path, &state.lsp_cfg) {
-            state.ensure_lsp_diagnostics_forwarder(st.root.clone(), lang).await;
+            state
+                .ensure_lsp_diagnostics_forwarder(st.root.clone(), lang)
+                .await;
         }
         let _ = state
             .lsp
@@ -1027,7 +1175,8 @@ async fn close_buffer(
     Json(req): Json<BufferCloseReq>,
 ) -> Result<StatusCode, StatusCode> {
     let bid = BufferId(uuid::Uuid::parse_str(&req.buffer_id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    let sid = SessionId(uuid::Uuid::parse_str(&req.session_id).map_err(|_| StatusCode::BAD_REQUEST)?);
+    let sid =
+        SessionId(uuid::Uuid::parse_str(&req.session_id).map_err(|_| StatusCode::BAD_REQUEST)?);
     state.buffers.close(bid, sid).await;
     Ok(StatusCode::OK)
 }
@@ -1774,14 +1923,15 @@ async fn lsp_code_actions_by_diagnostic_plan(
             )
         })?;
 
-    let diag: lsp_types::Diagnostic = serde_json::from_value(req.diagnostic.clone()).map_err(|e| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(ApiErrorResp {
-                error: logs::redact_sensitive(&e.to_string()),
-            }),
-        )
-    })?;
+    let diag: lsp_types::Diagnostic =
+        serde_json::from_value(req.diagnostic.clone()).map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
 
     let actions = state
         .lsp
@@ -1806,9 +1956,11 @@ async fn lsp_code_actions_by_diagnostic_plan(
     for action in actions {
         let (title, edit, preferred) = match action {
             lsp_types::CodeActionOrCommand::CodeAction(ca) => {
-                let edit = ca
-                    .edit
-                    .or_else(|| ca.command.as_ref().and_then(extract_workspace_edit_from_command));
+                let edit = ca.edit.or_else(|| {
+                    ca.command
+                        .as_ref()
+                        .and_then(extract_workspace_edit_from_command)
+                });
                 (ca.title, edit, ca.is_preferred.unwrap_or(false))
             }
             lsp_types::CodeActionOrCommand::Command(cmd) => {
@@ -1817,22 +1969,16 @@ async fn lsp_code_actions_by_diagnostic_plan(
             }
         };
         let Some(edit) = edit else { continue };
-        let plan = crate::edit_plans::workspace_edit_to_plan(
-            &root,
-            &root,
-            sid,
-            track_id,
-            title,
-            edit,
-        )
-        .map_err(|e| {
-            (
-                StatusCode::BAD_REQUEST,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&e.to_string()),
-                }),
-            )
-        })?;
+        let plan =
+            crate::edit_plans::workspace_edit_to_plan(&root, &root, sid, track_id, title, edit)
+                .map_err(|e| {
+                    (
+                        StatusCode::BAD_REQUEST,
+                        Json(ApiErrorResp {
+                            error: logs::redact_sensitive(&e.to_string()),
+                        }),
+                    )
+                })?;
         let summary = plan.to_summary();
         state.persist_edit_plan(&plan);
         state.edit_plans.lock().await.insert(plan.id, plan);
@@ -1925,7 +2071,12 @@ async fn lsp_execute_command_plan(
 
     let (result, edit) = state
         .lsp
-        .execute_command_for_file(&root, &file, req.command.clone(), req.arguments.unwrap_or_default())
+        .execute_command_for_file(
+            &root,
+            &file,
+            req.command.clone(),
+            req.arguments.unwrap_or_default(),
+        )
         .await
         .map_err(|e| {
             (
@@ -1939,7 +2090,10 @@ async fn lsp_execute_command_plan(
         return Err((
             StatusCode::BAD_REQUEST,
             Json(ApiErrorResp {
-                error: format!("execute_command returned no WorkspaceEdit (result={})", result),
+                error: format!(
+                    "execute_command returned no WorkspaceEdit (result={})",
+                    result
+                ),
             }),
         ));
     };
@@ -1991,7 +2145,8 @@ async fn lsp_workspace_symbols(
     }
 
     let root = if let Some(session_id) = req.session_id.as_deref() {
-        let sid = SessionId(uuid::Uuid::parse_str(session_id).map_err(|_| StatusCode::BAD_REQUEST)?);
+        let sid =
+            SessionId(uuid::Uuid::parse_str(session_id).map_err(|_| StatusCode::BAD_REQUEST)?);
         let session = state
             .store
             .get_session(sid)
@@ -2032,7 +2187,8 @@ async fn lsp_workspace_symbol_resolve(
     }
 
     let root = if let Some(session_id) = req.session_id.as_deref() {
-        let sid = SessionId(uuid::Uuid::parse_str(session_id).map_err(|_| StatusCode::BAD_REQUEST)?);
+        let sid =
+            SessionId(uuid::Uuid::parse_str(session_id).map_err(|_| StatusCode::BAD_REQUEST)?);
         let session = state
             .store
             .get_session(sid)
@@ -2149,16 +2305,14 @@ async fn lsp_rename_plan(
                 error: "worktree not found".to_string(),
             }),
         ))?;
-    let root = PathBuf::from(wt.root_path)
-        .canonicalize()
-        .map_err(|_| {
-            (
-                StatusCode::BAD_REQUEST,
-                Json(ApiErrorResp {
-                    error: "invalid worktree root".to_string(),
-                }),
-            )
-        })?;
+    let root = PathBuf::from(wt.root_path).canonicalize().map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid worktree root".to_string(),
+            }),
+        )
+    })?;
     let file = root.join(&req.path);
     let edit = state
         .lsp
@@ -2262,29 +2416,23 @@ async fn lsp_format_plan(
                 error: "worktree not found".to_string(),
             }),
         ))?;
-    let root = PathBuf::from(wt.root_path)
-        .canonicalize()
-        .map_err(|_| {
-            (
-                StatusCode::BAD_REQUEST,
-                Json(ApiErrorResp {
-                    error: "invalid worktree root".to_string(),
-                }),
-            )
-        })?;
+    let root = PathBuf::from(wt.root_path).canonicalize().map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid worktree root".to_string(),
+            }),
+        )
+    })?;
     let file = root.join(&req.path);
-    let edits = state
-        .lsp
-        .format_document(&root, &file)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::BAD_REQUEST,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&e.to_string()),
-                }),
-            )
-        })?;
+    let edits = state.lsp.format_document(&root, &file).await.map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&e.to_string()),
+            }),
+        )
+    })?;
 
     let rel = file
         .strip_prefix(&root)
@@ -2313,7 +2461,9 @@ async fn lsp_format_plan(
     Ok(Json(summary))
 }
 
-fn extract_workspace_edit_from_command(cmd: &lsp_types::Command) -> Option<lsp_types::WorkspaceEdit> {
+fn extract_workspace_edit_from_command(
+    cmd: &lsp_types::Command,
+) -> Option<lsp_types::WorkspaceEdit> {
     let args = cmd.arguments.as_ref()?;
     for arg in args {
         if let Ok(edit) = serde_json::from_value::<lsp_types::WorkspaceEdit>(arg.clone()) {
@@ -2330,7 +2480,9 @@ fn extract_workspace_edit_from_command(cmd: &lsp_types::Command) -> Option<lsp_t
         if let Some(obj) = arg.as_object() {
             for key in ["edit", "workspaceEdit"] {
                 if let Some(val) = obj.get(key) {
-                    if let Ok(edit) = serde_json::from_value::<lsp_types::WorkspaceEdit>(val.clone()) {
+                    if let Ok(edit) =
+                        serde_json::from_value::<lsp_types::WorkspaceEdit>(val.clone())
+                    {
                         let has_edits = edit
                             .changes
                             .as_ref()
@@ -2407,30 +2559,31 @@ async fn lsp_code_actions_plan(
                 error: "worktree not found".to_string(),
             }),
         ))?;
-    let root = PathBuf::from(wt.root_path)
-        .canonicalize()
-        .map_err(|_| {
-            (
-                StatusCode::BAD_REQUEST,
-                Json(ApiErrorResp {
-                    error: "invalid worktree root".to_string(),
-                }),
-            )
-        })?;
-
-    let action: lsp_types::CodeActionOrCommand = serde_json::from_value(req.action.clone()).map_err(|e| {
+    let root = PathBuf::from(wt.root_path).canonicalize().map_err(|_| {
         (
             StatusCode::BAD_REQUEST,
             Json(ApiErrorResp {
-                error: logs::redact_sensitive(&e.to_string()),
+                error: "invalid worktree root".to_string(),
             }),
         )
     })?;
+
+    let action: lsp_types::CodeActionOrCommand = serde_json::from_value(req.action.clone())
+        .map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
     let (title, edit) = match action {
         lsp_types::CodeActionOrCommand::CodeAction(ca) => {
-            let edit = ca
-                .edit
-                .or_else(|| ca.command.as_ref().and_then(extract_workspace_edit_from_command));
+            let edit = ca.edit.or_else(|| {
+                ca.command
+                    .as_ref()
+                    .and_then(extract_workspace_edit_from_command)
+            });
             (ca.title, edit)
         }
         lsp_types::CodeActionOrCommand::Command(cmd) => {
@@ -2447,22 +2600,15 @@ async fn lsp_code_actions_plan(
         ));
     };
 
-    let plan = crate::edit_plans::workspace_edit_to_plan(
-        &root,
-        &root,
-        sid,
-        track_id,
-        title,
-        edit,
-    )
-    .map_err(|e| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(ApiErrorResp {
-                error: logs::redact_sensitive(&e.to_string()),
-            }),
-        )
-    })?;
+    let plan = crate::edit_plans::workspace_edit_to_plan(&root, &root, sid, track_id, title, edit)
+        .map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
     let summary = plan.to_summary();
     state.persist_edit_plan(&plan);
     state.edit_plans.lock().await.insert(plan.id, plan);
@@ -2527,16 +2673,14 @@ async fn lsp_organize_imports_plan(
                 error: "worktree not found".to_string(),
             }),
         ))?;
-    let root = PathBuf::from(wt.root_path)
-        .canonicalize()
-        .map_err(|_| {
-            (
-                StatusCode::BAD_REQUEST,
-                Json(ApiErrorResp {
-                    error: "invalid worktree root".to_string(),
-                }),
-            )
-        })?;
+    let root = PathBuf::from(wt.root_path).canonicalize().map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid worktree root".to_string(),
+            }),
+        )
+    })?;
     let file = root.join(&req.path);
 
     let text = tokio::fs::read_to_string(&file).await.map_err(|e| {
@@ -2560,7 +2704,10 @@ async fn lsp_organize_imports_plan(
             &root,
             &file,
             lsp_types::Range {
-                start: lsp_types::Position { line: 0, character: 0 },
+                start: lsp_types::Position {
+                    line: 0,
+                    character: 0,
+                },
                 end: lsp_types::Position {
                     line: end_line,
                     character: end_character,
@@ -2580,9 +2727,11 @@ async fn lsp_organize_imports_plan(
         })?;
 
     let edit = actions.into_iter().find_map(|a| match a {
-        lsp_types::CodeActionOrCommand::CodeAction(ca) => ca
-            .edit
-            .or_else(|| ca.command.as_ref().and_then(extract_workspace_edit_from_command)),
+        lsp_types::CodeActionOrCommand::CodeAction(ca) => ca.edit.or_else(|| {
+            ca.command
+                .as_ref()
+                .and_then(extract_workspace_edit_from_command)
+        }),
         lsp_types::CodeActionOrCommand::Command(cmd) => extract_workspace_edit_from_command(&cmd),
     });
     let Some(edit) = edit else {
@@ -2639,7 +2788,9 @@ async fn get_edit_plan(
         uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?,
     );
     let map = state.edit_plans.lock().await;
-    let Some(plan) = map.get(&pid) else { return Err(StatusCode::NOT_FOUND) };
+    let Some(plan) = map.get(&pid) else {
+        return Err(StatusCode::NOT_FOUND);
+    };
     Ok(Json(plan.to_summary()))
 }
 
@@ -2695,10 +2846,18 @@ async fn apply_edit_plan_patch(
 
             // Stale-plan check: ensure files match the base used to create the plan.
             for pf in &parsed {
-                let rel = if !pf.new_path.is_empty() { &pf.new_path } else { &pf.old_path };
-                let Some(base) = plan_files.iter().find(|f| {
-                    plan_paths_match(&pf.old_path, &pf.new_path, &f.old_path, &f.new_path)
-                }).map(|f| f.base_sha256.clone()) else {
+                let rel = if !pf.new_path.is_empty() {
+                    &pf.new_path
+                } else {
+                    &pf.old_path
+                };
+                let Some(base) = plan_files
+                    .iter()
+                    .find(|f| {
+                        plan_paths_match(&pf.old_path, &pf.new_path, &f.old_path, &f.new_path)
+                    })
+                    .map(|f| f.base_sha256.clone())
+                else {
                     continue;
                 };
                 if base.trim().is_empty() {
@@ -2711,10 +2870,7 @@ async fn apply_edit_plan_patch(
                     return Err((
                         StatusCode::CONFLICT,
                         Json(ApiErrorResp {
-                            error: format!(
-                                "edit plan is stale for {}; regenerate the plan",
-                                rel
-                            ),
+                            error: format!("edit plan is stale for {}; regenerate the plan", rel),
                         }),
                     ));
                 }
@@ -2752,7 +2908,11 @@ async fn apply_edit_plan_patch(
             // After applying, update base hashes for affected files so subsequent partial applies don't always look stale.
             let mut updated_bases: Vec<(String, String)> = Vec::new();
             for pf in &parsed {
-                let rel = if !pf.new_path.is_empty() { pf.new_path.clone() } else { pf.old_path.clone() };
+                let rel = if !pf.new_path.is_empty() {
+                    pf.new_path.clone()
+                } else {
+                    pf.old_path.clone()
+                };
                 let abs = worktree_root.join(&rel);
                 let current = tokio::fs::read_to_string(&abs).await.unwrap_or_default();
                 updated_bases.push((rel, sha256_hex(&current)));
@@ -2771,7 +2931,11 @@ async fn apply_edit_plan_patch(
                 plan.remove_patch(&patch);
                 for (rel, sha) in &updated_bases {
                     for f in &mut plan.files {
-                        let f_rel = if !f.new_path.is_empty() { &f.new_path } else { &f.old_path };
+                        let f_rel = if !f.new_path.is_empty() {
+                            &f.new_path
+                        } else {
+                            &f.old_path
+                        };
                         if f_rel == rel {
                             f.base_sha256 = sha.clone();
                         }
@@ -2834,7 +2998,9 @@ async fn discard_edit_plan(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, StatusCode> {
-    let pid = crate::edit_plans::EditPlanId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
+    let pid = crate::edit_plans::EditPlanId(
+        uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?,
+    );
     state.edit_plans.lock().await.remove(&pid);
     state.delete_edit_plan_file(pid);
     Ok(StatusCode::NO_CONTENT)
@@ -2919,16 +3085,17 @@ async fn check_updates(
         ]
     });
 
-    let manifest = updates::fetch_latest_manifest_with_params(&base_url, &channel, query.as_deref())
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::BAD_GATEWAY,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&e.to_string()),
-                }),
-            )
-        })?;
+    let manifest =
+        updates::fetch_latest_manifest_with_params(&base_url, &channel, query.as_deref())
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::BAD_GATEWAY,
+                    Json(ApiErrorResp {
+                        error: logs::redact_sensitive(&e.to_string()),
+                    }),
+                )
+            })?;
 
     let latest_version = manifest.latest_version.clone();
     let update_available = match (
@@ -3090,19 +3257,17 @@ async fn apply_appimage_update(
     Ok(Json(ApplyAppImageResp {
         applied: true,
         target_path: Some(target.to_string_lossy().to_string()),
-        message: "Update applied in place. Quit and relaunch the desktop app to run the new version.".to_string(),
+        message:
+            "Update applied in place. Quit and relaunch the desktop app to run the new version."
+                .to_string(),
     }))
 }
 
 async fn auth_middleware(
     State(state): State<Arc<AppState>>,
-    req: Request<axum::body::Body>,
+    mut req: Request<axum::body::Body>,
     next: Next,
 ) -> Result<impl IntoResponse, StatusCode> {
-    let Some(expected) = state.auth_token.clone() else {
-        return Ok(next.run(req).await);
-    };
-
     let path = req.uri().path();
     if !path.starts_with("/api/") || path == "/api/health" {
         return Ok(next.run(req).await);
@@ -3128,11 +3293,239 @@ async fn auth_middleware(
         });
     }
 
-    if token.as_deref() != Some(expected.as_str()) {
+    match state.auth_token.clone() {
+        Some(expected) => {
+            if token.as_deref() == Some(expected.as_str()) {
+                return Ok(next.run(req).await);
+            }
+            if let Some(token_value) = token {
+                if let Some(profile_id) = verify_mobile_api_token(&state, &token_value).await? {
+                    req.extensions_mut()
+                        .insert(MobileAuthContext { profile_id });
+                    return Ok(next.run(req).await);
+                }
+            }
+            Err(StatusCode::UNAUTHORIZED)
+        }
+        None => {
+            if let Some(token_value) = token {
+                if let Some(profile_id) = verify_mobile_api_token(&state, &token_value).await? {
+                    req.extensions_mut()
+                        .insert(MobileAuthContext { profile_id });
+                    return Ok(next.run(req).await);
+                }
+                return Err(StatusCode::UNAUTHORIZED);
+            }
+            Ok(next.run(req).await)
+        }
+    }
+}
+
+async fn list_mobile_connection_profiles(
+    State(state): State<Arc<AppState>>,
+    mobile_auth: Option<Extension<MobileAuthContext>>,
+) -> Result<Json<Vec<MobileConnectionProfile>>, StatusCode> {
+    if mobile_auth.is_some() {
         return Err(StatusCode::UNAUTHORIZED);
     }
+    let profiles = state
+        .store
+        .list_mobile_connection_profiles()
+        .await
+        .map_err(|e| {
+            tracing::error!("failed to list mobile profiles: {e:?}");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+    Ok(Json(profiles))
+}
 
-    Ok(next.run(req).await)
+async fn create_mobile_connection_profile(
+    State(state): State<Arc<AppState>>,
+    mobile_auth: Option<Extension<MobileAuthContext>>,
+    Json(req): Json<CreateMobileConnectionProfileReq>,
+) -> Result<Json<CreateMobileConnectionProfileResp>, (StatusCode, Json<ApiErrorResp>)> {
+    if mobile_auth.is_some() {
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            Json(ApiErrorResp {
+                error: "desktop auth required".into(),
+            }),
+        ));
+    }
+    let label = req.label.trim();
+    if label.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "label is required".into(),
+            }),
+        ));
+    }
+    let base_url_raw = req.base_url.trim();
+    if base_url_raw.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "base_url is required".into(),
+            }),
+        ));
+    }
+    let parsed = Url::parse(base_url_raw).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "base_url must be a valid URL".into(),
+            }),
+        )
+    })?;
+    if parsed.scheme() != "https" {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "base_url must use https://".into(),
+            }),
+        ));
+    }
+    let normalized_base = parsed.as_str().trim_end_matches('/').to_string();
+    let scopes: Vec<String> = req
+        .scopes
+        .into_iter()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    let token = generate_mobile_api_token();
+    let token_hash = hash_api_token(&token);
+    let token_prefix: String = token.chars().take(8).collect();
+    let profile = state
+        .store
+        .create_mobile_connection_profile(
+            label.to_string(),
+            normalized_base.clone(),
+            token_hash,
+            token_prefix,
+            scopes,
+        )
+        .await
+        .map_err(|e| {
+            tracing::error!("failed to create mobile profile: {e:?}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: "failed to create profile".into(),
+                }),
+            )
+        })?;
+    let qr_payload = serde_json::json!({
+        "connection_profile": {
+            "label": profile.label,
+            "connection": {
+                "type": "direct_https",
+                "base_url": normalized_base,
+            },
+            "auth": {
+                "api_token": token,
+            }
+        },
+        "label": profile.label,
+        "baseUrl": normalized_base,
+        "token": token,
+    });
+    Ok(Json(CreateMobileConnectionProfileResp {
+        profile,
+        token,
+        qr_payload,
+    }))
+}
+
+async fn delete_mobile_connection_profile(
+    State(state): State<Arc<AppState>>,
+    mobile_auth: Option<Extension<MobileAuthContext>>,
+    Path(id): Path<String>,
+) -> Result<StatusCode, StatusCode> {
+    if mobile_auth.is_some() {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    let uuid = uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?;
+    state
+        .store
+        .delete_mobile_connection_profile(ConnectionProfileId(uuid))
+        .await
+        .map_err(|e| {
+            tracing::error!("failed to delete mobile profile: {e:?}");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn list_mobile_devices_for_profile(
+    State(state): State<Arc<AppState>>,
+    mobile_auth: Option<Extension<MobileAuthContext>>,
+    Path(id): Path<String>,
+) -> Result<Json<Vec<MobileDeviceRegistration>>, StatusCode> {
+    if mobile_auth.is_some() {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    let uuid = uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let devices = state
+        .store
+        .list_mobile_devices(ConnectionProfileId(uuid))
+        .await
+        .map_err(|e| {
+            tracing::error!("failed to list mobile devices: {e:?}");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+    Ok(Json(devices))
+}
+
+async fn register_mobile_device(
+    State(state): State<Arc<AppState>>,
+    auth: Option<Extension<MobileAuthContext>>,
+    Json(req): Json<RegisterMobileDeviceReq>,
+) -> Result<Json<MobileDeviceRegistration>, (StatusCode, Json<ApiErrorResp>)> {
+    let Some(Extension(mobile_auth)) = auth else {
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            Json(ApiErrorResp {
+                error: "mobile token required".into(),
+            }),
+        ));
+    };
+    let device_uuid = uuid::Uuid::parse_str(req.device_id.trim()).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "device_id must be a UUID".into(),
+            }),
+        )
+    })?;
+    let sanitize = |input: Option<String>| -> Option<String> {
+        input
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+    };
+    let device = state
+        .store
+        .upsert_mobile_device(
+            MobileDeviceId(device_uuid),
+            mobile_auth.profile_id,
+            sanitize(req.device_label),
+            sanitize(req.platform),
+            sanitize(req.push_token),
+            sanitize(req.push_provider),
+            sanitize(req.public_key),
+            sanitize(req.app_version),
+        )
+        .await
+        .map_err(|e| {
+            tracing::error!("failed to register mobile device: {e:?}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: "failed to register device".into(),
+                }),
+            )
+        })?;
+    Ok(Json(device))
 }
 
 async fn list_providers(
@@ -3145,19 +3538,18 @@ async fn list_providers(
     let managed = installer::load_agent_server_config(&state.data_root)
         .await
         .unwrap_or_default();
-    let matrix = crate::provider_matrix::load_matrix_cached(
-        &state.data_root,
-        &state.provider_matrix_cache,
-    )
-    .await;
+    let matrix =
+        crate::provider_matrix::load_matrix_cached(&state.data_root, &state.provider_matrix_cache)
+            .await;
 
     let show_fake = std::env::var("CONTEXT_SHOW_FAKE_PROVIDER").ok().as_deref() == Some("1");
     for status in out.iter_mut() {
         installer::apply_managed_install_details(status, &managed);
         if status.provider_id == "fake" {
-            status
-                .details
-                .insert("ui_hidden".into(), if show_fake { "false" } else { "true" }.into());
+            status.details.insert(
+                "ui_hidden".into(),
+                if show_fake { "false" } else { "true" }.into(),
+            );
         }
         status.details.insert(
             "install_supported".into(),
@@ -3190,11 +3582,9 @@ async fn get_provider(
     let managed = installer::load_agent_server_config(&state.data_root)
         .await
         .unwrap_or_default();
-    let matrix = crate::provider_matrix::load_matrix_cached(
-        &state.data_root,
-        &state.provider_matrix_cache,
-    )
-    .await;
+    let matrix =
+        crate::provider_matrix::load_matrix_cached(&state.data_root, &state.provider_matrix_cache)
+            .await;
     installer::apply_managed_install_details(&mut status, &managed);
     status.details.insert(
         "install_supported".into(),
@@ -3208,7 +3598,9 @@ async fn get_provider(
         status
             .details
             .insert("install_running".into(), "true".into());
-        status.details.insert("install_id".into(), install_id.to_string());
+        status
+            .details
+            .insert("install_id".into(), install_id.to_string());
     }
     Ok(Json(status))
 }
@@ -3227,8 +3619,11 @@ fn default_agent_server_command(
     let entry = crate::provider_matrix::get_entry(matrix, provider_id)?;
     let mut cmd = entry.command.clone()?;
     if provider_id == "cagent" {
-        cmd.args
-            .push(crate::installer::cagent_config_path(data_root).to_string_lossy().to_string());
+        cmd.args.push(
+            crate::installer::cagent_config_path(data_root)
+                .to_string_lossy()
+                .to_string(),
+        );
     }
     Some((cmd.command, cmd.args))
 }
@@ -3305,17 +3700,13 @@ async fn get_provider_options(
                 "probe_error": "provider not installed or unhealthy",
                 "probed_at": chrono::Utc::now().to_rfc3339(),
             }));
-            state
-                .provider_options_cache
-                .lock()
-                .await
-                .insert(
-                    cache_key,
-                    crate::daemon::CachedProviderOptions {
-                        cached_at: std::time::Instant::now(),
-                        value: base_resp.clone(),
-                    },
-                );
+            state.provider_options_cache.lock().await.insert(
+                cache_key,
+                crate::daemon::CachedProviderOptions {
+                    cached_at: std::time::Instant::now(),
+                    value: base_resp.clone(),
+                },
+            );
             let mut out = base_resp;
             if let Some((verify_at, verify)) = verify_entry.as_ref() {
                 if verify_at.elapsed() < VERIFY_TTL {
@@ -3350,11 +3741,9 @@ async fn get_provider_options(
     let cfg = installer::load_agent_server_config(&state.data_root)
         .await
         .unwrap_or_default();
-    let matrix = crate::provider_matrix::load_matrix_cached(
-        &state.data_root,
-        &state.provider_matrix_cache,
-    )
-    .await;
+    let matrix =
+        crate::provider_matrix::load_matrix_cached(&state.data_root, &state.provider_matrix_cache)
+            .await;
 
     let (command, args) = cfg
         .providers
@@ -3428,17 +3817,13 @@ async fn get_provider_options(
 
     let resp = redact_json_value(raw_resp);
 
-    state
-        .provider_options_cache
-        .lock()
-        .await
-        .insert(
-            cache_key,
-            crate::daemon::CachedProviderOptions {
-                cached_at: std::time::Instant::now(),
-                value: resp.clone(),
-            },
-        );
+    state.provider_options_cache.lock().await.insert(
+        cache_key,
+        crate::daemon::CachedProviderOptions {
+            cached_at: std::time::Instant::now(),
+            value: resp.clone(),
+        },
+    );
 
     let mut out = resp;
     if let Some((verify_at, verify)) = verify_entry.as_ref() {
@@ -3493,11 +3878,9 @@ async fn authenticate_provider_for_workspace(
     let cfg = installer::load_agent_server_config(&state.data_root)
         .await
         .unwrap_or_default();
-    let matrix = crate::provider_matrix::load_matrix_cached(
-        &state.data_root,
-        &state.provider_matrix_cache,
-    )
-    .await;
+    let matrix =
+        crate::provider_matrix::load_matrix_cached(&state.data_root, &state.provider_matrix_cache)
+            .await;
     let (command, args) = cfg
         .providers
         .get(&provider_id)
@@ -3530,7 +3913,14 @@ async fn authenticate_provider_for_workspace(
     }
     env.insert("CONTEXT_MCP_DISABLED".to_string(), "1".to_string());
 
-    let probe = authenticate_provider(agent, client, PathBuf::from(&ws.root_path), env, req.method_id).await;
+    let probe = authenticate_provider(
+        agent,
+        client,
+        PathBuf::from(&ws.root_path),
+        env,
+        req.method_id,
+    )
+    .await;
     let (status, auth_required, auth_methods, acp_error) = match probe {
         Ok(p) => (p.status, p.auth_required, p.auth_methods, p.acp_error),
         Err(e) => (
@@ -3588,11 +3978,9 @@ async fn verify_provider_for_workspace(
     let cfg = installer::load_agent_server_config(&state.data_root)
         .await
         .unwrap_or_default();
-    let matrix = crate::provider_matrix::load_matrix_cached(
-        &state.data_root,
-        &state.provider_matrix_cache,
-    )
-    .await;
+    let matrix =
+        crate::provider_matrix::load_matrix_cached(&state.data_root, &state.provider_matrix_cache)
+            .await;
     let (command, args) = cfg
         .providers
         .get(&provider_id)
@@ -3647,17 +4035,13 @@ async fn verify_provider_for_workspace(
     }));
 
     let cache_key = format!("{}/{}", ws_id.0, provider_id);
-    state
-        .provider_verify_cache
-        .lock()
-        .await
-        .insert(
-            cache_key,
-            crate::daemon::CachedProviderVerify {
-                cached_at: std::time::Instant::now(),
-                value: resp.clone(),
-            },
-        );
+    state.provider_verify_cache.lock().await.insert(
+        cache_key,
+        crate::daemon::CachedProviderVerify {
+            cached_at: std::time::Instant::now(),
+            value: resp.clone(),
+        },
+    );
 
     Ok(Json(resp))
 }
@@ -3666,11 +4050,9 @@ async fn install_provider(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<Json<InstallStartResponse>, StatusCode> {
-    let matrix = crate::provider_matrix::load_matrix_cached(
-        &state.data_root,
-        &state.provider_matrix_cache,
-    )
-    .await;
+    let matrix =
+        crate::provider_matrix::load_matrix_cached(&state.data_root, &state.provider_matrix_cache)
+            .await;
     if !installer::is_supported_managed_provider(&matrix, &id) {
         return Err(StatusCode::BAD_REQUEST);
     }
@@ -3680,7 +4062,13 @@ async fn install_provider(
         let state2 = state.clone();
         let provider_id = id.clone();
         tokio::spawn(async move {
-            if let Err(e) = installer::install_provider_with_progress(state2.clone(), install_id, provider_id.clone()).await {
+            if let Err(e) = installer::install_provider_with_progress(
+                state2.clone(),
+                install_id,
+                provider_id.clone(),
+            )
+            .await
+            {
                 tracing::error!("provider install failed ({provider_id}): {e:#}");
             }
         });
@@ -3712,8 +4100,12 @@ async fn install_lsp_server(
         let state2 = state.clone();
         let server_id = id.clone();
         tokio::spawn(async move {
-            if let Err(e) =
-                installer::install_lsp_server_with_progress(state2.clone(), install_id, server_id.clone()).await
+            if let Err(e) = installer::install_lsp_server_with_progress(
+                state2.clone(),
+                install_id,
+                server_id.clone(),
+            )
+            .await
             {
                 tracing::error!("lsp install failed ({server_id}): {e:#}");
             }
@@ -3730,11 +4122,9 @@ async fn install_all_providers(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<InstallStartResponse>>, StatusCode> {
     let mut out = Vec::new();
-    let matrix = crate::provider_matrix::load_matrix_cached(
-        &state.data_root,
-        &state.provider_matrix_cache,
-    )
-    .await;
+    let matrix =
+        crate::provider_matrix::load_matrix_cached(&state.data_root, &state.provider_matrix_cache)
+            .await;
     for entry in matrix.providers.iter() {
         if !installer::is_supported_managed_provider(&matrix, &entry.id) {
             continue;
@@ -3750,7 +4140,8 @@ async fn install_all_providers(
 
         let status = state.provider_statuses.lock().await.get(id).cloned();
         if let Some(st) = status {
-            if st.installed && matches!(st.health, context_providers::adapters::ProviderHealth::Ok) {
+            if st.installed && matches!(st.health, context_providers::adapters::ProviderHealth::Ok)
+            {
                 continue;
             }
         }
@@ -3760,7 +4151,13 @@ async fn install_all_providers(
             let state2 = state.clone();
             let provider_id = id.to_string();
             tokio::spawn(async move {
-                if let Err(e) = installer::install_provider_with_progress(state2.clone(), install_id, provider_id.clone()).await {
+                if let Err(e) = installer::install_provider_with_progress(
+                    state2.clone(),
+                    install_id,
+                    provider_id.clone(),
+                )
+                .await
+                {
                     tracing::error!("provider install failed ({provider_id}): {e:#}");
                 }
             });
@@ -3777,7 +4174,8 @@ async fn get_install(
     State(state): State<Arc<AppState>>,
     Path(install_id): Path<String>,
 ) -> Result<Json<InstallInfo>, StatusCode> {
-    let install_id: InstallId = uuid::Uuid::parse_str(&install_id).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let install_id: InstallId =
+        uuid::Uuid::parse_str(&install_id).map_err(|_| StatusCode::BAD_REQUEST)?;
     state
         .get_install_info(install_id)
         .await
@@ -3789,7 +4187,8 @@ async fn list_install_events(
     State(state): State<Arc<AppState>>,
     Path(install_id): Path<String>,
 ) -> Result<Json<Vec<InstallProgressEvent>>, StatusCode> {
-    let install_id: InstallId = uuid::Uuid::parse_str(&install_id).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let install_id: InstallId =
+        uuid::Uuid::parse_str(&install_id).map_err(|_| StatusCode::BAD_REQUEST)?;
     state
         .get_install_events(install_id)
         .await
@@ -3801,12 +4200,16 @@ async fn install_stream_sse(
     State(state): State<Arc<AppState>>,
     Path(install_id): Path<String>,
 ) -> Result<Sse<impl Stream<Item = Result<SseEvent, axum::Error>>>, StatusCode> {
-    let install_id: InstallId = uuid::Uuid::parse_str(&install_id).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let install_id: InstallId =
+        uuid::Uuid::parse_str(&install_id).map_err(|_| StatusCode::BAD_REQUEST)?;
     let Some(sender) = state.get_install_sender(install_id).await else {
         return Err(StatusCode::NOT_FOUND);
     };
 
-    let history = state.get_install_events(install_id).await.unwrap_or_default();
+    let history = state
+        .get_install_events(install_id)
+        .await
+        .unwrap_or_default();
     let initial = futures::stream::iter(history.into_iter().map(|ev| {
         let payload = serde_json::to_string(&ev).unwrap_or_else(|_| "{}".into());
         Ok::<_, axum::Error>(SseEvent::default().event("progress").data(payload))
@@ -3836,7 +4239,9 @@ struct CreateWorkspaceReq {
     name: Option<String>,
 }
 
-async fn list_workspaces(State(state): State<Arc<AppState>>) -> Result<Json<Vec<Workspace>>, StatusCode> {
+async fn list_workspaces(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<Workspace>>, StatusCode> {
     state
         .store
         .list_workspaces()
@@ -3850,7 +4255,12 @@ async fn get_workspace(
     Path(id): Path<String>,
 ) -> Result<Json<Workspace>, StatusCode> {
     let id = WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    match state.store.get_workspace(id).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)? {
+    match state
+        .store
+        .get_workspace(id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    {
         Some(ws) => {
             state
                 .telemetry
@@ -3899,11 +4309,7 @@ async fn create_workspace(
         (
             StatusCode::BAD_REQUEST,
             Json(ApiErrorResp {
-                error: format!(
-                    "invalid root_path '{}': {}",
-                    expanded.to_string_lossy(),
-                    e
-                ),
+                error: format!("invalid root_path '{}': {}", expanded.to_string_lossy(), e),
             }),
         )
     })?;
@@ -3911,7 +4317,9 @@ async fn create_workspace(
     assert_git_repo(&root_path).await.map_err(|e| {
         (
             StatusCode::BAD_REQUEST,
-            Json(ApiErrorResp { error: e.to_string() }),
+            Json(ApiErrorResp {
+                error: e.to_string(),
+            }),
         )
     })?;
 
@@ -4269,16 +4677,14 @@ async fn create_task(
     let worktree_id = WorktreeId::new();
     let wt_path = managed_worktree_path(&state.data_root, ws_id, worktree_id);
     if let Some(parent) = wt_path.parent() {
-        tokio::fs::create_dir_all(parent)
-            .await
-            .map_err(|e| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ApiErrorResp {
-                        error: logs::redact_sensitive(&e.to_string()),
-                    }),
-                )
-            })?;
+        tokio::fs::create_dir_all(parent).await.map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
     }
     let branch_name = format!("context/{}/{}", task.id.0, worktree_id.0);
     create_worktree(&ws.root_path, &wt_path, &base_commit_sha, &branch_name)
@@ -4300,18 +4706,14 @@ async fn create_task(
         git_branch: Some(branch_name),
         created_at: chrono::Utc::now(),
     };
-    state
-        .store
-        .insert_worktree(worktree)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&e.to_string()),
-                }),
-            )
-        })?;
+    state.store.insert_worktree(worktree).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&e.to_string()),
+            }),
+        )
+    })?;
 
     let label = req
         .default_track_label
@@ -4433,7 +4835,12 @@ async fn create_track(
         )
     })?;
 
-    let env_target = req.env_target.as_deref().unwrap_or("worktree").trim().to_lowercase();
+    let env_target = req
+        .env_target
+        .as_deref()
+        .unwrap_or("worktree")
+        .trim()
+        .to_lowercase();
     let worktree_id = match env_target.as_str() {
         "worktree" => {
             let worktree_id = WorktreeId::new();
@@ -4468,18 +4875,14 @@ async fn create_track(
                 git_branch: Some(branch_name),
                 created_at: chrono::Utc::now(),
             };
-            state
-                .store
-                .insert_worktree(worktree)
-                .await
-                .map_err(|e| {
-                    (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(ApiErrorResp {
-                            error: logs::redact_sensitive(&e.to_string()),
-                        }),
-                    )
-                })?;
+            state.store.insert_worktree(worktree).await.map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiErrorResp {
+                        error: logs::redact_sensitive(&e.to_string()),
+                    }),
+                )
+            })?;
             worktree_id
         }
         "local" => {
@@ -4507,18 +4910,14 @@ async fn create_track(
                     git_branch: None,
                     created_at: chrono::Utc::now(),
                 };
-                state
-                    .store
-                    .insert_worktree(worktree)
-                    .await
-                    .map_err(|e| {
-                        (
-                            StatusCode::INTERNAL_SERVER_ERROR,
-                            Json(ApiErrorResp {
-                                error: logs::redact_sensitive(&e.to_string()),
-                            }),
-                        )
-                    })?;
+                state.store.insert_worktree(worktree).await.map_err(|e| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(ApiErrorResp {
+                            error: logs::redact_sensitive(&e.to_string()),
+                        }),
+                    )
+                })?;
                 worktree_id
             }
         }
@@ -4585,7 +4984,13 @@ async fn create_session_for_track(
 
     let session = state
         .store
-        .create_session(&track, req.provider_id, req.model_id, "implementer".into(), None)
+        .create_session(
+            &track,
+            req.provider_id,
+            req.model_id,
+            "implementer".into(),
+            None,
+        )
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
@@ -4836,7 +5241,11 @@ async fn list_session_events(
     let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
     let limit = q.limit;
     let out = if let Some(tail) = q.tail {
-        match state.store.list_session_events_tail_by_seq(session_id, tail).await {
+        match state
+            .store
+            .list_session_events_tail_by_seq(session_id, tail)
+            .await
+        {
             Ok(events) => Ok(Json(events)),
             Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
         }
@@ -4898,10 +5307,7 @@ async fn session_file_completions(
         .ok_or(StatusCode::NOT_FOUND)?;
 
     let query = q.query.unwrap_or_default();
-    let limit = q
-        .limit
-        .unwrap_or(DEFAULT_LIMIT)
-        .clamp(1, MAX_LIMIT) as usize;
+    let limit = q.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT) as usize;
 
     let files = {
         let now = Instant::now();
@@ -4919,7 +5325,9 @@ async fn session_file_completions(
         }
     };
 
-    Ok(Json(completions::filter_and_rank_paths(&files, &query, limit)))
+    Ok(Json(completions::filter_and_rank_paths(
+        &files, &query, limit,
+    )))
 }
 
 async fn workspace_file_completions(
@@ -4945,10 +5353,7 @@ async fn workspace_file_completions(
     }
 
     let query = q.query.unwrap_or_default();
-    let limit = q
-        .limit
-        .unwrap_or(DEFAULT_LIMIT)
-        .clamp(1, MAX_LIMIT) as usize;
+    let limit = q.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT) as usize;
 
     let files = {
         let now = Instant::now();
@@ -4966,7 +5371,9 @@ async fn workspace_file_completions(
         }
     };
 
-    Ok(Json(completions::filter_and_rank_paths(&files, &query, limit)))
+    Ok(Json(completions::filter_and_rank_paths(
+        &files, &query, limit,
+    )))
 }
 
 async fn load_and_cache_worktree_files(
@@ -5093,8 +5500,8 @@ async fn normalize_message_attachments(
                 let bytes = base64::engine::general_purpose::STANDARD
                     .decode(data_base64.as_bytes())
                     .map_err(|_| StatusCode::BAD_REQUEST)?;
-                let saved = persist_blob_bytes(state.as_ref(), &bytes, &mime_type, name.as_deref())
-                    .await?;
+                let saved =
+                    persist_blob_bytes(state.as_ref(), &bytes, &mime_type, name.as_deref()).await?;
                 out.push(MessageAttachment::ImageRef {
                     blob_id: saved.blob_id,
                     mime_type,
@@ -5315,7 +5722,12 @@ async fn set_session_model(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    let worktree = state.store.get_worktree(updated.worktree_id).await.ok().flatten();
+    let worktree = state
+        .store
+        .get_worktree(updated.worktree_id)
+        .await
+        .ok()
+        .flatten();
     Ok(Json(SessionWithEnv {
         env_target: env_target_for_worktree(worktree.as_ref()),
         session: updated,
@@ -5452,12 +5864,15 @@ async fn authenticate_session(
         provider_env.insert("CONTEXT_PROVIDER_SESSION_REF".to_string(), provider_ref);
     }
     provider_env.insert("CONTEXT_SESSION_ID".to_string(), session.id.0.to_string());
-    provider_env.insert("CONTEXT_MCP_TOKEN".to_string(), uuid::Uuid::new_v4().to_string());
+    provider_env.insert(
+        "CONTEXT_MCP_TOKEN".to_string(),
+        uuid::Uuid::new_v4().to_string(),
+    );
     if let Ok(v) = std::env::var("CONTEXT_MCP_COMMAND") {
         provider_env.insert("CONTEXT_MCP_COMMAND".to_string(), v);
     }
     if let Ok(v) = std::env::var("CONTEXT_MCP_DISABLED") {
-    provider_env.insert("CONTEXT_MCP_DISABLED".to_string(), v);
+        provider_env.insert("CONTEXT_MCP_DISABLED".to_string(), v);
     }
 
     let (ev_tx, mut ev_rx) = mpsc::channel::<NormalizedEvent>(128);
@@ -5467,7 +5882,9 @@ async fn authenticate_session(
         while let Some(ev) = ev_rx.recv().await {
             let payload = ev.payload_json.clone();
             if matches!(ev.event_type, SessionEventType::Init) {
-                if let Some(ps) = payload.get("acp_session_id").and_then(serde_json::Value::as_str)
+                if let Some(ps) = payload
+                    .get("acp_session_id")
+                    .and_then(serde_json::Value::as_str)
                 {
                     let _ = store
                         .update_session_provider_session_ref(session_id, Some(ps.to_string()))
@@ -5509,7 +5926,13 @@ async fn authenticate_session(
 
     let session_key = session.id.0.to_string();
     let result = adapter
-        .authenticate_session(session_key, workdir, provider_env, req.method_id.clone(), ev_tx)
+        .authenticate_session(
+            session_key,
+            workdir,
+            provider_env,
+            req.method_id.clone(),
+            ev_tx,
+        )
         .await;
 
     match result {
@@ -5858,17 +6281,16 @@ async fn track_diff_apply(
         }
     }
 
-    let diff =
-        context_fs::worktrees::diff_worktree(&worktree.root_path, &worktree.base_commit_sha)
-            .await
-            .map_err(|e| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ApiErrorResp {
-                        error: e.to_string(),
-                    }),
-                )
-            })?;
+    let diff = context_fs::worktrees::diff_worktree(&worktree.root_path, &worktree.base_commit_sha)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: e.to_string(),
+                }),
+            )
+        })?;
     if perf {
         tracing::info!(
             target: "context_perf",
@@ -5932,20 +6354,24 @@ async fn handle_global_ws(socket: WebSocket, state: Arc<AppState>) {
 
     let conn_cancel = CancellationToken::new();
     let mut subscribed: HashMap<SessionId, i64> = HashMap::new();
-    let mut tasks: HashMap<SessionId, (CancellationToken, tokio::task::JoinHandle<()>)> = HashMap::new();
+    let mut tasks: HashMap<SessionId, (CancellationToken, tokio::task::JoinHandle<()>)> =
+        HashMap::new();
 
-    let stop_all = |tasks: &mut HashMap<SessionId, (CancellationToken, tokio::task::JoinHandle<()>)>| {
-        for (_sid, (tok, handle)) in tasks.drain() {
-            tok.cancel();
-            handle.abort();
-        }
-    };
+    let stop_all =
+        |tasks: &mut HashMap<SessionId, (CancellationToken, tokio::task::JoinHandle<()>)>| {
+            for (_sid, (tok, handle)) in tasks.drain() {
+                tok.cancel();
+                handle.abort();
+            }
+        };
 
     let spawn_session_task = |session_id: SessionId,
-                             mut after_seq: i64,
-                             ws_tx: Arc<Mutex<futures::stream::SplitSink<WebSocket, WsMessage>>>,
-                             state: Arc<AppState>,
-                             conn_cancel: CancellationToken| {
+                              mut after_seq: i64,
+                              ws_tx: Arc<
+        Mutex<futures::stream::SplitSink<WebSocket, WsMessage>>,
+    >,
+                              state: Arc<AppState>,
+                              conn_cancel: CancellationToken| {
         let task_cancel = CancellationToken::new();
         let task_cancel_child = task_cancel.clone();
         let conn_cancel_child = conn_cancel.clone();
@@ -5965,7 +6391,11 @@ async fn handle_global_ws(socket: WebSocket, state: Arc<AppState>) {
                     }
                     let page = match state
                         .store
-                        .list_session_events_page_by_seq(session_id, Some(after_seq), Some(page_limit))
+                        .list_session_events_page_by_seq(
+                            session_id,
+                            Some(after_seq),
+                            Some(page_limit),
+                        )
                         .await
                     {
                         Ok(v) => v,
@@ -6112,4 +6542,41 @@ async fn dictation_livekit_stream_ws(
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
     ws.on_upgrade(move |socket| dictation_livekit::dictation_livekit_stream(socket, state))
+}
+
+async fn verify_mobile_api_token(
+    state: &Arc<AppState>,
+    token: &str,
+) -> Result<Option<ConnectionProfileId>, StatusCode> {
+    let hash = hash_api_token(token);
+    let profile = state
+        .store
+        .get_mobile_connection_profile_by_token_hash(&hash)
+        .await
+        .map_err(|e| {
+            tracing::error!("failed to query mobile connection profile: {e:?}");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+    if let Some(profile) = profile {
+        if let Err(err) = state
+            .store
+            .mark_mobile_connection_profile_used(profile.id)
+            .await
+        {
+            tracing::warn!("failed to update profile usage: {err:?}");
+        }
+        Ok(Some(profile.id))
+    } else {
+        Ok(None)
+    }
+}
+
+fn hash_api_token(token: &str) -> String {
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(token.as_bytes());
+    hex::encode(hasher.finalize())
+}
+
+fn generate_mobile_api_token() -> String {
+    format!("ctxm_{}", uuid::Uuid::new_v4().to_string().replace('-', ""))
 }

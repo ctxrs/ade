@@ -82,49 +82,107 @@ async fn test_server_supports_semantic_actions() {
     });
 
     let def = mgr
-        .definition(root, &file, Position { line: 0, character: 0 })
+        .definition(
+            root,
+            &file,
+            Position {
+                line: 0,
+                character: 0,
+            },
+        )
         .await
         .unwrap();
     assert!(def.is_array());
 
     let tdef = mgr
-        .type_definition(root, &file, Position { line: 0, character: 0 })
+        .type_definition(
+            root,
+            &file,
+            Position {
+                line: 0,
+                character: 0,
+            },
+        )
         .await
         .unwrap();
     assert!(tdef.is_array());
 
     let impls = mgr
-        .implementation(root, &file, Position { line: 0, character: 0 })
+        .implementation(
+            root,
+            &file,
+            Position {
+                line: 0,
+                character: 0,
+            },
+        )
         .await
         .unwrap();
     assert!(impls.is_array());
 
     let refs = mgr
-        .references(root, &file, Position { line: 0, character: 0 }, true)
+        .references(
+            root,
+            &file,
+            Position {
+                line: 0,
+                character: 0,
+            },
+            true,
+        )
         .await
         .unwrap();
     assert_eq!(refs.len(), 1);
 
     let hover = mgr
-        .hover(root, &file, Position { line: 0, character: 0 })
+        .hover(
+            root,
+            &file,
+            Position {
+                line: 0,
+                character: 0,
+            },
+        )
         .await
         .unwrap();
     assert!(hover.is_object());
 
     let sig = mgr
-        .signature_help(root, &file, Position { line: 0, character: 0 })
+        .signature_help(
+            root,
+            &file,
+            Position {
+                line: 0,
+                character: 0,
+            },
+        )
         .await
         .unwrap();
     assert!(sig.is_object());
 
     let comp = mgr
-        .completion(root, &file, Position { line: 0, character: 0 })
+        .completion(
+            root,
+            &file,
+            Position {
+                line: 0,
+                character: 0,
+            },
+        )
         .await
         .unwrap();
     assert!(comp.is_object());
 
     let edit = mgr
-        .rename(root, &file, Position { line: 0, character: 0 }, "new".into())
+        .rename(
+            root,
+            &file,
+            Position {
+                line: 0,
+                character: 0,
+            },
+            "new".into(),
+        )
         .await
         .unwrap();
     assert!(edit.changes.is_some());
@@ -137,8 +195,14 @@ async fn test_server_supports_semantic_actions() {
             root,
             &file,
             Range {
-                start: Position { line: 0, character: 0 },
-                end: Position { line: 0, character: 1 },
+                start: Position {
+                    line: 0,
+                    character: 0,
+                },
+                end: Position {
+                    line: 0,
+                    character: 1,
+                },
             },
             vec![],
         )
@@ -150,7 +214,14 @@ async fn test_server_supports_semantic_actions() {
     assert!(folds.is_array());
 
     let linked = mgr
-        .linked_editing_range(root, &file, Position { line: 0, character: 0 })
+        .linked_editing_range(
+            root,
+            &file,
+            Position {
+                line: 0,
+                character: 0,
+            },
+        )
         .await
         .unwrap();
     assert!(linked.is_object());
@@ -202,15 +273,21 @@ async fn test_server_supports_agent_text_only_extensions() {
         .await
         .unwrap()
         .unwrap();
-    assert!(
-        diag.diagnostics
-            .first()
-            .map(|d| d.message.contains("Intentional diagnostic"))
-            .unwrap_or(false)
-    );
+    assert!(diag
+        .diagnostics
+        .first()
+        .map(|d| d.message.contains("Intentional diagnostic"))
+        .unwrap_or(false));
 
     let comp = mgr
-        .completion(root, &file, Position { line: 0, character: 0 })
+        .completion(
+            root,
+            &file,
+            Position {
+                line: 0,
+                character: 0,
+            },
+        )
         .await
         .unwrap();
     let item = comp
@@ -219,10 +296,7 @@ async fn test_server_supports_agent_text_only_extensions() {
         .and_then(|a| a.first())
         .cloned()
         .unwrap_or(Value::Null);
-    let resolved = mgr
-        .completion_resolve(root, &file, item)
-        .await
-        .unwrap();
+    let resolved = mgr.completion_resolve(root, &file, item).await.unwrap();
     assert!(resolved.is_object());
 
     let actions = mgr
@@ -230,8 +304,14 @@ async fn test_server_supports_agent_text_only_extensions() {
             root,
             &file,
             Range {
-                start: Position { line: 0, character: 0 },
-                end: Position { line: 0, character: 1 },
+                start: Position {
+                    line: 0,
+                    character: 0,
+                },
+                end: Position {
+                    line: 0,
+                    character: 1,
+                },
             },
             vec![],
         )
@@ -242,10 +322,7 @@ async fn test_server_supports_agent_text_only_extensions() {
         .and_then(|a| a.first())
         .cloned()
         .unwrap_or(Value::Null);
-    let resolved_action = mgr
-        .code_action_resolve(root, &file, action)
-        .await
-        .unwrap();
+    let resolved_action = mgr.code_action_resolve(root, &file, action).await.unwrap();
     assert!(resolved_action.is_object());
 
     let inlays = mgr
@@ -253,8 +330,14 @@ async fn test_server_supports_agent_text_only_extensions() {
             root,
             &file,
             Range {
-                start: Position { line: 0, character: 0 },
-                end: Position { line: 0, character: 1 },
+                start: Position {
+                    line: 0,
+                    character: 0,
+                },
+                end: Position {
+                    line: 0,
+                    character: 1,
+                },
             },
         )
         .await
@@ -262,22 +345,47 @@ async fn test_server_supports_agent_text_only_extensions() {
     assert!(inlays.is_array());
 
     let highlights = mgr
-        .document_highlight(root, &file, Position { line: 0, character: 0 })
+        .document_highlight(
+            root,
+            &file,
+            Position {
+                line: 0,
+                character: 0,
+            },
+        )
         .await
         .unwrap();
     assert!(highlights.is_array());
 
     let sel = mgr
-        .selection_ranges(root, &file, vec![Position { line: 0, character: 0 }])
+        .selection_ranges(
+            root,
+            &file,
+            vec![Position {
+                line: 0,
+                character: 0,
+            }],
+        )
         .await
         .unwrap();
     assert!(sel.is_array());
 
     let ch = mgr
-        .call_hierarchy_prepare(root, &file, Position { line: 0, character: 0 })
+        .call_hierarchy_prepare(
+            root,
+            &file,
+            Position {
+                line: 0,
+                character: 0,
+            },
+        )
         .await
         .unwrap();
-    let item = ch.as_array().and_then(|a| a.first()).cloned().unwrap_or(Value::Null);
+    let item = ch
+        .as_array()
+        .and_then(|a| a.first())
+        .cloned()
+        .unwrap_or(Value::Null);
     let incoming = mgr
         .call_hierarchy_incoming(root, &file, item.clone())
         .await
@@ -290,7 +398,11 @@ async fn test_server_supports_agent_text_only_extensions() {
     assert!(outgoing.is_array());
 
     let lenses = mgr.code_lens(root, &file).await.unwrap();
-    let lens = lenses.as_array().and_then(|a| a.first()).cloned().unwrap_or(Value::Null);
+    let lens = lenses
+        .as_array()
+        .and_then(|a| a.first())
+        .cloned()
+        .unwrap_or(Value::Null);
     let resolved_lens = mgr.code_lens_resolve(root, &file, lens).await.unwrap();
     assert!(resolved_lens.is_object());
 
@@ -301,28 +413,47 @@ async fn test_server_supports_agent_text_only_extensions() {
     assert!(edit.is_some(), "expected applyEdit captured");
 
     let prep = mgr
-        .prepare_rename(root, &file, Position { line: 0, character: 0 })
+        .prepare_rename(
+            root,
+            &file,
+            Position {
+                line: 0,
+                character: 0,
+            },
+        )
         .await
         .unwrap();
     assert!(prep.is_object() || prep.is_null());
 
     let links = mgr.document_links(root, &file).await.unwrap();
     assert!(links.is_array());
-    let link = links.as_array().and_then(|a| a.first()).cloned().unwrap_or(Value::Null);
-    let resolved_link = mgr
-        .document_link_resolve(root, &file, link)
-        .await
-        .unwrap();
+    let link = links
+        .as_array()
+        .and_then(|a| a.first())
+        .cloned()
+        .unwrap_or(Value::Null);
+    let resolved_link = mgr.document_link_resolve(root, &file, link).await.unwrap();
     assert!(resolved_link.is_object());
 
     let tokens = mgr.semantic_tokens_full(root, &file).await.unwrap();
     assert!(tokens.is_object());
 
     let th = mgr
-        .type_hierarchy_prepare(root, &file, Position { line: 0, character: 0 })
+        .type_hierarchy_prepare(
+            root,
+            &file,
+            Position {
+                line: 0,
+                character: 0,
+            },
+        )
         .await
         .unwrap();
-    let item = th.as_array().and_then(|a| a.first()).cloned().unwrap_or(Value::Null);
+    let item = th
+        .as_array()
+        .and_then(|a| a.first())
+        .cloned()
+        .unwrap_or(Value::Null);
     let sups = mgr
         .type_hierarchy_supertypes(root, &file, item.clone())
         .await

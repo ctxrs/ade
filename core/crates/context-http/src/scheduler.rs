@@ -10,12 +10,7 @@ use tokio::sync::mpsc;
 
 use context_core::ids::{MessageId, RunId, TurnId};
 use context_core::models::{
-    Message,
-    MessageDelivery,
-    MessageRole,
-    Session,
-    SessionEventType,
-    SessionTurnStatus,
+    Message, MessageDelivery, MessageRole, Session, SessionEventType, SessionTurnStatus,
     SessionTurnTool,
 };
 use context_providers::adapters::{ProviderAdapter, RunHandle, TurnInput};
@@ -205,10 +200,7 @@ async fn start_turn(
     if let Some(provider_ref) = session.provider_session_ref.clone() {
         provider_env.insert("CONTEXT_PROVIDER_SESSION_REF".to_string(), provider_ref);
     }
-    provider_env.insert(
-        "CONTEXT_SESSION_ID".to_string(),
-        session.id.0.to_string(),
-    );
+    provider_env.insert("CONTEXT_SESSION_ID".to_string(), session.id.0.to_string());
     provider_env.insert(
         "CONTEXT_MCP_TOKEN".to_string(),
         uuid::Uuid::new_v4().to_string(),
@@ -236,18 +228,15 @@ async fn start_turn(
                     path_parts.extend(std::env::split_paths(&current));
                 }
                 if let Ok(joined) = std::env::join_paths(path_parts) {
-                    provider_env.insert(
-                        "PATH".to_string(),
-                        joined.to_string_lossy().to_string(),
-                    );
+                    provider_env.insert("PATH".to_string(), joined.to_string_lossy().to_string());
                 }
             }
         }
     }
 
     let session_key = session.id.0.to_string();
-    let needs_rehydrate = session.provider_session_ref.is_some()
-        && !adapter.has_live_session(&session_key).await;
+    let needs_rehydrate =
+        session.provider_session_ref.is_some() && !adapter.has_live_session(&session_key).await;
     let mut context_blocks: Vec<serde_json::Value> = Vec::new();
     if needs_rehydrate {
         if let Ok(block) = build_rehydrate_transcript_block(&state.store, session.id).await {
@@ -320,10 +309,7 @@ async fn start_turn(
             if matches!(ev.event_type, SessionEventType::Init) {
                 if let Some(ps) = payload.get("acp_session_id").and_then(Value::as_str) {
                     let _ = store
-                        .update_session_provider_session_ref(
-                            session_id,
-                            Some(ps.to_string()),
-                        )
+                        .update_session_provider_session_ref(session_id, Some(ps.to_string()))
                         .await;
                 }
             }
@@ -331,8 +317,7 @@ async fn start_turn(
                 if let (Some(metrics), Some(obj)) =
                     (context_window_metrics.clone(), payload.as_object_mut())
                 {
-                    obj.entry("context_window")
-                        .or_insert(metrics);
+                    obj.entry("context_window").or_insert(metrics);
                     obj.entry("status").or_insert(json!("completed"));
                 }
             }
@@ -448,8 +433,13 @@ async fn start_turn(
                                 turn_id,
                                 event.created_at,
                             );
-                            let (delta_total, delta_pending, delta_running, delta_completed, delta_failed) =
-                                tool_count_deltas(prev.as_ref(), &merged);
+                            let (
+                                delta_total,
+                                delta_pending,
+                                delta_running,
+                                delta_completed,
+                                delta_failed,
+                            ) = tool_count_deltas(prev.as_ref(), &merged);
                             let _ = store.upsert_session_turn_tool(merged.clone()).await;
                             if delta_total != 0
                                 || delta_pending != 0
@@ -544,9 +534,7 @@ async fn start_turn(
                             .delete_session_events_for_turn_types(
                                 session_id,
                                 turn_id,
-                                &[
-                                    SessionEventType::AssistantChunk,
-                                ],
+                                &[SessionEventType::AssistantChunk],
                             )
                             .await;
                     }
@@ -629,9 +617,7 @@ async fn start_turn(
                             .delete_session_events_for_turn_types(
                                 session_id,
                                 turn_id,
-                                &[
-                                    SessionEventType::AssistantChunk,
-                                ],
+                                &[SessionEventType::AssistantChunk],
                             )
                             .await;
                     }
@@ -716,10 +702,16 @@ async fn build_rehydrate_transcript_block(
         };
         let mut content = m.content;
         if content.chars().count() > MAX_CHARS_PER_MESSAGE {
-            content = content.chars().take(MAX_CHARS_PER_MESSAGE).collect::<String>();
+            content = content
+                .chars()
+                .take(MAX_CHARS_PER_MESSAGE)
+                .collect::<String>();
             content.push_str("\n…(truncated)");
         }
-        text.push_str(&format!("[{}] {role}:\n{content}\n\n", m.created_at.to_rfc3339()));
+        text.push_str(&format!(
+            "[{}] {role}:\n{content}\n\n",
+            m.created_at.to_rfc3339()
+        ));
     }
 
     Ok(json!({
@@ -809,8 +801,7 @@ fn compute_context_window_metrics(
     let context_window_tokens = model_context_window(provider_id, model_id)?;
     let context_tokens_estimate = estimate_tokens(prompt);
     let remaining_tokens_estimate = context_window_tokens.saturating_sub(context_tokens_estimate);
-    let remaining_fraction =
-        remaining_tokens_estimate as f64 / context_window_tokens as f64;
+    let remaining_fraction = remaining_tokens_estimate as f64 / context_window_tokens as f64;
     Some(json!({
         "context_tokens_estimate": context_tokens_estimate,
         "context_window_tokens": context_window_tokens,
@@ -963,7 +954,13 @@ fn tool_count_deltas(
         }
     }
 
-    (delta_total, delta_pending, delta_running, delta_completed, delta_failed)
+    (
+        delta_total,
+        delta_pending,
+        delta_running,
+        delta_completed,
+        delta_failed,
+    )
 }
 
 fn tool_status_bucket(status: Option<&str>) -> Option<&'static str> {
@@ -1020,7 +1017,11 @@ fn tool_call_id_from_payload(payload: &Value) -> Option<String> {
     let from_raw = update
         .pointer("/rawInput/call_id")
         .and_then(|v| v.as_str())
-        .or_else(|| update.pointer("/raw_input/call_id").and_then(|v| v.as_str()));
+        .or_else(|| {
+            update
+                .pointer("/raw_input/call_id")
+                .and_then(|v| v.as_str())
+        });
     from_raw.map(|v| v.to_string())
 }
 
@@ -1029,10 +1030,22 @@ fn extract_tool_output_text(update: &Value) -> Option<String> {
         .get("outputText")
         .and_then(|v| v.as_str())
         .or_else(|| update.get("output_text").and_then(|v| v.as_str()))
-        .or_else(|| update.pointer("/toolCall/outputText").and_then(|v| v.as_str()))
-        .or_else(|| update.pointer("/toolCall/output_text").and_then(|v| v.as_str()))
+        .or_else(|| {
+            update
+                .pointer("/toolCall/outputText")
+                .and_then(|v| v.as_str())
+        })
+        .or_else(|| {
+            update
+                .pointer("/toolCall/output_text")
+                .and_then(|v| v.as_str())
+        })
         .or_else(|| update.get("result").and_then(|v| v.as_str()))
-        .or_else(|| update.pointer("/rawOutput/aggregated_output").and_then(|v| v.as_str()))
+        .or_else(|| {
+            update
+                .pointer("/rawOutput/aggregated_output")
+                .and_then(|v| v.as_str())
+        })
         .or_else(|| update.pointer("/rawOutput/output").and_then(|v| v.as_str()));
     if let Some(v) = direct {
         let trimmed = v.trim();
@@ -1044,7 +1057,11 @@ fn extract_tool_output_text(update: &Value) -> Option<String> {
     let blocks = update.get("content").and_then(|v| v.as_array())?;
     let mut out = String::new();
     for b in blocks {
-        if let Some(t) = b.get("content").and_then(|c| c.get("text")).and_then(|v| v.as_str()) {
+        if let Some(t) = b
+            .get("content")
+            .and_then(|c| c.get("text"))
+            .and_then(|v| v.as_str())
+        {
             out.push_str(t);
         } else if let Some(t) = b.get("text").and_then(|v| v.as_str()) {
             out.push_str(t);

@@ -140,7 +140,9 @@ edition = "2021"
     let sid_str = session.id.0.to_string();
     ws_stream
         .send(tokio_tungstenite::tungstenite::Message::Text(
-            json!({"type":"set","sessions":[{"session_id":sid_str.clone(),"after_seq":0}]}).to_string().into(),
+            json!({"type":"set","sessions":[{"session_id":sid_str.clone(),"after_seq":0}]})
+                .to_string()
+                .into(),
         ))
         .await
         .unwrap();
@@ -160,7 +162,9 @@ edition = "2021"
     let mut got = false;
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     while tokio::time::Instant::now() < deadline {
-        let Some(Ok(frame)) = ws_stream.next().await else { break };
+        let Some(Ok(frame)) = ws_stream.next().await else {
+            break;
+        };
         if let tokio_tungstenite::tungstenite::Message::Text(txt) = frame {
             let v: serde_json::Value = serde_json::from_str(&txt).unwrap_or(json!({}));
             if v.get("type").and_then(|t| t.as_str()) == Some("lsp_diagnostics") {

@@ -4,10 +4,10 @@ pub mod completions;
 pub mod daemon;
 pub mod dictation_livekit;
 pub mod edit_plans;
-pub mod installs;
 pub mod installer;
-pub mod lsp_catalog;
+pub mod installs;
 pub mod logs;
+pub mod lsp_catalog;
 pub mod provider_matrix;
 pub mod scheduler;
 pub mod settings;
@@ -23,13 +23,13 @@ mod tests {
 
     use axum::body::{to_bytes, Body};
     use axum::http::{Request, StatusCode};
+    use futures::StreamExt;
     use serde_json::json;
     use tokio::process::Command;
     use tower::ServiceExt;
-    use futures::StreamExt;
 
-    use context_providers::fake::FakeProviderAdapter;
     use context_providers::adapters::ProviderStatus;
+    use context_providers::fake::FakeProviderAdapter;
     use context_store::Store;
 
     use crate::api;
@@ -161,7 +161,10 @@ mod tests {
         let mut attempts = 0;
         loop {
             let msgs = store.list_messages_for_session(session.id).await.unwrap();
-            if msgs.iter().any(|m| matches!(m.role, context_core::models::MessageRole::Assistant)) {
+            if msgs
+                .iter()
+                .any(|m| matches!(m.role, context_core::models::MessageRole::Assistant))
+            {
                 break;
             }
             attempts += 1;
@@ -300,8 +303,7 @@ mod tests {
         let mut seen_done = false;
         while let Some(Ok(frame)) = ws_stream.next().await {
             if let tokio_tungstenite::tungstenite::Message::Text(txt) = frame {
-                let ev: context_core::models::SessionEvent =
-                    serde_json::from_str(&txt).unwrap();
+                let ev: context_core::models::SessionEvent = serde_json::from_str(&txt).unwrap();
                 if matches!(ev.event_type, context_core::models::SessionEventType::Done) {
                     seen_done = true;
                     break;
@@ -311,9 +313,10 @@ mod tests {
         assert!(seen_done);
 
         let events = store.list_session_events(session.id).await.unwrap();
-        assert!(events
-            .iter()
-            .any(|e| matches!(e.event_type, context_core::models::SessionEventType::UserMessage)));
+        assert!(events.iter().any(|e| matches!(
+            e.event_type,
+            context_core::models::SessionEventType::UserMessage
+        )));
 
         // mark task read/unread endpoints
         let task_after_read: context_core::models::Task = client

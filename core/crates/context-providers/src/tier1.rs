@@ -127,17 +127,15 @@ impl ProviderAdapter for Tier1AcpAdapter {
 
         let mut diagnostics = Vec::new();
         if !installed {
-            diagnostics.push(format!(
-                "ACP agent executable not found: {}",
-                self.command
-            ));
+            diagnostics.push(format!("ACP agent executable not found: {}", self.command));
         }
 
         if installed {
             // Managed installs commonly run `node <script> ...`; ensure the script exists.
             if let Some(first) = self.args.first() {
                 let p = std::path::Path::new(first);
-                if (self.command.ends_with("/node") || self.command.ends_with("\\node")) && !p.exists()
+                if (self.command.ends_with("/node") || self.command.ends_with("\\node"))
+                    && !p.exists()
                 {
                     installed = false;
                     diagnostics.push(format!(
@@ -201,7 +199,9 @@ impl ProviderAdapter for Tier1AcpAdapter {
                         data_base64,
                         ..
                     } => {
-                        prompt.push(json!({"type":"image","data": data_base64, "mimeType": mime_type}));
+                        prompt.push(
+                            json!({"type":"image","data": data_base64, "mimeType": mime_type}),
+                        );
                     }
                     context_core::models::MessageAttachment::ImageRef {
                         blob_id,
@@ -244,9 +244,10 @@ impl ProviderAdapter for Tier1AcpAdapter {
                             }
                         };
 
-                        let data_base64 =
-                            base64::engine::general_purpose::STANDARD.encode(bytes);
-                        prompt.push(json!({"type":"image","data": data_base64, "mimeType": mime_type}));
+                        let data_base64 = base64::engine::general_purpose::STANDARD.encode(bytes);
+                        prompt.push(
+                            json!({"type":"image","data": data_base64, "mimeType": mime_type}),
+                        );
                     }
                 }
             }
@@ -266,7 +267,7 @@ impl ProviderAdapter for Tier1AcpAdapter {
                     event_sink.clone(),
                     cancel_rx,
                 )
-            .await
+                .await
             {
                 let _ = event_sink
                     .send(NormalizedEvent {
@@ -379,9 +380,20 @@ async fn embed_at_file_refs(workdir: &PathBuf, input: &str) -> Result<Vec<serde_
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     for tok in input.split_whitespace() {
-        let Some(rest) = tok.strip_prefix('@') else { continue };
+        let Some(rest) = tok.strip_prefix('@') else {
+            continue;
+        };
         let path = rest
-            .trim_matches(|c: char| c == '"' || c == '\'' || c == ')' || c == '(' || c == ',' || c == '.' || c == ';' || c == ':' )
+            .trim_matches(|c: char| {
+                c == '"'
+                    || c == '\''
+                    || c == ')'
+                    || c == '('
+                    || c == ','
+                    || c == '.'
+                    || c == ';'
+                    || c == ':'
+            })
             .to_string();
         if path.is_empty() {
             continue;
@@ -395,7 +407,9 @@ async fn embed_at_file_refs(workdir: &PathBuf, input: &str) -> Result<Vec<serde_
         } else {
             root.join(&path)
         };
-        let Ok(canon) = candidate.canonicalize() else { continue };
+        let Ok(canon) = candidate.canonicalize() else {
+            continue;
+        };
         if !canon.starts_with(&root) {
             continue;
         }
@@ -405,7 +419,11 @@ async fn embed_at_file_refs(workdir: &PathBuf, input: &str) -> Result<Vec<serde_
             Err(_) => continue,
         };
         const MAX: usize = 200 * 1024;
-        let bytes = if bytes.len() > MAX { &bytes[..MAX] } else { &bytes[..] };
+        let bytes = if bytes.len() > MAX {
+            &bytes[..MAX]
+        } else {
+            &bytes[..]
+        };
         let text = String::from_utf8_lossy(bytes).to_string();
         let uri = format!("file://{}", canon.to_string_lossy());
         out.push(json!({

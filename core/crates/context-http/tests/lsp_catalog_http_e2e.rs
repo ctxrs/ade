@@ -45,9 +45,7 @@ async fn lsp_catalog_install_from_file_url_updates_config() {
         "fake/bin/fake-ls",
         b"#!/usr/bin/env bash\necho ok\n",
     );
-    let archive_url = url::Url::from_file_path(&archive_path)
-        .unwrap()
-        .to_string();
+    let archive_url = url::Url::from_file_path(&archive_path).unwrap().to_string();
     let catalog_path = lsp_dir.join("catalog.json");
     let catalog = json!({
         "version": 1,
@@ -69,9 +67,12 @@ async fn lsp_catalog_install_from_file_url_updates_config() {
             }
         }]
     });
-    tokio::fs::write(&catalog_path, serde_json::to_string_pretty(&catalog).unwrap())
-        .await
-        .unwrap();
+    tokio::fs::write(
+        &catalog_path,
+        serde_json::to_string_pretty(&catalog).unwrap(),
+    )
+    .await
+    .unwrap();
 
     let state = Arc::new(AppState::new(
         data_dir.path().to_path_buf(),

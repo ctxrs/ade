@@ -37,4 +37,5 @@ id_type!(MessageId);
 id_type!(SessionEventId);
 id_type!(RunId);
 id_type!(TurnId);
-
+id_type!(ConnectionProfileId);
+id_type!(MobileDeviceId);

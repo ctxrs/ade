@@ -132,14 +132,20 @@ async fn global_stream_replays_from_db_and_resumes_by_seq() {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
     loop {
         let evs: Vec<context_core::models::SessionEvent> = client
-            .get(format!("{base}/api/sessions/{}/events?tail=50", session.id.0))
+            .get(format!(
+                "{base}/api/sessions/{}/events?tail=50",
+                session.id.0
+            ))
             .send()
             .await
             .unwrap()
             .json()
             .await
             .unwrap();
-        if evs.iter().any(|e| matches!(e.event_type, context_core::models::SessionEventType::Done)) {
+        if evs
+            .iter()
+            .any(|e| matches!(e.event_type, context_core::models::SessionEventType::Done))
+        {
             break;
         }
         if tokio::time::Instant::now() > deadline {
@@ -154,7 +160,9 @@ async fn global_stream_replays_from_db_and_resumes_by_seq() {
     let sid_str = session.id.0.to_string();
     stream
         .send(tokio_tungstenite::tungstenite::Message::Text(
-            json!({"type":"set","sessions":[{"session_id":sid_str,"after_seq":0}]}).to_string().into(),
+            json!({"type":"set","sessions":[{"session_id":sid_str,"after_seq":0}]})
+                .to_string()
+                .into(),
         ))
         .await
         .unwrap();
@@ -163,7 +171,9 @@ async fn global_stream_replays_from_db_and_resumes_by_seq() {
     let mut saw_done = false;
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     while tokio::time::Instant::now() < deadline {
-        let Some(Ok(frame)) = stream.next().await else { break };
+        let Some(Ok(frame)) = stream.next().await else {
+            break;
+        };
         if let tokio_tungstenite::tungstenite::Message::Text(txt) = frame {
             let ev: context_core::models::SessionEvent = serde_json::from_str(&txt).unwrap();
             last_seq = last_seq.max(ev.seq);
@@ -187,8 +197,10 @@ async fn global_stream_replays_from_db_and_resumes_by_seq() {
         .unwrap();
 
     let no_frame = tokio::time::timeout(Duration::from_millis(250), stream2.next()).await;
-    assert!(no_frame.is_err(), "unexpected replay when resuming from last_seq");
+    assert!(
+        no_frame.is_err(),
+        "unexpected replay when resuming from last_seq"
+    );
 
     server.abort();
 }
-

@@ -195,7 +195,10 @@ pub async fn git_apply_patch(
             .context("writing patch to git apply stdin")?;
     }
 
-    let output = child.wait_with_output().await.context("waiting for git apply")?;
+    let output = child
+        .wait_with_output()
+        .await
+        .context("waiting for git apply")?;
     if !output.status.success() {
         bail!(
             "git apply failed: {}",

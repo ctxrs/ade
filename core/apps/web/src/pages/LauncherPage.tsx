@@ -1,6 +1,18 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { createWorkspace, getDaemonBaseUrl, idToString, listWorkspaces, setDaemonBaseUrl } from "../api/client";
+import {
+  createMobileConnectionProfile,
+  createWorkspace,
+  deleteMobileConnectionProfile,
+  getDaemonBaseUrl,
+  idToString,
+  listMobileConnectionProfiles,
+  listWorkspaces,
+  setDaemonBaseUrl,
+  type CreateMobileProfileResponse,
+  type MobileConnectionProfile,
+} from "../api/client";
+import { QRCodeSVG } from "qrcode.react";
 import {
   desktopConnectLocal,
   desktopConnectSsh,
@@ -97,6 +109,15 @@ export default function LauncherPage() {
   const [recents, setRecents] = useState<RecentEntry[]>(() => loadRecents());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [mobileProfiles, setMobileProfiles] = useState<MobileConnectionProfile[]>([]);
+  const [mobileProfilesLoading, setMobileProfilesLoading] = useState(true);
+  const [mobileProfilesError, setMobileProfilesError] = useState<string | null>(null);
+  const [mobileCreateOpen, setMobileCreateOpen] = useState(false);
+  const [mobileCreateBusy, setMobileCreateBusy] = useState(false);
+  const [mobileCreateError, setMobileCreateError] = useState<string | null>(null);
+  const [mobileLabel, setMobileLabel] = useState("");
+  const [mobileBaseUrl, setMobileBaseUrl] = useState("");
+  const [qrModal, setQrModal] = useState<CreateMobileProfileResponse | null>(null);
 
   const isDesktop = isDesktopApp();
 
@@ -116,6 +137,23 @@ export default function LauncherPage() {
   useEffect(() => {
     setRecents(loadRecents());
   }, [busy]);
+
+  const loadMobileProfiles = useCallback(async () => {
+    setMobileProfilesLoading(true);
+    setMobileProfilesError(null);
+    try {
+      const profiles = await listMobileConnectionProfiles();
+      setMobileProfiles(profiles);
+    } catch (e: any) {
+      setMobileProfilesError(e?.message ?? String(e));
+    } finally {
+      setMobileProfilesLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadMobileProfiles();
+  }, [loadMobileProfiles]);
 
   const connectedLabel = useMemo(() => {
     if (!connection || connection.kind === "none") return "Not connected";
@@ -240,7 +278,58 @@ export default function LauncherPage() {
     }
   };
 
+  const openCreateMobileModal = () => {
+    setMobileCreateError(null);
+    setMobileLabel("");
+    setMobileBaseUrl(connection?.base_url ?? getDaemonBaseUrl() ?? "");
+    setMobileCreateOpen(true);
+  };
+
+  const closeCreateMobileModal = () => {
+    if (!mobileCreateBusy) setMobileCreateOpen(false);
+  };
+
+  const submitMobileProfile = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!mobileLabel.trim() || !mobileBaseUrl.trim()) {
+      setMobileCreateError("Label and base URL are required.");
+      return;
+    }
+    setMobileCreateBusy(true);
+    setMobileCreateError(null);
+    try {
+      const resp = await createMobileConnectionProfile({
+        label: mobileLabel.trim(),
+        base_url: mobileBaseUrl.trim(),
+      });
+      setQrModal(resp);
+      setMobileCreateOpen(false);
+      setMobileLabel("");
+      setMobileBaseUrl("");
+      await loadMobileProfiles();
+    } catch (e: any) {
+      setMobileCreateError(e?.message ?? String(e));
+    } finally {
+      setMobileCreateBusy(false);
+    }
+  };
+
+  const onRevokeMobileProfile = async (profile: MobileConnectionProfile) => {
+    if (!window.confirm(`Revoke mobile access for “${profile.label}”?`)) {
+      return;
+    }
+    try {
+      await deleteMobileConnectionProfile(profile.id);
+      await loadMobileProfiles();
+    } catch (e: any) {
+      setMobileProfilesError(e?.message ?? String(e));
+    }
+  };
+
+  const closeQrModal = () => setQrModal(null);
+
   return (
+    <>
     <div className="page">
       <div className="row" style={{ alignItems: "baseline" }}>
         <h1 style={{ marginRight: "auto" }}>Context</h1>
@@ -288,6 +377,45 @@ export default function LauncherPage() {
         </ul>
       </div>
 
+      <div className="card" style={{ marginTop: 18 }}>
+        <div className="row" style={{ alignItems: "center" }}>
+          <strong>Mobile connections</strong>
+          <button type="button" onClick={openCreateMobileModal} disabled={mobileCreateBusy}>
+            Enable mobile
+          </button>
+        </div>
+        <p className="muted" style={{ marginTop: 4 }}>
+          Generate HTTPS + API-token QR codes for the Expo app. Tokens are only shown once.
+        </p>
+        {mobileProfilesError && <div className="error" style={{ marginTop: 6 }}>{mobileProfilesError}</div>}
+        <div style={{ marginTop: 12 }}>
+          {mobileProfilesLoading ? (
+            <div className="muted">Loading profiles…</div>
+          ) : mobileProfiles.length === 0 ? (
+            <div className="muted">No mobile profiles yet.</div>
+          ) : (
+            <div style={{ display: "grid", gap: 12 }}>
+              {mobileProfiles.map((profile) => (
+                <div key={profile.id} className="mobile-profile-row">
+                  <div>
+                    <div style={{ fontWeight: 600 }}>{profile.label}</div>
+                    <div className="muted">{profile.base_url}</div>
+                    <div className="muted">Token prefix: {profile.token_prefix}</div>
+                    <div className="muted">Created {formatDate(profile.created_at)}</div>
+                    {profile.last_used_at && (
+                      <div className="muted">Last used {formatDate(profile.last_used_at)}</div>
+                    )}
+                  </div>
+                  <button type="button" onClick={() => onRevokeMobileProfile(profile)}>
+                    Revoke
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
       <form id="ssh-form" onSubmit={onConnectSsh} className="card" style={{ marginTop: 18 }}>
         <div className="row">
           <strong>Connect via SSH</strong>
@@ -329,11 +457,63 @@ export default function LauncherPage() {
           </button>
         </div>
 
-        <div className="muted" style={{ marginTop: 10 }}>
-          Uses SSH port forwarding to connect to a daemon bound on the remote host’s <code>127.0.0.1</code>.
+      <div className="muted" style={{ marginTop: 10 }}>
+        Uses SSH port forwarding to connect to a daemon bound on the remote host’s <code>127.0.0.1</code>.
+      </div>
+    </form>
+
+    {mobileCreateOpen && (
+      <div className="modal-overlay">
+        <div className="modal">
+          <h3>Enable mobile connection</h3>
+          <form onSubmit={submitMobileProfile} style={{ display: "grid", gap: 12 }}>
+            <label>
+              <div className="muted">Label</div>
+              <input value={mobileLabel} onChange={(e) => setMobileLabel(e.target.value)} placeholder="Home devbox" />
+            </label>
+            <label>
+              <div className="muted">HTTPS base URL</div>
+              <input
+                value={mobileBaseUrl}
+                onChange={(e) => setMobileBaseUrl(e.target.value)}
+                placeholder="https://devbox.example.com"
+              />
+            </label>
+            {mobileCreateError && <div className="error">{mobileCreateError}</div>}
+            <div className="modal-actions">
+              <button type="button" onClick={closeCreateMobileModal} disabled={mobileCreateBusy}>
+                Cancel
+              </button>
+              <button type="submit" disabled={mobileCreateBusy}>
+                {mobileCreateBusy ? "Creating…" : "Create"}
+              </button>
+            </div>
+          </form>
         </div>
-      </form>
+      </div>
+    )}
+
+    {qrModal && (
+      <div className="modal-overlay">
+        <div className="modal">
+          <h3>Scan with Context mobile</h3>
+          <p className="muted">
+            Scan this QR in the Expo app or copy the token below. Store it securely—it's only shown once.
+          </p>
+          <div style={{ display: "flex", justifyContent: "center", marginBottom: 12 }}>
+            <QRCodeSVG value={JSON.stringify(qrModal.qr_payload)} size={220} bgColor="transparent" fgColor="#f5f7ff" />
+          </div>
+          <div className="mobile-token">{qrModal.token}</div>
+          <div className="modal-actions" style={{ marginTop: 16 }}>
+            <button type="button" onClick={closeQrModal}>
+              Close
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
     </div>
+    </>
   );
 }
 
@@ -341,4 +521,10 @@ function lastSegment(path: string): string {
   const s = String(path || "").trim().replace(/\/+$/, "");
   const idx = s.lastIndexOf("/");
   return idx >= 0 ? s.slice(idx + 1) : s;
+}
+
+function formatDate(value?: string | null): string {
+  if (!value) return "never";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
 }

@@ -2,9 +2,10 @@ use std::io::{Read, Write};
 
 use lsp_types::{
     CodeAction, CodeActionKind, Command, Diagnostic, DiagnosticSeverity, Location, NumberOrString,
-    Position, PublishDiagnosticsParams, Range, SymbolKind, TextEdit, TypeHierarchyItem, Uri, WorkspaceEdit,
+    Position, PublishDiagnosticsParams, Range, SymbolKind, TextEdit, TypeHierarchyItem, Uri,
+    WorkspaceEdit,
 };
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 fn main() {
     // Minimal stdio LSP server used for workspace tests. Not shipped or used in production.
@@ -21,43 +22,43 @@ fn main() {
         };
 
         if msg.get("method").and_then(|v| v.as_str()) == Some("initialize") {
-	            if let Some(id) = msg.get("id").cloned() {
-	                write_response(
-	                    &mut output,
-	                    json!({
-                        "jsonrpc":"2.0",
-                        "id": id,
-                        "result": {
-	                            "capabilities": {
-	                                "textDocumentSync": 1,
-	                                "definitionProvider": true,
-	                                "typeDefinitionProvider": true,
-	                                "implementationProvider": true,
-	                                "referencesProvider": true,
-	                                "hoverProvider": true,
-	                                "signatureHelpProvider": true,
-	                                "completionProvider": true,
-	                                "documentLinkProvider": { "resolveProvider": true },
-	                                "inlayHintProvider": true,
-	                                "documentHighlightProvider": true,
-	                                "selectionRangeProvider": true,
-	                                "callHierarchyProvider": true,
-	                                "typeHierarchyProvider": true,
-	                                "semanticTokensProvider": { "full": true, "legend": { "tokenTypes": [], "tokenModifiers": [] } },
-	                                "codeLensProvider": { "resolveProvider": true },
-	                                "executeCommandProvider": { "commands": ["context.test.fixAll"] },
-	                                "documentSymbolProvider": true,
-	                                "workspaceSymbolProvider": true,
-	                                "renameProvider": { "prepareProvider": true },
-	                                "documentFormattingProvider": true,
-	                                "codeActionProvider": true
-	                            }
-	                        }
-	                    }),
-	                );
-	            }
-	            continue;
-	        }
+            if let Some(id) = msg.get("id").cloned() {
+                write_response(
+                    &mut output,
+                    json!({
+                    "jsonrpc":"2.0",
+                    "id": id,
+                    "result": {
+                            "capabilities": {
+                                "textDocumentSync": 1,
+                                "definitionProvider": true,
+                                "typeDefinitionProvider": true,
+                                "implementationProvider": true,
+                                "referencesProvider": true,
+                                "hoverProvider": true,
+                                "signatureHelpProvider": true,
+                                "completionProvider": true,
+                                "documentLinkProvider": { "resolveProvider": true },
+                                "inlayHintProvider": true,
+                                "documentHighlightProvider": true,
+                                "selectionRangeProvider": true,
+                                "callHierarchyProvider": true,
+                                "typeHierarchyProvider": true,
+                                "semanticTokensProvider": { "full": true, "legend": { "tokenTypes": [], "tokenModifiers": [] } },
+                                "codeLensProvider": { "resolveProvider": true },
+                                "executeCommandProvider": { "commands": ["context.test.fixAll"] },
+                                "documentSymbolProvider": true,
+                                "workspaceSymbolProvider": true,
+                                "renameProvider": { "prepareProvider": true },
+                                "documentFormattingProvider": true,
+                                "codeActionProvider": true
+                            }
+                        }
+                    }),
+                );
+            }
+            continue;
+        }
 
         if msg.get("method").and_then(|v| v.as_str()) == Some("shutdown") {
             if let Some(id) = msg.get("id").cloned() {
@@ -112,8 +113,14 @@ fn main() {
 
             let diag = Diagnostic {
                 range: Range {
-                    start: Position { line: 1, character: 0 },
-                    end: Position { line: 1, character: 1 },
+                    start: Position {
+                        line: 1,
+                        character: 0,
+                    },
+                    end: Position {
+                        line: 1,
+                        character: 1,
+                    },
                 },
                 severity: Some(DiagnosticSeverity::ERROR),
                 code: Some(NumberOrString::String("CTX_TEST".into())),
@@ -126,7 +133,11 @@ fn main() {
             };
 
             let params = PublishDiagnosticsParams {
-                uri: uri.as_str().unwrap_or("file:///unknown.rs").parse().unwrap(),
+                uri: uri
+                    .as_str()
+                    .unwrap_or("file:///unknown.rs")
+                    .parse()
+                    .unwrap(),
                 diagnostics: vec![diag],
                 version: None,
             };
@@ -185,8 +196,14 @@ fn main() {
                     let loc = Location {
                         uri,
                         range: Range {
-                            start: Position { line: 0, character: 0 },
-                            end: Position { line: 0, character: 1 },
+                            start: Position {
+                                line: 0,
+                                character: 0,
+                            },
+                            end: Position {
+                                line: 0,
+                                character: 1,
+                            },
                         },
                     };
                     json!([loc])
@@ -197,8 +214,14 @@ fn main() {
                     let loc = Location {
                         uri,
                         range: Range {
-                            start: Position { line: 0, character: 0 },
-                            end: Position { line: 0, character: 1 },
+                            start: Position {
+                                line: 0,
+                                character: 0,
+                            },
+                            end: Position {
+                                line: 0,
+                                character: 1,
+                            },
                         },
                     };
                     json!([loc])
@@ -209,8 +232,14 @@ fn main() {
                     let loc = Location {
                         uri,
                         range: Range {
-                            start: Position { line: 0, character: 0 },
-                            end: Position { line: 0, character: 1 },
+                            start: Position {
+                                line: 0,
+                                character: 0,
+                            },
+                            end: Position {
+                                line: 0,
+                                character: 1,
+                            },
                         },
                     };
                     json!([loc])
@@ -221,8 +250,14 @@ fn main() {
                     let loc = Location {
                         uri,
                         range: Range {
-                            start: Position { line: 1, character: 0 },
-                            end: Position { line: 1, character: 1 },
+                            start: Position {
+                                line: 1,
+                                character: 0,
+                            },
+                            end: Position {
+                                line: 1,
+                                character: 1,
+                            },
                         },
                     };
                     json!([loc])
@@ -273,8 +308,14 @@ fn main() {
                                 uri,
                                 vec![TextEdit {
                                     range: Range {
-                                        start: Position { line: 0, character: 0 },
-                                        end: Position { line: 0, character: 0 },
+                                        start: Position {
+                                            line: 0,
+                                            character: 0,
+                                        },
+                                        end: Position {
+                                            line: 0,
+                                            character: 0,
+                                        },
                                     },
                                     new_text: "// resolved code action\n".to_string(),
                                 }],
@@ -335,7 +376,10 @@ fn main() {
                 "codeLens/resolve" => {
                     let mut lens = msg.get("params").cloned().unwrap_or(json!({}));
                     if let Some(obj) = lens.as_object_mut() {
-                        obj.insert("command".to_string(), json!({ "title": "Run (resolved)", "command": "run" }));
+                        obj.insert(
+                            "command".to_string(),
+                            json!({ "title": "Run (resolved)", "command": "run" }),
+                        );
                     }
                     lens
                 }
@@ -350,8 +394,14 @@ fn main() {
                                 uri,
                                 vec![TextEdit {
                                     range: Range {
-                                        start: Position { line: 0, character: 0 },
-                                        end: Position { line: 0, character: 0 },
+                                        start: Position {
+                                            line: 0,
+                                            character: 0,
+                                        },
+                                        end: Position {
+                                            line: 0,
+                                            character: 0,
+                                        },
                                     },
                                     new_text: "RENAMED_".to_string(),
                                 }],
@@ -363,15 +413,19 @@ fn main() {
                     };
                     json!(edit)
                 }
-                "textDocument/formatting" => json!([
-                    TextEdit {
-                        range: Range {
-                            start: Position { line: 0, character: 0 },
-                            end: Position { line: 0, character: 0 },
+                "textDocument/formatting" => json!([TextEdit {
+                    range: Range {
+                        start: Position {
+                            line: 0,
+                            character: 0
                         },
-                        new_text: "// formatted\n".to_string(),
-                    }
-                ]),
+                        end: Position {
+                            line: 0,
+                            character: 0
+                        },
+                    },
+                    new_text: "// formatted\n".to_string(),
+                }]),
                 "textDocument/codeAction" => {
                     let uri: lsp_types::Uri = uri_from_params(&msg)
                         .unwrap_or_else(|| "file:///unknown.rs".parse().unwrap());
@@ -381,8 +435,14 @@ fn main() {
                                 uri,
                                 vec![TextEdit {
                                     range: Range {
-                                        start: Position { line: 0, character: 0 },
-                                        end: Position { line: 0, character: 0 },
+                                        start: Position {
+                                            line: 0,
+                                            character: 0,
+                                        },
+                                        end: Position {
+                                            line: 0,
+                                            character: 0,
+                                        },
                                     },
                                     new_text: "// fix\n".to_string(),
                                 }],
@@ -464,23 +524,43 @@ fn main() {
                         detail: None,
                         uri,
                         range: Range {
-                            start: Position { line: 0, character: 0 },
-                            end: Position { line: 0, character: 1 },
+                            start: Position {
+                                line: 0,
+                                character: 0,
+                            },
+                            end: Position {
+                                line: 0,
+                                character: 1,
+                            },
                         },
                         selection_range: Range {
-                            start: Position { line: 0, character: 0 },
-                            end: Position { line: 0, character: 1 },
+                            start: Position {
+                                line: 0,
+                                character: 0,
+                            },
+                            end: Position {
+                                line: 0,
+                                character: 1,
+                            },
                         },
                         data: None,
                     };
                     json!([item])
                 }
                 "typeHierarchy/supertypes" => {
-                    let item = msg.get("params").and_then(|p| p.get("item")).cloned().unwrap_or(json!({}));
+                    let item = msg
+                        .get("params")
+                        .and_then(|p| p.get("item"))
+                        .cloned()
+                        .unwrap_or(json!({}));
                     json!([item])
                 }
                 "typeHierarchy/subtypes" => {
-                    let item = msg.get("params").and_then(|p| p.get("item")).cloned().unwrap_or(json!({}));
+                    let item = msg
+                        .get("params")
+                        .and_then(|p| p.get("item"))
+                        .cloned()
+                        .unwrap_or(json!({}));
                     json!([item])
                 }
                 _ => Value::Null,

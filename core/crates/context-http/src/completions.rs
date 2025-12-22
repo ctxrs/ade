@@ -120,7 +120,10 @@ mod tests {
         ];
 
         let out = filter_and_rank_paths(&paths, "sess", 10);
-        assert_eq!(out.first().map(|s| s.as_str()), Some("src/pages/SessionPage.tsx"));
+        assert_eq!(
+            out.first().map(|s| s.as_str()),
+            Some("src/pages/SessionPage.tsx")
+        );
     }
 
     #[test]
@@ -139,7 +142,11 @@ mod tests {
 
     #[test]
     fn returns_deterministic_order_for_empty_query() {
-        let paths = vec!["b.txt".to_string(), "a.txt".to_string(), "c.txt".to_string()];
+        let paths = vec![
+            "b.txt".to_string(),
+            "a.txt".to_string(),
+            "c.txt".to_string(),
+        ];
         let out = filter_and_rank_paths(&paths, "", 2);
         // With equal score, shorter/lex order picks deterministically.
         assert_eq!(out.len(), 2);
@@ -152,4 +159,3 @@ mod tests {
         assert!(out.is_empty());
     }
 }
-

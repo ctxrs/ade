@@ -1,7 +1,7 @@
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Instant;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
 use axum::extract::ws::{Message as WsMessage, WebSocket};
@@ -11,14 +11,14 @@ use futures::{SinkExt, StreamExt};
 use jsonwebtoken::{EncodingKey, Header};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use tokio_tungstenite::tungstenite::http::header::AUTHORIZATION;
+use tokio::sync::Mutex;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+use tokio_tungstenite::tungstenite::http::header::AUTHORIZATION;
 use tokio_tungstenite::tungstenite::http::HeaderValue;
 use tokio_tungstenite::tungstenite::Message as TMessage;
 use tokio_tungstenite::MaybeTlsStream;
 use tokio_tungstenite::WebSocketStream;
 use url::Url;
-use tokio::sync::Mutex;
 
 use crate::daemon::AppState;
 use crate::settings::{self, DictationProvider, LiveKitDictationSettings};
@@ -72,10 +72,12 @@ fn ws_url_for_inference(base_url: &str) -> anyhow::Result<Url> {
     let mut url = Url::parse(base_url).context("invalid base_url")?;
     match url.scheme() {
         "http" => {
-            url.set_scheme("ws").map_err(|_| anyhow::anyhow!("failed to set ws scheme"))?;
+            url.set_scheme("ws")
+                .map_err(|_| anyhow::anyhow!("failed to set ws scheme"))?;
         }
         "https" => {
-            url.set_scheme("wss").map_err(|_| anyhow::anyhow!("failed to set wss scheme"))?;
+            url.set_scheme("wss")
+                .map_err(|_| anyhow::anyhow!("failed to set wss scheme"))?;
         }
         "ws" | "wss" => {}
         other => anyhow::bail!("unsupported base_url scheme: {other}"),
@@ -107,15 +109,26 @@ async fn connect_livekit_inference_stt(
 
     let url = ws_url_for_inference(&cfg.base_url)?;
     let mut req = url.as_str().into_client_request()?;
-    req.headers_mut()
-        .insert(AUTHORIZATION, HeaderValue::from_str(&format!("Bearer {token}"))?);
+    req.headers_mut().insert(
+        AUTHORIZATION,
+        HeaderValue::from_str(&format!("Bearer {token}"))?,
+    );
 
     let (mut ws, _) = tokio_tungstenite::connect_async(req).await?;
 
     let mut settings = serde_json::Map::new();
-    settings.insert("sample_rate".to_string(), serde_json::Value::String("16000".to_string()));
-    settings.insert("encoding".to_string(), serde_json::Value::String("pcm_s16le".to_string()));
-    settings.insert("extra".to_string(), serde_json::Value::Object(serde_json::Map::new()));
+    settings.insert(
+        "sample_rate".to_string(),
+        serde_json::Value::String("16000".to_string()),
+    );
+    settings.insert(
+        "encoding".to_string(),
+        serde_json::Value::String("pcm_s16le".to_string()),
+    );
+    settings.insert(
+        "extra".to_string(),
+        serde_json::Value::Object(serde_json::Map::new()),
+    );
     if !cfg.language.trim().is_empty() {
         settings.insert(
             "language".to_string(),
@@ -124,7 +137,10 @@ async fn connect_livekit_inference_stt(
     }
 
     let mut session_create = serde_json::Map::new();
-    session_create.insert("type".to_string(), serde_json::Value::String("session.create".to_string()));
+    session_create.insert(
+        "type".to_string(),
+        serde_json::Value::String("session.create".to_string()),
+    );
     session_create.insert("settings".to_string(), serde_json::Value::Object(settings));
     session_create.insert(
         "model".to_string(),
@@ -134,7 +150,7 @@ async fn connect_livekit_inference_stt(
     ws.send(TMessage::Text(
         serde_json::Value::Object(session_create).to_string().into(),
     ))
-        .await?;
+    .await?;
     // tungstenite 0.26 uses an internal Utf8Bytes type
     // (String implements Into<Utf8Bytes>).
 
@@ -151,7 +167,9 @@ pub async fn dictation_livekit_stream(mut socket: WebSocket, state: std::sync::A
                     r#type: "error",
                     message: "Dictation settings not configured.".to_string(),
                 })
-                .unwrap_or_else(|_| "{\"type\":\"error\",\"message\":\"dictation unavailable\"}".to_string()),
+                .unwrap_or_else(|_| {
+                    "{\"type\":\"error\",\"message\":\"dictation unavailable\"}".to_string()
+                }),
             ))
             .await;
         return;
@@ -164,7 +182,9 @@ pub async fn dictation_livekit_stream(mut socket: WebSocket, state: std::sync::A
                     r#type: "error",
                     message: "Dictation is disabled.".to_string(),
                 })
-                .unwrap_or_else(|_| "{\"type\":\"error\",\"message\":\"dictation disabled\"}".to_string()),
+                .unwrap_or_else(|_| {
+                    "{\"type\":\"error\",\"message\":\"dictation disabled\"}".to_string()
+                }),
             ))
             .await;
         return;
@@ -177,7 +197,9 @@ pub async fn dictation_livekit_stream(mut socket: WebSocket, state: std::sync::A
                     r#type: "error",
                     message: "LiveKit dictation settings not configured.".to_string(),
                 })
-                .unwrap_or_else(|_| "{\"type\":\"error\",\"message\":\"missing livekit config\"}".to_string()),
+                .unwrap_or_else(|_| {
+                    "{\"type\":\"error\",\"message\":\"missing livekit config\"}".to_string()
+                }),
             ))
             .await;
         return;
@@ -194,9 +216,12 @@ pub async fn dictation_livekit_stream(mut socket: WebSocket, state: std::sync::A
             .send(WsMessage::Text(
                 serde_json::to_string(&ErrorMsg {
                     r#type: "error",
-                    message: "LiveKit API credentials missing. Configure them in Settings.".to_string(),
+                    message: "LiveKit API credentials missing. Configure them in Settings."
+                        .to_string(),
                 })
-                .unwrap_or_else(|_| "{\"type\":\"error\",\"message\":\"missing credentials\"}".to_string()),
+                .unwrap_or_else(|_| {
+                    "{\"type\":\"error\",\"message\":\"missing credentials\"}".to_string()
+                }),
             ))
             .await;
         return;
@@ -215,7 +240,9 @@ pub async fn dictation_livekit_stream(mut socket: WebSocket, state: std::sync::A
                         r#type: "error",
                         message: format!("Failed to connect to LiveKit Inference STT: {e:#}"),
                     })
-                    .unwrap_or_else(|_| "{\"type\":\"error\",\"message\":\"connect failed\"}".to_string()),
+                    .unwrap_or_else(|_| {
+                        "{\"type\":\"error\",\"message\":\"connect failed\"}".to_string()
+                    }),
                 ))
                 .await;
             return;
@@ -249,7 +276,9 @@ pub async fn dictation_livekit_stream(mut socket: WebSocket, state: std::sync::A
                         let _ = client_tx_send
                             .lock()
                             .await
-                            .send(WsMessage::Text(json!({ "type": "audio_started" }).to_string()))
+                            .send(WsMessage::Text(
+                                json!({ "type": "audio_started" }).to_string(),
+                            ))
                             .await;
                     }
                     let audio = BASE64.encode(bytes);
@@ -272,7 +301,11 @@ pub async fn dictation_livekit_stream(mut socket: WebSocket, state: std::sync::A
                     }
                 }
                 WsMessage::Ping(payload) => {
-                    let _ = client_tx_send.lock().await.send(WsMessage::Pong(payload)).await;
+                    let _ = client_tx_send
+                        .lock()
+                        .await
+                        .send(WsMessage::Pong(payload))
+                        .await;
                 }
                 WsMessage::Close(_) => {
                     if !finalized {
@@ -318,7 +351,9 @@ pub async fn dictation_livekit_stream(mut socket: WebSocket, state: std::sync::A
             let Ok(msg) = item else { break };
             match msg {
                 TMessage::Text(text) => {
-                    let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else { continue };
+                    let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else {
+                        continue;
+                    };
                     let msg_type = v.get("type").and_then(|t| t.as_str()).unwrap_or("");
                     match msg_type {
                         "interim_transcript" | "final_transcript" => {
@@ -332,7 +367,13 @@ pub async fn dictation_livekit_stream(mut socket: WebSocket, state: std::sync::A
                                 "text": v.get("transcript").and_then(|t| t.as_str()).unwrap_or(""),
                                 "language": v.get("language").and_then(|t| t.as_str()).unwrap_or(""),
                             });
-                            if client_tx_recv.lock().await.send(WsMessage::Text(out.to_string())).await.is_err() {
+                            if client_tx_recv
+                                .lock()
+                                .await
+                                .send(WsMessage::Text(out.to_string()))
+                                .await
+                                .is_err()
+                            {
                                 break;
                             }
                         }
@@ -342,7 +383,11 @@ pub async fn dictation_livekit_stream(mut socket: WebSocket, state: std::sync::A
                                 "type": "error",
                                 "message": v.get("message").and_then(|t| t.as_str()).unwrap_or("LiveKit STT error"),
                             });
-                            let _ = client_tx_recv.lock().await.send(WsMessage::Text(out.to_string())).await;
+                            let _ = client_tx_recv
+                                .lock()
+                                .await
+                                .send(WsMessage::Text(out.to_string()))
+                                .await;
                             break;
                         }
                         "session.closed" => break,
@@ -366,7 +411,11 @@ pub async fn dictation_livekit_stream(mut socket: WebSocket, state: std::sync::A
             transcript_messages,
             audio_started.load(Ordering::Relaxed)
         );
-        let _ = client_tx_recv.lock().await.send(WsMessage::Text(json!({ "type": "done" }).to_string())).await;
+        let _ = client_tx_recv
+            .lock()
+            .await
+            .send(WsMessage::Text(json!({ "type": "done" }).to_string()))
+            .await;
     });
 
     let _ = tokio::join!(send_task, recv_task);

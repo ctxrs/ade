@@ -12,7 +12,9 @@ use tokio::time::timeout;
 
 use context_core::models::SessionEventType;
 
-use crate::ask_user_question::{AskUserQuestionAnswer, AskUserQuestionBroker, AskUserQuestionOutcome};
+use crate::ask_user_question::{
+    AskUserQuestionAnswer, AskUserQuestionBroker, AskUserQuestionOutcome,
+};
 use crate::events::NormalizedEvent;
 
 #[derive(Debug, Clone)]
@@ -131,16 +133,20 @@ impl AcpSessionPool {
             .await?;
 
         let mut proc_guard = self.process.lock().await;
-        let process = proc_guard
-            .as_mut()
-            .context("no active ACP process")?;
+        let process = proc_guard.as_mut().context("no active ACP process")?;
 
         let acp_session_id = self
             .ensure_context_session(&session_key, process, &client, &workdir, &env, &event_sink)
             .await?;
 
         match process
-            .prompt(&session_key, &acp_session_id, prompt, event_sink.clone(), cancel_rx)
+            .prompt(
+                &session_key,
+                &acp_session_id,
+                prompt,
+                event_sink.clone(),
+                cancel_rx,
+            )
             .await
         {
             Ok(()) => Ok(()),
@@ -182,9 +188,7 @@ impl AcpSessionPool {
         };
         let (tx, _rx) = mpsc::channel::<NormalizedEvent>(1);
         let mut proc_guard = self.process.lock().await;
-        let process = proc_guard
-            .as_mut()
-            .context("no active ACP process")?;
+        let process = proc_guard.as_mut().context("no active ACP process")?;
         process.set_model(&acp_session_id, model_id, tx).await
     }
 
@@ -197,9 +201,7 @@ impl AcpSessionPool {
         };
         let (tx, _rx) = mpsc::channel::<NormalizedEvent>(1);
         let mut proc_guard = self.process.lock().await;
-        let process = proc_guard
-            .as_mut()
-            .context("no active ACP process")?;
+        let process = proc_guard.as_mut().context("no active ACP process")?;
         process.set_mode(&acp_session_id, mode_id, tx).await
     }
 
@@ -215,9 +217,7 @@ impl AcpSessionPool {
         self.ensure_process(&client, workdir.clone(), env.clone(), event_sink.clone())
             .await?;
         let mut proc_guard = self.process.lock().await;
-        let process = proc_guard
-            .as_mut()
-            .context("no active ACP process")?;
+        let process = proc_guard.as_mut().context("no active ACP process")?;
         let method_id = if let Some(method_id) = method_id {
             method_id
         } else {
@@ -250,8 +250,8 @@ impl AcpSessionPool {
                 self.ask_user_question.as_ref().map(Arc::clone),
                 event_sink,
             )
-                .await
-                .context("creating ACP process")?;
+            .await
+            .context("creating ACP process")?;
             *guard = Some(process);
         }
         Ok(())
@@ -323,9 +323,12 @@ impl AcpProcess {
             cmd.env(k, v);
         }
 
-        let mut child = cmd
-            .spawn()
-            .with_context(|| format!("spawning ACP agent {} ({})", agent.provider_id, agent.command))?;
+        let mut child = cmd.spawn().with_context(|| {
+            format!(
+                "spawning ACP agent {} ({})",
+                agent.provider_id, agent.command
+            )
+        })?;
 
         let stdin = child.stdin.take().context("capturing agent stdin")?;
         let stdout = child.stdout.take().context("capturing agent stdout")?;
@@ -515,14 +518,28 @@ impl AcpProcess {
                     .send(load_line)
                     .map_err(|_| anyhow::anyhow!("ACP writer task unavailable"))?;
                 let load_resp = self
-                    .drive_until_response(load_rx, None, event_sink.clone(), None, false, None, None)
+                    .drive_until_response(
+                        load_rx,
+                        None,
+                        event_sink.clone(),
+                        None,
+                        false,
+                        None,
+                        None,
+                    )
                     .await
                     .context("waiting for session/load response")?;
                 if load_resp.get("error").is_none() {
                     resumed = true;
                     session_id = Some(resume_id);
-                    modes = load_resp.get("result").and_then(|v| v.get("modes")).cloned();
-                    models = load_resp.get("result").and_then(|v| v.get("models")).cloned();
+                    modes = load_resp
+                        .get("result")
+                        .and_then(|v| v.get("modes"))
+                        .cloned();
+                    models = load_resp
+                        .get("result")
+                        .and_then(|v| v.get("models"))
+                        .cloned();
                 } else if let Some(err) = load_resp.get("error") {
                     if is_auth_required_error(err) {
                         let _ = event_sink
@@ -595,7 +612,10 @@ impl AcpProcess {
                 .to_string();
             session_id = Some(id.clone());
             modes = new_resp.get("result").and_then(|v| v.get("modes")).cloned();
-            models = new_resp.get("result").and_then(|v| v.get("models")).cloned();
+            models = new_resp
+                .get("result")
+                .and_then(|v| v.get("models"))
+                .cloned();
         }
 
         let session_id = session_id.context("missing ACP sessionId")?;
@@ -1088,7 +1108,10 @@ fn build_request_permission_response(
     Ok(Some(line))
 }
 
-fn normalize_session_update(msg: &serde_json::Value, state: &mut StreamState) -> Vec<NormalizedEvent> {
+fn normalize_session_update(
+    msg: &serde_json::Value,
+    state: &mut StreamState,
+) -> Vec<NormalizedEvent> {
     let Some(params) = msg.get("params") else {
         return vec![];
     };
@@ -1800,7 +1823,10 @@ async fn acp_probe_request(
 
 fn content_text(block: &serde_json::Value) -> Option<String> {
     if block.get("type").and_then(|v| v.as_str()) == Some("text") {
-        return block.get("text").and_then(|v| v.as_str()).map(|s| s.to_string());
+        return block
+            .get("text")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
     }
     None
 }
@@ -1877,7 +1903,10 @@ mod tests {
 
         let events = normalize_session_update(&msg, &mut state);
         assert_eq!(events.len(), 1);
-        assert!(matches!(events[0].event_type, SessionEventType::AssistantChunk));
+        assert!(matches!(
+            events[0].event_type,
+            SessionEventType::AssistantChunk
+        ));
         assert_eq!(state.assistant_buf, "hello");
     }
 
@@ -1917,7 +1946,10 @@ mod tests {
 
         let ev2 = normalize_session_update(&tool_done, &mut state);
         assert_eq!(ev2.len(), 2);
-        assert!(matches!(ev2[0].event_type, SessionEventType::ToolCallUpdate));
+        assert!(matches!(
+            ev2[0].event_type,
+            SessionEventType::ToolCallUpdate
+        ));
         assert!(matches!(ev2[1].event_type, SessionEventType::ToolResult));
     }
 

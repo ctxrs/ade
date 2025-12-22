@@ -99,4 +99,3 @@ pub fn truncate_for_storage(s: &str, max_len: usize) -> String {
     out.push_str("…");
     out
 }
-

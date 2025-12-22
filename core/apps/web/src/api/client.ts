@@ -1,83 +1,37 @@
+import type {
+  Diagnostics,
+  Message,
+  MessageAttachment,
+  MobileConnectionProfile,
+  MobileDeviceRegistration,
+  ProviderStatus,
+  Session,
+  SessionEvent,
+  SessionTurn,
+  SessionTurnTool,
+  Task,
+  Track,
+  Workspace,
+  Worktree,
+} from "@context/types";
 import { desktopDaemonRequest, desktopUploadBlob, isDesktopApp } from "../utils/desktop";
 
-export type Workspace = {
-  id: { 0: string } | string;
-  name: string;
-  root_path: string;
-  created_at: string;
-};
-
-export type Task = {
-  id: { 0: string } | string;
-  workspace_id: { 0: string } | string;
-  title: string;
-  description?: string | null;
-  status: string;
-  created_at: string;
-  updated_at: string;
-  archived_at?: string | null;
-  assistant_seen_at?: string | null;
-  last_activity_at?: string | null;
-  last_assistant_message_at?: string | null;
-  has_active_session?: boolean;
-};
-
-export type Track = {
-  id: { 0: string } | string;
-  task_id: { 0: string } | string;
-  workspace_id: { 0: string } | string;
-  worktree_id: { 0: string } | string;
-  label: string;
-  status: string;
-};
-
-export type Worktree = {
-  id: { 0: string } | string;
-  workspace_id: { 0: string } | string;
-  root_path: string;
-  base_commit_sha: string;
-  git_branch?: string | null;
-  created_at: string;
-};
-
-export type Session = {
-  id: { 0: string } | string;
-  track_id: { 0: string } | string;
-  task_id: { 0: string } | string;
-  workspace_id: { 0: string } | string;
-  worktree_id: { 0: string } | string;
-  provider_id: string;
-  model_id: string;
-  agent_role: string;
-  status: string;
-  env_target?: "worktree" | "local" | string;
-};
-
-export type Message = {
-  id: { 0: string } | string;
-  session_id: { 0: string } | string;
-  turn_id?: { 0: string } | string | null;
-  turn_sequence?: number | null;
-  role: "user" | "assistant" | "system";
-  content: string;
-  attachments?: MessageAttachment[];
-  delivery: "immediate" | "queued";
-  created_at: string;
-};
-
-export type MessageAttachment =
-  | {
-      kind: "image";
-      mime_type: string;
-      data_base64: string;
-      name?: string | null;
-    }
-  | {
-      kind: "image_ref";
-      blob_id: string;
-      mime_type: string;
-      name?: string | null;
-    };
+export type {
+  Diagnostics,
+  Message,
+  MessageAttachment,
+  MobileConnectionProfile,
+  MobileDeviceRegistration,
+  ProviderStatus,
+  Session,
+  SessionEvent,
+  SessionTurn,
+  SessionTurnTool,
+  Task,
+  Track,
+  Workspace,
+  Worktree,
+} from "@context/types";
 
 export type BlobUploadResp = {
   blob_id: string;
@@ -905,5 +859,32 @@ export const blobUrl = (blobId: string): string => {
   const url = `${prefix}/api/blobs/${encodeURIComponent(String(blobId || ""))}`;
   return token ? `${url}?token=${encodeURIComponent(token)}` : url;
 };
+
+export type CreateMobileProfileRequest = {
+  label: string;
+  base_url: string;
+  scopes?: string[];
+};
+
+export type CreateMobileProfileResponse = {
+  profile: MobileConnectionProfile;
+  token: string;
+  qr_payload: any;
+};
+
+export const listMobileConnectionProfiles = () =>
+  api<MobileConnectionProfile[]>(`/api/mobile/connection_profiles`);
+
+export const createMobileConnectionProfile = (payload: CreateMobileProfileRequest) =>
+  api<CreateMobileProfileResponse>(`/api/mobile/connection_profiles`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+
+export const deleteMobileConnectionProfile = (id: string) =>
+  api<void>(`/api/mobile/connection_profiles/${id}`, { method: "DELETE" });
+
+export const listMobileDevicesForProfile = (profileId: string) =>
+  api<MobileDeviceRegistration[]>(`/api/mobile/connection_profiles/${profileId}/devices`);
 
 export { idToString };

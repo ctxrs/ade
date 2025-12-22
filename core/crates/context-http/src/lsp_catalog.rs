@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -114,4 +114,3 @@ pub async fn get_entry(data_root: &Path, id: &str) -> Result<LspCatalogEntry> {
         .find(|e| e.id == id)
         .ok_or_else(|| anyhow!("unknown LSP catalog server id: {id}"))
 }
-

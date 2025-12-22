@@ -162,7 +162,9 @@ pub async fn load_settings(data_root: &Path) -> Settings {
     }
 
     if let Ok(api_key) = std::env::var("LIVEKIT_API_KEY") {
-        let d = settings.dictation.get_or_insert_with(DictationSettings::default);
+        let d = settings
+            .dictation
+            .get_or_insert_with(DictationSettings::default);
         if d.livekit.is_none() {
             d.livekit = Some(LiveKitDictationSettings::default());
         }
@@ -173,18 +175,27 @@ pub async fn load_settings(data_root: &Path) -> Settings {
         }
     }
     if let Ok(api_secret) = std::env::var("LIVEKIT_API_SECRET") {
-        let d = settings.dictation.get_or_insert_with(DictationSettings::default);
+        let d = settings
+            .dictation
+            .get_or_insert_with(DictationSettings::default);
         if d.livekit.is_none() {
             d.livekit = Some(LiveKitDictationSettings::default());
         }
         if let Some(lk) = d.livekit.as_mut() {
-            if lk.api_secret.as_ref().map(|s| s.trim().is_empty()).unwrap_or(true) {
+            if lk
+                .api_secret
+                .as_ref()
+                .map(|s| s.trim().is_empty())
+                .unwrap_or(true)
+            {
                 lk.api_secret = Some(api_secret);
             }
         }
     }
     if let Ok(base_url) = std::env::var("CONTEXT_LIVEKIT_INFERENCE_BASE_URL") {
-        let d = settings.dictation.get_or_insert_with(DictationSettings::default);
+        let d = settings
+            .dictation
+            .get_or_insert_with(DictationSettings::default);
         if d.livekit.is_none() {
             d.livekit = Some(LiveKitDictationSettings::default());
         }
@@ -208,17 +219,20 @@ pub async fn save_settings(data_root: &Path, settings: &Settings) -> anyhow::Res
 }
 
 pub fn to_public(settings: &Settings) -> PublicSettings {
-    let dictation = settings.dictation.as_ref().map(|d| PublicDictationSettings {
-        enabled: d.enabled,
-        provider: d.provider.clone(),
-        livekit: d.livekit.as_ref().map(|lk| PublicLiveKitDictationSettings {
-            base_url: lk.base_url.clone(),
-            api_key: lk.api_key.clone(),
-            api_secret_set: lk.api_secret.as_ref().is_some_and(|s| !s.trim().is_empty()),
-            model: lk.model.clone(),
-            language: lk.language.clone(),
-        }),
-    });
+    let dictation = settings
+        .dictation
+        .as_ref()
+        .map(|d| PublicDictationSettings {
+            enabled: d.enabled,
+            provider: d.provider.clone(),
+            livekit: d.livekit.as_ref().map(|lk| PublicLiveKitDictationSettings {
+                base_url: lk.base_url.clone(),
+                api_key: lk.api_key.clone(),
+                api_secret_set: lk.api_secret.as_ref().is_some_and(|s| !s.trim().is_empty()),
+                model: lk.model.clone(),
+                language: lk.language.clone(),
+            }),
+        });
     let telemetry = Some(match settings.telemetry.as_ref() {
         Some(t) => PublicTelemetrySettings {
             enabled: t.enabled,
@@ -229,7 +243,10 @@ pub fn to_public(settings: &Settings) -> PublicSettings {
             endpoint: crate::telemetry::default_telemetry_endpoint(),
         },
     });
-    PublicSettings { dictation, telemetry }
+    PublicSettings {
+        dictation,
+        telemetry,
+    }
 }
 
 pub fn apply_update(mut current: Settings, req: UpdateSettingsReq) -> Settings {

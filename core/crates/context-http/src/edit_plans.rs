@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{anyhow, Context, Result};
 use chrono::{DateTime, Utc};
 use context_core::ids::{SessionId, TrackId};
 use lsp_types::{TextEdit, Uri, WorkspaceEdit};
@@ -368,10 +368,12 @@ fn collect_workspace_edit(
             lsp_types::DocumentChanges::Edits(edits) => {
                 for e in edits {
                     let rel = uri_to_relpath(root, &e.text_document.uri)?;
-                    out.entry(rel).or_default().extend(e.edits.iter().cloned().map(|x| match x {
-                        lsp_types::OneOf::Left(te) => te,
-                        lsp_types::OneOf::Right(annot) => annot.text_edit,
-                    }));
+                    out.entry(rel)
+                        .or_default()
+                        .extend(e.edits.iter().cloned().map(|x| match x {
+                            lsp_types::OneOf::Left(te) => te,
+                            lsp_types::OneOf::Right(annot) => annot.text_edit,
+                        }));
                 }
             }
             lsp_types::DocumentChanges::Operations(changes) => {
@@ -379,10 +381,12 @@ fn collect_workspace_edit(
                     match ch {
                         lsp_types::DocumentChangeOperation::Edit(edit) => {
                             let rel = uri_to_relpath(root, &edit.text_document.uri)?;
-                            out.entry(rel).or_default().extend(edit.edits.iter().cloned().map(|x| match x {
-                                lsp_types::OneOf::Left(te) => te,
-                                lsp_types::OneOf::Right(annot) => annot.text_edit,
-                            }));
+                            out.entry(rel)
+                                .or_default()
+                                .extend(edit.edits.iter().cloned().map(|x| match x {
+                                    lsp_types::OneOf::Left(te) => te,
+                                    lsp_types::OneOf::Right(annot) => annot.text_edit,
+                                }));
                         }
                         lsp_types::DocumentChangeOperation::Op(op) => match op {
                             lsp_types::ResourceOp::Create(cf) => {
@@ -422,7 +426,10 @@ fn uri_to_relpath(root: &Path, uri: &Uri) -> Result<String> {
         anyhow::bail!("uri outside root");
     }
     let rel = canon.strip_prefix(&root).unwrap_or(&canon);
-    Ok(rel.to_string_lossy().trim_start_matches(std::path::MAIN_SEPARATOR).to_string())
+    Ok(rel
+        .to_string_lossy()
+        .trim_start_matches(std::path::MAIN_SEPARATOR)
+        .to_string())
 }
 
 fn git_unified_diff_modify(path: &str, old: &str, new: &str) -> String {
@@ -466,8 +473,18 @@ fn apply_text_edits_utf16(text: &str, edits: &[TextEdit]) -> Result<String> {
     edits.sort_by(|a, b| {
         let ar = &a.range;
         let br = &b.range;
-        (br.start.line, br.start.character, br.end.line, br.end.character)
-            .cmp(&(ar.start.line, ar.start.character, ar.end.line, ar.end.character))
+        (
+            br.start.line,
+            br.start.character,
+            br.end.line,
+            br.end.character,
+        )
+            .cmp(&(
+                ar.start.line,
+                ar.start.character,
+                ar.end.line,
+                ar.end.character,
+            ))
     });
     for e in edits {
         let start = pos_to_byte_offset_utf16(&out, e.range.start)?;
@@ -484,7 +501,9 @@ fn pos_to_byte_offset_utf16(text: &str, pos: lsp_types::Position) -> Result<usiz
     let mut lines = text.split_inclusive('\n');
     let mut offset = 0usize;
     for _ in 0..pos.line {
-        let Some(l) = lines.next() else { return Ok(text.len()) };
+        let Some(l) = lines.next() else {
+            return Ok(text.len());
+        };
         offset += l.len();
     }
     let line = lines.next().unwrap_or("");

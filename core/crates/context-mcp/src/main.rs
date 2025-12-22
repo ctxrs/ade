@@ -2,7 +2,7 @@
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 #[derive(Parser, Debug)]
@@ -247,246 +247,246 @@ async fn main() -> Result<()> {
                                 "additionalProperties": false
                             }
                         },
-	                        {
-	                            "name": "context.lsp_completion",
-	                            "title": "LSP Completion",
-	                            "description": "Returns completion items at a position in a file.",
-	                            "inputSchema": {
-	                                "type": "object",
-	                                "properties": {
-	                                    "session_id": { "type": "string", "description": "Optional Context session id (defaults to $CONTEXT_SESSION_ID)." },
-	                                    "path": { "type": "string" },
-	                                    "root_path": { "type": "string" },
-	                                    "line": { "type": "integer", "minimum": 0 },
-	                                    "character": { "type": "integer", "minimum": 0 }
-	                                },
-	                                "required": ["path", "line", "character"],
-	                                "additionalProperties": false
-	                            }
-	                        },
-	                        {
-	                            "name": "context.lsp_completion_resolve",
-	                            "title": "LSP Completion Resolve",
-	                            "description": "Resolves additional fields for a completion item (server-dependent).",
-	                            "inputSchema": {
-	                                "type": "object",
-	                                "properties": {
-	                                    "session_id": { "type": "string", "description": "Optional Context session id (defaults to $CONTEXT_SESSION_ID)." },
-	                                    "path": { "type": "string" },
-	                                    "root_path": { "type": "string" },
-	                                    "item": { "type": "object" }
-	                                },
-	                                "required": ["path", "item"],
-	                                "additionalProperties": false
-	                            }
-	                        },
-	                        {
-	                            "name": "context.lsp_code_action_resolve",
-	                            "title": "LSP Code Action Resolve",
-	                            "description": "Resolves additional fields for a CodeAction (server-dependent).",
-	                            "inputSchema": {
-	                                "type": "object",
-	                                "properties": {
-	                                    "session_id": { "type": "string", "description": "Optional Context session id (defaults to $CONTEXT_SESSION_ID)." },
-	                                    "path": { "type": "string" },
-	                                    "root_path": { "type": "string" },
-	                                    "item": { "type": "object" }
-	                                },
-	                                "required": ["path", "item"],
-	                                "additionalProperties": false
-	                            }
-	                        },
-	                        {
-	                            "name": "context.lsp_inlay_hints",
-	                            "title": "LSP Inlay Hints",
-	                            "description": "Returns inlay hints for a visible range (server-dependent).",
-	                            "inputSchema": {
-	                                "type": "object",
-	                                "properties": {
-	                                    "session_id": { "type": "string", "description": "Optional Context session id (defaults to $CONTEXT_SESSION_ID)." },
-	                                    "path": { "type": "string" },
-	                                    "root_path": { "type": "string" },
-	                                    "start_line": { "type": "integer", "minimum": 0 },
-	                                    "start_character": { "type": "integer", "minimum": 0 },
-	                                    "end_line": { "type": "integer", "minimum": 0 },
-	                                    "end_character": { "type": "integer", "minimum": 0 }
-	                                },
-	                                "required": ["path", "start_line", "start_character", "end_line", "end_character"],
-	                                "additionalProperties": false
-	                            }
-	                        },
-	                        {
-	                            "name": "context.lsp_document_highlight",
-	                            "title": "LSP Document Highlight",
-	                            "description": "Returns document highlights at a position (server-dependent).",
-	                            "inputSchema": {
-	                                "type": "object",
-	                                "properties": {
-	                                    "session_id": { "type": "string", "description": "Optional Context session id (defaults to $CONTEXT_SESSION_ID)." },
-	                                    "path": { "type": "string" },
-	                                    "root_path": { "type": "string" },
-	                                    "line": { "type": "integer", "minimum": 0 },
-	                                    "character": { "type": "integer", "minimum": 0 }
-	                                },
-	                                "required": ["path", "line", "character"],
-	                                "additionalProperties": false
-	                            }
-	                        },
-	                        {
-	                            "name": "context.lsp_selection_ranges",
-	                            "title": "LSP Selection Ranges",
-	                            "description": "Returns selection ranges for one or more positions (server-dependent).",
-	                            "inputSchema": {
-	                                "type": "object",
-	                                "properties": {
-	                                    "session_id": { "type": "string", "description": "Optional Context session id (defaults to $CONTEXT_SESSION_ID)." },
-	                                    "path": { "type": "string" },
-	                                    "root_path": { "type": "string" },
-	                                    "positions": {
-	                                        "type": "array",
-	                                        "items": {
-	                                            "type": "object",
-	                                            "properties": {
-	                                                "line": { "type": "integer", "minimum": 0 },
-	                                                "character": { "type": "integer", "minimum": 0 }
-	                                            },
-	                                            "required": ["line", "character"],
-	                                            "additionalProperties": false
-	                                        }
-	                                    }
-	                                },
-	                                "required": ["path", "positions"],
-	                                "additionalProperties": false
-	                            }
-	                        },
-	                        {
-	                            "name": "context.lsp_call_hierarchy_prepare",
-	                            "title": "LSP Call Hierarchy (Prepare)",
-	                            "description": "Prepares call hierarchy items at a position.",
-	                            "inputSchema": {
-	                                "type": "object",
-	                                "properties": {
-	                                    "session_id": { "type": "string", "description": "Optional Context session id (defaults to $CONTEXT_SESSION_ID)." },
-	                                    "path": { "type": "string" },
-	                                    "root_path": { "type": "string" },
-	                                    "line": { "type": "integer", "minimum": 0 },
-	                                    "character": { "type": "integer", "minimum": 0 }
-	                                },
-	                                "required": ["path", "line", "character"],
-	                                "additionalProperties": false
-	                            }
-	                        },
-	                        {
-	                            "name": "context.lsp_call_hierarchy_incoming",
-	                            "title": "LSP Call Hierarchy (Incoming)",
-	                            "description": "Returns incoming calls for a CallHierarchyItem.",
-	                            "inputSchema": {
-	                                "type": "object",
-	                                "properties": {
-	                                    "session_id": { "type": "string", "description": "Optional Context session id (defaults to $CONTEXT_SESSION_ID)." },
-	                                    "path": { "type": "string" },
-	                                    "root_path": { "type": "string" },
-	                                    "item": { "type": "object" }
-	                                },
-	                                "required": ["path", "item"],
-	                                "additionalProperties": false
-	                            }
-	                        },
-	                        {
-	                            "name": "context.lsp_call_hierarchy_outgoing",
-	                            "title": "LSP Call Hierarchy (Outgoing)",
-	                            "description": "Returns outgoing calls for a CallHierarchyItem.",
-	                            "inputSchema": {
-	                                "type": "object",
-	                                "properties": {
-	                                    "session_id": { "type": "string", "description": "Optional Context session id (defaults to $CONTEXT_SESSION_ID)." },
-	                                    "path": { "type": "string" },
-	                                    "root_path": { "type": "string" },
-	                                    "item": { "type": "object" }
-	                                },
-	                                "required": ["path", "item"],
-	                                "additionalProperties": false
-	                            }
-	                        },
-	                        {
-	                            "name": "context.lsp_code_lens",
-	                            "title": "LSP Code Lens",
-	                            "description": "Returns code lenses for a file (server-dependent).",
-	                            "inputSchema": {
-	                                "type": "object",
-	                                "properties": {
-	                                    "session_id": { "type": "string", "description": "Optional Context session id (defaults to $CONTEXT_SESSION_ID)." },
-	                                    "path": { "type": "string" },
-	                                    "root_path": { "type": "string" }
-	                                },
-	                                "required": ["path"],
-	                                "additionalProperties": false
-	                            }
-	                        },
-	                        {
-	                            "name": "context.lsp_code_lens_resolve",
-	                            "title": "LSP Code Lens Resolve",
-	                            "description": "Resolves additional fields for a code lens (server-dependent).",
-	                            "inputSchema": {
-	                                "type": "object",
-	                                "properties": {
-	                                    "session_id": { "type": "string", "description": "Optional Context session id (defaults to $CONTEXT_SESSION_ID)." },
-	                                    "path": { "type": "string" },
-	                                    "root_path": { "type": "string" },
-	                                    "item": { "type": "object" }
-	                                },
-	                                "required": ["path", "item"],
-	                                "additionalProperties": false
-	                            }
-	                        },
-	                        {
-	                            "name": "context.lsp_prepare_rename",
-	                            "title": "LSP Prepare Rename",
-	                            "description": "Preflights a rename at a position and returns the target range (server-dependent).",
-	                            "inputSchema": {
-	                                "type": "object",
-	                                "properties": {
-	                                    "session_id": { "type": "string", "description": "Optional Context session id (defaults to $CONTEXT_SESSION_ID)." },
-	                                    "path": { "type": "string" },
-	                                    "root_path": { "type": "string" },
-	                                    "line": { "type": "integer", "minimum": 0 },
-	                                    "character": { "type": "integer", "minimum": 0 }
-	                                },
-	                                "required": ["path", "line", "character"],
-	                                "additionalProperties": false
-	                            }
-	                        },
-	                        {
-	                            "name": "context.lsp_document_links",
-	                            "title": "LSP Document Links",
-	                            "description": "Returns document links for a file (server-dependent).",
-	                            "inputSchema": {
-	                                "type": "object",
-	                                "properties": {
-	                                    "session_id": { "type": "string", "description": "Optional Context session id (defaults to $CONTEXT_SESSION_ID)." },
-	                                    "path": { "type": "string" },
-	                                    "root_path": { "type": "string" }
-	                                },
-	                                "required": ["path"],
-	                                "additionalProperties": false
-	                            }
-	                        },
-	                        {
-	                            "name": "context.lsp_document_link_resolve",
-	                            "title": "LSP Document Link Resolve",
-	                            "description": "Resolves a document link target (server-dependent).",
-	                            "inputSchema": {
-	                                "type": "object",
-	                                "properties": {
-	                                    "session_id": { "type": "string", "description": "Optional Context session id (defaults to $CONTEXT_SESSION_ID)." },
-	                                    "path": { "type": "string" },
-	                                    "root_path": { "type": "string" },
-	                                    "item": { "type": "object" }
-	                                },
-	                                "required": ["path", "item"],
-	                                "additionalProperties": false
-	                            }
-	                        },
+                            {
+                                "name": "context.lsp_completion",
+                                "title": "LSP Completion",
+                                "description": "Returns completion items at a position in a file.",
+                                "inputSchema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "session_id": { "type": "string", "description": "Optional Context session id (defaults to $CONTEXT_SESSION_ID)." },
+                                        "path": { "type": "string" },
+                                        "root_path": { "type": "string" },
+                                        "line": { "type": "integer", "minimum": 0 },
+                                        "character": { "type": "integer", "minimum": 0 }
+                                    },
+                                    "required": ["path", "line", "character"],
+                                    "additionalProperties": false
+                                }
+                            },
+                            {
+                                "name": "context.lsp_completion_resolve",
+                                "title": "LSP Completion Resolve",
+                                "description": "Resolves additional fields for a completion item (server-dependent).",
+                                "inputSchema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "session_id": { "type": "string", "description": "Optional Context session id (defaults to $CONTEXT_SESSION_ID)." },
+                                        "path": { "type": "string" },
+                                        "root_path": { "type": "string" },
+                                        "item": { "type": "object" }
+                                    },
+                                    "required": ["path", "item"],
+                                    "additionalProperties": false
+                                }
+                            },
+                            {
+                                "name": "context.lsp_code_action_resolve",
+                                "title": "LSP Code Action Resolve",
+                                "description": "Resolves additional fields for a CodeAction (server-dependent).",
+                                "inputSchema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "session_id": { "type": "string", "description": "Optional Context session id (defaults to $CONTEXT_SESSION_ID)." },
+                                        "path": { "type": "string" },
+                                        "root_path": { "type": "string" },
+                                        "item": { "type": "object" }
+                                    },
+                                    "required": ["path", "item"],
+                                    "additionalProperties": false
+                                }
+                            },
+                            {
+                                "name": "context.lsp_inlay_hints",
+                                "title": "LSP Inlay Hints",
+                                "description": "Returns inlay hints for a visible range (server-dependent).",
+                                "inputSchema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "session_id": { "type": "string", "description": "Optional Context session id (defaults to $CONTEXT_SESSION_ID)." },
+                                        "path": { "type": "string" },
+                                        "root_path": { "type": "string" },
+                                        "start_line": { "type": "integer", "minimum": 0 },
+                                        "start_character": { "type": "integer", "minimum": 0 },
+                                        "end_line": { "type": "integer", "minimum": 0 },
+                                        "end_character": { "type": "integer", "minimum": 0 }
+                                    },
+                                    "required": ["path", "start_line", "start_character", "end_line", "end_character"],
+                                    "additionalProperties": false
+                                }
+                            },
+                            {
+                                "name": "context.lsp_document_highlight",
+                                "title": "LSP Document Highlight",
+                                "description": "Returns document highlights at a position (server-dependent).",
+                                "inputSchema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "session_id": { "type": "string", "description": "Optional Context session id (defaults to $CONTEXT_SESSION_ID)." },
+                                        "path": { "type": "string" },
+                                        "root_path": { "type": "string" },
+                                        "line": { "type": "integer", "minimum": 0 },
+                                        "character": { "type": "integer", "minimum": 0 }
+                                    },
+                                    "required": ["path", "line", "character"],
+                                    "additionalProperties": false
+                                }
+                            },
+                            {
+                                "name": "context.lsp_selection_ranges",
+                                "title": "LSP Selection Ranges",
+                                "description": "Returns selection ranges for one or more positions (server-dependent).",
+                                "inputSchema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "session_id": { "type": "string", "description": "Optional Context session id (defaults to $CONTEXT_SESSION_ID)." },
+                                        "path": { "type": "string" },
+                                        "root_path": { "type": "string" },
+                                        "positions": {
+                                            "type": "array",
+                                            "items": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "line": { "type": "integer", "minimum": 0 },
+                                                    "character": { "type": "integer", "minimum": 0 }
+                                                },
+                                                "required": ["line", "character"],
+                                                "additionalProperties": false
+                                            }
+                                        }
+                                    },
+                                    "required": ["path", "positions"],
+                                    "additionalProperties": false
+                                }
+                            },
+                            {
+                                "name": "context.lsp_call_hierarchy_prepare",
+                                "title": "LSP Call Hierarchy (Prepare)",
+                                "description": "Prepares call hierarchy items at a position.",
+                                "inputSchema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "session_id": { "type": "string", "description": "Optional Context session id (defaults to $CONTEXT_SESSION_ID)." },
+                                        "path": { "type": "string" },
+                                        "root_path": { "type": "string" },
+                                        "line": { "type": "integer", "minimum": 0 },
+                                        "character": { "type": "integer", "minimum": 0 }
+                                    },
+                                    "required": ["path", "line", "character"],
+                                    "additionalProperties": false
+                                }
+                            },
+                            {
+                                "name": "context.lsp_call_hierarchy_incoming",
+                                "title": "LSP Call Hierarchy (Incoming)",
+                                "description": "Returns incoming calls for a CallHierarchyItem.",
+                                "inputSchema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "session_id": { "type": "string", "description": "Optional Context session id (defaults to $CONTEXT_SESSION_ID)." },
+                                        "path": { "type": "string" },
+                                        "root_path": { "type": "string" },
+                                        "item": { "type": "object" }
+                                    },
+                                    "required": ["path", "item"],
+                                    "additionalProperties": false
+                                }
+                            },
+                            {
+                                "name": "context.lsp_call_hierarchy_outgoing",
+                                "title": "LSP Call Hierarchy (Outgoing)",
+                                "description": "Returns outgoing calls for a CallHierarchyItem.",
+                                "inputSchema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "session_id": { "type": "string", "description": "Optional Context session id (defaults to $CONTEXT_SESSION_ID)." },
+                                        "path": { "type": "string" },
+                                        "root_path": { "type": "string" },
+                                        "item": { "type": "object" }
+                                    },
+                                    "required": ["path", "item"],
+                                    "additionalProperties": false
+                                }
+                            },
+                            {
+                                "name": "context.lsp_code_lens",
+                                "title": "LSP Code Lens",
+                                "description": "Returns code lenses for a file (server-dependent).",
+                                "inputSchema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "session_id": { "type": "string", "description": "Optional Context session id (defaults to $CONTEXT_SESSION_ID)." },
+                                        "path": { "type": "string" },
+                                        "root_path": { "type": "string" }
+                                    },
+                                    "required": ["path"],
+                                    "additionalProperties": false
+                                }
+                            },
+                            {
+                                "name": "context.lsp_code_lens_resolve",
+                                "title": "LSP Code Lens Resolve",
+                                "description": "Resolves additional fields for a code lens (server-dependent).",
+                                "inputSchema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "session_id": { "type": "string", "description": "Optional Context session id (defaults to $CONTEXT_SESSION_ID)." },
+                                        "path": { "type": "string" },
+                                        "root_path": { "type": "string" },
+                                        "item": { "type": "object" }
+                                    },
+                                    "required": ["path", "item"],
+                                    "additionalProperties": false
+                                }
+                            },
+                            {
+                                "name": "context.lsp_prepare_rename",
+                                "title": "LSP Prepare Rename",
+                                "description": "Preflights a rename at a position and returns the target range (server-dependent).",
+                                "inputSchema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "session_id": { "type": "string", "description": "Optional Context session id (defaults to $CONTEXT_SESSION_ID)." },
+                                        "path": { "type": "string" },
+                                        "root_path": { "type": "string" },
+                                        "line": { "type": "integer", "minimum": 0 },
+                                        "character": { "type": "integer", "minimum": 0 }
+                                    },
+                                    "required": ["path", "line", "character"],
+                                    "additionalProperties": false
+                                }
+                            },
+                            {
+                                "name": "context.lsp_document_links",
+                                "title": "LSP Document Links",
+                                "description": "Returns document links for a file (server-dependent).",
+                                "inputSchema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "session_id": { "type": "string", "description": "Optional Context session id (defaults to $CONTEXT_SESSION_ID)." },
+                                        "path": { "type": "string" },
+                                        "root_path": { "type": "string" }
+                                    },
+                                    "required": ["path"],
+                                    "additionalProperties": false
+                                }
+                            },
+                            {
+                                "name": "context.lsp_document_link_resolve",
+                                "title": "LSP Document Link Resolve",
+                                "description": "Resolves a document link target (server-dependent).",
+                                "inputSchema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "session_id": { "type": "string", "description": "Optional Context session id (defaults to $CONTEXT_SESSION_ID)." },
+                                        "path": { "type": "string" },
+                                        "root_path": { "type": "string" },
+                                        "item": { "type": "object" }
+                                    },
+                                    "required": ["path", "item"],
+                                    "additionalProperties": false
+                                }
+                            },
                         {
                             "name": "context.lsp_semantic_tokens_full",
                             "title": "LSP Semantic Tokens (Full)",
@@ -550,103 +550,103 @@ async fn main() -> Result<()> {
                                 "additionalProperties": false
                             }
                         },
-	                        {
-	                            "name": "context.lsp_type_hierarchy_prepare",
-	                            "title": "LSP Type Hierarchy Prepare",
-	                            "description": "Prepares a type hierarchy item at a position (server-dependent).",
-	                            "inputSchema": {
-	                                "type": "object",
-	                                "properties": {
-	                                    "session_id": { "type": "string", "description": "Optional Context session id (defaults to $CONTEXT_SESSION_ID)." },
-	                                    "path": { "type": "string" },
-	                                    "root_path": { "type": "string" },
-	                                    "line": { "type": "integer", "minimum": 0 },
-	                                    "character": { "type": "integer", "minimum": 0 }
-	                                },
-	                                "required": ["path", "line", "character"],
-	                                "additionalProperties": false
-	                            }
-	                        },
-	                        {
-	                            "name": "context.lsp_type_hierarchy_supertypes",
-	                            "title": "LSP Type Hierarchy Supertypes",
-	                            "description": "Returns supertypes for a type hierarchy item (server-dependent).",
-	                            "inputSchema": {
-	                                "type": "object",
-	                                "properties": {
-	                                    "session_id": { "type": "string", "description": "Optional Context session id (defaults to $CONTEXT_SESSION_ID)." },
-	                                    "path": { "type": "string" },
-	                                    "root_path": { "type": "string" },
-	                                    "item": { "type": "object" }
-	                                },
-	                                "required": ["path", "item"],
-	                                "additionalProperties": false
-	                            }
-	                        },
-	                        {
-	                            "name": "context.lsp_type_hierarchy_subtypes",
-	                            "title": "LSP Type Hierarchy Subtypes",
-	                            "description": "Returns subtypes for a type hierarchy item (server-dependent).",
-	                            "inputSchema": {
-	                                "type": "object",
-	                                "properties": {
-	                                    "session_id": { "type": "string", "description": "Optional Context session id (defaults to $CONTEXT_SESSION_ID)." },
-	                                    "path": { "type": "string" },
-	                                    "root_path": { "type": "string" },
-	                                    "item": { "type": "object" }
-	                                },
-	                                "required": ["path", "item"],
-	                                "additionalProperties": false
-	                            }
-	                        },
-	                        {
-	                            "name": "context.lsp_code_actions_by_diagnostic_plan",
-	                            "title": "LSP Code Actions (By Diagnostic) (Plan)",
-	                            "description": "Creates ranked edit plans for quick-fixes for a specific diagnostic (requires daemon LSP edit plans enabled).",
-	                            "inputSchema": {
-	                                "type": "object",
-	                                "properties": {
-	                                    "session_id": { "type": "string", "description": "Optional Context session id (defaults to $CONTEXT_SESSION_ID)." },
-	                                    "path": { "type": "string" },
-	                                    "diagnostic": { "type": "object" }
-	                                },
-	                                "required": ["path", "diagnostic"],
-	                                "additionalProperties": false
-	                            }
-	                        },
-	                        {
-	                            "name": "context.lsp_execute_command",
-	                            "title": "LSP Execute Command",
-	                            "description": "Executes an allowlisted LSP command and returns any captured WorkspaceEdit (disabled by default; see daemon config).",
-	                            "inputSchema": {
-	                                "type": "object",
-	                                "properties": {
-	                                    "session_id": { "type": "string", "description": "Optional Context session id (defaults to $CONTEXT_SESSION_ID)." },
-	                                    "path": { "type": "string" },
-	                                    "root_path": { "type": "string" },
-	                                    "command": { "type": "string" },
-	                                    "arguments": { "type": "array" }
-	                                },
-	                                "required": ["path", "command"],
-	                                "additionalProperties": false
-	                            }
-	                        },
-	                        {
-	                            "name": "context.lsp_execute_command_plan",
-	                            "title": "LSP Execute Command (Plan)",
-	                            "description": "Creates an edit plan from an allowlisted executeCommand that produces a WorkspaceEdit.",
-	                            "inputSchema": {
-	                                "type": "object",
-	                                "properties": {
-	                                    "session_id": { "type": "string", "description": "Optional Context session id (defaults to $CONTEXT_SESSION_ID)." },
-	                                    "path": { "type": "string" },
-	                                    "command": { "type": "string" },
-	                                    "arguments": { "type": "array" }
-	                                },
-	                                "required": ["path", "command"],
-	                                "additionalProperties": false
-	                            }
-	                        },
+                            {
+                                "name": "context.lsp_type_hierarchy_prepare",
+                                "title": "LSP Type Hierarchy Prepare",
+                                "description": "Prepares a type hierarchy item at a position (server-dependent).",
+                                "inputSchema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "session_id": { "type": "string", "description": "Optional Context session id (defaults to $CONTEXT_SESSION_ID)." },
+                                        "path": { "type": "string" },
+                                        "root_path": { "type": "string" },
+                                        "line": { "type": "integer", "minimum": 0 },
+                                        "character": { "type": "integer", "minimum": 0 }
+                                    },
+                                    "required": ["path", "line", "character"],
+                                    "additionalProperties": false
+                                }
+                            },
+                            {
+                                "name": "context.lsp_type_hierarchy_supertypes",
+                                "title": "LSP Type Hierarchy Supertypes",
+                                "description": "Returns supertypes for a type hierarchy item (server-dependent).",
+                                "inputSchema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "session_id": { "type": "string", "description": "Optional Context session id (defaults to $CONTEXT_SESSION_ID)." },
+                                        "path": { "type": "string" },
+                                        "root_path": { "type": "string" },
+                                        "item": { "type": "object" }
+                                    },
+                                    "required": ["path", "item"],
+                                    "additionalProperties": false
+                                }
+                            },
+                            {
+                                "name": "context.lsp_type_hierarchy_subtypes",
+                                "title": "LSP Type Hierarchy Subtypes",
+                                "description": "Returns subtypes for a type hierarchy item (server-dependent).",
+                                "inputSchema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "session_id": { "type": "string", "description": "Optional Context session id (defaults to $CONTEXT_SESSION_ID)." },
+                                        "path": { "type": "string" },
+                                        "root_path": { "type": "string" },
+                                        "item": { "type": "object" }
+                                    },
+                                    "required": ["path", "item"],
+                                    "additionalProperties": false
+                                }
+                            },
+                            {
+                                "name": "context.lsp_code_actions_by_diagnostic_plan",
+                                "title": "LSP Code Actions (By Diagnostic) (Plan)",
+                                "description": "Creates ranked edit plans for quick-fixes for a specific diagnostic (requires daemon LSP edit plans enabled).",
+                                "inputSchema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "session_id": { "type": "string", "description": "Optional Context session id (defaults to $CONTEXT_SESSION_ID)." },
+                                        "path": { "type": "string" },
+                                        "diagnostic": { "type": "object" }
+                                    },
+                                    "required": ["path", "diagnostic"],
+                                    "additionalProperties": false
+                                }
+                            },
+                            {
+                                "name": "context.lsp_execute_command",
+                                "title": "LSP Execute Command",
+                                "description": "Executes an allowlisted LSP command and returns any captured WorkspaceEdit (disabled by default; see daemon config).",
+                                "inputSchema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "session_id": { "type": "string", "description": "Optional Context session id (defaults to $CONTEXT_SESSION_ID)." },
+                                        "path": { "type": "string" },
+                                        "root_path": { "type": "string" },
+                                        "command": { "type": "string" },
+                                        "arguments": { "type": "array" }
+                                    },
+                                    "required": ["path", "command"],
+                                    "additionalProperties": false
+                                }
+                            },
+                            {
+                                "name": "context.lsp_execute_command_plan",
+                                "title": "LSP Execute Command (Plan)",
+                                "description": "Creates an edit plan from an allowlisted executeCommand that produces a WorkspaceEdit.",
+                                "inputSchema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "session_id": { "type": "string", "description": "Optional Context session id (defaults to $CONTEXT_SESSION_ID)." },
+                                        "path": { "type": "string" },
+                                        "command": { "type": "string" },
+                                        "arguments": { "type": "array" }
+                                    },
+                                    "required": ["path", "command"],
+                                    "additionalProperties": false
+                                }
+                            },
                         {
                             "name": "context.lsp_document_symbols",
                             "title": "LSP Document Symbols",
@@ -936,7 +936,9 @@ async fn main() -> Result<()> {
                                 .map(|s| s.to_string())
                                 .or_else(|| std::env::var("CONTEXT_SESSION_ID").ok());
 
-                            match lsp_diagnostics(&client, &daemon_url, session_id, root_path, path).await {
+                            match lsp_diagnostics(&client, &daemon_url, session_id, root_path, path)
+                                .await
+                            {
                                 Ok(val) => ok(
                                     id.unwrap(),
                                     json!({
@@ -955,187 +957,371 @@ async fn main() -> Result<()> {
                         }
                     }
                     "context.lsp_definition" => {
-                        match lsp_pos_call(&client, &daemon_url, "/api/lsp/definition", &arguments).await {
+                        match lsp_pos_call(&client, &daemon_url, "/api/lsp/definition", &arguments)
+                            .await
+                        {
                             Ok(val) => ok(id.unwrap(), tool_ok(val)),
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
                     "context.lsp_type_definition" => {
-                        match lsp_pos_call(&client, &daemon_url, "/api/lsp/type_definition", &arguments).await {
+                        match lsp_pos_call(
+                            &client,
+                            &daemon_url,
+                            "/api/lsp/type_definition",
+                            &arguments,
+                        )
+                        .await
+                        {
                             Ok(val) => ok(id.unwrap(), tool_ok(val)),
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
                     "context.lsp_implementation" => {
-                        match lsp_pos_call(&client, &daemon_url, "/api/lsp/implementation", &arguments).await {
+                        match lsp_pos_call(
+                            &client,
+                            &daemon_url,
+                            "/api/lsp/implementation",
+                            &arguments,
+                        )
+                        .await
+                        {
                             Ok(val) => ok(id.unwrap(), tool_ok(val)),
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
                     "context.lsp_references" => {
-                        match lsp_pos_call(&client, &daemon_url, "/api/lsp/references", &arguments).await {
+                        match lsp_pos_call(&client, &daemon_url, "/api/lsp/references", &arguments)
+                            .await
+                        {
                             Ok(val) => ok(id.unwrap(), tool_ok(val)),
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
                     "context.lsp_hover" => {
-                        match lsp_pos_call(&client, &daemon_url, "/api/lsp/hover", &arguments).await {
+                        match lsp_pos_call(&client, &daemon_url, "/api/lsp/hover", &arguments).await
+                        {
                             Ok(val) => ok(id.unwrap(), tool_ok(val)),
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
                     "context.lsp_signature_help" => {
-                        match lsp_pos_call(&client, &daemon_url, "/api/lsp/signature_help", &arguments).await {
+                        match lsp_pos_call(
+                            &client,
+                            &daemon_url,
+                            "/api/lsp/signature_help",
+                            &arguments,
+                        )
+                        .await
+                        {
                             Ok(val) => ok(id.unwrap(), tool_ok(val)),
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
                     "context.lsp_completion" => {
-                        match lsp_pos_call(&client, &daemon_url, "/api/lsp/completion", &arguments).await {
+                        match lsp_pos_call(&client, &daemon_url, "/api/lsp/completion", &arguments)
+                            .await
+                        {
                             Ok(val) => ok(id.unwrap(), tool_ok(val)),
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
                     "context.lsp_completion_resolve" => {
-                        match lsp_item_call(&client, &daemon_url, "/api/lsp/completion/resolve", &arguments).await {
+                        match lsp_item_call(
+                            &client,
+                            &daemon_url,
+                            "/api/lsp/completion/resolve",
+                            &arguments,
+                        )
+                        .await
+                        {
                             Ok(val) => ok(id.unwrap(), tool_ok(val)),
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
                     "context.lsp_code_action_resolve" => {
-                        match lsp_item_call(&client, &daemon_url, "/api/lsp/code_action/resolve", &arguments).await {
+                        match lsp_item_call(
+                            &client,
+                            &daemon_url,
+                            "/api/lsp/code_action/resolve",
+                            &arguments,
+                        )
+                        .await
+                        {
                             Ok(val) => ok(id.unwrap(), tool_ok(val)),
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
                     "context.lsp_inlay_hints" => {
-                        match lsp_range_call(&client, &daemon_url, "/api/lsp/inlay_hints", &arguments).await {
+                        match lsp_range_call(
+                            &client,
+                            &daemon_url,
+                            "/api/lsp/inlay_hints",
+                            &arguments,
+                        )
+                        .await
+                        {
                             Ok(val) => ok(id.unwrap(), tool_ok(val)),
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
                     "context.lsp_document_highlight" => {
-                        match lsp_pos_call(&client, &daemon_url, "/api/lsp/document_highlight", &arguments).await {
+                        match lsp_pos_call(
+                            &client,
+                            &daemon_url,
+                            "/api/lsp/document_highlight",
+                            &arguments,
+                        )
+                        .await
+                        {
                             Ok(val) => ok(id.unwrap(), tool_ok(val)),
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
                     "context.lsp_selection_ranges" => {
-                        match lsp_selection_ranges_call(&client, &daemon_url, "/api/lsp/selection_ranges", &arguments).await {
+                        match lsp_selection_ranges_call(
+                            &client,
+                            &daemon_url,
+                            "/api/lsp/selection_ranges",
+                            &arguments,
+                        )
+                        .await
+                        {
                             Ok(val) => ok(id.unwrap(), tool_ok(val)),
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
                     "context.lsp_call_hierarchy_prepare" => {
-                        match lsp_pos_call(&client, &daemon_url, "/api/lsp/call_hierarchy/prepare", &arguments).await {
+                        match lsp_pos_call(
+                            &client,
+                            &daemon_url,
+                            "/api/lsp/call_hierarchy/prepare",
+                            &arguments,
+                        )
+                        .await
+                        {
                             Ok(val) => ok(id.unwrap(), tool_ok(val)),
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
                     "context.lsp_call_hierarchy_incoming" => {
-                        match lsp_item_call(&client, &daemon_url, "/api/lsp/call_hierarchy/incoming", &arguments).await {
+                        match lsp_item_call(
+                            &client,
+                            &daemon_url,
+                            "/api/lsp/call_hierarchy/incoming",
+                            &arguments,
+                        )
+                        .await
+                        {
                             Ok(val) => ok(id.unwrap(), tool_ok(val)),
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
                     "context.lsp_call_hierarchy_outgoing" => {
-                        match lsp_item_call(&client, &daemon_url, "/api/lsp/call_hierarchy/outgoing", &arguments).await {
+                        match lsp_item_call(
+                            &client,
+                            &daemon_url,
+                            "/api/lsp/call_hierarchy/outgoing",
+                            &arguments,
+                        )
+                        .await
+                        {
                             Ok(val) => ok(id.unwrap(), tool_ok(val)),
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
                     "context.lsp_code_lens" => {
-                        match lsp_file_call(&client, &daemon_url, "/api/lsp/code_lens", &arguments).await {
+                        match lsp_file_call(&client, &daemon_url, "/api/lsp/code_lens", &arguments)
+                            .await
+                        {
                             Ok(val) => ok(id.unwrap(), tool_ok(val)),
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
                     "context.lsp_code_lens_resolve" => {
-                        match lsp_item_call(&client, &daemon_url, "/api/lsp/code_lens/resolve", &arguments).await {
+                        match lsp_item_call(
+                            &client,
+                            &daemon_url,
+                            "/api/lsp/code_lens/resolve",
+                            &arguments,
+                        )
+                        .await
+                        {
                             Ok(val) => ok(id.unwrap(), tool_ok(val)),
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
                     "context.lsp_prepare_rename" => {
-                        match lsp_pos_call(&client, &daemon_url, "/api/lsp/prepare_rename", &arguments).await {
+                        match lsp_pos_call(
+                            &client,
+                            &daemon_url,
+                            "/api/lsp/prepare_rename",
+                            &arguments,
+                        )
+                        .await
+                        {
                             Ok(val) => ok(id.unwrap(), tool_ok(val)),
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
                     "context.lsp_document_links" => {
-                        match lsp_file_call(&client, &daemon_url, "/api/lsp/document_links", &arguments).await {
+                        match lsp_file_call(
+                            &client,
+                            &daemon_url,
+                            "/api/lsp/document_links",
+                            &arguments,
+                        )
+                        .await
+                        {
                             Ok(val) => ok(id.unwrap(), tool_ok(val)),
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
                     "context.lsp_document_link_resolve" => {
-                        match lsp_item_call(&client, &daemon_url, "/api/lsp/document_links/resolve", &arguments).await {
+                        match lsp_item_call(
+                            &client,
+                            &daemon_url,
+                            "/api/lsp/document_links/resolve",
+                            &arguments,
+                        )
+                        .await
+                        {
                             Ok(val) => ok(id.unwrap(), tool_ok(val)),
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
                     "context.lsp_semantic_tokens_full" => {
-                        match lsp_file_call(&client, &daemon_url, "/api/lsp/semantic_tokens/full", &arguments).await {
+                        match lsp_file_call(
+                            &client,
+                            &daemon_url,
+                            "/api/lsp/semantic_tokens/full",
+                            &arguments,
+                        )
+                        .await
+                        {
                             Ok(val) => ok(id.unwrap(), tool_ok(val)),
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
                     "context.lsp_semantic_tokens_delta" => {
-                        match lsp_semantic_tokens_delta_call(&client, &daemon_url, &arguments).await {
+                        match lsp_semantic_tokens_delta_call(&client, &daemon_url, &arguments).await
+                        {
                             Ok(val) => ok(id.unwrap(), tool_ok(val)),
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
                     "context.lsp_folding_ranges" => {
-                        match lsp_file_call(&client, &daemon_url, "/api/lsp/folding_ranges", &arguments).await {
+                        match lsp_file_call(
+                            &client,
+                            &daemon_url,
+                            "/api/lsp/folding_ranges",
+                            &arguments,
+                        )
+                        .await
+                        {
                             Ok(val) => ok(id.unwrap(), tool_ok(val)),
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
                     "context.lsp_linked_editing_range" => {
-                        match lsp_pos_call(&client, &daemon_url, "/api/lsp/linked_editing_range", &arguments).await {
+                        match lsp_pos_call(
+                            &client,
+                            &daemon_url,
+                            "/api/lsp/linked_editing_range",
+                            &arguments,
+                        )
+                        .await
+                        {
                             Ok(val) => ok(id.unwrap(), tool_ok(val)),
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
                     "context.lsp_type_hierarchy_prepare" => {
-                        match lsp_pos_call(&client, &daemon_url, "/api/lsp/type_hierarchy/prepare", &arguments).await {
+                        match lsp_pos_call(
+                            &client,
+                            &daemon_url,
+                            "/api/lsp/type_hierarchy/prepare",
+                            &arguments,
+                        )
+                        .await
+                        {
                             Ok(val) => ok(id.unwrap(), tool_ok(val)),
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
                     "context.lsp_type_hierarchy_supertypes" => {
-                        match lsp_item_call(&client, &daemon_url, "/api/lsp/type_hierarchy/supertypes", &arguments).await {
+                        match lsp_item_call(
+                            &client,
+                            &daemon_url,
+                            "/api/lsp/type_hierarchy/supertypes",
+                            &arguments,
+                        )
+                        .await
+                        {
                             Ok(val) => ok(id.unwrap(), tool_ok(val)),
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
                     "context.lsp_type_hierarchy_subtypes" => {
-                        match lsp_item_call(&client, &daemon_url, "/api/lsp/type_hierarchy/subtypes", &arguments).await {
+                        match lsp_item_call(
+                            &client,
+                            &daemon_url,
+                            "/api/lsp/type_hierarchy/subtypes",
+                            &arguments,
+                        )
+                        .await
+                        {
                             Ok(val) => ok(id.unwrap(), tool_ok(val)),
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
                     "context.lsp_code_actions_by_diagnostic_plan" => {
-                        match lsp_code_actions_by_diagnostic_plan_call(&client, &daemon_url, &arguments).await {
+                        match lsp_code_actions_by_diagnostic_plan_call(
+                            &client,
+                            &daemon_url,
+                            &arguments,
+                        )
+                        .await
+                        {
                             Ok(val) => ok(id.unwrap(), tool_ok(val)),
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
                     "context.lsp_execute_command" => {
-                        match lsp_execute_command_call(&client, &daemon_url, "/api/lsp/execute_command", &arguments).await {
+                        match lsp_execute_command_call(
+                            &client,
+                            &daemon_url,
+                            "/api/lsp/execute_command",
+                            &arguments,
+                        )
+                        .await
+                        {
                             Ok(val) => ok(id.unwrap(), tool_ok(val)),
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
                     "context.lsp_execute_command_plan" => {
-                        match lsp_execute_command_call(&client, &daemon_url, "/api/lsp/execute_command/plan", &arguments).await {
+                        match lsp_execute_command_call(
+                            &client,
+                            &daemon_url,
+                            "/api/lsp/execute_command/plan",
+                            &arguments,
+                        )
+                        .await
+                        {
                             Ok(val) => ok(id.unwrap(), tool_ok(val)),
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
                     "context.lsp_document_symbols" => {
-                        match lsp_file_call(&client, &daemon_url, "/api/lsp/document_symbols", &arguments).await {
+                        match lsp_file_call(
+                            &client,
+                            &daemon_url,
+                            "/api/lsp/document_symbols",
+                            &arguments,
+                        )
+                        .await
+                        {
                             Ok(val) => ok(id.unwrap(), tool_ok(val)),
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
@@ -1147,7 +1333,9 @@ async fn main() -> Result<()> {
                         }
                     }
                     "context.lsp_workspace_symbol_resolve" => {
-                        match lsp_workspace_symbol_resolve_call(&client, &daemon_url, &arguments).await {
+                        match lsp_workspace_symbol_resolve_call(&client, &daemon_url, &arguments)
+                            .await
+                        {
                             Ok(val) => ok(id.unwrap(), tool_ok(val)),
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
@@ -1171,7 +1359,8 @@ async fn main() -> Result<()> {
                         }
                     }
                     "context.lsp_organize_imports_plan" => {
-                        match lsp_organize_imports_plan_call(&client, &daemon_url, &arguments).await {
+                        match lsp_organize_imports_plan_call(&client, &daemon_url, &arguments).await
+                        {
                             Ok(val) => ok(id.unwrap(), tool_ok(val)),
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
@@ -1206,10 +1395,20 @@ async fn main() -> Result<()> {
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    _ => error(id.unwrap(), -32601, "Method not found", Some(json!({"tool": name}))),
+                    _ => error(
+                        id.unwrap(),
+                        -32601,
+                        "Method not found",
+                        Some(json!({"tool": name})),
+                    ),
                 }
             }
-            _ => error(id.unwrap(), -32601, "Method not found", Some(json!({"method": method}))),
+            _ => error(
+                id.unwrap(),
+                -32601,
+                "Method not found",
+                Some(json!({"method": method})),
+            ),
         };
 
         let line = serde_json::to_string(&response).context("serializing MCP response")?;
@@ -1368,7 +1567,10 @@ async fn lsp_pos_call(
     endpoint: &str,
     arguments: &Value,
 ) -> Result<Value> {
-    let line = arguments.get("line").and_then(|v| v.as_u64()).context("missing line")?;
+    let line = arguments
+        .get("line")
+        .and_then(|v| v.as_u64())
+        .context("missing line")?;
     let character = arguments
         .get("character")
         .and_then(|v| v.as_u64())
@@ -1458,7 +1660,10 @@ async fn lsp_execute_command_call(
         .and_then(|v| v.as_str())
         .context("missing command")?
         .to_string();
-    let args = arguments.get("arguments").cloned().unwrap_or_else(|| json!([]));
+    let args = arguments
+        .get("arguments")
+        .cloned()
+        .unwrap_or_else(|| json!([]));
     let mut body = lsp_file_call_body(arguments)?;
     if let Some(obj) = body.as_object_mut() {
         obj.insert("command".into(), json!(command));
@@ -1536,7 +1741,13 @@ async fn lsp_workspace_symbol_resolve_call(
         "root_path": root_path,
         "item": item,
     });
-    daemon_post_json(client, daemon_url, "/api/lsp/workspace_symbols/resolve", &body).await
+    daemon_post_json(
+        client,
+        daemon_url,
+        "/api/lsp/workspace_symbols/resolve",
+        &body,
+    )
+    .await
 }
 
 async fn lsp_semantic_tokens_delta_call(
@@ -1603,7 +1814,10 @@ async fn lsp_rename_plan_call(
         .and_then(|v| v.as_str())
         .context("missing path")?
         .to_string();
-    let line = arguments.get("line").and_then(|v| v.as_u64()).context("missing line")?;
+    let line = arguments
+        .get("line")
+        .and_then(|v| v.as_u64())
+        .context("missing line")?;
     let character = arguments
         .get("character")
         .and_then(|v| v.as_u64())
@@ -1704,13 +1918,22 @@ async fn lsp_code_actions_by_diagnostic_plan_call(
         .and_then(|v| v.as_str())
         .context("missing path")?
         .to_string();
-    let diagnostic = arguments.get("diagnostic").cloned().context("missing diagnostic")?;
+    let diagnostic = arguments
+        .get("diagnostic")
+        .cloned()
+        .context("missing diagnostic")?;
     let body = json!({
         "session_id": session_id,
         "path": path,
         "diagnostic": diagnostic
     });
-    daemon_post_json(client, daemon_url, "/api/lsp/code_actions/by_diagnostic/plan", &body).await
+    daemon_post_json(
+        client,
+        daemon_url,
+        "/api/lsp/code_actions/by_diagnostic/plan",
+        &body,
+    )
+    .await
 }
 
 async fn list_edit_plans_call(
@@ -1718,7 +1941,10 @@ async fn list_edit_plans_call(
     daemon_url: &str,
     arguments: &Value,
 ) -> Result<Value> {
-    let track_id = arguments.get("track_id").and_then(|v| v.as_str()).map(|s| s.to_string());
+    let track_id = arguments
+        .get("track_id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
     let track_id = if let Some(tid) = track_id {
         tid
     } else {
@@ -1728,12 +1954,8 @@ async fn list_edit_plans_call(
             .map(|s| s.to_string())
             .or_else(|| std::env::var("CONTEXT_SESSION_ID").ok())
             .context("missing track_id and session_id")?;
-        let sess = daemon_get_json(
-            client,
-            daemon_url,
-            &format!("/api/sessions/{}", session_id),
-        )
-        .await?;
+        let sess =
+            daemon_get_json(client, daemon_url, &format!("/api/sessions/{}", session_id)).await?;
         let tid = sess
             .get("track_id")
             .and_then(|v| v.as_str().or_else(|| v.get("0").and_then(|x| x.as_str())))
@@ -1757,12 +1979,7 @@ async fn get_edit_plan_call(
         .get("plan_id")
         .and_then(|v| v.as_str())
         .context("missing plan_id")?;
-    daemon_get_json(
-        client,
-        daemon_url,
-        &format!("/api/edit_plans/{}", plan_id),
-    )
-    .await
+    daemon_get_json(client, daemon_url, &format!("/api/edit_plans/{}", plan_id)).await
 }
 
 async fn apply_edit_plan_call(
@@ -1781,12 +1998,8 @@ async fn apply_edit_plan_call(
     let patch = if let Some(p) = arguments.get("patch").and_then(|v| v.as_str()) {
         p.to_string()
     } else {
-        let plan = daemon_get_json(
-            client,
-            daemon_url,
-            &format!("/api/edit_plans/{}", plan_id),
-        )
-        .await?;
+        let plan =
+            daemon_get_json(client, daemon_url, &format!("/api/edit_plans/{}", plan_id)).await?;
         plan.get("diff")
             .and_then(|v| v.as_str())
             .unwrap_or("")

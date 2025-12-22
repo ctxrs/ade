@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
@@ -168,7 +168,9 @@ impl BufferStore {
         new_sha256: Option<String>,
     ) -> Result<BufferState> {
         let mut by_id = self.by_id.lock().await;
-        let st = by_id.get_mut(&id).ok_or_else(|| anyhow!("buffer not found"))?;
+        let st = by_id
+            .get_mut(&id)
+            .ok_or_else(|| anyhow!("buffer not found"))?;
         if version <= st.version {
             anyhow::bail!("stale buffer version");
         }
@@ -226,7 +228,9 @@ impl BufferStore {
         } else {
             root.join(path)
         };
-        let file = candidate.canonicalize().with_context(|| "canonicalize buffer path")?;
+        let file = candidate
+            .canonicalize()
+            .with_context(|| "canonicalize buffer path")?;
         if !file.starts_with(root) {
             anyhow::bail!("path outside root");
         }

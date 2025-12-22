@@ -1,0 +1,25 @@
+{
+  "name": "@context/design",
+  "version": "0.1.0",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "private": true,
+  "exports": {
+    ".": "./src/index.ts",
+    "./native": "./src/native.ts",
+    "./web": "./src/web.ts"
+  },
+  "typesVersions": {
+    "*": {
+      "*": [
+        "src/index.ts"
+      ],
+      "native": [
+        "src/native.ts"
+      ],
+      "web": [
+        "src/web.ts"
+      ]
+    }
+  }
+}

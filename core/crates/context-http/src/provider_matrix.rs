@@ -239,7 +239,10 @@ pub async fn load_matrix_cached(
     matrix
 }
 
-pub fn get_entry<'a>(matrix: &'a ProviderMatrix, provider_id: &str) -> Option<&'a ProviderMatrixEntry> {
+pub fn get_entry<'a>(
+    matrix: &'a ProviderMatrix,
+    provider_id: &str,
+) -> Option<&'a ProviderMatrixEntry> {
     matrix.providers.iter().find(|p| p.id == provider_id)
 }
 
@@ -276,7 +279,10 @@ pub fn release_for_version<'a>(
     entry: &'a ProviderMatrixEntry,
     version: &str,
 ) -> Option<&'a ProviderRelease> {
-    entry.releases.iter().find(|r| version_matches(&r.version, version))
+    entry
+        .releases
+        .iter()
+        .find(|r| version_matches(&r.version, version))
 }
 
 pub async fn apply_matrix_to_status(
@@ -294,9 +300,10 @@ pub async fn apply_matrix_to_status(
     }
 
     if let Some(rec) = recommended_release(entry, context_version) {
-        status
-            .details
-            .insert("matrix_recommended_version".to_string(), rec.version.clone());
+        status.details.insert(
+            "matrix_recommended_version".to_string(),
+            rec.version.clone(),
+        );
     }
     if let Some(latest) = latest_release(entry) {
         status
@@ -341,7 +348,10 @@ pub async fn apply_matrix_to_status(
     }
 
     if status.installed
-        && matches!(status.health, context_providers::adapters::ProviderHealth::Ok)
+        && matches!(
+            status.health,
+            context_providers::adapters::ProviderHealth::Ok
+        )
         && !supported
     {
         status.health = context_providers::adapters::ProviderHealth::UnsupportedVersion;
@@ -376,9 +386,10 @@ pub async fn apply_matrix_to_status(
         _ => false,
     };
     if update_requires_context {
-        status
-            .details
-            .insert("matrix_update_requires_context".to_string(), "true".to_string());
+        status.details.insert(
+            "matrix_update_requires_context".to_string(),
+            "true".to_string(),
+        );
     }
 }
 
@@ -432,7 +443,10 @@ async fn probe_command_version(command: &str, args: &[String]) -> Option<String>
         .env("NO_COLOR", "1")
         .env("CLICOLOR", "0");
 
-    let output = timeout(VERSION_PROBE_TIMEOUT, cmd.output()).await.ok()?.ok()?;
+    let output = timeout(VERSION_PROBE_TIMEOUT, cmd.output())
+        .await
+        .ok()?
+        .ok()?;
     if !output.status.success() {
         return None;
     }
@@ -446,7 +460,8 @@ fn probe_node_package_version(
     package: &str,
     data_root: &Path,
 ) -> Option<String> {
-    let script_path = if command.command.ends_with("node") || command.command.ends_with("node.exe") {
+    let script_path = if command.command.ends_with("node") || command.command.ends_with("node.exe")
+    {
         command.args.first().map(PathBuf::from)
     } else {
         resolve_command_path(&command.command).or_else(|| {
@@ -499,7 +514,10 @@ fn read_package_version(path: &Path, package: &str) -> Option<String> {
 }
 
 fn resolve_command_path(command: &str) -> Option<PathBuf> {
-    if command.contains(std::path::MAIN_SEPARATOR) || command.contains('/') || command.contains('\\') {
+    if command.contains(std::path::MAIN_SEPARATOR)
+        || command.contains('/')
+        || command.contains('\\')
+    {
         let p = PathBuf::from(command);
         return if p.exists() { Some(p) } else { None };
     }
@@ -573,7 +591,8 @@ async fn fetch_remote_matrix(base_url: &str, channel: &str) -> Result<ProviderMa
         .text()
         .await
         .context("reading provider matrix body")?;
-    let parsed: ProviderMatrix = serde_json::from_str(&txt).context("parsing provider matrix JSON")?;
+    let parsed: ProviderMatrix =
+        serde_json::from_str(&txt).context("parsing provider matrix JSON")?;
     if parsed.version != MATRIX_SCHEMA_VERSION {
         anyhow::bail!(
             "unsupported provider matrix version {} (expected {})",
@@ -674,7 +693,11 @@ fn extract_version(text: &str) -> Option<String> {
         }
         break;
     }
-    if started { Some(buf) } else { None }
+    if started {
+        Some(buf)
+    } else {
+        None
+    }
 }
 
 #[cfg(test)]

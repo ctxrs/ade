@@ -15,8 +15,8 @@ use crate::installs::{truncate_for_storage, InstallEventLevel, InstallId, Instal
 use crate::lsp_catalog::{LspCatalogArchive, LspCatalogInstall};
 use crate::provider_matrix;
 use crate::updates;
-use context_providers::tier1::Tier1AcpAdapter;
 use context_lsp::LspManagerConfig;
+use context_providers::tier1::Tier1AcpAdapter;
 
 const NODE_VERSION: &str = "24.12.0";
 const PYTHON_VERSION: &str = "3.13.11";
@@ -134,10 +134,14 @@ pub fn apply_managed_install_details(
     };
 
     if let Some(v) = &meta.version {
-        status.details.insert("managed_version".to_string(), v.clone());
+        status
+            .details
+            .insert("managed_version".to_string(), v.clone());
     }
     if let Some(p) = &meta.package {
-        status.details.insert("managed_package".to_string(), p.clone());
+        status
+            .details
+            .insert("managed_package".to_string(), p.clone());
     }
     if let Some(d) = &meta.install_dir_rel {
         status
@@ -145,7 +149,9 @@ pub fn apply_managed_install_details(
             .insert("managed_install_dir".to_string(), d.clone());
     }
     if let Some(d) = &meta.bin_dir_rel {
-        status.details.insert("managed_bin_dir".to_string(), d.clone());
+        status
+            .details
+            .insert("managed_bin_dir".to_string(), d.clone());
     }
     if let Some(ts) = &meta.last_success_at {
         status
@@ -160,10 +166,9 @@ pub fn apply_managed_install_details(
         status
             .details
             .insert("managed_last_error_at".to_string(), err.at.clone());
-        status.details.insert(
-            "managed_last_error_stage".to_string(),
-            err.stage.clone(),
-        );
+        status
+            .details
+            .insert("managed_last_error_stage".to_string(), err.stage.clone());
     }
 }
 
@@ -189,7 +194,10 @@ pub async fn install_provider_with_progress(
 }
 
 fn resolve_command_path(command: &str) -> (bool, Option<PathBuf>) {
-    if command.contains(std::path::MAIN_SEPARATOR) || command.contains('/') || command.contains('\\') {
+    if command.contains(std::path::MAIN_SEPARATOR)
+        || command.contains('/')
+        || command.contains('\\')
+    {
         let p = PathBuf::from(command);
         if p.exists() {
             return (true, Some(p));
@@ -252,7 +260,9 @@ fn find_unique_path_ending_with(root: &Path, suffix: &str) -> Result<PathBuf> {
     let mut matches = Vec::new();
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
-        for entry in std::fs::read_dir(&dir).with_context(|| format!("read_dir {}", dir.display()))? {
+        for entry in
+            std::fs::read_dir(&dir).with_context(|| format!("read_dir {}", dir.display()))?
+        {
             let entry = entry?;
             let path = entry.path();
             if path.is_dir() {
@@ -275,7 +285,8 @@ fn find_unique_path_ending_with(root: &Path, suffix: &str) -> Result<PathBuf> {
 }
 
 fn extract_zip_to_dir(zip_path: &Path, out_dir: &Path) -> Result<()> {
-    let file = std::fs::File::open(zip_path).with_context(|| format!("open {}", zip_path.display()))?;
+    let file =
+        std::fs::File::open(zip_path).with_context(|| format!("open {}", zip_path.display()))?;
     let mut archive = zip::ZipArchive::new(file).context("parsing zip")?;
     for i in 0..archive.len() {
         let mut f = archive.by_index(i).context("zip entry")?;
@@ -287,8 +298,8 @@ fn extract_zip_to_dir(zip_path: &Path, out_dir: &Path) -> Result<()> {
         if let Some(parent) = dest.parent() {
             std::fs::create_dir_all(parent).ok();
         }
-        let mut out = std::fs::File::create(&dest)
-            .with_context(|| format!("create {}", dest.display()))?;
+        let mut out =
+            std::fs::File::create(&dest).with_context(|| format!("create {}", dest.display()))?;
         std::io::copy(&mut f, &mut out).context("extract zip entry")?;
     }
     Ok(())
@@ -317,8 +328,8 @@ fn zed_target_key() -> Result<&'static str> {
 }
 
 fn extract_tar_bz2_to_dir(tar_bz2_path: &Path, out_dir: &Path) -> Result<()> {
-    let tar_bz2 =
-        std::fs::File::open(tar_bz2_path).with_context(|| format!("open {}", tar_bz2_path.display()))?;
+    let tar_bz2 = std::fs::File::open(tar_bz2_path)
+        .with_context(|| format!("open {}", tar_bz2_path.display()))?;
     let dec = bzip2::read::BzDecoder::new(tar_bz2);
     let mut archive = tar::Archive::new(dec);
     archive.unpack(out_dir).context("extract tar.bz2")?;
@@ -376,7 +387,8 @@ async fn install_agent_server_url_binary(
             Ok(dest)
         }
         AgentServerArchive::TarGz => {
-            let tar_gz = std::fs::File::open(&tmp).with_context(|| format!("open {}", tmp.display()))?;
+            let tar_gz =
+                std::fs::File::open(&tmp).with_context(|| format!("open {}", tmp.display()))?;
             let dec = flate2::read::GzDecoder::new(tar_gz);
             let mut archive = tar::Archive::new(dec);
             archive.unpack(&install_dir).context("extract tar.gz")?;
@@ -462,19 +474,22 @@ async fn install_url_binary(
             Ok(dest)
         }
         LspCatalogArchive::Gz => {
-            let gz = std::fs::File::open(&tmp).with_context(|| format!("open {}", tmp.display()))?;
+            let gz =
+                std::fs::File::open(&tmp).with_context(|| format!("open {}", tmp.display()))?;
             let mut dec = flate2::read::GzDecoder::new(gz);
             let dest = install_dir.join(bin_path);
             if let Some(parent) = dest.parent() {
                 std::fs::create_dir_all(parent).ok();
             }
-            let mut out = std::fs::File::create(&dest).with_context(|| format!("create {}", dest.display()))?;
+            let mut out = std::fs::File::create(&dest)
+                .with_context(|| format!("create {}", dest.display()))?;
             std::io::copy(&mut dec, &mut out).context("decompress gz")?;
             ensure_executable(&dest)?;
             Ok(dest)
         }
         LspCatalogArchive::TarGz => {
-            let tar_gz = std::fs::File::open(&tmp).with_context(|| format!("open {}", tmp.display()))?;
+            let tar_gz =
+                std::fs::File::open(&tmp).with_context(|| format!("open {}", tmp.display()))?;
             let dec = flate2::read::GzDecoder::new(tar_gz);
             let mut archive = tar::Archive::new(dec);
             archive.unpack(&install_dir).context("extract tar.gz")?;
@@ -540,8 +555,7 @@ pub async fn install_lsp_catalog_server_with_progress(
     install_id: InstallId,
     catalog_id: String,
 ) -> Result<()> {
-    let res =
-        install_lsp_catalog_server_impl(state.as_ref(), &catalog_id, Some(install_id)).await;
+    let res = install_lsp_catalog_server_impl(state.as_ref(), &catalog_id, Some(install_id)).await;
     match &res {
         Ok(()) => state.finish_install(install_id, true, None).await,
         Err(e) => {
@@ -717,10 +731,7 @@ async fn install_lsp_catalog_server_impl(
             let meta = ManagedInstallMetadata {
                 package: Some(t.url.clone()),
                 version: Some(version.clone()),
-                install_dir_rel: Some(install_dir_rel(
-                    &data_root,
-                    bin.parent().unwrap_or(&bin),
-                )),
+                install_dir_rel: Some(install_dir_rel(&data_root, bin.parent().unwrap_or(&bin))),
                 bin_dir_rel: None,
                 last_success_at: Some(Utc::now().to_rfc3339()),
                 last_error: None,
@@ -826,9 +837,16 @@ async fn install_managed_npm_provider(
 
     let package_spec = format!("{package}@{version}");
     *stage = "npm_install";
-    npm_install(state, install_id, provider_id, &node, &install_dir, &package_spec)
-        .await
-        .context("running npm install")?;
+    npm_install(
+        state,
+        install_id,
+        provider_id,
+        &node,
+        &install_dir,
+        &package_spec,
+    )
+    .await
+    .context("running npm install")?;
 
     if provider_id == "claude" {
         *stage = "patch";
@@ -1417,11 +1435,9 @@ async fn install_provider_impl(
         )
         .await;
 
-        let matrix = provider_matrix::load_matrix_cached(
-            &state.data_root,
-            &state.provider_matrix_cache,
-        )
-        .await;
+        let matrix =
+            provider_matrix::load_matrix_cached(&state.data_root, &state.provider_matrix_cache)
+                .await;
         let entry = provider_matrix::get_entry(&matrix, &provider_id)
             .ok_or_else(|| anyhow::anyhow!("unsupported provider for install: {provider_id}"))?;
         let Some(install) = entry.managed_install.as_ref() else {
@@ -1457,10 +1473,8 @@ async fn install_provider_impl(
                     provider_matrix::DependencyInstall::Npm { package, version } => {
                         error_package = Some(package.clone());
                         error_version = Some(version.clone());
-                        error_install_dir_rel = Some(format!(
-                            "providers/agent-servers/{}/{}",
-                            dep.id, version
-                        ));
+                        error_install_dir_rel =
+                            Some(format!("providers/agent-servers/{}/{}", dep.id, version));
                         install_managed_npm_dependency(
                             state,
                             install_id,
@@ -1475,17 +1489,12 @@ async fn install_provider_impl(
                     provider_matrix::DependencyInstall::Archive { version, targets } => {
                         let target = zed_target_key().context("resolving platform target")?;
                         let target_entry = targets.get(target).ok_or_else(|| {
-                            anyhow::anyhow!(
-                                "unsupported dependency target {}: {target}",
-                                dep.id
-                            )
+                            anyhow::anyhow!("unsupported dependency target {}: {target}", dep.id)
                         })?;
                         error_package = Some(target_entry.url.clone());
                         error_version = Some(version.clone());
-                        error_install_dir_rel = Some(format!(
-                            "providers/agent-servers/{}/{}",
-                            dep.id, version
-                        ));
+                        error_install_dir_rel =
+                            Some(format!("providers/agent-servers/{}/{}", dep.id, version));
                         install_managed_archive_dependency(
                             state,
                             install_id,
@@ -1623,15 +1632,20 @@ async fn install_provider_impl(
         )
         .await;
 
-        let adapter: std::sync::Arc<Tier1AcpAdapter> = std::sync::Arc::new(if provider_id == "claude" {
-            Tier1AcpAdapter::claude_from_raw_with_ask_user_question(
-                managed.command.clone(),
-                managed.args.clone(),
-                std::sync::Arc::clone(&state.ask_user_question),
-            )
-        } else {
-            Tier1AcpAdapter::from_raw(&provider_id, managed.command.clone(), managed.args.clone())
-        });
+        let adapter: std::sync::Arc<Tier1AcpAdapter> =
+            std::sync::Arc::new(if provider_id == "claude" {
+                Tier1AcpAdapter::claude_from_raw_with_ask_user_question(
+                    managed.command.clone(),
+                    managed.args.clone(),
+                    std::sync::Arc::clone(&state.ask_user_question),
+                )
+            } else {
+                Tier1AcpAdapter::from_raw(
+                    &provider_id,
+                    managed.command.clone(),
+                    managed.args.clone(),
+                )
+            });
 
         // Refresh the in-memory adapter so new Sessions use the managed install.
         {
@@ -1655,7 +1669,12 @@ async fn install_provider_impl(
             .get(&provider_id)
             .cloned();
         if let Some(status) = status {
-            if !status.installed || !matches!(status.health, context_providers::adapters::ProviderHealth::Ok) {
+            if !status.installed
+                || !matches!(
+                    status.health,
+                    context_providers::adapters::ProviderHealth::Ok
+                )
+            {
                 anyhow::bail!(
                     "install completed but provider is not healthy: {}",
                     status.diagnostics.join("; ")
@@ -1793,20 +1812,22 @@ async fn update_registry_last_error(
     version: Option<&str>,
     install_dir_rel: Option<String>,
 ) {
-    let mut cfg = load_agent_server_config(data_root).await.unwrap_or_default();
+    let mut cfg = load_agent_server_config(data_root)
+        .await
+        .unwrap_or_default();
     let install_dir_rel_clone = install_dir_rel.clone();
-    let mut meta = cfg
-        .managed_installs
-        .get(provider_id)
-        .cloned()
-        .unwrap_or(ManagedInstallMetadata {
-            package: package.map(|s| s.to_string()),
-            version: version.map(|s| s.to_string()),
-            install_dir_rel: install_dir_rel_clone,
-            bin_dir_rel: None,
-            last_success_at: None,
-            last_error: None,
-        });
+    let mut meta =
+        cfg.managed_installs
+            .get(provider_id)
+            .cloned()
+            .unwrap_or(ManagedInstallMetadata {
+                package: package.map(|s| s.to_string()),
+                version: version.map(|s| s.to_string()),
+                install_dir_rel: install_dir_rel_clone,
+                bin_dir_rel: None,
+                last_success_at: None,
+                last_error: None,
+            });
     if meta.package.is_none() {
         meta.package = package.map(|s| s.to_string());
     }
@@ -1877,11 +1898,8 @@ async fn refresh_provider_statuses_with_cfg(
     state: &AppState,
     cfg: AgentServerConfigFile,
 ) -> Result<()> {
-    let matrix = provider_matrix::load_matrix_cached(
-        &state.data_root,
-        &state.provider_matrix_cache,
-    )
-    .await;
+    let matrix =
+        provider_matrix::load_matrix_cached(&state.data_root, &state.provider_matrix_cache).await;
 
     let map = state.providers.lock().await;
     let mut statuses = HashMap::new();
@@ -1890,8 +1908,13 @@ async fn refresh_provider_statuses_with_cfg(
             Ok(mut status) => {
                 apply_managed_install_details(&mut status, &cfg);
                 if let Some(entry) = provider_matrix::get_entry(&matrix, id) {
-                    provider_matrix::apply_matrix_to_status(&state.data_root, &cfg, entry, &mut status)
-                        .await;
+                    provider_matrix::apply_matrix_to_status(
+                        &state.data_root,
+                        &cfg,
+                        entry,
+                        &mut status,
+                    )
+                    .await;
                 }
                 statuses.insert(id.clone(), status);
             }
@@ -1944,10 +1967,7 @@ pub async fn load_agent_server_config(data_root: &Path) -> Result<AgentServerCon
     Ok(serde_json::from_str(&txt).context("parsing agent server config")?)
 }
 
-pub async fn save_agent_server_config(
-    data_root: &Path,
-    cfg: &AgentServerConfigFile,
-) -> Result<()> {
+pub async fn save_agent_server_config(data_root: &Path, cfg: &AgentServerConfigFile) -> Result<()> {
     let path = agent_server_config_path(data_root);
     if let Some(parent) = path.parent() {
         tokio::fs::create_dir_all(parent).await?;
@@ -1958,9 +1978,7 @@ pub async fn save_agent_server_config(
         .as_nanos();
     let tmp_path = path.with_file_name(format!(
         "{}.tmp-{}",
-        path.file_name()
-            .unwrap_or_default()
-            .to_string_lossy(),
+        path.file_name().unwrap_or_default().to_string_lossy(),
         nanos
     ));
     tokio::fs::write(&tmp_path, serde_json::to_string_pretty(cfg)?).await?;
@@ -2001,9 +2019,7 @@ pub async fn save_lsp_server_config(data_root: &Path, cfg: &LspServerConfigFile)
         .as_nanos();
     let tmp_path = path.with_file_name(format!(
         "{}.tmp-{}",
-        path.file_name()
-            .unwrap_or_default()
-            .to_string_lossy(),
+        path.file_name().unwrap_or_default().to_string_lossy(),
         nanos
     ));
     tokio::fs::write(&tmp_path, serde_json::to_string_pretty(cfg)?).await?;
@@ -2378,9 +2394,7 @@ async fn ensure_node_runtime(
     } else {
         ("tar.gz", "tar_gz")
     };
-    let url = format!(
-        "https://nodejs.org/dist/v{NODE_VERSION}/{folder}.{archive_ext}"
-    );
+    let url = format!("https://nodejs.org/dist/v{NODE_VERSION}/{folder}.{archive_ext}");
     let tmp = data_root
         .join("runtimes")
         .join("node")
@@ -2399,7 +2413,10 @@ async fn ensure_node_runtime(
     .await;
     download_to_file(state, install_id, provider_id, "node_download", &url, &tmp).await?;
 
-    let extract_root = data_root.join("runtimes").join("node").join(format!("{folder}.extract"));
+    let extract_root = data_root
+        .join("runtimes")
+        .join("node")
+        .join(format!("{folder}.extract"));
     if extract_root.exists() {
         tokio::fs::remove_dir_all(&extract_root).await.ok();
     }
@@ -2436,7 +2453,10 @@ async fn ensure_node_runtime(
     // Node tarballs contain a single top-level folder named `node-vX.Y.Z-<target>`.
     let extracted = extract_root.join(&folder);
     if !extracted.exists() {
-        anyhow::bail!("node extraction failed: missing {folder} in {}", extract_root.display());
+        anyhow::bail!(
+            "node extraction failed: missing {folder} in {}",
+            extract_root.display()
+        );
     }
 
     if node_root.exists() {
@@ -2531,9 +2551,7 @@ async fn ensure_python_runtime(
             provider_id,
             InstallEventLevel::Info,
             "python",
-            format!(
-                "Using existing Python runtime {PYTHON_VERSION} ({target})"
-            ),
+            format!("Using existing Python runtime {PYTHON_VERSION} ({target})"),
             None,
             None,
             None,
@@ -2554,9 +2572,7 @@ async fn ensure_python_runtime(
             provider_id,
             InstallEventLevel::Info,
             "python",
-            format!(
-                "Using existing Python runtime {PYTHON_VERSION} ({target})"
-            ),
+            format!("Using existing Python runtime {PYTHON_VERSION} ({target})"),
             None,
             None,
             None,
@@ -2572,16 +2588,11 @@ async fn ensure_python_runtime(
         tokio::fs::create_dir_all(parent).await?;
     }
 
-    let asset = format!(
-        "cpython-{PYTHON_VERSION}+{PYTHON_BUILD_TAG}-{target}-install_only.tar.gz"
-    );
+    let asset = format!("cpython-{PYTHON_VERSION}+{PYTHON_BUILD_TAG}-{target}-install_only.tar.gz");
     let url = format!(
         "https://github.com/indygreg/python-build-standalone/releases/download/{PYTHON_BUILD_TAG}/{asset}"
     );
-    let tmp = data_root
-        .join("runtimes")
-        .join("python")
-        .join(&asset);
+    let tmp = data_root.join("runtimes").join("python").join(&asset);
 
     emit_install(
         state,
@@ -2595,7 +2606,15 @@ async fn ensure_python_runtime(
         None,
     )
     .await;
-    download_to_file(state, install_id, provider_id, "python_download", &url, &tmp).await?;
+    download_to_file(
+        state,
+        install_id,
+        provider_id,
+        "python_download",
+        &url,
+        &tmp,
+    )
+    .await?;
 
     let extract_root = data_root
         .join("runtimes")
@@ -2657,9 +2676,7 @@ async fn ensure_python_runtime(
         provider_id,
         InstallEventLevel::Success,
         "python_extract",
-        format!(
-            "Installed Python runtime {PYTHON_VERSION} ({target})"
-        ),
+        format!("Installed Python runtime {PYTHON_VERSION} ({target})"),
         None,
         None,
         None,
@@ -2703,7 +2720,11 @@ fn resolve_python_bin(python_root: &Path) -> PathBuf {
 
 async fn ensure_python_pip(python: &Path) -> Result<()> {
     let mut pip_check = Command::new(python);
-    pip_check.arg("-m").arg("pip").arg("--version").kill_on_drop(true);
+    pip_check
+        .arg("-m")
+        .arg("pip")
+        .arg("--version")
+        .kill_on_drop(true);
     let out = run_command_with_timeout(pip_check, Duration::from_secs(60))
         .await
         .context("checking pip availability")?;
@@ -2844,8 +2865,10 @@ async fn npm_install(
         )
         .await;
         if attempt < RETRY_COUNT {
-            tokio::time::sleep(Duration::from_millis(RETRY_BACKOFF_BASE_MS * attempt as u64))
-                .await;
+            tokio::time::sleep(Duration::from_millis(
+                RETRY_BACKOFF_BASE_MS * attempt as u64,
+            ))
+            .await;
         }
     }
 
@@ -2898,9 +2921,7 @@ async fn download_to_file(
                 while let Some(chunk) = stream.next().await {
                     let bytes = chunk.context("streaming download")?;
                     downloaded += bytes.len() as u64;
-                    file.write_all(&bytes)
-                        .await
-                        .context("writing download")?;
+                    file.write_all(&bytes).await.context("writing download")?;
                     emit_install(
                         state,
                         install_id,
@@ -2962,10 +2983,7 @@ async fn download_to_file(
     Ok(())
 }
 
-async fn run_command_with_timeout(
-    mut cmd: Command,
-    dur: Duration,
-) -> Result<std::process::Output> {
+async fn run_command_with_timeout(mut cmd: Command, dur: Duration) -> Result<std::process::Output> {
     let child = cmd.spawn().context("spawning process")?;
     let wait = async move { child.wait_with_output().await };
     match timeout(dur, wait).await {
@@ -2991,14 +3009,18 @@ async fn npm_install_one(
     version: &str,
 ) -> Result<()> {
     let package_spec = format!("{package}@{version}");
-    npm_install(state, install_id, provider_id, node, install_dir, &package_spec).await
+    npm_install(
+        state,
+        install_id,
+        provider_id,
+        node,
+        install_dir,
+        &package_spec,
+    )
+    .await
 }
 
-async fn npm_dependency_matches(
-    install_dir: &Path,
-    package: &str,
-    version: &str,
-) -> Result<bool> {
+async fn npm_dependency_matches(install_dir: &Path, package: &str, version: &str) -> Result<bool> {
     let pkg_dir = install_dir.join("node_modules").join(package);
     let pkg_json_path = pkg_dir.join("package.json");
     if !pkg_json_path.exists() {
@@ -3008,8 +3030,7 @@ async fn npm_dependency_matches(
         .await
         .with_context(|| format!("reading {}", pkg_json_path.display()))?;
     let v: serde_json::Value = serde_json::from_str(&txt).context("parsing package.json")?;
-    Ok(v
-        .get("version")
+    Ok(v.get("version")
         .and_then(|v| v.as_str())
         .map(|v| v == version)
         .unwrap_or(false))

@@ -79,7 +79,10 @@ async fn setup_state() -> (tempfile::TempDir, Arc<AppState>, axum::Router) {
     (data_dir, state, app)
 }
 
-async fn create_session(app: axum::Router, repo: &Path) -> (axum::Router, context_core::models::Session) {
+async fn create_session(
+    app: axum::Router,
+    repo: &Path,
+) -> (axum::Router, context_core::models::Session) {
     // create workspace
     let req = Request::builder()
         .method("POST")
@@ -134,7 +137,9 @@ async fn create_session(app: axum::Router, repo: &Path) -> (axum::Router, contex
         .method("POST")
         .uri(format!("/api/tracks/{}/sessions", track.id.0))
         .header("content-type", "application/json")
-        .body(Body::from(json!({"provider_id":"fake","model_id":"fake"}).to_string()))
+        .body(Body::from(
+            json!({"provider_id":"fake","model_id":"fake"}).to_string(),
+        ))
         .unwrap();
     let res = app.clone().oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::OK);
@@ -166,7 +171,11 @@ async fn buffer_open_update_and_conflict() {
     assert_eq!(res.status(), StatusCode::OK);
     let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
     let opened: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    let buffer_id = opened.get("buffer_id").and_then(|v| v.as_str()).unwrap().to_string();
+    let buffer_id = opened
+        .get("buffer_id")
+        .and_then(|v| v.as_str())
+        .unwrap()
+        .to_string();
 
     // update buffer (autosave)
     let new_text = "pub fn ok() {}\npub fn added() {}\n";

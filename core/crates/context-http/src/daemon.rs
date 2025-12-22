@@ -13,25 +13,25 @@ use fs2::FileExt;
 use serde_json::json;
 use tokio::sync::{broadcast, mpsc, watch, Mutex};
 
+use crate::buffers::BufferStore;
+use crate::edit_plans::{EditPlan, EditPlanId};
 use context_core::ids::{SessionId, WorkspaceId, WorktreeId};
 use context_core::models::{Session, SessionEvent};
+use context_lsp::Language as LspLanguage;
+use context_lsp::{LspManager, LspManagerConfig};
 use context_providers::adapters::ProviderAdapter;
 use context_providers::adapters::ProviderStatus;
 use context_providers::ask_user_question::AskUserQuestionBroker;
 use context_providers::fake::FakeProviderAdapter;
 use context_providers::tier1::Tier1AcpAdapter;
 use context_store::Store;
-use context_lsp::{LspManager, LspManagerConfig};
-use crate::edit_plans::{EditPlan, EditPlanId};
-use crate::buffers::BufferStore;
-use context_lsp::Language as LspLanguage;
 
 use crate::api;
-use crate::installs::{InstallId, InstallProgressEvent, InstallState, InstallStateKind};
 use crate::installer;
+use crate::installs::{InstallId, InstallProgressEvent, InstallState, InstallStateKind};
 use crate::scheduler::{session_worker, SchedulerCommand};
-use crate::telemetry::{Telemetry, TelemetryConfig};
 use crate::settings;
+use crate::telemetry::{Telemetry, TelemetryConfig};
 
 fn acquire_daemon_lock(data_root: &Path) -> Result<std::fs::File> {
     let path = data_root.join("daemon.lock");
@@ -45,7 +45,10 @@ fn acquire_daemon_lock(data_root: &Path) -> Result<std::fs::File> {
     match file.try_lock_exclusive() {
         Ok(()) => Ok(file),
         Err(e) if e.kind() == ErrorKind::WouldBlock => {
-            anyhow::bail!("Context daemon already running (lockfile {})", path.display())
+            anyhow::bail!(
+                "Context daemon already running (lockfile {})",
+                path.display()
+            )
         }
         Err(e) => Err(e).with_context(|| format!("locking daemon lockfile {}", path.display())),
     }
@@ -165,7 +168,9 @@ impl AppState {
             store,
             providers: Mutex::new(providers),
             provider_statuses: Mutex::new(HashMap::new()),
-            provider_matrix_cache: Mutex::new(crate::provider_matrix::ProviderMatrixCache::default()),
+            provider_matrix_cache: Mutex::new(
+                crate::provider_matrix::ProviderMatrixCache::default(),
+            ),
             provider_options_cache: Mutex::new(HashMap::new()),
             provider_verify_cache: Mutex::new(HashMap::new()),
             file_completions_cache: Mutex::new(HashMap::new()),
@@ -217,7 +222,10 @@ impl AppState {
             .clone()
     }
 
-    pub async fn subscribe_session_event_head(&self, session_id: SessionId) -> watch::Receiver<i64> {
+    pub async fn subscribe_session_event_head(
+        &self,
+        session_id: SessionId,
+    ) -> watch::Receiver<i64> {
         let mut map = self.session_event_heads.lock().await;
         if let Some(tx) = map.get(&session_id) {
             return tx.subscribe();
@@ -247,7 +255,11 @@ impl AppState {
         let _ = sender.send(event.seq);
     }
 
-    pub async fn ensure_lsp_diagnostics_forwarder(self: &Arc<Self>, root: PathBuf, lang: LspLanguage) {
+    pub async fn ensure_lsp_diagnostics_forwarder(
+        self: &Arc<Self>,
+        root: PathBuf,
+        lang: LspLanguage,
+    ) {
         if !self.lsp.enabled() {
             return;
         }
@@ -262,7 +274,11 @@ impl AppState {
 
         let state = self.clone();
         tokio::spawn(async move {
-            let mut rx = match state.lsp.subscribe_diagnostics_for_language(&root, lang).await {
+            let mut rx = match state
+                .lsp
+                .subscribe_diagnostics_for_language(&root, lang)
+                .await
+            {
                 Ok(v) => v,
                 Err(_) => return,
             };
@@ -278,7 +294,9 @@ impl AppState {
                 if url.scheme() != "file" {
                     continue;
                 }
-                let Ok(abs_path) = url.to_file_path() else { continue };
+                let Ok(abs_path) = url.to_file_path() else {
+                    continue;
+                };
 
                 let watchers = state.buffers.watchers_for_abs_path(&abs_path).await;
                 if watchers.is_empty() {
@@ -369,7 +387,10 @@ impl AppState {
             .map(|s| s.tx.clone())
     }
 
-    pub async fn get_install_info(&self, install_id: InstallId) -> Option<crate::installs::InstallInfo> {
+    pub async fn get_install_info(
+        &self,
+        install_id: InstallId,
+    ) -> Option<crate::installs::InstallInfo> {
         self.installs
             .lock()
             .await
@@ -377,7 +398,10 @@ impl AppState {
             .map(|s| s.info(install_id))
     }
 
-    pub async fn get_install_events(&self, install_id: InstallId) -> Option<Vec<InstallProgressEvent>> {
+    pub async fn get_install_events(
+        &self,
+        install_id: InstallId,
+    ) -> Option<Vec<InstallProgressEvent>> {
         self.installs
             .lock()
             .await
@@ -410,7 +434,6 @@ impl AppState {
         st.error = error;
         st.finished_at = Some(Utc::now());
     }
-
 }
 
 fn edit_plans_dir(data_root: &Path) -> PathBuf {
@@ -436,7 +459,10 @@ fn load_edit_plans_from_disk(data_root: &Path) -> HashMap<EditPlanId, EditPlan> 
         let bytes = match std::fs::read(&path) {
             Ok(b) => b,
             Err(e) => {
-                tracing::warn!("failed to read edit plan file {}: {e}", path.to_string_lossy());
+                tracing::warn!(
+                    "failed to read edit plan file {}: {e}",
+                    path.to_string_lossy()
+                );
                 continue;
             }
         };
@@ -445,7 +471,10 @@ fn load_edit_plans_from_disk(data_root: &Path) -> HashMap<EditPlanId, EditPlan> 
                 out.insert(plan.id, plan);
             }
             Err(e) => {
-                tracing::warn!("failed to parse edit plan file {}: {e}", path.to_string_lossy());
+                tracing::warn!(
+                    "failed to parse edit plan file {}: {e}",
+                    path.to_string_lossy()
+                );
             }
         }
     }
@@ -554,28 +583,36 @@ pub async fn serve(
             .providers
             .get("mistral")
             .map(|c| Tier1AcpAdapter::from_raw("mistral", c.command.clone(), c.args.clone()))
-            .unwrap_or_else(|| Tier1AcpAdapter::from_raw("mistral", "vibe-acp".to_string(), vec![])),
+            .unwrap_or_else(|| {
+                Tier1AcpAdapter::from_raw("mistral", "vibe-acp".to_string(), vec![])
+            }),
     );
     let goose_adapter: Arc<Tier1AcpAdapter> = Arc::new(
         agent_cfg
             .providers
             .get("goose")
             .map(|c| Tier1AcpAdapter::from_raw("goose", c.command.clone(), c.args.clone()))
-            .unwrap_or_else(|| Tier1AcpAdapter::from_raw("goose", "goose".to_string(), vec!["acp".to_string()])),
+            .unwrap_or_else(|| {
+                Tier1AcpAdapter::from_raw("goose", "goose".to_string(), vec!["acp".to_string()])
+            }),
     );
     let kimi_adapter: Arc<Tier1AcpAdapter> = Arc::new(
         agent_cfg
             .providers
             .get("kimi")
             .map(|c| Tier1AcpAdapter::from_raw("kimi", c.command.clone(), c.args.clone()))
-            .unwrap_or_else(|| Tier1AcpAdapter::from_raw("kimi", "kimi".to_string(), vec!["--acp".to_string()])),
+            .unwrap_or_else(|| {
+                Tier1AcpAdapter::from_raw("kimi", "kimi".to_string(), vec!["--acp".to_string()])
+            }),
     );
     let auggie_adapter: Arc<Tier1AcpAdapter> = Arc::new(
         agent_cfg
             .providers
             .get("auggie")
             .map(|c| Tier1AcpAdapter::from_raw("auggie", c.command.clone(), c.args.clone()))
-            .unwrap_or_else(|| Tier1AcpAdapter::from_raw("auggie", "auggie".to_string(), vec!["--acp".to_string()])),
+            .unwrap_or_else(|| {
+                Tier1AcpAdapter::from_raw("auggie", "auggie".to_string(), vec!["--acp".to_string()])
+            }),
     );
     let cagent_adapter: Arc<Tier1AcpAdapter> = Arc::new(
         agent_cfg
@@ -590,7 +627,11 @@ pub async fn serve(
                     .join("config.yaml")
                     .to_string_lossy()
                     .to_string();
-                Tier1AcpAdapter::from_raw("cagent", "cagent".to_string(), vec!["acp".to_string(), cfg])
+                Tier1AcpAdapter::from_raw(
+                    "cagent",
+                    "cagent".to_string(),
+                    vec!["acp".to_string(), cfg],
+                )
             }),
     );
 
@@ -688,7 +729,9 @@ pub async fn serve(
             args,
             Arc::clone(&state.ask_user_question),
         ),
-        None => Tier1AcpAdapter::claude_with_ask_user_question(Arc::clone(&state.ask_user_question)),
+        None => {
+            Tier1AcpAdapter::claude_with_ask_user_question(Arc::clone(&state.ask_user_question))
+        }
     });
     {
         let mut map = state.providers.lock().await;
@@ -699,12 +742,13 @@ pub async fn serve(
     // Pinned ACP provider warming:
     // - Always keep these providers warm today: codex, gemini, claude
     // - For future providers, they start on first use and remain alive for daemon lifetime.
-    let prewarm_ids: std::collections::HashSet<String> = std::env::var("CONTEXT_ACP_PREWARM_PROVIDERS")
-        .unwrap_or_else(|_| "codex,gemini,claude".to_string())
-        .split(',')
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .collect();
+    let prewarm_ids: std::collections::HashSet<String> =
+        std::env::var("CONTEXT_ACP_PREWARM_PROVIDERS")
+            .unwrap_or_else(|_| "codex,gemini,claude".to_string())
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
 
     if !prewarm_ids.is_empty() {
         let mut base_env = HashMap::<String, String>::new();
@@ -725,9 +769,10 @@ pub async fn serve(
             let env = base_env.clone();
             tokio::spawn(async move {
                 let status = adapter.inspect().await;
-                let ok = status
-                    .as_ref()
-                    .is_ok_and(|s| s.installed && matches!(s.health, context_providers::adapters::ProviderHealth::Ok));
+                let ok = status.as_ref().is_ok_and(|s| {
+                    s.installed
+                        && matches!(s.health, context_providers::adapters::ProviderHealth::Ok)
+                });
                 if !ok {
                     return;
                 }

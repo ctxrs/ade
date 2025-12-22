@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use axum::{Json, Router, routing::post};
+use axum::{routing::post, Json, Router};
 use serde_json::json;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
@@ -51,7 +51,11 @@ async fn mcp_lsp_diagnostics_calls_daemon_http() {
     stdin.write_all(b"\n").await.unwrap();
 
     stdin
-        .write_all(json!({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}).to_string().as_bytes())
+        .write_all(
+            json!({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}})
+                .to_string()
+                .as_bytes(),
+        )
         .await
         .unwrap();
     stdin.write_all(b"\n").await.unwrap();
@@ -78,7 +82,9 @@ async fn mcp_lsp_diagnostics_calls_daemon_http() {
     let mut got_call = false;
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     while tokio::time::Instant::now() < deadline {
-        let Some(line) = reader.next_line().await.unwrap() else { break };
+        let Some(line) = reader.next_line().await.unwrap() else {
+            break;
+        };
         let v: serde_json::Value = serde_json::from_str(&line).unwrap();
         if v.get("id").and_then(|id| id.as_i64()) == Some(3) {
             let text = v["result"]["content"][0]["text"].as_str().unwrap_or("");
@@ -152,7 +158,9 @@ async fn mcp_lsp_status_calls_daemon_http() {
     let mut got_call = false;
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     while tokio::time::Instant::now() < deadline {
-        let Some(line) = reader.next_line().await.unwrap() else { break };
+        let Some(line) = reader.next_line().await.unwrap() else {
+            break;
+        };
         let v: serde_json::Value = serde_json::from_str(&line).unwrap();
         if v.get("id").and_then(|id| id.as_i64()) == Some(2) {
             let text = v["result"]["content"][0]["text"].as_str().unwrap_or("");
@@ -227,7 +235,9 @@ async fn mcp_lsp_hover_calls_daemon_http() {
     let mut got_call = false;
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     while tokio::time::Instant::now() < deadline {
-        let Some(line) = reader.next_line().await.unwrap() else { break };
+        let Some(line) = reader.next_line().await.unwrap() else {
+            break;
+        };
         let v: serde_json::Value = serde_json::from_str(&line).unwrap();
         if v.get("id").and_then(|id| id.as_i64()) == Some(2) {
             let text = v["result"]["content"][0]["text"].as_str().unwrap_or("");
@@ -302,7 +312,9 @@ async fn mcp_lsp_execute_command_calls_daemon_http() {
     let mut got_call = false;
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     while tokio::time::Instant::now() < deadline {
-        let Some(line) = reader.next_line().await.unwrap() else { break };
+        let Some(line) = reader.next_line().await.unwrap() else {
+            break;
+        };
         let v: serde_json::Value = serde_json::from_str(&line).unwrap();
         if v.get("id").and_then(|id| id.as_i64()) == Some(2) {
             let text = v["result"]["content"][0]["text"].as_str().unwrap_or("");
@@ -376,7 +388,9 @@ async fn mcp_lsp_semantic_tokens_full_calls_daemon_http() {
     let mut got_call = false;
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     while tokio::time::Instant::now() < deadline {
-        let Some(line) = reader.next_line().await.unwrap() else { break };
+        let Some(line) = reader.next_line().await.unwrap() else {
+            break;
+        };
         let v: serde_json::Value = serde_json::from_str(&line).unwrap();
         if v.get("id").and_then(|id| id.as_i64()) == Some(2) {
             let text = v["result"]["content"][0]["text"].as_str().unwrap_or("");
@@ -454,7 +468,9 @@ async fn mcp_lsp_code_actions_by_diagnostic_plan_calls_daemon_http() {
     let mut got_call = false;
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     while tokio::time::Instant::now() < deadline {
-        let Some(line) = reader.next_line().await.unwrap() else { break };
+        let Some(line) = reader.next_line().await.unwrap() else {
+            break;
+        };
         let v: serde_json::Value = serde_json::from_str(&line).unwrap();
         if v.get("id").and_then(|id| id.as_i64()) == Some(2) {
             let text = v["result"]["content"][0]["text"].as_str().unwrap_or("");
@@ -591,7 +607,9 @@ async fn mcp_lsp_rename_plan_and_apply_call_daemon_http() {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     let mut got_apply = false;
     while tokio::time::Instant::now() < deadline {
-        let Some(line) = reader.next_line().await.unwrap() else { break };
+        let Some(line) = reader.next_line().await.unwrap() else {
+            break;
+        };
         let v: serde_json::Value = serde_json::from_str(&line).unwrap();
         if v.get("id").and_then(|id| id.as_i64()) == Some(3) {
             let text = v["result"]["content"][0]["text"].as_str().unwrap_or("");
@@ -602,7 +620,11 @@ async fn mcp_lsp_rename_plan_and_apply_call_daemon_http() {
     }
     assert!(got_apply, "did not receive tools/call apply response");
 
-    let body = rename_body_tx.lock().await.clone().expect("expected rename body");
+    let body = rename_body_tx
+        .lock()
+        .await
+        .clone()
+        .expect("expected rename body");
     assert_eq!(
         body.get("session_id").and_then(|v| v.as_str()),
         Some("00000000-0000-0000-0000-000000000000"),

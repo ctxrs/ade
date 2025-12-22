@@ -106,7 +106,13 @@ mod tests {
                 .await
                 .unwrap();
             let session = store
-                .create_session(&track, "fake".into(), "fake".into(), "implementer".into(), None)
+                .create_session(
+                    &track,
+                    "fake".into(),
+                    "fake".into(),
+                    "implementer".into(),
+                    None,
+                )
                 .await
                 .unwrap();
 

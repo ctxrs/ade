@@ -60,12 +60,11 @@ impl Store {
     }
 
     pub async fn get_workspace(&self, id: WorkspaceId) -> Result<Option<Workspace>> {
-        let row = sqlx::query(
-            r#"SELECT id, name, root_path, created_at FROM workspaces WHERE id = ?"#,
-        )
-        .bind(id.0.to_string())
-        .fetch_optional(&self.pool)
-        .await?;
+        let row =
+            sqlx::query(r#"SELECT id, name, root_path, created_at FROM workspaces WHERE id = ?"#)
+                .bind(id.0.to_string())
+                .fetch_optional(&self.pool)
+                .await?;
 
         Ok(row.and_then(|r| {
             let id: String = r.try_get("id").ok()?;
@@ -145,7 +144,8 @@ impl Store {
             let archived_at: Option<String> = r.try_get("archived_at")?;
             let assistant_seen_at: Option<String> = r.try_get("assistant_seen_at")?;
             let last_activity_at: Option<String> = r.try_get("last_activity_at")?;
-            let last_assistant_message_at: Option<String> = r.try_get("last_assistant_message_at")?;
+            let last_assistant_message_at: Option<String> =
+                r.try_get("last_assistant_message_at")?;
             let has_active_session: i64 = r.try_get("has_active_session")?;
             out.push(Task {
                 id: TaskId(uuid::Uuid::parse_str(&id)?),
@@ -159,7 +159,10 @@ impl Store {
                 archived_at: archived_at.as_deref().map(parse_dt).transpose()?,
                 assistant_seen_at: assistant_seen_at.as_deref().map(parse_dt).transpose()?,
                 last_activity_at: last_activity_at.as_deref().map(parse_dt).transpose()?,
-                last_assistant_message_at: last_assistant_message_at.as_deref().map(parse_dt).transpose()?,
+                last_assistant_message_at: last_assistant_message_at
+                    .as_deref()
+                    .map(parse_dt)
+                    .transpose()?,
                 has_active_session: has_active_session != 0,
             });
         }
@@ -231,7 +234,11 @@ impl Store {
                 updated_at: parse_dt(&updated_at).ok()?,
                 exec_plan_id: r.try_get("exec_plan_id").ok()?,
                 archived_at: archived_at.as_deref().map(parse_dt).transpose().ok()?,
-                assistant_seen_at: assistant_seen_at.as_deref().map(parse_dt).transpose().ok()?,
+                assistant_seen_at: assistant_seen_at
+                    .as_deref()
+                    .map(parse_dt)
+                    .transpose()
+                    .ok()?,
                 last_activity_at: None,
                 last_assistant_message_at: None,
                 has_active_session: false,
@@ -354,7 +361,8 @@ impl Store {
             let archived_at: Option<String> = r.try_get("archived_at").ok()?;
             let assistant_seen_at: Option<String> = r.try_get("assistant_seen_at").ok()?;
             let last_activity_at: Option<String> = r.try_get("last_activity_at").ok()?;
-            let last_assistant_message_at: Option<String> = r.try_get("last_assistant_message_at").ok()?;
+            let last_assistant_message_at: Option<String> =
+                r.try_get("last_assistant_message_at").ok()?;
             let has_active_session: i64 = r.try_get("has_active_session").ok()?;
             Some(Task {
                 id: TaskId(uuid::Uuid::parse_str(&id).ok()?),
@@ -366,9 +374,17 @@ impl Store {
                 updated_at: parse_dt(&updated_at).ok()?,
                 exec_plan_id: r.try_get("exec_plan_id").ok()?,
                 archived_at: archived_at.as_deref().map(parse_dt).transpose().ok()?,
-                assistant_seen_at: assistant_seen_at.as_deref().map(parse_dt).transpose().ok()?,
+                assistant_seen_at: assistant_seen_at
+                    .as_deref()
+                    .map(parse_dt)
+                    .transpose()
+                    .ok()?,
                 last_activity_at: last_activity_at.as_deref().map(parse_dt).transpose().ok()?,
-                last_assistant_message_at: last_assistant_message_at.as_deref().map(parse_dt).transpose().ok()?,
+                last_assistant_message_at: last_assistant_message_at
+                    .as_deref()
+                    .map(parse_dt)
+                    .transpose()
+                    .ok()?,
                 has_active_session: has_active_session != 0,
             })
         }))
@@ -753,7 +769,8 @@ impl Store {
 
     // Message APIs
     pub async fn insert_message(&self, mut message: Message) -> Result<Message> {
-        if matches!(message.delivery, MessageDelivery::Immediate) && message.delivered_at.is_none() {
+        if matches!(message.delivery, MessageDelivery::Immediate) && message.delivered_at.is_none()
+        {
             message.delivered_at = Some(Utc::now());
         }
         let attachments_json = if message.attachments.is_empty() {
@@ -1034,18 +1051,12 @@ impl Store {
         Ok(row.and_then(|r| build_session_turn_from_row(r).ok()))
     }
 
-    pub async fn delete_session_turn(
-        &self,
-        session_id: SessionId,
-        turn_id: TurnId,
-    ) -> Result<()> {
-        sqlx::query(
-            r#"DELETE FROM session_turns WHERE session_id = ? AND turn_id = ?"#,
-        )
-        .bind(session_id.0.to_string())
-        .bind(turn_id.0.to_string())
-        .execute(&self.pool)
-        .await?;
+    pub async fn delete_session_turn(&self, session_id: SessionId, turn_id: TurnId) -> Result<()> {
+        sqlx::query(r#"DELETE FROM session_turns WHERE session_id = ? AND turn_id = ?"#)
+            .bind(session_id.0.to_string())
+            .bind(turn_id.0.to_string())
+            .execute(&self.pool)
+            .await?;
         Ok(())
     }
 
@@ -1284,12 +1295,11 @@ impl Store {
     }
 
     async fn ensure_session_turns(&self, session_id: SessionId) -> Result<()> {
-        let count: i64 = sqlx::query_scalar(
-            r#"SELECT COUNT(*) FROM session_turns WHERE session_id = ?"#,
-        )
-        .bind(session_id.0.to_string())
-        .fetch_one(&self.pool)
-        .await?;
+        let count: i64 =
+            sqlx::query_scalar(r#"SELECT COUNT(*) FROM session_turns WHERE session_id = ?"#)
+                .bind(session_id.0.to_string())
+                .fetch_one(&self.pool)
+                .await?;
         if count > 0 {
             return Ok(());
         }
@@ -1362,13 +1372,21 @@ impl Store {
                         start_seq = start_seq.or(Some(ev.seq));
                     }
                     SessionEventType::AssistantChunk => {
-                        if let Some(fragment) = ev.payload_json.get("content_fragment").and_then(|v| v.as_str()) {
+                        if let Some(fragment) = ev
+                            .payload_json
+                            .get("content_fragment")
+                            .and_then(|v| v.as_str())
+                        {
                             assistant_partial.push_str(fragment);
                         }
                         has_activity = true;
                     }
                     SessionEventType::ThoughtChunk => {
-                        if let Some(fragment) = ev.payload_json.get("content_fragment").and_then(|v| v.as_str()) {
+                        if let Some(fragment) = ev
+                            .payload_json
+                            .get("content_fragment")
+                            .and_then(|v| v.as_str())
+                        {
                             thought_partial.push_str(fragment);
                         }
                         has_activity = true;
@@ -1384,9 +1402,7 @@ impl Store {
                     SessionEventType::ToolCall
                     | SessionEventType::ToolCallUpdate
                     | SessionEventType::ToolResult => {
-                        if let Some((tool_call_id, status)) =
-                            extract_tool_status_for_backfill(ev)
-                        {
+                        if let Some((tool_call_id, status)) = extract_tool_status_for_backfill(ev) {
                             tool_statuses.insert(tool_call_id, status);
                         }
                         has_activity = true;
@@ -1447,9 +1463,7 @@ impl Store {
                 .map(|m| m.created_at)
                 .or_else(|| evs.first().map(|e| e.created_at))
                 .unwrap_or_else(Utc::now);
-            let updated_at = assistant
-                .map(|m| m.created_at)
-                .unwrap_or(last_event_at);
+            let updated_at = assistant.map(|m| m.created_at).unwrap_or(last_event_at);
 
             let turn = SessionTurn {
                 turn_id,
@@ -1570,7 +1584,8 @@ impl Store {
     }
 
     pub async fn list_session_events(&self, session_id: SessionId) -> Result<Vec<SessionEvent>> {
-        self.list_session_events_page_by_seq(session_id, None, None).await
+        self.list_session_events_page_by_seq(session_id, None, None)
+            .await
     }
 
     pub async fn list_session_events_page_by_seq(
@@ -1701,7 +1716,9 @@ impl Store {
                     .as_deref()
                     .and_then(|s| uuid::Uuid::parse_str(s).ok())
                     .map(TurnId),
-                event_type: parse_session_event_type(r.try_get::<String, _>("event_type")?.as_str()),
+                event_type: parse_session_event_type(
+                    r.try_get::<String, _>("event_type")?.as_str(),
+                ),
                 payload_json: serde_json::from_str(&payload_json)
                     .context("parsing session event payload")?,
                 created_at: parse_dt(&created_at)?,
@@ -1781,13 +1798,228 @@ impl Store {
                 event_type: parse_session_event_type(
                     r.try_get::<String, _>("event_type")?.as_str(),
                 ),
-                payload_json: serde_json::from_str(&payload_json).context("parsing payload_json")?,
+                payload_json: serde_json::from_str(&payload_json)
+                    .context("parsing payload_json")?,
                 created_at: parse_dt(&created_at)?,
             });
         }
         out.reverse(); // return ASC
         Ok(out)
     }
+
+    // Mobile connection profiles + devices
+    pub async fn create_mobile_connection_profile(
+        &self,
+        label: String,
+        base_url: String,
+        token_hash: String,
+        token_prefix: String,
+        scopes: Vec<String>,
+    ) -> Result<MobileConnectionProfile> {
+        let now = Utc::now();
+        let profile = MobileConnectionProfile {
+            id: ConnectionProfileId::new(),
+            label,
+            base_url,
+            token_prefix,
+            scopes,
+            created_at: now,
+            last_used_at: None,
+        };
+        let scopes_json = serde_json::to_string(&profile.scopes)?;
+        sqlx::query(
+            r#"INSERT INTO mobile_connection_profiles
+               (id, label, base_url, token_hash, token_prefix, scopes_json, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)"#,
+        )
+        .bind(profile.id.0.to_string())
+        .bind(&profile.label)
+        .bind(&profile.base_url)
+        .bind(&token_hash)
+        .bind(&profile.token_prefix)
+        .bind(scopes_json)
+        .bind(profile.created_at.to_rfc3339())
+        .execute(&self.pool)
+        .await?;
+        Ok(profile)
+    }
+
+    pub async fn list_mobile_connection_profiles(&self) -> Result<Vec<MobileConnectionProfile>> {
+        let rows = sqlx::query(
+            r#"SELECT id, label, base_url, token_prefix, scopes_json, created_at, last_used_at
+               FROM mobile_connection_profiles
+               ORDER BY created_at DESC"#,
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        let mut out = Vec::with_capacity(rows.len());
+        for row in rows {
+            out.push(build_mobile_connection_profile_from_row(row)?);
+        }
+        Ok(out)
+    }
+
+    pub async fn get_mobile_connection_profile(
+        &self,
+        id: ConnectionProfileId,
+    ) -> Result<Option<MobileConnectionProfile>> {
+        let row = sqlx::query(
+            r#"SELECT id, label, base_url, token_prefix, scopes_json, created_at, last_used_at
+               FROM mobile_connection_profiles WHERE id = ?"#,
+        )
+        .bind(id.0.to_string())
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row
+            .map(build_mobile_connection_profile_from_row)
+            .transpose()?)
+    }
+
+    pub async fn get_mobile_connection_profile_by_token_hash(
+        &self,
+        token_hash: &str,
+    ) -> Result<Option<MobileConnectionProfile>> {
+        let row = sqlx::query(
+            r#"SELECT id, label, base_url, token_prefix, scopes_json, created_at, last_used_at
+               FROM mobile_connection_profiles WHERE token_hash = ?"#,
+        )
+        .bind(token_hash)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row
+            .map(build_mobile_connection_profile_from_row)
+            .transpose()?)
+    }
+
+    pub async fn mark_mobile_connection_profile_used(&self, id: ConnectionProfileId) -> Result<()> {
+        sqlx::query(r#"UPDATE mobile_connection_profiles SET last_used_at = ? WHERE id = ?"#)
+            .bind(Utc::now().to_rfc3339())
+            .bind(id.0.to_string())
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn delete_mobile_connection_profile(&self, id: ConnectionProfileId) -> Result<()> {
+        sqlx::query(r#"DELETE FROM mobile_connection_profiles WHERE id = ?"#)
+            .bind(id.0.to_string())
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn upsert_mobile_device(
+        &self,
+        id: MobileDeviceId,
+        profile_id: ConnectionProfileId,
+        device_label: Option<String>,
+        platform: Option<String>,
+        push_token: Option<String>,
+        push_provider: Option<String>,
+        public_key: Option<String>,
+        app_version: Option<String>,
+    ) -> Result<MobileDeviceRegistration> {
+        let now = Utc::now();
+        sqlx::query(
+            r#"INSERT INTO mobile_devices
+                (id, profile_id, device_label, platform, push_token, push_provider, public_key, app_version, created_at, last_seen_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    device_label=excluded.device_label,
+                    platform=excluded.platform,
+                    push_token=excluded.push_token,
+                    push_provider=excluded.push_provider,
+                    public_key=excluded.public_key,
+                    app_version=excluded.app_version,
+                    last_seen_at=excluded.last_seen_at"#,
+        )
+        .bind(id.0.to_string())
+        .bind(profile_id.0.to_string())
+        .bind(device_label.clone())
+        .bind(platform.clone())
+        .bind(push_token.clone())
+        .bind(push_provider.clone())
+        .bind(public_key.clone())
+        .bind(app_version.clone())
+        .bind(now.to_rfc3339())
+        .bind(now.to_rfc3339())
+        .execute(&self.pool)
+        .await?;
+
+        self.get_mobile_device(id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("failed to read back mobile device {}", id.0))
+    }
+
+    pub async fn get_mobile_device(
+        &self,
+        id: MobileDeviceId,
+    ) -> Result<Option<MobileDeviceRegistration>> {
+        let row = sqlx::query(
+            r#"SELECT id, profile_id, device_label, platform, push_token, push_provider, public_key, app_version, created_at, last_seen_at
+               FROM mobile_devices WHERE id = ?"#,
+        )
+        .bind(id.0.to_string())
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.map(build_mobile_device_from_row).transpose()?)
+    }
+
+    pub async fn list_mobile_devices(
+        &self,
+        profile_id: ConnectionProfileId,
+    ) -> Result<Vec<MobileDeviceRegistration>> {
+        let rows = sqlx::query(
+            r#"SELECT id, profile_id, device_label, platform, push_token, push_provider, public_key, app_version, created_at, last_seen_at
+               FROM mobile_devices WHERE profile_id = ? ORDER BY created_at DESC"#,
+        )
+        .bind(profile_id.0.to_string())
+        .fetch_all(&self.pool)
+        .await?;
+        let mut out = Vec::with_capacity(rows.len());
+        for row in rows {
+            out.push(build_mobile_device_from_row(row)?);
+        }
+        Ok(out)
+    }
+}
+
+fn build_mobile_connection_profile_from_row(
+    row: sqlx::sqlite::SqliteRow,
+) -> Result<MobileConnectionProfile> {
+    let id: String = row.try_get("id")?;
+    let scopes_json: String = row.try_get("scopes_json")?;
+    let created_at: String = row.try_get("created_at")?;
+    let last_used_at: Option<String> = row.try_get("last_used_at")?;
+    let scopes: Vec<String> = serde_json::from_str(&scopes_json).unwrap_or_default();
+    Ok(MobileConnectionProfile {
+        id: ConnectionProfileId(uuid::Uuid::parse_str(&id)?),
+        label: row.try_get("label")?,
+        base_url: row.try_get("base_url")?,
+        token_prefix: row.try_get("token_prefix")?,
+        scopes,
+        created_at: parse_dt(&created_at)?,
+        last_used_at: last_used_at.as_deref().map(parse_dt).transpose()?,
+    })
+}
+
+fn build_mobile_device_from_row(row: sqlx::sqlite::SqliteRow) -> Result<MobileDeviceRegistration> {
+    let id: String = row.try_get("id")?;
+    let profile_id: String = row.try_get("profile_id")?;
+    let created_at: String = row.try_get("created_at")?;
+    let last_seen_at: String = row.try_get("last_seen_at")?;
+    Ok(MobileDeviceRegistration {
+        id: MobileDeviceId(uuid::Uuid::parse_str(&id)?),
+        profile_id: ConnectionProfileId(uuid::Uuid::parse_str(&profile_id)?),
+        device_label: row.try_get("device_label")?,
+        platform: row.try_get("platform")?,
+        push_token: row.try_get("push_token")?,
+        push_provider: row.try_get("push_provider")?,
+        public_key: row.try_get("public_key")?,
+        app_version: row.try_get("app_version")?,
+        created_at: parse_dt(&created_at)?,
+        last_seen_at: parse_dt(&last_seen_at)?,
+    })
 }
 
 fn parse_dt(value: &str) -> Result<DateTime<Utc>> {
@@ -1953,9 +2185,7 @@ fn parse_session_event_type(value: &str) -> SessionEventType {
     }
 }
 
-fn build_session_turn_from_row(
-    r: sqlx::sqlite::SqliteRow,
-) -> Result<SessionTurn> {
+fn build_session_turn_from_row(r: sqlx::sqlite::SqliteRow) -> Result<SessionTurn> {
     let turn_id: String = r.try_get("turn_id")?;
     let session_id: String = r.try_get("session_id")?;
     let run_id: Option<String> = r.try_get("run_id")?;
@@ -1995,9 +2225,7 @@ fn build_session_turn_from_row(
     })
 }
 
-fn build_session_turn_tool_from_row(
-    r: sqlx::sqlite::SqliteRow,
-) -> Result<SessionTurnTool> {
+fn build_session_turn_tool_from_row(r: sqlx::sqlite::SqliteRow) -> Result<SessionTurnTool> {
     let session_id: String = r.try_get("session_id")?;
     let tool_call_id: String = r.try_get("tool_call_id")?;
     let turn_id: String = r.try_get("turn_id")?;
@@ -2103,7 +2331,11 @@ fn tool_call_id_from_payload(payload: &Value) -> Option<String> {
     let from_raw = update
         .pointer("/rawInput/call_id")
         .and_then(|v| v.as_str())
-        .or_else(|| update.pointer("/raw_input/call_id").and_then(|v| v.as_str()));
+        .or_else(|| {
+            update
+                .pointer("/raw_input/call_id")
+                .and_then(|v| v.as_str())
+        });
     from_raw.map(|v| v.to_string())
 }
 
@@ -2112,10 +2344,22 @@ fn extract_tool_output_text(update: &Value) -> Option<String> {
         .get("outputText")
         .and_then(|v| v.as_str())
         .or_else(|| update.get("output_text").and_then(|v| v.as_str()))
-        .or_else(|| update.pointer("/toolCall/outputText").and_then(|v| v.as_str()))
-        .or_else(|| update.pointer("/toolCall/output_text").and_then(|v| v.as_str()))
+        .or_else(|| {
+            update
+                .pointer("/toolCall/outputText")
+                .and_then(|v| v.as_str())
+        })
+        .or_else(|| {
+            update
+                .pointer("/toolCall/output_text")
+                .and_then(|v| v.as_str())
+        })
         .or_else(|| update.get("result").and_then(|v| v.as_str()))
-        .or_else(|| update.pointer("/rawOutput/aggregated_output").and_then(|v| v.as_str()))
+        .or_else(|| {
+            update
+                .pointer("/rawOutput/aggregated_output")
+                .and_then(|v| v.as_str())
+        })
         .or_else(|| update.pointer("/rawOutput/output").and_then(|v| v.as_str()));
     if let Some(v) = direct {
         let trimmed = v.trim();
@@ -2127,7 +2371,11 @@ fn extract_tool_output_text(update: &Value) -> Option<String> {
     let blocks = update.get("content").and_then(|v| v.as_array())?;
     let mut out = String::new();
     for b in blocks {
-        if let Some(t) = b.get("content").and_then(|c| c.get("text")).and_then(|v| v.as_str()) {
+        if let Some(t) = b
+            .get("content")
+            .and_then(|c| c.get("text"))
+            .and_then(|v| v.as_str())
+        {
             out.push_str(t);
         } else if let Some(t) = b.get("text").and_then(|v| v.as_str()) {
             out.push_str(t);
@@ -2194,7 +2442,9 @@ fn build_turn_tools_from_events(
             None => continue,
         };
         let update = extract_tool_update(&ev.payload_json);
-        let entry = map.entry(tool_call_id.clone()).or_insert_with(ToolAgg::default);
+        let entry = map
+            .entry(tool_call_id.clone())
+            .or_insert_with(ToolAgg::default);
         if !entry.initialized {
             entry.created_at = ev.created_at;
             entry.updated_at = ev.created_at;

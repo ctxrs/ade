@@ -148,12 +148,17 @@ async fn wait_for_tool_events(store: &Store, session_id: context_core::ids::Sess
     let mut attempts = 0;
     loop {
         let events = store.list_session_events(session_id).await.unwrap();
-        if events.iter().any(|e| matches!(e.event_type, SessionEventType::ToolCall))
+        if events
+            .iter()
+            .any(|e| matches!(e.event_type, SessionEventType::ToolCall))
             && events
                 .iter()
                 .any(|e| matches!(e.event_type, SessionEventType::ToolResult))
         {
-            if events.iter().any(|e| matches!(e.event_type, SessionEventType::Error)) {
+            if events
+                .iter()
+                .any(|e| matches!(e.event_type, SessionEventType::Error))
+            {
                 panic!("saw Error event(s): {events:#?}");
             }
             break;

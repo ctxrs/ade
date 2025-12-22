@@ -38,7 +38,11 @@ async fn setup_git_repo() -> tempfile::TempDir {
     dir
 }
 
-async fn run_and_collect(adapter: &dyn ProviderAdapter, workdir: &Path, prompt: &str) -> Vec<NormalizedEvent> {
+async fn run_and_collect(
+    adapter: &dyn ProviderAdapter,
+    workdir: &Path,
+    prompt: &str,
+) -> Vec<NormalizedEvent> {
     let (tx, mut rx) = mpsc::channel::<NormalizedEvent>(1024);
     let handle = adapter
         .run(
@@ -85,7 +89,9 @@ fn assert_has_correlated_tool_call(events: &[NormalizedEvent]) {
     }
 
     assert!(
-        events.iter().any(|e| matches!(e.event_type, SessionEventType::Done)),
+        events
+            .iter()
+            .any(|e| matches!(e.event_type, SessionEventType::Done)),
         "expected at least one Done event, got {events:#?}"
     );
 

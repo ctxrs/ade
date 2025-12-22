@@ -97,15 +97,20 @@ pub async fn list_log_files(data_root: &Path) -> Vec<LogFileInfo> {
     };
 
     while let Ok(Some(ent)) = rd.next_entry().await {
-        let Ok(ft) = ent.file_type().await else { continue };
+        let Ok(ft) = ent.file_type().await else {
+            continue;
+        };
         if !ft.is_file() {
             continue;
         }
-        let Ok(md) = ent.metadata().await else { continue };
+        let Ok(md) = ent.metadata().await else {
+            continue;
+        };
 
-        let modified_utc = md.modified().ok().map(|t| {
-            DateTime::<Utc>::from(t).to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
-        });
+        let modified_utc = md
+            .modified()
+            .ok()
+            .map(|t| DateTime::<Utc>::from(t).to_rfc3339_opts(chrono::SecondsFormat::Secs, true));
 
         entries.push(LogFileInfo {
             name: ent.file_name().to_string_lossy().to_string(),
@@ -141,4 +146,3 @@ pub async fn open_logs_folder(data_root: &Path) -> Result<()> {
     }
     Ok(())
 }
-

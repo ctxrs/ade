@@ -1,19 +1,28 @@
 :root {
-  /* Dark-only for now (Cursor-like). */
-  --bg: #1e1e1e;
-  --panel: #252526;
-  --panel-2: #2d2d2d;
-  --border: rgba(255, 255, 255, 0.08);
-  --border-strong: rgba(255, 255, 255, 0.14);
-  --text: #d4d4d4;
-  --muted: rgba(212, 212, 212, 0.65);
+  color-scheme: dark;
+  --bg: var(--context-color-background, #0b0d17);
+  --panel: var(--context-color-surface, #111629);
+  --panel-2: var(--context-color-surface-alt, #161b2b);
+  --border: var(--context-color-border, rgba(255, 255, 255, 0.08));
+  --border-strong: var(--context-color-border, rgba(255, 255, 255, 0.14));
+  --text: var(--context-color-text, #f5f7ff);
+  --muted: var(--context-color-muted, rgba(212, 212, 212, 0.65));
   --shadow: none;
-  --accent: #3794ff;
-  --success: #22c55e;
-  --warning: #fbbf24;
-  --error: #ef4444;
-  --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
-    "Courier New", monospace;
+  --accent: var(--context-color-accent, #4c8bff);
+  --success: var(--context-color-success, #22c55e);
+  --warning: var(--context-color-warning, #fbbf24);
+  --error: var(--context-color-danger, #ef4444);
+  --mono: var(
+    --context-font-mono,
+    ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    Monaco,
+    Consolas,
+    "Liberation Mono",
+    "Courier New",
+    monospace
+  );
 }
 
 *,
@@ -24,7 +33,7 @@
 
 body {
   margin: 0;
-  font-family: system-ui, sans-serif;
+  font-family: var(--context-font-family, system-ui, sans-serif);
   background: var(--bg);
   color: var(--text);
   font-size: 13px;
@@ -158,6 +167,55 @@ button.linklike:hover {
 
 .file-btn input {
   display: none;
+}
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.65);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modal {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 20px;
+  max-width: 520px;
+  width: min(520px, 90vw);
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.5);
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.mobile-profile-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+}
+
+.mobile-profile-row:first-of-type {
+  border-top: none;
+  padding-top: 0;
+}
+
+.mobile-token {
+  font-family: var(--mono);
+  background: var(--panel-2);
+  border-radius: 6px;
+  padding: 8px 12px;
+  display: inline-block;
+  word-break: break-all;
 }
 
 .thumb {

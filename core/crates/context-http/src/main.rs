@@ -108,7 +108,8 @@ async fn main() -> Result<()> {
             yes,
             check,
         } => {
-            let base_url = base_url.unwrap_or_else(context_http::updates::default_download_base_url);
+            let base_url =
+                base_url.unwrap_or_else(context_http::updates::default_download_base_url);
             context_http::updates::self_update_daemon(&channel, &base_url, yes, check).await?;
         }
     }

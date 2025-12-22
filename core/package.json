@@ -12,6 +12,10 @@
     "desktop:build": "pnpm desktop:prep:release && pnpm -C apps/desktop build",
     "desktop:build:debug": "pnpm desktop:prep && pnpm -C apps/desktop build -- --debug",
     "desktop:build:release": "pnpm desktop:build",
+    "mobile:start": "pnpm -C apps/mobile start",
+    "mobile:android": "pnpm -C apps/mobile android",
+    "mobile:ios": "pnpm -C apps/mobile ios",
+    "mobile:web": "pnpm -C apps/mobile web",
     "verify:quiet": "pnpm test"
   }
 }

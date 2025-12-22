@@ -128,7 +128,9 @@ async fn lsp_diagnostics_endpoint_returns_diagnostics() {
         .method("POST")
         .uri(format!("/api/tracks/{}/sessions", track.id.0))
         .header("content-type", "application/json")
-        .body(Body::from(json!({"provider_id":"fake","model_id":"fake"}).to_string()))
+        .body(Body::from(
+            json!({"provider_id":"fake","model_id":"fake"}).to_string(),
+        ))
         .unwrap();
     let res = app.clone().oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::OK);
@@ -142,7 +144,9 @@ async fn lsp_diagnostics_endpoint_returns_diagnostics() {
         .unwrap()
         .unwrap();
     let wt_root = std::path::PathBuf::from(wt.root_path);
-    tokio::fs::create_dir_all(wt_root.join("src")).await.unwrap();
+    tokio::fs::create_dir_all(wt_root.join("src"))
+        .await
+        .unwrap();
     tokio::fs::write(wt_root.join("src/lib.rs"), "pub fn ok() {}\n")
         .await
         .unwrap();
@@ -230,14 +234,30 @@ async fn lsp_status_endpoint_returns_expected_shape() {
     assert!(servers.len() >= 4);
     let langs: std::collections::HashSet<String> = servers
         .iter()
-        .filter_map(|s| s.get("language").and_then(|x| x.as_str()).map(|s| s.to_string()))
+        .filter_map(|s| {
+            s.get("language")
+                .and_then(|x| x.as_str())
+                .map(|s| s.to_string())
+        })
         .collect();
     for required in ["rust", "typescript", "python", "go"] {
         assert!(langs.contains(required), "missing {required}");
     }
     for s in servers {
-        assert!(s.get("language").and_then(|x| x.as_str()).unwrap_or("").len() > 0);
-        assert!(s.get("command").and_then(|x| x.as_str()).unwrap_or("").len() > 0);
+        assert!(
+            s.get("language")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .len()
+                > 0
+        );
+        assert!(
+            s.get("command")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .len()
+                > 0
+        );
         assert!(s.get("found").and_then(|x| x.as_bool()).is_some());
     }
 }
@@ -318,7 +338,9 @@ async fn lsp_semantic_endpoints_return_payloads() {
         .method("POST")
         .uri(format!("/api/tracks/{}/sessions", track.id.0))
         .header("content-type", "application/json")
-        .body(Body::from(json!({"provider_id":"fake","model_id":"fake"}).to_string()))
+        .body(Body::from(
+            json!({"provider_id":"fake","model_id":"fake"}).to_string(),
+        ))
         .unwrap();
     let res = app.clone().oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::OK);
@@ -332,7 +354,9 @@ async fn lsp_semantic_endpoints_return_payloads() {
         .unwrap()
         .unwrap();
     let wt_root = std::path::PathBuf::from(wt.root_path);
-    tokio::fs::create_dir_all(wt_root.join("src")).await.unwrap();
+    tokio::fs::create_dir_all(wt_root.join("src"))
+        .await
+        .unwrap();
     tokio::fs::write(wt_root.join("src/lib.rs"), "pub fn ok() {}\n")
         .await
         .unwrap();
@@ -363,7 +387,10 @@ async fn lsp_semantic_endpoints_return_payloads() {
         assert_eq!(res.status(), StatusCode::OK, "endpoint {endpoint} failed");
         let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
         let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        assert!(v != serde_json::Value::Null, "endpoint {endpoint} returned null");
+        assert!(
+            v != serde_json::Value::Null,
+            "endpoint {endpoint} returned null"
+        );
     }
 }
 
@@ -445,7 +472,9 @@ async fn lsp_text_only_agent_endpoints_return_payloads() {
         .method("POST")
         .uri(format!("/api/tracks/{}/sessions", track.id.0))
         .header("content-type", "application/json")
-        .body(Body::from(json!({"provider_id":"fake","model_id":"fake"}).to_string()))
+        .body(Body::from(
+            json!({"provider_id":"fake","model_id":"fake"}).to_string(),
+        ))
         .unwrap();
     let res = app.clone().oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::OK);
@@ -459,7 +488,9 @@ async fn lsp_text_only_agent_endpoints_return_payloads() {
         .unwrap()
         .unwrap();
     let wt_root = std::path::PathBuf::from(wt.root_path);
-    tokio::fs::create_dir_all(wt_root.join("src")).await.unwrap();
+    tokio::fs::create_dir_all(wt_root.join("src"))
+        .await
+        .unwrap();
     tokio::fs::write(wt_root.join("src/lib.rs"), "pub fn ok() {}\n")
         .await
         .unwrap();
@@ -569,7 +600,10 @@ async fn lsp_text_only_agent_endpoints_return_payloads() {
         .and_then(|a| a.first())
         .cloned()
         .unwrap_or(serde_json::Value::Null);
-    for endpoint in ["/api/lsp/call_hierarchy/incoming", "/api/lsp/call_hierarchy/outgoing"] {
+    for endpoint in [
+        "/api/lsp/call_hierarchy/incoming",
+        "/api/lsp/call_hierarchy/outgoing",
+    ] {
         let req = Request::builder()
             .method("POST")
             .uri(endpoint)
@@ -782,7 +816,10 @@ async fn lsp_text_only_agent_endpoints_return_payloads() {
         .and_then(|a| a.first())
         .cloned()
         .unwrap_or(serde_json::Value::Null);
-    for endpoint in ["/api/lsp/type_hierarchy/supertypes", "/api/lsp/type_hierarchy/subtypes"] {
+    for endpoint in [
+        "/api/lsp/type_hierarchy/supertypes",
+        "/api/lsp/type_hierarchy/subtypes",
+    ] {
         let req = Request::builder()
             .method("POST")
             .uri(endpoint)

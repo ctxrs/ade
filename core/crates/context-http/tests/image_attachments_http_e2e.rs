@@ -39,14 +39,18 @@ async fn create_test_repo() -> tempfile::TempDir {
     dir
 }
 
-fn multipart_body(boundary: &str, name: &str, filename: &str, content_type: &str, bytes: &[u8]) -> Vec<u8> {
+fn multipart_body(
+    boundary: &str,
+    name: &str,
+    filename: &str,
+    content_type: &str,
+    bytes: &[u8],
+) -> Vec<u8> {
     let mut out = Vec::new();
     out.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
     out.extend_from_slice(
-        format!(
-            "Content-Disposition: form-data; name=\"{name}\"; filename=\"{filename}\"\r\n"
-        )
-        .as_bytes(),
+        format!("Content-Disposition: form-data; name=\"{name}\"; filename=\"{filename}\"\r\n")
+            .as_bytes(),
     );
     out.extend_from_slice(format!("Content-Type: {content_type}\r\n\r\n").as_bytes());
     out.extend_from_slice(bytes);
@@ -201,16 +205,16 @@ async fn image_attachments_use_blobs_and_never_persist_base64() {
 
     assert_eq!(msg.attachments.len(), 1);
     let att_json = serde_json::to_value(&msg.attachments[0]).unwrap();
-    assert_eq!(att_json.get("kind").and_then(|v| v.as_str()), Some("image_ref"));
+    assert_eq!(
+        att_json.get("kind").and_then(|v| v.as_str()),
+        Some("image_ref")
+    );
     assert!(
         att_json.get("data_base64").is_none(),
         "expected no base64 persisted in message attachment: {att_json:?}"
     );
 
-    let ref_blob_id = att_json
-        .get("blob_id")
-        .and_then(|v| v.as_str())
-        .unwrap();
+    let ref_blob_id = att_json.get("blob_id").and_then(|v| v.as_str()).unwrap();
     let blob_path: PathBuf = data_dir.path().join("blobs").join(ref_blob_id);
     assert!(blob_path.exists(), "expected blob file at {blob_path:?}");
 }
