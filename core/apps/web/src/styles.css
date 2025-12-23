@@ -1,28 +1,19 @@
 :root {
-  color-scheme: dark;
-  --bg: var(--context-color-background, #0b0d17);
-  --panel: var(--context-color-surface, #111629);
-  --panel-2: var(--context-color-surface-alt, #161b2b);
-  --border: var(--context-color-border, rgba(255, 255, 255, 0.08));
-  --border-strong: var(--context-color-border, rgba(255, 255, 255, 0.14));
-  --text: var(--context-color-text, #f5f7ff);
-  --muted: var(--context-color-muted, rgba(212, 212, 212, 0.65));
+  /* Dark-only for now (Cursor-like). */
+  --bg: #1e1e1e;
+  --panel: #252526;
+  --panel-2: #2d2d2d;
+  --border: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.14);
+  --text: #d4d4d4;
+  --muted: rgba(212, 212, 212, 0.65);
   --shadow: none;
-  --accent: var(--context-color-accent, #4c8bff);
-  --success: var(--context-color-success, #22c55e);
-  --warning: var(--context-color-warning, #fbbf24);
-  --error: var(--context-color-danger, #ef4444);
-  --mono: var(
-    --context-font-mono,
-    ui-monospace,
-    SFMono-Regular,
-    Menlo,
-    Monaco,
-    Consolas,
-    "Liberation Mono",
-    "Courier New",
-    monospace
-  );
+  --accent: #3794ff;
+  --success: #22c55e;
+  --warning: #fbbf24;
+  --error: #ef4444;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+    "Courier New", monospace;
 }
 
 *,
@@ -33,7 +24,7 @@
 
 body {
   margin: 0;
-  font-family: var(--context-font-family, system-ui, sans-serif);
+  font-family: system-ui, sans-serif;
   background: var(--bg);
   color: var(--text);
   font-size: 13px;
