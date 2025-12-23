@@ -23,9 +23,7 @@ import continueLogo from "../assets/harness-logos/continue.png";
 import junieLogo from "../assets/harness-logos/junie.png";
 import kiloLogo from "../assets/harness-logos/kilo.png";
 import openhandsLogo from "../assets/harness-logos/openhands.png";
-import plandexLogo from "../assets/harness-logos/plandex.png";
 import sweAgentLogo from "../assets/harness-logos/swe-agent.png";
-import tabbyLogo from "../assets/harness-logos/tabby.png";
 
 export type HarnessCatalogEntry = {
   id: string;
@@ -58,10 +56,8 @@ export const HARNESS_CATALOG: HarnessCatalogEntry[] = [
   // Additional harnesses from specs/21_harness_providers.md
   { id: "aider", label: "Aider", logoSrc: aiderLogo },
   { id: "continue", label: "Continue", logoSrc: continueLogo },
-  { id: "plandex", label: "Plandex", logoSrc: plandexLogo },
   { id: "openhands", label: "OpenHands", logoSrc: openhandsLogo },
   { id: "swe-agent", label: "SWE-agent", logoSrc: sweAgentLogo },
-  { id: "tabby", label: "Tabby", logoSrc: tabbyLogo },
   { id: "cagent", label: "cagent", logoSrc: cagentLogo },
   { id: "kilo", label: "Kilo Code", logoSrc: kiloLogo },
   { id: "cody", label: "Cody", logoSrc: codyLogo },
