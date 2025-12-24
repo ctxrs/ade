@@ -27,6 +27,8 @@ export type Track = {
   worktree_id: { 0: string } | string;
   label: string;
   status: string;
+  created_at?: string;
+  updated_at?: string;
 };
 
 export type Worktree = {
@@ -50,6 +52,63 @@ export type Session = {
   status: string;
   env_target?: "worktree" | "local" | string;
 };
+
+export type SessionSummary = {
+  id: { 0: string } | string;
+  track_id: { 0: string } | string;
+  task_id: { 0: string } | string;
+  workspace_id: { 0: string } | string;
+  provider_id: string;
+  model_id: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type TrackSummary = {
+  track: Track;
+  sessions?: SessionSummary[];
+};
+
+export type WorkspaceTaskSummary = {
+  task: Task;
+  provider_ids?: string[];
+  tracks: TrackSummary[];
+  sort_at: string;
+};
+
+export type WorkspaceIndexCursor = {
+  sort_at: string;
+  task_id: { 0: string } | string;
+};
+
+export type WorkspaceIndexPage = {
+  workspace_id: { 0: string } | string;
+  snapshot_rev: number;
+  tasks: WorkspaceTaskSummary[];
+  next_cursor?: WorkspaceIndexCursor | null;
+  total_active: number;
+  total_archived: number;
+};
+
+export type WorkspaceIndexEvent =
+  | {
+      type: "ready";
+      workspace_id: { 0: string } | string;
+      snapshot_rev: number;
+    }
+  | {
+      type: "task_upsert";
+      workspace_id: { 0: string } | string;
+      snapshot_rev: number;
+      task: WorkspaceTaskSummary;
+    }
+  | {
+      type: "task_delete";
+      workspace_id: { 0: string } | string;
+      snapshot_rev: number;
+      task_id: { 0: string } | string;
+    };
 
 export type Message = {
   id: { 0: string } | string;

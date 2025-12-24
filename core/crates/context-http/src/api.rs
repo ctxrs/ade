@@ -218,6 +218,11 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
             "/api/workspaces/:id",
             delete(delete_workspace).get(get_workspace),
         )
+        .route("/api/workspaces/:id/index", get(get_workspace_index))
+        .route(
+            "/api/workspaces/:id/index/stream",
+            get(workspace_index_stream_ws),
+        )
         .route(
             "/api/workspaces/:id/completions/files",
             get(workspace_file_completions),
@@ -4459,7 +4464,7 @@ async fn update_task_title(
         ));
     }
 
-    match state
+    let task = match state
         .store
         .get_task_with_activity(task_id)
         .await
@@ -4471,14 +4476,21 @@ async fn update_task_title(
                 }),
             )
         })? {
-        Some(task) => Ok(Json(task)),
-        None => Err((
-            StatusCode::NOT_FOUND,
-            Json(ApiErrorResp {
-                error: "task not found".to_string(),
-            }),
-        )),
+        Some(task) => task,
+        None => {
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(ApiErrorResp {
+                    error: "task not found".to_string(),
+                }),
+            ))
+        }
+    };
+
+    if let Err(e) = state.emit_workspace_task_upsert(task_id).await {
+        tracing::warn!(task_id = %task_id.0, "workspace index refresh failed: {e:?}");
     }
+    Ok(Json(task))
 }
 
 async fn delete_task(
@@ -4486,6 +4498,12 @@ async fn delete_task(
     Path(id): Path<String>,
 ) -> Result<StatusCode, StatusCode> {
     let task_id = TaskId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
+    let task = state
+        .store
+        .get_task(task_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
     let deleted = state
         .store
         .delete_task(task_id)
@@ -4494,6 +4512,9 @@ async fn delete_task(
     if !deleted {
         return Err(StatusCode::NOT_FOUND);
     }
+    state
+        .emit_workspace_task_delete(task.workspace_id, task_id)
+        .await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -4510,15 +4531,19 @@ async fn archive_task(
     if !updated {
         return Err(StatusCode::NOT_FOUND);
     }
-    match state
+    let task = match state
         .store
         .get_task_with_activity(task_id)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
     {
-        Some(task) => Ok(Json(task)),
-        None => Err(StatusCode::NOT_FOUND),
+        Some(task) => task,
+        None => return Err(StatusCode::NOT_FOUND),
+    };
+    if let Err(e) = state.emit_workspace_task_upsert(task_id).await {
+        tracing::warn!(task_id = %task_id.0, "workspace index refresh failed: {e:?}");
     }
+    Ok(Json(task))
 }
 
 async fn unarchive_task(
@@ -4534,15 +4559,19 @@ async fn unarchive_task(
     if !updated {
         return Err(StatusCode::NOT_FOUND);
     }
-    match state
+    let task = match state
         .store
         .get_task_with_activity(task_id)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
     {
-        Some(task) => Ok(Json(task)),
-        None => Err(StatusCode::NOT_FOUND),
+        Some(task) => task,
+        None => return Err(StatusCode::NOT_FOUND),
+    };
+    if let Err(e) = state.emit_workspace_task_upsert(task_id).await {
+        tracing::warn!(task_id = %task_id.0, "workspace index refresh failed: {e:?}");
     }
+    Ok(Json(task))
 }
 
 async fn mark_task_read(
@@ -4558,15 +4587,19 @@ async fn mark_task_read(
     if !updated {
         return Err(StatusCode::NOT_FOUND);
     }
-    match state
+    let task = match state
         .store
         .get_task_with_activity(task_id)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
     {
-        Some(task) => Ok(Json(task)),
-        None => Err(StatusCode::NOT_FOUND),
+        Some(task) => task,
+        None => return Err(StatusCode::NOT_FOUND),
+    };
+    if let Err(e) = state.emit_workspace_task_upsert(task_id).await {
+        tracing::warn!(task_id = %task_id.0, "workspace index refresh failed: {e:?}");
     }
+    Ok(Json(task))
 }
 
 async fn mark_task_unread(
@@ -4582,15 +4615,19 @@ async fn mark_task_unread(
     if !updated {
         return Err(StatusCode::NOT_FOUND);
     }
-    match state
+    let task = match state
         .store
         .get_task_with_activity(task_id)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
     {
-        Some(task) => Ok(Json(task)),
-        None => Err(StatusCode::NOT_FOUND),
+        Some(task) => task,
+        None => return Err(StatusCode::NOT_FOUND),
+    };
+    if let Err(e) = state.emit_workspace_task_upsert(task_id).await {
+        tracing::warn!(task_id = %task_id.0, "workspace index refresh failed: {e:?}");
     }
+    Ok(Json(task))
 }
 
 async fn create_task(
@@ -4651,6 +4688,9 @@ async fn create_task(
         })?;
 
     if !req.create_default_track {
+        if let Err(e) = state.emit_workspace_task_upsert(task.id).await {
+            tracing::warn!(task_id = %task.id.0, "workspace index refresh failed: {e:?}");
+        }
         return Ok(Json(task));
     }
 
@@ -4731,6 +4771,9 @@ async fn create_task(
             )
         })?;
 
+    if let Err(e) = state.emit_workspace_task_upsert(task.id).await {
+        tracing::warn!(task_id = %task.id.0, "workspace index refresh failed: {e:?}");
+    }
     Ok(Json(task))
 }
 
@@ -4945,6 +4988,9 @@ async fn create_track(
             )
         })?;
 
+    if let Err(e) = state.emit_workspace_task_upsert(track.task_id).await {
+        tracing::warn!(task_id = %track.task_id.0, "workspace index refresh failed: {e:?}");
+    }
     Ok(Json(track))
 }
 
@@ -5077,6 +5123,9 @@ async fn create_session_for_track(
             Some(env_target.clone()),
         ))
         .await;
+    if let Err(e) = state.emit_workspace_task_upsert(session.task_id).await {
+        tracing::warn!(task_id = %session.task_id.0, "workspace index refresh failed: {e:?}");
+    }
     Ok(Json(SessionWithEnv {
         env_target,
         session,
@@ -5374,6 +5423,155 @@ async fn workspace_file_completions(
     Ok(Json(completions::filter_and_rank_paths(
         &files, &query, limit,
     )))
+}
+
+#[derive(Debug, Deserialize)]
+struct WorkspaceIndexQuery {
+    limit: Option<i64>,
+    #[serde(default)]
+    include_archived: Option<String>,
+    cursor_sort_at: Option<String>,
+    cursor_task_id: Option<String>,
+}
+
+fn parse_boolish_flag(raw: Option<&str>) -> Result<bool, String> {
+    match raw {
+        Some(value) => {
+            let normalized = value.trim();
+            if normalized.eq_ignore_ascii_case("true") || normalized == "1" {
+                Ok(true)
+            } else if normalized.eq_ignore_ascii_case("false") || normalized == "0" {
+                Ok(false)
+            } else if normalized.is_empty() {
+                Ok(false)
+            } else {
+                Err("include_archived must be true/false or 1/0".to_string())
+            }
+        }
+        None => Ok(false),
+    }
+}
+
+async fn get_workspace_index(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Query(query): Query<WorkspaceIndexQuery>,
+) -> Result<Json<WorkspaceIndexPage>, (StatusCode, Json<ApiErrorResp>)> {
+    let workspace_id = WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid workspace id".to_string(),
+            }),
+        )
+    })?);
+
+    let limit = query.limit.unwrap_or(50);
+    let include_archived = parse_boolish_flag(query.include_archived.as_deref())
+        .map_err(|msg| (StatusCode::BAD_REQUEST, Json(ApiErrorResp { error: msg })))?;
+    let cursor = match (
+        query.cursor_sort_at.as_deref(),
+        query.cursor_task_id.as_deref(),
+    ) {
+        (Some(sort_at), Some(task_id)) => {
+            let sort_at = chrono::DateTime::parse_from_rfc3339(sort_at)
+                .map_err(|_| {
+                    (
+                        StatusCode::BAD_REQUEST,
+                        Json(ApiErrorResp {
+                            error: "invalid cursor_sort_at".to_string(),
+                        }),
+                    )
+                })?
+                .with_timezone(&chrono::Utc);
+            let task_id = uuid::Uuid::parse_str(task_id).map_err(|_| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(ApiErrorResp {
+                        error: "invalid cursor_task_id".to_string(),
+                    }),
+                )
+            })?;
+            Some(WorkspaceIndexCursor {
+                sort_at,
+                task_id: TaskId(task_id),
+            })
+        }
+        _ => None,
+    };
+
+    let (tasks, next_cursor) = state
+        .store
+        .list_workspace_index_page(workspace_id, cursor, limit, include_archived)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
+
+    let (total_active, total_archived) = state
+        .store
+        .workspace_task_counts(workspace_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
+
+    let snapshot_rev = state.workspace_index.current_rev(workspace_id).await;
+    let page = WorkspaceIndexPage {
+        workspace_id,
+        snapshot_rev,
+        tasks,
+        next_cursor,
+        total_active,
+        total_archived,
+    };
+    Ok(Json(page))
+}
+
+async fn workspace_index_stream_ws(
+    ws: WebSocketUpgrade,
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let workspace_id = match uuid::Uuid::parse_str(&id) {
+        Ok(v) => WorkspaceId(v),
+        Err(_) => return StatusCode::BAD_REQUEST.into_response(),
+    };
+    ws.on_upgrade(move |socket| handle_workspace_index_ws(socket, state, workspace_id))
+}
+
+async fn handle_workspace_index_ws(
+    mut socket: WebSocket,
+    state: Arc<AppState>,
+    workspace_id: WorkspaceId,
+) {
+    let ready = WorkspaceIndexEvent::Ready {
+        workspace_id,
+        snapshot_rev: state.workspace_index.current_rev(workspace_id).await,
+    };
+    if let Ok(text) = serde_json::to_string(&ready) {
+        if socket.send(WsMessage::Text(text)).await.is_err() {
+            return;
+        }
+    }
+    let mut rx = state.workspace_index.subscribe(workspace_id).await;
+    while let Ok(event) = rx.recv().await {
+        if let Ok(text) = serde_json::to_string(&event) {
+            if socket.send(WsMessage::Text(text)).await.is_err() {
+                break;
+            }
+        }
+    }
 }
 
 async fn load_and_cache_worktree_files(

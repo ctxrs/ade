@@ -7,7 +7,7 @@ use chrono::{DateTime, Utc};
 use context_core::ids::*;
 use context_core::models::*;
 use serde_json::Value;
-use sqlx::{sqlite::SqlitePoolOptions, Pool, Row, Sqlite};
+use sqlx::{sqlite::SqlitePoolOptions, Pool, QueryBuilder, Row, Sqlite};
 
 #[derive(Clone)]
 pub struct Store {
@@ -803,6 +803,248 @@ impl Store {
         Ok(message)
     }
 
+    pub async fn workspace_task_counts(&self, workspace_id: WorkspaceId) -> Result<(i64, i64)> {
+        let active = sqlx::query_scalar::<_, i64>(
+            r#"SELECT COUNT(*) FROM tasks WHERE workspace_id = ? AND archived_at IS NULL"#,
+        )
+        .bind(workspace_id.0.to_string())
+        .fetch_one(&self.pool)
+        .await?;
+
+        let archived = sqlx::query_scalar::<_, i64>(
+            r#"SELECT COUNT(*) FROM tasks WHERE workspace_id = ? AND archived_at IS NOT NULL"#,
+        )
+        .bind(workspace_id.0.to_string())
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok((active, archived))
+    }
+
+    pub async fn list_workspace_index_page(
+        &self,
+        workspace_id: WorkspaceId,
+        cursor: Option<WorkspaceIndexCursor>,
+        limit: i64,
+        include_archived: bool,
+    ) -> Result<(Vec<WorkspaceTaskSummary>, Option<WorkspaceIndexCursor>)> {
+        const MAX_LIMIT: i64 = 200;
+        let limit = limit.clamp(1, MAX_LIMIT);
+
+        const SORT_EXPR: &str = "
+            COALESCE(
+                (
+                    SELECT MAX(m.created_at)
+                    FROM messages m
+                    WHERE m.task_id = t.id
+                ),
+                t.updated_at,
+                t.created_at
+            )
+        ";
+
+        let mut sql = format!(
+            r#"
+            SELECT
+              t.id,
+              t.workspace_id,
+              t.title,
+              t.description,
+              t.status,
+              t.exec_plan_id,
+              t.created_at,
+              t.updated_at,
+              t.archived_at,
+              t.assistant_seen_at,
+              (
+                SELECT MAX(m.created_at)
+                FROM messages m
+                WHERE m.task_id = t.id AND m.role = 'assistant'
+              ) AS last_assistant_message_at,
+              EXISTS(
+                SELECT 1
+                FROM sessions s
+                WHERE s.task_id = t.id AND s.status = 'active'
+              ) AS has_active_session,
+              ({sort_expr}) AS sort_at
+            FROM tasks t
+            WHERE t.workspace_id = ?
+            "#,
+            sort_expr = SORT_EXPR,
+        );
+
+        if !include_archived {
+            sql.push_str(" AND t.archived_at IS NULL");
+        }
+
+        if cursor.is_some() {
+            sql.push_str(&format!(
+                " AND (({expr}) < ? OR (({expr}) = ? AND t.id < ?))",
+                expr = SORT_EXPR
+            ));
+        }
+
+        sql.push_str(" ORDER BY sort_at DESC, t.id DESC LIMIT ?");
+
+        let mut query = sqlx::query(&sql).bind(workspace_id.0.to_string());
+
+        if let Some(cursor) = &cursor {
+            let cursor_ts = cursor.sort_at.to_rfc3339();
+            query = query
+                .bind(cursor_ts.clone())
+                .bind(cursor_ts)
+                .bind(cursor.task_id.0.to_string());
+        }
+
+        query = query.bind(limit + 1);
+
+        let rows = query.fetch_all(&self.pool).await?;
+
+        let mut task_rows = Vec::with_capacity(rows.len());
+        for r in rows {
+            let id: String = r.try_get("id")?;
+            let ws_id: String = r.try_get("workspace_id")?;
+            let created_at: String = r.try_get("created_at")?;
+            let updated_at: String = r.try_get("updated_at")?;
+            let archived_at: Option<String> = r.try_get("archived_at")?;
+            let assistant_seen_at: Option<String> = r.try_get("assistant_seen_at")?;
+            let last_assistant_message_at: Option<String> =
+                r.try_get("last_assistant_message_at")?;
+            let has_active_session: i64 = r.try_get("has_active_session")?;
+            let sort_at: String = r.try_get("sort_at")?;
+            let sort_at_dt = parse_dt(&sort_at)?;
+
+            let task = Task {
+                id: TaskId(uuid::Uuid::parse_str(&id)?),
+                workspace_id: WorkspaceId(uuid::Uuid::parse_str(&ws_id)?),
+                title: r.try_get("title")?,
+                description: r.try_get("description")?,
+                status: parse_task_status(r.try_get::<String, _>("status")?.as_str()),
+                created_at: parse_dt(&created_at)?,
+                updated_at: parse_dt(&updated_at)?,
+                exec_plan_id: r.try_get("exec_plan_id")?,
+                archived_at: archived_at.as_deref().map(parse_dt).transpose()?,
+                assistant_seen_at: assistant_seen_at.as_deref().map(parse_dt).transpose()?,
+                last_activity_at: Some(sort_at_dt),
+                last_assistant_message_at: last_assistant_message_at
+                    .as_deref()
+                    .map(parse_dt)
+                    .transpose()?,
+                has_active_session: has_active_session != 0,
+            };
+            task_rows.push((task, sort_at_dt));
+        }
+
+        let mut next_cursor: Option<WorkspaceIndexCursor> = None;
+        if task_rows.len() as i64 > limit {
+            if let Some((task, sort_at)) = task_rows.pop() {
+                next_cursor = Some(WorkspaceIndexCursor {
+                    sort_at,
+                    task_id: task.id,
+                });
+            }
+        }
+
+        if task_rows.is_empty() {
+            return Ok((Vec::new(), next_cursor));
+        }
+
+        let summaries = self.build_workspace_task_summaries(task_rows).await?;
+
+        Ok((summaries, next_cursor))
+    }
+
+    pub async fn get_workspace_task_summary(
+        &self,
+        task_id: TaskId,
+    ) -> Result<Option<WorkspaceTaskSummary>> {
+        const SORT_EXPR: &str = "
+            COALESCE(
+                (
+                    SELECT MAX(m.created_at)
+                    FROM messages m
+                    WHERE m.task_id = t.id
+                ),
+                t.updated_at,
+                t.created_at
+            )
+        ";
+        let sql = format!(
+            r#"
+            SELECT
+              t.id,
+              t.workspace_id,
+              t.title,
+              t.description,
+              t.status,
+              t.exec_plan_id,
+              t.created_at,
+              t.updated_at,
+              t.archived_at,
+              t.assistant_seen_at,
+              (
+                SELECT MAX(m.created_at)
+                FROM messages m
+                WHERE m.task_id = t.id AND m.role = 'assistant'
+              ) AS last_assistant_message_at,
+              EXISTS(
+                SELECT 1
+                FROM sessions s
+                WHERE s.task_id = t.id AND s.status = 'active'
+              ) AS has_active_session,
+              ({sort_expr}) AS sort_at
+            FROM tasks t
+            WHERE t.id = ?
+            LIMIT 1
+            "#,
+            sort_expr = SORT_EXPR,
+        );
+
+        if let Some(r) = sqlx::query(&sql)
+            .bind(task_id.0.to_string())
+            .fetch_optional(&self.pool)
+            .await?
+        {
+            let id: String = r.try_get("id")?;
+            let ws_id: String = r.try_get("workspace_id")?;
+            let created_at: String = r.try_get("created_at")?;
+            let updated_at: String = r.try_get("updated_at")?;
+            let archived_at: Option<String> = r.try_get("archived_at")?;
+            let assistant_seen_at: Option<String> = r.try_get("assistant_seen_at")?;
+            let last_assistant_message_at: Option<String> =
+                r.try_get("last_assistant_message_at")?;
+            let has_active_session: i64 = r.try_get("has_active_session")?;
+            let sort_at: String = r.try_get("sort_at")?;
+            let sort_at_dt = parse_dt(&sort_at)?;
+
+            let task = Task {
+                id: TaskId(uuid::Uuid::parse_str(&id)?),
+                workspace_id: WorkspaceId(uuid::Uuid::parse_str(&ws_id)?),
+                title: r.try_get("title")?,
+                description: r.try_get("description")?,
+                status: parse_task_status(r.try_get::<String, _>("status")?.as_str()),
+                created_at: parse_dt(&created_at)?,
+                updated_at: parse_dt(&updated_at)?,
+                exec_plan_id: r.try_get("exec_plan_id")?,
+                archived_at: archived_at.as_deref().map(parse_dt).transpose()?,
+                assistant_seen_at: assistant_seen_at.as_deref().map(parse_dt).transpose()?,
+                last_activity_at: Some(sort_at_dt),
+                last_assistant_message_at: last_assistant_message_at
+                    .as_deref()
+                    .map(parse_dt)
+                    .transpose()?,
+                has_active_session: has_active_session != 0,
+            };
+
+            let summaries = self
+                .build_workspace_task_summaries(vec![(task, sort_at_dt)])
+                .await?;
+            Ok(summaries.into_iter().next())
+        } else {
+            Ok(None)
+        }
+    }
+
     pub async fn list_messages_for_session(&self, session_id: SessionId) -> Result<Vec<Message>> {
         let rows = sqlx::query(
             r#"SELECT id, session_id, task_id, track_id, run_id, turn_id, turn_sequence, role, content, attachments_json, delivery, delivered_at, created_at
@@ -853,6 +1095,147 @@ impl Store {
             });
         }
         Ok(out)
+    }
+
+    async fn build_workspace_task_summaries(
+        &self,
+        rows: Vec<(Task, DateTime<Utc>)>,
+    ) -> Result<Vec<WorkspaceTaskSummary>> {
+        if rows.is_empty() {
+            return Ok(Vec::new());
+        }
+        const SESSION_LIMIT: i64 = 4;
+        let mut summaries = Vec::with_capacity(rows.len());
+        let mut index_by_task = HashMap::new();
+        for (idx, (task, sort_at)) in rows.into_iter().enumerate() {
+            index_by_task.insert(task.id, idx);
+            summaries.push(WorkspaceTaskSummary {
+                task,
+                provider_ids: Vec::new(),
+                tracks: Vec::new(),
+                sort_at,
+            });
+        }
+
+        let task_ids: Vec<TaskId> = summaries.iter().map(|s| s.task.id).collect();
+
+        let mut track_query =
+            QueryBuilder::new("SELECT id, task_id, workspace_id, worktree_id, label, status, created_at, updated_at FROM tracks WHERE task_id IN (");
+        let mut first = true;
+        for task_id in &task_ids {
+            if !first {
+                track_query.push(", ");
+            }
+            first = false;
+            track_query.push_bind(task_id.0.to_string());
+        }
+        track_query.push(") ORDER BY created_at ASC");
+
+        let track_rows = track_query.build().fetch_all(&self.pool).await?;
+
+        let mut track_index: HashMap<TrackId, (usize, usize)> = HashMap::new();
+
+        for r in track_rows {
+            let id: String = r.try_get("id")?;
+            let task_id: String = r.try_get("task_id")?;
+            let ws_id: String = r.try_get("workspace_id")?;
+            let wt_id: String = r.try_get("worktree_id")?;
+            let created_at: String = r.try_get("created_at")?;
+            let updated_at: String = r.try_get("updated_at")?;
+            let track = Track {
+                id: TrackId(uuid::Uuid::parse_str(&id)?),
+                task_id: TaskId(uuid::Uuid::parse_str(&task_id)?),
+                workspace_id: WorkspaceId(uuid::Uuid::parse_str(&ws_id)?),
+                worktree_id: WorktreeId(uuid::Uuid::parse_str(&wt_id)?),
+                label: r.try_get("label")?,
+                status: parse_track_status(r.try_get::<String, _>("status")?.as_str()),
+                created_at: parse_dt(&created_at)?,
+                updated_at: parse_dt(&updated_at)?,
+            };
+            if let Some(task_idx) = index_by_task.get(&track.task_id) {
+                let idx = *task_idx;
+                let track_pos = summaries[idx].tracks.len();
+                summaries[idx].tracks.push(TrackSummary {
+                    track,
+                    sessions: Vec::new(),
+                });
+                track_index.insert(summaries[idx].tracks[track_pos].track.id, (idx, track_pos));
+            }
+        }
+
+        if !track_index.is_empty() {
+            let mut session_query = QueryBuilder::new(
+                "
+                SELECT id, track_id, task_id, workspace_id, worktree_id,
+                       provider_id, model_id, status, created_at, updated_at
+                FROM (
+                    SELECT
+                        s.*,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY s.track_id
+                            ORDER BY
+                                CASE s.status
+                                    WHEN 'active' THEN 0
+                                    ELSE 1
+                                END,
+                                s.updated_at DESC
+                        ) AS rn
+                    FROM sessions s
+                    WHERE s.track_id IN (",
+            );
+            let mut first = true;
+            for track_id in track_index.keys() {
+                if !first {
+                    session_query.push(", ");
+                }
+                first = false;
+                session_query.push_bind(track_id.0.to_string());
+            }
+            session_query.push(")) WHERE rn <= ");
+            session_query.push_bind(SESSION_LIMIT);
+            session_query.push(" ORDER BY track_id, rn");
+
+            let session_rows = session_query.build().fetch_all(&self.pool).await?;
+
+            for r in session_rows {
+                let id: String = r.try_get("id")?;
+                let track_id: String = r.try_get("track_id")?;
+                let task_id: String = r.try_get("task_id")?;
+                let ws_id: String = r.try_get("workspace_id")?;
+                let created_at: String = r.try_get("created_at")?;
+                let updated_at: String = r.try_get("updated_at")?;
+                let summary = SessionSummary {
+                    id: SessionId(uuid::Uuid::parse_str(&id)?),
+                    track_id: TrackId(uuid::Uuid::parse_str(&track_id)?),
+                    task_id: TaskId(uuid::Uuid::parse_str(&task_id)?),
+                    workspace_id: WorkspaceId(uuid::Uuid::parse_str(&ws_id)?),
+                    provider_id: r.try_get("provider_id")?,
+                    model_id: r.try_get("model_id")?,
+                    status: parse_session_status(r.try_get::<String, _>("status")?.as_str()),
+                    created_at: parse_dt(&created_at)?,
+                    updated_at: parse_dt(&updated_at)?,
+                };
+                if let Some((task_idx, track_pos)) = track_index.get(&summary.track_id) {
+                    summaries[*task_idx].tracks[*track_pos]
+                        .sessions
+                        .push(summary.clone());
+                }
+
+                if let Some(task_idx) = index_by_task.get(&summary.task_id) {
+                    let summary_task = &mut summaries[*task_idx];
+                    let pid = summary.provider_id.trim().to_string();
+                    if !pid.is_empty() && !summary_task.provider_ids.contains(&pid) {
+                        summary_task.provider_ids.push(pid);
+                        summary_task.provider_ids.sort();
+                        if summary_task.provider_ids.len() > 3 {
+                            summary_task.provider_ids.truncate(3);
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(summaries)
     }
 
     pub async fn list_queued_messages_for_session(

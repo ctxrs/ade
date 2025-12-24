@@ -70,6 +70,7 @@ async fn global_stream_replays_from_db_and_resumes_by_seq() {
         "http://127.0.0.1:0".to_string(),
         None,
     ));
+    state.start_workspace_index_listener();
     let app = api::router(state.clone());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();

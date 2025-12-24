@@ -13,6 +13,7 @@ pub mod scheduler;
 pub mod settings;
 pub mod telemetry;
 pub mod updates;
+pub mod workspace_index;
 
 #[cfg(test)]
 mod tests {
@@ -86,6 +87,7 @@ mod tests {
             "http://127.0.0.1:4399".to_string(),
             None,
         ));
+        state.start_workspace_index_listener();
         let app = api::router(state.clone());
 
         // create workspace
@@ -198,6 +200,7 @@ mod tests {
             "http://127.0.0.1:4399".to_string(),
             None,
         ));
+        state.start_workspace_index_listener();
         {
             let mut statuses = HashMap::new();
             statuses.insert(

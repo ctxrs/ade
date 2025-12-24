@@ -166,6 +166,7 @@ async fn setup_state_and_app(
         },
         lsp_edit_plans_enabled,
     ));
+    state.start_workspace_index_listener();
     let app = api::router(state.clone());
     (data_dir, state, app)
 }
@@ -236,6 +237,7 @@ async fn edit_plan_persists_across_restart_and_discards() {
         },
         true,
     ));
+    state2.start_workspace_index_listener();
     let app2 = api::router(state2.clone());
 
     let req = Request::builder()

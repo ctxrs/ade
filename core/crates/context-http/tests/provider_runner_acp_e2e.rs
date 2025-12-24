@@ -64,6 +64,7 @@ async fn setup_state_with_real_providers() -> (tempfile::TempDir, Store, Arc<App
         "http://127.0.0.1:4399".to_string(),
         None,
     ));
+    state.start_workspace_index_listener();
 
     (data_dir, store, state)
 }

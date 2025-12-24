@@ -76,6 +76,7 @@ async fn lsp_diagnostics_endpoint_returns_diagnostics() {
         },
         false,
     ));
+    state.start_workspace_index_listener();
     let app = api::router(state.clone());
 
     let repo = setup_git_repo().await;
@@ -210,6 +211,7 @@ async fn lsp_status_endpoint_returns_expected_shape() {
         },
         true,
     ));
+    state.start_workspace_index_listener();
     let app = api::router(state);
 
     let req = Request::builder()
@@ -286,6 +288,7 @@ async fn lsp_semantic_endpoints_return_payloads() {
         },
         false,
     ));
+    state.start_workspace_index_listener();
     let app = api::router(state.clone());
 
     let repo = setup_git_repo().await;
@@ -420,6 +423,7 @@ async fn lsp_text_only_agent_endpoints_return_payloads() {
         },
         false,
     ));
+    state.start_workspace_index_listener();
     let app = api::router(state.clone());
 
     let repo = setup_git_repo().await;

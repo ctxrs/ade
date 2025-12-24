@@ -201,6 +201,72 @@ pub struct SessionTurnTool {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionSummary {
+    pub id: SessionId,
+    pub track_id: TrackId,
+    pub task_id: TaskId,
+    pub workspace_id: WorkspaceId,
+    pub provider_id: String,
+    pub model_id: String,
+    pub status: SessionStatus,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TrackSummary {
+    pub track: Track,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sessions: Vec<SessionSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkspaceTaskSummary {
+    pub task: Task,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub provider_ids: Vec<String>,
+    #[serde(default)]
+    pub tracks: Vec<TrackSummary>,
+    pub sort_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkspaceIndexCursor {
+    pub sort_at: DateTime<Utc>,
+    pub task_id: TaskId,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkspaceIndexPage {
+    pub workspace_id: WorkspaceId,
+    pub snapshot_rev: i64,
+    pub tasks: Vec<WorkspaceTaskSummary>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<WorkspaceIndexCursor>,
+    pub total_active: i64,
+    pub total_archived: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum WorkspaceIndexEvent {
+    Ready {
+        workspace_id: WorkspaceId,
+        snapshot_rev: i64,
+    },
+    TaskUpsert {
+        workspace_id: WorkspaceId,
+        snapshot_rev: i64,
+        task: WorkspaceTaskSummary,
+    },
+    TaskDelete {
+        workspace_id: WorkspaceId,
+        snapshot_rev: i64,
+        task_id: TaskId,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SessionEventType {
     Init,

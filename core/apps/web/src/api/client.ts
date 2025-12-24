@@ -9,9 +9,15 @@ import type {
   SessionEvent,
   SessionTurn,
   SessionTurnTool,
+  SessionSummary,
   Task,
   Track,
+  TrackSummary,
   Workspace,
+  WorkspaceIndexCursor,
+  WorkspaceIndexEvent,
+  WorkspaceIndexPage,
+  WorkspaceTaskSummary,
   Worktree,
 } from "@context/types";
 import { desktopDaemonRequest, desktopUploadBlob, isDesktopApp } from "../utils/desktop";
@@ -27,9 +33,15 @@ export type {
   SessionEvent,
   SessionTurn,
   SessionTurnTool,
+  SessionSummary,
   Task,
   Track,
+  TrackSummary,
   Workspace,
+  WorkspaceIndexCursor,
+  WorkspaceIndexEvent,
+  WorkspaceIndexPage,
+  WorkspaceTaskSummary,
   Worktree,
 } from "@context/types";
 
@@ -530,6 +542,25 @@ export const getWorkspace = (id: string) =>
 
 export const listTasks = (workspaceId: string) =>
   apiAny<Task[]>(`/api/workspaces/${workspaceId}/tasks`);
+
+export type WorkspaceIndexParams = {
+  limit?: number;
+  includeArchived?: boolean;
+  cursor?: WorkspaceIndexCursor | null;
+};
+
+export const getWorkspaceIndex = (workspaceId: string, params?: WorkspaceIndexParams) => {
+  const search = new URLSearchParams();
+  if (params?.limit) search.set("limit", String(params.limit));
+  if (params?.includeArchived) search.set("include_archived", params.includeArchived ? "1" : "0");
+  if (params?.cursor) {
+    search.set("cursor_sort_at", params.cursor.sort_at);
+    search.set("cursor_task_id", idToString(params.cursor.task_id));
+  }
+  const qs = search.toString();
+  const suffix = qs ? `?${qs}` : "";
+  return apiAny<WorkspaceIndexPage>(`/api/workspaces/${workspaceId}/index${suffix}`);
+};
 
 export const createTask = (
   workspaceId: string,

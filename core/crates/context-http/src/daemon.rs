@@ -15,7 +15,7 @@ use tokio::sync::{broadcast, mpsc, watch, Mutex};
 
 use crate::buffers::BufferStore;
 use crate::edit_plans::{EditPlan, EditPlanId};
-use context_core::ids::{SessionId, WorkspaceId, WorktreeId};
+use context_core::ids::{SessionId, TaskId, WorkspaceId, WorktreeId};
 use context_core::models::{Session, SessionEvent};
 use context_lsp::Language as LspLanguage;
 use context_lsp::{LspManager, LspManagerConfig};
@@ -32,6 +32,7 @@ use crate::installs::{InstallId, InstallProgressEvent, InstallState, InstallStat
 use crate::scheduler::{session_worker, SchedulerCommand};
 use crate::settings;
 use crate::telemetry::{Telemetry, TelemetryConfig};
+use crate::workspace_index::WorkspaceIndexHub;
 
 fn acquire_daemon_lock(data_root: &Path) -> Result<std::fs::File> {
     let path = data_root.join("daemon.lock");
@@ -73,6 +74,7 @@ pub struct AppState {
     pub ask_user_question: Arc<AskUserQuestionBroker>,
     pub shutdown_tx: broadcast::Sender<()>,
     pub telemetry: Telemetry,
+    pub workspace_index: WorkspaceIndexHub,
     schedulers: Mutex<HashMap<SessionId, mpsc::Sender<SchedulerCommand>>>,
     broadcasters: Mutex<HashMap<SessionId, broadcast::Sender<SessionEvent>>>,
     session_event_heads: Mutex<HashMap<SessionId, watch::Sender<i64>>>,
@@ -163,6 +165,7 @@ impl AppState {
         let ask_user_question = Arc::new(AskUserQuestionBroker::new());
         let lsp = Arc::new(LspManager::new(lsp_cfg.clone()));
         let telemetry = Telemetry::new(data_root.clone());
+        let workspace_index = WorkspaceIndexHub::new();
         Self {
             data_root,
             store,
@@ -184,6 +187,7 @@ impl AppState {
             ask_user_question,
             shutdown_tx,
             telemetry,
+            workspace_index,
             schedulers: Mutex::new(HashMap::new()),
             broadcasters: Mutex::new(HashMap::new()),
             session_event_heads: Mutex::new(HashMap::new()),
@@ -253,6 +257,35 @@ impl AppState {
             tx
         });
         let _ = sender.send(event.seq);
+    }
+
+    pub async fn emit_workspace_task_upsert(&self, task_id: TaskId) -> Result<()> {
+        if let Some(summary) = self.store.get_workspace_task_summary(task_id).await? {
+            let workspace_id = summary.task.workspace_id;
+            self.workspace_index
+                .publish_task_upsert(workspace_id, summary)
+                .await;
+        }
+        Ok(())
+    }
+
+    pub async fn emit_workspace_task_delete(&self, workspace_id: WorkspaceId, task_id: TaskId) {
+        self.workspace_index
+            .publish_task_delete(workspace_id, task_id)
+            .await;
+    }
+
+    pub fn start_workspace_index_listener(self: &Arc<Self>) {
+        let state = Arc::clone(self);
+        tokio::spawn(async move {
+            let mut rx = state.global_broadcaster.subscribe();
+            while let Ok(event) = rx.recv().await {
+                let session_id = event.session_id;
+                if let Ok(Some(session)) = state.store.get_session(session_id).await {
+                    let _ = state.emit_workspace_task_upsert(session.task_id).await;
+                }
+            }
+        });
     }
 
     pub async fn ensure_lsp_diagnostics_forwarder(
@@ -711,6 +744,7 @@ pub async fn serve(
         auth_token,
         lsp_cfg,
     ));
+    state.start_workspace_index_listener();
     let settings = settings::load_settings(&state.data_root).await;
     let mut telemetry_cfg = TelemetryConfig::default();
     if let Some(telemetry) = settings.telemetry.as_ref() {

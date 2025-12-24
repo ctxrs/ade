@@ -83,6 +83,7 @@ async fn image_attachments_use_blobs_and_never_persist_base64() {
         "http://127.0.0.1:4399".to_string(),
         None,
     ));
+    state.start_workspace_index_listener();
     let app = api::router(state.clone());
 
     // 1) Upload blob and fetch it back.

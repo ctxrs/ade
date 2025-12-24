@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Virtuoso } from "react-virtuoso";
 import { Link, useParams } from "react-router-dom";
 import {
   Archive,
@@ -48,7 +49,6 @@ import {
   listProviders,
   listEditPlansForTrack,
   listSessionsForTrack,
-  listTasks,
   listTracks,
   markTaskRead as markTaskReadApi,
   markTaskUnread as markTaskUnreadApi,
@@ -85,6 +85,12 @@ import {
   useWorkbenchSnapshot,
   useWorkbenchStore,
 } from "../workbench/store";
+import {
+  WorkspaceIndexProvider,
+  useWorkspaceIndexSnapshot,
+  useWorkspaceIndexStore,
+  type WorkspaceIndexItem,
+} from "../state/workspaceIndexStore";
 
 function deriveTaskTitle(prompt: string): string {
   const line = prompt.trim().split("\n")[0] ?? "";
@@ -191,9 +197,11 @@ export default function WorkbenchPage() {
   const { id: workspaceId } = useParams<{ id: string }>();
   if (!workspaceId) return null;
   return (
-    <WorkbenchStoreProvider workspaceId={workspaceId}>
-      <WorkbenchPageInner workspaceId={workspaceId} />
-    </WorkbenchStoreProvider>
+    <WorkspaceIndexProvider workspaceId={workspaceId}>
+      <WorkbenchStoreProvider workspaceId={workspaceId}>
+        <WorkbenchPageInner workspaceId={workspaceId} />
+      </WorkbenchStoreProvider>
+    </WorkspaceIndexProvider>
   );
 }
 
@@ -201,6 +209,9 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const supervisor = useSessionSupervisor();
   const sessionSnap = useSessionCacheSnapshot();
   const workbenchStore = useWorkbenchStore();
+  const workspaceIndexStore = useWorkspaceIndexStore();
+  const workspaceIndex = useWorkspaceIndexSnapshot();
+  const tasksById = workspaceIndex.tasksById;
   const workbenchSnap = useWorkbenchSnapshot();
   const activeTab = useActiveWorkbenchTab();
   const { taskId: activeTaskId, trackId: activeTrackId } = useActiveWorkbenchIds();
@@ -256,7 +267,6 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     return installed[0] ?? "codex";
   }, [providers]);
 
-  const [tasks, setTasks] = useState<Task[]>([]);
   const [taskQuery, setTaskQuery] = useState("");
   const [archivedCollapsed, setArchivedCollapsed] = useState(true);
   const [taskMenu, setTaskMenu] = useState<{ taskId: string; style: React.CSSProperties } | null>(null);
@@ -264,7 +274,6 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const [renamingTaskId, setRenamingTaskId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
   const renameInputRef = useRef<HTMLInputElement | null>(null);
-  const [taskProviderIdsByTaskId, setTaskProviderIdsByTaskId] = useState<Record<string, string[]>>({});
   const [convoMenu, setConvoMenu] = useState<{ style: React.CSSProperties } | null>(null);
   const convoMenuRef = useRef<HTMLDivElement | null>(null);
 
@@ -288,7 +297,6 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   );
 
   // Keep tracks cached per task so we can show best-effort provider badges.
-  const [tracksByTaskId, setTracksByTaskId] = useState<Record<string, Track[]>>({});
 
   const [draftTracks, setDraftTracks] = useState<DraftTrack[]>([
     { key: "t1", label: "", providerId: "codex", modelId: "" },
@@ -441,10 +449,6 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     setDraftTracks((prev) => (prev.length > 0 ? [prev[0]] : prev));
   }, [useMultipleAgents, draftTracks.length]);
 
-  const refreshTasks = async () => {
-    if (!workspaceId) return;
-    setTasks(await listTasks(workspaceId));
-  };
 
   const refreshTaskDetail = async (
     taskId: string,
@@ -489,7 +493,6 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   useEffect(() => {
     if (!workspaceId) return;
     getWorkspace(workspaceId).then(setWorkspace).catch(() => setWorkspace(null));
-    refreshTasks().catch(() => { });
     listProviders().then(setProviders).catch(() => setProviders([]));
     getLspStatus().then(setLspStatus).catch(() => setLspStatus(null));
   }, [workspaceId]);
@@ -711,27 +714,6 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     });
   }, [providerInstallsById, providersById]);
 
-  // Load tracks for all tasks (for expansion UI)
-  useEffect(() => {
-    if (!tasks.length) return;
-    const loadAllTracks = async () => {
-      const map: Record<string, Track[]> = {};
-      await Promise.all(
-        tasks.map(async (task) => {
-          try {
-            const taskId = idToString(task.id);
-            const tracks = await listTracks(taskId);
-            map[taskId] = tracks;
-          } catch {
-            // Ignore errors for individual tasks
-          }
-        })
-      );
-      setTracksByTaskId(map);
-    };
-    loadAllTracks().catch(() => { });
-  }, [tasks]);
-
   useEffect(() => {
     if (!providers.length) return;
     const codexInstalled = providersById["codex"]?.installed === true && providersById["codex"]?.health === "ok";
@@ -797,19 +779,33 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     return () => controller.abort();
   }, [activeTrackId]);
 
-  const sortedTasks = useMemo(() => {
-    return [...tasks].sort((a, b) => {
-      const ta = taskActivityMs(a) ?? 0;
-      const tb = taskActivityMs(b) ?? 0;
-      return tb - ta;
+  const normalizedTaskQuery = taskQuery.trim().toLowerCase();
+  const filteredActiveIds = useMemo(() => {
+    return workspaceIndex.activeIds.filter((id) => {
+      const summary = tasksById[id];
+      if (!summary) return false;
+      if (!normalizedTaskQuery) return true;
+      return (summary.task.title ?? "").toLowerCase().includes(normalizedTaskQuery);
     });
-  }, [tasks]);
+  }, [workspaceIndex.activeIds, tasksById, normalizedTaskQuery]);
 
-  const filteredTasks = useMemo(() => {
-    const q = taskQuery.trim().toLowerCase();
-    if (!q) return sortedTasks;
-    return sortedTasks.filter((t) => (t.title ?? "").toLowerCase().includes(q));
-  }, [sortedTasks, taskQuery]);
+  const filteredArchivedIds = useMemo(() => {
+    return workspaceIndex.archivedIds.filter((id) => {
+      const summary = tasksById[id];
+      if (!summary) return false;
+      if (!normalizedTaskQuery) return true;
+      return (summary.task.title ?? "").toLowerCase().includes(normalizedTaskQuery);
+    });
+  }, [workspaceIndex.archivedIds, tasksById, normalizedTaskQuery]);
+
+  const activeTaskSummaries = useMemo(
+    () => filteredActiveIds.map((id) => tasksById[id]).filter((v): v is WorkspaceIndexItem => Boolean(v)),
+    [filteredActiveIds, tasksById],
+  );
+  const archivedTaskSummaries = useMemo(
+    () => filteredArchivedIds.map((id) => tasksById[id]).filter((v): v is WorkspaceIndexItem => Boolean(v)),
+    [filteredArchivedIds, tasksById],
+  );
 
   // Helper to check if agent is still working (hasn't finished responding)
   const isAgentStillWorking = useCallback((entry: any): boolean => {
@@ -895,61 +891,6 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     return out;
   }, [sessionSnap.sessions]);
 
-  const taskProviderFetchInFlightRef = useRef<Record<string, Promise<void>>>({});
-  useEffect(() => {
-    if (tasks.length === 0) return;
-    const maxFetch = 24;
-    const candidates = tasks
-      .map((t) => idToString(t.id))
-      .filter(Boolean)
-      .filter((tid) => {
-        if ((providerIdsByTaskFromSessions[tid] ?? []).length > 0) return false;
-        if ((taskProviderIdsByTaskId[tid] ?? []).length > 0) return false;
-        const trs = tracksByTaskId[tid] ?? [];
-        return trs.length > 0;
-      })
-      .slice(0, maxFetch);
-
-    for (const tid of candidates) {
-      if (taskProviderFetchInFlightRef.current[tid]) continue;
-      const p = (async () => {
-        const trs = tracksByTaskId[tid] ?? [];
-        const providerIds: string[] = [];
-        const seen = new Set<string>();
-        for (const tr of trs.slice(0, 3)) {
-          const trid = idToString(tr.id);
-          if (!trid) continue;
-          let sessions: any[] = [];
-          try {
-            sessions = await listSessionsForTrack(trid);
-          } catch {
-            continue;
-          }
-          for (const s of sessions) {
-            const pid = String((s as any)?.provider_id ?? "").trim();
-            if (!pid || seen.has(pid)) continue;
-            seen.add(pid);
-            providerIds.push(pid);
-            if (providerIds.length >= 3) break;
-          }
-          if (providerIds.length >= 3) break;
-        }
-        if (providerIds.length > 0) {
-          setTaskProviderIdsByTaskId((prev) => {
-            if ((prev[tid] ?? []).length > 0) return prev;
-            return { ...prev, [tid]: providerIds };
-          });
-        }
-      })().finally(() => {
-        delete taskProviderFetchInFlightRef.current[tid];
-      });
-      taskProviderFetchInFlightRef.current[tid] = p;
-    }
-  }, [providerIdsByTaskFromSessions, taskProviderIdsByTaskId, tasks, tracksByTaskId]);
-
-  const activeTasks = useMemo(() => filteredTasks.filter((t) => !t.archived_at), [filteredTasks]);
-  const archivedTasks = useMemo(() => filteredTasks.filter((t) => !!t.archived_at), [filteredTasks]);
-
   const markTaskReadInFlightRef = useRef<Record<string, Promise<void>>>({});
 
   const markTaskRead = useCallback(async (taskId: string) => {
@@ -957,7 +898,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     const p = (async () => {
       try {
         const updated = await markTaskReadApi(taskId);
-        setTasks((prev) => prev.map((t) => (idToString(t.id) === taskId ? { ...t, ...updated } : t)));
+        workspaceIndexStore.applyTaskUpdate(updated);
       } catch {
         // ignore
       }
@@ -966,21 +907,22 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     });
     markTaskReadInFlightRef.current[taskId] = p;
     await p;
-  }, []);
+  }, [workspaceIndexStore]);
 
   const markTaskUnread = useCallback(async (taskId: string) => {
     try {
       const updated = await markTaskUnreadApi(taskId);
-      setTasks((prev) => prev.map((t) => (idToString(t.id) === taskId ? { ...t, ...updated } : t)));
+      workspaceIndexStore.applyTaskUpdate(updated);
     } catch {
       // ignore
     }
-  }, []);
+  }, [workspaceIndexStore]);
 
   useEffect(() => {
     if (!activeTaskId) return;
     const tid = activeTaskId;
-    const t = tasks.find((x) => idToString(x.id) === tid);
+    const taskSummary = tasksById[tid];
+    const t = taskSummary?.task;
     if (!t) return;
     const working = taskLiveInfo.workingByTask.has(tid);
     const serverLastAssistantMs = parseMs(t.last_assistant_message_at ?? null);
@@ -993,7 +935,13 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     const unread = !working && lastAssistantMs !== null && (seenMs === null || lastAssistantMs > seenMs);
     if (!unread) return;
     void markTaskRead(tid);
-  }, [activeTaskId, markTaskRead, taskLiveInfo.lastAssistantMsByTask, taskLiveInfo.workingByTask, tasks]);
+  }, [activeTaskId, markTaskRead, taskLiveInfo.lastAssistantMsByTask, taskLiveInfo.workingByTask, tasksById]);
+
+  useEffect(() => {
+    if (!archivedCollapsed) {
+      workspaceIndexStore.ensureArchivedLoaded();
+    }
+  }, [archivedCollapsed, workspaceIndexStore]);
 
   useEffect(() => {
     if (!renamingTaskId) return;
@@ -1008,10 +956,10 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const onToggleArchive = useCallback(
     async (taskId: string, nextArchived: boolean) => {
       const updated = nextArchived ? await archiveTask(taskId) : await unarchiveTask(taskId);
-      setTasks((prev) => prev.map((t) => (idToString(t.id) === taskId ? { ...t, ...updated } : t)));
+      workspaceIndexStore.applyTaskUpdate(updated);
       if (nextArchived && activeTaskId === taskId) setArchivedCollapsed(false);
     },
-    [activeTaskId],
+    [activeTaskId, workspaceIndexStore],
   );
 
   const openTaskMenu = useCallback((taskId: string, opts: { triggerEl: HTMLElement } | { x: number; y: number }) => {
@@ -1028,11 +976,11 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
 
   const beginRenameTask = useCallback(
     (taskId: string) => {
-      const t = tasks.find((x) => idToString(x.id) === taskId);
+      const summary = tasksById[taskId];
       setRenamingTaskId(taskId);
-      setRenameDraft(String(t?.title ?? "").trim());
+      setRenameDraft(String(summary?.task.title ?? "").trim());
     },
-    [tasks],
+    [tasksById],
   );
 
   const cancelRenameTask = useCallback(() => {
@@ -1047,40 +995,175 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
         window.alert("Task title is required.");
         return;
       }
-      const current = String(tasks.find((t) => idToString(t.id) === taskId)?.title ?? "").trim();
+      const current = String(tasksById[taskId]?.task.title ?? "").trim();
       if (current && current === next) {
         cancelRenameTask();
         return;
       }
       try {
         const updated = await updateTaskTitle(taskId, next);
-        setTasks((prev) => prev.map((t) => (idToString(t.id) === taskId ? { ...t, ...updated } : t)));
+        workspaceIndexStore.applyTaskUpdate(updated);
         cancelRenameTask();
       } catch (e: any) {
         window.alert(e?.message ?? "Failed to rename.");
       }
     },
-    [cancelRenameTask, renameDraft, tasks],
+    [cancelRenameTask, renameDraft, tasksById, workspaceIndexStore],
+  );
+
+  const renderTaskRow = useCallback(
+    (summary: WorkspaceIndexItem, opts?: { archived?: boolean }) => {
+      const tid = summary.id;
+      const t = summary.task;
+      const selected = tid === activeTaskId;
+      const archived = !!opts?.archived;
+      const title = t.title ?? "New conversation";
+      const working = taskLiveInfo.workingByTask.has(tid);
+      const hasError = taskLiveInfo.errorByTask.has(tid);
+      const serverLastAssistantMs = parseMs(t.last_assistant_message_at ?? null);
+      const liveLastAssistantMs = taskLiveInfo.lastAssistantMsByTask[tid] ?? null;
+      const lastAssistantMs =
+        liveLastAssistantMs !== null && serverLastAssistantMs !== null
+          ? Math.max(liveLastAssistantMs, serverLastAssistantMs)
+          : liveLastAssistantMs ?? serverLastAssistantMs;
+      const seenMs = parseMs(t.assistant_seen_at ?? null);
+      const unread = !working && lastAssistantMs !== null && (seenMs === null || lastAssistantMs > seenMs);
+      const age = formatRelativeAgeShort(t.last_activity_at ?? t.updated_at ?? t.created_at) || "Now";
+      const dotKind = hasError ? "error" : unread ? "unread" : null;
+      const summaryProviders = summary.provider_ids ?? [];
+      const providerIds =
+        (providerIdsByTaskFromSessions[tid] ?? []).length > 0 ? providerIdsByTaskFromSessions[tid] : summaryProviders;
+      const providerCount = new Set(providerIds).size;
+      const harnesses = providerIds
+        .map((pid) => HARNESS_CATALOG.find((h) => h.id === pid))
+        .filter(Boolean)
+        .slice(0, 3) as Array<(typeof HARNESS_CATALOG)[number]>;
+
+      return (
+        <React.Fragment key={tid}>
+          <div
+            className={`wb-task-row ${archived ? "wb-task-row-archived" : ""} ${selected ? "wb-task-row-active" : ""}`}
+            role="listitem"
+            onClick={() => focusTask(tid)}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              openTaskMenu(tid, { x: e.clientX, y: e.clientY });
+            }}
+            onKeyDown={(e) => {
+              const target = e.target as HTMLElement | null;
+              if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) {
+                return;
+              }
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                focusTask(tid);
+              }
+            }}
+            tabIndex={0}
+            title={title}
+          >
+            <div className="wb-task-leading" aria-hidden="true">
+              {providerCount > 1 ? (
+                <LayersPlus className="wb-task-harness-multi" size={16} />
+              ) : harnesses.length > 0 ? (
+                <img
+                  className={`wb-task-harness-logo ${harnesses[0].invertInDark ? "wb-invert" : ""}`}
+                  src={harnesses[0].logoSrc}
+                  alt=""
+                />
+              ) : (
+                <span className="wb-task-harness-fallback" aria-hidden="true" />
+              )}
+            </div>
+            <div className="wb-task-body">
+              {renamingTaskId === tid ? (
+                <input
+                  ref={renameInputRef}
+                  className="wb-task-rename"
+                  value={renameDraft}
+                  onChange={(e) => setRenameDraft(e.target.value)}
+                  onClick={(e) => e.stopPropagation()}
+                  onKeyDown={(e) => {
+                    if (e.key === "Escape") {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      cancelRenameTask();
+                    }
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      void commitRenameTask(tid);
+                    }
+                  }}
+                  onBlur={() => void commitRenameTask(tid)}
+                  aria-label="Rename task"
+                />
+              ) : (
+                <div className="wb-task-title">{title}</div>
+              )}
+            </div>
+            <div className="wb-task-meta">
+              <div className="wb-task-meta-status" aria-hidden="true">
+                <div className="wb-task-age">{age}</div>
+                {working && <span className="wb-task-spinner" />}
+                {dotKind === "unread" && <span className="wb-task-status-dot wb-task-status-dot-unread" />}
+                {dotKind === "error" && <span className="wb-task-status-dot wb-task-status-dot-error" />}
+              </div>
+              <div className="wb-task-actions" aria-label="Task actions">
+                <button
+                  type="button"
+                  className="wb-icon wb-task-action wb-task-menu-trigger"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    openTaskMenu(tid, { triggerEl: e.currentTarget });
+                  }}
+                  aria-label="More actions"
+                  title="More actions"
+                >
+                  <Ellipsis size={14} />
+                </button>
+                <button
+                  type="button"
+                  className="wb-icon wb-task-action"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onToggleArchive(tid, !archived).catch(() => {});
+                  }}
+                  aria-label={archived ? "Unarchive" : "Archive"}
+                  title={archived ? "Unarchive" : "Archive"}
+                >
+                  <Archive size={14} />
+                </button>
+              </div>
+            </div>
+          </div>
+        </React.Fragment>
+      );
+    },
+    [
+      activeTaskId,
+      cancelRenameTask,
+      commitRenameTask,
+      focusTask,
+      onToggleArchive,
+      openTaskMenu,
+      providerIdsByTaskFromSessions,
+      renameDraft,
+      renamingTaskId,
+      taskLiveInfo.errorByTask,
+      taskLiveInfo.lastAssistantMsByTask,
+      taskLiveInfo.workingByTask,
+    ],
   );
 
   const onDeleteTask = useCallback(
     async (taskId: string) => {
-      const t = tasks.find((x) => idToString(x.id) === taskId);
-      const title = String(t?.title ?? "this task");
+      const summary = tasksById[taskId];
+      const title = String(summary?.task.title ?? "this task");
       if (!window.confirm(`Delete “${title}”? This deletes all sessions and messages in the task.`)) return;
       try {
         await deleteTask(taskId);
-        setTasks((prev) => prev.filter((x) => idToString(x.id) !== taskId));
-        setTracksByTaskId((prev) => {
-          const next = { ...prev };
-          delete next[taskId];
-          return next;
-        });
-        setTaskProviderIdsByTaskId((prev) => {
-          const next = { ...prev };
-          delete next[taskId];
-          return next;
-        });
         if (activeTaskId === taskId) {
           focusNewTask();
         }
@@ -1088,7 +1171,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
         window.alert(e?.message ?? "Failed to delete task.");
       }
     },
-    [activeTaskId, focusNewTask, tasks],
+    [activeTaskId, focusNewTask, tasksById],
   );
 
   const openConvoMenu = useCallback((triggerEl: HTMLElement) => {
@@ -1474,7 +1557,6 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       if (firstTrackId) {
         await refreshTaskDetail(taskId, firstTrackId, firstSessionId);
       }
-      await refreshTasks();
       setNewTaskDraft({ text: "", modeId: "default" });
       await workbenchStore.flushDraft(NEW_TASK_DRAFT_KEY);
       setDraftAttachments([]);
@@ -1628,8 +1710,9 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     }
   }, []);
 
-  const activeTask = activeTaskId ? tasks.find((t) => idToString(t.id) === activeTaskId) : null;
-  const expectedActiveTrackCount = activeTaskId ? (tracksByTaskId[activeTaskId]?.length ?? null) : null;
+  const activeTaskSummary = activeTaskId ? tasksById[activeTaskId] : null;
+  const activeTask = activeTaskSummary?.task ?? null;
+  const expectedActiveTrackCount = activeTaskSummary ? activeTaskSummary.tracks.length : null;
   const singleTrackHeader = useMemo(() => {
     if (tracks.length !== 1) return null;
     const sess = activeEntry?.session ?? null;
@@ -2034,303 +2117,90 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
           />
         </div>
 
-        <div className="wb-sidebar-section wb-sidebar-grow">
-          <div className="wb-task-scroll">
-            <div className="wb-section-header">
-              <div className="wb-section-title">Active</div>
-            </div>
-
-            <div className="wb-task-list" role="list" aria-label="Active tasks">
-              {activeTasks.map((t) => {
-                const tid = idToString(t.id);
-                const selected = tid === activeTaskId;
-                const title = t.title ?? "New conversation";
-                const working = taskLiveInfo.workingByTask.has(tid);
-                const hasError = taskLiveInfo.errorByTask.has(tid);
-                const serverLastAssistantMs = parseMs(t.last_assistant_message_at ?? null);
-                const liveLastAssistantMs = taskLiveInfo.lastAssistantMsByTask[tid] ?? null;
-                const lastAssistantMs =
-                  liveLastAssistantMs !== null && serverLastAssistantMs !== null
-                    ? Math.max(liveLastAssistantMs, serverLastAssistantMs)
-                    : liveLastAssistantMs ?? serverLastAssistantMs;
-                const seenMs = parseMs(t.assistant_seen_at ?? null);
-                const unread = !working && lastAssistantMs !== null && (seenMs === null || lastAssistantMs > seenMs);
-                const age = formatRelativeAgeShort(t.last_activity_at ?? t.updated_at ?? t.created_at) || "Now";
-                const dotKind = hasError ? "error" : unread ? "unread" : null;
-                const providerIds =
-                  (providerIdsByTaskFromSessions[tid] ?? []).length > 0
-                    ? providerIdsByTaskFromSessions[tid]
-                    : (taskProviderIdsByTaskId[tid] ?? []);
-                const providerCount = new Set(providerIds).size;
-                const harnesses = providerIds
-                  .map((pid) => HARNESS_CATALOG.find((h) => h.id === pid))
-                  .filter(Boolean)
-                  .slice(0, 3) as Array<(typeof HARNESS_CATALOG)[number]>;
-
-                return (
-                  <React.Fragment key={tid}>
-                    <div
-                      className={`wb-task-row ${selected ? "wb-task-row-active" : ""}`}
-                      role="listitem"
-                      onClick={() => focusTask(tid)}
-                      onContextMenu={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        openTaskMenu(tid, { x: e.clientX, y: e.clientY });
-                      }}
-                      onKeyDown={(e) => {
-                        const target = e.target as HTMLElement | null;
-                        if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) {
-                          return;
-                        }
-                        if (e.key === "Enter" || e.key === " ") {
-                          e.preventDefault();
-                          focusTask(tid);
-                        }
-                      }}
-                      tabIndex={0}
-                      title={title}
-                    >
-                      <div className="wb-task-leading" aria-hidden="true">
-                        {/* TODO: multi-track indicator/dropdown (design TBD). */}
-                        {providerCount > 1 ? (
-                          <LayersPlus className="wb-task-harness-multi" size={16} />
-                        ) : harnesses.length > 0 ? (
-                          <img
-                            className={`wb-task-harness-logo ${harnesses[0].invertInDark ? "wb-invert" : ""}`}
-                            src={harnesses[0].logoSrc}
-                            alt=""
-                          />
-                        ) : (
-                          <span className="wb-task-harness-fallback" aria-hidden="true" />
-                        )}
+        <div className="wb-sidebar-section wb-sidebar-grow" style={{ minHeight: 0, display: "flex" }}>
+          <Virtuoso
+            style={{ height: "100%" }}
+            data={activeTaskSummaries}
+            overscan={8}
+            itemKey={(_, summary) => summary.id}
+            itemContent={(_, summary) => renderTaskRow(summary)}
+            endReached={() => {
+              if (workspaceIndex.hasMoreActive) {
+                workspaceIndexStore.loadMoreActive();
+              }
+            }}
+            components={{
+              Scroller: React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>((props, ref) => (
+                <div {...props} ref={ref} className="wb-task-scroll" />
+              )),
+              List: React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>((props, ref) => (
+                <div {...props} ref={ref} className="wb-task-list" role="list" aria-label="Active tasks" />
+              )),
+              Header: () => (
+                <div className="wb-section-header">
+                  <div className="wb-section-title">Active</div>
+                </div>
+              ),
+              Footer: () => (
+                <>
+                  {activeTaskSummaries.length === 0 &&
+                    workspaceIndex.initialized &&
+                    workspaceIndex.fetchState.active !== "loading" && (
+                      <div className="wb-task-list">
+                        <div className="wb-muted">No active tasks.</div>
                       </div>
-                      <div className="wb-task-body">
-                        {renamingTaskId === tid ? (
-                          <input
-                            ref={renameInputRef}
-                            className="wb-task-rename"
-                            value={renameDraft}
-                            onChange={(e) => setRenameDraft(e.target.value)}
-                            onClick={(e) => e.stopPropagation()}
-                            onKeyDown={(e) => {
-                              if (e.key === "Escape") {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                cancelRenameTask();
-                              }
-                              if (e.key === "Enter") {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                void commitRenameTask(tid);
-                              }
-                            }}
-                            onBlur={() => void commitRenameTask(tid)}
-                            aria-label="Rename task"
-                          />
-                        ) : (
-                          <div className="wb-task-title">{title}</div>
-                        )}
-                      </div>
-                      <div className="wb-task-meta">
-                        <div className="wb-task-meta-status" aria-hidden="true">
-                          <div className="wb-task-age">{age}</div>
-                          {working && <span className="wb-task-spinner" />}
-                          {dotKind === "unread" && <span className="wb-task-status-dot wb-task-status-dot-unread" />}
-                          {dotKind === "error" && <span className="wb-task-status-dot wb-task-status-dot-error" />}
-                        </div>
-                        <div className="wb-task-actions" aria-label="Task actions">
-                          <button
-                            type="button"
-                            className="wb-icon wb-task-action wb-task-menu-trigger"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              openTaskMenu(tid, { triggerEl: e.currentTarget });
-                            }}
-                            aria-label="More actions"
-                            title="More actions"
-                          >
-                            <Ellipsis size={14} />
-                          </button>
-                          <button
-                            type="button"
-                            className="wb-icon wb-task-action"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              onToggleArchive(tid, true).catch(() => { });
-                            }}
-                            aria-label="Archive"
-                            title="Archive"
-                          >
-                            <Archive size={14} />
-                          </button>
-                        </div>
-                      </div>
+                    )}
+                  {workspaceIndex.fetchState.active === "loading" && (
+                    <div className="wb-task-list">
+                      <div className="wb-muted">Loading tasks…</div>
                     </div>
-                  </React.Fragment>
-                );
-              })}
-              {activeTasks.length === 0 && <div className="wb-muted">No active tasks.</div>}
-            </div>
-
-            <div className="wb-section-header">
-              <button
-                type="button"
-                className="wb-section-toggle"
-                onClick={() => setArchivedCollapsed((v) => !v)}
-                aria-expanded={!archivedCollapsed}
-                aria-controls="wb-archived-list"
-              >
-                <span className="wb-section-title">Archived</span>
-                <span className={`wb-section-chev ${archivedCollapsed ? "wb-section-chev-collapsed" : ""}`}>
-                  <ChevronDown size={14} />
-                </span>
-              </button>
-            </div>
-
-            {!archivedCollapsed && (
-              <div
-                id="wb-archived-list"
-                className="wb-task-list wb-task-list-archived"
-                role="list"
-                aria-label="Archived tasks"
-              >
-                {archivedTasks.map((t) => {
-                  const tid = idToString(t.id);
-                  const selected = tid === activeTaskId;
-                  const title = t.title ?? "New conversation";
-                  const working = taskLiveInfo.workingByTask.has(tid);
-                  const hasError = taskLiveInfo.errorByTask.has(tid);
-                  const serverLastAssistantMs = parseMs(t.last_assistant_message_at ?? null);
-                  const liveLastAssistantMs = taskLiveInfo.lastAssistantMsByTask[tid] ?? null;
-                  const lastAssistantMs =
-                    liveLastAssistantMs !== null && serverLastAssistantMs !== null
-                      ? Math.max(liveLastAssistantMs, serverLastAssistantMs)
-                      : liveLastAssistantMs ?? serverLastAssistantMs;
-                  const seenMs = parseMs(t.assistant_seen_at ?? null);
-                  const unread = !working && lastAssistantMs !== null && (seenMs === null || lastAssistantMs > seenMs);
-                  const age = formatRelativeAgeShort(t.last_activity_at ?? t.updated_at ?? t.created_at) || "Now";
-                  const dotKind = hasError ? "error" : unread ? "unread" : null;
-                  const providerIds =
-                    (providerIdsByTaskFromSessions[tid] ?? []).length > 0
-                      ? providerIdsByTaskFromSessions[tid]
-                      : (taskProviderIdsByTaskId[tid] ?? []);
-                  const providerCount = new Set(providerIds).size;
-                  const harnesses = providerIds
-                    .map((pid) => HARNESS_CATALOG.find((h) => h.id === pid))
-                    .filter(Boolean)
-                    .slice(0, 3) as Array<(typeof HARNESS_CATALOG)[number]>;
-
-                  return (
-                    <React.Fragment key={tid}>
-                      <div
-                        className={`wb-task-row wb-task-row-archived ${selected ? "wb-task-row-active" : ""}`}
-                      role="listitem"
-                      onClick={() => focusTask(tid)}
-                      onContextMenu={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        openTaskMenu(tid, { x: e.clientX, y: e.clientY });
-                      }}
-                      onKeyDown={(e) => {
-                          const target = e.target as HTMLElement | null;
-                          if (
-                            target &&
-                            (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)
-                          ) {
-                            return;
-                        }
-                        if (e.key === "Enter" || e.key === " ") {
-                          e.preventDefault();
-                          focusTask(tid);
-                        }
-                      }}
-                      tabIndex={0}
-                      title={title}
+                  )}
+                  <div className="wb-section-header">
+                    <button
+                      type="button"
+                      className="wb-section-toggle"
+                      onClick={() => setArchivedCollapsed((v) => !v)}
+                      aria-expanded={!archivedCollapsed}
+                      aria-controls="wb-archived-list"
                     >
-                        <div className="wb-task-leading" aria-hidden="true">
-                          {/* TODO: multi-track indicator/dropdown (design TBD). */}
-                          {providerCount > 1 ? (
-                            <LayersPlus className="wb-task-harness-multi" size={16} />
-                          ) : harnesses.length > 0 ? (
-                            <img
-                              className={`wb-task-harness-logo ${harnesses[0].invertInDark ? "wb-invert" : ""}`}
-                              src={harnesses[0].logoSrc}
-                              alt=""
-                            />
-                          ) : (
-                            <span className="wb-task-harness-fallback" aria-hidden="true" />
-                          )}
-                        </div>
-                        <div className="wb-task-body">
-                          {renamingTaskId === tid ? (
-                            <input
-                              ref={renameInputRef}
-                              className="wb-task-rename"
-                              value={renameDraft}
-                              onChange={(e) => setRenameDraft(e.target.value)}
-                              onClick={(e) => e.stopPropagation()}
-                              onKeyDown={(e) => {
-                                if (e.key === "Escape") {
-                                  e.preventDefault();
-                                  e.stopPropagation();
-                                  cancelRenameTask();
-                                }
-                                if (e.key === "Enter") {
-                                  e.preventDefault();
-                                  e.stopPropagation();
-                                  void commitRenameTask(tid);
-                                }
-                              }}
-                              onBlur={() => void commitRenameTask(tid)}
-                              aria-label="Rename task"
-                            />
-                          ) : (
-                            <div className="wb-task-title">{title}</div>
-                          )}
-                        </div>
-                        <div className="wb-task-meta">
-                          <div className="wb-task-meta-status" aria-hidden="true">
-                            <div className="wb-task-age">{age}</div>
-                            {working && <span className="wb-task-spinner" />}
-                            {dotKind === "unread" && <span className="wb-task-status-dot wb-task-status-dot-unread" />}
-                            {dotKind === "error" && <span className="wb-task-status-dot wb-task-status-dot-error" />}
-                          </div>
-                          <div className="wb-task-actions" aria-label="Task actions">
-                            <button
-                              type="button"
-                              className="wb-icon wb-task-action wb-task-menu-trigger"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                openTaskMenu(tid, { triggerEl: e.currentTarget });
-                              }}
-                              aria-label="More actions"
-                              title="More actions"
-                            >
-                              <Ellipsis size={14} />
-                            </button>
-                            <button
-                              type="button"
-                              className="wb-icon wb-task-action"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                onToggleArchive(tid, false).catch(() => { });
-                              }}
-                              aria-label="Unarchive"
-                              title="Unarchive"
-                            >
-                              <Archive size={14} />
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    </React.Fragment>
-                  );
-                })}
-                {archivedTasks.length === 0 && <div className="wb-muted">No archived tasks.</div>}
-              </div>
-            )}
-          </div>
+                      <span className="wb-section-title">Archived</span>
+                      <span className={`wb-section-chev ${archivedCollapsed ? "wb-section-chev-collapsed" : ""}`}>
+                        <ChevronDown size={14} />
+                      </span>
+                    </button>
+                  </div>
+                  {!archivedCollapsed && (
+                    <div
+                      id="wb-archived-list"
+                      className="wb-task-list wb-task-list-archived"
+                      role="list"
+                      aria-label="Archived tasks"
+                    >
+                      {workspaceIndex.fetchState.archived === "loading" && (
+                        <div className="wb-muted">Loading archived tasks…</div>
+                      )}
+                      {workspaceIndex.fetchState.archived === "error" && (
+                        <div className="wb-muted">Failed to load archived tasks. Retry.</div>
+                      )}
+                      {archivedTaskSummaries.map((summary) => renderTaskRow(summary, { archived: true }))}
+                      {archivedTaskSummaries.length === 0 &&
+                        workspaceIndex.archivedLoaded &&
+                        workspaceIndex.fetchState.archived !== "loading" && <div className="wb-muted">No archived tasks.</div>}
+                      {workspaceIndex.hasMoreArchived && (
+                        <button
+                          type="button"
+                          className="wb-archived-more"
+                          onClick={() => workspaceIndexStore.loadMoreArchived()}
+                        >
+                          Load more
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </>
+              ),
+            }}
+          />
         </div>
 
         <div className="wb-sidebar-bottom">
@@ -3174,16 +3044,16 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
             className="wb-menu-item"
             onClick={() => {
               const tid = taskMenu.taskId;
-              const t = tasks.find((x) => idToString(x.id) === tid);
-              const nextArchived = !t?.archived_at;
+              const summary = tasksById[tid];
+              const nextArchived = !summary?.task.archived_at;
               onToggleArchive(tid, nextArchived).catch(() => { });
               setTaskMenu(null);
             }}
             role="menuitem"
           >
             {(() => {
-              const t = tasks.find((x) => idToString(x.id) === taskMenu.taskId);
-              return t?.archived_at ? "Unarchive" : "Archive";
+              const summary = tasksById[taskMenu.taskId];
+              return summary?.task.archived_at ? "Unarchive" : "Archive";
             })()}
           </button>
           <button
@@ -3191,12 +3061,13 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
             className="wb-menu-item"
             disabled={(() => {
               const tid = taskMenu.taskId;
-              const t = tasks.find((x) => idToString(x.id) === tid);
-              return !t?.last_assistant_message_at;
+              const summary = tasksById[tid];
+              return !summary?.task.last_assistant_message_at;
             })()}
             onClick={() => {
               const tid = taskMenu.taskId;
-              const t = tasks.find((x) => idToString(x.id) === tid);
+              const summary = tasksById[tid];
+              const t = summary?.task;
               const serverLastAssistantMs = parseMs(t?.last_assistant_message_at ?? null);
               const liveLastAssistantMs = taskLiveInfo.lastAssistantMsByTask[tid] ?? null;
               const lastAssistantMs =
@@ -3214,7 +3085,8 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
           >
             {(() => {
               const tid = taskMenu.taskId;
-              const t = tasks.find((x) => idToString(x.id) === tid);
+              const summary = tasksById[tid];
+              const t = summary?.task;
               const serverLastAssistantMs = parseMs(t?.last_assistant_message_at ?? null);
               const liveLastAssistantMs = taskLiveInfo.lastAssistantMsByTask[tid] ?? null;
               const lastAssistantMs =
