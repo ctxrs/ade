@@ -39,3 +39,4 @@ id_type!(RunId);
 id_type!(TurnId);
 id_type!(ConnectionProfileId);
 id_type!(MobileDeviceId);
+id_type!(WorkspaceAttachmentId);

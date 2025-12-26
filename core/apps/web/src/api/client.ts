@@ -14,10 +14,12 @@ import type {
   Track,
   TrackSummary,
   Workspace,
+  WorkspaceAttachment,
   WorkspaceIndexCursor,
   WorkspaceIndexEvent,
   WorkspaceIndexPage,
   WorkspaceTaskSummary,
+  TrackAttachmentMount,
   Worktree,
 } from "@context/types";
 import { desktopDaemonRequest, desktopUploadBlob, isDesktopApp } from "../utils/desktop";
@@ -38,10 +40,12 @@ export type {
   Track,
   TrackSummary,
   Workspace,
+  WorkspaceAttachment,
   WorkspaceIndexCursor,
   WorkspaceIndexEvent,
   WorkspaceIndexPage,
   WorkspaceTaskSummary,
+  TrackAttachmentMount,
   Worktree,
 } from "@context/types";
 
@@ -539,6 +543,32 @@ export const createWorkspace = (root_path: string, name?: string) =>
 
 export const getWorkspace = (id: string) =>
   apiAny<Workspace>(`/api/workspaces/${id}`);
+
+export type WorkspaceAttachmentCreate = {
+  kind: "reference_repo" | "doc_mirror";
+  name: string;
+  source: string;
+  revision?: string;
+  subpath?: string;
+  mount_relpath?: string;
+  mode?: "ro" | "rw";
+  update_policy?: "manual" | "on_open" | "scheduled";
+};
+
+export const listWorkspaceAttachments = (workspaceId: string) =>
+  apiAny<WorkspaceAttachment[]>(`/api/workspaces/${workspaceId}/attachments`);
+
+export const syncWorkspaceAttachments = (workspaceId: string, opts?: { refresh?: boolean }) =>
+  apiAny<WorkspaceAttachment[]>(`/api/workspaces/${workspaceId}/attachments/sync`, {
+    method: "POST",
+    body: JSON.stringify(opts ?? {}),
+  });
+
+export const createWorkspaceAttachment = (workspaceId: string, attachment: WorkspaceAttachmentCreate) =>
+  apiAny<WorkspaceAttachment[]>(`/api/workspaces/${workspaceId}/attachments`, {
+    method: "POST",
+    body: JSON.stringify(attachment),
+  });
 
 export const listTasks = (workspaceId: string) =>
   apiAny<Task[]>(`/api/workspaces/${workspaceId}/tasks`);

@@ -1,0 +1,10 @@
+[[attachments]]
+kind = "reference_repo"
+name = "react"
+source = "https://github.com/facebook/react.git"
+revision = "main"
+
+[[attachments]]
+kind = "doc_mirror"
+name = "react-docs"
+source = ".context/scripts/fetch-react-docs.sh"

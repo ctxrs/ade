@@ -29,6 +29,7 @@ use context_core::models::*;
 use context_fs::git::{assert_git_repo, list_tracked_files, list_untracked_files, rev_parse_head};
 use context_fs::worktrees::{create_worktree, managed_worktree_path};
 
+use crate::attachments;
 use crate::buffers::{
     BufferCloseReq, BufferConflictResp, BufferId, BufferOpenReq, BufferOpenResp, BufferUpdateReq,
     BufferUpdateResp,
@@ -251,6 +252,14 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
         .route(
             "/api/workspaces/:id/providers/:provider_id/verify",
             post(verify_provider_for_workspace),
+        )
+        .route(
+            "/api/workspaces/:id/attachments",
+            get(list_workspace_attachments).post(create_workspace_attachment),
+        )
+        .route(
+            "/api/workspaces/:id/attachments/sync",
+            post(sync_workspace_attachments),
         )
         .route(
             "/api/workspaces/:id/tasks",
@@ -4370,6 +4379,178 @@ async fn delete_workspace(
 }
 
 #[derive(Debug, Deserialize)]
+struct SyncWorkspaceAttachmentsReq {
+    #[serde(default)]
+    refresh: Option<bool>,
+}
+
+async fn list_workspace_attachments(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<Vec<WorkspaceAttachment>>, StatusCode> {
+    let ws_id = WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
+    state
+        .store
+        .list_workspace_attachments(ws_id)
+        .await
+        .map(Json)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+async fn sync_workspace_attachments(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(req): Json<SyncWorkspaceAttachmentsReq>,
+) -> Result<Json<Vec<WorkspaceAttachment>>, (StatusCode, Json<ApiErrorResp>)> {
+    let ws_id = WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid workspace id".to_string(),
+            }),
+        )
+    })?);
+    let workspace = state
+        .store
+        .get_workspace(ws_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "workspace not found".to_string(),
+            }),
+        ))?;
+
+    let refresh = req.refresh.unwrap_or(false);
+    let attachments = attachments::sync_workspace_attachments(&state, &workspace, refresh)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
+    let _ = attachments::ensure_workspace_attachments_for_tracks_with_attachments(
+        &state,
+        &workspace,
+        &attachments,
+        false,
+        false,
+    )
+    .await;
+    Ok(Json(attachments))
+}
+
+#[derive(Debug, Deserialize)]
+struct CreateWorkspaceAttachmentReq {
+    kind: WorkspaceAttachmentKind,
+    name: String,
+    source: String,
+    #[serde(default)]
+    revision: Option<String>,
+    #[serde(default)]
+    subpath: Option<String>,
+    #[serde(default)]
+    mount_relpath: Option<String>,
+    #[serde(default)]
+    mode: Option<AttachmentMode>,
+    #[serde(default)]
+    update_policy: Option<AttachmentUpdatePolicy>,
+}
+
+async fn create_workspace_attachment(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(req): Json<CreateWorkspaceAttachmentReq>,
+) -> Result<Json<Vec<WorkspaceAttachment>>, (StatusCode, Json<ApiErrorResp>)> {
+    if req.name.trim().is_empty() || req.source.trim().is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "name and source are required".to_string(),
+            }),
+        ));
+    }
+    let ws_id = WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid workspace id".to_string(),
+            }),
+        )
+    })?);
+    let workspace = state
+        .store
+        .get_workspace(ws_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "workspace not found".to_string(),
+            }),
+        ))?;
+
+    let cfg = attachments::AttachmentConfig {
+        kind: req.kind,
+        name: req.name,
+        source: req.source,
+        revision: req.revision,
+        subpath: req.subpath,
+        mount_relpath: req.mount_relpath,
+        mode: req.mode,
+        update_policy: req.update_policy,
+    };
+    attachments::upsert_attachment_config(StdPath::new(&workspace.root_path), cfg)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
+
+    let attachments = attachments::sync_workspace_attachments(&state, &workspace, true)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
+    let _ = attachments::ensure_workspace_attachments_for_tracks_with_attachments(
+        &state,
+        &workspace,
+        &attachments,
+        false,
+        false,
+    )
+    .await;
+    Ok(Json(attachments))
+}
+
+#[derive(Debug, Deserialize)]
 struct CreateTaskReq {
     title: String,
     description: Option<String>,
@@ -4746,7 +4927,7 @@ async fn create_task(
         git_branch: Some(branch_name),
         created_at: chrono::Utc::now(),
     };
-    state.store.insert_worktree(worktree).await.map_err(|e| {
+    state.store.insert_worktree(worktree.clone()).await.map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ApiErrorResp {
@@ -4758,7 +4939,7 @@ async fn create_task(
     let label = req
         .default_track_label
         .unwrap_or_else(|| "default".to_string());
-    let _track = state
+    let track = state
         .store
         .create_track(task.id, ws_id, worktree_id, label)
         .await
@@ -4770,6 +4951,12 @@ async fn create_task(
                 }),
             )
         })?;
+
+    if let Err(e) =
+        attachments::ensure_track_attachment_mounts(&state, &ws, &track, &worktree, false).await
+    {
+        tracing::warn!(task_id = %task.id.0, "attachment mounts failed: {e:?}");
+    }
 
     if let Err(e) = state.emit_workspace_task_upsert(task.id).await {
         tracing::warn!(task_id = %task.id.0, "workspace index refresh failed: {e:?}");
@@ -4987,6 +5174,22 @@ async fn create_track(
                 }),
             )
         })?;
+
+    if let Some(worktree) = state.store.get_worktree(worktree_id).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&e.to_string()),
+            }),
+        )
+    })? {
+        if let Err(e) =
+            attachments::ensure_track_attachment_mounts(&state, &ws, &track, &worktree, false)
+                .await
+        {
+            tracing::warn!(task_id = %track.task_id.0, "attachment mounts failed: {e:?}");
+        }
+    }
 
     if let Err(e) = state.emit_workspace_task_upsert(track.task_id).await {
         tracing::warn!(task_id = %track.task_id.0, "workspace index refresh failed: {e:?}");

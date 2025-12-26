@@ -1,4 +1,5 @@
 pub mod api;
+pub mod attachments;
 pub mod buffers;
 pub mod completions;
 pub mod daemon;
