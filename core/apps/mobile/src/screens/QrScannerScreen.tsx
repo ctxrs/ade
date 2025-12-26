@@ -16,7 +16,7 @@ export function QrScannerScreen({ navigation }: Props): React.JSX.Element {
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
   const [webPermission, setWebPermission] = useState<"granted" | "denied" | "prompt">("prompt");
   const [scanned, setScanned] = useState(false);
-  const { setConnection } = useConnection();
+  const { setConnection, config } = useConnection();
   const isWeb = Platform.OS === "web";
   const webScannerModule = useMemo(() => {
     if (!isWeb) return null;
@@ -53,6 +53,8 @@ export function QrScannerScreen({ navigation }: Props): React.JSX.Element {
     }
   }, [cameraPermission?.granted, isWeb, requestCameraPermission, webScannerModule]);
 
+  const wasConnected = Boolean(config);
+
   const handleScan = async (data: string | undefined) => {
     if (!data) return;
     if (scanned) return;
@@ -63,7 +65,11 @@ export function QrScannerScreen({ navigation }: Props): React.JSX.Element {
       if (!profile) throw new Error("QR code is missing connection info.");
       await setConnection(profile);
       Alert.alert("Connection updated", `Connected to ${profile.baseUrl}`);
-      navigation.goBack();
+      if (wasConnected) {
+        navigation.goBack();
+      } else {
+        navigation.reset({ index: 0, routes: [{ name: "Workspaces" }] });
+      }
     } catch (err: any) {
       Alert.alert("Scan failed", err?.message ?? String(err), [
         {

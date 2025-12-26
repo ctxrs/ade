@@ -1,22 +1,33 @@
 import type {
   Diagnostics,
-  Message as DaemonMessage,
+  Message,
+  MessageAttachment,
   MobileDeviceRegistration,
   ProviderStatus,
-  Session as DaemonSession,
-  Task as DaemonTask,
-  Track as DaemonTrack,
-  Workspace as DaemonWorkspace,
+  Session,
+  SessionHead,
+  SessionHistoryPage,
+  SessionTurnTool,
+  Task,
+  Track,
+  Workspace,
+  WorkspaceCatchupCursor,
+  WorkspaceCatchupSnapshot,
 } from "@context/types";
 
-export type Workspace = {
+export type ConnectionConfig = {
+  baseUrl: string;
+  token: string;
+};
+
+export type WorkspaceSummary = {
   id: string;
   name: string;
   root_path: string;
   created_at: string;
 };
 
-export type Task = {
+export type TaskSummary = {
   id: string;
   workspace_id: string;
   title: string;
@@ -26,7 +37,7 @@ export type Task = {
   last_activity_at?: string | null;
 };
 
-export type Track = {
+export type TrackSummary = {
   id: string;
   task_id: string;
   label: string;
@@ -34,7 +45,7 @@ export type Track = {
   worktree_id: string;
 };
 
-export type Session = {
+export type SessionSummary = {
   id: string;
   track_id: string;
   task_id?: string;
@@ -46,18 +57,13 @@ export type Session = {
   agent_role: string;
 };
 
-export type Message = {
+export type MessageSummary = {
   id: string;
   session_id: string;
   role: "user" | "assistant" | "system";
   content: string;
   delivery: "immediate" | "queued";
   created_at: string;
-};
-
-export type ConnectionConfig = {
-  baseUrl: string;
-  token: string;
 };
 
 const ensureSlash = (input: string): string => {
@@ -71,7 +77,7 @@ const buildUrl = (conn: ConnectionConfig, path: string): string => {
   return `${normalized}${absolute}`;
 };
 
-const toStringId = (value: unknown): string => {
+export const idToString = (value: unknown): string => {
   if (typeof value === "string") return value;
   if (value && typeof value === "object" && "0" in (value as Record<string, unknown>)) {
     return String((value as Record<string, unknown>)["0"]);
@@ -79,16 +85,16 @@ const toStringId = (value: unknown): string => {
   return value ? String(value) : "";
 };
 
-const mapWorkspace = (item: DaemonWorkspace): Workspace => ({
-  id: toStringId(item.id),
+const mapWorkspace = (item: Workspace): WorkspaceSummary => ({
+  id: idToString(item.id),
   name: item.name,
   root_path: item.root_path,
   created_at: item.created_at,
 });
 
-const mapTask = (item: DaemonTask): Task => ({
-  id: toStringId(item.id),
-  workspace_id: toStringId(item.workspace_id),
+const mapTask = (item: Task): TaskSummary => ({
+  id: idToString(item.id),
+  workspace_id: idToString(item.workspace_id),
   title: item.title,
   description: item.description,
   status: item.status,
@@ -96,29 +102,29 @@ const mapTask = (item: DaemonTask): Task => ({
   last_activity_at: item.last_activity_at,
 });
 
-const mapTrack = (item: DaemonTrack): Track => ({
-  id: toStringId(item.id),
-  task_id: toStringId(item.task_id),
+const mapTrack = (item: Track): TrackSummary => ({
+  id: idToString(item.id),
+  task_id: idToString(item.task_id),
   label: item.label,
   status: item.status,
-  worktree_id: toStringId(item.worktree_id),
+  worktree_id: idToString(item.worktree_id),
 });
 
-const mapSession = (item: DaemonSession): Session => ({
-  id: toStringId(item.id),
-  track_id: toStringId(item.track_id),
-  task_id: toStringId(item.task_id),
-  workspace_id: toStringId(item.workspace_id),
-  worktree_id: toStringId(item.worktree_id),
+const mapSession = (item: Session): SessionSummary => ({
+  id: idToString(item.id),
+  track_id: idToString(item.track_id),
+  task_id: idToString(item.task_id),
+  workspace_id: idToString(item.workspace_id),
+  worktree_id: idToString(item.worktree_id),
   provider_id: item.provider_id,
   model_id: item.model_id,
   status: item.status,
   agent_role: item.agent_role,
 });
 
-const mapMessage = (item: DaemonMessage): Message => ({
-  id: toStringId(item.id),
-  session_id: toStringId(item.session_id),
+const mapMessage = (item: Message): MessageSummary => ({
+  id: idToString(item.id),
+  session_id: idToString(item.session_id),
   role: item.role,
   content: item.content,
   delivery: item.delivery,
@@ -148,34 +154,36 @@ async function fetchJson<T>(conn: ConnectionConfig, path: string, init?: Request
 
   try {
     return JSON.parse(text) as T;
-  } catch (err) {
+  } catch {
     throw new Error(`Unexpected response from daemon: ${text.slice(0, 200)}`);
   }
 }
 
 export const listWorkspaces = (conn: ConnectionConfig) =>
-  fetchJson<any[]>(conn, "/api/workspaces").then((items) => items.map(mapWorkspace));
+  fetchJson<Workspace[]>(conn, "/api/workspaces").then((items) => items.map(mapWorkspace));
 
 export const listTasks = (conn: ConnectionConfig, workspaceId: string) =>
-  fetchJson<any[]>(conn, `/api/workspaces/${workspaceId}/tasks`).then((items) => items.map(mapTask));
+  fetchJson<Task[]>(conn, `/api/workspaces/${workspaceId}/tasks`).then((items) => items.map(mapTask));
 
 export const listTracks = (conn: ConnectionConfig, taskId: string) =>
-  fetchJson<any[]>(conn, `/api/tasks/${taskId}/tracks`).then((items) => items.map(mapTrack));
+  fetchJson<Track[]>(conn, `/api/tasks/${taskId}/tracks`).then((items) => items.map(mapTrack));
 
 export const listSessionsForTrack = (conn: ConnectionConfig, trackId: string) =>
-  fetchJson<DaemonSession[]>(conn, `/api/tracks/${trackId}/sessions`).then((items) =>
-    items.map(mapSession),
-  );
+  fetchJson<Session[]>(conn, `/api/tracks/${trackId}/sessions`).then((items) => items.map(mapSession));
 
 export const listMessages = (conn: ConnectionConfig, sessionId: string) =>
-  fetchJson<DaemonMessage[]>(conn, `/api/sessions/${sessionId}/messages`).then((items) =>
-    items.map(mapMessage),
-  );
+  fetchJson<Message[]>(conn, `/api/sessions/${sessionId}/messages`).then((items) => items.map(mapMessage));
 
-export const postMessage = (conn: ConnectionConfig, sessionId: string, content: string) =>
-  fetchJson<DaemonMessage>(conn, `/api/sessions/${sessionId}/messages`, {
+export const postMessage = (
+  conn: ConnectionConfig,
+  sessionId: string,
+  content: string,
+  delivery?: "immediate" | "queued",
+  attachments?: MessageAttachment[],
+) =>
+  fetchJson<Message>(conn, `/api/sessions/${sessionId}/messages`, {
     method: "POST",
-    body: JSON.stringify({ content, delivery: "immediate", attachments: [] }),
+    body: JSON.stringify({ content, delivery, attachments: attachments ?? [] }),
   }).then(mapMessage);
 
 export const fetchTrackDiff = (conn: ConnectionConfig, trackId: string) =>
@@ -188,9 +196,7 @@ export const getDiagnostics = (conn: ConnectionConfig) =>
   fetchJson<Diagnostics>(conn, "/api/diagnostics");
 
 export const listQueue = (conn: ConnectionConfig, sessionId: string) =>
-  fetchJson<DaemonMessage[]>(conn, `/api/sessions/${sessionId}/queue`).then((items) =>
-    items.map(mapMessage),
-  );
+  fetchJson<Message[]>(conn, `/api/sessions/${sessionId}/queue`).then((items) => items.map(mapMessage));
 
 export type RegisterMobileDeviceRequest = {
   device_id: string;
@@ -207,3 +213,51 @@ export const registerMobileDevice = (conn: ConnectionConfig, payload: RegisterMo
     method: "POST",
     body: JSON.stringify(payload),
   });
+
+export type WorkspaceCatchupParams = {
+  limit?: number;
+  includeArchived?: boolean;
+  archivedOnly?: boolean;
+  activeCursor?: WorkspaceCatchupCursor | null;
+  archivedCursor?: WorkspaceCatchupCursor | null;
+};
+
+export const getWorkspaceCatchup = (
+  conn: ConnectionConfig,
+  workspaceId: string,
+  params?: WorkspaceCatchupParams,
+) => {
+  const search = new URLSearchParams();
+  if (params?.limit) search.set("limit", String(params.limit));
+  if (params?.includeArchived) search.set("include_archived", "1");
+  if (params?.archivedOnly) search.set("archived_only", "1");
+  if (params?.activeCursor) {
+    search.set("active_cursor_sort_at", params.activeCursor.sort_at);
+    search.set("active_cursor_task_id", idToString(params.activeCursor.task_id));
+  }
+  if (params?.archivedCursor) {
+    search.set("archived_cursor_sort_at", params.archivedCursor.sort_at);
+    search.set("archived_cursor_task_id", idToString(params.archivedCursor.task_id));
+  }
+  const qs = search.toString();
+  const suffix = qs ? `?${qs}` : "";
+  return fetchJson<WorkspaceCatchupSnapshot>(conn, `/api/workspaces/${workspaceId}/catchup${suffix}`);
+};
+
+export const getSessionHead = (conn: ConnectionConfig, sessionId: string, limit?: number) => {
+  const qs = new URLSearchParams();
+  if (limit) qs.set("limit", String(limit));
+  const suffix = qs.toString() ? `?${qs.toString()}` : "";
+  return fetchJson<SessionHead>(conn, `/api/sessions/${sessionId}/head${suffix}`);
+};
+
+export const getSessionHistory = (conn: ConnectionConfig, sessionId: string, beforeSeq?: number, limit?: number) => {
+  const qs = new URLSearchParams();
+  if (typeof beforeSeq === "number") qs.set("before_seq", String(beforeSeq));
+  if (limit) qs.set("limit", String(limit));
+  const suffix = qs.toString() ? `?${qs.toString()}` : "";
+  return fetchJson<SessionHistoryPage>(conn, `/api/sessions/${sessionId}/history${suffix}`);
+};
+
+export const listTurnTools = (conn: ConnectionConfig, sessionId: string, turnId: string) =>
+  fetchJson<SessionTurnTool[]>(conn, `/api/sessions/${sessionId}/turns/${turnId}/tools`);

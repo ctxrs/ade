@@ -1,42 +1,44 @@
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
-import { useQuery } from "@tanstack/react-query";
-import React from "react";
+import React, { useMemo } from "react";
 import { FlatList, Pressable, RefreshControl, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { listTracks, type Track } from "../api/client";
 import type { RootStackParamList } from "../navigation/types";
 import { useConnection } from "../state/ConnectionProvider";
+import { useWorkspaceCatchupSnapshot, useWorkspaceCatchupStore } from "../state/workspaceCatchupStore";
 import { LoadingView } from "../components/LoadingView";
 import { ErrorView } from "../components/ErrorView";
 import { createContextStyles, useContextTokens } from "../theme";
+import { idToString } from "../api/client";
 
 type Props = NativeStackScreenProps<RootStackParamList, "Tracks">;
 
 export function TrackListScreen({ route, navigation }: Props): React.JSX.Element {
   const { taskId, taskTitle } = route.params;
   const { config } = useConnection();
+  const store = useWorkspaceCatchupStore();
+  const snapshot = useWorkspaceCatchupSnapshot();
   const theme = useContextTokens();
-  const { data, isLoading, error, refetch, isRefetching } = useQuery({
-    queryKey: ["tracks", taskId, config?.baseUrl],
-    enabled: !!config,
-    queryFn: () => listTracks(config!, taskId),
-  });
 
   if (!config) return <ErrorView message="Connect to a daemon first." />;
-  if (isLoading && !data) return <LoadingView />;
-  if (error) return <ErrorView message={(error as Error).message} />;
+
+  const summary = snapshot.tasksById[taskId];
+  const tracks = useMemo(() => summary?.tracks ?? [], [summary?.tracks]);
+  const hasData = tracks.length > 0;
+
+  if (!summary && !snapshot.initialized) return <LoadingView />;
+  if (!summary && snapshot.initialized) return <ErrorView message="Task not found." />;
 
   return (
     <SafeAreaView style={styles.safe}>
       <FlatList
-        data={data}
-        keyExtractor={(item) => item.id}
+        data={tracks}
+        keyExtractor={(item) => idToString(item.track.id)}
         contentContainerStyle={styles.list}
         refreshControl={
           <RefreshControl
-            refreshing={isRefetching}
-            onRefresh={() => void refetch()}
+            refreshing={snapshot.fetchState.active === "loading"}
+            onRefresh={() => store.refreshActive()}
             tintColor={theme.colors.accent}
           />
         }
@@ -44,13 +46,24 @@ export function TrackListScreen({ route, navigation }: Props): React.JSX.Element
         renderItem={({ item }) => (
           <View style={styles.card}>
             <Pressable
-              onPress={() => navigation.navigate("Sessions", { trackId: item.id, trackLabel: item.label })}
+              onPress={() =>
+                navigation.navigate("Sessions", {
+                  trackId: idToString(item.track.id),
+                  trackLabel: item.track.label || "Track",
+                })
+              }
             >
-              <Text style={styles.title}>{item.label || "Track"}</Text>
-              <Text style={styles.meta}>Status: {item.status}</Text>
+              <Text style={styles.title}>{item.track.label || "Track"}</Text>
+              <Text style={styles.meta}>Status: {item.track.status}</Text>
+              <Text style={styles.meta}>Sessions: {item.sessions.length}</Text>
             </Pressable>
             <Pressable
-              onPress={() => navigation.navigate("TrackDiff", { trackId: item.id, trackLabel: item.label })}
+              onPress={() =>
+                navigation.navigate("TrackDiff", {
+                  trackId: idToString(item.track.id),
+                  trackLabel: item.track.label || "Track",
+                })
+              }
               style={styles.diffButton}
             >
               <Text style={styles.diffText}>View Diff</Text>
@@ -59,7 +72,7 @@ export function TrackListScreen({ route, navigation }: Props): React.JSX.Element
         )}
         ListEmptyComponent={
           <View style={styles.empty}>
-            <Text style={styles.emptyText}>No tracks for this task.</Text>
+            <Text style={styles.emptyText}>{hasData ? "" : "No tracks for this task."}</Text>
           </View>
         }
       />

@@ -16,6 +16,7 @@ export function ConnectionScreen({ navigation }: Props): React.JSX.Element {
   const [token, setToken] = useState(config?.token ?? "");
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const wasConnected = Boolean(config);
 
   const onSave = async () => {
     setError(null);
@@ -28,6 +29,9 @@ export function ConnectionScreen({ navigation }: Props): React.JSX.Element {
         return;
       }
       await setConnection({ baseUrl: trimmedUrl, token: trimmedToken });
+      if (!wasConnected) {
+        navigation.reset({ index: 0, routes: [{ name: "Workspaces" }] });
+      }
     } catch (e: any) {
       setError(e?.message ?? String(e));
     } finally {

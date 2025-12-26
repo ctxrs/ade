@@ -3,7 +3,7 @@ import { NavigationContainer } from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import * as Notifications from "expo-notifications";
-import React from "react";
+import React, { useEffect } from "react";
 import { TouchableOpacity, Text, View } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
@@ -19,6 +19,9 @@ import { SettingsScreen } from "./src/screens/SettingsScreen";
 import { QrScannerScreen } from "./src/screens/QrScannerScreen";
 import type { RootStackParamList } from "./src/navigation/types";
 import { ConnectionProvider, useConnection } from "./src/state/ConnectionProvider";
+import { WorkspaceCatchupProvider, useWorkspaceCatchupStore } from "./src/state/workspaceCatchupStore";
+import { SessionSupervisorProvider, useSessionSupervisor } from "./src/state/sessionSupervisor";
+import { WorkspaceSelectionProvider, useWorkspaceSelection } from "./src/state/WorkspaceSelectionProvider";
 import { LoadingView } from "./src/components/LoadingView";
 import { tokens } from "./src/theme";
 
@@ -40,13 +43,42 @@ export default function App(): React.JSX.Element {
     <SafeAreaProvider>
       <QueryClientProvider client={queryClient}>
         <ConnectionProvider>
-          <NavigationContainer>
-            <RootNavigator />
-          </NavigationContainer>
+          <WorkspaceSelectionProvider>
+            <SessionSupervisorProvider>
+              <WorkspaceDataProviders>
+                <NavigationContainer>
+                  <RootNavigator />
+                </NavigationContainer>
+              </WorkspaceDataProviders>
+            </SessionSupervisorProvider>
+          </WorkspaceSelectionProvider>
         </ConnectionProvider>
       </QueryClientProvider>
     </SafeAreaProvider>
   );
+}
+
+function WorkspaceDataProviders({ children }: { children: React.ReactNode }): React.JSX.Element {
+  const { workspaceId } = useWorkspaceSelection();
+
+  return (
+    <WorkspaceCatchupProvider workspaceId={workspaceId}>
+      {workspaceId ? <WorkspaceCatchupBinding /> : null}
+      {children}
+    </WorkspaceCatchupProvider>
+  );
+}
+
+function WorkspaceCatchupBinding(): null {
+  const supervisor = useSessionSupervisor();
+  const store = useWorkspaceCatchupStore();
+
+  useEffect(() => {
+    supervisor.bindWorkspaceCatchupStore(store);
+    return () => supervisor.bindWorkspaceCatchupStore(null);
+  }, [supervisor, store]);
+
+  return null;
 }
 
 function RootNavigator(): React.JSX.Element {

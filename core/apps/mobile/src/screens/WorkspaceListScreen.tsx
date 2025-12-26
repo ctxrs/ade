@@ -4,8 +4,9 @@ import { FlatList, Pressable, RefreshControl, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import type { RootStackParamList } from "../navigation/types";
-import { listWorkspaces, type Workspace } from "../api/client";
+import { listWorkspaces } from "../api/client";
 import { useConnection } from "../state/ConnectionProvider";
+import { useWorkspaceSelection } from "../state/WorkspaceSelectionProvider";
 import { ErrorView } from "../components/ErrorView";
 import { createContextStyles, useContextTokens } from "../theme";
 import { LoadingView } from "../components/LoadingView";
@@ -15,6 +16,7 @@ type Props = NativeStackScreenProps<RootStackParamList, "Workspaces">;
 
 export function WorkspaceListScreen({ navigation }: Props): React.JSX.Element {
   const { config } = useConnection();
+  const { setWorkspace } = useWorkspaceSelection();
   const theme = useContextTokens();
   const { data, isLoading, refetch, isRefetching, error } = useQuery({
     queryKey: ["workspaces", config?.baseUrl],
@@ -50,9 +52,10 @@ export function WorkspaceListScreen({ navigation }: Props): React.JSX.Element {
         renderItem={({ item }) => (
           <Pressable
             style={styles.card}
-            onPress={() =>
-              navigation.navigate("Tasks", { workspaceId: item.id, workspaceName: item.name })
-            }
+            onPress={() => {
+              setWorkspace(item.id, item.name);
+              navigation.navigate("Tasks", { workspaceId: item.id, workspaceName: item.name });
+            }}
           >
             <Text style={styles.name}>{item.name}</Text>
             <Text style={styles.path}>{item.root_path}</Text>

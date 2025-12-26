@@ -1,5 +1,5 @@
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation } from "@tanstack/react-query";
 import React, { useMemo, useState } from "react";
 import {
   FlatList,
@@ -13,45 +13,40 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { listMessages, postMessage, type Message } from "../api/client";
+import { idToString, postMessage } from "../api/client";
 import type { RootStackParamList } from "../navigation/types";
 import { useConnection } from "../state/ConnectionProvider";
+import { useOpenSession, useSessionEntry, useSessionSupervisor } from "../state/sessionSupervisor";
 import { LoadingView } from "../components/LoadingView";
 import { ErrorView } from "../components/ErrorView";
 import { createContextStyles, useContextTokens } from "../theme";
+import type { Message } from "@context/types";
 
 type Props = NativeStackScreenProps<RootStackParamList, "SessionDetail">;
 
 export function SessionDetailScreen({ route }: Props): React.JSX.Element {
   const { sessionId, sessionTitle } = route.params;
   const { config } = useConnection();
-  const queryClient = useQueryClient();
+  const supervisor = useSessionSupervisor();
+  const entry = useSessionEntry(sessionId);
   const [draft, setDraft] = useState("");
   const theme = useContextTokens();
-  const { data, isLoading, error, refetch, isRefetching } = useQuery({
-    queryKey: ["messages", sessionId, config?.baseUrl],
-    enabled: !!config,
-    queryFn: () => listMessages(config!, sessionId),
-  });
-  const messages = useMemo(
-    () =>
-      [...(data ?? [])].sort(
-        (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
-      ),
-    [data],
-  );
+
+  useOpenSession(sessionId);
+
+  const messages = useMemo(() => entry?.messages ?? [], [entry?.messages]);
 
   const mutation = useMutation({
-    mutationFn: (content: string) => postMessage(config!, sessionId, content),
+    mutationFn: (content: string) => postMessage(config!, sessionId, content, "immediate"),
     onSuccess: () => {
       setDraft("");
-      void queryClient.invalidateQueries({ queryKey: ["messages", sessionId, config?.baseUrl] });
+      supervisor.refreshSession(sessionId);
     },
   });
 
   if (!config) return <ErrorView message="Connect to a daemon first." />;
-  if (isLoading && !data) return <LoadingView />;
-  if (error) return <ErrorView message={(error as Error).message} />;
+  if (!entry || (entry.loading && messages.length === 0)) return <LoadingView />;
+  if (entry.error) return <ErrorView message={entry.error} />;
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -62,17 +57,26 @@ export function SessionDetailScreen({ route }: Props): React.JSX.Element {
       >
         <FlatList
           data={messages}
-          keyExtractor={(item) => item.id}
+          keyExtractor={(item) => idToString(item.id)}
           contentContainerStyle={styles.list}
           refreshControl={
             <RefreshControl
-              refreshing={isRefetching || mutation.isPending}
-              onRefresh={() => void refetch()}
+              refreshing={mutation.isPending}
+              onRefresh={() => supervisor.refreshSession(sessionId)}
               tintColor={theme.colors.accent}
             />
           }
+          ListHeaderComponent={
+            <View style={styles.headerWrap}>
+              <Text style={styles.header}>{sessionTitle}</Text>
+              {entry.hasMoreTurns ? (
+                <TouchableOpacity style={styles.moreButton} onPress={() => supervisor.loadMoreTurns(sessionId)}>
+                  <Text style={styles.moreText}>Load earlier turns</Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
+          }
           renderItem={({ item }) => <MessageBubble message={item} />}
-          ListHeaderComponent={<Text style={styles.header}>{sessionTitle}</Text>}
         />
         <View style={styles.composer}>
           <TextInput
@@ -114,11 +118,26 @@ const styles: Record<string, any> = createContextStyles((t) => ({
     padding: t.spacing.md,
     gap: t.spacing.md,
   },
+  headerWrap: {
+    gap: t.spacing.sm,
+    marginBottom: t.spacing.xs,
+  },
   header: {
     color: t.colors.muted,
     fontWeight: "600",
     textTransform: "uppercase",
-    marginBottom: t.spacing.xs,
+  },
+  moreButton: {
+    alignSelf: "flex-start",
+    paddingHorizontal: t.spacing.md,
+    paddingVertical: t.spacing.xs,
+    borderRadius: t.radii.pill,
+    borderWidth: 1,
+    borderColor: t.colors.border,
+  },
+  moreText: {
+    color: t.colors.muted,
+    fontSize: t.typography.sizes.xs,
   },
   composer: {
     padding: t.spacing.md,

@@ -4,7 +4,12 @@
     "strict": true,
     "baseUrl": ".",
     "paths": {
-      "@context/design/native": ["src/types/context-design.d.ts"]
+      "@context/design/native": [
+        "src/types/context-design.d.ts"
+      ]
     }
-  }
+  },
+  "exclude": [
+    "src/**/*.test.ts"
+  ]
 }
