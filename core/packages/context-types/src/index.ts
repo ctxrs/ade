@@ -51,6 +51,8 @@ export type Session = {
   agent_role: string;
   status: string;
   env_target?: "worktree" | "local" | string;
+  created_at?: string;
+  updated_at?: string;
 };
 
 export type SessionSummary = {
@@ -108,6 +110,125 @@ export type WorkspaceIndexEvent =
       workspace_id: { 0: string } | string;
       snapshot_rev: number;
       task_id: { 0: string } | string;
+    };
+
+export type WorkspaceCatchupCursor = {
+  sort_at: string;
+  task_id: { 0: string } | string;
+};
+
+export type SessionCatchupSummary = {
+  session: Session;
+  last_message_at?: string | null;
+  last_message_preview?: string | null;
+  last_event_seq?: number | null;
+  unread?: boolean;
+};
+
+export type TrackDiffSummary = {
+  file_count: number;
+  line_additions: number;
+  line_deletions: number;
+  updated_at: string;
+};
+
+export type TrackDiffSummaryResponse = {
+  summary?: TrackDiffSummary | null;
+  too_large: boolean;
+};
+
+export type WorkspaceCatchupTrackSummary = {
+  track: Track;
+  primary_session_id?: { 0: string } | string | null;
+  sessions: SessionCatchupSummary[];
+  diff_summary?: TrackDiffSummary | null;
+};
+
+export type WorkspaceCatchupTaskSummary = {
+  task: Task;
+  tracks: WorkspaceCatchupTrackSummary[];
+  sort_at: string;
+};
+
+export type WorkspaceCatchupPage = {
+  tasks: WorkspaceCatchupTaskSummary[];
+  next_cursor?: WorkspaceCatchupCursor | null;
+  total_count: number;
+};
+
+export type WorkspaceCatchupSnapshot = {
+  workspace_id: { 0: string } | string;
+  snapshot_rev: number;
+  active: WorkspaceCatchupPage;
+  archived?: WorkspaceCatchupPage | null;
+};
+
+export type SessionHead = {
+  session: Session;
+  turns: SessionTurn[];
+  events?: SessionEvent[];
+  messages: Message[];
+  last_event_seq: number;
+  has_more_turns: boolean;
+};
+
+export type SessionHeadDelta = {
+  session_id: { 0: string } | string;
+  last_event_seq: number;
+  event?: SessionEvent | null;
+  turn?: SessionTurn | null;
+  message?: Message | null;
+};
+
+export type SessionHistoryPage = {
+  session_id: { 0: string } | string;
+  turns: SessionTurn[];
+  messages: Message[];
+  next_cursor?: number | null;
+  has_more: boolean;
+};
+
+export type WorkspaceCatchupEvent =
+  | {
+      type: "ready";
+      workspace_id: { 0: string } | string;
+      snapshot_rev: number;
+    }
+  | {
+      type: "task_upsert";
+      workspace_id: { 0: string } | string;
+      snapshot_rev: number;
+      task: WorkspaceCatchupTaskSummary;
+    }
+  | {
+      type: "task_delete";
+      workspace_id: { 0: string } | string;
+      snapshot_rev: number;
+      task_id: { 0: string } | string;
+    }
+  | {
+      type: "track_upsert";
+      workspace_id: { 0: string } | string;
+      snapshot_rev: number;
+      track: WorkspaceCatchupTrackSummary;
+    }
+  | {
+      type: "session_summary";
+      workspace_id: { 0: string } | string;
+      snapshot_rev: number;
+      summary: SessionCatchupSummary;
+    }
+  | {
+      type: "session_head_delta";
+      workspace_id: { 0: string } | string;
+      snapshot_rev: number;
+      delta: SessionHeadDelta;
+    };
+
+export type WorkspaceCatchupClientMessage =
+  | {
+      type: "subscribe";
+      session_ids: ({ 0: string } | string)[];
     };
 
 export type Message = {

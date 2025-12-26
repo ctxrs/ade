@@ -92,3 +92,40 @@ pub async fn diff_worktree(
 
     Ok(out)
 }
+
+pub async fn diff_worktree_summary(worktree_path: impl AsRef<Path>) -> Result<(i64, i64, i64)> {
+    let root = worktree_path.as_ref();
+    let mut file_count: i64 = 0;
+    let mut additions: i64 = 0;
+    let mut deletions: i64 = 0;
+
+    let numstats = git::git_diff_numstat_unstaged(root).await?;
+    for (add, del, _path) in numstats {
+        file_count += 1;
+        additions += add;
+        deletions += del;
+    }
+
+    let untracked = git::list_untracked_files(root).await.unwrap_or_default();
+    if !untracked.is_empty() {
+        for rel in untracked {
+            file_count += 1;
+            let abs = root.join(&rel);
+            if let Ok(meta) = tokio::fs::metadata(&abs).await {
+                const MAX_BYTES: u64 = 512 * 1024;
+                if meta.len() > MAX_BYTES {
+                    continue;
+                }
+            }
+            if let Ok(bytes) = tokio::fs::read(&abs).await {
+                let mut line_count = bytes.iter().filter(|b| **b == b'\n').count() as i64;
+                if !bytes.is_empty() && !bytes.ends_with(b"\n") {
+                    line_count += 1;
+                }
+                additions += line_count;
+            }
+        }
+    }
+
+    Ok((file_count, additions, deletions))
+}

@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::Path;
 use std::time::Duration;
 
@@ -954,6 +954,136 @@ impl Store {
         Ok((summaries, next_cursor))
     }
 
+    pub async fn list_workspace_catchup_page(
+        &self,
+        workspace_id: WorkspaceId,
+        cursor: Option<WorkspaceCatchupCursor>,
+        limit: i64,
+        archived_only: bool,
+    ) -> Result<(Vec<WorkspaceCatchupTaskSummary>, Option<WorkspaceCatchupCursor>)> {
+        const MAX_LIMIT: i64 = 200;
+        let limit = limit.clamp(1, MAX_LIMIT);
+
+        const SORT_EXPR: &str = "
+            COALESCE(
+                (
+                    SELECT MAX(m.created_at)
+                    FROM messages m
+                    WHERE m.task_id = t.id
+                ),
+                t.updated_at,
+                t.created_at
+            )
+        ";
+
+        let mut sql = format!(
+            r#"
+            SELECT
+              t.id,
+              t.workspace_id,
+              t.title,
+              t.description,
+              t.status,
+              t.exec_plan_id,
+              t.created_at,
+              t.updated_at,
+              t.archived_at,
+              t.assistant_seen_at,
+              (
+                SELECT MAX(m.created_at)
+                FROM messages m
+                WHERE m.task_id = t.id AND m.role = 'assistant'
+              ) AS last_assistant_message_at,
+              EXISTS(
+                SELECT 1
+                FROM sessions s
+                WHERE s.task_id = t.id AND s.status = 'active'
+              ) AS has_active_session,
+              ({sort_expr}) AS sort_at
+            FROM tasks t
+            WHERE t.workspace_id = ?
+            "#,
+            sort_expr = SORT_EXPR,
+        );
+
+        if archived_only {
+            sql.push_str(" AND t.archived_at IS NOT NULL");
+        } else {
+            sql.push_str(" AND t.archived_at IS NULL");
+        }
+
+        if cursor.is_some() {
+            sql.push_str(&format!(
+                " AND (({expr}) < ? OR (({expr}) = ? AND t.id < ?))",
+                expr = SORT_EXPR
+            ));
+        }
+
+        sql.push_str(" ORDER BY sort_at DESC, t.id DESC LIMIT ?");
+
+        let mut query = sqlx::query(&sql).bind(workspace_id.0.to_string());
+
+        if let Some(cursor) = &cursor {
+            let cursor_ts = cursor.sort_at.to_rfc3339();
+            query = query
+                .bind(cursor_ts.clone())
+                .bind(cursor_ts)
+                .bind(cursor.task_id.0.to_string());
+        }
+
+        query = query.bind(limit + 1);
+
+        let rows = query.fetch_all(&self.pool).await?;
+
+        let mut task_rows = Vec::with_capacity(rows.len());
+        for r in rows {
+            let id: String = r.try_get("id")?;
+            let ws_id: String = r.try_get("workspace_id")?;
+            let created_at: String = r.try_get("created_at")?;
+            let updated_at: String = r.try_get("updated_at")?;
+            let archived_at: Option<String> = r.try_get("archived_at")?;
+            let assistant_seen_at: Option<String> = r.try_get("assistant_seen_at")?;
+            let last_assistant_message_at: Option<String> =
+                r.try_get("last_assistant_message_at")?;
+            let has_active_session: i64 = r.try_get("has_active_session")?;
+            let sort_at: String = r.try_get("sort_at")?;
+            let sort_at_dt = parse_dt(&sort_at)?;
+
+            let task = Task {
+                id: TaskId(uuid::Uuid::parse_str(&id)?),
+                workspace_id: WorkspaceId(uuid::Uuid::parse_str(&ws_id)?),
+                title: r.try_get("title")?,
+                description: r.try_get("description")?,
+                status: parse_task_status(r.try_get::<String, _>("status")?.as_str()),
+                created_at: parse_dt(&created_at)?,
+                updated_at: parse_dt(&updated_at)?,
+                exec_plan_id: r.try_get("exec_plan_id")?,
+                archived_at: archived_at.as_deref().map(parse_dt).transpose()?,
+                assistant_seen_at: assistant_seen_at.as_deref().map(parse_dt).transpose()?,
+                last_activity_at: Some(sort_at_dt),
+                last_assistant_message_at: last_assistant_message_at
+                    .as_deref()
+                    .map(parse_dt)
+                    .transpose()?,
+                has_active_session: has_active_session != 0,
+            };
+            task_rows.push((task, sort_at_dt));
+        }
+
+        let mut next_cursor: Option<WorkspaceCatchupCursor> = None;
+        if task_rows.len() as i64 > limit {
+            if let Some((task, sort_at)) = task_rows.pop() {
+                next_cursor = Some(WorkspaceCatchupCursor {
+                    sort_at,
+                    task_id: task.id,
+                });
+            }
+        }
+
+        let summaries = self.build_workspace_catchup_task_summaries(task_rows).await?;
+        Ok((summaries, next_cursor))
+    }
+
     pub async fn get_workspace_task_summary(
         &self,
         task_id: TaskId,
@@ -1056,6 +1186,75 @@ impl Store {
         .fetch_all(&self.pool)
         .await?;
 
+        let mut out = Vec::with_capacity(rows.len());
+        for r in rows {
+            let id: String = r.try_get("id")?;
+            let session_id: String = r.try_get("session_id")?;
+            let task_id: String = r.try_get("task_id")?;
+            let track_id: String = r.try_get("track_id")?;
+            let created_at: String = r.try_get("created_at")?;
+            let delivered_at: Option<String> = r.try_get("delivered_at")?;
+            let run_id: Option<String> = r.try_get("run_id")?;
+            let turn_id: Option<String> = r.try_get("turn_id")?;
+            let turn_sequence: Option<i64> = r.try_get("turn_sequence")?;
+            let attachments_json: Option<String> = r.try_get("attachments_json")?;
+            let attachments = attachments_json
+                .as_deref()
+                .and_then(|s| serde_json::from_str::<Vec<MessageAttachment>>(s).ok())
+                .unwrap_or_default();
+            out.push(Message {
+                id: MessageId(uuid::Uuid::parse_str(&id)?),
+                session_id: SessionId(uuid::Uuid::parse_str(&session_id)?),
+                task_id: TaskId(uuid::Uuid::parse_str(&task_id)?),
+                track_id: TrackId(uuid::Uuid::parse_str(&track_id)?),
+                run_id: run_id
+                    .as_deref()
+                    .and_then(|s| uuid::Uuid::parse_str(s).ok())
+                    .map(RunId),
+                turn_id: turn_id
+                    .as_deref()
+                    .and_then(|s| uuid::Uuid::parse_str(s).ok())
+                    .map(TurnId),
+                turn_sequence,
+                role: parse_message_role(r.try_get::<String, _>("role")?.as_str()),
+                content: r.try_get("content")?,
+                attachments,
+                delivery: parse_message_delivery(r.try_get::<String, _>("delivery")?.as_str()),
+                delivered_at: delivered_at.as_deref().map(parse_dt).transpose()?,
+                created_at: parse_dt(&created_at)?,
+            });
+        }
+        Ok(out)
+    }
+
+    async fn list_messages_for_turns(
+        &self,
+        session_id: SessionId,
+        turn_ids: &[TurnId],
+    ) -> Result<Vec<Message>> {
+        let mut query = QueryBuilder::new(
+            "SELECT id, session_id, task_id, track_id, run_id, turn_id, turn_sequence, role, content, attachments_json, delivery, delivered_at, created_at
+             FROM messages
+             WHERE session_id = ",
+        );
+        query.push_bind(session_id.0.to_string());
+        if turn_ids.is_empty() {
+            query.push(" AND delivery = 'queued' AND delivered_at IS NULL");
+        } else {
+            query.push(" AND (turn_id IN (");
+            let mut first = true;
+            for turn_id in turn_ids {
+                if !first {
+                    query.push(", ");
+                }
+                first = false;
+                query.push_bind(turn_id.0.to_string());
+            }
+            query.push(") OR (delivery = 'queued' AND delivered_at IS NULL))");
+        }
+        query.push(" ORDER BY created_at ASC, turn_sequence ASC");
+
+        let rows = query.build().fetch_all(&self.pool).await?;
         let mut out = Vec::with_capacity(rows.len());
         for r in rows {
             let id: String = r.try_get("id")?;
@@ -1236,6 +1435,382 @@ impl Store {
         }
 
         Ok(summaries)
+    }
+
+    pub async fn get_workspace_catchup_task_summary(
+        &self,
+        task_id: TaskId,
+    ) -> Result<Option<WorkspaceCatchupTaskSummary>> {
+        let row = sqlx::query(
+            r#"SELECT id, workspace_id, title, description, status, exec_plan_id,
+                      created_at, updated_at, archived_at, assistant_seen_at,
+                      (
+                        SELECT MAX(m.created_at)
+                        FROM messages m
+                        WHERE m.task_id = t.id AND m.role = 'assistant'
+                      ) AS last_assistant_message_at,
+                      EXISTS(
+                        SELECT 1
+                        FROM sessions s
+                        WHERE s.task_id = t.id AND s.status = 'active'
+                      ) AS has_active_session,
+                      COALESCE(
+                        (
+                          SELECT MAX(m.created_at)
+                          FROM messages m
+                          WHERE m.task_id = t.id
+                        ),
+                        t.updated_at,
+                        t.created_at
+                      ) AS sort_at
+               FROM tasks t WHERE id = ?"#,
+        )
+        .bind(task_id.0.to_string())
+        .fetch_optional(&self.pool)
+        .await?;
+
+        if let Some(r) = row {
+            let id: String = r.try_get("id")?;
+            let ws_id: String = r.try_get("workspace_id")?;
+            let created_at: String = r.try_get("created_at")?;
+            let updated_at: String = r.try_get("updated_at")?;
+            let archived_at: Option<String> = r.try_get("archived_at")?;
+            let assistant_seen_at: Option<String> = r.try_get("assistant_seen_at")?;
+            let last_assistant_message_at: Option<String> =
+                r.try_get("last_assistant_message_at")?;
+            let has_active_session: i64 = r.try_get("has_active_session")?;
+            let sort_at: String = r.try_get("sort_at")?;
+            let sort_at_dt = parse_dt(&sort_at)?;
+
+            let task = Task {
+                id: TaskId(uuid::Uuid::parse_str(&id)?),
+                workspace_id: WorkspaceId(uuid::Uuid::parse_str(&ws_id)?),
+                title: r.try_get("title")?,
+                description: r.try_get("description")?,
+                status: parse_task_status(r.try_get::<String, _>("status")?.as_str()),
+                created_at: parse_dt(&created_at)?,
+                updated_at: parse_dt(&updated_at)?,
+                exec_plan_id: r.try_get("exec_plan_id")?,
+                archived_at: archived_at.as_deref().map(parse_dt).transpose()?,
+                assistant_seen_at: assistant_seen_at.as_deref().map(parse_dt).transpose()?,
+                last_activity_at: Some(sort_at_dt),
+                last_assistant_message_at: last_assistant_message_at
+                    .as_deref()
+                    .map(parse_dt)
+                    .transpose()?,
+                has_active_session: has_active_session != 0,
+            };
+            let summaries = self
+                .build_workspace_catchup_task_summaries(vec![(task, sort_at_dt)])
+                .await?;
+            return Ok(summaries.into_iter().next());
+        }
+        Ok(None)
+    }
+
+    pub async fn get_workspace_catchup_track_summary(
+        &self,
+        track_id: TrackId,
+    ) -> Result<Option<WorkspaceCatchupTrackSummary>> {
+        let row = sqlx::query(
+            r#"SELECT id, task_id, workspace_id, worktree_id, label, status, created_at, updated_at
+               FROM tracks WHERE id = ?"#,
+        )
+        .bind(track_id.0.to_string())
+        .fetch_optional(&self.pool)
+        .await?;
+
+        let row = match row {
+            Some(r) => r,
+            None => return Ok(None),
+        };
+
+        let id: String = row.try_get("id")?;
+        let task_id: String = row.try_get("task_id")?;
+        let ws_id: String = row.try_get("workspace_id")?;
+        let wt_id: String = row.try_get("worktree_id")?;
+        let created_at: String = row.try_get("created_at")?;
+        let updated_at: String = row.try_get("updated_at")?;
+
+        let track = Track {
+            id: TrackId(uuid::Uuid::parse_str(&id)?),
+            task_id: TaskId(uuid::Uuid::parse_str(&task_id)?),
+            workspace_id: WorkspaceId(uuid::Uuid::parse_str(&ws_id)?),
+            worktree_id: WorktreeId(uuid::Uuid::parse_str(&wt_id)?),
+            label: row.try_get("label")?,
+            status: parse_track_status(row.try_get::<String, _>("status")?.as_str()),
+            created_at: parse_dt(&created_at)?,
+            updated_at: parse_dt(&updated_at)?,
+        };
+
+        let mut summary = WorkspaceCatchupTrackSummary {
+            track,
+            primary_session_id: None,
+            sessions: Vec::new(),
+            diff_summary: None,
+        };
+
+        let session_rows = self
+            .list_session_catchup_rows(&[track_id])
+            .await?;
+
+        let mut primary: Option<(i32, DateTime<Utc>, SessionId)> = None;
+        for row in session_rows {
+            if row.session.track_id != track_id {
+                continue;
+            }
+            summary.sessions.push(SessionCatchupSummary {
+                session: row.session.clone(),
+                last_message_at: row.last_message_at,
+                last_message_preview: row.last_message_preview.clone(),
+                last_event_seq: row.last_event_seq,
+                unread: None,
+            });
+
+            let rank = if matches!(row.session.status, SessionStatus::Active) {
+                0
+            } else {
+                1
+            };
+            let candidate = (rank, row.session.updated_at, row.session.id);
+            if primary
+                .as_ref()
+                .map(|(r, t, _)| candidate.0 < *r || (candidate.0 == *r && candidate.1 > *t))
+                .unwrap_or(true)
+            {
+                primary = Some(candidate);
+            }
+        }
+
+        if let Some((_rank, _updated_at, session_id)) = primary {
+            summary.primary_session_id = Some(session_id);
+        }
+
+        Ok(Some(summary))
+    }
+
+    async fn build_workspace_catchup_task_summaries(
+        &self,
+        rows: Vec<(Task, DateTime<Utc>)>,
+    ) -> Result<Vec<WorkspaceCatchupTaskSummary>> {
+        if rows.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut summaries = Vec::with_capacity(rows.len());
+        let mut index_by_task = HashMap::new();
+        for (idx, (task, sort_at)) in rows.into_iter().enumerate() {
+            index_by_task.insert(task.id, idx);
+            summaries.push(WorkspaceCatchupTaskSummary {
+                task,
+                tracks: Vec::new(),
+                sort_at,
+            });
+        }
+
+        let task_ids: Vec<TaskId> = summaries.iter().map(|s| s.task.id).collect();
+
+        let mut track_query =
+            QueryBuilder::new("SELECT id, task_id, workspace_id, worktree_id, label, status, created_at, updated_at FROM tracks WHERE task_id IN (");
+        let mut first = true;
+        for task_id in &task_ids {
+            if !first {
+                track_query.push(", ");
+            }
+            first = false;
+            track_query.push_bind(task_id.0.to_string());
+        }
+        track_query.push(") ORDER BY created_at ASC");
+
+        let track_rows = track_query.build().fetch_all(&self.pool).await?;
+
+        let mut track_index: HashMap<TrackId, (usize, usize)> = HashMap::new();
+
+        for r in track_rows {
+            let id: String = r.try_get("id")?;
+            let task_id: String = r.try_get("task_id")?;
+            let ws_id: String = r.try_get("workspace_id")?;
+            let wt_id: String = r.try_get("worktree_id")?;
+            let created_at: String = r.try_get("created_at")?;
+            let updated_at: String = r.try_get("updated_at")?;
+            let track = Track {
+                id: TrackId(uuid::Uuid::parse_str(&id)?),
+                task_id: TaskId(uuid::Uuid::parse_str(&task_id)?),
+                workspace_id: WorkspaceId(uuid::Uuid::parse_str(&ws_id)?),
+                worktree_id: WorktreeId(uuid::Uuid::parse_str(&wt_id)?),
+                label: r.try_get("label")?,
+                status: parse_track_status(r.try_get::<String, _>("status")?.as_str()),
+                created_at: parse_dt(&created_at)?,
+                updated_at: parse_dt(&updated_at)?,
+            };
+            if let Some(task_idx) = index_by_task.get(&track.task_id) {
+                let idx = *task_idx;
+                let track_pos = summaries[idx].tracks.len();
+                summaries[idx].tracks.push(WorkspaceCatchupTrackSummary {
+                    track,
+                    primary_session_id: None,
+                    sessions: Vec::new(),
+                    diff_summary: None,
+                });
+                track_index.insert(summaries[idx].tracks[track_pos].track.id, (idx, track_pos));
+            }
+        }
+
+        if !track_index.is_empty() {
+            let session_rows = self
+                .list_session_catchup_rows(&track_index.keys().cloned().collect::<Vec<_>>())
+                .await?;
+
+            let mut primary_by_track: HashMap<TrackId, (i32, DateTime<Utc>, SessionId)> =
+                HashMap::new();
+
+            for row in session_rows {
+                let summary = SessionCatchupSummary {
+                    session: row.session.clone(),
+                    last_message_at: row.last_message_at,
+                    last_message_preview: row.last_message_preview.clone(),
+                    last_event_seq: row.last_event_seq,
+                    unread: None,
+                };
+
+                if let Some((task_idx, track_pos)) = track_index.get(&summary.session.track_id) {
+                    summaries[*task_idx].tracks[*track_pos]
+                        .sessions
+                        .push(summary);
+                }
+
+                let rank = if matches!(row.session.status, SessionStatus::Active) {
+                    0
+                } else {
+                    1
+                };
+                let candidate = (rank, row.session.updated_at, row.session.id);
+                let replace = primary_by_track
+                    .get(&row.session.track_id)
+                    .map(|(r, t, _)| candidate.0 < *r || (candidate.0 == *r && candidate.1 > *t))
+                    .unwrap_or(true);
+                if replace {
+                    primary_by_track.insert(row.session.track_id, candidate);
+                }
+            }
+
+            for (track_id, (_rank, _updated_at, session_id)) in primary_by_track {
+                if let Some((task_idx, track_pos)) = track_index.get(&track_id) {
+                    summaries[*task_idx].tracks[*track_pos].primary_session_id = Some(session_id);
+                }
+            }
+        }
+
+        Ok(summaries)
+    }
+
+    async fn list_session_catchup_rows(
+        &self,
+        track_ids: &[TrackId],
+    ) -> Result<Vec<SessionCatchupRow>> {
+        if track_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut session_query = QueryBuilder::new(
+            r#"
+            WITH last_assistant_messages AS (
+                SELECT session_id, content, created_at,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY session_id
+                           ORDER BY created_at DESC, id DESC
+                       ) AS rn
+                FROM messages
+                WHERE role = 'assistant'
+            ),
+            last_events AS (
+                SELECT session_id, MAX(seq) AS last_event_seq
+                FROM session_events
+                GROUP BY session_id
+            )
+            SELECT
+                s.id,
+                s.track_id,
+                s.task_id,
+                s.workspace_id,
+                s.worktree_id,
+                s.provider_id,
+                s.model_id,
+                s.agent_role,
+                s.status,
+                s.provider_session_ref,
+                s.created_at,
+                s.updated_at,
+                lm.content AS last_message_content,
+                lm.created_at AS last_message_at,
+                le.last_event_seq AS last_event_seq
+            FROM sessions s
+            LEFT JOIN last_assistant_messages lm
+              ON lm.session_id = s.id AND lm.rn = 1
+            LEFT JOIN last_events le
+              ON le.session_id = s.id
+            WHERE s.track_id IN ("#,
+        );
+
+        let mut first = true;
+        for track_id in track_ids {
+            if !first {
+                session_query.push(", ");
+            }
+            first = false;
+            session_query.push_bind(track_id.0.to_string());
+        }
+        session_query.push(") ORDER BY s.created_at ASC");
+
+        let session_rows = session_query.build().fetch_all(&self.pool).await?;
+        let mut out = Vec::with_capacity(session_rows.len());
+
+        for r in session_rows {
+            let id: String = r.try_get("id")?;
+            let track_id: String = r.try_get("track_id")?;
+            let task_id: String = r.try_get("task_id")?;
+            let ws_id: String = r.try_get("workspace_id")?;
+            let wt_id: String = r.try_get("worktree_id")?;
+            let created_at: String = r.try_get("created_at")?;
+            let updated_at: String = r.try_get("updated_at")?;
+            let last_message_at: Option<String> = r.try_get("last_message_at")?;
+            let last_message_content: Option<String> = r.try_get("last_message_content")?;
+            let last_event_seq: Option<i64> = r.try_get("last_event_seq")?;
+
+            let session = Session {
+                id: SessionId(uuid::Uuid::parse_str(&id)?),
+                track_id: TrackId(uuid::Uuid::parse_str(&track_id)?),
+                task_id: TaskId(uuid::Uuid::parse_str(&task_id)?),
+                workspace_id: WorkspaceId(uuid::Uuid::parse_str(&ws_id)?),
+                worktree_id: WorktreeId(uuid::Uuid::parse_str(&wt_id)?),
+                provider_id: r.try_get("provider_id")?,
+                model_id: r.try_get("model_id")?,
+                agent_role: r.try_get("agent_role")?,
+                status: parse_session_status(r.try_get::<String, _>("status")?.as_str()),
+                provider_session_ref: r.try_get("provider_session_ref")?,
+                created_at: parse_dt(&created_at)?,
+                updated_at: parse_dt(&updated_at)?,
+            };
+
+            let last_message_preview = last_message_content.as_deref().and_then(|content| {
+                let preview = derive_message_preview(content);
+                if preview.is_empty() {
+                    None
+                } else {
+                    Some(preview)
+                }
+            });
+
+            let row = SessionCatchupRow {
+                session,
+                last_message_at: last_message_at.as_deref().map(parse_dt).transpose()?,
+                last_message_preview,
+                last_event_seq,
+            };
+            out.push(row);
+        }
+
+        Ok(out)
     }
 
     pub async fn list_queued_messages_for_session(
@@ -1543,7 +2118,6 @@ impl Store {
         before_seq: Option<i64>,
         limit: Option<u32>,
     ) -> Result<Vec<SessionTurn>> {
-        self.ensure_session_turns(session_id).await?;
         let limit = limit.unwrap_or(50).clamp(1, 500) as i64;
         let rows = if let Some(before_seq) = before_seq {
             sqlx::query(
@@ -1584,6 +2158,140 @@ impl Store {
         }
         out.reverse();
         Ok(out)
+    }
+
+    pub async fn get_session_head(
+        &self,
+        session_id: SessionId,
+        limit: u32,
+        include_events: bool,
+    ) -> Result<Option<SessionHead>> {
+        const EVENT_HEAD_LIMIT: u32 = 200;
+        let session = match self.get_session(session_id).await? {
+            Some(session) => session,
+            None => return Ok(None),
+        };
+        let limit = limit.clamp(1, 200) as i64;
+        let rows = sqlx::query(
+            r#"SELECT turn_id, session_id, run_id, user_message_id, status,
+                      start_seq, end_seq, started_at, updated_at, assistant_partial, thought_partial,
+                      metrics_json, tool_total, tool_pending, tool_running, tool_completed, tool_failed
+               FROM session_turns
+               WHERE session_id = ?
+               ORDER BY start_seq DESC
+               LIMIT ?"#,
+        )
+        .bind(session_id.0.to_string())
+        .bind(limit + 1)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut has_more_turns = false;
+        let mut out = Vec::with_capacity(rows.len());
+        for r in rows {
+            if out.len() as i64 >= limit {
+                has_more_turns = true;
+                break;
+            }
+            if let Ok(turn) = build_session_turn_from_row(r) {
+                out.push(turn);
+            }
+        }
+        out.reverse();
+
+        let turn_ids: Vec<TurnId> = out.iter().map(|t| t.turn_id).collect();
+        let messages = self.list_messages_for_turns(session_id, &turn_ids).await?;
+        let last_event_seq = self.session_last_event_seq(session_id).await?;
+        let events = if include_events {
+            let mut events = self
+                .list_session_events_tail_by_seq(session_id, EVENT_HEAD_LIMIT)
+                .await?;
+            events.sort_by(|a, b| a.seq.cmp(&b.seq));
+            events
+        } else {
+            Vec::new()
+        };
+
+        Ok(Some(SessionHead {
+            session,
+            turns: out,
+            events,
+            messages,
+            last_event_seq,
+            has_more_turns,
+        }))
+    }
+
+    pub async fn get_session_history_page(
+        &self,
+        session_id: SessionId,
+        before_seq: Option<i64>,
+        limit: u32,
+    ) -> Result<Option<SessionHistoryPage>> {
+        if self.get_session(session_id).await?.is_none() {
+            return Ok(None);
+        }
+        let limit = limit.clamp(1, 200) as i64;
+        let rows = if let Some(before_seq) = before_seq {
+            sqlx::query(
+                r#"SELECT turn_id, session_id, run_id, user_message_id, status,
+                          start_seq, end_seq, started_at, updated_at, assistant_partial, thought_partial,
+                          metrics_json, tool_total, tool_pending, tool_running, tool_completed, tool_failed
+                   FROM session_turns
+                   WHERE session_id = ? AND start_seq < ?
+                   ORDER BY start_seq DESC
+                   LIMIT ?"#,
+            )
+            .bind(session_id.0.to_string())
+            .bind(before_seq)
+            .bind(limit + 1)
+            .fetch_all(&self.pool)
+            .await?
+        } else {
+            sqlx::query(
+                r#"SELECT turn_id, session_id, run_id, user_message_id, status,
+                          start_seq, end_seq, started_at, updated_at, assistant_partial, thought_partial,
+                          metrics_json, tool_total, tool_pending, tool_running, tool_completed, tool_failed
+                   FROM session_turns
+                   WHERE session_id = ?
+                   ORDER BY start_seq DESC
+                   LIMIT ?"#,
+            )
+            .bind(session_id.0.to_string())
+            .bind(limit + 1)
+            .fetch_all(&self.pool)
+            .await?
+        };
+
+        let mut has_more = false;
+        let mut turns = Vec::with_capacity(rows.len());
+        for r in rows {
+            if turns.len() as i64 >= limit {
+                has_more = true;
+                break;
+            }
+            if let Ok(turn) = build_session_turn_from_row(r) {
+                turns.push(turn);
+            }
+        }
+        turns.reverse();
+
+        let next_cursor = if has_more {
+            turns.first().and_then(|t| t.start_seq)
+        } else {
+            None
+        };
+
+        let turn_ids: Vec<TurnId> = turns.iter().map(|t| t.turn_id).collect();
+        let messages = self.list_messages_for_turns(session_id, &turn_ids).await?;
+
+        Ok(Some(SessionHistoryPage {
+            session_id,
+            turns,
+            messages,
+            next_cursor,
+            has_more,
+        }))
     }
 
     pub async fn list_turn_tools(
@@ -1677,210 +2385,6 @@ impl Store {
         Ok(tool)
     }
 
-    async fn ensure_session_turns(&self, session_id: SessionId) -> Result<()> {
-        let count: i64 =
-            sqlx::query_scalar(r#"SELECT COUNT(*) FROM session_turns WHERE session_id = ?"#)
-                .bind(session_id.0.to_string())
-                .fetch_one(&self.pool)
-                .await?;
-        if count > 0 {
-            return Ok(());
-        }
-        self.backfill_session_turns(session_id).await
-    }
-
-    async fn backfill_session_turns(&self, session_id: SessionId) -> Result<()> {
-        let messages = self.list_messages_for_session(session_id).await?;
-        let events = self.list_session_events(session_id).await?;
-
-        let mut user_by_turn: HashMap<TurnId, Message> = HashMap::new();
-        let mut assistant_last_by_turn: HashMap<TurnId, Message> = HashMap::new();
-        for m in messages {
-            let Some(turn_id) = m.turn_id else { continue };
-            match m.role {
-                MessageRole::User => {
-                    user_by_turn.insert(turn_id, m);
-                }
-                MessageRole::Assistant => {
-                    let update = match assistant_last_by_turn.get(&turn_id) {
-                        Some(existing) => m.created_at > existing.created_at,
-                        None => true,
-                    };
-                    if update {
-                        assistant_last_by_turn.insert(turn_id, m);
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        let mut events_by_turn: HashMap<TurnId, Vec<SessionEvent>> = HashMap::new();
-        for ev in events {
-            let Some(turn_id) = ev.turn_id else { continue };
-            events_by_turn.entry(turn_id).or_default().push(ev);
-        }
-
-        let mut turn_ids: HashSet<TurnId> = HashSet::new();
-        turn_ids.extend(user_by_turn.keys().cloned());
-        turn_ids.extend(events_by_turn.keys().cloned());
-
-        for turn_id in turn_ids {
-            let user = user_by_turn.get(&turn_id);
-            let assistant = assistant_last_by_turn.get(&turn_id);
-            let mut evs = events_by_turn.remove(&turn_id).unwrap_or_default();
-            evs.sort_by_key(|e| e.seq);
-
-            let mut start_seq: Option<i64> = None;
-            let mut end_seq: Option<i64> = None;
-            let mut assistant_partial = String::new();
-            let mut thought_partial = String::new();
-            let mut tool_statuses: HashMap<String, String> = HashMap::new();
-            let mut saw_turn_interrupted = false;
-            let mut saw_error = false;
-            let mut saw_assistant_complete = false;
-            let mut has_activity = false;
-            let mut metrics_json: Option<serde_json::Value> = None;
-
-            let mut last_event_at = user
-                .map(|m| m.created_at)
-                .or_else(|| evs.first().map(|e| e.created_at))
-                .unwrap_or_else(Utc::now);
-
-            for ev in &evs {
-                if ev.created_at > last_event_at {
-                    last_event_at = ev.created_at;
-                }
-                match ev.event_type {
-                    SessionEventType::UserMessage => {
-                        start_seq = start_seq.or(Some(ev.seq));
-                    }
-                    SessionEventType::AssistantChunk => {
-                        if let Some(fragment) = ev
-                            .payload_json
-                            .get("content_fragment")
-                            .and_then(|v| v.as_str())
-                        {
-                            assistant_partial.push_str(fragment);
-                        }
-                        has_activity = true;
-                    }
-                    SessionEventType::ThoughtChunk => {
-                        if let Some(fragment) = ev
-                            .payload_json
-                            .get("content_fragment")
-                            .and_then(|v| v.as_str())
-                        {
-                            thought_partial.push_str(fragment);
-                        }
-                        has_activity = true;
-                    }
-                    SessionEventType::AssistantComplete => {
-                        saw_assistant_complete = true;
-                        has_activity = true;
-                    }
-                    SessionEventType::AssistantMessageInserted => {
-                        saw_assistant_complete = true;
-                        has_activity = true;
-                    }
-                    SessionEventType::ToolCall
-                    | SessionEventType::ToolCallUpdate
-                    | SessionEventType::ToolResult => {
-                        if let Some((tool_call_id, status)) = extract_tool_status_for_backfill(ev) {
-                            tool_statuses.insert(tool_call_id, status);
-                        }
-                        has_activity = true;
-                    }
-                    SessionEventType::TurnInterrupted => {
-                        saw_turn_interrupted = true;
-                        end_seq = Some(ev.seq);
-                        has_activity = true;
-                    }
-                    SessionEventType::Done => {
-                        end_seq = Some(ev.seq);
-                        metrics_json = ev
-                            .payload_json
-                            .get("context_window")
-                            .cloned()
-                            .or(metrics_json);
-                        has_activity = true;
-                    }
-                    SessionEventType::Error => {
-                        saw_error = true;
-                        has_activity = true;
-                    }
-                    SessionEventType::Init
-                    | SessionEventType::Notice
-                    | SessionEventType::AuthRequired
-                    | SessionEventType::InputQueued
-                    | SessionEventType::InterruptRequested
-                    | SessionEventType::Plan => {}
-                }
-            }
-
-            let (tool_pending, tool_running, tool_completed, tool_failed) =
-                tally_tool_statuses(&tool_statuses);
-
-            if start_seq.is_none() {
-                if let Some(first_ev) = evs.first() {
-                    start_seq = Some(first_ev.seq);
-                }
-            }
-
-            let status = if saw_turn_interrupted {
-                SessionTurnStatus::Interrupted
-            } else if saw_error && assistant.is_none() && !saw_assistant_complete {
-                SessionTurnStatus::Failed
-            } else if assistant.is_some() || saw_assistant_complete {
-                SessionTurnStatus::Completed
-            } else if user
-                .map(|m| matches!(m.delivery, MessageDelivery::Queued))
-                .unwrap_or(false)
-                && !has_activity
-            {
-                SessionTurnStatus::Queued
-            } else {
-                SessionTurnStatus::Running
-            };
-
-            let started_at = user
-                .map(|m| m.created_at)
-                .or_else(|| evs.first().map(|e| e.created_at))
-                .unwrap_or_else(Utc::now);
-            let updated_at = assistant.map(|m| m.created_at).unwrap_or(last_event_at);
-
-            let turn = SessionTurn {
-                turn_id,
-                session_id,
-                run_id: user.and_then(|m| m.run_id),
-                user_message_id: user.map(|m| m.id),
-                status,
-                start_seq,
-                end_seq,
-                started_at,
-                updated_at,
-                assistant_partial: if assistant_partial.is_empty() {
-                    None
-                } else {
-                    Some(assistant_partial)
-                },
-                thought_partial: if thought_partial.is_empty() {
-                    None
-                } else {
-                    Some(thought_partial)
-                },
-                metrics_json,
-                tool_total: tool_statuses.len() as i64,
-                tool_pending,
-                tool_running,
-                tool_completed,
-                tool_failed,
-            };
-            let _ = self.insert_session_turn(turn).await;
-        }
-
-        Ok(())
-    }
-
     // Blob APIs
     pub async fn insert_blob(
         &self,
@@ -1969,6 +2473,16 @@ impl Store {
     pub async fn list_session_events(&self, session_id: SessionId) -> Result<Vec<SessionEvent>> {
         self.list_session_events_page_by_seq(session_id, None, None)
             .await
+    }
+
+    async fn session_last_event_seq(&self, session_id: SessionId) -> Result<i64> {
+        let seq = sqlx::query_scalar::<_, Option<i64>>(
+            r#"SELECT MAX(seq) FROM session_events WHERE session_id = ?"#,
+        )
+        .bind(session_id.0.to_string())
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(seq.unwrap_or(0))
     }
 
     pub async fn list_session_events_page_by_seq(
@@ -2405,6 +2919,27 @@ fn build_mobile_device_from_row(row: sqlx::sqlite::SqliteRow) -> Result<MobileDe
     })
 }
 
+struct SessionCatchupRow {
+    session: Session,
+    last_message_at: Option<DateTime<Utc>>,
+    last_message_preview: Option<String>,
+    last_event_seq: Option<i64>,
+}
+
+fn derive_message_preview(content: &str) -> String {
+    let trimmed = content.trim();
+    let line = trimmed.lines().next().unwrap_or("").trim();
+    if line.is_empty() {
+        return String::new();
+    }
+    const MAX_CHARS: usize = 160;
+    let mut out: String = line.chars().take(MAX_CHARS).collect();
+    if line.chars().count() > MAX_CHARS {
+        out.push_str("...");
+    }
+    out
+}
+
 fn parse_dt(value: &str) -> Result<DateTime<Utc>> {
     Ok(DateTime::parse_from_rfc3339(value)?.with_timezone(&Utc))
 }
@@ -2631,44 +3166,6 @@ fn build_session_turn_tool_from_row(r: sqlx::sqlite::SqliteRow) -> Result<Sessio
         created_at: parse_dt(&created_at)?,
         updated_at: parse_dt(&updated_at)?,
     })
-}
-
-fn extract_tool_status_for_backfill(ev: &SessionEvent) -> Option<(String, String)> {
-    let tool_call_id = tool_call_id_from_payload(&ev.payload_json)?;
-    let update = extract_tool_update(&ev.payload_json);
-    let raw_status = update
-        .get("status")
-        .and_then(|v| v.as_str())
-        .or_else(|| update.pointer("/toolCall/status").and_then(|v| v.as_str()));
-
-    let status = if let Some(raw) = raw_status {
-        normalize_tool_status(raw, ev.event_type.clone())
-    } else if matches!(ev.event_type, SessionEventType::ToolResult) {
-        "completed".to_string()
-    } else if matches!(ev.event_type, SessionEventType::ToolCall) {
-        "pending".to_string()
-    } else {
-        return None;
-    };
-
-    Some((tool_call_id, status))
-}
-
-fn tally_tool_statuses(statuses: &HashMap<String, String>) -> (i64, i64, i64, i64) {
-    let mut pending = 0;
-    let mut running = 0;
-    let mut completed = 0;
-    let mut failed = 0;
-    for status in statuses.values() {
-        match status.as_str() {
-            "pending" => pending += 1,
-            "in_progress" => running += 1,
-            "completed" => completed += 1,
-            "failed" => failed += 1,
-            _ => pending += 1,
-        }
-    }
-    (pending, running, completed, failed)
 }
 
 fn normalize_tool_status(status: &str, event_type: SessionEventType) -> String {

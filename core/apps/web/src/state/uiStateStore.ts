@@ -113,3 +113,64 @@ export async function clearWorkbenchSelectionV1(workspaceId: string): Promise<vo
   await uiStateDelete(workbenchSelectionKeyV1(workspaceId));
 }
 
+export type PersistedWorkspaceCatchupV1 = {
+  v: 1;
+  snapshot: import("@context/types").WorkspaceCatchupSnapshot;
+  updatedAtMs: number;
+};
+
+export function workspaceCatchupKeyV1(workspaceId: string) {
+  return `wb.catchup.v1.${workspaceId}`;
+}
+
+export async function loadWorkspaceCatchupV1(
+  workspaceId: string,
+): Promise<PersistedWorkspaceCatchupV1 | null> {
+  const raw = await uiStateGet(workspaceCatchupKeyV1(workspaceId));
+  if (!raw || typeof raw !== "object") return null;
+  const rec = raw as PersistedWorkspaceCatchupV1;
+  if (rec.v !== 1 || !rec.snapshot) return null;
+  return rec;
+}
+
+export async function saveWorkspaceCatchupV1(
+  workspaceId: string,
+  snapshot: PersistedWorkspaceCatchupV1["snapshot"],
+): Promise<void> {
+  await uiStateSet(workspaceCatchupKeyV1(workspaceId), {
+    v: 1,
+    snapshot,
+    updatedAtMs: Date.now(),
+  } satisfies PersistedWorkspaceCatchupV1);
+}
+
+export type PersistedSessionHeadV1 = {
+  v: 1;
+  sessionId: string;
+  head: import("@context/types").SessionHead;
+  updatedAtMs: number;
+};
+
+export function sessionHeadKeyV1(sessionId: string) {
+  return `wb.session_head.v1.${sessionId}`;
+}
+
+export async function loadSessionHeadV1(sessionId: string): Promise<PersistedSessionHeadV1 | null> {
+  const raw = await uiStateGet(sessionHeadKeyV1(sessionId));
+  if (!raw || typeof raw !== "object") return null;
+  const rec = raw as PersistedSessionHeadV1;
+  if (rec.v !== 1 || rec.sessionId !== sessionId || !rec.head) return null;
+  return rec;
+}
+
+export async function saveSessionHeadV1(
+  sessionId: string,
+  head: PersistedSessionHeadV1["head"],
+): Promise<void> {
+  await uiStateSet(sessionHeadKeyV1(sessionId), {
+    v: 1,
+    sessionId,
+    head,
+    updatedAtMs: Date.now(),
+  } satisfies PersistedSessionHeadV1);
+}

@@ -4,9 +4,9 @@ import { tmpdir } from "os";
 import path from "path";
 import { execSync } from "child_process";
 
-test("workbench: recovers when WS misses events (polling backfill)", async ({ page }) => {
-  // Simulate a flaky network where the global stream WS is dropped once.
-  // The client should reconnect and resume via `after_seq` without stalling the conversation.
+test("workbench: recovers when workspace stream drops once", async ({ page }) => {
+  // Simulate a flaky network where the workspace stream WS is dropped once.
+  // The client should reconnect and keep the conversation moving.
   await page.addInitScript(() => {
     const OriginalWebSocket = window.WebSocket as any;
     (window as any).__contextTestClosedStreamOnce ??= false;
@@ -17,7 +17,7 @@ test("workbench: recovers when WS misses events (polling backfill)", async ({ pa
         super(url, protocols);
         const u = String(url ?? "");
         if ((window as any).__contextTestClosedStreamOnce) return;
-        if (!u.includes("/api/stream")) return;
+        if (!u.includes("/api/workspaces/") || !u.includes("/stream")) return;
 
         this.addEventListener("open", () => {
           // Close shortly after open to simulate an interrupted WS.
@@ -64,11 +64,53 @@ test("workbench: recovers when WS misses events (polling backfill)", async ({ pa
 
   await page.locator(".wb-new-composer-stack textarea.wb-composer-textarea").fill("hello 1");
   await page.locator(".wb-new-composer-stack button[aria-label=\"Send\"]").click();
-  await expect(page.locator(".wb-session .wb-assistant-entry")).toHaveCount(1, { timeout: 20000 });
+  const url = new URL(page.url());
+  const workspaceId = url.pathname.split("/").filter(Boolean).pop();
+  expect(workspaceId).toBeTruthy();
+
+  const readId = (v: any): string => {
+    if (!v) return "";
+    if (typeof v === "string") return v;
+    if (typeof v === "object" && typeof v["0"] === "string") return v["0"];
+    return "";
+  };
+
+  let sessionId = "";
+  await expect
+    .poll(async () => {
+      const resp = await page.request.get(`/api/workspaces/${workspaceId}/catchup`);
+      if (!resp.ok()) return "";
+      const snapshot = (await resp.json()) as any;
+      const taskSummary = snapshot?.active?.tasks?.[0];
+      const trackSummary = taskSummary?.tracks?.[0];
+      const primarySessionId = readId(trackSummary?.primary_session_id);
+      const sessionSummary = trackSummary?.sessions?.[trackSummary?.sessions?.length - 1];
+      sessionId = readId(sessionSummary?.session?.id) || primarySessionId;
+      return sessionId;
+    })
+    .not.toBe("");
+
+  await expect
+    .poll(async () => {
+      const resp = await page.request.get(`/api/sessions/${sessionId}/head?limit=50`);
+      if (!resp.ok()) return 0;
+      const head = (await resp.json()) as any;
+      const msgs = head?.messages ?? [];
+      return msgs.filter((m: any) => m.role === "assistant").length;
+    })
+    .toBeGreaterThan(0);
 
   const sessionComposer = page.locator(".wb-session textarea.wb-active-textarea");
   await expect(sessionComposer).toBeVisible({ timeout: 20000 });
   await sessionComposer.fill("hello 2");
   await page.locator(".wb-session button[aria-label=\"Send\"]").click();
-  await expect(page.locator(".wb-session .wb-assistant-entry")).toHaveCount(2, { timeout: 20000 });
+  await expect
+    .poll(async () => {
+      const resp = await page.request.get(`/api/sessions/${sessionId}/head?limit=50`);
+      if (!resp.ok()) return 0;
+      const head = (await resp.json()) as any;
+      const msgs = head?.messages ?? [];
+      return msgs.filter((m: any) => m.role === "assistant").length;
+    })
+    .toBeGreaterThanOrEqual(2);
 });

@@ -10,14 +10,22 @@ import type {
   SessionTurn,
   SessionTurnTool,
   SessionSummary,
+  SessionHead,
+  SessionHeadDelta,
+  SessionHistoryPage,
+  SessionCatchupSummary,
   Task,
   Track,
+  TrackDiffSummary,
+  TrackDiffSummaryResponse,
   TrackSummary,
   Workspace,
-  WorkspaceIndexCursor,
-  WorkspaceIndexEvent,
-  WorkspaceIndexPage,
-  WorkspaceTaskSummary,
+  WorkspaceCatchupCursor,
+  WorkspaceCatchupClientMessage,
+  WorkspaceCatchupEvent,
+  WorkspaceCatchupSnapshot,
+  WorkspaceCatchupTaskSummary,
+  WorkspaceCatchupTrackSummary,
   Worktree,
 } from "@context/types";
 import { desktopDaemonRequest, desktopUploadBlob, isDesktopApp } from "../utils/desktop";
@@ -34,14 +42,22 @@ export type {
   SessionTurn,
   SessionTurnTool,
   SessionSummary,
+  SessionHead,
+  SessionHeadDelta,
+  SessionHistoryPage,
+  SessionCatchupSummary,
   Task,
   Track,
+  TrackDiffSummary,
+  TrackDiffSummaryResponse,
   TrackSummary,
   Workspace,
-  WorkspaceIndexCursor,
-  WorkspaceIndexEvent,
-  WorkspaceIndexPage,
-  WorkspaceTaskSummary,
+  WorkspaceCatchupCursor,
+  WorkspaceCatchupClientMessage,
+  WorkspaceCatchupEvent,
+  WorkspaceCatchupSnapshot,
+  WorkspaceCatchupTaskSummary,
+  WorkspaceCatchupTrackSummary,
   Worktree,
 } from "@context/types";
 
@@ -540,26 +556,30 @@ export const createWorkspace = (root_path: string, name?: string) =>
 export const getWorkspace = (id: string) =>
   apiAny<Workspace>(`/api/workspaces/${id}`);
 
-export const listTasks = (workspaceId: string) =>
-  apiAny<Task[]>(`/api/workspaces/${workspaceId}/tasks`);
-
-export type WorkspaceIndexParams = {
+export type WorkspaceCatchupParams = {
   limit?: number;
   includeArchived?: boolean;
-  cursor?: WorkspaceIndexCursor | null;
+  archivedOnly?: boolean;
+  activeCursor?: WorkspaceCatchupCursor | null;
+  archivedCursor?: WorkspaceCatchupCursor | null;
 };
 
-export const getWorkspaceIndex = (workspaceId: string, params?: WorkspaceIndexParams) => {
+export const getWorkspaceCatchup = (workspaceId: string, params?: WorkspaceCatchupParams) => {
   const search = new URLSearchParams();
   if (params?.limit) search.set("limit", String(params.limit));
   if (params?.includeArchived) search.set("include_archived", params.includeArchived ? "1" : "0");
-  if (params?.cursor) {
-    search.set("cursor_sort_at", params.cursor.sort_at);
-    search.set("cursor_task_id", idToString(params.cursor.task_id));
+  if (params?.archivedOnly) search.set("archived_only", params.archivedOnly ? "1" : "0");
+  if (params?.activeCursor) {
+    search.set("active_cursor_sort_at", params.activeCursor.sort_at);
+    search.set("active_cursor_task_id", idToString(params.activeCursor.task_id));
+  }
+  if (params?.archivedCursor) {
+    search.set("archived_cursor_sort_at", params.archivedCursor.sort_at);
+    search.set("archived_cursor_task_id", idToString(params.archivedCursor.task_id));
   }
   const qs = search.toString();
   const suffix = qs ? `?${qs}` : "";
-  return apiAny<WorkspaceIndexPage>(`/api/workspaces/${workspaceId}/index${suffix}`);
+  return apiAny<WorkspaceCatchupSnapshot>(`/api/workspaces/${workspaceId}/catchup${suffix}`);
 };
 
 export const createTask = (
@@ -578,8 +598,6 @@ export const createTask = (
     }),
   });
 
-export const getTask = (taskId: string) =>
-  apiAny<Task>(`/api/tasks/${taskId}`);
 
 export const updateTaskTitle = (taskId: string, title: string) =>
   apiAny<Task>(`/api/tasks/${taskId}/title`, { method: "POST", body: JSON.stringify({ title }) });
@@ -599,9 +617,6 @@ export const markTaskRead = (taskId: string) =>
 export const markTaskUnread = (taskId: string) =>
   apiAny<Task>(`/api/tasks/${taskId}/mark_unread`, { method: "POST" });
 
-export const listTracks = (taskId: string) =>
-  apiAny<Track[]>(`/api/tasks/${taskId}/tracks`);
-
 export const createTrack = (taskId: string, label?: string, opts?: { env_target?: "worktree" | "local" }) =>
   apiAny<Track>(`/api/tasks/${taskId}/tracks`, {
     method: "POST",
@@ -617,46 +632,28 @@ export const createSession = (trackId: string, provider_id: string, model_id: st
     body: JSON.stringify({ provider_id, model_id }),
   });
 
-export const listSessionsForTrack = (trackId: string) =>
-  apiAny<Session[]>(`/api/tracks/${trackId}/sessions`);
-
-export const getSession = (sessionId: string) =>
-  apiAny<Session>(`/api/sessions/${sessionId}`);
 
 export const getWorktree = (worktreeId: string) =>
   apiAny<Worktree>(`/api/worktrees/${worktreeId}`);
 
-export const listMessages = (sessionId: string) =>
-  apiAny<Message[]>(`/api/sessions/${sessionId}/messages`);
+export const getSessionHead = (sessionId: string, limit?: number, includeEvents?: boolean) => {
+  const qs = new URLSearchParams();
+  if (limit) qs.set("limit", String(limit));
+  if (includeEvents !== undefined) qs.set("include_events", includeEvents ? "1" : "0");
+  const suffix = qs.toString() ? `?${qs.toString()}` : "";
+  return apiAny<SessionHead>(`/api/sessions/${sessionId}/head${suffix}`);
+};
 
-export const listSessionTurnsPage = (sessionId: string, beforeSeq?: number, limit?: number) => {
+export const getSessionHistory = (sessionId: string, beforeSeq?: number, limit?: number) => {
   const qs = new URLSearchParams();
   if (typeof beforeSeq === "number") qs.set("before_seq", String(beforeSeq));
   if (limit) qs.set("limit", String(limit));
   const suffix = qs.toString() ? `?${qs.toString()}` : "";
-  return apiAny<SessionTurn[]>(`/api/sessions/${sessionId}/turns${suffix}`);
+  return apiAny<SessionHistoryPage>(`/api/sessions/${sessionId}/history${suffix}`);
 };
 
 export const listTurnTools = (sessionId: string, turnId: string) =>
   apiAny<SessionTurnTool[]>(`/api/sessions/${sessionId}/turns/${turnId}/tools`);
-
-export const listSessionEvents = (sessionId: string) =>
-  apiAny<SessionEvent[]>(`/api/sessions/${sessionId}/events`);
-
-export const listSessionEventsPage = (sessionId: string, afterSeq?: number, limit?: number) => {
-  const qs = new URLSearchParams();
-  if (typeof afterSeq === "number") qs.set("after_seq", String(afterSeq));
-  if (limit) qs.set("limit", String(limit));
-  const suffix = qs.toString() ? `?${qs.toString()}` : "";
-  return apiAny<SessionEvent[]>(`/api/sessions/${sessionId}/events${suffix}`);
-};
-
-export const listSessionEventsTail = (sessionId: string, tail: number) => {
-  const qs = new URLSearchParams();
-  qs.set("tail", String(tail));
-  const suffix = `?${qs.toString()}`;
-  return apiAny<SessionEvent[]>(`/api/sessions/${sessionId}/events${suffix}`);
-};
 
 export const listSessionFileCompletions = (
   sessionId: string,
@@ -764,6 +761,9 @@ export const submitAskUserQuestion = (
 export const trackDiff = (trackId: string) =>
   apiAny<{ diff: string }>(`/api/tracks/${trackId}/diff`);
 
+export const getTrackDiffSummary = (trackId: string) =>
+  apiAny<TrackDiffSummaryResponse>(`/api/tracks/${trackId}/diff_summary`);
+
 export const applyTrackDiffPatch = (trackId: string, action: "accept" | "reject", patch: string) =>
   apiAny<{ diff: string }>(`/api/tracks/${trackId}/diff/apply`, {
     method: "POST",
@@ -788,8 +788,6 @@ export const discardEditPlan = (planId: string) =>
     body: JSON.stringify({}),
   });
 
-export const listQueue = (sessionId: string) =>
-  apiAny<Message[]>(`/api/sessions/${sessionId}/queue`);
 
 export const deleteMessage = (messageId: string) =>
   apiAny(`/api/messages/${messageId}`, { method: "DELETE" });

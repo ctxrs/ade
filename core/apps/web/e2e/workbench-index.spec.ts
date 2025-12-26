@@ -4,7 +4,7 @@ import { tmpdir } from "os";
 import path from "path";
 import { execSync } from "child_process";
 
-test("workbench index snapshot+stream keeps network lean", async ({ page }) => {
+test("workbench catchup snapshot+stream keeps network lean", async ({ page }) => {
   const repo = mkdtempSync(path.join(tmpdir(), "context-e2e-"));
   execSync("git init", { cwd: repo });
   execSync("git config user.email test@example.com", { cwd: repo });
@@ -39,10 +39,12 @@ test("workbench index snapshot+stream keeps network lean", async ({ page }) => {
   const apiRequests = requests.filter((r) => r.url.includes("/api/"));
   expect(apiRequests.length).toBeLessThanOrEqual(30);
 
-  const indexRequests = apiRequests.filter((r) =>
-    r.method === "GET" && r.url.includes(`/api/workspaces/${workspaceId}/index`),
+  const catchupRequests = apiRequests.filter((r) =>
+    r.method === "GET" && r.url.includes(`/api/workspaces/${workspaceId}/catchup`),
   );
-  expect(indexRequests.length).toBeGreaterThanOrEqual(1);
+  expect(catchupRequests.length).toBeGreaterThanOrEqual(1);
   const tracksRequests = apiRequests.filter((r) => /\/api\/tasks\/[^/]+\/tracks/.test(r.url));
+  const sessionsRequests = apiRequests.filter((r) => /\/api\/tracks\/[^/]+\/sessions/.test(r.url));
   expect(tracksRequests.length).toBe(0);
+  expect(sessionsRequests.length).toBe(0);
 });

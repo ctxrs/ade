@@ -267,6 +267,145 @@ pub enum WorkspaceIndexEvent {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkspaceCatchupCursor {
+    pub sort_at: DateTime<Utc>,
+    pub task_id: TaskId,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionCatchupSummary {
+    pub session: Session,
+    pub last_message_at: Option<DateTime<Utc>>,
+    pub last_message_preview: Option<String>,
+    pub last_event_seq: Option<i64>,
+    pub unread: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TrackDiffSummary {
+    pub file_count: i64,
+    pub line_additions: i64,
+    pub line_deletions: i64,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TrackDiffSummaryResponse {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary: Option<TrackDiffSummary>,
+    pub too_large: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkspaceCatchupTrackSummary {
+    pub track: Track,
+    pub primary_session_id: Option<SessionId>,
+    #[serde(default)]
+    pub sessions: Vec<SessionCatchupSummary>,
+    pub diff_summary: Option<TrackDiffSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkspaceCatchupTaskSummary {
+    pub task: Task,
+    #[serde(default)]
+    pub tracks: Vec<WorkspaceCatchupTrackSummary>,
+    pub sort_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkspaceCatchupPage {
+    pub tasks: Vec<WorkspaceCatchupTaskSummary>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<WorkspaceCatchupCursor>,
+    pub total_count: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkspaceCatchupSnapshot {
+    pub workspace_id: WorkspaceId,
+    pub snapshot_rev: i64,
+    pub active: WorkspaceCatchupPage,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub archived: Option<WorkspaceCatchupPage>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionHead {
+    pub session: Session,
+    #[serde(default)]
+    pub turns: Vec<SessionTurn>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub events: Vec<SessionEvent>,
+    #[serde(default)]
+    pub messages: Vec<Message>,
+    pub last_event_seq: i64,
+    pub has_more_turns: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionHeadDelta {
+    pub session_id: SessionId,
+    pub last_event_seq: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event: Option<SessionEvent>,
+    pub turn: Option<SessionTurn>,
+    pub message: Option<Message>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionHistoryPage {
+    pub session_id: SessionId,
+    #[serde(default)]
+    pub turns: Vec<SessionTurn>,
+    #[serde(default)]
+    pub messages: Vec<Message>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<i64>,
+    pub has_more: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum WorkspaceCatchupEvent {
+    Ready {
+        workspace_id: WorkspaceId,
+        snapshot_rev: i64,
+    },
+    TaskUpsert {
+        workspace_id: WorkspaceId,
+        snapshot_rev: i64,
+        task: WorkspaceCatchupTaskSummary,
+    },
+    TaskDelete {
+        workspace_id: WorkspaceId,
+        snapshot_rev: i64,
+        task_id: TaskId,
+    },
+    TrackUpsert {
+        workspace_id: WorkspaceId,
+        snapshot_rev: i64,
+        track: WorkspaceCatchupTrackSummary,
+    },
+    SessionSummary {
+        workspace_id: WorkspaceId,
+        snapshot_rev: i64,
+        summary: SessionCatchupSummary,
+    },
+    SessionHeadDelta {
+        workspace_id: WorkspaceId,
+        snapshot_rev: i64,
+        delta: SessionHeadDelta,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum WorkspaceCatchupClientMessage {
+    Subscribe { #[serde(default)] session_ids: Vec<SessionId> },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SessionEventType {
     Init,

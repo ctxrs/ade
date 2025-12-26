@@ -78,6 +78,42 @@ pub async fn git_diff_unstaged(root_path: impl AsRef<Path>) -> Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
+pub async fn git_diff_numstat_unstaged(
+    root_path: impl AsRef<Path>,
+) -> Result<Vec<(i64, i64, String)>> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root_path.as_ref())
+        .arg("diff")
+        .arg("--numstat")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .await
+        .context("running git diff --numstat")?;
+    if !output.status.success() {
+        bail!(
+            "git diff --numstat failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut out = Vec::new();
+    for line in stdout.lines() {
+        let mut parts = line.split('\t');
+        let add = parts.next().unwrap_or("0");
+        let del = parts.next().unwrap_or("0");
+        let path = parts.next().unwrap_or("").trim();
+        if path.is_empty() {
+            continue;
+        }
+        let add_count = add.parse::<i64>().unwrap_or(0);
+        let del_count = del.parse::<i64>().unwrap_or(0);
+        out.push((add_count, del_count, path.to_string()));
+    }
+    Ok(out)
+}
+
 pub async fn list_untracked_files(root_path: impl AsRef<Path>) -> Result<Vec<String>> {
     let output = Command::new("git")
         .arg("-C")

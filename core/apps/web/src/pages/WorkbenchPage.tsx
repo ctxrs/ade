@@ -25,8 +25,6 @@ import {
   MessageAttachment,
   ProviderOptions,
   ProviderStatus,
-  Task,
-  Track,
   Worktree,
   Workspace,
   archiveTask,
@@ -46,10 +44,8 @@ import {
   idToString,
   installAllProviders,
   installProvider,
-  listProviders,
   listEditPlansForTrack,
-  listSessionsForTrack,
-  listTracks,
+  listProviders,
   markTaskRead as markTaskReadApi,
   markTaskUnread as markTaskUnreadApi,
   postMessage,
@@ -86,11 +82,11 @@ import {
   useWorkbenchStore,
 } from "../workbench/store";
 import {
-  WorkspaceIndexProvider,
-  useWorkspaceIndexSnapshot,
-  useWorkspaceIndexStore,
-  type WorkspaceIndexItem,
-} from "../state/workspaceIndexStore";
+  WorkspaceCatchupProvider,
+  useWorkspaceCatchupSnapshot,
+  useWorkspaceCatchupStore,
+  type WorkspaceCatchupItem,
+} from "../state/workspaceCatchupStore";
 
 function deriveTaskTitle(prompt: string): string {
   const line = prompt.trim().split("\n")[0] ?? "";
@@ -132,10 +128,6 @@ function lastPathSegment(path: string | null | undefined): string {
   if (!raw) return "";
   const parts = raw.split(/[\\/]/).filter(Boolean);
   return parts[parts.length - 1] ?? "";
-}
-
-function taskActivityMs(t: Task): number | null {
-  return parseMs(t.last_activity_at ?? null) ?? parseMs(t.updated_at ?? null) ?? parseMs(t.created_at ?? null);
 }
 
 function lastAssistantMessageMs(messages: { role: string; created_at: string }[]): number | null {
@@ -197,11 +189,11 @@ export default function WorkbenchPage() {
   const { id: workspaceId } = useParams<{ id: string }>();
   if (!workspaceId) return null;
   return (
-    <WorkspaceIndexProvider workspaceId={workspaceId}>
+    <WorkspaceCatchupProvider workspaceId={workspaceId}>
       <WorkbenchStoreProvider workspaceId={workspaceId}>
         <WorkbenchPageInner workspaceId={workspaceId} />
       </WorkbenchStoreProvider>
-    </WorkspaceIndexProvider>
+    </WorkspaceCatchupProvider>
   );
 }
 
@@ -209,15 +201,20 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const supervisor = useSessionSupervisor();
   const sessionSnap = useSessionCacheSnapshot();
   const workbenchStore = useWorkbenchStore();
-  const workspaceIndexStore = useWorkspaceIndexStore();
-  const workspaceIndex = useWorkspaceIndexSnapshot();
-  const tasksById = workspaceIndex.tasksById;
+  const workspaceCatchupStore = useWorkspaceCatchupStore();
+  const workspaceCatchup = useWorkspaceCatchupSnapshot();
+  const tasksById = workspaceCatchup.tasksById;
   const workbenchSnap = useWorkbenchSnapshot();
   const activeTab = useActiveWorkbenchTab();
   const { taskId: activeTaskId, trackId: activeTrackId } = useActiveWorkbenchIds();
   const { value: newTaskDraft, setValue: setNewTaskDraft } = useNewTaskDraft();
   const draftPrompt = newTaskDraft.text;
   const draftMode = newTaskDraft.modeId;
+
+  useEffect(() => {
+    supervisor.bindWorkspaceCatchupStore(workspaceCatchupStore);
+    return () => supervisor.bindWorkspaceCatchupStore(null);
+  }, [supervisor, workspaceCatchupStore]);
   const setDraftPrompt = useCallback(
     (text: string) => setNewTaskDraft({ text, modeId: newTaskDraft.modeId }),
     [newTaskDraft.modeId, setNewTaskDraft],
@@ -277,11 +274,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const [convoMenu, setConvoMenu] = useState<{ style: React.CSSProperties } | null>(null);
   const convoMenuRef = useRef<HTMLDivElement | null>(null);
 
-  const [tracks, setTracks] = useState<Track[]>([]);
-  const [sessionsByTrack, setSessionsByTrack] = useState<Record<string, any[]>>({});
   const [activeWorktree, setActiveWorktree] = useState<Worktree | null>(null);
-  const taskDetailAbortRef = useRef<AbortController | null>(null);
-  const taskDetailLoadSeqRef = useRef(0);
   const editPlansAbortRef = useRef<AbortController | null>(null);
   const editPlansLoadSeqRef = useRef(0);
 
@@ -295,8 +288,6 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     },
     [workbenchStore],
   );
-
-  // Keep tracks cached per task so we can show best-effort provider badges.
 
   const [draftTracks, setDraftTracks] = useState<DraftTrack[]>([
     { key: "t1", label: "", providerId: "codex", modelId: "" },
@@ -450,45 +441,18 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   }, [useMultipleAgents, draftTracks.length]);
 
 
-  const refreshTaskDetail = async (
-    taskId: string,
-    preferredTrackId: string | null,
-    preferredSessionId: string | null,
-    signal?: AbortSignal,
-    seq?: number,
-  ) => {
-    const trs = await listTracks(taskId);
-    if (signal?.aborted) return;
-    if (seq !== undefined && seq !== taskDetailLoadSeqRef.current) return;
-    setTracks(trs);
-    const map: Record<string, any[]> = {};
-    await Promise.allSettled(
-      trs.map(async (tr) => {
-        const trid = idToString(tr.id);
-        try {
-          map[trid] = await listSessionsForTrack(trid);
-        } catch {
-          map[trid] = [];
-        }
-      }),
-    );
-    if (signal?.aborted) return;
-    if (seq !== undefined && seq !== taskDetailLoadSeqRef.current) return;
-    setSessionsByTrack(map);
-    const trackIds = trs.map((tr) => idToString(tr.id)).filter(Boolean);
-
-    const wantedFromSession =
-      preferredSessionId && trackIds.length > 0
-        ? trackIds.find((trid) => (map[trid] ?? []).some((s: any) => idToString(s?.id) === preferredSessionId))
-        : null;
-    const activeTab = workbenchStore.getActiveTab();
-    const prevTrackId = activeTab?.kind === "track" && activeTab.ref.taskId === taskId ? activeTab.ref.trackId : null;
-    const wanted = wantedFromSession ?? preferredTrackId ?? prevTrackId;
-    const nextTrackId = pickPreferredTrackId(trackIds, map, wanted);
-    if (activeTab?.kind === "track" && activeTab.ref.taskId === taskId) {
-      workbenchStore.setActiveTrackForActiveTask(nextTrackId);
-    }
-  };
+  const ensureActiveTrackSelection = useCallback(
+    (taskId: string, trackIds: string[], sessionsMap: Record<string, any[]>) => {
+      const activeTab = workbenchStore.getActiveTab();
+      const prevTrackId = activeTab?.kind === "track" && activeTab.ref.taskId === taskId ? activeTab.ref.trackId : null;
+      const wanted = prevTrackId ?? null;
+      const nextTrackId = pickPreferredTrackId(trackIds, sessionsMap, wanted);
+      if (activeTab?.kind === "track" && activeTab.ref.taskId === taskId && nextTrackId !== prevTrackId) {
+        workbenchStore.setActiveTrackForActiveTask(nextTrackId);
+      }
+    },
+    [workbenchStore],
+  );
 
   useEffect(() => {
     if (!workspaceId) return;
@@ -726,27 +690,84 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     });
   }, [providers.length, providersById, defaultProviderId]);
 
-  useEffect(() => {
-    taskDetailAbortRef.current?.abort();
-    const controller = new AbortController();
-    taskDetailAbortRef.current = controller;
-    const seq = ++taskDetailLoadSeqRef.current;
+  const activeTaskSummary = activeTaskId ? tasksById[activeTaskId] : null;
+  const trackSummaries = useMemo(() => activeTaskSummary?.tracks ?? [], [activeTaskSummary]);
+  const tracks = useMemo(() => trackSummaries.map((t) => t.track), [trackSummaries]);
+  const primarySessionByTrackId = useMemo(() => {
+    const out: Record<string, string> = {};
+    for (const summary of trackSummaries) {
+      const trackId = idToString(summary.track.id);
+      const primary = idToString(summary.primary_session_id ?? "");
+      if (trackId && primary) out[trackId] = primary;
+    }
+    return out;
+  }, [trackSummaries]);
+  const sessionsByTrack = useMemo(() => {
+    const out: Record<string, any[]> = {};
+    for (const summary of trackSummaries) {
+      const trid = idToString(summary.track.id);
+      if (!trid) continue;
+      out[trid] = summary.sessions.map((s) => s.session);
+    }
+    return out;
+  }, [trackSummaries]);
+  const activeTaskSessionIds = useMemo(() => {
+    const ids: string[] = [];
+    for (const summary of trackSummaries) {
+      for (const session of summary.sessions) {
+        const sid = idToString(session.session.id);
+        if (sid) ids.push(sid);
+      }
+    }
+    return ids;
+  }, [trackSummaries]);
 
+  const warmSessionIds = useMemo(() => {
+    const ids: { id: string; updatedAt: number; running: boolean }[] = [];
+    const activeSet = new Set(activeTaskSessionIds);
+    for (const taskId of workspaceCatchup.activeIds) {
+      const task = tasksById[taskId];
+      if (!task) continue;
+      for (const summary of task.tracks) {
+        for (const sess of summary.sessions) {
+          const sid = idToString(sess.session.id);
+          if (!sid || activeSet.has(sid)) continue;
+          const last = parseMs(sess.last_message_at) ?? parseMs(sess.session.updated_at) ?? 0;
+          const running = sess.session.status === "active" || sess.session.status === "running";
+          ids.push({ id: sid, updatedAt: last, running });
+        }
+      }
+    }
+    ids.sort((a, b) => {
+      if (a.running !== b.running) return a.running ? -1 : 1;
+      return b.updatedAt - a.updatedAt;
+    });
+    return ids.map((s) => s.id).slice(0, 20);
+  }, [activeTaskSessionIds, tasksById, workspaceCatchup.activeIds]);
+
+  useEffect(() => {
     if (!activeTaskId) {
-      setTracks([]);
-      setSessionsByTrack({});
       setEditPlans([]);
       setActiveEditPlanId(null);
-      controller.abort();
       return;
     }
-    setTracks([]);
-    setSessionsByTrack({});
     setEditPlans([]);
     setActiveEditPlanId(null);
-    refreshTaskDetail(activeTaskId, null, null, controller.signal, seq).catch(() => { });
-    return () => controller.abort();
-  }, [activeTaskId]);
+    const trackIds = tracks.map((tr) => idToString(tr.id)).filter(Boolean);
+    if (trackIds.length === 0) {
+      workbenchStore.setActiveTrackForActiveTask(null);
+      return;
+    }
+    ensureActiveTrackSelection(activeTaskId, trackIds, sessionsByTrack);
+  }, [activeTaskId, ensureActiveTrackSelection, sessionsByTrack, tracks, workbenchStore]);
+
+  useEffect(() => {
+    supervisor.setActiveTaskSessionIds(activeTaskSessionIds);
+  }, [supervisor, activeTaskSessionIds]);
+
+  useEffect(() => {
+    supervisor.setWarmSessionIds(warmSessionIds);
+  }, [supervisor, warmSessionIds]);
 
   useEffect(() => {
     editPlansAbortRef.current?.abort();
@@ -781,29 +802,29 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
 
   const normalizedTaskQuery = taskQuery.trim().toLowerCase();
   const filteredActiveIds = useMemo(() => {
-    return workspaceIndex.activeIds.filter((id) => {
+    return workspaceCatchup.activeIds.filter((id) => {
       const summary = tasksById[id];
       if (!summary) return false;
       if (!normalizedTaskQuery) return true;
       return (summary.task.title ?? "").toLowerCase().includes(normalizedTaskQuery);
     });
-  }, [workspaceIndex.activeIds, tasksById, normalizedTaskQuery]);
+  }, [workspaceCatchup.activeIds, tasksById, normalizedTaskQuery]);
 
   const filteredArchivedIds = useMemo(() => {
-    return workspaceIndex.archivedIds.filter((id) => {
+    return workspaceCatchup.archivedIds.filter((id) => {
       const summary = tasksById[id];
       if (!summary) return false;
       if (!normalizedTaskQuery) return true;
       return (summary.task.title ?? "").toLowerCase().includes(normalizedTaskQuery);
     });
-  }, [workspaceIndex.archivedIds, tasksById, normalizedTaskQuery]);
+  }, [workspaceCatchup.archivedIds, tasksById, normalizedTaskQuery]);
 
   const activeTaskSummaries = useMemo(
-    () => filteredActiveIds.map((id) => tasksById[id]).filter((v): v is WorkspaceIndexItem => Boolean(v)),
+    () => filteredActiveIds.map((id) => tasksById[id]).filter((v): v is WorkspaceCatchupItem => Boolean(v)),
     [filteredActiveIds, tasksById],
   );
   const archivedTaskSummaries = useMemo(
-    () => filteredArchivedIds.map((id) => tasksById[id]).filter((v): v is WorkspaceIndexItem => Boolean(v)),
+    () => filteredArchivedIds.map((id) => tasksById[id]).filter((v): v is WorkspaceCatchupItem => Boolean(v)),
     [filteredArchivedIds, tasksById],
   );
 
@@ -898,7 +919,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     const p = (async () => {
       try {
         const updated = await markTaskReadApi(taskId);
-        workspaceIndexStore.applyTaskUpdate(updated);
+        workspaceCatchupStore.applyTaskUpdate(updated);
       } catch {
         // ignore
       }
@@ -907,16 +928,16 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     });
     markTaskReadInFlightRef.current[taskId] = p;
     await p;
-  }, [workspaceIndexStore]);
+  }, [workspaceCatchupStore]);
 
   const markTaskUnread = useCallback(async (taskId: string) => {
     try {
       const updated = await markTaskUnreadApi(taskId);
-      workspaceIndexStore.applyTaskUpdate(updated);
+      workspaceCatchupStore.applyTaskUpdate(updated);
     } catch {
       // ignore
     }
-  }, [workspaceIndexStore]);
+  }, [workspaceCatchupStore]);
 
   useEffect(() => {
     if (!activeTaskId) return;
@@ -939,9 +960,9 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
 
   useEffect(() => {
     if (!archivedCollapsed) {
-      workspaceIndexStore.ensureArchivedLoaded();
+      workspaceCatchupStore.ensureArchivedLoaded();
     }
-  }, [archivedCollapsed, workspaceIndexStore]);
+  }, [archivedCollapsed, workspaceCatchupStore]);
 
   useEffect(() => {
     if (!renamingTaskId) return;
@@ -956,10 +977,10 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const onToggleArchive = useCallback(
     async (taskId: string, nextArchived: boolean) => {
       const updated = nextArchived ? await archiveTask(taskId) : await unarchiveTask(taskId);
-      workspaceIndexStore.applyTaskUpdate(updated);
+      workspaceCatchupStore.applyTaskUpdate(updated);
       if (nextArchived && activeTaskId === taskId) setArchivedCollapsed(false);
     },
-    [activeTaskId, workspaceIndexStore],
+    [activeTaskId, workspaceCatchupStore],
   );
 
   const openTaskMenu = useCallback((taskId: string, opts: { triggerEl: HTMLElement } | { x: number; y: number }) => {
@@ -1002,17 +1023,17 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       }
       try {
         const updated = await updateTaskTitle(taskId, next);
-        workspaceIndexStore.applyTaskUpdate(updated);
+        workspaceCatchupStore.applyTaskUpdate(updated);
         cancelRenameTask();
       } catch (e: any) {
         window.alert(e?.message ?? "Failed to rename.");
       }
     },
-    [cancelRenameTask, renameDraft, tasksById, workspaceIndexStore],
+    [cancelRenameTask, renameDraft, tasksById, workspaceCatchupStore],
   );
 
   const renderTaskRow = useCallback(
-    (summary: WorkspaceIndexItem, opts?: { archived?: boolean }) => {
+    (summary: WorkspaceCatchupItem, opts?: { archived?: boolean }) => {
       const tid = summary.id;
       const t = summary.task;
       const selected = tid === activeTaskId;
@@ -1030,7 +1051,9 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       const unread = !working && lastAssistantMs !== null && (seenMs === null || lastAssistantMs > seenMs);
       const age = formatRelativeAgeShort(t.last_activity_at ?? t.updated_at ?? t.created_at) || "Now";
       const dotKind = hasError ? "error" : unread ? "unread" : null;
-      const summaryProviders = summary.provider_ids ?? [];
+      const summaryProviders = summary.tracks.flatMap((tr) =>
+        tr.sessions.map((s) => String(s.session.provider_id ?? "").trim()).filter(Boolean),
+      );
       const providerIds =
         (providerIdsByTaskFromSessions[tid] ?? []).length > 0 ? providerIdsByTaskFromSessions[tid] : summaryProviders;
       const providerCount = new Set(providerIds).size;
@@ -1187,8 +1210,8 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       activeTab?.kind === "track" && activeTab.ref.trackId === activeTrackId ? (activeTab.ref.sessionId ?? null) : null;
     if (override) return override;
     const sessions = sessionsByTrack[activeTrackId] ?? [];
-    return pickPreferredSessionId(sessions);
-  }, [activeTab, activeTrackId, sessionsByTrack]);
+    return pickPreferredSessionId(sessions, primarySessionByTrackId[activeTrackId]);
+  }, [activeTab, activeTrackId, sessionsByTrack, primarySessionByTrackId]);
 
   const activeSessionDraft = useWorkbenchDraft(activeSessionId ? sessionDraftKey(activeSessionId) : "", {
     text: "",
@@ -1546,17 +1569,10 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
           focusTask(taskId, trackId, sessionId);
         }
         supervisor.refreshSession(sessionId, { watchDiff: true });
-        supervisor.refreshQueue(sessionId);
         await postMessage(sessionId, prompt, "immediate", draftAttachments);
-        // Ensure the workbench view can render the just-posted user message (and any streamed events)
-        // without waiting for a `done` event to trigger a refresh.
-        supervisor.refreshQueue(sessionId);
         supervisor.refreshSession(sessionId, { watchDiff: true });
       }
 
-      if (firstTrackId) {
-        await refreshTaskDetail(taskId, firstTrackId, firstSessionId);
-      }
       setNewTaskDraft({ text: "", modeId: "default" });
       await workbenchStore.flushDraft(NEW_TASK_DRAFT_KEY);
       setDraftAttachments([]);
@@ -1710,7 +1726,6 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     }
   }, []);
 
-  const activeTaskSummary = activeTaskId ? tasksById[activeTaskId] : null;
   const activeTask = activeTaskSummary?.task ?? null;
   const expectedActiveTrackCount = activeTaskSummary ? activeTaskSummary.tracks.length : null;
   const singleTrackHeader = useMemo(() => {
@@ -2122,11 +2137,11 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
             style={{ height: "100%" }}
             data={activeTaskSummaries}
             overscan={8}
-            itemKey={(_, summary) => summary.id}
+            computeItemKey={(_, summary) => summary.id}
             itemContent={(_, summary) => renderTaskRow(summary)}
             endReached={() => {
-              if (workspaceIndex.hasMoreActive) {
-                workspaceIndexStore.loadMoreActive();
+              if (workspaceCatchup.hasMoreActive) {
+                workspaceCatchupStore.loadMoreActive();
               }
             }}
             components={{
@@ -2144,13 +2159,13 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
               Footer: () => (
                 <>
                   {activeTaskSummaries.length === 0 &&
-                    workspaceIndex.initialized &&
-                    workspaceIndex.fetchState.active !== "loading" && (
+                    workspaceCatchup.initialized &&
+                    workspaceCatchup.fetchState.active !== "loading" && (
                       <div className="wb-task-list">
                         <div className="wb-muted">No active tasks.</div>
                       </div>
                     )}
-                  {workspaceIndex.fetchState.active === "loading" && (
+                  {workspaceCatchup.fetchState.active === "loading" && (
                     <div className="wb-task-list">
                       <div className="wb-muted">Loading tasks…</div>
                     </div>
@@ -2176,21 +2191,21 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
                       role="list"
                       aria-label="Archived tasks"
                     >
-                      {workspaceIndex.fetchState.archived === "loading" && (
+                      {workspaceCatchup.fetchState.archived === "loading" && (
                         <div className="wb-muted">Loading archived tasks…</div>
                       )}
-                      {workspaceIndex.fetchState.archived === "error" && (
+                      {workspaceCatchup.fetchState.archived === "error" && (
                         <div className="wb-muted">Failed to load archived tasks. Retry.</div>
                       )}
                       {archivedTaskSummaries.map((summary) => renderTaskRow(summary, { archived: true }))}
                       {archivedTaskSummaries.length === 0 &&
-                        workspaceIndex.archivedLoaded &&
-                        workspaceIndex.fetchState.archived !== "loading" && <div className="wb-muted">No archived tasks.</div>}
-                      {workspaceIndex.hasMoreArchived && (
+                        workspaceCatchup.archivedLoaded &&
+                        workspaceCatchup.fetchState.archived !== "loading" && <div className="wb-muted">No archived tasks.</div>}
+                      {workspaceCatchup.hasMoreArchived && (
                         <button
                           type="button"
                           className="wb-archived-more"
-                          onClick={() => workspaceIndexStore.loadMoreArchived()}
+                          onClick={() => workspaceCatchupStore.loadMoreArchived()}
                         >
                           Load more
                         </button>
@@ -2830,27 +2845,28 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
                     </>
                   ) : (
                     tracks.map((tr) => {
-                    const trid = idToString(tr.id);
-                    const selected = trid === activeTrackId;
-                    const sessions = sessionsByTrack[trid] ?? [];
-                    const s = pickPreferredSession(sessions) as any;
-                    const sessionId = s ? idToString((s as any).id) : "";
-                    const liveSession = sessionId ? sessionCache.sessions[sessionId]?.session : null;
-                    const displaySession = (liveSession ?? s) as any;
-                    const model = displaySession ? `${displaySession.provider_id} ${displaySession.model_id}` : "No session";
-                    const status = tr.status === "running" ? "Running…" : tr.status === "completed" ? "Task completed" : tr.status;
-                    return (
-                      <button
-                        key={trid}
-                        type="button"
-                        className={`wb-trackcard ${selected ? "wb-trackcard-active" : ""}`}
-                        onClick={() => workbenchStore.setActiveTrackForActiveTask(trid)}
-                      >
-                        <div className="wb-trackcard-title">{model}</div>
-                        <div className="wb-trackcard-sub">{status}</div>
-                      </button>
-                    );
-                  })
+                      const trid = idToString(tr.id);
+                      const selected = trid === activeTrackId;
+                      const sessions = sessionsByTrack[trid] ?? [];
+                      const preferredSession = pickPreferredSession(sessions, primarySessionByTrackId[trid]) as any;
+                      const sessionId = preferredSession ? idToString((preferredSession as any).id) : "";
+                      const liveSession = sessionId ? sessionCache.sessions[sessionId]?.session : null;
+                      const displaySession = (liveSession ?? preferredSession) as any;
+                      const model = displaySession ? `${displaySession.provider_id} ${displaySession.model_id}` : "No session";
+                      const status =
+                        tr.status === "running" ? "Running…" : tr.status === "completed" ? "Task completed" : tr.status;
+                      return (
+                        <button
+                          key={trid}
+                          type="button"
+                          className={`wb-trackcard ${selected ? "wb-trackcard-active" : ""}`}
+                          onClick={() => workbenchStore.setActiveTrackForActiveTask(trid)}
+                        >
+                          <div className="wb-trackcard-title">{model}</div>
+                          <div className="wb-trackcard-sub">{status}</div>
+                        </button>
+                      );
+                    })
                   )}
                 </div>
               )}

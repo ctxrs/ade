@@ -15,8 +15,8 @@ use tokio::sync::{broadcast, mpsc, watch, Mutex};
 
 use crate::buffers::BufferStore;
 use crate::edit_plans::{EditPlan, EditPlanId};
-use context_core::ids::{SessionId, TaskId, WorkspaceId, WorktreeId};
-use context_core::models::{Session, SessionEvent};
+use context_core::ids::{MessageId, SessionId, TaskId, TrackId, WorkspaceId, WorktreeId};
+use context_core::models::{Session, SessionEvent, SessionEventType, SessionHeadDelta, TrackDiffSummary};
 use context_lsp::Language as LspLanguage;
 use context_lsp::{LspManager, LspManagerConfig};
 use context_providers::adapters::ProviderAdapter;
@@ -32,7 +32,7 @@ use crate::installs::{InstallId, InstallProgressEvent, InstallState, InstallStat
 use crate::scheduler::{session_worker, SchedulerCommand};
 use crate::settings;
 use crate::telemetry::{Telemetry, TelemetryConfig};
-use crate::workspace_index::WorkspaceIndexHub;
+use crate::workspace_catchup::WorkspaceCatchupHub;
 
 fn acquire_daemon_lock(data_root: &Path) -> Result<std::fs::File> {
     let path = data_root.join("daemon.lock");
@@ -63,6 +63,7 @@ pub struct AppState {
     pub provider_matrix_cache: Mutex<crate::provider_matrix::ProviderMatrixCache>,
     pub provider_options_cache: Mutex<HashMap<String, CachedProviderOptions>>,
     pub provider_verify_cache: Mutex<HashMap<String, CachedProviderVerify>>,
+    pub diff_summary_cache: Mutex<HashMap<TrackId, CachedDiffSummary>>,
     pub file_completions_cache: Mutex<HashMap<WorktreeId, CachedFileCompletions>>,
     pub workspace_file_completions_cache: Mutex<HashMap<WorkspaceId, CachedFileCompletions>>,
     pub daemon_url: String,
@@ -74,7 +75,7 @@ pub struct AppState {
     pub ask_user_question: Arc<AskUserQuestionBroker>,
     pub shutdown_tx: broadcast::Sender<()>,
     pub telemetry: Telemetry,
-    pub workspace_index: WorkspaceIndexHub,
+    pub workspace_catchup: WorkspaceCatchupHub,
     schedulers: Mutex<HashMap<SessionId, mpsc::Sender<SchedulerCommand>>>,
     broadcasters: Mutex<HashMap<SessionId, broadcast::Sender<SessionEvent>>>,
     session_event_heads: Mutex<HashMap<SessionId, watch::Sender<i64>>>,
@@ -84,6 +85,7 @@ pub struct AppState {
     running_sessions: Mutex<HashSet<SessionId>>,
     installs: Mutex<HashMap<InstallId, InstallState>>,
     pub edit_plans: Mutex<HashMap<EditPlanId, EditPlan>>,
+    session_meta_cache: Mutex<HashMap<SessionId, Session>>,
 }
 
 pub struct CachedProviderOptions {
@@ -99,6 +101,13 @@ pub struct CachedProviderVerify {
 pub struct CachedFileCompletions {
     pub cached_at: Instant,
     pub files: Arc<Vec<String>>,
+}
+
+#[derive(Clone)]
+pub struct CachedDiffSummary {
+    pub cached_at: Instant,
+    pub summary: Option<TrackDiffSummary>,
+    pub too_large: bool,
 }
 
 impl AppState {
@@ -165,7 +174,7 @@ impl AppState {
         let ask_user_question = Arc::new(AskUserQuestionBroker::new());
         let lsp = Arc::new(LspManager::new(lsp_cfg.clone()));
         let telemetry = Telemetry::new(data_root.clone());
-        let workspace_index = WorkspaceIndexHub::new();
+        let workspace_catchup = WorkspaceCatchupHub::new();
         Self {
             data_root,
             store,
@@ -176,6 +185,7 @@ impl AppState {
             ),
             provider_options_cache: Mutex::new(HashMap::new()),
             provider_verify_cache: Mutex::new(HashMap::new()),
+            diff_summary_cache: Mutex::new(HashMap::new()),
             file_completions_cache: Mutex::new(HashMap::new()),
             workspace_file_completions_cache: Mutex::new(HashMap::new()),
             daemon_url,
@@ -187,7 +197,7 @@ impl AppState {
             ask_user_question,
             shutdown_tx,
             telemetry,
-            workspace_index,
+            workspace_catchup,
             schedulers: Mutex::new(HashMap::new()),
             broadcasters: Mutex::new(HashMap::new()),
             session_event_heads: Mutex::new(HashMap::new()),
@@ -197,6 +207,7 @@ impl AppState {
             running_sessions: Mutex::new(HashSet::new()),
             installs: Mutex::new(HashMap::new()),
             edit_plans: Mutex::new(edit_plans),
+            session_meta_cache: Mutex::new(HashMap::new()),
         }
     }
 
@@ -259,31 +270,99 @@ impl AppState {
         let _ = sender.send(event.seq);
     }
 
+    pub async fn remember_session_meta(&self, session: &Session) {
+        let mut cache = self.session_meta_cache.lock().await;
+        cache.insert(session.id, session.clone());
+    }
+
+    async fn session_meta(&self, session_id: SessionId) -> Option<Session> {
+        {
+            let cache = self.session_meta_cache.lock().await;
+            if let Some(session) = cache.get(&session_id) {
+                return Some(session.clone());
+            }
+        }
+        let session = self.store.get_session(session_id).await.ok().flatten()?;
+        let mut cache = self.session_meta_cache.lock().await;
+        cache.insert(session_id, session.clone());
+        Some(session)
+    }
+
     pub async fn emit_workspace_task_upsert(&self, task_id: TaskId) -> Result<()> {
-        if let Some(summary) = self.store.get_workspace_task_summary(task_id).await? {
+        if let Some(summary) = self.store.get_workspace_catchup_task_summary(task_id).await? {
             let workspace_id = summary.task.workspace_id;
-            self.workspace_index
+            self.workspace_catchup
                 .publish_task_upsert(workspace_id, summary)
                 .await;
         }
         Ok(())
     }
 
+    pub async fn emit_workspace_track_upsert(&self, track_id: TrackId) -> Result<()> {
+        if let Some(summary) = self.store.get_workspace_catchup_track_summary(track_id).await? {
+            let workspace_id = summary.track.workspace_id;
+            self.workspace_catchup
+                .publish_track_upsert(workspace_id, summary)
+                .await;
+        }
+        Ok(())
+    }
+
     pub async fn emit_workspace_task_delete(&self, workspace_id: WorkspaceId, task_id: TaskId) {
-        self.workspace_index
+        self.workspace_catchup
             .publish_task_delete(workspace_id, task_id)
             .await;
     }
 
-    pub fn start_workspace_index_listener(self: &Arc<Self>) {
+    pub fn start_workspace_catchup_listener(self: &Arc<Self>) {
         let state = Arc::clone(self);
         tokio::spawn(async move {
             let mut rx = state.global_broadcaster.subscribe();
             while let Ok(event) = rx.recv().await {
-                let session_id = event.session_id;
-                if let Ok(Some(session)) = state.store.get_session(session_id).await {
+                let Some(session) = state.session_meta(event.session_id).await else {
+                    continue;
+                };
+                let update_task = matches!(
+                    event.event_type,
+                    SessionEventType::UserMessage
+                        | SessionEventType::AssistantMessageInserted
+                        | SessionEventType::AssistantComplete
+                        | SessionEventType::Done
+                );
+                if update_task {
                     let _ = state.emit_workspace_task_upsert(session.task_id).await;
                 }
+
+                let message = if matches!(
+                    event.event_type,
+                    SessionEventType::UserMessage | SessionEventType::AssistantMessageInserted
+                ) {
+                    let message_id = event
+                        .payload_json
+                        .get("message_id")
+                        .and_then(|v| v.as_str())
+                        .and_then(|id| uuid::Uuid::parse_str(id).ok())
+                        .map(MessageId);
+                    if let Some(message_id) = message_id {
+                        state.store.get_message(message_id).await.ok().flatten()
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
+                let delta = SessionHeadDelta {
+                    session_id: event.session_id,
+                    last_event_seq: event.seq,
+                    event: Some(event.clone()),
+                    turn: None,
+                    message,
+                };
+                state
+                    .workspace_catchup
+                    .publish_session_head_delta(session.workspace_id, delta)
+                    .await;
             }
         });
     }
@@ -744,7 +823,7 @@ pub async fn serve(
         auth_token,
         lsp_cfg,
     ));
-    state.start_workspace_index_listener();
+    state.start_workspace_catchup_listener();
     let settings = settings::load_settings(&state.data_root).await;
     let mut telemetry_cfg = TelemetryConfig::default();
     if let Some(telemetry) = settings.telemetry.as_ref() {

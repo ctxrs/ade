@@ -12,6 +12,16 @@ describe("workbenchSelection", () => {
     expect(pickPreferredSession(sessions)?.id?.[0]).toBe("s2");
   });
 
+  it("honors a preferred session id when provided", () => {
+    const sessions = [
+      { id: { 0: "s1" }, status: "completed" },
+      { id: { 0: "s2" }, status: "active" },
+      { id: { 0: "s3" }, status: "completed" },
+    ];
+    expect(pickPreferredSessionId(sessions, "s3")).toBe("s3");
+    expect(pickPreferredSession(sessions, "s3")?.id?.[0]).toBe("s3");
+  });
+
   it("otherwise prefers the most recent session", () => {
     const sessions = [
       { id: { 0: "old" }, status: "completed" },
@@ -38,4 +48,3 @@ describe("workbenchSelection", () => {
     expect(pickPreferredTrackId(ids, sessionsByTrack, "missing")).toBe("t1");
   });
 });
-

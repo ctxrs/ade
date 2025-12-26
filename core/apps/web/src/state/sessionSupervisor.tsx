@@ -1,27 +1,19 @@
 import React, { createContext, useContext, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import {
-  getDaemonBaseUrl,
-  getHealth,
-  getSession,
+  getSessionHead,
+  getSessionHistory,
   idToString,
-  listQueue,
-  listMessages,
-  listSessionEventsPage,
-  listSessionEventsTail,
-  listSessionTurnsPage,
   listTurnTools,
-  Session,
-  SessionEvent,
-  SessionTurn,
-  SessionTurnTool,
-  SessionTurnStatus,
-  Message,
   trackDiff,
+  type Message,
+  type Session,
+  type SessionEvent,
+  type SessionTurn,
+  type SessionTurnTool,
+  type WorkspaceCatchupEvent,
 } from "../api/client";
-import type { Health } from "../api/client";
-import { parseWsJson } from "../utils/wsJson";
-
-type ConnectionStatus = "connecting" | "connected" | "disconnected";
+import type { WorkspaceCatchupEventSource } from "./workspaceCatchupStore";
+import { loadSessionHeadV1, saveSessionHeadV1 } from "./uiStateStore";
 
 const readTunableInt = (key: string, fallback: number) => {
   try {
@@ -34,6 +26,8 @@ const readTunableInt = (key: string, fallback: number) => {
     return fallback;
   }
 };
+
+type ConnectionStatus = "connecting" | "connected" | "disconnected" | "idle";
 
 export type SessionSupervisorSnapshot = {
   connection: ConnectionStatus;
@@ -61,12 +55,13 @@ export type SessionCacheEntry = {
 
 type OpenOptions = {
   watchDiff?: boolean;
+  force?: boolean;
+  silent?: boolean;
 };
 
 type InternalEntry = SessionCacheEntry & {
   refCount: number;
   wantDiffCount: number;
-  nextDiffPollAtMs: number;
   warmUntilMs: number;
   seqSet: Set<number>;
   turnsHydrated: boolean;
@@ -74,15 +69,12 @@ type InternalEntry = SessionCacheEntry & {
   toolStatusByKey: Map<string, string>;
   toolIdsByTurn: Map<string, Set<string>>;
   turnToolsLoadingSet: Set<string>;
-  eventsHydrated: boolean;
   trackId?: string;
   diagnosticsByPath: Record<string, any[]>;
+  loadedFromCache: boolean;
   fetching: {
-    session: boolean;
-    turns: boolean;
-    events: boolean;
-    messages: boolean;
-    queue: boolean;
+    head: boolean;
+    history: boolean;
     diff: boolean;
   };
 };
@@ -95,30 +87,19 @@ const MAX_CACHED_SESSIONS = readTunableInt(
   Math.max(30, WARM_SESSION_BUDGET * 3),
 );
 const WARM_TTL_MS = readTunableInt("contextWarmSessionTtlMs", 10 * 60 * 1000);
-const POLL_INTERVAL_MS = 1500;
-const DIFF_POLL_INTERVAL_MS = 900;
-const DIFF_POLL_IDLE_INTERVAL_MS = 2500;
-
-const authToken = (): string | null => {
-  try {
-    return sessionStorage.getItem("contextAuthToken");
-  } catch {
-    return null;
-  }
-};
+const HEAD_LIMIT = readTunableInt("contextSessionHeadLimit", TURN_PAGE_LIMIT);
+const SUBSCRIBE_LIMIT = readTunableInt("contextSubscribeLimit", 20);
 
 export class SessionSupervisor {
   private listeners = new Set<() => void>();
-  private snapshot: SessionSupervisorSnapshot = { connection: "connecting", sessions: {} };
+  private snapshot: SessionSupervisorSnapshot = { connection: "idle", sessions: {} };
   private entries = new Map<string, InternalEntry>();
-  private ws: WebSocket | null = null;
-  private wsUrl: string | null = null;
-  private reconnectTimer: number | null = null;
-  private reconnectBackoffMs = 800;
-  private pollTimer: number | null = null;
-  private diffPollTimer: number | null = null;
-  private resubscribeTimer: number | null = null;
-  private health: Health | null = null;
+  private catchupStore: WorkspaceCatchupEventSource | null = null;
+  private catchupUnsub: (() => void) | null = null;
+  private catchupSnapshotUnsub: (() => void) | null = null;
+  private activeTaskSessionIds: string[] = [];
+  private warmSessionIds: string[] = [];
+  private subscribedSessionIds: string[] = [];
 
   subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener);
@@ -127,13 +108,37 @@ export class SessionSupervisor {
 
   getSnapshot = (): SessionSupervisorSnapshot => this.snapshot;
 
+  bindWorkspaceCatchupStore(store: WorkspaceCatchupEventSource | null) {
+    if (this.catchupUnsub) {
+      this.catchupUnsub();
+      this.catchupUnsub = null;
+    }
+    if (this.catchupSnapshotUnsub) {
+      this.catchupSnapshotUnsub();
+      this.catchupSnapshotUnsub = null;
+    }
+    this.catchupStore = store;
+    if (!store) {
+      this.setConnection("disconnected");
+      return;
+    }
+    this.catchupUnsub = store.subscribeEvents((evt) => this.handleCatchupEvent(evt));
+    this.catchupSnapshotUnsub = store.subscribe(() => {
+      const state = store.getSnapshot();
+      const next = this.mapConnection(state.connection);
+      this.setConnection(next);
+    });
+    this.setConnection(this.mapConnection(store.getSnapshot().connection));
+    this.refreshSubscriptions();
+  }
+
   openSession = (sessionId: string, opts?: OpenOptions) => {
     const entry = this.ensureEntry(sessionId);
     entry.refCount += 1;
     if (opts?.watchDiff) entry.wantDiffCount += 1;
     entry.warmUntilMs = Date.now() + WARM_TTL_MS;
-    this.kick();
     this.ensureLoaded(sessionId, opts).catch(() => {});
+    this.refreshSubscriptions();
     return () => this.closeSession(sessionId, opts);
   };
 
@@ -143,21 +148,30 @@ export class SessionSupervisor {
     entry.refCount = Math.max(0, entry.refCount - 1);
     if (opts?.watchDiff) entry.wantDiffCount = Math.max(0, entry.wantDiffCount - 1);
     entry.warmUntilMs = Date.now() + WARM_TTL_MS;
-    this.kick();
+    this.refreshSubscriptions();
+    this.publish();
   };
 
   refreshSession = (sessionId: string, opts?: OpenOptions) => {
-    const sid = String(sessionId);
-    this.ensureLoaded(sid, opts)
-      .catch(() => {})
-      .finally(() => {
-        this.backfillSession(sid).catch(() => {});
-      });
+    this.ensureLoaded(sessionId, { ...opts, force: true }).catch(() => {});
   };
 
   refreshQueue = (sessionId: string) => {
-    const entry = this.ensureEntry(String(sessionId));
-    return this.refreshQueueAndDiff(entry).catch(() => {});
+    this.ensureLoaded(sessionId, { force: true }).catch(() => {});
+  };
+
+  setActiveTaskSessionIds = (sessionIds: string[]) => {
+    const next = dedupeIds(sessionIds);
+    if (sameIdList(next, this.activeTaskSessionIds)) return;
+    this.activeTaskSessionIds = next;
+    this.refreshSubscriptions();
+  };
+
+  setWarmSessionIds = (sessionIds: string[]) => {
+    const next = dedupeIds(sessionIds);
+    if (sameIdList(next, this.warmSessionIds)) return;
+    this.warmSessionIds = next;
+    this.refreshSubscriptions();
   };
 
   setSession = (session: Session) => {
@@ -177,9 +191,69 @@ export class SessionSupervisor {
     this.publish();
   };
 
-  init = () => {
-    this.connect().catch(() => {});
-  };
+  async loadMoreTurns(sessionId: string) {
+    const entry = this.entries.get(String(sessionId));
+    if (!entry) return;
+    if (entry.fetching.history || !entry.hasMoreTurns) return;
+    const beforeSeq = entry.oldestTurnSeq;
+    if (beforeSeq == null || !Number.isFinite(beforeSeq)) {
+      entry.hasMoreTurns = false;
+      this.publish();
+      return;
+    }
+    entry.fetching.history = true;
+    try {
+      const page = await getSessionHistory(sessionId, beforeSeq, TURN_PAGE_LIMIT);
+      this.mergeTurns(entry, page.turns);
+      this.mergeMessages(entry, page.messages);
+      entry.hasMoreTurns = page.has_more;
+      entry.oldestTurnSeq = page.next_cursor ?? entry.oldestTurnSeq;
+      entry.updatedAtMs = Date.now();
+      this.publish();
+      await this.persistHead(entry);
+    } finally {
+      entry.fetching.history = false;
+    }
+  }
+
+  async loadTurnTools(sessionId: string, turnId: string) {
+    const entry = this.entries.get(String(sessionId));
+    if (!entry) return;
+    if (entry.turnToolsByTurnId[turnId]) return;
+    if (entry.turnToolsLoadingSet.has(turnId)) return;
+    entry.turnToolsLoadingSet.add(turnId);
+    entry.turnToolsLoading = [...entry.turnToolsLoadingSet];
+    this.publish();
+    try {
+      const tools = await listTurnTools(sessionId, turnId);
+      entry.turnToolsByTurnId = {
+        ...entry.turnToolsByTurnId,
+        [turnId]: tools,
+      };
+    } finally {
+      entry.turnToolsLoadingSet.delete(turnId);
+      entry.turnToolsLoading = [...entry.turnToolsLoadingSet];
+      entry.updatedAtMs = Date.now();
+      this.publish();
+    }
+  }
+
+  private mapConnection(connection: "idle" | "connecting" | "connected" | "disconnected"): ConnectionStatus {
+    if (connection === "connected") return "connected";
+    if (connection === "disconnected") return "disconnected";
+    if (connection === "connecting") return "connecting";
+    return "idle";
+  }
+
+  private setConnection(next: ConnectionStatus) {
+    const prev = this.snapshot.connection;
+    if (prev === next) return;
+    this.snapshot = { ...this.snapshot, connection: next };
+    if (next === "connected" && prev !== "connected") {
+      this.refreshSubscribedHeads();
+    }
+    for (const l of this.listeners) l();
+  }
 
   private publish() {
     this.evictIfNeeded();
@@ -221,11 +295,10 @@ export class SessionSupervisor {
   }
 
   private ensureEntry(sessionId: string): InternalEntry {
-    const id = String(sessionId);
-    const existing = this.entries.get(id);
+    const existing = this.entries.get(sessionId);
     if (existing) return existing;
     const entry: InternalEntry = {
-      sessionId: id,
+      sessionId,
       session: undefined,
       turns: [],
       turnToolsByTurnId: {},
@@ -237,234 +310,224 @@ export class SessionSupervisor {
       diff: undefined,
       diagnosticsByPath: {},
       lastEventSeq: undefined,
-      loading: true,
+      loading: false,
       error: undefined,
       subscribed: false,
       updatedAtMs: Date.now(),
       refCount: 0,
       wantDiffCount: 0,
-      nextDiffPollAtMs: 0,
       warmUntilMs: Date.now() + WARM_TTL_MS,
-      seqSet: new Set(),
+      seqSet: new Set<number>(),
       turnsHydrated: false,
       oldestTurnSeq: undefined,
       toolStatusByKey: new Map(),
       toolIdsByTurn: new Map(),
       turnToolsLoadingSet: new Set(),
-      eventsHydrated: false,
       trackId: undefined,
-      fetching: { session: false, turns: false, events: false, messages: false, queue: false, diff: false },
+      loadedFromCache: false,
+      fetching: {
+        head: false,
+        history: false,
+        diff: false,
+      },
     };
-    this.entries.set(id, entry);
-    this.publish();
+    this.entries.set(sessionId, entry);
     return entry;
-  }
-
-  private computeSubscribedSet(): string[] {
-    const now = Date.now();
-    const visible: string[] = [];
-    const warm: InternalEntry[] = [];
-    for (const [id, e] of this.entries) {
-      if (!e.eventsHydrated) continue;
-      if (e.refCount > 0) {
-        visible.push(id);
-        continue;
-      }
-      if (now < e.warmUntilMs) {
-        warm.push(e);
-      }
-    }
-    warm.sort((a, b) => b.updatedAtMs - a.updatedAtMs);
-    const warmed = warm.slice(0, WARM_SESSION_BUDGET).map((e) => e.sessionId);
-    return [...visible, ...warmed];
-  }
-
-  private scheduleResubscribe() {
-    if (this.resubscribeTimer) window.clearTimeout(this.resubscribeTimer);
-    this.resubscribeTimer = window.setTimeout(() => {
-      this.resubscribeTimer = null;
-      this.updateWsSubscriptions();
-    }, 100);
-  }
-
-  private kick() {
-    this.scheduleResubscribe();
-    // Always keep a lightweight polling backfill running for "warm" sessions.
-    // Even when the global WebSocket is connected, events can be missed after long-idle periods
-    // (e.g. replying to older sessions). Backfill is cheap (cursor-based) and deduped.
-    this.ensurePolling();
-    this.ensureDiffPolling();
   }
 
   private async ensureLoaded(sessionId: string, opts?: OpenOptions) {
     const entry = this.ensureEntry(sessionId);
-
-    const needSession = !entry.session && !entry.fetching.session;
-    const needTurns = !entry.turnsHydrated && !entry.fetching.turns;
-    const needEvents = !entry.eventsHydrated && !entry.fetching.events;
-    const needMessages = entry.messages.length === 0 && !entry.fetching.messages;
-    const needQueue = entry.queue.length === 0 && !entry.fetching.queue;
-    const needDiff = (opts?.watchDiff ?? false) && !entry.fetching.diff && entry.wantDiffCount > 0;
-
-    const hasCached =
-      entry.turns.length > 0 || entry.messages.length > 0 || entry.events.length > 0;
-    entry.loading = !hasCached;
-    this.publish();
-
+    if (!entry.loadedFromCache) {
+      entry.loadedFromCache = true;
+      await this.loadCachedHead(entry);
+    }
+    if (entry.fetching.head) return;
+    if (entry.turnsHydrated && !opts?.force) {
+      if (opts?.watchDiff) {
+        void this.refreshDiff(entry);
+      }
+      return;
+    }
+    entry.fetching.head = true;
+    if (!opts?.silent) {
+      entry.loading = true;
+      this.publish();
+    }
     try {
-      if (!this.health) {
-        this.health = await getHealth().catch(() => null);
-      }
-
-      if (needSession) {
-        entry.fetching.session = true;
-        const s = await getSession(sessionId);
-        entry.session = s;
-        entry.trackId = idToString(s.track_id);
-        entry.fetching.session = false;
-      }
-
-      if (needTurns) {
-        entry.fetching.turns = true;
-        const hadTurns = entry.turns.length > 0;
-        const turns = await listSessionTurnsPage(sessionId, undefined, TURN_PAGE_LIMIT);
-        this.mergeTurns(entry, turns);
-        if (!hadTurns) {
-          entry.hasMoreTurns = turns.length >= TURN_PAGE_LIMIT;
-        }
-        entry.turnsHydrated = true;
-        entry.fetching.turns = false;
-      }
-
-      if (needEvents) {
-        entry.fetching.events = true;
-        // Hydrate with a bounded tail; the WS stream is resumable from the last seen seq.
-        const evs = await listSessionEventsTail(sessionId, EVENT_BUFFER_LIMIT);
-        this.upsertEvents(entry, evs);
-        entry.eventsHydrated = true;
-        entry.fetching.events = false;
-      }
-
-      if (needMessages) {
-        entry.fetching.messages = true;
-        entry.messages = await listMessages(sessionId);
-        entry.fetching.messages = false;
-      }
-
-      if (needQueue) {
-        entry.fetching.queue = true;
-        entry.queue = await listQueue(sessionId);
-        entry.fetching.queue = false;
-      }
-
-      if (needDiff) {
-        entry.fetching.diff = true;
-        const trackId = entry.trackId;
-        if (trackId) {
-          const d = await trackDiff(trackId);
-          entry.diff = d.diff;
-        }
-        entry.fetching.diff = false;
-      }
-
-      entry.error = undefined;
+      const head = await getSessionHead(sessionId, HEAD_LIMIT, false);
+      this.applyHead(entry, head);
+      await this.persistHead(entry);
     } catch (e: any) {
-      entry.error = e?.message ?? String(e);
+      if (!opts?.silent) {
+        entry.error = e?.message ?? "Failed to load session";
+      }
     } finally {
-      entry.loading = false;
+      if (!opts?.silent) {
+        entry.loading = false;
+      }
+      entry.fetching.head = false;
       entry.updatedAtMs = Date.now();
       this.publish();
-      // Hydrating the event tail establishes a baseline cursor (lastEventSeq) which enables WS subscribe.
-      // Ensure we resubscribe after hydration completes.
-      this.scheduleResubscribe();
+    }
+    if (opts?.watchDiff) {
+      void this.refreshDiff(entry);
     }
   }
 
-  private upsertEvents(entry: InternalEntry, incoming: SessionEvent[]) {
-    if (incoming.length === 0) return;
-    const sorted = [...incoming].sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0));
-
-    let needsSort = false;
-    const lastExistingSeq = entry.events.length > 0 ? (entry.events[entry.events.length - 1]?.seq ?? 0) : 0;
-    let prevSeq = lastExistingSeq;
-
-    const toAdd: SessionEvent[] = [];
-    for (const ev of sorted) {
-      const seq = Number(ev.seq ?? 0);
-      if (!Number.isFinite(seq) || seq <= 0) continue;
-      if (entry.seqSet.has(seq)) continue;
-      entry.seqSet.add(seq);
-      if (prevSeq && seq < prevSeq) needsSort = true;
-      prevSeq = seq;
-      toAdd.push(ev);
+  private async loadCachedHead(entry: InternalEntry) {
+    try {
+      const cached = await loadSessionHeadV1(entry.sessionId);
+      if (!cached?.head) return;
+      this.applyHead(entry, cached.head, { fromCache: true });
+    } catch {
+      // ignore cache errors
     }
+  }
 
-    if (toAdd.length === 0) return;
-    entry.events.push(...toAdd);
-    if (needsSort) {
-      entry.events.sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0));
+  private applyHead(
+    entry: InternalEntry,
+    head: {
+      session: Session;
+      turns: SessionTurn[];
+      events?: SessionEvent[];
+      messages: Message[];
+      last_event_seq: number;
+      has_more_turns: boolean;
+    },
+    opts?: { fromCache?: boolean },
+  ) {
+    entry.session = head.session;
+    entry.trackId = idToString(head.session.track_id);
+    entry.turnsHydrated = true;
+    entry.hasMoreTurns = head.has_more_turns;
+    entry.lastEventSeq = head.last_event_seq;
+    this.mergeTurns(entry, head.turns ?? []);
+    this.mergeEvents(entry, head.events ?? []);
+    this.mergeMessages(entry, head.messages ?? []);
+    if (!opts?.fromCache) {
+      entry.error = undefined;
     }
-    while (entry.events.length > EVENT_BUFFER_LIMIT) {
-      const first = entry.events.shift();
-      if (!first) break;
-      const seq = Number(first.seq ?? 0);
-      if (Number.isFinite(seq)) entry.seqSet.delete(seq);
+    entry.updatedAtMs = Date.now();
+    this.publish();
+  }
+
+  private async refreshDiff(entry: InternalEntry) {
+    if (entry.fetching.diff) return;
+    if (!entry.trackId) return;
+    if (entry.wantDiffCount <= 0) return;
+    entry.fetching.diff = true;
+    try {
+      const resp = await trackDiff(entry.trackId);
+      entry.diff = resp.diff ?? "";
+      entry.updatedAtMs = Date.now();
+      this.publish();
+    } finally {
+      entry.fetching.diff = false;
     }
-    const last = entry.events[entry.events.length - 1];
-    if (last && Number.isFinite(last.seq)) entry.lastEventSeq = Number(last.seq);
+  }
+
+  private async persistHead(entry: InternalEntry) {
+    if (!entry.session) return;
+    const head = {
+      session: entry.session,
+      turns: entry.turns,
+      events: entry.events,
+      messages: entry.messages,
+      last_event_seq: entry.lastEventSeq ?? 0,
+      has_more_turns: entry.hasMoreTurns,
+    };
+    await saveSessionHeadV1(entry.sessionId, head);
+  }
+
+  private refreshSubscriptions() {
+    const openIds = Array.from(this.entries.values())
+      .filter((entry) => entry.refCount > 0)
+      .map((entry) => entry.sessionId);
+    const combined = mergeOrderedIds(openIds, this.activeTaskSessionIds, this.warmSessionIds);
+    const next = combined.slice(0, SUBSCRIBE_LIMIT);
+    const key = next.join("|");
+    const prev = this.subscribedSessionIds.join("|");
+    if (key === prev) return;
+    const nextSet = new Set(next);
+    const prevSet = new Set(this.subscribedSessionIds);
+    this.subscribedSessionIds = next;
+    for (const entry of this.entries.values()) {
+      entry.subscribed = nextSet.has(entry.sessionId);
+    }
+    for (const sessionId of next) {
+      if (!prevSet.has(sessionId)) {
+        this.ensureLoaded(sessionId, { silent: true }).catch(() => {});
+      }
+    }
+    if (this.catchupStore) {
+      this.catchupStore.setSubscriptions(next);
+    }
+    this.publish();
+  }
+
+  private refreshSubscribedHeads() {
+    for (const sessionId of this.subscribedSessionIds) {
+      this.ensureLoaded(sessionId, { force: true, silent: true }).catch(() => {});
+    }
   }
 
   private mergeTurns(entry: InternalEntry, incoming: SessionTurn[]) {
     if (incoming.length === 0) return;
-    const map = new Map<string, SessionTurn>();
+    const byId = new Map<string, SessionTurn>();
     for (const t of entry.turns) {
       const id = idToString(t.turn_id);
-      if (!id) continue;
-      map.set(id, t);
+      if (id) byId.set(id, t);
     }
     for (const t of incoming) {
       const id = idToString(t.turn_id);
       if (!id) continue;
-      const prev = map.get(id);
-      map.set(id, this.mergeTurn(prev, t));
+      const prev = byId.get(id);
+      byId.set(id, prev ? mergeTurn(prev, t) : t);
     }
-    const next = [...map.values()];
-    next.sort((a, b) => this.compareTurnOrder(a, b));
+    const next = Array.from(byId.values()).sort(this.compareTurnOrder.bind(this));
     entry.turns = next;
-    if (next.length > 0) {
-      const startSeq = Number(next[0].start_seq ?? Number.NaN);
-      if (Number.isFinite(startSeq)) {
-        entry.oldestTurnSeq = startSeq;
-      }
-    }
+    entry.oldestTurnSeq = next[0]?.start_seq ?? entry.oldestTurnSeq;
   }
 
-  private mergeTurn(prev: SessionTurn | undefined, next: SessionTurn): SessionTurn {
-    if (!prev) return next;
-    const assistant_partial =
-      next.assistant_partial === "" ? "" : mergeStreamingText(prev.assistant_partial, next.assistant_partial);
-    const thought_partial = mergeStreamingText(prev.thought_partial, next.thought_partial);
-    const status =
-      this.turnStatusRank(next.status) >= this.turnStatusRank(prev.status)
-        ? next.status
-        : prev.status;
-    const updated_at =
-      new Date(next.updated_at).getTime() >= new Date(prev.updated_at).getTime()
-        ? next.updated_at
-        : prev.updated_at;
-    return {
-      ...prev,
-      ...next,
-      status,
-      updated_at,
-      assistant_partial,
-      thought_partial,
-      tool_total: Math.max(prev.tool_total ?? 0, next.tool_total ?? 0),
-      tool_pending: Math.max(prev.tool_pending ?? 0, next.tool_pending ?? 0),
-      tool_running: Math.max(prev.tool_running ?? 0, next.tool_running ?? 0),
-      tool_completed: Math.max(prev.tool_completed ?? 0, next.tool_completed ?? 0),
-      tool_failed: Math.max(prev.tool_failed ?? 0, next.tool_failed ?? 0),
-    };
+  private mergeMessages(entry: InternalEntry, incoming: Message[]) {
+    if (incoming.length === 0) return;
+    const byId = new Map<string, Message>();
+    for (const m of entry.messages) {
+      const id = idToString(m.id);
+      if (id) byId.set(id, m);
+    }
+    for (const m of incoming) {
+      const id = idToString(m.id);
+      if (!id) continue;
+      byId.set(id, m);
+    }
+    const next = Array.from(byId.values()).sort((a, b) => {
+      const c = String(a.created_at).localeCompare(String(b.created_at));
+      if (c !== 0) return c;
+      const sa = Number(a.turn_sequence ?? Number.NaN);
+      const sb = Number(b.turn_sequence ?? Number.NaN);
+      if (Number.isFinite(sa) && Number.isFinite(sb) && sa !== sb) return sa - sb;
+      if (Number.isFinite(sa) && !Number.isFinite(sb)) return -1;
+      if (!Number.isFinite(sa) && Number.isFinite(sb)) return 1;
+      return String(idToString(a.id)).localeCompare(String(idToString(b.id)));
+    });
+    entry.messages = next;
+    entry.queue = next.filter((m) => m.delivery === "queued");
+  }
+
+  private mergeEvents(entry: InternalEntry, incoming: SessionEvent[]) {
+    if (incoming.length === 0) return;
+    const bySeq = new Map<number, SessionEvent>();
+    for (const ev of entry.events) {
+      if (typeof ev.seq === "number") bySeq.set(ev.seq, ev);
+    }
+    for (const ev of incoming) {
+      if (typeof ev.seq === "number") bySeq.set(ev.seq, ev);
+    }
+    const next = Array.from(bySeq.values()).sort((a, b) => a.seq - b.seq);
+    const trimmed = next.length > EVENT_BUFFER_LIMIT ? next.slice(-EVENT_BUFFER_LIMIT) : next;
+    entry.events = trimmed;
+    entry.seqSet = new Set(trimmed.map((ev) => ev.seq));
   }
 
   private compareTurnOrder(a: SessionTurn, b: SessionTurn): number {
@@ -476,21 +539,35 @@ export class SessionSupervisor {
     return String(a.started_at).localeCompare(String(b.started_at));
   }
 
-  private turnStatusRank(status: SessionTurnStatus): number {
-    switch (status) {
-      case "queued":
-        return 0;
-      case "running":
-        return 1;
-      case "completed":
-        return 2;
-      case "interrupted":
-        return 3;
-      case "failed":
-        return 3;
-      default:
-        return 1;
-    }
+  private ensureTurnFromEvent(entry: InternalEntry, event: SessionEvent): SessionTurn | null {
+    const turnId = idToString(event.turn_id);
+    if (!turnId) return null;
+    const existing = entry.turns.find((t) => idToString(t.turn_id) === turnId);
+    if (existing) return existing;
+    const createdAt = event.created_at ?? new Date().toISOString();
+    const status = deriveTurnStatusFromEvent(String(event.event_type ?? ""));
+    const turn: SessionTurn = {
+      turn_id: event.turn_id,
+      session_id: event.session_id,
+      run_id: event.run_id ?? null,
+      user_message_id: event.payload_json?.user_message_id ?? null,
+      status,
+      start_seq: event.seq ?? null,
+      end_seq: null,
+      started_at: createdAt,
+      updated_at: createdAt,
+      assistant_partial: "",
+      thought_partial: "",
+      metrics_json: null,
+      tool_total: 0,
+      tool_pending: 0,
+      tool_running: 0,
+      tool_completed: 0,
+      tool_failed: 0,
+    };
+    entry.turns = [...entry.turns, turn].sort(this.compareTurnOrder.bind(this));
+    entry.oldestTurnSeq = entry.turns[0]?.start_seq ?? entry.oldestTurnSeq;
+    return turn;
   }
 
   private applyEventToTurns(entry: InternalEntry, event: SessionEvent): boolean {
@@ -613,426 +690,120 @@ export class SessionSupervisor {
     return true;
   }
 
-  async loadMoreTurns(sessionId: string) {
-    const entry = this.entries.get(String(sessionId));
+  private handleCatchupEvent(evt: WorkspaceCatchupEvent) {
+    if (evt.type !== "session_head_delta") return;
+    const delta = evt.delta;
+    const sid = idToString(delta.session_id);
+    if (!sid) return;
+    const entry = this.entries.get(sid);
     if (!entry) return;
-    if (entry.fetching.turns || !entry.hasMoreTurns) return;
-    const beforeSeq = entry.oldestTurnSeq;
-    if (!beforeSeq || !Number.isFinite(beforeSeq)) {
-      entry.hasMoreTurns = false;
-      this.publish();
-      return;
-    }
-    entry.fetching.turns = true;
-    try {
-      const turns = await listSessionTurnsPage(sessionId, beforeSeq, TURN_PAGE_LIMIT);
-      this.mergeTurns(entry, turns);
-      if (turns.length < TURN_PAGE_LIMIT) {
-        entry.hasMoreTurns = false;
-      }
-      entry.updatedAtMs = Date.now();
-      this.publish();
-    } finally {
-      entry.fetching.turns = false;
-    }
-  }
 
-  async loadTurnTools(sessionId: string, turnId: string) {
-    const entry = this.entries.get(String(sessionId));
-    if (!entry) return;
-    if (entry.turnToolsByTurnId[turnId]) return;
-    if (entry.turnToolsLoadingSet.has(turnId)) return;
-    entry.turnToolsLoadingSet.add(turnId);
-    entry.turnToolsLoading = [...entry.turnToolsLoadingSet];
-    this.publish();
-    try {
-      const tools = await listTurnTools(sessionId, turnId);
-      entry.turnToolsByTurnId = {
-        ...entry.turnToolsByTurnId,
-        [turnId]: tools,
-      };
-    } finally {
-      entry.turnToolsLoadingSet.delete(turnId);
-      entry.turnToolsLoading = [...entry.turnToolsLoadingSet];
-      entry.updatedAtMs = Date.now();
-      this.publish();
-    }
-  }
-
-  // We only refresh durable data (Messages/Queue) once the turn is fully finalized.
-  // `assistant_complete` is a UI boundary, but it can be observed before the daemon has
-  // finished inserting the assistant message into the Messages table (event-first publish).
-  private isRefreshBoundaryEventType(eventType: unknown): boolean {
-    return eventType === "done" || eventType === "turn_interrupted";
-  }
-
-  private isMidTurn(entry: InternalEntry): boolean {
-    const lastType = entry.events.length > 0 ? String(entry.events[entry.events.length - 1].event_type ?? "") : "";
-    return lastType !== "" && !this.isRefreshBoundaryEventType(lastType);
-  }
-
-  private shouldPollDiff(entry: InternalEntry): boolean {
-    if (entry.wantDiffCount <= 0) return false;
-    if (!entry.trackId) return false;
-    return true;
-  }
-
-  private async connect() {
-    if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
-      return;
-    }
-    const token = authToken();
-    const qs = token ? `?token=${encodeURIComponent(token)}` : "";
-
-    // Prefer same-origin (works under dev proxy); fall back to configured daemon base URL; then to daemon_url from /api/health.
-    let baseWs: string | null = null;
-    const configuredBase = getDaemonBaseUrl();
-    if (configuredBase) {
-      baseWs = configuredBase.startsWith("https://")
-        ? configuredBase.replace(/^https:\/\//, "wss://")
-        : configuredBase.replace(/^http:\/\//, "ws://");
-    }
-    try {
-      this.health = await getHealth();
-      const base = String(this.health.daemon_url || "").trim();
-      if (base && !baseWs) {
-        baseWs = base.startsWith("https://")
-          ? base.replace(/^https:\/\//, "wss://")
-          : base.replace(/^http:\/\//, "ws://");
-      }
-    } catch {
-      // ignore
-    }
-
-    const wsUrl =
-      `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/api/stream${qs}`;
-    const wsUrlAlt = baseWs ? `${baseWs}/api/stream${qs}` : null;
-
-    const urls = wsUrlAlt && wsUrlAlt !== wsUrl ? [wsUrl, wsUrlAlt] : [wsUrl];
-    this.snapshot = { ...this.snapshot, connection: "connecting" };
-    this.publish();
-
-    for (const candidate of urls) {
-      try {
-        await this.openWebSocket(candidate);
-        return;
-      } catch {
-        // try next
+    let changed = false;
+    if (typeof delta.last_event_seq === "number") {
+      if (!entry.lastEventSeq || delta.last_event_seq > entry.lastEventSeq) {
+        entry.lastEventSeq = delta.last_event_seq;
+        changed = true;
       }
     }
 
-    this.snapshot = { ...this.snapshot, connection: "disconnected" };
-    this.publish();
-    this.ensurePolling();
-    this.scheduleReconnect();
-  }
+    if (delta.turn) {
+      this.mergeTurns(entry, [delta.turn]);
+      changed = true;
+    }
 
-  private openWebSocket(url: string): Promise<void> {
-    return new Promise((resolve, reject) => {
-      const ws = new WebSocket(url);
-      let opened = false;
-      const timeoutMs = 3000;
-      const connectTimeout = window.setTimeout(() => {
-        if (opened) return;
-        try {
-          ws.close();
-        } catch {}
-        reject(new Error("ws connect timeout"));
-      }, timeoutMs);
-      const onOpen = () => {
-        opened = true;
-        window.clearTimeout(connectTimeout);
-        this.ws = ws;
-        this.wsUrl = url;
-        this.reconnectBackoffMs = 800;
-        if (this.reconnectTimer) {
-          window.clearTimeout(this.reconnectTimer);
-          this.reconnectTimer = null;
+    if (delta.message) {
+      this.mergeMessages(entry, [delta.message]);
+      changed = true;
+    }
+
+    if (delta.event) {
+      if (!entry.seqSet.has(delta.event.seq)) {
+        entry.seqSet.add(delta.event.seq);
+        entry.events.push(delta.event);
+        if (entry.events.length > EVENT_BUFFER_LIMIT) {
+          const overflow = entry.events.length - EVENT_BUFFER_LIMIT;
+          const removed = entry.events.splice(0, overflow);
+          removed.forEach((e) => entry.seqSet.delete(e.seq));
         }
-        this.snapshot = { ...this.snapshot, connection: "connected" };
-        this.publish();
-        this.stopPolling();
-        this.updateWsSubscriptions();
-        resolve();
-      };
-      const onError = () => {
-        window.clearTimeout(connectTimeout);
-        if (!opened) reject(new Error("ws connect failed"));
-        this.snapshot = { ...this.snapshot, connection: "disconnected" };
-        this.publish();
-      };
-      const onClose = () => {
-        window.clearTimeout(connectTimeout);
-        this.ws = null;
-        this.snapshot = { ...this.snapshot, connection: "disconnected" };
-        this.publish();
-        this.ensurePolling();
-        this.scheduleReconnect();
-      };
-      ws.addEventListener("open", onOpen, { once: true });
-      ws.addEventListener("error", onError);
-      ws.addEventListener("close", onClose);
-      ws.addEventListener("message", (ev) => {
-        void (async () => {
-          try {
-            const data = await parseWsJson(ev.data ?? "{}");
-            if (!data) return;
-            const sid = idToString(data.session_id);
-            if (!sid) return;
-            const entry = this.entries.get(sid);
-            if (!entry) return;
-            if (String(data.type || "") === "lsp_diagnostics") {
-              const path = String(data.path || "");
-              if (path) {
-                entry.diagnosticsByPath[path] = Array.isArray(data.diagnostics) ? data.diagnostics : [];
-              }
-              entry.updatedAtMs = Date.now();
-              this.publish();
-              return;
-            }
-            const event = data as SessionEvent;
-            this.upsertEvents(entry, [event]);
-            const appliedTurn = this.applyEventToTurns(entry, event);
-            entry.updatedAtMs = Date.now();
-            // Keep hot sessions warm when they are producing events.
-            entry.warmUntilMs = Date.now() + WARM_TTL_MS;
-
-            if (
-              event.event_type === "user_message" ||
-              event.event_type === "assistant_message_inserted" ||
-              event.event_type === "assistant_complete" ||
-              this.isRefreshBoundaryEventType(event.event_type)
-            ) {
-              this.refreshTurns(entry).catch(() => {});
-            }
-            if (event.event_type === "user_message" || event.event_type === "assistant_message_inserted") {
-              this.refreshMessages(entry).catch(() => {});
-            }
-
-            if (this.isRefreshBoundaryEventType(event.event_type)) {
-              this.refreshQueueAndDiff(entry).catch(() => {});
-            } else if (this.isMidTurn(entry) && this.shouldPollDiff(entry)) {
-              this.ensureDiffPolling();
-              // Diff is computed from git and can safely be refreshed mid-turn.
-              this.refreshDiff(entry).catch(() => {});
-            }
-            if (appliedTurn) {
-              entry.updatedAtMs = Date.now();
-            }
-            this.publish();
-          } catch {
-            // ignore
-          }
-        })();
-      });
-    });
-  }
-
-  private updateWsSubscriptions() {
-    const ws = this.ws;
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
-
-    const ids = this.computeSubscribedSet();
-    const nextSet = new Set(ids);
-    for (const [id, e] of this.entries) {
-      const should = nextSet.has(id);
-      if (e.subscribed !== should) {
-        e.subscribed = should;
+        changed = true;
+      }
+      this.ensureTurnFromEvent(entry, delta.event);
+      if (this.applyEventToTurns(entry, delta.event)) {
+        changed = true;
       }
     }
-    this.publish();
 
-    const sessions = ids
-      .map((sid) => {
-        const entry = this.entries.get(sid);
-        if (!entry) return null;
-        return { session_id: sid, after_seq: entry.lastEventSeq ?? 0 };
-      })
-      .filter(Boolean);
-    try {
-      ws.send(JSON.stringify({ type: "set", sessions }));
-    } catch {
-      // If send fails synchronously (e.g. socket transitioning), fall back to polling until reconnect.
-      this.snapshot = { ...this.snapshot, connection: "disconnected" };
-      this.publish();
-      try {
-        ws.close();
-      } catch {
-        // ignore
-      }
-      return;
-    }
-
-    // Backfill deltas for subscribed sessions.
-    for (const sid of ids) {
-      this.backfillSession(sid).catch(() => {});
-    }
-  }
-
-  private async backfillSession(sessionId: string) {
-    const entry = this.entries.get(sessionId);
-    if (!entry) return;
-    try {
-      const afterSeq = entry.lastEventSeq;
-      const evs = await listSessionEventsPage(sessionId, afterSeq, 500);
-      const sawRefreshBoundary = evs.some((e) => this.isRefreshBoundaryEventType(e.event_type));
-      const sawTurnRefresh = evs.some(
-        (e) =>
-          e.event_type === "user_message" ||
-          e.event_type === "assistant_complete" ||
-          this.isRefreshBoundaryEventType(e.event_type),
-      );
-      const sawMessageRefresh = evs.some(
-        (e) => e.event_type === "user_message" || e.event_type === "assistant_message_inserted",
-      );
-      this.upsertEvents(entry, evs);
-      for (const ev of evs) {
-        this.applyEventToTurns(entry, ev);
-      }
+    if (changed) {
       entry.updatedAtMs = Date.now();
       this.publish();
-      // When disconnected (polling mode), we won't get the WS-triggered refresh that keeps Messages in sync.
-      // Refreshing here ensures assistant replies show up after daemon/webapp restarts.
-      if (sawTurnRefresh) {
-        await this.refreshTurns(entry);
-      }
-      if (sawMessageRefresh) {
-        await this.refreshMessages(entry);
-      }
-      if (sawRefreshBoundary) {
-        await this.refreshQueueAndDiff(entry);
-      } else if (this.isMidTurn(entry) && this.shouldPollDiff(entry)) {
-        this.ensureDiffPolling();
-        await this.refreshDiff(entry);
-      }
-    } catch {
-      // ignore
     }
-  }
-
-  private async refreshQueueAndDiff(entry: InternalEntry) {
-    const sid = entry.sessionId;
-    entry.messages = await listMessages(sid);
-    entry.queue = await listQueue(sid);
-    await this.refreshTurns(entry);
-    await this.refreshDiff(entry);
-    entry.updatedAtMs = Date.now();
-    this.publish();
-  }
-
-  private async refreshMessages(entry: InternalEntry) {
-    if (entry.fetching.messages) return;
-    entry.fetching.messages = true;
-    try {
-      entry.messages = await listMessages(entry.sessionId);
-      entry.updatedAtMs = Date.now();
-      this.publish();
-    } finally {
-      entry.fetching.messages = false;
-    }
-  }
-
-  private async refreshTurns(entry: InternalEntry) {
-    if (entry.fetching.turns) return;
-    entry.fetching.turns = true;
-    try {
-      const hadTurns = entry.turns.length > 0;
-      const turns = await listSessionTurnsPage(entry.sessionId, undefined, TURN_PAGE_LIMIT);
-      this.mergeTurns(entry, turns);
-      if (!hadTurns) {
-        entry.hasMoreTurns = turns.length >= TURN_PAGE_LIMIT;
-      }
-      entry.updatedAtMs = Date.now();
-      this.publish();
-    } finally {
-      entry.fetching.turns = false;
-    }
-  }
-
-  private async refreshDiff(entry: InternalEntry) {
-    if (entry.fetching.diff) return;
-    if (entry.wantDiffCount <= 0) return;
-    if (!entry.trackId) return;
-    entry.fetching.diff = true;
-    try {
-      const d = await trackDiff(entry.trackId);
-      const next = d.diff ?? "";
-      if (next !== (entry.diff ?? "")) {
-        entry.diff = next;
-        entry.updatedAtMs = Date.now();
-        this.publish();
-      }
-    } finally {
-      entry.fetching.diff = false;
-    }
-  }
-
-  private ensurePolling() {
-    if (this.pollTimer) return;
-    this.pollTimer = window.setInterval(() => {
-      const ids = this.computeSubscribedSet();
-      for (const sid of ids) {
-        const entry = this.entries.get(sid);
-        if (!entry) continue;
-        const lastType = entry.events.length > 0 ? String(entry.events[entry.events.length - 1].event_type ?? "") : "";
-        const doneLike = this.isRefreshBoundaryEventType(lastType);
-        const visible = entry.refCount > 0;
-        // When connected, poll all *visible* warm sessions to guarantee we recover from missed WS events
-        // (e.g. broadcaster lag / dropped frames). Non-visible warm sessions still poll only mid-turn to keep load down.
-        if (this.snapshot.connection === "connected" && doneLike && !visible) continue;
-        this.backfillSession(sid).catch(() => {});
-      }
-    }, POLL_INTERVAL_MS);
-  }
-
-  private ensureDiffPolling() {
-    if (this.diffPollTimer) return;
-    this.diffPollTimer = window.setInterval(() => {
-      const ids = this.computeSubscribedSet();
-      let anyNeeded = false;
-      const now = Date.now();
-      for (const sid of ids) {
-        const entry = this.entries.get(sid);
-        if (!entry) continue;
-        if (!this.shouldPollDiff(entry)) continue;
-        anyNeeded = true;
-        if (entry.fetching.diff) continue;
-        if (entry.nextDiffPollAtMs > now) continue;
-        entry.nextDiffPollAtMs = now + (this.isMidTurn(entry) ? DIFF_POLL_INTERVAL_MS : DIFF_POLL_IDLE_INTERVAL_MS);
-        this.refreshDiff(entry).catch(() => {});
-      }
-      if (!anyNeeded) this.stopDiffPolling();
-    }, DIFF_POLL_INTERVAL_MS);
-  }
-
-  private stopPolling() {
-    if (this.pollTimer) {
-      window.clearInterval(this.pollTimer);
-      this.pollTimer = null;
-    }
-  }
-
-  private stopDiffPolling() {
-    if (this.diffPollTimer) {
-      window.clearInterval(this.diffPollTimer);
-      this.diffPollTimer = null;
-    }
-  }
-
-  private scheduleReconnect() {
-    if (this.reconnectTimer) return;
-    const delay = this.reconnectBackoffMs;
-    this.reconnectBackoffMs = Math.min(10_000, Math.floor(this.reconnectBackoffMs * 1.5));
-    this.reconnectTimer = window.setTimeout(() => {
-      this.reconnectTimer = null;
-      this.connect().catch(() => {});
-    }, delay);
   }
 }
 
-const mergeStreamingText = (prev?: string | null, next?: string | null) => {
-  const p = prev ?? "";
-  const n = next ?? "";
+const SessionSupervisorContext = createContext<SessionSupervisor | null>(null);
+
+export function SessionSupervisorProvider({ children }: { children: React.ReactNode }) {
+  const supRef = useRef<SessionSupervisor | null>(null);
+  if (!supRef.current) {
+    supRef.current = new SessionSupervisor();
+  }
+
+  return (
+    <SessionSupervisorContext.Provider value={supRef.current}>
+      {children}
+    </SessionSupervisorContext.Provider>
+  );
+}
+
+export function useSessionSupervisor() {
+  const sup = useContext(SessionSupervisorContext);
+  if (!sup) throw new Error("SessionSupervisorProvider missing");
+  return sup;
+}
+
+export function useSessionCacheSnapshot(): SessionSupervisorSnapshot {
+  const sup = useSessionSupervisor();
+  return useSyncExternalStore(sup.subscribe, sup.getSnapshot, sup.getSnapshot);
+}
+
+export function useSessionEntry(sessionId: string): SessionCacheEntry | null {
+  const snap = useSessionCacheSnapshot();
+  return snap.sessions[String(sessionId)] ?? null;
+}
+
+export function useOpenSession(sessionId: string, opts?: OpenOptions) {
+  const sup = useSessionSupervisor();
+  const stableOpts = useMemo(
+    () => ({
+      watchDiff: opts?.watchDiff ?? false,
+      force: opts?.force ?? false,
+      silent: opts?.silent ?? false,
+    }),
+    [opts?.watchDiff, opts?.force, opts?.silent],
+  );
+  useEffect(() => {
+    if (!sessionId) return;
+    return sup.openSession(String(sessionId), stableOpts);
+  }, [sup, sessionId, stableOpts]);
+}
+
+const mergeTurn = (prev: SessionTurn, next: SessionTurn): SessionTurn => {
+  const assistant_partial = mergePartial(prev.assistant_partial ?? "", next.assistant_partial ?? "");
+  const thought_partial = mergePartial(prev.thought_partial ?? "", next.thought_partial ?? "");
+  return {
+    ...prev,
+    ...next,
+    assistant_partial,
+    thought_partial,
+    tool_total: Math.max(prev.tool_total ?? 0, next.tool_total ?? 0),
+    tool_pending: Math.max(prev.tool_pending ?? 0, next.tool_pending ?? 0),
+    tool_running: Math.max(prev.tool_running ?? 0, next.tool_running ?? 0),
+    tool_completed: Math.max(prev.tool_completed ?? 0, next.tool_completed ?? 0),
+    tool_failed: Math.max(prev.tool_failed ?? 0, next.tool_failed ?? 0),
+  };
+};
+
+const mergePartial = (p: string, n: string): string => {
   if (!p) return n;
   if (!n) return p;
   if (n.startsWith(p)) return n;
@@ -1040,18 +811,16 @@ const mergeStreamingText = (prev?: string | null, next?: string | null) => {
   return n.length >= p.length ? n : p;
 };
 
-const appendFragment = (prev?: string | null, fragment?: string | null) => {
-  const p = prev ?? "";
-  const f = fragment ?? "";
-  if (!p) return f;
+const appendFragment = (p: string | null | undefined, f: string | null | undefined): string => {
+  if (!p) return f || "";
   if (!f) return p;
   if (f.startsWith(p)) return f;
   if (p.endsWith(f)) return p;
   return `${p}${f}`;
 };
 
-const shouldRenderThoughtChunk = (event: SessionEvent): boolean => {
-  const payload = event.payload_json ?? {};
+function shouldRenderThoughtChunk(ev: SessionEvent): boolean {
+  const payload = ev.payload_json ?? {};
   const meta =
     payload?.acp_update?._meta ??
     payload?.acp_update?.meta ??
@@ -1062,26 +831,19 @@ const shouldRenderThoughtChunk = (event: SessionEvent): boolean => {
   const reasoningKind = meta?.codex?.reasoning_kind ?? meta?.codex?.reasoningKind;
   if (reasoningKind === "summary") return false;
   return true;
-};
+}
 
 const extractToolCallId = (event: SessionEvent): string | null => {
   const payload = event.payload_json ?? {};
-  const direct = payload.tool_call_id ?? payload.toolCallId ?? null;
+  const direct = payload?.tool_call_id ?? payload?.tool_call?.id ?? payload?.tool?.id;
   if (typeof direct === "string" && direct.trim()) return String(direct);
-  const update = payload.acp_update ?? payload;
-  const fromUpdate =
-    update?.toolCallId ??
-    update?.tool_call_id ??
-    update?.rawInput?.call_id ??
-    update?.raw_input?.call_id ??
-    update?.toolCall?.rawInput?.call_id ??
-    null;
+  const fromUpdate = payload?.acp_update?.tool_call_id ?? payload?.acp_update?.tool_call?.id;
   if (typeof fromUpdate === "string" && fromUpdate.trim()) return String(fromUpdate);
   return null;
 };
 
-const normalizeToolStatus = (status: string, eventType: string) => {
-  const s = String(status ?? "").trim().toLowerCase();
+const normalizeToolStatus = (raw: string, eventType: string): string => {
+  const s = String(raw ?? "").toLowerCase();
   if (s === "inprogress" || s === "in_progress" || s === "running") return "in_progress";
   if (s === "pending" || s === "queued") return "pending";
   if (s === "completed" || s === "complete" || s === "ok" || s === "succeeded") return "completed";
@@ -1092,20 +854,16 @@ const normalizeToolStatus = (status: string, eventType: string) => {
 
 const extractToolStatus = (event: SessionEvent): string | null => {
   const payload = event.payload_json ?? {};
-  const update = payload.acp_update ?? payload;
-  const raw =
-    update?.status ??
-    update?.toolCall?.status ??
-    null;
-  if (typeof raw === "string" && raw.trim()) {
-    return normalizeToolStatus(raw, String(event.event_type ?? ""));
-  }
+  const direct = payload?.tool_status ?? payload?.tool?.status ?? payload?.status;
+  if (typeof direct === "string" && direct.trim()) return normalizeToolStatus(direct, String(event.event_type ?? ""));
+  const fromUpdate = payload?.acp_update?.tool_status ?? payload?.acp_update?.tool?.status;
+  if (typeof fromUpdate === "string" && fromUpdate.trim()) return normalizeToolStatus(fromUpdate, String(event.event_type ?? ""));
   if (event.event_type === "tool_result") return "completed";
   if (event.event_type === "tool_call") return "pending";
   return null;
 };
 
-const toolStatusBucket = (status?: string | null) => {
+const toolStatusBucket = (status?: string | null): string | null => {
   const s = String(status ?? "").toLowerCase();
   if (s === "pending" || s === "queued") return "pending";
   if (s === "in_progress" || s === "inprogress" || s === "running") return "in_progress";
@@ -1135,49 +893,51 @@ const applyToolBucketDelta = (turn: SessionTurn, bucket: string | null, delta: n
   }
 };
 
-const SessionSupervisorContext = createContext<SessionSupervisor | null>(null);
-
-export function SessionSupervisorProvider({ children }: { children: React.ReactNode }) {
-  const supRef = useRef<SessionSupervisor | null>(null);
-  if (!supRef.current) {
-    supRef.current = new SessionSupervisor();
+const deriveTurnStatusFromEvent = (eventType: string): string => {
+  switch (eventType) {
+    case "done":
+    case "assistant_complete":
+      return "completed";
+    case "turn_interrupted":
+      return "interrupted";
+    case "error":
+      return "failed";
+    default:
+      return "running";
   }
+};
 
-  useEffect(() => {
-    supRef.current?.init();
-    return () => {
-      // best-effort close
-    };
-  }, []);
+const dedupeIds = (ids: string[]): string[] => {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of ids) {
+    const id = String(raw || "").trim();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    out.push(id);
+  }
+  return out;
+};
 
-  return (
-    <SessionSupervisorContext.Provider value={supRef.current}>
-      {children}
-    </SessionSupervisorContext.Provider>
-  );
-}
+const mergeOrderedIds = (...groups: string[][]): string[] => {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const group of groups) {
+    for (const raw of group) {
+      const id = String(raw || "").trim();
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      out.push(id);
+    }
+  }
+  return out;
+};
 
-export function useSessionSupervisor() {
-  const sup = useContext(SessionSupervisorContext);
-  if (!sup) throw new Error("SessionSupervisorProvider missing");
-  return sup;
-}
-
-export function useSessionCacheSnapshot(): SessionSupervisorSnapshot {
-  const sup = useSessionSupervisor();
-  return useSyncExternalStore(sup.subscribe, sup.getSnapshot, sup.getSnapshot);
-}
-
-export function useSessionEntry(sessionId: string): SessionCacheEntry | null {
-  const snap = useSessionCacheSnapshot();
-  return snap.sessions[String(sessionId)] ?? null;
-}
-
-export function useOpenSession(sessionId: string, opts?: OpenOptions) {
-  const sup = useSessionSupervisor();
-  const stableOpts = useMemo(() => ({ watchDiff: opts?.watchDiff ?? false }), [opts?.watchDiff]);
-  useEffect(() => {
-    if (!sessionId) return;
-    return sup.openSession(String(sessionId), stableOpts);
-  }, [sup, sessionId, stableOpts]);
-}
+const sameIdList = (a: string[], b: string[]): boolean => {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+};

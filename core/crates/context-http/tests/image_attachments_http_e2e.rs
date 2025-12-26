@@ -83,7 +83,7 @@ async fn image_attachments_use_blobs_and_never_persist_base64() {
         "http://127.0.0.1:4399".to_string(),
         None,
     ));
-    state.start_workspace_index_listener();
+    state.start_workspace_catchup_listener();
     let app = api::router(state.clone());
 
     // 1) Upload blob and fetch it back.
@@ -149,17 +149,9 @@ async fn image_attachments_use_blobs_and_never_persist_base64() {
         .unwrap();
     let res = app.clone().oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::OK);
-
-    let req = Request::builder()
-        .method("GET")
-        .uri(format!("/api/workspaces/{}/tasks", ws.id.0))
-        .body(Body::empty())
-        .unwrap();
-    let res = app.clone().oneshot(req).await.unwrap();
-    assert_eq!(res.status(), StatusCode::OK);
     let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
-    let tasks: Vec<context_core::models::Task> = serde_json::from_slice(&body).unwrap();
-    let task_id = tasks[0].id.0;
+    let task: context_core::models::Task = serde_json::from_slice(&body).unwrap();
+    let task_id = task.id.0;
 
     let req = Request::builder()
         .method("POST")

@@ -13,7 +13,7 @@ pub mod scheduler;
 pub mod settings;
 pub mod telemetry;
 pub mod updates;
-pub mod workspace_index;
+pub mod workspace_catchup;
 
 #[cfg(test)]
 mod tests {
@@ -87,7 +87,7 @@ mod tests {
             "http://127.0.0.1:4399".to_string(),
             None,
         ));
-        state.start_workspace_index_listener();
+        state.start_workspace_catchup_listener();
         let app = api::router(state.clone());
 
         // create workspace
@@ -122,23 +122,29 @@ mod tests {
         let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
         let task: context_core::models::Task = serde_json::from_slice(&body).unwrap();
 
-        // list tracks
+        // fetch workspace catchup to locate the default track
         let req = Request::builder()
             .method("GET")
-            .uri(format!("/api/tasks/{}/tracks", task.id.0))
+            .uri(format!("/api/workspaces/{}/catchup", ws.id.0))
             .body(Body::empty())
             .unwrap();
         let res = app.clone().oneshot(req).await.unwrap();
         assert_eq!(res.status(), StatusCode::OK);
         let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
-        let tracks: Vec<context_core::models::Track> = serde_json::from_slice(&body).unwrap();
-        assert_eq!(tracks.len(), 1);
-        let track = &tracks[0];
+        let snapshot: context_core::models::WorkspaceCatchupSnapshot =
+            serde_json::from_slice(&body).unwrap();
+        let track = snapshot
+            .active
+            .tasks
+            .iter()
+            .find(|summary| summary.task.id == task.id)
+            .and_then(|summary| summary.tracks.first())
+            .expect("default track missing");
 
         // create session
         let req = Request::builder()
             .method("POST")
-            .uri(format!("/api/tracks/{}/sessions", track.id.0))
+            .uri(format!("/api/tracks/{}/sessions", track.track.id.0))
             .header("content-type", "application/json")
             .body(Body::from(
                 json!({"provider_id":"fake","model_id":"fake-model"}).to_string(),
@@ -200,7 +206,7 @@ mod tests {
             "http://127.0.0.1:4399".to_string(),
             None,
         ));
-        state.start_workspace_index_listener();
+        state.start_workspace_catchup_listener();
         {
             let mut statuses = HashMap::new();
             statuses.insert(
@@ -265,20 +271,26 @@ mod tests {
             .await
             .unwrap();
 
-        // list tracks
-        let tracks: Vec<context_core::models::Track> = client
-            .get(format!("{base}/api/tasks/{}/tracks", task.id.0))
+        // fetch workspace catchup to locate the default track
+        let snapshot: context_core::models::WorkspaceCatchupSnapshot = client
+            .get(format!("{base}/api/workspaces/{}/catchup", ws.id.0))
             .send()
             .await
             .unwrap()
             .json()
             .await
             .unwrap();
-        let track = &tracks[0];
+        let track = snapshot
+            .active
+            .tasks
+            .iter()
+            .find(|summary| summary.task.id == task.id)
+            .and_then(|summary| summary.tracks.first())
+            .expect("default track missing");
 
         // create session
         let session: context_core::models::Session = client
-            .post(format!("{base}/api/tracks/{}/sessions", track.id.0))
+            .post(format!("{base}/api/tracks/{}/sessions", track.track.id.0))
             .json(&json!({"provider_id":"fake","model_id":"fake-model"}))
             .send()
             .await
@@ -287,8 +299,8 @@ mod tests {
             .await
             .unwrap();
 
-        // open ws before sending message
-        let ws_url = format!("ws://{}/api/sessions/{}/stream", addr, session.id.0);
+        // open workspace stream before sending message
+        let ws_url = format!("ws://{}/api/workspaces/{}/stream", addr, ws.id.0);
         let (mut ws_stream, _) = tokio_tungstenite::connect_async(ws_url).await.unwrap();
 
         // post message
@@ -302,14 +314,31 @@ mod tests {
             .await
             .unwrap();
 
-        // consume ws until Done
+        // consume workspace stream until we see a Done event for the session
         let mut seen_done = false;
         while let Some(Ok(frame)) = ws_stream.next().await {
             if let tokio_tungstenite::tungstenite::Message::Text(txt) = frame {
-                let ev: context_core::models::SessionEvent = serde_json::from_str(&txt).unwrap();
-                if matches!(ev.event_type, context_core::models::SessionEventType::Done) {
-                    seen_done = true;
-                    break;
+                let ev: context_core::models::WorkspaceCatchupEvent =
+                    serde_json::from_str(&txt).unwrap();
+                if let context_core::models::WorkspaceCatchupEvent::SessionHeadDelta {
+                    delta, ..
+                } = ev
+                {
+                    if delta.session_id == session.id
+                        && delta
+                            .event
+                            .as_ref()
+                            .map(|event| {
+                                matches!(
+                                    event.event_type,
+                                    context_core::models::SessionEventType::Done
+                                )
+                            })
+                            .unwrap_or(false)
+                    {
+                        seen_done = true;
+                        break;
+                    }
                 }
             }
         }

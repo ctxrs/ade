@@ -1,8 +1,15 @@
 import { idToString } from "../api/client";
 
-export function pickPreferredSession(sessions: any[] | undefined | null): any | null {
+export function pickPreferredSession(
+  sessions: any[] | undefined | null,
+  preferredSessionId?: string | null,
+): any | null {
   const list = sessions ?? [];
   if (!Array.isArray(list) || list.length === 0) return null;
+  if (preferredSessionId) {
+    const preferred = list.find((s) => idToString((s as any)?.id) === preferredSessionId);
+    if (preferred) return preferred;
+  }
   for (let i = list.length - 1; i >= 0; i--) {
     const s = list[i];
     if (s?.status === "active") return s;
@@ -10,8 +17,11 @@ export function pickPreferredSession(sessions: any[] | undefined | null): any | 
   return list[list.length - 1] ?? null;
 }
 
-export function pickPreferredSessionId(sessions: any[] | undefined | null): string | null {
-  const s = pickPreferredSession(sessions);
+export function pickPreferredSessionId(
+  sessions: any[] | undefined | null,
+  preferredSessionId?: string | null,
+): string | null {
+  const s = pickPreferredSession(sessions, preferredSessionId);
   const id = s ? idToString((s as any).id) : "";
   return id ? String(id) : null;
 }

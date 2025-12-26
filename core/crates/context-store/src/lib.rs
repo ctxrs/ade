@@ -180,7 +180,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn workspace_index_page_counts_and_sessions() {
+    async fn workspace_catchup_page_counts_and_sessions() {
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("db.sqlite");
         let store = Store::open(&db_path).await.unwrap();
@@ -224,7 +224,7 @@ mod tests {
         store.archive_task(task_archived.id).await.unwrap();
 
         let (page, cursor) = store
-            .list_workspace_index_page(ws.id, None, 50, false)
+            .list_workspace_catchup_page(ws.id, None, 50, false)
             .await
             .unwrap();
         assert_eq!(page.len(), 1);
@@ -233,23 +233,25 @@ mod tests {
         assert_eq!(summary.task.id, task_active.id);
         assert_eq!(summary.tracks.len(), 1);
         assert_eq!(summary.tracks[0].sessions.len(), 1);
-        assert_eq!(summary.provider_ids, vec!["fake".to_string()]);
+        assert_eq!(
+            summary.tracks[0].primary_session_id,
+            Some(summary.tracks[0].sessions[0].session.id)
+        );
 
         let (active_count, archived_count) = store.workspace_task_counts(ws.id).await.unwrap();
         assert_eq!(active_count, 1);
         assert_eq!(archived_count, 1);
 
         let (page_all, _) = store
-            .list_workspace_index_page(ws.id, None, 50, true)
+            .list_workspace_catchup_page(ws.id, None, 50, true)
             .await
             .unwrap();
-        assert_eq!(page_all.len(), 2);
-        assert!(page_all
-            .iter()
-            .any(|s| s.task.id == task_archived.id && s.task.archived_at.is_some()));
+        assert_eq!(page_all.len(), 1);
+        assert_eq!(page_all[0].task.id, task_archived.id);
+        assert!(page_all[0].task.archived_at.is_some());
 
         let summary = store
-            .get_workspace_task_summary(task_active.id)
+            .get_workspace_catchup_task_summary(task_active.id)
             .await
             .unwrap()
             .expect("summary exists");
@@ -259,7 +261,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn workspace_index_cursor_supports_pagination() {
+    async fn workspace_catchup_cursor_supports_pagination() {
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("db.sqlite");
         let store = Store::open(&db_path).await.unwrap();
@@ -274,7 +276,7 @@ mod tests {
         }
 
         let (page1, cursor1) = store
-            .list_workspace_index_page(ws.id, None, 2, false)
+            .list_workspace_catchup_page(ws.id, None, 2, false)
             .await
             .unwrap();
         assert_eq!(page1.len(), 2);
@@ -282,7 +284,7 @@ mod tests {
 
         if let Some(cursor) = cursor1 {
             let (page2, cursor2) = store
-                .list_workspace_index_page(ws.id, Some(cursor), 2, false)
+                .list_workspace_catchup_page(ws.id, Some(cursor), 2, false)
                 .await
                 .unwrap();
             assert!(page2.len() <= 2);

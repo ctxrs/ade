@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::{Path as StdPath, PathBuf};
 use std::sync::Arc;
 
@@ -17,7 +18,7 @@ use base64::Engine;
 use futures::{Stream, StreamExt};
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tokio::process::Command;
 use tokio::sync::mpsc;
 use tokio_util::io::ReaderStream;
@@ -27,14 +28,14 @@ use url::Url;
 use context_core::ids::*;
 use context_core::models::*;
 use context_fs::git::{assert_git_repo, list_tracked_files, list_untracked_files, rev_parse_head};
-use context_fs::worktrees::{create_worktree, managed_worktree_path};
+use context_fs::worktrees::{create_worktree, diff_worktree_summary, managed_worktree_path};
 
 use crate::buffers::{
     BufferCloseReq, BufferConflictResp, BufferId, BufferOpenReq, BufferOpenResp, BufferUpdateReq,
     BufferUpdateResp,
 };
 use crate::completions;
-use crate::daemon::AppState;
+use crate::daemon::{AppState, CachedDiffSummary};
 use crate::dictation_livekit;
 use crate::installer;
 use crate::installs::{InstallId, InstallInfo, InstallProgressEvent};
@@ -218,11 +219,8 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
             "/api/workspaces/:id",
             delete(delete_workspace).get(get_workspace),
         )
-        .route("/api/workspaces/:id/index", get(get_workspace_index))
-        .route(
-            "/api/workspaces/:id/index/stream",
-            get(workspace_index_stream_ws),
-        )
+        .route("/api/workspaces/:id/catchup", get(get_workspace_catchup))
+        .route("/api/workspaces/:id/stream", get(workspace_catchup_stream_ws))
         .route(
             "/api/workspaces/:id/completions/files",
             get(workspace_file_completions),
@@ -252,40 +250,29 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
             "/api/workspaces/:id/providers/:provider_id/verify",
             post(verify_provider_for_workspace),
         )
-        .route(
-            "/api/workspaces/:id/tasks",
-            get(list_tasks).post(create_task),
-        )
-        .route("/api/tasks/:id", get(get_task).delete(delete_task))
+        .route("/api/workspaces/:id/tasks", post(create_task))
+        .route("/api/tasks/:id", delete(delete_task))
         .route("/api/tasks/:id/title", post(update_task_title))
         .route("/api/tasks/:id/archive", post(archive_task))
         .route("/api/tasks/:id/unarchive", post(unarchive_task))
         .route("/api/tasks/:id/mark_read", post(mark_task_read))
         .route("/api/tasks/:id/mark_unread", post(mark_task_unread))
-        .route("/api/tasks/:id/tracks", get(list_tracks).post(create_track))
+        .route("/api/tasks/:id/tracks", post(create_track))
         .route("/api/worktrees/:id", get(get_worktree))
-        .route(
-            "/api/tracks/:id/sessions",
-            get(list_sessions_for_track).post(create_session_for_track),
-        )
-        .route("/api/sessions/:id", get(get_session))
-        .route(
-            "/api/sessions/:id/messages",
-            get(list_messages).post(post_message),
-        )
+        .route("/api/tracks/:id/sessions", post(create_session_for_track))
+        .route("/api/sessions/:id/messages", post(post_message))
         .route("/api/sessions/:id/model", post(set_session_model))
         .route("/api/sessions/:id/mode", post(set_session_mode))
-        .route("/api/sessions/:id/turns", get(list_session_turns))
+        .route("/api/sessions/:id/head", get(get_session_head))
+        .route("/api/sessions/:id/history", get(get_session_history))
         .route(
             "/api/sessions/:id/turns/:turn_id/tools",
             get(list_session_turn_tools),
         )
-        .route("/api/sessions/:id/events", get(list_session_events))
         .route(
             "/api/sessions/:id/completions/files",
             get(session_file_completions),
         )
-        .route("/api/sessions/:id/queue", get(list_queue))
         .route("/api/messages/:id", delete(delete_message))
         .route("/api/sessions/:id/cancel", post(cancel_session))
         .route("/api/sessions/:id/interrupt", post(interrupt_session))
@@ -295,13 +282,12 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
             post(submit_ask_user_question),
         )
         .route("/api/tracks/:id/diff", get(track_diff))
+        .route("/api/tracks/:id/diff_summary", get(track_diff_summary))
         .route("/api/tracks/:id/diff/apply", post(track_diff_apply))
         .route(
             "/api/dictation/livekit/stream",
             get(dictation_livekit_stream_ws),
         )
-        .route("/api/stream", get(global_stream_ws))
-        .route("/api/sessions/:id/stream", get(session_stream_ws))
         .layer(middleware::from_fn_with_state(auth_state, auth_middleware))
         .with_state(state);
 
@@ -4383,35 +4369,6 @@ fn default_true() -> bool {
     true
 }
 
-async fn list_tasks(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-) -> Result<Json<Vec<Task>>, StatusCode> {
-    let ws_id = WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    state
-        .store
-        .list_tasks(ws_id)
-        .await
-        .map(Json)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
-}
-
-async fn get_task(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-) -> Result<Json<Task>, StatusCode> {
-    let task_id = TaskId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    match state
-        .store
-        .get_task_with_activity(task_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-    {
-        Some(task) => Ok(Json(task)),
-        None => Err(StatusCode::NOT_FOUND),
-    }
-}
-
 async fn update_task_title(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
@@ -4488,7 +4445,7 @@ async fn update_task_title(
     };
 
     if let Err(e) = state.emit_workspace_task_upsert(task_id).await {
-        tracing::warn!(task_id = %task_id.0, "workspace index refresh failed: {e:?}");
+        tracing::warn!(task_id = %task_id.0, "workspace catchup refresh failed: {e:?}");
     }
     Ok(Json(task))
 }
@@ -4541,7 +4498,7 @@ async fn archive_task(
         None => return Err(StatusCode::NOT_FOUND),
     };
     if let Err(e) = state.emit_workspace_task_upsert(task_id).await {
-        tracing::warn!(task_id = %task_id.0, "workspace index refresh failed: {e:?}");
+        tracing::warn!(task_id = %task_id.0, "workspace catchup refresh failed: {e:?}");
     }
     Ok(Json(task))
 }
@@ -4569,7 +4526,7 @@ async fn unarchive_task(
         None => return Err(StatusCode::NOT_FOUND),
     };
     if let Err(e) = state.emit_workspace_task_upsert(task_id).await {
-        tracing::warn!(task_id = %task_id.0, "workspace index refresh failed: {e:?}");
+        tracing::warn!(task_id = %task_id.0, "workspace catchup refresh failed: {e:?}");
     }
     Ok(Json(task))
 }
@@ -4597,7 +4554,7 @@ async fn mark_task_read(
         None => return Err(StatusCode::NOT_FOUND),
     };
     if let Err(e) = state.emit_workspace_task_upsert(task_id).await {
-        tracing::warn!(task_id = %task_id.0, "workspace index refresh failed: {e:?}");
+        tracing::warn!(task_id = %task_id.0, "workspace catchup refresh failed: {e:?}");
     }
     Ok(Json(task))
 }
@@ -4625,7 +4582,7 @@ async fn mark_task_unread(
         None => return Err(StatusCode::NOT_FOUND),
     };
     if let Err(e) = state.emit_workspace_task_upsert(task_id).await {
-        tracing::warn!(task_id = %task_id.0, "workspace index refresh failed: {e:?}");
+        tracing::warn!(task_id = %task_id.0, "workspace catchup refresh failed: {e:?}");
     }
     Ok(Json(task))
 }
@@ -4689,7 +4646,7 @@ async fn create_task(
 
     if !req.create_default_track {
         if let Err(e) = state.emit_workspace_task_upsert(task.id).await {
-            tracing::warn!(task_id = %task.id.0, "workspace index refresh failed: {e:?}");
+            tracing::warn!(task_id = %task.id.0, "workspace catchup refresh failed: {e:?}");
         }
         return Ok(Json(task));
     }
@@ -4772,22 +4729,9 @@ async fn create_task(
         })?;
 
     if let Err(e) = state.emit_workspace_task_upsert(task.id).await {
-        tracing::warn!(task_id = %task.id.0, "workspace index refresh failed: {e:?}");
+        tracing::warn!(task_id = %task.id.0, "workspace catchup refresh failed: {e:?}");
     }
     Ok(Json(task))
-}
-
-async fn list_tracks(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-) -> Result<Json<Vec<Track>>, StatusCode> {
-    let task_id = TaskId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    state
-        .store
-        .list_tracks_for_task(task_id)
-        .await
-        .map(Json)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
 #[derive(Debug, Deserialize)]
@@ -4989,7 +4933,7 @@ async fn create_track(
         })?;
 
     if let Err(e) = state.emit_workspace_task_upsert(track.task_id).await {
-        tracing::warn!(task_id = %track.task_id.0, "workspace index refresh failed: {e:?}");
+        tracing::warn!(task_id = %track.task_id.0, "workspace catchup refresh failed: {e:?}");
     }
     Ok(Json(track))
 }
@@ -5123,8 +5067,9 @@ async fn create_session_for_track(
             Some(env_target.clone()),
         ))
         .await;
+    state.remember_session_meta(&session).await;
     if let Err(e) = state.emit_workspace_task_upsert(session.task_id).await {
-        tracing::warn!(task_id = %session.task_id.0, "workspace index refresh failed: {e:?}");
+        tracing::warn!(task_id = %session.task_id.0, "workspace catchup refresh failed: {e:?}");
     }
     Ok(Json(SessionWithEnv {
         env_target,
@@ -5132,138 +5077,54 @@ async fn create_session_for_track(
     }))
 }
 
-async fn get_session(
+#[derive(Debug, Deserialize, Default)]
+struct SessionHeadQuery {
+    limit: Option<u32>,
+    include_events: Option<String>,
+}
+
+async fn get_session_head(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
-) -> Result<Json<SessionWithEnv>, StatusCode> {
-    let perf = std::env::var_os("CONTEXT_PERF").is_some();
-    let t0 = Instant::now();
+    Query(q): Query<SessionHeadQuery>,
+) -> Result<Json<SessionHead>, StatusCode> {
     let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    let out = match state
+    let limit = q.limit.unwrap_or(60);
+    let include_events = parse_boolish_flag(q.include_events.as_deref(), "include_events")
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    match state
         .store
-        .get_session(session_id)
+        .get_session_head(session_id, limit, include_events)
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
     {
-        Some(session) => {
-            let worktree = state
-                .store
-                .get_worktree(session.worktree_id)
-                .await
-                .ok()
-                .flatten();
-            Ok(Json(SessionWithEnv {
-                env_target: env_target_for_worktree(worktree.as_ref()),
-                session,
-            }))
-        }
-        None => Err(StatusCode::NOT_FOUND),
-    };
-    if perf {
-        tracing::info!(
-            target: "context_perf",
-            endpoint = "get_session",
-            session_id = %session_id.0,
-            ms = %t0.elapsed().as_millis(),
-        );
+        Ok(Some(head)) => Ok(Json(head)),
+        Ok(None) => Err(StatusCode::NOT_FOUND),
+        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
     }
-    out
-}
-
-async fn list_sessions_for_track(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-) -> Result<Json<Vec<SessionWithEnv>>, StatusCode> {
-    let track_id = TrackId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    let sessions = state
-        .store
-        .list_sessions_for_track(track_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    let mut out = Vec::with_capacity(sessions.len());
-    for session in sessions {
-        let worktree = state
-            .store
-            .get_worktree(session.worktree_id)
-            .await
-            .ok()
-            .flatten();
-        out.push(SessionWithEnv {
-            env_target: env_target_for_worktree(worktree.as_ref()),
-            session,
-        });
-    }
-    Ok(Json(out))
-}
-
-async fn list_messages(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-) -> Result<Json<Vec<Message>>, StatusCode> {
-    let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    state
-        .store
-        .list_messages_for_session(session_id)
-        .await
-        .map(Json)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
-}
-
-async fn list_queue(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-) -> Result<Json<Vec<Message>>, StatusCode> {
-    let perf = std::env::var_os("CONTEXT_PERF").is_some();
-    let t0 = Instant::now();
-    let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    let out = state
-        .store
-        .list_queued_messages_for_session(session_id)
-        .await
-        .map(Json)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR);
-    if perf {
-        tracing::info!(
-            target: "context_perf",
-            endpoint = "list_queue",
-            session_id = %session_id.0,
-            ms = %t0.elapsed().as_millis(),
-        );
-    }
-    out
 }
 
 #[derive(Debug, Deserialize, Default)]
-struct ListSessionTurnsQuery {
+struct SessionHistoryQuery {
     before_seq: Option<i64>,
     limit: Option<u32>,
 }
 
-async fn list_session_turns(
+async fn get_session_history(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
-    Query(q): Query<ListSessionTurnsQuery>,
-) -> Result<Json<Vec<SessionTurn>>, StatusCode> {
-    let perf = std::env::var_os("CONTEXT_PERF").is_some();
-    let t0 = Instant::now();
+    Query(q): Query<SessionHistoryQuery>,
+) -> Result<Json<SessionHistoryPage>, StatusCode> {
     let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    let limit = q.limit;
-    let out = state
+    let limit = q.limit.unwrap_or(60);
+    match state
         .store
-        .list_session_turns_page_by_seq(session_id, q.before_seq, limit)
+        .get_session_history_page(session_id, q.before_seq, limit)
         .await
-        .map(Json)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR);
-    if perf {
-        tracing::info!(
-            target: "context_perf",
-            endpoint = "list_session_turns",
-            session_id = %session_id.0,
-            ms = %t0.elapsed().as_millis(),
-        );
+    {
+        Ok(Some(page)) => Ok(Json(page)),
+        Ok(None) => Err(StatusCode::NOT_FOUND),
+        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
     }
-    out
 }
 
 async fn list_session_turn_tools(
@@ -5278,52 +5139,6 @@ async fn list_session_turn_tools(
         .await
         .map(Json)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
-}
-
-async fn list_session_events(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-    Query(q): Query<ListSessionEventsQuery>,
-) -> Result<Json<Vec<SessionEvent>>, StatusCode> {
-    let perf = std::env::var_os("CONTEXT_PERF").is_some();
-    let t0 = Instant::now();
-    let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    let limit = q.limit;
-    let out = if let Some(tail) = q.tail {
-        match state
-            .store
-            .list_session_events_tail_by_seq(session_id, tail)
-            .await
-        {
-            Ok(events) => Ok(Json(events)),
-            Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
-        }
-    } else {
-        match state
-            .store
-            .list_session_events_page_by_seq(session_id, q.after_seq, limit)
-            .await
-        {
-            Ok(events) => Ok(Json(events)),
-            Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
-        }
-    };
-    if perf {
-        tracing::info!(
-            target: "context_perf",
-            endpoint = "list_session_events",
-            session_id = %session_id.0,
-            ms = %t0.elapsed().as_millis(),
-        );
-    }
-    out
-}
-
-#[derive(Debug, Deserialize, Default)]
-struct ListSessionEventsQuery {
-    after_seq: Option<i64>,
-    tail: Option<u32>,
-    limit: Option<u32>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -5426,15 +5241,19 @@ async fn workspace_file_completions(
 }
 
 #[derive(Debug, Deserialize)]
-struct WorkspaceIndexQuery {
+struct WorkspaceCatchupQuery {
     limit: Option<i64>,
     #[serde(default)]
     include_archived: Option<String>,
-    cursor_sort_at: Option<String>,
-    cursor_task_id: Option<String>,
+    #[serde(default)]
+    archived_only: Option<String>,
+    active_cursor_sort_at: Option<String>,
+    active_cursor_task_id: Option<String>,
+    archived_cursor_sort_at: Option<String>,
+    archived_cursor_task_id: Option<String>,
 }
 
-fn parse_boolish_flag(raw: Option<&str>) -> Result<bool, String> {
+fn parse_boolish_flag(raw: Option<&str>, label: &str) -> Result<bool, String> {
     match raw {
         Some(value) => {
             let normalized = value.trim();
@@ -5445,18 +5264,18 @@ fn parse_boolish_flag(raw: Option<&str>) -> Result<bool, String> {
             } else if normalized.is_empty() {
                 Ok(false)
             } else {
-                Err("include_archived must be true/false or 1/0".to_string())
+                Err(format!("{label} must be true/false or 1/0"))
             }
         }
         None => Ok(false),
     }
 }
 
-async fn get_workspace_index(
+async fn get_workspace_catchup(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
-    Query(query): Query<WorkspaceIndexQuery>,
-) -> Result<Json<WorkspaceIndexPage>, (StatusCode, Json<ApiErrorResp>)> {
+    Query(query): Query<WorkspaceCatchupQuery>,
+) -> Result<Json<WorkspaceCatchupSnapshot>, (StatusCode, Json<ApiErrorResp>)> {
     let workspace_id = WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| {
         (
             StatusCode::BAD_REQUEST,
@@ -5467,51 +5286,22 @@ async fn get_workspace_index(
     })?);
 
     let limit = query.limit.unwrap_or(50);
-    let include_archived = parse_boolish_flag(query.include_archived.as_deref())
+    let include_archived = parse_boolish_flag(query.include_archived.as_deref(), "include_archived")
         .map_err(|msg| (StatusCode::BAD_REQUEST, Json(ApiErrorResp { error: msg })))?;
-    let cursor = match (
-        query.cursor_sort_at.as_deref(),
-        query.cursor_task_id.as_deref(),
-    ) {
-        (Some(sort_at), Some(task_id)) => {
-            let sort_at = chrono::DateTime::parse_from_rfc3339(sort_at)
-                .map_err(|_| {
-                    (
-                        StatusCode::BAD_REQUEST,
-                        Json(ApiErrorResp {
-                            error: "invalid cursor_sort_at".to_string(),
-                        }),
-                    )
-                })?
-                .with_timezone(&chrono::Utc);
-            let task_id = uuid::Uuid::parse_str(task_id).map_err(|_| {
-                (
-                    StatusCode::BAD_REQUEST,
-                    Json(ApiErrorResp {
-                        error: "invalid cursor_task_id".to_string(),
-                    }),
-                )
-            })?;
-            Some(WorkspaceIndexCursor {
-                sort_at,
-                task_id: TaskId(task_id),
-            })
-        }
-        _ => None,
-    };
+    let archived_only = parse_boolish_flag(query.archived_only.as_deref(), "archived_only")
+        .map_err(|msg| (StatusCode::BAD_REQUEST, Json(ApiErrorResp { error: msg })))?;
+    let include_archived = include_archived || archived_only;
 
-    let (tasks, next_cursor) = state
-        .store
-        .list_workspace_index_page(workspace_id, cursor, limit, include_archived)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&e.to_string()),
-                }),
-            )
-        })?;
+    let active_cursor = parse_workspace_catchup_cursor(
+        query.active_cursor_sort_at.as_deref(),
+        query.active_cursor_task_id.as_deref(),
+        "active",
+    )?;
+    let archived_cursor = parse_workspace_catchup_cursor(
+        query.archived_cursor_sort_at.as_deref(),
+        query.archived_cursor_task_id.as_deref(),
+        "archived",
+    )?;
 
     let (total_active, total_archived) = state
         .store
@@ -5526,19 +5316,66 @@ async fn get_workspace_index(
             )
         })?;
 
-    let snapshot_rev = state.workspace_index.current_rev(workspace_id).await;
-    let page = WorkspaceIndexPage {
+    let (mut active_tasks, active_next) = if archived_only {
+        (Vec::new(), None)
+    } else {
+        state
+            .store
+            .list_workspace_catchup_page(workspace_id, active_cursor, limit, false)
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiErrorResp {
+                        error: logs::redact_sensitive(&e.to_string()),
+                    }),
+                )
+            })?
+    };
+
+    apply_cached_diff_summaries(&state, &mut active_tasks).await;
+
+    let active_page = WorkspaceCatchupPage {
+        tasks: active_tasks,
+        next_cursor: active_next,
+        total_count: total_active,
+    };
+
+    let archived_page = if include_archived {
+        let (mut archived_tasks, archived_next) = state
+            .store
+            .list_workspace_catchup_page(workspace_id, archived_cursor, limit, true)
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiErrorResp {
+                        error: logs::redact_sensitive(&e.to_string()),
+                    }),
+                )
+            })?;
+        apply_cached_diff_summaries(&state, &mut archived_tasks).await;
+
+        Some(WorkspaceCatchupPage {
+            tasks: archived_tasks,
+            next_cursor: archived_next,
+            total_count: total_archived,
+        })
+    } else {
+        None
+    };
+
+    let snapshot_rev = state.workspace_catchup.current_rev(workspace_id).await;
+    let snapshot = WorkspaceCatchupSnapshot {
         workspace_id,
         snapshot_rev,
-        tasks,
-        next_cursor,
-        total_active,
-        total_archived,
+        active: active_page,
+        archived: archived_page,
     };
-    Ok(Json(page))
+    Ok(Json(snapshot))
 }
 
-async fn workspace_index_stream_ws(
+async fn workspace_catchup_stream_ws(
     ws: WebSocketUpgrade,
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
@@ -5547,30 +5384,108 @@ async fn workspace_index_stream_ws(
         Ok(v) => WorkspaceId(v),
         Err(_) => return StatusCode::BAD_REQUEST.into_response(),
     };
-    ws.on_upgrade(move |socket| handle_workspace_index_ws(socket, state, workspace_id))
+    ws.on_upgrade(move |socket| handle_workspace_catchup_ws(socket, state, workspace_id))
 }
 
-async fn handle_workspace_index_ws(
+async fn handle_workspace_catchup_ws(
     mut socket: WebSocket,
     state: Arc<AppState>,
     workspace_id: WorkspaceId,
 ) {
-    let ready = WorkspaceIndexEvent::Ready {
+    let ready = WorkspaceCatchupEvent::Ready {
         workspace_id,
-        snapshot_rev: state.workspace_index.current_rev(workspace_id).await,
+        snapshot_rev: state.workspace_catchup.current_rev(workspace_id).await,
     };
     if let Ok(text) = serde_json::to_string(&ready) {
         if socket.send(WsMessage::Text(text)).await.is_err() {
             return;
         }
     }
-    let mut rx = state.workspace_index.subscribe(workspace_id).await;
-    while let Ok(event) = rx.recv().await {
-        if let Ok(text) = serde_json::to_string(&event) {
-            if socket.send(WsMessage::Text(text)).await.is_err() {
-                break;
+    let mut rx = state.workspace_catchup.subscribe(workspace_id).await;
+    let mut subscriptions: Option<HashSet<SessionId>> = None;
+    loop {
+        tokio::select! {
+            msg = socket.recv() => {
+                match msg {
+                    Some(Ok(WsMessage::Text(text))) => {
+                        if let Ok(message) = serde_json::from_str::<WorkspaceCatchupClientMessage>(&text) {
+                            match message {
+                                WorkspaceCatchupClientMessage::Subscribe { session_ids } => {
+                                    subscriptions = Some(session_ids.into_iter().collect());
+                                }
+                            }
+                        }
+                    }
+                    Some(Ok(WsMessage::Binary(bytes))) => {
+                        if let Ok(text) = String::from_utf8(bytes.to_vec()) {
+                            if let Ok(message) = serde_json::from_str::<WorkspaceCatchupClientMessage>(&text) {
+                                match message {
+                                    WorkspaceCatchupClientMessage::Subscribe { session_ids } => {
+                                        subscriptions = Some(session_ids.into_iter().collect());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Some(Ok(WsMessage::Close(_))) => break,
+                    Some(Ok(_)) => {},
+                    Some(Err(_)) => break,
+                    None => break,
+                }
+            }
+            event = rx.recv() => {
+                let event = match event {
+                    Ok(event) => event,
+                    Err(_) => break,
+                };
+                if let WorkspaceCatchupEvent::SessionHeadDelta { delta, .. } = &event {
+                    if let Some(subscriptions) = &subscriptions {
+                        if !subscriptions.contains(&delta.session_id) {
+                            continue;
+                        }
+                    }
+                }
+                if let Ok(text) = serde_json::to_string(&event) {
+                    if socket.send(WsMessage::Text(text)).await.is_err() {
+                        break;
+                    }
+                }
             }
         }
+    }
+}
+
+fn parse_workspace_catchup_cursor(
+    sort_at: Option<&str>,
+    task_id: Option<&str>,
+    label: &str,
+) -> Result<Option<WorkspaceCatchupCursor>, (StatusCode, Json<ApiErrorResp>)> {
+    match (sort_at, task_id) {
+        (Some(sort_at), Some(task_id)) => {
+            let sort_at = chrono::DateTime::parse_from_rfc3339(sort_at)
+                .map_err(|_| {
+                    (
+                        StatusCode::BAD_REQUEST,
+                        Json(ApiErrorResp {
+                            error: format!("invalid {label}_cursor_sort_at"),
+                        }),
+                    )
+                })?
+                .with_timezone(&chrono::Utc);
+            let task_id = uuid::Uuid::parse_str(task_id).map_err(|_| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(ApiErrorResp {
+                        error: format!("invalid {label}_cursor_task_id"),
+                    }),
+                )
+            })?;
+            Ok(Some(WorkspaceCatchupCursor {
+                sort_at,
+                task_id: TaskId(task_id),
+            }))
+        }
+        _ => Ok(None),
     }
 }
 
@@ -6309,6 +6224,163 @@ async fn submit_ask_user_question(
     Ok(Json(SubmitAskUserQuestionResp { ok: true }))
 }
 
+const DIFF_SUMMARY_TTL: Duration = Duration::from_secs(10);
+const DIFF_SUMMARY_TOO_LARGE_TTL: Duration = Duration::from_secs(60);
+const DIFF_SUMMARY_MAX_FILES: i64 = 1000;
+const DIFF_SUMMARY_MAX_LINES: i64 = 500_000;
+
+fn diff_summary_cache_ttl(too_large: bool) -> Duration {
+    if too_large {
+        DIFF_SUMMARY_TOO_LARGE_TTL
+    } else {
+        DIFF_SUMMARY_TTL
+    }
+}
+
+fn diff_summary_is_too_large(file_count: i64, additions: i64, deletions: i64) -> bool {
+    file_count > DIFF_SUMMARY_MAX_FILES || additions.saturating_add(deletions) > DIFF_SUMMARY_MAX_LINES
+}
+
+fn build_diff_summary(
+    file_count: i64,
+    line_additions: i64,
+    line_deletions: i64,
+) -> (Option<TrackDiffSummary>, bool) {
+    let too_large = diff_summary_is_too_large(file_count, line_additions, line_deletions);
+    let summary = TrackDiffSummary {
+        file_count,
+        line_additions,
+        line_deletions,
+        updated_at: chrono::Utc::now(),
+    };
+    let summary = if too_large { None } else { Some(summary) };
+    (summary, too_large)
+}
+
+async fn write_diff_summary_cache(
+    state: &Arc<AppState>,
+    track_id: TrackId,
+    summary: Option<TrackDiffSummary>,
+    too_large: bool,
+) -> CachedDiffSummary {
+    let entry = CachedDiffSummary {
+        cached_at: Instant::now(),
+        summary,
+        too_large,
+    };
+    let mut cache = state.diff_summary_cache.lock().await;
+    cache.insert(track_id, entry.clone());
+    entry
+}
+
+async fn read_cached_diff_summary(
+    state: &Arc<AppState>,
+    track_id: TrackId,
+) -> Option<CachedDiffSummary> {
+    let mut cache = state.diff_summary_cache.lock().await;
+    let entry = cache.get(&track_id)?.clone();
+    if entry.cached_at.elapsed() > diff_summary_cache_ttl(entry.too_large) {
+        cache.remove(&track_id);
+        return None;
+    }
+    Some(entry)
+}
+
+async fn apply_cached_diff_summaries(
+    state: &Arc<AppState>,
+    tasks: &mut [WorkspaceCatchupTaskSummary],
+) {
+    let mut cache = state.diff_summary_cache.lock().await;
+    for task in tasks.iter_mut() {
+        for track_summary in task.tracks.iter_mut() {
+            let track_id = track_summary.track.id;
+            let entry = match cache.get(&track_id) {
+                Some(entry) => entry.clone(),
+                None => continue,
+            };
+            if entry.cached_at.elapsed() > diff_summary_cache_ttl(entry.too_large) {
+                cache.remove(&track_id);
+                continue;
+            }
+            if let Some(summary) = entry.summary.clone() {
+                track_summary.diff_summary = Some(summary);
+            }
+        }
+    }
+}
+
+async fn track_diff_summary(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<TrackDiffSummaryResponse>, StatusCode> {
+    let perf = std::env::var_os("CONTEXT_PERF").is_some();
+    let t0 = Instant::now();
+    let track_id = TrackId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
+    let track = state
+        .store
+        .get_track(track_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    if let Some(entry) = read_cached_diff_summary(&state, track_id).await {
+        if perf {
+            tracing::info!(
+                target: "context_perf",
+                endpoint = "track_diff_summary",
+                track_id = %track_id.0,
+                cache_hit = true,
+                ms = %t0.elapsed().as_millis(),
+            );
+        }
+        return Ok(Json(TrackDiffSummaryResponse {
+            summary: entry.summary,
+            too_large: entry.too_large,
+        }));
+    }
+
+    let worktree = state
+        .store
+        .get_worktree(track.worktree_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    let (file_count, line_additions, line_deletions) =
+        diff_worktree_summary(&worktree.root_path)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let (summary, too_large) = build_diff_summary(file_count, line_additions, line_deletions);
+    let entry = write_diff_summary_cache(&state, track_id, summary.clone(), too_large).await;
+
+    if let Ok(Some(mut catchup_summary)) = state
+        .store
+        .get_workspace_catchup_track_summary(track_id)
+        .await
+    {
+        catchup_summary.diff_summary = summary.clone();
+        state
+            .workspace_catchup
+            .publish_track_upsert(track.workspace_id, catchup_summary)
+            .await;
+    }
+
+    if perf {
+        tracing::info!(
+            target: "context_perf",
+            endpoint = "track_diff_summary",
+            track_id = %track_id.0,
+            cache_hit = false,
+            ms = %t0.elapsed().as_millis(),
+        );
+    }
+
+    Ok(Json(TrackDiffSummaryResponse {
+        summary: entry.summary,
+        too_large: entry.too_large,
+    }))
+}
+
 #[derive(Debug, Serialize)]
 struct DiffResponse {
     diff: String,
@@ -6501,238 +6573,23 @@ async fn track_diff_apply(
         );
     }
 
+    if let Ok((file_count, additions, deletions)) = diff_worktree_summary(&worktree.root_path).await {
+        let (summary, too_large) = build_diff_summary(file_count, additions, deletions);
+        let entry = write_diff_summary_cache(&state, track_id, summary.clone(), too_large).await;
+        if let Ok(Some(mut catchup_summary)) = state
+            .store
+            .get_workspace_catchup_track_summary(track_id)
+            .await
+        {
+            catchup_summary.diff_summary = entry.summary.clone();
+            state
+                .workspace_catchup
+                .publish_track_upsert(track.workspace_id, catchup_summary)
+                .await;
+        }
+    }
+
     Ok(Json(DiffResponse { diff }))
-}
-
-async fn session_stream_ws(
-    ws: WebSocketUpgrade,
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-) -> impl IntoResponse {
-    let session_id = match uuid::Uuid::parse_str(&id) {
-        Ok(u) => SessionId(u),
-        Err(_) => return StatusCode::BAD_REQUEST.into_response(),
-    };
-    ws.on_upgrade(move |socket| handle_ws(socket, state, session_id))
-}
-
-#[derive(Debug, Deserialize)]
-struct StreamSessionSpec {
-    session_id: String,
-    #[serde(default)]
-    after_seq: Option<i64>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-enum GlobalStreamClientMsg {
-    Set { sessions: Vec<StreamSessionSpec> },
-}
-
-async fn global_stream_ws(
-    ws: WebSocketUpgrade,
-    State(state): State<Arc<AppState>>,
-) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| handle_global_ws(socket, state))
-}
-
-async fn handle_global_ws(socket: WebSocket, state: Arc<AppState>) {
-    use futures::{SinkExt, StreamExt};
-    use std::collections::{HashMap, HashSet};
-    use tokio::select;
-    use tokio::sync::broadcast::error::RecvError;
-    use tokio::sync::Mutex;
-    use tokio::time::{timeout, Duration};
-    use tokio_util::sync::CancellationToken;
-
-    let (ws_tx, mut ws_rx) = socket.split();
-    let ws_tx = Arc::new(Mutex::new(ws_tx));
-
-    let mut diag_rx = state.lsp_diag_broadcaster().subscribe();
-
-    let conn_cancel = CancellationToken::new();
-    let mut subscribed: HashMap<SessionId, i64> = HashMap::new();
-    let mut tasks: HashMap<SessionId, (CancellationToken, tokio::task::JoinHandle<()>)> =
-        HashMap::new();
-
-    let stop_all =
-        |tasks: &mut HashMap<SessionId, (CancellationToken, tokio::task::JoinHandle<()>)>| {
-            for (_sid, (tok, handle)) in tasks.drain() {
-                tok.cancel();
-                handle.abort();
-            }
-        };
-
-    let spawn_session_task = |session_id: SessionId,
-                              mut after_seq: i64,
-                              ws_tx: Arc<
-        Mutex<futures::stream::SplitSink<WebSocket, WsMessage>>,
-    >,
-                              state: Arc<AppState>,
-                              conn_cancel: CancellationToken| {
-        let task_cancel = CancellationToken::new();
-        let task_cancel_child = task_cancel.clone();
-        let conn_cancel_child = conn_cancel.clone();
-        let join = tokio::spawn(async move {
-            let mut head_rx = state.subscribe_session_event_head(session_id).await;
-            let page_limit: u32 = 500;
-
-            loop {
-                if task_cancel_child.is_cancelled() || conn_cancel_child.is_cancelled() {
-                    break;
-                }
-
-                // Catch up to current DB head.
-                loop {
-                    if task_cancel_child.is_cancelled() || conn_cancel_child.is_cancelled() {
-                        return;
-                    }
-                    let page = match state
-                        .store
-                        .list_session_events_page_by_seq(
-                            session_id,
-                            Some(after_seq),
-                            Some(page_limit),
-                        )
-                        .await
-                    {
-                        Ok(v) => v,
-                        Err(e) => {
-                            tracing::warn!(session_id = %session_id.0, "stream replay failed: {e}");
-                            conn_cancel_child.cancel();
-                            return;
-                        }
-                    };
-                    if page.is_empty() {
-                        break;
-                    }
-
-                    for ev in page {
-                        after_seq = ev.seq;
-                        let text = match serde_json::to_string(&ev) {
-                            Ok(t) => t,
-                            Err(_) => continue,
-                        };
-                        let send_res = timeout(Duration::from_secs(2), async {
-                            let mut locked = ws_tx.lock().await;
-                            locked.send(WsMessage::Text(text)).await
-                        })
-                        .await;
-
-                        match send_res {
-                            Ok(Ok(())) => {}
-                            Ok(Err(_)) => {
-                                conn_cancel_child.cancel();
-                                return;
-                            }
-                            Err(_) => {
-                                // Slow consumer: force reconnect/resume.
-                                conn_cancel_child.cancel();
-                                return;
-                            }
-                        }
-                    }
-                }
-
-                // Wait for the session head to advance, then loop to fetch from DB.
-                // `watch` is level-triggered (stores latest), so we can't miss a signal.
-                let head = *head_rx.borrow();
-                if after_seq >= head {
-                    select! {
-                        _ = task_cancel_child.cancelled() => break,
-                        _ = conn_cancel_child.cancelled() => break,
-                        _ = head_rx.changed() => {}
-                    }
-                }
-            }
-        });
-
-        (task_cancel, join)
-    };
-
-    loop {
-        select! {
-            _ = conn_cancel.cancelled() => break,
-            msg = ws_rx.next() => {
-                let Some(Ok(msg)) = msg else { break };
-                let WsMessage::Text(text) = msg else { continue };
-                let Ok(parsed) = serde_json::from_str::<GlobalStreamClientMsg>(&text) else { continue };
-
-                let GlobalStreamClientMsg::Set { sessions } = parsed;
-                let mut next: HashMap<SessionId, i64> = HashMap::new();
-                for s in sessions {
-                    let Ok(u) = uuid::Uuid::parse_str(&s.session_id) else { continue };
-                    next.insert(SessionId(u), s.after_seq.unwrap_or(0));
-                }
-
-                // Remove old sessions.
-                let next_ids: HashSet<SessionId> = next.keys().cloned().collect();
-                for sid in subscribed.keys().cloned().collect::<Vec<_>>() {
-                    if next_ids.contains(&sid) { continue; }
-                    if let Some((tok, handle)) = tasks.remove(&sid) {
-                        tok.cancel();
-                        handle.abort();
-                    }
-                }
-
-                // Start/update tasks.
-                for (sid, after_seq) in next.iter() {
-                    let current = subscribed.get(sid).copied();
-                    if current == Some(*after_seq) && tasks.contains_key(sid) {
-                        continue;
-                    }
-                    if let Some((tok, handle)) = tasks.remove(sid) {
-                        tok.cancel();
-                        handle.abort();
-                    }
-                    let (tok, handle) = spawn_session_task(
-                        *sid,
-                        *after_seq,
-                        ws_tx.clone(),
-                        state.clone(),
-                        conn_cancel.clone(),
-                    );
-                    tasks.insert(*sid, (tok, handle));
-                }
-
-                subscribed = next;
-            }
-            dev = diag_rx.recv() => {
-                let msg = match dev {
-                    Ok(msg) => msg,
-                    Err(RecvError::Lagged(_)) => continue,
-                    Err(RecvError::Closed) => break,
-                };
-                if subscribed.is_empty() { continue; }
-                let sid = msg.get("session_id").and_then(|v| v.as_str()).and_then(|s| uuid::Uuid::parse_str(s).ok()).map(SessionId);
-                let Some(sid) = sid else { continue };
-                if !subscribed.contains_key(&sid) { continue; }
-                let Ok(text) = serde_json::to_string(&msg) else { continue };
-                let send_res = timeout(Duration::from_secs(2), async {
-                    let mut locked = ws_tx.lock().await;
-                    locked.send(WsMessage::Text(text)).await
-                }).await;
-                match send_res {
-                    Ok(Ok(())) => {}
-                    _ => conn_cancel.cancel(),
-                }
-            }
-        }
-    }
-
-    stop_all(&mut tasks);
-}
-
-async fn handle_ws(mut socket: WebSocket, state: Arc<AppState>, session_id: SessionId) {
-    let tx = state.get_broadcaster(session_id).await;
-    let mut rx = tx.subscribe();
-    while let Ok(event) = rx.recv().await {
-        if let Ok(text) = serde_json::to_string(&event) {
-            if socket.send(WsMessage::Text(text)).await.is_err() {
-                break;
-            }
-        }
-    }
 }
 
 async fn dictation_livekit_stream_ws(

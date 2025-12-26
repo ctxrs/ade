@@ -76,7 +76,7 @@ async fn lsp_diagnostics_endpoint_returns_diagnostics() {
         },
         false,
     ));
-    state.start_workspace_index_listener();
+    state.start_workspace_catchup_listener();
     let app = api::router(state.clone());
 
     let repo = setup_git_repo().await;
@@ -111,23 +111,29 @@ async fn lsp_diagnostics_endpoint_returns_diagnostics() {
     let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
     let task: context_core::models::Task = serde_json::from_slice(&body).unwrap();
 
-    // list tracks
+    // fetch workspace catchup to locate the default track
     let req = Request::builder()
         .method("GET")
-        .uri(format!("/api/tasks/{}/tracks", task.id.0))
+        .uri(format!("/api/workspaces/{}/catchup", ws.id.0))
         .body(Body::empty())
         .unwrap();
     let res = app.clone().oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::OK);
     let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
-    let tracks: Vec<context_core::models::Track> = serde_json::from_slice(&body).unwrap();
-    assert_eq!(tracks.len(), 1);
-    let track = &tracks[0];
+    let snapshot: context_core::models::WorkspaceCatchupSnapshot =
+        serde_json::from_slice(&body).unwrap();
+    let track = snapshot
+        .active
+        .tasks
+        .iter()
+        .find(|summary| summary.task.id == task.id)
+        .and_then(|summary| summary.tracks.first())
+        .expect("default track missing");
 
     // create session
     let req = Request::builder()
         .method("POST")
-        .uri(format!("/api/tracks/{}/sessions", track.id.0))
+        .uri(format!("/api/tracks/{}/sessions", track.track.id.0))
         .header("content-type", "application/json")
         .body(Body::from(
             json!({"provider_id":"fake","model_id":"fake"}).to_string(),
@@ -211,7 +217,7 @@ async fn lsp_status_endpoint_returns_expected_shape() {
         },
         true,
     ));
-    state.start_workspace_index_listener();
+    state.start_workspace_catchup_listener();
     let app = api::router(state);
 
     let req = Request::builder()
@@ -288,7 +294,7 @@ async fn lsp_semantic_endpoints_return_payloads() {
         },
         false,
     ));
-    state.start_workspace_index_listener();
+    state.start_workspace_catchup_listener();
     let app = api::router(state.clone());
 
     let repo = setup_git_repo().await;
@@ -323,23 +329,29 @@ async fn lsp_semantic_endpoints_return_payloads() {
     let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
     let task: context_core::models::Task = serde_json::from_slice(&body).unwrap();
 
-    // list tracks
+    // fetch workspace catchup to locate the default track
     let req = Request::builder()
         .method("GET")
-        .uri(format!("/api/tasks/{}/tracks", task.id.0))
+        .uri(format!("/api/workspaces/{}/catchup", ws.id.0))
         .body(Body::empty())
         .unwrap();
     let res = app.clone().oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::OK);
     let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
-    let tracks: Vec<context_core::models::Track> = serde_json::from_slice(&body).unwrap();
-    assert_eq!(tracks.len(), 1);
-    let track = &tracks[0];
+    let snapshot: context_core::models::WorkspaceCatchupSnapshot =
+        serde_json::from_slice(&body).unwrap();
+    let track = snapshot
+        .active
+        .tasks
+        .iter()
+        .find(|summary| summary.task.id == task.id)
+        .and_then(|summary| summary.tracks.first())
+        .expect("default track missing");
 
     // create session
     let req = Request::builder()
         .method("POST")
-        .uri(format!("/api/tracks/{}/sessions", track.id.0))
+        .uri(format!("/api/tracks/{}/sessions", track.track.id.0))
         .header("content-type", "application/json")
         .body(Body::from(
             json!({"provider_id":"fake","model_id":"fake"}).to_string(),
@@ -423,7 +435,7 @@ async fn lsp_text_only_agent_endpoints_return_payloads() {
         },
         false,
     ));
-    state.start_workspace_index_listener();
+    state.start_workspace_catchup_listener();
     let app = api::router(state.clone());
 
     let repo = setup_git_repo().await;
@@ -458,23 +470,29 @@ async fn lsp_text_only_agent_endpoints_return_payloads() {
     let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
     let task: context_core::models::Task = serde_json::from_slice(&body).unwrap();
 
-    // list tracks
+    // fetch workspace catchup to locate the default track
     let req = Request::builder()
         .method("GET")
-        .uri(format!("/api/tasks/{}/tracks", task.id.0))
+        .uri(format!("/api/workspaces/{}/catchup", ws.id.0))
         .body(Body::empty())
         .unwrap();
     let res = app.clone().oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::OK);
     let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
-    let tracks: Vec<context_core::models::Track> = serde_json::from_slice(&body).unwrap();
-    assert_eq!(tracks.len(), 1);
-    let track = &tracks[0];
+    let snapshot: context_core::models::WorkspaceCatchupSnapshot =
+        serde_json::from_slice(&body).unwrap();
+    let track = snapshot
+        .active
+        .tasks
+        .iter()
+        .find(|summary| summary.task.id == task.id)
+        .and_then(|summary| summary.tracks.first())
+        .expect("default track missing");
 
     // create session
     let req = Request::builder()
         .method("POST")
-        .uri(format!("/api/tracks/{}/sessions", track.id.0))
+        .uri(format!("/api/tracks/{}/sessions", track.track.id.0))
         .header("content-type", "application/json")
         .body(Body::from(
             json!({"provider_id":"fake","model_id":"fake"}).to_string(),

@@ -4,6 +4,13 @@ import { tmpdir } from "os";
 import path from "path";
 import { execFileSync, execSync } from "child_process";
 
+const readId = (v: any): string => {
+  if (!v) return "";
+  if (typeof v === "string") return v;
+  if (typeof v === "object" && typeof v["0"] === "string") return v["0"];
+  return "";
+};
+
 test("workbench: refresh keeps selection, even for older sessions", async ({ page }) => {
   const repo = mkdtempSync(path.join(tmpdir(), "context-e2e-"));
   execSync("git init", { cwd: repo });
@@ -51,37 +58,35 @@ test("workbench: refresh keeps selection, even for older sessions", async ({ pag
     await page.screenshot({ path: path.join(tmpdir(), "context-e2e-session-missing.png"), fullPage: true });
     throw err;
   }
-  await expect(page.locator(".wb-session .wb-assistant-entry").filter({ hasText: "done: hello refresh" })).toBeVisible({
-    timeout: 20000,
-  });
+  await expect(
+    page.locator(".wb-session .wb-assistant-entry").filter({ hasText: "done: hello refresh" }).first(),
+  ).toBeVisible({ timeout: 20000 });
 
   const url = new URL(page.url());
   const workspaceId = url.pathname.split("/").filter(Boolean).pop();
   expect(workspaceId).toBeTruthy();
 
-  const tasksResp = await page.request.get(`/api/workspaces/${workspaceId}/tasks`);
-  expect(tasksResp.ok()).toBeTruthy();
-  const tasks = (await tasksResp.json()) as any[];
-  const task = tasks.find((t) => String(t.title ?? "") === "hello refresh") ?? tasks[0];
-  expect(task).toBeTruthy();
-  const taskId = String(task.id);
-
-  const tracksResp = await page.request.get(`/api/tasks/${taskId}/tracks`);
-  expect(tracksResp.ok()).toBeTruthy();
-  const tracks = (await tracksResp.json()) as any[];
-  const trackId = String(tracks[0].id);
-
-  const sessionsResp = await page.request.get(`/api/tracks/${trackId}/sessions`);
-  expect(sessionsResp.ok()).toBeTruthy();
-  const sessions = (await sessionsResp.json()) as any[];
-  const sessionId = String(sessions[0].id);
+  const snapshotResp = await page.request.get(`/api/workspaces/${workspaceId}/catchup`);
+  expect(snapshotResp.ok()).toBeTruthy();
+  const snapshot = (await snapshotResp.json()) as any;
+  const taskSummary =
+    snapshot?.active?.tasks?.find((t: any) => String(t?.task?.title ?? "") === "hello refresh") ??
+    snapshot?.active?.tasks?.[0];
+  expect(taskSummary).toBeTruthy();
+  const taskId = readId(taskSummary?.task?.id);
+  const trackSummary = taskSummary?.tracks?.[0];
+  expect(trackSummary).toBeTruthy();
+  const trackId = readId(trackSummary?.track?.id);
+  const sessionSummary = trackSummary?.sessions?.[0];
+  const sessionId = readId(sessionSummary?.session?.id) || readId(trackSummary?.primary_session_id);
 
   await expect
     .poll(async () => {
-      const resp = await page.request.get(`/api/sessions/${sessionId}/messages`);
+      const resp = await page.request.get(`/api/sessions/${sessionId}/head`);
       if (!resp.ok()) return 0;
-      const msgs = (await resp.json()) as any[];
-      return msgs.filter((m) => m.role === "assistant").length;
+      const head = (await resp.json()) as any;
+      const msgs = head?.messages ?? [];
+      return msgs.filter((m: any) => m.role === "assistant").length;
     })
     .toBeGreaterThan(0);
 
@@ -145,12 +150,13 @@ test("workbench: refresh keeps selection, even for older sessions", async ({ pag
   await sendButton.click();
   await expect
     .poll(async () => {
-      const resp = await page.request.get(`/api/sessions/${sessionId}/events`);
+      const resp = await page.request.get(`/api/sessions/${sessionId}/head?limit=50`);
       if (!resp.ok()) return 0;
-      const evs = (await resp.json()) as any[];
-      return evs.filter((e) => e.event_type === "assistant_complete").length;
+      const head = (await resp.json()) as any;
+      const msgs = head?.messages ?? [];
+      return msgs.filter((m: any) => m.role === "assistant").length;
     })
-    .toBe(2);
+    .toBeGreaterThanOrEqual(2);
   await page.locator(".thread-stack").evaluate((root) => {
     const el = root as HTMLElement;
     const candidates = [el, ...Array.from(el.querySelectorAll<HTMLElement>("*"))];

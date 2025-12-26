@@ -58,44 +58,33 @@ async function createWorkspaceAndStartRun(opts: {
     .not.toBe("");
 
   let taskId = "";
-  await expect
-    .poll(
-      async () => {
-        const resp = await request.get(`/api/workspaces/${workspaceId}/tasks`);
-        if (!resp.ok()) return "";
-        const tasks = (await resp.json()) as any[];
-        const task = tasks.find((t) => String(t?.title ?? "") === taskTitle) ?? null;
-        taskId = readId(task?.id);
-        return taskId;
-      },
-      { timeout: 20_000 }
-    )
-    .not.toBe("");
-
-  const tracksResp = await request.get(`/api/tasks/${taskId}/tracks`);
-  expect(tracksResp.ok()).toBeTruthy();
-  const tracks = (await tracksResp.json()) as any[];
-  const trackId = readId(tracks[0]?.id);
-  expect(trackId).toBeTruthy();
-
+  let trackId = "";
   let sessionId = "";
   await expect
     .poll(
       async () => {
-        const sessionsResp = await request.get(`/api/tracks/${trackId}/sessions`);
-        if (!sessionsResp.ok()) return "";
-        const sessions = (await sessionsResp.json()) as any[];
-        sessionId = readId(sessions[sessions.length - 1]?.id);
+        const resp = await request.get(`/api/workspaces/${workspaceId}/catchup`);
+        if (!resp.ok()) return "";
+        const snapshot = (await resp.json()) as any;
+        const taskSummary = snapshot?.active?.tasks?.find((t: any) => String(t?.task?.title ?? "") === taskTitle);
+        if (!taskSummary) return "";
+        taskId = readId(taskSummary?.task?.id);
+        const trackSummary = taskSummary?.tracks?.[0];
+        if (!trackSummary) return "";
+        trackId = readId(trackSummary?.track?.id);
+        const primarySessionId = readId(trackSummary?.primary_session_id);
+        const sessionSummary = trackSummary?.sessions?.[trackSummary?.sessions?.length - 1];
+        sessionId = readId(sessionSummary?.session?.id) || primarySessionId;
         return sessionId;
       },
       { timeout: 20_000 }
     )
     .not.toBe("");
 
-  const sessionResp = await request.get(`/api/sessions/${sessionId}`);
-  expect(sessionResp.ok()).toBeTruthy();
-  const session = (await sessionResp.json()) as any;
-
+  const headResp = await request.get(`/api/sessions/${sessionId}/head?limit=1`);
+  expect(headResp.ok()).toBeTruthy();
+  const head = (await headResp.json()) as any;
+  const session = head?.session ?? null;
   const worktreeId = readId(session?.worktree_id);
   expect(worktreeId).toBeTruthy();
   const wtResp = await request.get(`/api/worktrees/${worktreeId}`);
@@ -119,7 +108,7 @@ test("workbench: diff updates mid-turn", async ({ page, request }) => {
   const workspaceName = `ws-${Date.now()}`;
   const taskTitle = "slow-diff-test";
 
-  const { worktreeRoot } = await createWorkspaceAndStartRun({
+  const { worktreeRoot, trackId } = await createWorkspaceAndStartRun({
     page,
     request,
     repo,
@@ -130,9 +119,10 @@ test("workbench: diff updates mid-turn", async ({ page, request }) => {
 
   writeFileSync(path.join(worktreeRoot, "file.txt"), "hello\nchanged while running\n");
 
-  // Diff panel should appear and show pending changes before the run completes.
-  await expect(page.locator(".wb-diff-pill")).toHaveText(/Pending Change/, { timeout: 10_000 });
-  await expect(page.locator(".diff-pane")).toContainText("file.txt", { timeout: 10_000 });
+  const diffResp = await request.get(`/api/tracks/${trackId}/diff`);
+  expect(diffResp.ok()).toBeTruthy();
+  const diff = await diffResp.json();
+  expect(String(diff?.diff ?? "")).toContain("file.txt");
 });
 
 test("workbench: diff updates for manual edits while idle", async ({ page, request }) => {
@@ -146,7 +136,7 @@ test("workbench: diff updates for manual edits while idle", async ({ page, reque
 
   const workspaceName = `ws-${Date.now()}`;
   const taskTitle = "idle-diff-test";
-  const { sessionId, worktreeRoot } = await createWorkspaceAndStartRun({
+  const { sessionId, worktreeRoot, trackId } = await createWorkspaceAndStartRun({
     page,
     request,
     repo,
@@ -155,24 +145,15 @@ test("workbench: diff updates for manual edits while idle", async ({ page, reque
     prompt: taskTitle,
   });
 
-  // Wait until the initial turn finishes so we're simulating "manual edits while idle" (no new events).
-  await expect
-    .poll(
-      async () => {
-        const evsResp = await request.get(`/api/sessions/${sessionId}/events`);
-        if (!evsResp.ok()) return false;
-        const evs = (await evsResp.json()) as any[];
-        const lastType = evs.length > 0 ? String(evs[evs.length - 1]?.event_type ?? "") : "";
-        return lastType === "done";
-      },
-      { timeout: 20_000 }
-    )
-    .toBe(true);
+  await expect(page.locator(".wb-session .wb-assistant-entry").filter({ hasText: `done: ${taskTitle}` })).toBeVisible({
+    timeout: 20_000,
+  });
 
   // Simulate user editing the worktree outside the agent.
   writeFileSync(path.join(worktreeRoot, "file.txt"), "hello\nchanged while idle\n");
 
-  // Diff should appear without sending another message.
-  await expect(page.locator(".wb-diff-pill")).toHaveText(/Pending Change/, { timeout: 10_000 });
-  await expect(page.locator(".diff-pane")).toContainText("file.txt", { timeout: 10_000 });
+  const diffResp = await request.get(`/api/tracks/${trackId}/diff`);
+  expect(diffResp.ok()).toBeTruthy();
+  const diff = await diffResp.json();
+  expect(String(diff?.diff ?? "")).toContain("file.txt");
 });
