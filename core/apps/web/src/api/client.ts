@@ -660,9 +660,19 @@ export const createSession = (trackId: string, provider_id: string, model_id: st
     body: JSON.stringify({ provider_id, model_id }),
   });
 
+type WorktreeFile = {
+  path: string;
+  text: string;
+};
 
 export const getWorktree = (worktreeId: string) =>
   apiAny<Worktree>(`/api/worktrees/${worktreeId}`);
+
+export const getWorktreeFile = (worktreeId: string, path: string) => {
+  const qs = new URLSearchParams();
+  qs.set("path", path);
+  return apiAny<WorktreeFile>(`/api/worktrees/${worktreeId}/file?${qs.toString()}`);
+};
 
 export const getSessionHead = (sessionId: string, limit?: number, includeEvents?: boolean) => {
   const qs = new URLSearchParams();
