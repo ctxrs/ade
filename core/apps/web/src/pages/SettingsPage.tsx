@@ -877,19 +877,23 @@ export default function SettingsPage() {
     <div className="settings-root">
       <div className="settings-shell">
         <aside className="settings-sidebar">
-          {workspaceIdFromQuery ? (
-            <button
-              type="button"
-              className="settings-back"
-              onClick={() => navigate(`/workspaces/${encodeURIComponent(workspaceIdFromQuery)}`)}
-              aria-label="Back to Workspace"
-            >
-              <span className="settings-back-arrow" aria-hidden="true">
-                ←
-              </span>
-              <span>Back to Workspace</span>
-            </button>
-          ) : null}
+          <button
+            type="button"
+            className="settings-back"
+            onClick={() =>
+              navigate(
+                workspaceIdFromQuery
+                  ? `/workspaces/${encodeURIComponent(workspaceIdFromQuery)}`
+                  : "/",
+              )
+            }
+            aria-label={workspaceIdFromQuery ? "Back to Workspace" : "Back to Home"}
+          >
+            <span className="settings-back-arrow" aria-hidden="true">
+              ←
+            </span>
+            <span>{workspaceIdFromQuery ? "Back to Workspace" : "Back to Home"}</span>
+          </button>
           <div className="settings-user settings-user-single">
             <div className="settings-user-name">Settings</div>
           </div>
