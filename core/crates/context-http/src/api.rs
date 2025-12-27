@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 use std::path::{Path as StdPath, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::body::{Body, Bytes};
 use axum::extract::ws::{Message as WsMessage, WebSocket, WebSocketUpgrade};
@@ -35,7 +36,7 @@ use crate::buffers::{
     BufferUpdateResp,
 };
 use crate::completions;
-use crate::daemon::AppState;
+use crate::daemon::{AppState, CachedDiffSummary};
 use crate::dictation_livekit;
 use crate::installer;
 use crate::installs::{InstallId, InstallInfo, InstallProgressEvent};
@@ -4494,6 +4495,14 @@ async fn get_workspace_catchup(
     })?);
 
     let limit = query.limit.unwrap_or(50);
+    let limit_i64 = i64::try_from(limit).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "limit is too large".to_string(),
+            }),
+        )
+    })?;
     let include_archived = parse_boolish_flag(query.include_archived.as_deref(), "include_archived")
         .map_err(|msg| (StatusCode::BAD_REQUEST, Json(ApiErrorResp { error: msg })))?;
     let archived_only = parse_boolish_flag(query.archived_only.as_deref(), "archived_only")
@@ -4529,7 +4538,7 @@ async fn get_workspace_catchup(
     } else {
         state
             .store
-            .list_workspace_catchup_page(workspace_id, active_cursor, limit, false)
+            .list_workspace_catchup_page(workspace_id, active_cursor, limit_i64, false)
             .await
             .map_err(|e| {
                 (
@@ -4552,7 +4561,7 @@ async fn get_workspace_catchup(
     let archived_page = if include_archived {
         let (mut archived_tasks, archived_next) = state
             .store
-            .list_workspace_catchup_page(workspace_id, archived_cursor, limit, true)
+            .list_workspace_catchup_page(workspace_id, archived_cursor, limit_i64, true)
             .await
             .map_err(|e| {
                 (
