@@ -4273,6 +4273,30 @@ button.linklike:hover {
   gap: 8px;
 }
 
+.settings-harness-logo,
+.settings-harness-logo-fallback {
+  width: 16px;
+  height: 16px;
+  border-radius: 0;
+  display: block;
+  flex: 0 0 auto;
+}
+
+.settings-harness-logo {
+  object-fit: contain;
+}
+
+.settings-harness-logo-fallback {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.settings-harness-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .settings-harness-actions {
   gap: 8px;
 }

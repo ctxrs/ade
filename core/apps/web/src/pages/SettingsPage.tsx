@@ -28,6 +28,7 @@ import {
   desktopUpdateEditorSettings,
   isDesktopApp,
 } from "../utils/desktop";
+import { HARNESS_CATALOG, type HarnessCatalogEntry } from "../utils/harnessCatalog";
 
 const MODEL_OPTIONS: Array<{ value: string; label: string }> = [
   { value: "auto", label: "Default (Deepgram Nova-3)" },
@@ -790,7 +791,16 @@ export default function SettingsPage() {
     if (active === "agent_harnesses") {
       const anyWorkspace = workspaces.length > 0;
       const visibleProviders = providers.filter((p) => p.details?.ui_hidden !== "true").slice();
-      visibleProviders.sort((a, b) => a.provider_id.localeCompare(b.provider_id));
+      const providersById = new Map<string, ProviderStatus>(visibleProviders.map((p) => [p.provider_id, p]));
+
+      const order = new Map<string, number>(HARNESS_CATALOG.map((h, idx) => [h.id, idx]));
+      const curated = HARNESS_CATALOG.filter((h) => providersById.has(h.id));
+      const extras: HarnessCatalogEntry[] = visibleProviders
+        .filter((p) => !order.has(p.provider_id))
+        .map((p) => ({ id: p.provider_id, label: p.provider_id, logoSrc: "" }))
+        .sort((a, b) => a.id.localeCompare(b.id));
+
+      const harnesses = [...curated, ...extras];
 
       return (
         <>
@@ -829,8 +839,11 @@ export default function SettingsPage() {
 
           <div className="settings-card settings-harness-list">
             <div className="settings-card-rows">
-              {visibleProviders.map((p) => {
-                const id = p.provider_id;
+              {harnesses.map((h) => {
+                const id = h.id;
+                const p = providersById.get(id);
+                if (!p) return null;
+
                 const installed = p.installed === true && p.health === "ok";
                 const installSupported = p.details?.install_supported === "true";
                 const installUi = installs[id];
@@ -864,7 +877,16 @@ export default function SettingsPage() {
                   <div key={id} className={`settings-row settings-harness-row ${installed ? "" : "settings-harness-row-disabled"}`}>
                     <div className="settings-row-left">
                       <div className="settings-row-title settings-harness-title">
-                        {p.provider_id}
+                        {h.logoSrc ? (
+                          <img
+                            className={`settings-harness-logo ${h.invertInDark ? "wb-invert" : ""}`}
+                            src={h.logoSrc}
+                            alt=""
+                          />
+                        ) : (
+                          <span className="settings-harness-logo-fallback" aria-hidden="true" />
+                        )}
+                        <span className="settings-harness-name">{h.label}</span>
                         {statusPill ? <span className="settings-harness-status">{statusPill}</span> : null}
                       </div>
                       <div className="settings-row-desc">
@@ -927,7 +949,7 @@ export default function SettingsPage() {
                   </div>
                 );
               })}
-              {visibleProviders.length === 0 ? <div className="settings-empty">No harnesses.</div> : null}
+              {harnesses.length === 0 ? <div className="settings-empty">No harnesses.</div> : null}
             </div>
           </div>
 
