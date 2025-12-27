@@ -275,6 +275,8 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
         )
         .route("/api/sessions/:id/model", post(set_session_model))
         .route("/api/sessions/:id/mode", post(set_session_mode))
+        .route("/api/sessions/:id/head", get(get_session_head))
+        .route("/api/sessions/:id/history", get(get_session_history))
         .route("/api/sessions/:id/turns", get(list_session_turns))
         .route(
             "/api/sessions/:id/turns/:turn_id/tools",
@@ -5558,6 +5560,56 @@ async fn list_session_turns(
         );
     }
     out
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct SessionHeadQuery {
+    limit: Option<u32>,
+    include_events: Option<String>,
+}
+
+async fn get_session_head(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Query(q): Query<SessionHeadQuery>,
+) -> Result<Json<SessionHead>, StatusCode> {
+    let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
+    let limit = q.limit.unwrap_or(60);
+    let include_events = parse_boolish_flag(q.include_events.as_deref(), "include_events")
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    match state
+        .store
+        .get_session_head(session_id, limit, include_events)
+        .await
+    {
+        Ok(Some(head)) => Ok(Json(head)),
+        Ok(None) => Err(StatusCode::NOT_FOUND),
+        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+    }
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct SessionHistoryQuery {
+    before_seq: Option<i64>,
+    limit: Option<u32>,
+}
+
+async fn get_session_history(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Query(q): Query<SessionHistoryQuery>,
+) -> Result<Json<SessionHistoryPage>, StatusCode> {
+    let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
+    let limit = q.limit.unwrap_or(60);
+    match state
+        .store
+        .get_session_history_page(session_id, q.before_seq, limit)
+        .await
+    {
+        Ok(Some(page)) => Ok(Json(page)),
+        Ok(None) => Err(StatusCode::NOT_FOUND),
+        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+    }
 }
 
 async fn list_session_turn_tools(
