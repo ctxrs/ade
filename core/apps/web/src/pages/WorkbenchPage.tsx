@@ -2151,12 +2151,6 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
         </div>
 
         <div className="wb-sidebar-bottom">
-          <Link className="wb-link" to="/providers" title="Providers">
-            Providers
-          </Link>
-          <Link className="wb-link" to="/diagnostics" title="Diagnostics">
-            Diagnostics
-          </Link>
         </div>
       </div>
 
