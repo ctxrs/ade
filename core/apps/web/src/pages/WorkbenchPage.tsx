@@ -18,33 +18,25 @@ import {
   Settings,
 } from "lucide-react";
 import {
-  DictationSettings,
-  EditPlanSummary,
   InstallInfo,
-  LspStatus,
   MessageAttachment,
   ProviderOptions,
   ProviderStatus,
-  Worktree,
   Workspace,
   archiveTask,
   applyTrackDiffPatch,
-  discardEditPlan,
   createSession,
   createTask,
   createTrack,
   deleteTask,
   getDaemonBaseUrl,
   getInstall,
-  getLspStatus,
   getProviderOptions,
-  getSettings,
   getWorktree,
   getWorkspace,
   idToString,
   installAllProviders,
   installProvider,
-  listEditPlansForTrack,
   listProviders,
   markTaskRead as markTaskReadApi,
   markTaskUnread as markTaskUnreadApi,
@@ -55,8 +47,9 @@ import {
   verifyProviderForWorkspace,
 } from "../api/client";
 import { useSessionCacheSnapshot, useSessionEntry, useSessionSupervisor } from "../state/sessionSupervisor";
+import { useSettingsSnapshot } from "../state/settingsStore";
+import { loadWorktreeV1, saveWorktreeV1 } from "../state/uiStateStore";
 import { DiffReviewPane } from "../components/DiffReviewPane";
-import { EditPlanReviewPane } from "../components/EditPlanReviewPane";
 import { SessionView, buildWorkbenchThreadViewModel } from "./SessionPage";
 import { HARNESS_CATALOG } from "../utils/harnessCatalog";
 import { WorkbenchComposer, type DraftTrack, type WorkbenchEnvTarget, type WorkbenchModeId } from "../components/WorkbenchComposer";
@@ -274,9 +267,6 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const [convoMenu, setConvoMenu] = useState<{ style: React.CSSProperties } | null>(null);
   const convoMenuRef = useRef<HTMLDivElement | null>(null);
 
-  const [activeWorktree, setActiveWorktree] = useState<Worktree | null>(null);
-  const editPlansAbortRef = useRef<AbortController | null>(null);
-  const editPlansLoadSeqRef = useRef(0);
 
   const focusNewTask = useCallback(() => {
     workbenchStore.focusNewTask();
@@ -301,7 +291,8 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const [dropActive, setDropActive] = useState(false);
   const dropHideTimerRef = useRef<number | null>(null);
 
-  const [dictationSettings, setDictationSettings] = useState<DictationSettings | null>(null);
+  const settingsSnapshot = useSettingsSnapshot();
+  const dictationSettings = settingsSnapshot.settings?.dictation ?? null;
   const [dictationRecording, setDictationRecording] = useState(false);
   const [dictationError, setDictationError] = useState<string | null>(null);
   const dictationWsRef = useRef<WebSocket | null>(null);
@@ -324,10 +315,6 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const dictationTranscriptMsgsRef = useRef(0);
 
   const [diffWidth, setDiffWidth] = useState(480);
-  const [reviewTab, setReviewTab] = useState<"git" | "lsp">("git");
-  const [editPlans, setEditPlans] = useState<EditPlanSummary[]>([]);
-  const [activeEditPlanId, setActiveEditPlanId] = useState<string | null>(null);
-  const [lspStatus, setLspStatus] = useState<LspStatus | null>(null);
 
   useEffect(() => {
     document.documentElement.classList.add("wb-no-scroll");
@@ -421,18 +408,6 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     };
   }, [convoMenu]);
 
-  useEffect(() => {
-    let cancelled = false;
-    getSettings()
-      .then((s) => {
-        if (cancelled) return;
-        setDictationSettings(s.dictation ?? null);
-      })
-      .catch(() => { });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   useEffect(() => {
     if (useMultipleAgents) return;
@@ -458,7 +433,6 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     if (!workspaceId) return;
     getWorkspace(workspaceId).then(setWorkspace).catch(() => setWorkspace(null));
     listProviders().then(setProviders).catch(() => setProviders([]));
-    getLspStatus().then(setLspStatus).catch(() => setLspStatus(null));
   }, [workspaceId]);
 
   const attachProviderInstall = useCallback((providerId: string, installId: string) => {
@@ -745,14 +719,33 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     return ids.map((s) => s.id).slice(0, 20);
   }, [activeTaskSessionIds, tasksById, workspaceCatchup.activeIds]);
 
+  const diffPrefetchTrackIds = useMemo(() => {
+    const out = new Set<string>();
+    for (const summary of trackSummaries) {
+      const trackId = idToString(summary.track.id);
+      if (trackId) out.add(trackId);
+    }
+    const warmSet = new Set(warmSessionIds);
+    for (const taskId of workspaceCatchup.activeIds) {
+      const task = tasksById[taskId];
+      if (!task) continue;
+      for (const summary of task.tracks) {
+        const trackId = idToString(summary.track.id);
+        if (!trackId) continue;
+        for (const sess of summary.sessions) {
+          const sid = idToString(sess.session.id);
+          if (!sid || !warmSet.has(sid)) continue;
+          out.add(trackId);
+        }
+      }
+    }
+    return Array.from(out);
+  }, [trackSummaries, warmSessionIds, tasksById, workspaceCatchup.activeIds]);
+
   useEffect(() => {
     if (!activeTaskId) {
-      setEditPlans([]);
-      setActiveEditPlanId(null);
       return;
     }
-    setEditPlans([]);
-    setActiveEditPlanId(null);
     const trackIds = tracks.map((tr) => idToString(tr.id)).filter(Boolean);
     if (trackIds.length === 0) {
       workbenchStore.setActiveTrackForActiveTask(null);
@@ -770,35 +763,10 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   }, [supervisor, warmSessionIds]);
 
   useEffect(() => {
-    editPlansAbortRef.current?.abort();
-    const controller = new AbortController();
-    editPlansAbortRef.current = controller;
-    const seq = ++editPlansLoadSeqRef.current;
+    if (diffPrefetchTrackIds.length === 0) return;
+    supervisor.prefetchDiffs(diffPrefetchTrackIds);
+  }, [supervisor, diffPrefetchTrackIds]);
 
-    if (!activeTrackId) {
-      setEditPlans([]);
-      setActiveEditPlanId(null);
-      controller.abort();
-      return;
-    }
-    setEditPlans([]);
-    setActiveEditPlanId(null);
-    listEditPlansForTrack(activeTrackId, controller.signal)
-      .then((plans) => {
-        if (controller.signal.aborted) return;
-        if (seq !== editPlansLoadSeqRef.current) return;
-        setEditPlans(plans);
-        const first = plans[0] ? idToString(plans[0].id) : null;
-        setActiveEditPlanId((prev) => (prev && plans.some((p) => idToString(p.id) === prev) ? prev : first));
-      })
-      .catch((e: any) => {
-        if (e?.name === "AbortError") return;
-        setEditPlans([]);
-        setActiveEditPlanId(null);
-      });
-
-    return () => controller.abort();
-  }, [activeTrackId]);
 
   const normalizedTaskQuery = taskQuery.trim().toLowerCase();
   const filteredActiveIds = useMemo(() => {
@@ -1263,43 +1231,80 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const activeTrackDiff = activeEntry?.diff ?? "";
   const activeTrackIdFromSession = activeEntry?.session ? idToString(activeEntry.session.track_id) : "";
   const activeWorktreeId = activeEntry?.session ? idToString(activeEntry.session.worktree_id) : "";
+  const [worktreePaths, setWorktreePaths] = useState<Record<string, string>>({});
+  const worktreeRequestsRef = useRef<Record<string, Promise<string | null>>>({});
+  const activeWorktreePath = activeWorktreeId ? worktreePaths[activeWorktreeId] ?? "" : "";
+
+  const rememberWorktreePath = useCallback((worktreeId: string, rootPath: string) => {
+    if (!worktreeId || !rootPath) return;
+    setWorktreePaths((prev) => (prev[worktreeId] === rootPath ? prev : { ...prev, [worktreeId]: rootPath }));
+  }, []);
+
+  const ensureWorktreePath = useCallback(
+    async (worktreeId: string) => {
+      if (!worktreeId) return null;
+      if (worktreePaths[worktreeId]) return worktreePaths[worktreeId];
+      const existing = worktreeRequestsRef.current[worktreeId];
+      if (existing) return existing;
+
+      const task = (async () => {
+        const cached = await loadWorktreeV1(worktreeId);
+        if (cached?.rootPath) {
+          rememberWorktreePath(worktreeId, cached.rootPath);
+          return cached.rootPath;
+        }
+        const worktree = await getWorktree(worktreeId);
+        const rootPath = String(worktree?.root_path ?? "");
+        if (rootPath) {
+          rememberWorktreePath(worktreeId, rootPath);
+          await saveWorktreeV1(worktreeId, rootPath);
+          return rootPath;
+        }
+        return null;
+      })().finally(() => {
+        delete worktreeRequestsRef.current[worktreeId];
+      });
+
+      worktreeRequestsRef.current[worktreeId] = task;
+      return task;
+    },
+    [rememberWorktreePath, worktreePaths],
+  );
 
   useEffect(() => {
-    if (!activeWorktreeId) {
-      setActiveWorktree(null);
-      return;
+    if (!activeWorktreeId) return;
+    void ensureWorktreePath(activeWorktreeId);
+  }, [activeWorktreeId, ensureWorktreePath]);
+
+  const worktreePrefetchIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const taskId of workspaceCatchup.activeIds) {
+      const task = tasksById[taskId];
+      if (!task) continue;
+      for (const summary of task.tracks) {
+        const worktreeId = idToString(summary.track.worktree_id);
+        if (worktreeId) ids.add(worktreeId);
+      }
     }
-    let cancelled = false;
-    getWorktree(activeWorktreeId)
-      .then((wt) => {
-        if (cancelled) return;
-        setActiveWorktree(wt);
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setActiveWorktree(null);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [activeWorktreeId]);
+    return Array.from(ids);
+  }, [tasksById, workspaceCatchup.activeIds]);
+
+  useEffect(() => {
+    if (worktreePrefetchIds.length === 0) return;
+    for (const worktreeId of worktreePrefetchIds) {
+      void ensureWorktreePath(worktreeId);
+    }
+  }, [ensureWorktreePath, worktreePrefetchIds]);
 
   const hasDiff = activeTrackDiff.trim().length > 0;
-  const hasEditPlans = editPlans.some((p) => (p.diff ?? "").trim().length > 0);
-  const showReviewPane = hasDiff || hasEditPlans;
+  const showReviewPane = hasDiff;
   const diffFileCount = useMemo(() => {
     if (!hasDiff) return 0;
     const m = activeTrackDiff.match(/^diff --git /gm);
     return m ? m.length : 1;
   }, [activeTrackDiff, hasDiff]);
 
-  useEffect(() => {
-    setReviewTab((prev) => {
-      if (prev === "git" && !hasDiff && hasEditPlans) return "lsp";
-      if (prev === "lsp" && !hasEditPlans && hasDiff) return "git";
-      return prev;
-    });
-  }, [hasDiff, hasEditPlans]);
+
 
   const providerOptionsInFlightRef = useRef<Record<string, Promise<ProviderOptions | undefined>>>({});
 
@@ -1568,9 +1573,9 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
           firstSessionId = sessionId;
           focusTask(taskId, trackId, sessionId);
         }
-        supervisor.refreshSession(sessionId, { watchDiff: true });
+        supervisor.refreshSession(sessionId, { watchDiff: false });
         await postMessage(sessionId, prompt, "immediate", draftAttachments);
-        supervisor.refreshSession(sessionId, { watchDiff: true });
+        supervisor.refreshSession(sessionId, { watchDiff: false });
       }
 
       setNewTaskDraft({ text: "", modeId: "default" });
@@ -1759,7 +1764,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     })();
 
     const age = formatRelativeAgeShort(lastIso) || "Now";
-    const worktreePath = sess?.env_target === "worktree" ? String(activeWorktree?.root_path ?? "") : "";
+    const worktreePath = sess?.env_target === "worktree" ? String(activeWorktreePath ?? "") : "";
     const worktreeSlug = worktreePath ? lastPathSegment(worktreePath) : "";
 
     return {
@@ -1772,7 +1777,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       worktreePath,
       canCopyWorktree: Boolean(worktreePath),
     };
-  }, [activeEntry, activeTask?.title, activeWorktree?.root_path, tracks.length]);
+  }, [activeEntry, activeTask?.title, activeWorktreePath, tracks.length]);
 
   const singleTrackHeaderForRender = useMemo(() => {
     if (singleTrackHeader) return singleTrackHeader;
@@ -1952,25 +1957,6 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       window.alert(e?.message ?? "Failed to export conversation.");
     }
   }, [activeEntry, singleTrackHeader?.title, singleTrackHeader?.worktreePath]);
-  const activeEditPlan = useMemo(() => {
-    if (!activeEditPlanId) return null;
-    return editPlans.find((p) => idToString(p.id) === activeEditPlanId) ?? null;
-  }, [activeEditPlanId, editPlans]);
-
-  const lspMissing = useMemo(() => {
-    const servers = lspStatus?.servers ?? [];
-    return servers.filter((s) => !s.found);
-  }, [lspStatus]);
-
-  useEffect(() => {
-    if (!activeEditPlanId) {
-      setActiveEditPlanId(editPlans[0] ? idToString(editPlans[0].id) : null);
-      return;
-    }
-    if (!editPlans.some((p) => idToString(p.id) === activeEditPlanId)) {
-      setActiveEditPlanId(editPlans[0] ? idToString(editPlans[0].id) : null);
-    }
-  }, [activeEditPlanId, editPlans]);
 
   useEffect(() => {
     const el = newComposerRef.current;
@@ -2003,24 +1989,6 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     showDropOverlay,
     urlToImageFile,
   ]);
-
-  const onEditPlanUpdated = (updated: EditPlanSummary) => {
-    const pid = idToString(updated.id);
-    setEditPlans((prev) => {
-      const has = prev.some((p) => idToString(p.id) === pid);
-      const next = (has ? prev.map((p) => (idToString(p.id) === pid ? updated : p)) : [updated, ...prev]).filter(
-        (p) => (p.diff ?? "").trim().length > 0,
-      );
-      return next;
-    });
-  };
-
-  const discardActiveEditPlan = async () => {
-    if (!activeEditPlan) return;
-    const pid = idToString(activeEditPlan.id);
-    await discardEditPlan(pid);
-    setEditPlans((prev) => prev.filter((p) => idToString(p.id) !== pid));
-  };
 
   const rootStyle = useMemo(() => {
     const max = Math.max(170, window.innerWidth - 240);
@@ -2907,55 +2875,22 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
                 <div className="wb-diff" style={{ width: diffWidth }}>
                   <div className="wb-diff-top">
                     <div className="wb-diff-tabs">
-                      {hasDiff && (
-                        <button
-                          type="button"
-                          className={`wb-diff-tab wb-diff-tab-button ${reviewTab === "git" ? "wb-diff-tab-active" : ""}`}
-                          onClick={() => setReviewTab("git")}
-                        >
-                          All Changes
-                        </button>
-                      )}
-                      {hasEditPlans && (
-                        <button
-                          type="button"
-                          className={`wb-diff-tab wb-diff-tab-button ${reviewTab === "lsp" ? "wb-diff-tab-active" : ""}`}
-                          onClick={() => setReviewTab("lsp")}
-                        >
-                          LSP Plans
-                        </button>
-                      )}
-                      {reviewTab === "git" && hasDiff && (
-                        <div className="wb-diff-pill">
-                          {diffFileCount} Pending Change{diffFileCount === 1 ? "" : "s"}
-                        </div>
-                      )}
-                      {reviewTab === "lsp" && hasEditPlans && (
-                        <div className="wb-diff-pill">
-                          {editPlans.length} Plan{editPlans.length === 1 ? "" : "s"}
-                        </div>
-                      )}
+                      <div className="wb-diff-tab wb-diff-tab-active">All Changes</div>
+                      <div className="wb-diff-pill">
+                        {diffFileCount} Pending Change{diffFileCount === 1 ? "" : "s"}
+                      </div>
                     </div>
                     <div className="wb-diff-actions">
-                      {reviewTab === "git" && hasDiff && (
-                        <>
-                          <button type="button" className="wb-primary" onClick={approveAll}>
-                            Approve
-                          </button>
-                          <button type="button" className="wb-small" onClick={rejectAll}>
-                            Reject
-                          </button>
-                        </>
-                      )}
-                      {reviewTab === "lsp" && hasEditPlans && activeEditPlan && (
-                        <button type="button" className="wb-small" onClick={discardActiveEditPlan}>
-                          Discard Plan
-                        </button>
-                      )}
+                      <button type="button" className="wb-primary" onClick={approveAll}>
+                        Approve
+                      </button>
+                      <button type="button" className="wb-small" onClick={rejectAll}>
+                        Reject
+                      </button>
                     </div>
                   </div>
 
-                  {reviewTab === "git" && hasDiff && (
+                  {hasDiff && (
                     <DiffReviewPane
                       diff={activeTrackDiff}
                       trackId={activeTrackIdFromSession}
@@ -2970,69 +2905,6 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
                         reject: "Reject",
                       }}
                     />
-                  )}
-
-                  {reviewTab === "lsp" && hasEditPlans && (
-                    <div className="wb-editplans">
-                      {lspStatus && (!lspStatus.enabled || !lspStatus.edit_plans_enabled || lspMissing.length > 0) && (
-                        <div className="banner" style={{ margin: "12px 12px 0" }}>
-                          {!lspStatus.enabled && (
-                            <div>
-                              LSP is disabled (set <code>CONTEXT_LSP_ENABLED=1</code>).
-                            </div>
-                          )}
-                          {lspStatus.enabled && !lspStatus.edit_plans_enabled && (
-                            <div>
-                              LSP edit plans are disabled (set{" "}
-                              <code>CONTEXT_LSP_EDITPLANS_ENABLED=1</code>).
-                            </div>
-                          )}
-                          {lspMissing.length > 0 && (
-                            <div>
-                              Missing language servers:{" "}
-                              <span className="muted">{lspMissing.map((s) => s.language).join(", ")}</span>. See{" "}
-                              <Link to="/diagnostics">Diagnostics</Link> for install hints.
-                            </div>
-                          )}
-                        </div>
-                      )}
-                      <div className="wb-editplans-list">
-                        {editPlans.map((p) => {
-                          const pid = idToString(p.id);
-                          const selected = pid === activeEditPlanId;
-                          return (
-                            <button
-                              key={pid}
-                              type="button"
-                              className={`wb-editplan-item ${selected ? "wb-editplan-item-active" : ""}`}
-                              onClick={() => setActiveEditPlanId(pid)}
-                            >
-                              <div className="wb-editplan-title">{p.title}</div>
-                              <div className="wb-editplan-sub">{p.remaining_hunks} hunk(s)</div>
-                            </button>
-                          );
-                        })}
-                      </div>
-                      {activeEditPlan ? (
-                        <EditPlanReviewPane
-                          plan={activeEditPlan}
-                          sessionId={activeSessionId || undefined}
-                          onPlanUpdated={onEditPlanUpdated}
-                          onFileSaved={refreshActiveDiff}
-                          labels={{
-                            title: activeEditPlan.title || "Pending LSP Changes",
-                            acceptAll: "Approve all",
-                            rejectAll: "Reject all",
-                            accept: "Approve",
-                            reject: "Reject",
-                          }}
-                        />
-                      ) : (
-                        <div className="wb-muted" style={{ padding: 12 }}>
-                          No pending LSP changes.
-                        </div>
-                      )}
-                    </div>
                   )}
                 </div>
               </>

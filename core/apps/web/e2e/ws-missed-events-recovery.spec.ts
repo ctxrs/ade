@@ -3,6 +3,7 @@ import { mkdtempSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import path from "path";
 import { execSync } from "child_process";
+import { createWorkspaceAndOpenWorkbench } from "./utils/workbench";
 
 test("workbench: recovers when workspace stream drops once", async ({ page }) => {
   // Simulate a flaky network where the workspace stream WS is dropped once.
@@ -47,15 +48,7 @@ test("workbench: recovers when workspace stream drops once", async ({ page }) =>
 
   const workspaceName = `ws-${Date.now()}`;
 
-  await page.goto("/");
-  await page.getByLabel("Root path").fill(repo);
-  await page.getByLabel("Name (optional)").fill(workspaceName);
-  await page.getByRole("button", { name: "Add workspace" }).click();
-  await page
-    .getByRole("listitem")
-    .filter({ hasText: repo })
-    .getByRole("link", { name: workspaceName })
-    .click();
+  const workspaceId = await createWorkspaceAndOpenWorkbench({ page, request: page.request, repo, workspaceName });
 
   // Choose Fake harness so the test doesn't depend on external agents.
   await page.locator(".wb-new-composer-stack").getByTitle("Harness").click();
@@ -64,8 +57,6 @@ test("workbench: recovers when workspace stream drops once", async ({ page }) =>
 
   await page.locator(".wb-new-composer-stack textarea.wb-composer-textarea").fill("hello 1");
   await page.locator(".wb-new-composer-stack button[aria-label=\"Send\"]").click();
-  const url = new URL(page.url());
-  const workspaceId = url.pathname.split("/").filter(Boolean).pop();
   expect(workspaceId).toBeTruthy();
 
   const readId = (v: any): string => {

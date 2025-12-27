@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { DictationSettings, TelemetrySettings, getSettings, updateSettings } from "../api/client";
+import { DictationSettings, TelemetrySettings } from "../api/client";
+import { useSettingsSnapshot, useSettingsStore } from "../state/settingsStore";
 
 const MODEL_OPTIONS: Array<{ value: string; label: string }> = [
   { value: "auto", label: "Default (Deepgram Nova-3)" },
@@ -21,6 +22,9 @@ export default function SettingsPage() {
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const settingsStore = useSettingsStore();
+  const settingsSnapshot = useSettingsSnapshot();
+  const initializedRef = useRef(false);
 
   const [dictationEnabled, setDictationEnabled] = useState(true);
   const [model, setModel] = useState("auto");
@@ -35,47 +39,47 @@ export default function SettingsPage() {
   const [telemetryError, setTelemetryError] = useState<string | null>(null);
 
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const s = await getSettings();
-        if (cancelled) return;
-        const d = s.dictation ?? null;
-        if (d) {
-          const normalizeModel = (m: string): string => {
-            const v = String(m || "").trim();
-            if (!v || v === "auto") return "auto";
-            if (v === "elevenlabs/scribe-v2-realtime") return "elevenlabs/scribe_v2_realtime";
-            if (v === "deepgram/flux") return "deepgram/flux-general";
-            return v;
-          };
+    const settings = settingsSnapshot.settings;
+    if (!settings || initializedRef.current) return;
 
-          setDictationEnabled(d.enabled);
-          setModel(normalizeModel(d.livekit?.model ?? "auto"));
-          setLanguage(d.livekit?.language ?? "en");
-          setBaseUrl(d.livekit?.base_url ?? "https://agent-gateway.livekit.cloud/v1");
-          setApiKey(d.livekit?.api_key ?? "");
-          setApiSecretSet(Boolean(d.livekit?.api_secret_set));
-        }
-        const t = s.telemetry ?? null;
-        if (t) {
-          setTelemetryEnabled(t.enabled);
-          setTelemetryEndpoint(t.endpoint ?? "");
-        } else {
-          setTelemetryEnabled(false);
-          setTelemetryEndpoint("");
-        }
-        setLoaded(true);
-      } catch (e: any) {
-        if (cancelled) return;
-        setError(e?.message ?? String(e));
-        setLoaded(true);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+    const d = settings.dictation ?? null;
+    if (d) {
+      const normalizeModel = (m: string): string => {
+        const v = String(m || "").trim();
+        if (!v || v === "auto") return "auto";
+        if (v === "elevenlabs/scribe-v2-realtime") return "elevenlabs/scribe_v2_realtime";
+        if (v === "deepgram/flux") return "deepgram/flux-general";
+        return v;
+      };
+
+      setDictationEnabled(d.enabled);
+      setModel(normalizeModel(d.livekit?.model ?? "auto"));
+      setLanguage(d.livekit?.language ?? "en");
+      setBaseUrl(d.livekit?.base_url ?? "https://agent-gateway.livekit.cloud/v1");
+      setApiKey(d.livekit?.api_key ?? "");
+      setApiSecretSet(Boolean(d.livekit?.api_secret_set));
+    }
+    const t = settings.telemetry ?? null;
+    if (t) {
+      setTelemetryEnabled(t.enabled);
+      setTelemetryEndpoint(t.endpoint ?? "");
+    } else {
+      setTelemetryEnabled(false);
+      setTelemetryEndpoint("");
+    }
+    initializedRef.current = true;
+    setLoaded(true);
+  }, [settingsSnapshot.settings]);
+
+  useEffect(() => {
+    if (!settingsSnapshot.loaded) return;
+    if (!initializedRef.current) {
+      setLoaded(true);
+    }
+    if (settingsSnapshot.error) {
+      setError(settingsSnapshot.error);
+    }
+  }, [settingsSnapshot.loaded, settingsSnapshot.error]);
 
   const onSaveTelemetry = async () => {
     setTelemetryError(null);
@@ -85,7 +89,7 @@ export default function SettingsPage() {
         enabled: telemetryEnabled,
         endpoint: telemetryEndpoint.trim() || telemetryEndpoint,
       };
-      await updateSettings({ telemetry: next });
+      await settingsStore.update({ telemetry: next });
     } catch (e: any) {
       setTelemetryError(e?.message ?? String(e));
     } finally {
@@ -115,7 +119,7 @@ export default function SettingsPage() {
           language: language.trim() || "en",
         },
       };
-      await updateSettings({ dictation: next });
+      await settingsStore.update({ dictation: next });
       setApiSecret("");
       setApiSecretSet(true);
     } catch (e: any) {

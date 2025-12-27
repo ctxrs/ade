@@ -3,6 +3,7 @@ import { mkdtempSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import path from "path";
 import { execSync } from "child_process";
+import { createWorkspaceAndOpenWorkbench } from "./utils/workbench";
 
 async function createWorkspaceAndStartRun(opts: {
   page: any;
@@ -14,15 +15,7 @@ async function createWorkspaceAndStartRun(opts: {
 }) {
   const { page, repo, workspaceName, taskTitle, prompt, request } = opts;
 
-  await page.goto("/");
-  await page.getByLabel("Root path").fill(repo);
-  await page.getByLabel("Name (optional)").fill(workspaceName);
-  await page.getByRole("button", { name: "Add workspace" }).click();
-  await page
-    .getByRole("listitem")
-    .filter({ hasText: repo })
-    .getByRole("link", { name: workspaceName })
-    .click();
+  const workspaceId = await createWorkspaceAndOpenWorkbench({ page, request, repo, workspaceName });
 
   // Choose Fake harness so the test doesn't depend on external agents.
   await page.locator(".wb-new-composer-stack").getByTitle("Harness").click();
@@ -42,15 +35,11 @@ async function createWorkspaceAndStartRun(opts: {
     return "";
   };
 
-  let workspaceId = "";
   await expect
     .poll(
       async () => {
-        const workspacesResp = await request.get("/api/workspaces");
+        const workspacesResp = await request.get(`/api/workspaces/${workspaceId}`);
         if (!workspacesResp.ok()) return "";
-        const workspaces = (await workspacesResp.json()) as any[];
-        const ws = workspaces.find((w) => path.resolve(String(w?.root_path ?? "")) === path.resolve(repo));
-        workspaceId = readId(ws?.id);
         return workspaceId;
       },
       { timeout: 20_000 }

@@ -6,7 +6,6 @@ import { Link, useParams } from "react-router-dom";
 import {
   cancelSession,
   deleteMessage,
-  DictationSettings,
   getDaemonBaseUrl,
   blobUrl,
   Message,
@@ -19,13 +18,13 @@ import {
   setSessionMode,
   setSessionModel,
   authenticateSession,
-  getSettings,
   idToString,
   interruptSession,
   submitAskUserQuestion,
   uploadBlob,
 } from "../api/client";
 import { useOpenSession, useSessionCacheSnapshot, useSessionEntry, useSessionSupervisor } from "../state/sessionSupervisor";
+import { useSettingsSnapshot } from "../state/settingsStore";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { DiffReviewPane } from "../components/DiffReviewPane";
@@ -250,7 +249,7 @@ export function SessionView({
     [onScrollStateChange],
   );
 
-  useOpenSession(id ?? "", { watchDiff: true });
+  useOpenSession(id ?? "", { watchDiff: showDiffPane });
 
   useEffect(() => {
     didInitialScrollRef.current = false;
@@ -268,7 +267,8 @@ export function SessionView({
     }
   }, [id]);
 
-  const [dictationSettings, setDictationSettings] = useState<DictationSettings | null>(null);
+  const settingsSnapshot = useSettingsSnapshot();
+  const dictationSettings = settingsSnapshot.settings?.dictation ?? null;
   const [dictationRecording, setDictationRecording] = useState(false);
   const [dictationError, setDictationError] = useState<string | null>(null);
   const dictationWsRef = useRef<WebSocket | null>(null);
@@ -334,18 +334,6 @@ export function SessionView({
     return null;
   }, [eventsKey, optimisticAskAnswered]);
 
-  useEffect(() => {
-    let cancelled = false;
-    getSettings()
-      .then((s) => {
-        if (cancelled) return;
-        setDictationSettings(s.dictation ?? null);
-      })
-      .catch(() => { });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   const stopDictation = useCallback(async (): Promise<string> => {
     const ws = dictationWsRef.current;
@@ -686,17 +674,6 @@ export function SessionView({
   const threadActivityCount = variant === "workbench" ? wbListItems.length : threadItems.length;
 
   useEffect(() => {
-    if (!id || variant !== "workbench") return;
-    for (const turn of turns) {
-      const turnId = idToString(turn.turn_id);
-      if (!turnId) continue;
-      if ((turn.tool_total ?? 0) <= 0) continue;
-      if (turnToolsByTurnId[turnId]) continue;
-      supervisor.loadTurnTools(id, turnId);
-    }
-  }, [id, variant, turnsKey, turnToolsByTurnId, supervisor, turns]);
-
-  useEffect(() => {
     if (!atBottom && threadActivityCount > 0) {
       setHasNewActivity(true);
     }
@@ -713,7 +690,7 @@ export function SessionView({
       await postMessage(id, text, undefined, draftAttachments);
       // Refresh Messages immediately so user turns render without waiting for a `done` event.
       await supervisor.refreshQueue(id);
-      supervisor.refreshSession(id, { watchDiff: true });
+      supervisor.refreshSession(id, { watchDiff: showDiffPane });
       setInput("");
       setDraftAttachments([]);
       try {

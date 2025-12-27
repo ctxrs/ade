@@ -2,6 +2,11 @@ import { render, screen } from "@testing-library/react";
 import { vi } from "vitest";
 import App from "./App";
 
+vi.mock("./state/uiStateStore", () => ({
+  loadSettingsV1: vi.fn(async () => null),
+  saveSettingsV1: vi.fn(async () => {}),
+}));
+
 beforeEach(() => {
   (globalThis as any).fetch = vi.fn(async () => {
     return new Response(JSON.stringify([]), {

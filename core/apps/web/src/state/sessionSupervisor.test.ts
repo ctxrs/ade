@@ -16,6 +16,9 @@ vi.mock("../api/client", () => {
 vi.mock("./uiStateStore", () => ({
   loadSessionHeadV1: vi.fn(async () => null),
   saveSessionHeadV1: vi.fn(async () => {}),
+  loadTrackDiffV1: vi.fn(async () => null),
+  saveTrackDiffV1: vi.fn(async () => {}),
+  deleteTrackDiffV1: vi.fn(async () => {}),
 }));
 
 import { getSessionHead } from "../api/client";
