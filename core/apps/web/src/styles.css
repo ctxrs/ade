@@ -3921,8 +3921,7 @@ button.linklike:hover {
 }
 
 .settings-shell {
-  max-width: 1200px;
-  margin: 0 auto;
+  width: 100%;
   display: grid;
   grid-template-columns: 280px 1fr;
   min-height: 100vh;
@@ -3934,46 +3933,34 @@ button.linklike:hover {
   border-right: 1px solid rgba(255, 255, 255, 0.06);
 }
 
-.settings-user {
+.settings-sidebar-header {
+  padding: 4px 10px 8px;
   display: grid;
-  grid-template-columns: 28px 1fr;
+  gap: 6px;
+}
+
+.settings-backlink {
+  display: inline-flex;
   align-items: center;
-  gap: 10px;
-  padding: 8px 10px;
-  border-radius: 10px;
-}
-
-.settings-avatar {
-  width: 28px;
-  height: 28px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.08);
-  display: grid;
-  place-items: center;
-  color: rgba(255, 255, 255, 0.75);
-  font-weight: 600;
+  gap: 6px;
   font-size: 12px;
-}
-
-.settings-user-meta {
-  display: grid;
-  gap: 2px;
-}
-
-.settings-user-name {
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.86);
-  line-height: 1.1;
-}
-
-.settings-user-sub {
-  font-size: 11px;
   color: rgba(255, 255, 255, 0.45);
-  line-height: 1.1;
+  text-decoration: none;
+}
+
+.settings-backlink:hover {
+  color: rgba(255, 255, 255, 0.75);
+  text-decoration: underline;
+}
+
+.settings-sidebar-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.9);
 }
 
 .settings-search {
-  margin-top: 10px;
+  margin-top: 8px;
   padding: 0 6px;
 }
 
@@ -4030,8 +4017,14 @@ button.linklike:hover {
 }
 
 .settings-main {
-  padding: 22px 26px;
   background: #1e1e1e;
+  display: flex;
+  justify-content: center;
+}
+
+.settings-main-inner {
+  width: min(980px, 100%);
+  padding: 22px 26px;
 }
 
 .settings-main-header {

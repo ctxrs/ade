@@ -2018,7 +2018,12 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
               {debugIdLabel}
             </button>
           )}
-          <Link className="wb-topbar-icon" to="/settings" title="Settings" aria-label="Settings">
+          <Link
+            className="wb-topbar-icon"
+            to={`/settings?ws=${encodeURIComponent(String(workspaceId))}`}
+            title="Settings"
+            aria-label="Settings"
+          >
             <Settings size={14} />
           </Link>
         </div>

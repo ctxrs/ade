@@ -1,4 +1,5 @@
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { Link, useLocation } from "react-router-dom";
 import {
   DictationSettings,
   InstallInfo,
@@ -157,6 +158,7 @@ function Card({ children, title }: { title?: string; children: ReactNode }) {
 }
 
 export default function SettingsPage() {
+  const location = useLocation();
   const [active, setActive] = useState<SectionId>(() => sectionFromHash(window.location.hash) ?? "general");
   const [query, setQuery] = useState("");
 
@@ -620,6 +622,15 @@ export default function SettingsPage() {
     return all.filter((s) => s.label.toLowerCase().includes(q));
   }, [query]);
 
+  const backLink = useMemo(() => {
+    const ws = new URLSearchParams(location.search).get("ws");
+    if (ws && ws.trim()) {
+      const id = ws.trim();
+      return { to: `/workspaces/${encodeURIComponent(id)}`, label: "← Back to Workspace" };
+    }
+    return { to: "/", label: "← Back to Home" };
+  }, [location.search]);
+
   const anySaving = saving || editorSaving;
 
   const Main = () => {
@@ -944,14 +955,11 @@ export default function SettingsPage() {
     <div className="settings-root">
       <div className="settings-shell">
         <aside className="settings-sidebar">
-          <div className="settings-user">
-            <div className="settings-avatar" aria-hidden="true">
-              C
-            </div>
-            <div className="settings-user-meta">
-              <div className="settings-user-name">Context</div>
-              <div className="settings-user-sub">Settings</div>
-            </div>
+          <div className="settings-sidebar-header">
+            <Link className="settings-backlink" to={backLink.to}>
+              {backLink.label}
+            </Link>
+            <div className="settings-sidebar-title">Settings</div>
           </div>
 
           <div className="settings-search">
@@ -1003,13 +1011,15 @@ export default function SettingsPage() {
         </aside>
 
         <main className="settings-main">
-          <div className="settings-main-header">
-            <div className="settings-main-title">{headerLabel}</div>
-            <div className="settings-main-sub">{anySaving ? "Saving…" : saveError ? "Not saved" : " "}</div>
-          </div>
+          <div className="settings-main-inner">
+            <div className="settings-main-header">
+              <div className="settings-main-title">{headerLabel}</div>
+              <div className="settings-main-sub">{anySaving ? "Saving…" : saveError ? "Not saved" : " "}</div>
+            </div>
 
-          {saveError ? <div className="settings-banner settings-banner-error">{saveError}</div> : null}
-          <Main />
+            {saveError ? <div className="settings-banner settings-banner-error">{saveError}</div> : null}
+            <Main />
+          </div>
         </main>
       </div>
     </div>
