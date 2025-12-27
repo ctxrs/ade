@@ -7,7 +7,6 @@ import WorkspacesPage from "./pages/WorkspacesPage";
 import WorkbenchPage from "./pages/WorkbenchPage";
 import SessionPage from "./pages/SessionPage";
 import CursorDiffDemoPage from "./pages/CursorDiffDemoPage";
-import ProvidersPage from "./pages/ProvidersPage";
 import DiagnosticsPage from "./pages/DiagnosticsPage";
 import SettingsPage from "./pages/SettingsPage";
 import { SessionSupervisorProvider } from "./state/sessionSupervisor";
@@ -41,7 +40,6 @@ export default function App() {
             <Route path="/app-settings" element={<AppSettingsPage />} />
             <Route path="/workspaces" element={<WorkspacesPage />} />
             <Route path="/settings" element={<SettingsPage />} />
-            <Route path="/providers" element={<ProvidersPage />} />
             <Route path="/diagnostics" element={<DiagnosticsPage />} />
             <Route path="/workspaces/:id" element={<WorkbenchPage />} />
             <Route path="/sessions/:id" element={<SessionPage />} />

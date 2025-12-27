@@ -38,7 +38,7 @@ export default function WorkspacesPage() {
         <h1 style={{ marginRight: "auto" }}>Workspaces</h1>
         <Link to="/">Launcher</Link>
         <Link to="/app-settings" style={{ marginLeft: 12 }}>Settings</Link>
-        <Link to="/providers" style={{ marginLeft: 12 }}>Providers</Link>
+        <Link to="/settings#agent_harnesses" style={{ marginLeft: 12 }}>Agent Harnesses</Link>
       </div>
 
       {providers.some(
@@ -46,7 +46,7 @@ export default function WorkspacesPage() {
           p.details?.install_supported === "true" && (!p.installed || p.health !== "ok"),
       ) && (
         <div className="banner">
-          Some providers are not ready. <Link to="/providers">Install or update providers</Link>.
+          Some harnesses are not ready. <Link to="/settings#agent_harnesses">Install or update harnesses</Link>.
         </div>
       )}
 
