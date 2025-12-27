@@ -157,6 +157,7 @@ export type SessionViewVariant = "legacy" | "workbench";
 
 export function SessionView({
   sessionId,
+  isActive = true,
   variant,
   showDiffPane,
   draft,
@@ -168,6 +169,7 @@ export function SessionView({
   onScrollStateChange,
 }: {
   sessionId: string;
+  isActive?: boolean;
   variant: SessionViewVariant;
   showDiffPane: boolean;
   draft?: { text: string; modeId: WorkbenchModeId } | null;
@@ -175,8 +177,20 @@ export function SessionView({
   onDraftChange?: ((text: string) => void) | null;
   onDraftPersistNow?: (() => void | Promise<void>) | null;
   onModeChange?: ((modeId: WorkbenchModeId) => void) | null;
-  scrollState?: { stickToBottom: boolean; anchorItemId: string | null; scrollTop: number | null } | null;
-  onScrollStateChange?: ((next: { stickToBottom: boolean; anchorItemId: string | null; scrollTop: number | null }) => void) | null;
+  scrollState?: {
+    stickToBottom: boolean;
+    anchorItemId: string | null;
+    scrollTop: number | null;
+    virtuosoState?: unknown | null;
+  } | null;
+  onScrollStateChange?: ((
+    next: {
+      stickToBottom: boolean;
+      anchorItemId: string | null;
+      scrollTop: number | null;
+      virtuosoState?: unknown | null;
+    },
+  ) => void) | null;
 }) {
   const id = sessionId;
   const supervisor = useSessionSupervisor();
@@ -232,6 +246,9 @@ export function SessionView({
   const latestAnchorIdRef = useRef<string | null>(null);
   const restoringScrollRef = useRef(false);
   const dropHideTimerRef = useRef<number | null>(null);
+  const latestVirtuosoStateRef = useRef<unknown | null>(null);
+  const restoreCooldownRef = useRef<number | null>(null);
+  const forceScrollRestoreRef = useRef(false);
 
   const input = variant === "workbench" ? (draft?.text ?? "") : inputInternal;
   const setInput = useCallback(
@@ -269,7 +286,7 @@ export function SessionView({
         return;
       }
       lastScrollPersistedRef.current = next;
-      onScrollStateChange(next);
+      onScrollStateChange({ ...next, virtuosoState: latestVirtuosoStateRef.current });
     },
     [onScrollStateChange],
   );
@@ -280,6 +297,7 @@ export function SessionView({
     if (scrollPersistTimerRef.current) window.clearTimeout(scrollPersistTimerRef.current);
     scrollPersistTimerRef.current = window.setTimeout(() => {
       scrollPersistTimerRef.current = null;
+      if (!isActiveRef.current) return;
       const el = scrollerRef.current;
       if (!el) return;
       const scrollTop = el.scrollTop;
@@ -338,12 +356,13 @@ export function SessionView({
 
   useOpenSession(id ?? "", { watchDiff: true });
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     didInitialScrollRef.current = false;
     lastScrollPersistedRef.current = null;
     latestAnchorIdRef.current = null;
     userScrolledRef.current = false;
     liveScrollTopRef.current = null;
+    latestVirtuosoStateRef.current = null;
     if (scrollSyncRafRef.current != null) {
       window.cancelAnimationFrame(scrollSyncRafRef.current);
       scrollSyncRafRef.current = null;
@@ -373,8 +392,39 @@ export function SessionView({
         window.cancelAnimationFrame(scrollSyncRafRef.current);
         scrollSyncRafRef.current = null;
       }
+      if (restoreCooldownRef.current) {
+        window.clearTimeout(restoreCooldownRef.current);
+        restoreCooldownRef.current = null;
+      }
     };
   }, []);
+
+  useEffect(() => {
+    return () => {
+      if (!onScrollStateChange) return;
+      const el = scrollerRef.current;
+      if (!el) return;
+      const scrollTop = el.scrollTop;
+      const remaining = el.scrollHeight - (scrollTop + el.clientHeight);
+      const nearBottom = remaining <= 16;
+      if (virtuosoRef.current) {
+        virtuosoRef.current.getState((state) => {
+          latestVirtuosoStateRef.current = state;
+          persistScroll({
+            stickToBottom: nearBottom,
+            anchorItemId: nearBottom ? null : latestAnchorIdRef.current,
+            scrollTop: nearBottom ? null : scrollTop,
+          });
+        });
+        return;
+      }
+      persistScroll({
+        stickToBottom: nearBottom,
+        anchorItemId: nearBottom ? null : latestAnchorIdRef.current,
+        scrollTop: nearBottom ? null : scrollTop,
+      });
+    };
+  }, [id, onScrollStateChange, persistScroll]);
 
   const [dictationSettings, setDictationSettings] = useState<DictationSettings | null>(null);
   const [dictationRecording, setDictationRecording] = useState(false);
@@ -418,7 +468,7 @@ export function SessionView({
 
   useEffect(() => {
     latestScrollStateRef.current = scrollState ?? null;
-  }, [scrollState?.anchorItemId, scrollState?.scrollTop, scrollState?.stickToBottom]);
+  }, [scrollState?.anchorItemId, scrollState?.scrollTop, scrollState?.stickToBottom, scrollState?.virtuosoState]);
 
   const interruptBanner = useMemo(() => {
     const last = [...events].reverse().find((e) => e.event_type === "turn_interrupted");
@@ -686,10 +736,38 @@ export function SessionView({
     threadItemsRef.current = threadItems;
   }, [threadItems]);
 
+  const isActiveRef = useRef(isActive);
+  isActiveRef.current = isActive;
+  const wasActiveRef = useRef(isActive);
   useLayoutEffect(() => {
+    if (isActive && !wasActiveRef.current) {
+      forceScrollRestoreRef.current = true;
+      didInitialScrollRef.current = false;
+      restoringScrollRef.current = true;
+      userScrolledRef.current = false;
+      liveScrollTopRef.current = null;
+    }
+    wasActiveRef.current = isActive;
+  }, [isActive]);
+
+  useLayoutEffect(() => {
+    if (!isActive) return;
+    const forceRestore = forceScrollRestoreRef.current;
+    if (forceRestore) forceScrollRestoreRef.current = false;
     const items = variant === "workbench" ? wbListItems : threadItems;
     if (items.length === 0) return;
     if (didInitialScrollRef.current) return;
+    if (scrollState?.virtuosoState && !forceRestore) {
+      latestVirtuosoStateRef.current = scrollState.virtuosoState ?? null;
+      restoringScrollRef.current = true;
+      if (restoreCooldownRef.current) window.clearTimeout(restoreCooldownRef.current);
+      restoreCooldownRef.current = window.setTimeout(() => {
+        restoreCooldownRef.current = null;
+        restoringScrollRef.current = false;
+      }, 400);
+      didInitialScrollRef.current = true;
+      return;
+    }
     if (userScrolledRef.current) {
       didInitialScrollRef.current = true;
       return;
@@ -702,10 +780,32 @@ export function SessionView({
 
     restoringScrollRef.current = true;
     requestAnimationFrame(() => {
-      if (restoreScrollTop !== null && scrollerRef.current) {
-        scrollerRef.current.scrollTop = Math.max(0, restoreScrollTop);
-        didInitialScrollRef.current = true;
-        restoringScrollRef.current = false;
+      if (restoreScrollTop !== null) {
+        let tries = 0;
+        const target = Math.max(0, restoreScrollTop);
+        const apply = () => {
+          const el = scrollerRef.current;
+          if (!el) {
+            restoringScrollRef.current = false;
+            return;
+          }
+          if (virtuosoRef.current) {
+            virtuosoRef.current.scrollTo({ top: target });
+          }
+          el.scrollTop = target;
+          tries += 1;
+          if (tries < 6 && Math.abs(el.scrollTop - target) > 8) {
+            requestAnimationFrame(apply);
+            return;
+          }
+          didInitialScrollRef.current = true;
+          if (restoreCooldownRef.current) window.clearTimeout(restoreCooldownRef.current);
+          restoreCooldownRef.current = window.setTimeout(() => {
+            restoreCooldownRef.current = null;
+            restoringScrollRef.current = false;
+          }, 250);
+        };
+        apply();
         return;
       }
       if (restoreAnchorId) {
@@ -713,19 +813,29 @@ export function SessionView({
         if (idx >= 0) {
           virtuosoRef.current?.scrollToIndex({ index: idx, align: "start" });
           didInitialScrollRef.current = true;
-          restoringScrollRef.current = false;
+          if (restoreCooldownRef.current) window.clearTimeout(restoreCooldownRef.current);
+          restoreCooldownRef.current = window.setTimeout(() => {
+            restoreCooldownRef.current = null;
+            restoringScrollRef.current = false;
+          }, 250);
           return;
         }
       }
       virtuosoRef.current?.scrollToIndex({ index: items.length - 1, align: "end" });
       didInitialScrollRef.current = true;
-      restoringScrollRef.current = false;
+      if (restoreCooldownRef.current) window.clearTimeout(restoreCooldownRef.current);
+      restoreCooldownRef.current = window.setTimeout(() => {
+        restoreCooldownRef.current = null;
+        restoringScrollRef.current = false;
+      }, 250);
     });
   }, [
     id,
+    isActive,
     scrollState?.anchorItemId,
     scrollState?.stickToBottom,
     scrollState?.scrollTop,
+    scrollState?.virtuosoState,
     threadItems.length,
     variant,
     wbListItems.length,
@@ -1183,6 +1293,7 @@ export function SessionView({
       if (!node) return;
       const state = latestScrollStateRef.current;
       if (!state) return;
+      if (state.virtuosoState) return;
       const items = variant === "workbench" ? workbenchItemsRef.current : threadItemsRef.current;
       const restoreAnchorId = !state.stickToBottom ? (state.anchorItemId ?? null) : null;
       const restoreScrollTop = !state.stickToBottom ? (state.scrollTop ?? null) : null;
@@ -1194,20 +1305,45 @@ export function SessionView({
           return;
         }
         if (restoreScrollTop !== null) {
-          node.scrollTop = Math.max(0, restoreScrollTop);
-          restoringScrollRef.current = false;
+          let tries = 0;
+          const target = Math.max(0, restoreScrollTop);
+          const apply = () => {
+            if (virtuosoRef.current) {
+              virtuosoRef.current.scrollTo({ top: target });
+            }
+            node.scrollTop = target;
+            tries += 1;
+            if (tries < 6 && Math.abs(node.scrollTop - target) > 8) {
+              requestAnimationFrame(apply);
+              return;
+            }
+            if (restoreCooldownRef.current) window.clearTimeout(restoreCooldownRef.current);
+            restoreCooldownRef.current = window.setTimeout(() => {
+              restoreCooldownRef.current = null;
+              restoringScrollRef.current = false;
+            }, 250);
+          };
+          apply();
           return;
         }
         if (restoreAnchorId) {
           const idx = items.findIndex((it) => it?.id === restoreAnchorId);
           if (idx >= 0) {
             virtuosoRef.current?.scrollToIndex({ index: idx, align: "start" });
-            restoringScrollRef.current = false;
+            if (restoreCooldownRef.current) window.clearTimeout(restoreCooldownRef.current);
+            restoreCooldownRef.current = window.setTimeout(() => {
+              restoreCooldownRef.current = null;
+              restoringScrollRef.current = false;
+            }, 250);
             return;
           }
         }
         virtuosoRef.current?.scrollToIndex({ index: items.length - 1, align: "end" });
-        restoringScrollRef.current = false;
+        if (restoreCooldownRef.current) window.clearTimeout(restoreCooldownRef.current);
+        restoreCooldownRef.current = window.setTimeout(() => {
+          restoreCooldownRef.current = null;
+          restoringScrollRef.current = false;
+        }, 250);
       });
     },
     [variant],
@@ -1229,12 +1365,13 @@ export function SessionView({
           }}
           onScroll={(event) => {
             props.onScroll?.(event);
+            if (!isActiveRef.current) return;
+            if (restoringScrollRef.current) return;
             userScrolledRef.current = true;
             if (scrollerRef.current) {
               liveScrollTopRef.current = scrollerRef.current.scrollTop;
             }
             if (!didInitialScrollRef.current) didInitialScrollRef.current = true;
-            if (restoringScrollRef.current) return;
             if (scrollSyncRafRef.current != null) return;
             scrollSyncRafRef.current = window.requestAnimationFrame(() => {
               scrollSyncRafRef.current = null;
@@ -1245,6 +1382,17 @@ export function SessionView({
               const nearBottom = remaining <= 16;
               setAtBottom(nearBottom);
               if (nearBottom) setHasNewActivity(false);
+              if (virtuosoRef.current) {
+                virtuosoRef.current.getState((state) => {
+                  latestVirtuosoStateRef.current = state;
+                  if (nearBottom) {
+                    persistScroll({ stickToBottom: true, anchorItemId: null, scrollTop: null });
+                    return;
+                  }
+                  persistScroll({ stickToBottom: false, anchorItemId: latestAnchorIdRef.current, scrollTop });
+                });
+                return;
+              }
               if (nearBottom) {
                 persistScroll({ stickToBottom: true, anchorItemId: null, scrollTop: null });
                 return;
@@ -1280,12 +1428,13 @@ export function SessionView({
           }}
           onScroll={(event) => {
             props.onScroll?.(event);
+            if (!isActiveRef.current) return;
+            if (restoringScrollRef.current) return;
             userScrolledRef.current = true;
             if (scrollerRef.current) {
               liveScrollTopRef.current = scrollerRef.current.scrollTop;
             }
             if (!didInitialScrollRef.current) didInitialScrollRef.current = true;
-            if (restoringScrollRef.current) return;
             if (scrollSyncRafRef.current != null) return;
             scrollSyncRafRef.current = window.requestAnimationFrame(() => {
               scrollSyncRafRef.current = null;
@@ -1296,6 +1445,17 @@ export function SessionView({
               const nearBottom = remaining <= 16;
               setAtBottom(nearBottom);
               if (nearBottom) setHasNewActivity(false);
+              if (virtuosoRef.current) {
+                virtuosoRef.current.getState((state) => {
+                  latestVirtuosoStateRef.current = state;
+                  if (nearBottom) {
+                    persistScroll({ stickToBottom: true, anchorItemId: null, scrollTop: null });
+                    return;
+                  }
+                  persistScroll({ stickToBottom: false, anchorItemId: latestAnchorIdRef.current, scrollTop });
+                });
+                return;
+              }
               if (nearBottom) {
                 persistScroll({ stickToBottom: true, anchorItemId: null, scrollTop: null });
                 return;
@@ -1577,6 +1737,7 @@ export function SessionView({
                   data={wbListItems}
                   ref={virtuosoRef}
                   followOutput={atBottom ? "auto" : false}
+                  restoreStateFrom={scrollState?.virtuosoState ?? undefined}
                   defaultItemHeight={56}
                   initialItemCount={wbListItems.length}
                   increaseViewportBy={{ top: 1000, bottom: 1000 }}
@@ -1586,20 +1747,23 @@ export function SessionView({
                     supervisor.loadMoreTurns(id);
                   }}
                   atBottomStateChange={(b) => {
+                    if (restoringScrollRef.current) return;
                     setAtBottom(b);
                     if (b) setHasNewActivity(false);
                     if (b) persistScroll({ stickToBottom: true, anchorItemId: null, scrollTop: null });
                   }}
                   rangeChanged={(range) => {
+                    if (restoringScrollRef.current) return;
                     if (atBottom) return;
                     const item = wbListItems[range.startIndex];
                     if (!item) return;
                     const anchorId = item.id ?? null;
                     latestAnchorIdRef.current = anchorId;
+                    const scrollTop = scrollerRef.current ? scrollerRef.current.scrollTop : null;
                     persistScroll({
                       stickToBottom: false,
                       anchorItemId: anchorId,
-                      scrollTop: lastScrollPersistedRef.current?.scrollTop ?? null,
+                      scrollTop,
                     });
                   }}
                   components={workbenchComponents}
@@ -1628,23 +1792,27 @@ export function SessionView({
                 data={threadItems}
                 ref={virtuosoRef}
                 followOutput={atBottom ? "auto" : false}
+                restoreStateFrom={scrollState?.virtuosoState ?? undefined}
                 defaultItemHeight={56}
                 computeItemKey={(index, item) => item?.id ?? `i:${index}`}
                 atBottomStateChange={(b) => {
+                  if (restoringScrollRef.current) return;
                   setAtBottom(b);
                   if (b) setHasNewActivity(false);
                   if (b) persistScroll({ stickToBottom: true, anchorItemId: null, scrollTop: null });
                 }}
                 rangeChanged={(range) => {
+                  if (restoringScrollRef.current) return;
                   if (atBottom) return;
                   const item = threadItems[range.startIndex];
                   if (!item) return;
                   const anchorId = item.id ?? null;
                   latestAnchorIdRef.current = anchorId;
+                  const scrollTop = scrollerRef.current ? scrollerRef.current.scrollTop : null;
                   persistScroll({
                     stickToBottom: false,
                     anchorItemId: anchorId,
-                    scrollTop: lastScrollPersistedRef.current?.scrollTop ?? null,
+                    scrollTop,
                   });
                 }}
                 components={threadComponents}

@@ -3014,6 +3014,15 @@ button.linklike:hover {
   min-height: 0;
   min-width: 0;
   overflow: hidden;
+  position: relative;
+}
+
+.wb-session-slot {
+  height: 100%;
+  min-height: 0;
+  position: absolute;
+  inset: 0;
+  width: 100%;
 }
 
 .wb-session-view {

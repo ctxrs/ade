@@ -49,7 +49,9 @@ test.describe.serial("workbench: tool summaries stability", () => {
     await page.goto(`/workspaces/${workspaceId}`, { waitUntil: "domcontentloaded" });
     await page.locator(".wb-task-row").first().click();
 
-    const scroller = page.locator(".wb-session [data-virtuoso-scroller]").first();
+    const scroller = page
+      .locator(".wb-session-slot[aria-hidden=\"false\"] [data-virtuoso-scroller]")
+      .first();
     await expect
       .poll(async () => scroller.evaluate((el) => el.scrollHeight), { timeout: 10_000 })
       .toBeGreaterThan(0);

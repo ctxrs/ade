@@ -17,8 +17,8 @@ export function sessionDraftKey(sessionId: string): string {
   return `session:${sessionId}`;
 }
 
-export function scrollKey(tabId: string, sessionId: string): string {
-  return `tab:${tabId}.session:${sessionId}`;
+export function scrollKey(sessionId: string): string {
+  return `session:${sessionId}`;
 }
 
 function getOrCreateWindowId(): string {
@@ -323,7 +323,10 @@ export class WorkbenchStore {
     this.setWindow({ ...win, layout: updateLeaf(win.layout, leafId, () => nextLeaf) }, { persistDelayMs: 0 });
   };
 
-  setScrollState = (key: string, next: Omit<WorkbenchScrollState, "updatedAtMs"> & { updatedAtMs?: number }) => {
+  setScrollState = (
+    key: string,
+    next: Omit<WorkbenchScrollState, "updatedAtMs"> & { updatedAtMs?: number },
+  ) => {
     const now = Date.now();
     const current = this.snapshot.window.scrollByKey[key];
     const updatedAtMs = next.updatedAtMs ?? now;
@@ -332,6 +335,7 @@ export class WorkbenchStore {
       current.stickToBottom === next.stickToBottom &&
       current.anchorItemId === next.anchorItemId &&
       (current.scrollTop ?? null) === (next.scrollTop ?? null) &&
+      (current.virtuosoState ?? null) === (next.virtuosoState ?? null) &&
       Math.abs(current.updatedAtMs - updatedAtMs) < 5
     ) {
       return;
@@ -346,6 +350,7 @@ export class WorkbenchStore {
             stickToBottom: next.stickToBottom,
             anchorItemId: next.anchorItemId,
             scrollTop: next.scrollTop ?? null,
+            virtuosoState: next.virtuosoState ?? null,
             updatedAtMs,
           },
         },

@@ -121,7 +121,8 @@ function decodeScrollState(raw: unknown): WorkbenchScrollState | null {
   const anchorItemId = raw.anchorItemId === null ? null : isString(raw.anchorItemId) ? raw.anchorItemId : null;
   const scrollTop = raw.scrollTop === null ? null : isNumber(raw.scrollTop) ? raw.scrollTop : null;
   const updatedAtMs = isNumber(raw.updatedAtMs) ? raw.updatedAtMs : 0;
-  return { stickToBottom, anchorItemId, scrollTop, updatedAtMs };
+  const virtuosoState = raw.virtuosoState === undefined ? null : raw.virtuosoState;
+  return { stickToBottom, anchorItemId, scrollTop, virtuosoState, updatedAtMs };
 }
 
 export function decodePersistedWorkbenchWindowV1(raw: unknown): PersistedWorkbenchWindowV1 | null {

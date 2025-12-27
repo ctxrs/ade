@@ -2,7 +2,7 @@ import { test, expect } from "playwright/test";
 import { seedDummyWorkspace } from "./utils/seedDummyWorkspace";
 
 const scrollSelector =
-  ".wb-session [data-virtuoso-scroller], .wb-session [data-viewport-type=\"element\"], .wb-session .thread-stack";
+  ".wb-session-slot[aria-hidden=\"false\"] [data-virtuoso-scroller], .wb-session-slot[aria-hidden=\"false\"] [data-viewport-type=\"element\"], .wb-session-slot[aria-hidden=\"false\"] .thread-stack";
 
 async function addLongMessages(request: any, sessionId: string) {
   const longText = Array.from({ length: 120 }, (_, i) => `fixture line ${i + 1}`).join("\n");

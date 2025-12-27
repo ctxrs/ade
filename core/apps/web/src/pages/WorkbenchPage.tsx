@@ -75,6 +75,7 @@ import {
   useWorkbenchSnapshot,
   useWorkbenchStore,
 } from "../workbench/store";
+import type { WorkbenchScrollState } from "../workbench/types";
 import {
   WorkspaceCatchupProvider,
   useWorkspaceCatchupSnapshot,
@@ -138,6 +139,57 @@ function lastRoleMessageMs(messages: { role: string; created_at: string }[], rol
     if (m?.role === role) return parseMs(m.created_at);
   }
   return null;
+}
+
+type WorkbenchSessionSlotProps = {
+  sessionId: string;
+  active: boolean;
+  scrollState: WorkbenchScrollState | null;
+};
+
+function WorkbenchSessionSlot({ sessionId, active, scrollState }: WorkbenchSessionSlotProps) {
+  const workbenchStore = useWorkbenchStore();
+  const draft = useWorkbenchDraft(sessionDraftKey(sessionId), { text: "", modeId: "default" });
+  const handleScrollStateChange = useCallback(
+    (next: { stickToBottom: boolean; anchorItemId: string | null; scrollTop: number | null; virtuosoState?: unknown | null }) => {
+      workbenchStore.setScrollState(scrollKey(sessionId), next);
+    },
+    [sessionId, workbenchStore],
+  );
+
+  const onScrollStateChange = active ? handleScrollStateChange : null;
+
+  return (
+    <div
+      className="wb-session-slot"
+      style={{ opacity: active ? 1 : 0, pointerEvents: active ? "auto" : "none" }}
+      aria-hidden={!active}
+    >
+      <SessionView
+        key={sessionId}
+        sessionId={sessionId}
+        isActive={active}
+        variant="workbench"
+        showDiffPane={false}
+        draft={draft.value}
+        draftUpdatedAtMs={draft.updatedAtMs}
+        onDraftChange={(text) => draft.setValue({ text, modeId: draft.value.modeId })}
+        onDraftPersistNow={() => workbenchStore.flushDraft(sessionDraftKey(sessionId))}
+        onModeChange={(modeId) => draft.setValue({ text: draft.value.text, modeId })}
+        scrollState={
+          scrollState
+            ? {
+                stickToBottom: scrollState.stickToBottom,
+                anchorItemId: scrollState.anchorItemId,
+                scrollTop: scrollState.scrollTop ?? null,
+                virtuosoState: scrollState.virtuosoState ?? null,
+              }
+            : null
+        }
+        onScrollStateChange={onScrollStateChange}
+      />
+    </div>
+  );
 }
 
 function sanitizeFileName(name: string): string {
@@ -1155,35 +1207,35 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     return pickPreferredSessionId(sessions, primarySessionByTrackId[activeTrackId]);
   }, [activeTab, activeTrackId, sessionsByTrack, primarySessionByTrackId]);
 
-  const activeSessionDraft = useWorkbenchDraft(activeSessionId ? sessionDraftKey(activeSessionId) : "", {
-    text: "",
-    modeId: "default",
-  });
-
-  const activeScrollKey = useMemo(() => {
-    if (!activeSessionId) return null;
-    if (!activeTab) return null;
-    return scrollKey(activeTab.id, activeSessionId);
-  }, [activeSessionId, activeTab]);
-
-  const activeScrollState = useMemo(() => {
-    if (!activeScrollKey) return null;
-    return (
-      workbenchSnap.window.scrollByKey[activeScrollKey] ?? {
-        stickToBottom: true,
-        anchorItemId: null,
-        updatedAtMs: 0,
-      }
-    );
-  }, [activeScrollKey, workbenchSnap.window.scrollByKey]);
-
-  const handleScrollStateChange = useCallback(
-    (next: { stickToBottom: boolean; anchorItemId: string | null; scrollTop: number | null }) => {
-      if (!activeScrollKey) return;
-      workbenchStore.setScrollState(activeScrollKey, next);
-    },
-    [activeScrollKey, workbenchStore],
+  const defaultScrollState = useMemo<WorkbenchScrollState>(
+    () => ({
+      stickToBottom: true,
+      anchorItemId: null,
+      scrollTop: null,
+      updatedAtMs: 0,
+    }),
+    [],
   );
+
+  const sessionIdsToRender = useMemo(() => {
+    const ids: string[] = [];
+    const seen = new Set<string>();
+    if (activeSessionId) {
+      ids.push(activeSessionId);
+      seen.add(activeSessionId);
+    }
+    for (const id of activeTaskSessionIds) {
+      if (seen.has(id)) continue;
+      ids.push(id);
+      seen.add(id);
+    }
+    for (const id of warmSessionIds) {
+      if (seen.has(id)) continue;
+      ids.push(id);
+      seen.add(id);
+    }
+    return ids;
+  }, [activeSessionId, activeTaskSessionIds, warmSessionIds]);
 
   const showDebugIds = useMemo(() => {
     const params = new URLSearchParams(window.location.search);
@@ -2807,30 +2859,18 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
 
               <div className="wb-session">
                 {activeSessionId ? (
-                  <SessionView
-                    sessionId={activeSessionId}
-                    variant="workbench"
-                    showDiffPane={false}
-                    draft={activeSessionDraft.value}
-                    draftUpdatedAtMs={activeSessionDraft.updatedAtMs}
-                    onDraftChange={(text) =>
-                      activeSessionDraft.setValue({ text, modeId: activeSessionDraft.value.modeId })
-                    }
-                    onDraftPersistNow={() => workbenchStore.flushDraft(sessionDraftKey(activeSessionId))}
-                    onModeChange={(modeId) =>
-                      activeSessionDraft.setValue({ text: activeSessionDraft.value.text, modeId })
-                    }
-                    scrollState={
-                      activeScrollState
-                        ? {
-                            stickToBottom: activeScrollState.stickToBottom,
-                            anchorItemId: activeScrollState.anchorItemId,
-                            scrollTop: activeScrollState.scrollTop ?? null,
-                          }
-                        : null
-                    }
-                    onScrollStateChange={handleScrollStateChange}
-                  />
+                  sessionIdsToRender.map((sessionId) => {
+                    const scrollState =
+                      workbenchSnap.window.scrollByKey[scrollKey(sessionId)] ?? defaultScrollState;
+                    return (
+                      <WorkbenchSessionSlot
+                        key={sessionId}
+                        sessionId={sessionId}
+                        active={sessionId === activeSessionId}
+                        scrollState={scrollState}
+                      />
+                    );
+                  })
                 ) : (
                   <div className="wb-muted" style={{ padding: 16 }}>
                     Select a track with a session.
