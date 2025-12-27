@@ -3,6 +3,7 @@ import { mkdtempSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import path from "path";
 import { execSync } from "child_process";
+import { createWorkspaceAndOpenWorkbench } from "./utils/workbench";
 
 test("workbench: second message gets a response", async ({ page }) => {
   const repo = mkdtempSync(path.join(tmpdir(), "context-e2e-"));
@@ -15,15 +16,7 @@ test("workbench: second message gets a response", async ({ page }) => {
 
   const workspaceName = `ws-${Date.now()}`;
 
-  await page.goto("/");
-  await page.getByLabel("Root path").fill(repo);
-  await page.getByLabel("Name (optional)").fill(workspaceName);
-  await page.getByRole("button", { name: "Add workspace" }).click();
-  await page
-    .getByRole("listitem")
-    .filter({ hasText: repo })
-    .getByRole("link", { name: workspaceName })
-    .click();
+  await createWorkspaceAndOpenWorkbench({ page, request: page.request, repo, workspaceName });
 
   // Choose Fake harness so the test doesn't depend on external agents.
   await page.locator(".wb-new-composer-stack").getByTitle("Harness").click();

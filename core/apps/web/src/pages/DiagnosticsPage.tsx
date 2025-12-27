@@ -159,14 +159,6 @@ export default function DiagnosticsPage() {
                 </span>
               )}
             </div>
-            <div>
-              <b>Edit plans:</b> {lspStatus.edit_plans_enabled ? "Yes" : "No"}{" "}
-              {!lspStatus.edit_plans_enabled && (
-                <span className="muted">
-                  (set <code>CONTEXT_LSP_EDITPLANS_ENABLED=1</code>)
-                </span>
-              )}
-            </div>
           </div>
 
           <ul className="list">

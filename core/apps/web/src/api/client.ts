@@ -227,7 +227,6 @@ export type LspServerStatus = {
 
 export type LspStatus = {
   enabled: boolean;
-  edit_plans_enabled: boolean;
   servers: LspServerStatus[];
 };
 
@@ -254,15 +253,6 @@ export type TelemetrySettings = {
 export type Settings = {
   dictation?: DictationSettings | null;
   telemetry?: TelemetrySettings | null;
-};
-
-export type EditPlanSummary = {
-  id: { 0: string } | string;
-  title: string;
-  created_at: string;
-  remaining_files: number;
-  remaining_hunks: number;
-  diff: string;
 };
 
 const authToken = (): string | null => {
@@ -806,24 +796,6 @@ export const applyTrackDiffPatch = (trackId: string, action: "accept" | "reject"
   apiAny<{ diff: string }>(`/api/tracks/${trackId}/diff/apply`, {
     method: "POST",
     body: JSON.stringify({ action, patch }),
-  });
-
-export const listEditPlansForTrack = (trackId: string) =>
-  apiAny<EditPlanSummary[]>(`/api/tracks/${trackId}/edit_plans`);
-
-export const getEditPlan = (planId: string) =>
-  apiAny<EditPlanSummary>(`/api/edit_plans/${planId}`);
-
-export const applyEditPlanPatch = (planId: string, action: "accept" | "reject", patch: string) =>
-  apiAny<EditPlanSummary>(`/api/edit_plans/${planId}/apply`, {
-    method: "POST",
-    body: JSON.stringify({ action, patch }),
-  });
-
-export const discardEditPlan = (planId: string) =>
-  apiAny<void>(`/api/edit_plans/${planId}/discard`, {
-    method: "POST",
-    body: JSON.stringify({}),
   });
 
 
