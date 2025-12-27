@@ -331,6 +331,7 @@ export class WorkbenchStore {
       current &&
       current.stickToBottom === next.stickToBottom &&
       current.anchorItemId === next.anchorItemId &&
+      (current.scrollTop ?? null) === (next.scrollTop ?? null) &&
       Math.abs(current.updatedAtMs - updatedAtMs) < 5
     ) {
       return;
@@ -341,7 +342,12 @@ export class WorkbenchStore {
         ...win,
         scrollByKey: {
           ...win.scrollByKey,
-          [key]: { stickToBottom: next.stickToBottom, anchorItemId: next.anchorItemId, updatedAtMs },
+          [key]: {
+            stickToBottom: next.stickToBottom,
+            anchorItemId: next.anchorItemId,
+            scrollTop: next.scrollTop ?? null,
+            updatedAtMs,
+          },
         },
       },
       { persistDelayMs: 500 },

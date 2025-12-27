@@ -1,11 +1,12 @@
-import { forwardRef, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import ReactMarkdown from "react-markdown";
+import { forwardRef, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent } from "react";
+import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Virtuoso, VirtuosoHandle } from "react-virtuoso";
 import { Link, useParams } from "react-router-dom";
 import {
   cancelSession,
   deleteMessage,
+  DictationSettings,
   getDaemonBaseUrl,
   blobUrl,
   Message,
@@ -18,13 +19,13 @@ import {
   setSessionMode,
   setSessionModel,
   authenticateSession,
+  getSettings,
   idToString,
   interruptSession,
   submitAskUserQuestion,
   uploadBlob,
 } from "../api/client";
 import { useOpenSession, useSessionCacheSnapshot, useSessionEntry, useSessionSupervisor } from "../state/sessionSupervisor";
-import { useSettingsSnapshot } from "../state/settingsStore";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { DiffReviewPane } from "../components/DiffReviewPane";
@@ -39,6 +40,7 @@ import { parseWsJson } from "../utils/wsJson";
 import { buildModelCatalog, composeModelId, formatEffortLabel, parseModelId } from "../utils/modelEffort";
 import { imageFilesToBlobRefAttachments, imageFilesToInlineAttachments } from "../utils/messageAttachments";
 import { registerDropScope } from "../utils/dragDropScopes";
+import { desktopGetDeepLinkToken, desktopOpenFile, desktopOpenPath, isDesktopApp } from "../utils/desktop";
 
 type ThreadItem =
   | {
@@ -172,8 +174,8 @@ export function SessionView({
   onDraftChange?: ((text: string) => void) | null;
   onDraftPersistNow?: (() => void | Promise<void>) | null;
   onModeChange?: ((modeId: WorkbenchModeId) => void) | null;
-  scrollState?: { stickToBottom: boolean; anchorItemId: string | null } | null;
-  onScrollStateChange?: ((next: { stickToBottom: boolean; anchorItemId: string | null }) => void) | null;
+  scrollState?: { stickToBottom: boolean; anchorItemId: string | null; scrollTop: number | null } | null;
+  onScrollStateChange?: ((next: { stickToBottom: boolean; anchorItemId: string | null; scrollTop: number | null }) => void) | null;
 }) {
   const id = sessionId;
   const supervisor = useSessionSupervisor();
@@ -199,6 +201,9 @@ export function SessionView({
   const [workbenchModeInternal, setWorkbenchModeInternal] = useState<WorkbenchModeId>("default");
   const [sendBusy, setSendBusy] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
+  const [fileOpenError, setFileOpenError] = useState<string | null>(null);
+  const [deepLinkToken, setDeepLinkToken] = useState<string | null>(null);
+  const deepLinkTokenTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
   const [atBottom, setAtBottom] = useState(true);
   const [hasNewActivity, setHasNewActivity] = useState(false);
   const [authMethodId, setAuthMethodId] = useState<string>("");
@@ -212,7 +217,15 @@ export function SessionView({
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const didInitialScrollRef = useRef(false);
-  const lastScrollPersistedRef = useRef<{ stickToBottom: boolean; anchorItemId: string | null } | null>(null);
+  const lastScrollPersistedRef = useRef<{
+    stickToBottom: boolean;
+    anchorItemId: string | null;
+    scrollTop: number | null;
+  } | null>(null);
+  const scrollerRef = useRef<HTMLDivElement | null>(null);
+  const scrollPersistTimerRef = useRef<number | null>(null);
+  const latestAnchorIdRef = useRef<string | null>(null);
+  const restoringScrollRef = useRef(false);
   const dropHideTimerRef = useRef<number | null>(null);
 
   const input = variant === "workbench" ? (draft?.text ?? "") : inputInternal;
@@ -239,27 +252,98 @@ export function SessionView({
   );
 
   const persistScroll = useCallback(
-    (next: { stickToBottom: boolean; anchorItemId: string | null }) => {
+    (next: { stickToBottom: boolean; anchorItemId: string | null; scrollTop: number | null }) => {
       if (!onScrollStateChange) return;
       const prev = lastScrollPersistedRef.current;
-      if (prev && prev.stickToBottom === next.stickToBottom && prev.anchorItemId === next.anchorItemId) return;
+      if (
+        prev &&
+        prev.stickToBottom === next.stickToBottom &&
+        prev.anchorItemId === next.anchorItemId &&
+        prev.scrollTop === next.scrollTop
+      ) {
+        return;
+      }
       lastScrollPersistedRef.current = next;
       onScrollStateChange(next);
     },
     [onScrollStateChange],
   );
 
-  useOpenSession(id ?? "", { watchDiff: showDiffPane });
+  const scheduleScrollPersist = useCallback(() => {
+    if (!onScrollStateChange) return;
+    if (restoringScrollRef.current) return;
+    if (scrollPersistTimerRef.current) window.clearTimeout(scrollPersistTimerRef.current);
+    scrollPersistTimerRef.current = window.setTimeout(() => {
+      scrollPersistTimerRef.current = null;
+      const el = scrollerRef.current;
+      if (!el) return;
+      const scrollTop = el.scrollTop;
+      const scrollHeight = el.scrollHeight;
+      const clientHeight = el.clientHeight;
+      const remaining = scrollHeight - (scrollTop + clientHeight);
+      const nearBottom = remaining <= 16;
+      if (nearBottom) {
+        persistScroll({ stickToBottom: true, anchorItemId: null, scrollTop: null });
+        return;
+      }
+      persistScroll({ stickToBottom: false, anchorItemId: latestAnchorIdRef.current, scrollTop });
+    }, 80);
+  }, [onScrollStateChange, persistScroll]);
+
+  const handleFileOpenError = useCallback((message: string | null) => {
+    setFileOpenError(message);
+  }, []);
+
+  useEffect(() => {
+    if (!isDesktopApp()) return;
+    let cancelled = false;
+
+    const scheduleRefresh = (expiresAtMs: number) => {
+      if (deepLinkTokenTimerRef.current) {
+        window.clearTimeout(deepLinkTokenTimerRef.current);
+        deepLinkTokenTimerRef.current = null;
+      }
+      const now = Date.now();
+      const leadTime = 60_000;
+      const delay = Math.max(expiresAtMs - now - leadTime, 10_000);
+      deepLinkTokenTimerRef.current = window.setTimeout(() => {
+        refresh();
+      }, delay);
+    };
+
+    const refresh = () => {
+      desktopGetDeepLinkToken()
+        .then((token) => {
+          if (cancelled) return;
+          setDeepLinkToken(token.token);
+          scheduleRefresh(token.expires_at_ms);
+        })
+        .catch(() => {});
+    };
+
+    refresh();
+    return () => {
+      cancelled = true;
+      if (deepLinkTokenTimerRef.current) {
+        window.clearTimeout(deepLinkTokenTimerRef.current);
+        deepLinkTokenTimerRef.current = null;
+      }
+    };
+  }, []);
+
+  useOpenSession(id ?? "", { watchDiff: true });
 
   useEffect(() => {
     didInitialScrollRef.current = false;
     lastScrollPersistedRef.current = null;
+    latestAnchorIdRef.current = null;
     setAtBottom(true);
     setHasNewActivity(false);
     setExpandedTurnHeaders({});
     setExpandedThoughtByAssistantId({});
     setExpandedToolById({});
     setSendError(null);
+    setFileOpenError(null);
     setAuthMethodId("");
     setAuthError(null);
     setOptimisticAskAnswered({});
@@ -267,8 +351,16 @@ export function SessionView({
     }
   }, [id]);
 
-  const settingsSnapshot = useSettingsSnapshot();
-  const dictationSettings = settingsSnapshot.settings?.dictation ?? null;
+  useEffect(() => {
+    return () => {
+      if (scrollPersistTimerRef.current) {
+        window.clearTimeout(scrollPersistTimerRef.current);
+        scrollPersistTimerRef.current = null;
+      }
+    };
+  }, []);
+
+  const [dictationSettings, setDictationSettings] = useState<DictationSettings | null>(null);
   const [dictationRecording, setDictationRecording] = useState(false);
   const [dictationError, setDictationError] = useState<string | null>(null);
   const dictationWsRef = useRef<WebSocket | null>(null);
@@ -292,6 +384,7 @@ export function SessionView({
 
   const entry = useSessionEntry(id ?? "");
   const session: Session | null = entry?.session ?? null;
+  const worktreeId = session ? idToString(session.worktree_id) : null;
   const turns = entry?.turns ?? [];
   const turnToolsByTurnId = entry?.turnToolsByTurnId ?? {};
   const turnToolsLoading = entry?.turnToolsLoading ?? [];
@@ -334,6 +427,18 @@ export function SessionView({
     return null;
   }, [eventsKey, optimisticAskAnswered]);
 
+  useEffect(() => {
+    let cancelled = false;
+    getSettings()
+      .then((s) => {
+        if (cancelled) return;
+        setDictationSettings(s.dictation ?? null);
+      })
+      .catch(() => { });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const stopDictation = useCallback(async (): Promise<string> => {
     const ws = dictationWsRef.current;
@@ -544,27 +649,46 @@ export function SessionView({
     return out;
   }, [wbGroups]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const items = variant === "workbench" ? wbListItems : threadItems;
     if (items.length === 0) return;
     if (didInitialScrollRef.current) return;
 
     const restoreAnchorId =
       scrollState && !scrollState.stickToBottom ? (scrollState.anchorItemId ?? null) : null;
+    const restoreScrollTop =
+      scrollState && !scrollState.stickToBottom ? (scrollState.scrollTop ?? null) : null;
 
+    restoringScrollRef.current = true;
     requestAnimationFrame(() => {
+      if (restoreScrollTop !== null && scrollerRef.current) {
+        scrollerRef.current.scrollTop = Math.max(0, restoreScrollTop);
+        didInitialScrollRef.current = true;
+        restoringScrollRef.current = false;
+        return;
+      }
       if (restoreAnchorId) {
         const idx = items.findIndex((it) => it?.id === restoreAnchorId);
         if (idx >= 0) {
           virtuosoRef.current?.scrollToIndex({ index: idx, align: "start" });
           didInitialScrollRef.current = true;
+          restoringScrollRef.current = false;
           return;
         }
       }
       virtuosoRef.current?.scrollToIndex({ index: items.length - 1, align: "end" });
       didInitialScrollRef.current = true;
+      restoringScrollRef.current = false;
     });
-  }, [id, scrollState?.anchorItemId, scrollState?.stickToBottom, threadItems.length, variant, wbListItems.length]);
+  }, [
+    id,
+    scrollState?.anchorItemId,
+    scrollState?.stickToBottom,
+    scrollState?.scrollTop,
+    threadItems.length,
+    variant,
+    wbListItems.length,
+  ]);
 
   const contextIndicator = useMemo(() => {
     const fromTurns = [...turns].reverse().find((t) => t.metrics_json);
@@ -674,6 +798,17 @@ export function SessionView({
   const threadActivityCount = variant === "workbench" ? wbListItems.length : threadItems.length;
 
   useEffect(() => {
+    if (!id || variant !== "workbench") return;
+    for (const turn of turns) {
+      const turnId = idToString(turn.turn_id);
+      if (!turnId) continue;
+      if ((turn.tool_total ?? 0) <= 0) continue;
+      if (turnToolsByTurnId[turnId]) continue;
+      supervisor.loadTurnTools(id, turnId);
+    }
+  }, [id, variant, turnsKey, turnToolsByTurnId, supervisor, turns]);
+
+  useEffect(() => {
     if (!atBottom && threadActivityCount > 0) {
       setHasNewActivity(true);
     }
@@ -690,7 +825,7 @@ export function SessionView({
       await postMessage(id, text, undefined, draftAttachments);
       // Refresh Messages immediately so user turns render without waiting for a `done` event.
       await supervisor.refreshQueue(id);
-      supervisor.refreshSession(id, { watchDiff: showDiffPane });
+      supervisor.refreshSession(id, { watchDiff: true });
       setInput("");
       setDraftAttachments([]);
       try {
@@ -926,6 +1061,9 @@ export function SessionView({
           onToggleThought={() =>
             setExpandedThoughtByAssistantId((prev) => ({ ...prev, [item.id]: !thoughtExpanded }))
           }
+          worktreeId={worktreeId}
+          onFileOpenError={handleFileOpenError}
+          linkToken={deepLinkToken}
         />
       );
     }
@@ -960,7 +1098,15 @@ export function SessionView({
         />
       );
     }
-    return <ThreadItemView item={item} variant={variant} />;
+    return (
+      <ThreadItemView
+        item={item}
+        variant={variant}
+        worktreeId={worktreeId}
+        onFileOpenError={handleFileOpenError}
+        linkToken={deepLinkToken}
+      />
+    );
   };
 
   return (
@@ -1233,15 +1379,35 @@ export function SessionView({
                   atBottomStateChange={(b) => {
                     setAtBottom(b);
                     if (b) setHasNewActivity(false);
-                    if (b) persistScroll({ stickToBottom: true, anchorItemId: null });
+                    if (b) persistScroll({ stickToBottom: true, anchorItemId: null, scrollTop: null });
                   }}
                   rangeChanged={(range) => {
                     if (atBottom) return;
                     const item = wbListItems[range.startIndex];
                     if (!item) return;
-                    persistScroll({ stickToBottom: false, anchorItemId: item.id ?? null });
+                    const anchorId = item.id ?? null;
+                    latestAnchorIdRef.current = anchorId;
+                    persistScroll({
+                      stickToBottom: false,
+                      anchorItemId: anchorId,
+                      scrollTop: lastScrollPersistedRef.current?.scrollTop ?? null,
+                    });
                   }}
                   components={{
+                    Scroller: forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>((props, ref) => (
+                      <div
+                        {...props}
+                        ref={(node) => {
+                          scrollerRef.current = node;
+                          if (typeof ref === "function") ref(node);
+                          else if (ref) (ref as React.MutableRefObject<HTMLDivElement | null>).current = node;
+                        }}
+                        onScroll={(event) => {
+                          props.onScroll?.(event);
+                          scheduleScrollPersist();
+                        }}
+                      />
+                    )),
                     List: forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>((props, ref) => (
                       <div {...props} ref={ref} role="list" />
                     )),
@@ -1295,15 +1461,35 @@ export function SessionView({
                 atBottomStateChange={(b) => {
                   setAtBottom(b);
                   if (b) setHasNewActivity(false);
-                  if (b) persistScroll({ stickToBottom: true, anchorItemId: null });
+                  if (b) persistScroll({ stickToBottom: true, anchorItemId: null, scrollTop: null });
                 }}
                 rangeChanged={(range) => {
                   if (atBottom) return;
                   const item = threadItems[range.startIndex];
                   if (!item) return;
-                  persistScroll({ stickToBottom: false, anchorItemId: item.id ?? null });
+                  const anchorId = item.id ?? null;
+                  latestAnchorIdRef.current = anchorId;
+                  persistScroll({
+                    stickToBottom: false,
+                    anchorItemId: anchorId,
+                    scrollTop: lastScrollPersistedRef.current?.scrollTop ?? null,
+                  });
                 }}
                 components={{
+                  Scroller: forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>((props, ref) => (
+                    <div
+                      {...props}
+                      ref={(node) => {
+                        scrollerRef.current = node;
+                        if (typeof ref === "function") ref(node);
+                        else if (ref) (ref as React.MutableRefObject<HTMLDivElement | null>).current = node;
+                      }}
+                      onScroll={(event) => {
+                        props.onScroll?.(event);
+                        scheduleScrollPersist();
+                      }}
+                    />
+                  )),
                   List: forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>((props, ref) => (
                     <div {...props} ref={ref} role="list" />
                   )),
@@ -1370,12 +1556,14 @@ export function SessionView({
               }}
             />
             {sendError && <div className="wb-banner">{sendError}</div>}
+            {fileOpenError && <div className="wb-banner">{fileOpenError}</div>}
             {dictationDebugText && <div className="wb-banner">{dictationDebugText}</div>}
             {dictationError && <div className="wb-banner">{dictationError}</div>}
           </>
         ) : (
           <form onSubmit={onSend} className="composer">
             {sendError && <div className="banner">{sendError}</div>}
+            {fileOpenError && <div className="banner">{fileOpenError}</div>}
             <div className="row">
               <button
                 type="button"
@@ -1506,7 +1694,19 @@ export function SessionView({
   );
 }
 
-function ThreadItemView({ item, variant }: { item: ThreadItem; variant: SessionViewVariant }) {
+function ThreadItemView({
+  item,
+  variant,
+  worktreeId,
+  onFileOpenError,
+  linkToken,
+}: {
+  item: ThreadItem;
+  variant: SessionViewVariant;
+  worktreeId: string | null;
+  onFileOpenError: (message: string | null) => void;
+  linkToken: string | null;
+}) {
   switch (item.kind) {
     case "message":
       return (
@@ -1516,6 +1716,9 @@ function ThreadItemView({ item, variant }: { item: ThreadItem; variant: SessionV
           content={item.content}
           attachments={item.attachments}
           delivery={item.delivery}
+          worktreeId={worktreeId}
+          onFileOpenError={onFileOpenError}
+          linkToken={linkToken}
         />
       );
     case "assistant":
@@ -1766,12 +1969,18 @@ function CollapsibleMessage({
   content,
   attachments,
   delivery,
+  worktreeId,
+  onFileOpenError,
+  linkToken,
 }: {
   id: string;
   role: "user" | "assistant";
   content: string;
   attachments: MessageAttachment[];
   delivery?: "immediate" | "queued";
+  worktreeId: string | null;
+  onFileOpenError: (message: string | null) => void;
+  linkToken: string | null;
 }) {
   const lines = (content || "").split("\n");
   const isLong = lines.length > 20 || content.length > 1500;
@@ -1782,7 +1991,13 @@ function CollapsibleMessage({
     <div className={`msg ${role}`}>
       <div className="role">{role}</div>
       <div id={`msg-${id}`}>
-        <Markdown content={shown} />
+        <Markdown
+          content={shown}
+          linkifyFiles={role === "assistant"}
+          worktreeId={worktreeId}
+          onFileOpenError={onFileOpenError}
+          linkToken={linkToken}
+        />
       </div>
       {attachments?.length > 0 && (
         <div className="attachments">
@@ -1828,6 +2043,9 @@ function AssistantEntry({
   variant,
   thoughtExpanded,
   onToggleThought,
+  worktreeId,
+  onFileOpenError,
+  linkToken,
 }: {
   id: string;
   content: string;
@@ -1837,6 +2055,9 @@ function AssistantEntry({
   variant: SessionViewVariant;
   thoughtExpanded: boolean;
   onToggleThought: () => void;
+  worktreeId: string | null;
+  onFileOpenError: (message: string | null) => void;
+  linkToken: string | null;
 }) {
   const [showThought, setShowThought] = useState(false);
   const show = variant === "workbench" ? false : showThought;
@@ -1846,7 +2067,13 @@ function AssistantEntry({
     return (
       <div className="wb-assistant-entry">
         <div className="wb-assistant-body">
-          <Markdown content={content} />
+          <Markdown
+            content={content}
+            linkifyFiles
+            worktreeId={worktreeId}
+            onFileOpenError={onFileOpenError}
+            linkToken={linkToken}
+          />
         </div>
       </div>
     );
@@ -1861,7 +2088,13 @@ function AssistantEntry({
         </span>
       </div>
       <div id={`msg-${id}`}>
-        <Markdown content={content} />
+        <Markdown
+          content={content}
+          linkifyFiles
+          worktreeId={worktreeId}
+          onFileOpenError={onFileOpenError}
+          linkToken={linkToken}
+        />
       </div>
       {thought.trim() && (
         <div className="thinking">
@@ -2397,6 +2630,172 @@ type MdastNode = {
   [key: string]: unknown;
 };
 
+type FileRef = {
+  path: string;
+  line?: number;
+  col?: number;
+};
+
+type ParsedContextOpen = {
+  worktreeId?: string;
+  file?: string;
+  path?: string;
+  line?: number;
+  col?: number;
+};
+
+function isAbsolutePath(path: string): boolean {
+  if (!path) return false;
+  if (path.startsWith("/") || path.startsWith("\\")) return true;
+  return /^[A-Za-z]:[\\/]/.test(path);
+}
+
+function buildContextOpenUrl(worktreeId: string, ref: FileRef, token?: string | null): string {
+  const params = new URLSearchParams();
+  params.set("v", "1");
+  params.set("openWith", "editor");
+  if (isAbsolutePath(ref.path)) {
+    params.set("path", ref.path);
+  } else {
+    params.set("worktreeId", worktreeId);
+    params.set("file", ref.path);
+  }
+  if (typeof ref.line === "number") params.set("line", String(ref.line));
+  if (typeof ref.col === "number") params.set("col", String(ref.col));
+  if (token) params.set("token", token);
+  return `context://open?${params.toString()}`;
+}
+
+function parseContextOpenUrl(href: string): ParsedContextOpen | null {
+  try {
+    const url = new URL(href);
+    if (url.protocol !== "context:") return null;
+    if (url.hostname !== "open") return null;
+    const worktreeId = url.searchParams.get("worktreeId") ?? "";
+    const file = url.searchParams.get("file") ?? "";
+    const path = url.searchParams.get("path") ?? "";
+    if (!worktreeId && !path) return null;
+    if (worktreeId && !file) return null;
+    const line = url.searchParams.get("line");
+    const col = url.searchParams.get("col");
+    const parsedLine = line ? Number.parseInt(line, 10) : undefined;
+    const parsedCol = col ? Number.parseInt(col, 10) : undefined;
+    const normalizedLine = parsedLine && parsedLine > 0 ? parsedLine : undefined;
+    const normalizedCol = parsedCol && parsedCol > 0 ? parsedCol : undefined;
+    return {
+      worktreeId: worktreeId || undefined,
+      file: file || undefined,
+      path: path || undefined,
+      line: Number.isFinite(normalizedLine ?? NaN) ? normalizedLine : undefined,
+      col: Number.isFinite(normalizedCol ?? NaN) ? normalizedCol : undefined,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function looksLikeFilePath(path: string): boolean {
+  if (!path) return false;
+  if (path === "." || path === "..") return false;
+  if (path.includes("://")) return false;
+  const hasSlash = /[\\/]/.test(path);
+  const hasExt = /\.[A-Za-z0-9][A-Za-z0-9_-]*$/.test(path);
+  return hasSlash || hasExt;
+}
+
+function parseFileRefToken(raw: string): FileRef | null {
+  let path = raw;
+  let line: number | undefined;
+  let col: number | undefined;
+
+  const hashMatch = raw.match(/^(.*)#L(\d+)(?:C(\d+))?$/);
+  if (hashMatch) {
+    path = hashMatch[1];
+    line = Number.parseInt(hashMatch[2], 10);
+    if (hashMatch[3]) col = Number.parseInt(hashMatch[3], 10);
+  } else {
+    const colonMatch = raw.match(/^(.*?)(?::(\d+)(?::(\d+))?)$/);
+    if (colonMatch) {
+      path = colonMatch[1];
+      line = Number.parseInt(colonMatch[2], 10);
+      if (colonMatch[3]) col = Number.parseInt(colonMatch[3], 10);
+    }
+  }
+
+  if (!looksLikeFilePath(path)) return null;
+  return {
+    path,
+    line: Number.isFinite(line ?? NaN) ? line : undefined,
+    col: Number.isFinite(col ?? NaN) ? col : undefined,
+  };
+}
+
+function splitFileRefs(text: string, worktreeId: string, linkToken?: string | null): MdastNode[] {
+  const parts = text.split(/(\s+)/);
+  const nodes: MdastNode[] = [];
+  const leadingPunct = new Set(["(", "{", "[", "\"", "'", "`", "<"]);
+  const trailingPunct = new Set([")", "]", "}", "\"", "'", "`", ",", ".", ";", "!", "?"]);
+
+  for (const part of parts) {
+    if (!part) continue;
+    if (part.trim() === "") {
+      nodes.push({ type: "text", value: part });
+      continue;
+    }
+
+    let candidate = part;
+    let prefix = "";
+    let suffix = "";
+    while (candidate && leadingPunct.has(candidate[0])) {
+      prefix += candidate[0];
+      candidate = candidate.slice(1);
+    }
+    while (candidate && trailingPunct.has(candidate[candidate.length - 1])) {
+      suffix = candidate[candidate.length - 1] + suffix;
+      candidate = candidate.slice(0, -1);
+    }
+
+    const ref = parseFileRefToken(candidate);
+    if (!ref) {
+      nodes.push({ type: "text", value: part });
+      continue;
+    }
+
+    if (prefix) nodes.push({ type: "text", value: prefix });
+    nodes.push({
+      type: "link",
+      url: buildContextOpenUrl(worktreeId, ref, linkToken),
+      children: [{ type: "text", value: candidate }],
+    });
+    if (suffix) nodes.push({ type: "text", value: suffix });
+  }
+
+  return nodes;
+}
+
+function remarkLinkifyFileRefs(opts: { worktreeId: string; token?: string | null }) {
+  return (tree: MdastNode) => {
+    const walk = (node: MdastNode) => {
+      if (!node || typeof node !== "object") return;
+      if (node.type && ["code", "inlineCode", "link", "linkReference"].includes(node.type)) return;
+      if (!Array.isArray(node.children)) return;
+
+      const next: MdastNode[] = [];
+      for (const child of node.children) {
+        if (child?.type === "text" && typeof (child as any).value === "string") {
+          next.push(...splitFileRefs(String((child as any).value), opts.worktreeId, opts.token));
+          continue;
+        }
+        walk(child as MdastNode);
+        next.push(child as MdastNode);
+      }
+      node.children = next;
+    };
+
+    walk(tree);
+  };
+}
+
 function remarkNormalizeCursorMarkdown() {
   return (tree: MdastNode) => {
     const walk = (node: MdastNode) => {
@@ -2476,11 +2875,87 @@ function remarkNormalizeCursorMarkdown() {
   };
 }
 
-function Markdown({ content }: { content: string }) {
+function Markdown({
+  content,
+  linkifyFiles = false,
+  worktreeId = null,
+  onFileOpenError,
+  linkToken,
+}: {
+  content: string;
+  linkifyFiles?: boolean;
+  worktreeId?: string | null;
+  onFileOpenError?: (message: string | null) => void;
+  linkToken?: string | null;
+}) {
+  const remarkPlugins: any[] = [remarkGfm, remarkNormalizeCursorMarkdown];
+  if (linkifyFiles && worktreeId) {
+    remarkPlugins.push([remarkLinkifyFileRefs, { worktreeId, token: linkToken }]);
+  }
+
   return (
     <ReactMarkdown
-      remarkPlugins={[remarkGfm, remarkNormalizeCursorMarkdown]}
+      remarkPlugins={remarkPlugins}
+      urlTransform={(url) => (url.startsWith("context://") ? url : defaultUrlTransform(url))}
       components={{
+        a({ href, children, className, ...rest }) {
+          const isContextOpen = typeof href === "string" && href.startsWith("context://open?");
+          if (!isContextOpen) {
+            return (
+              <a href={href} className={className} {...rest}>
+                {children}
+              </a>
+            );
+          }
+
+          const handleClick = async (event: MouseEvent<HTMLAnchorElement>) => {
+            if (!isDesktopApp()) {
+              return;
+            }
+            event.preventDefault();
+            if (!event.metaKey && !event.ctrlKey) return;
+            if (!href) return;
+            const parsed = parseContextOpenUrl(href);
+            if (!parsed) {
+              onFileOpenError?.("Couldn't parse file link.");
+              return;
+            }
+            try {
+              if (parsed.worktreeId && parsed.file) {
+                await desktopOpenFile({
+                  worktree_id: parsed.worktreeId,
+                  path: parsed.file,
+                  line: parsed.line ?? null,
+                  col: parsed.col ?? null,
+                });
+              } else if (parsed.path) {
+                await desktopOpenPath({
+                  path: parsed.path,
+                  line: parsed.line ?? null,
+                  col: parsed.col ?? null,
+                });
+              } else {
+                throw new Error("Missing file reference.");
+              }
+              onFileOpenError?.(null);
+            } catch (e: any) {
+              onFileOpenError?.(e?.message ?? String(e));
+            }
+          };
+
+          const combinedClassName = [className, "ctx-file-link"].filter(Boolean).join(" ");
+          return (
+            <a
+              href={href}
+              className={combinedClassName}
+              title="Cmd/Ctrl+Click to open in editor"
+              onClick={handleClick}
+              {...rest}
+            >
+              {children}
+            </a>
+          );
+        },
         pre({ children }) {
           return <>{children}</>;
         },

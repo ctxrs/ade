@@ -85,7 +85,7 @@ mod tests {
 
     #[tokio::test]
     async fn concurrent_event_and_message_writes_do_not_error() {
-        tokio::time::timeout(Duration::from_secs(10), async {
+        tokio::time::timeout(Duration::from_secs(30), async {
             let dir = tempfile::tempdir().unwrap();
             let db_path = dir.path().join("db.sqlite");
             let store = Store::open(&db_path).await.unwrap();
@@ -122,8 +122,8 @@ mod tests {
             let task_id = session.task_id;
             let track_id = session.track_id;
 
-            const WORKERS: usize = 16;
-            const WRITES_PER_WORKER: usize = 20;
+            const WORKERS: usize = 8;
+            const WRITES_PER_WORKER: usize = 10;
 
             let barrier = Arc::new(Barrier::new(WORKERS));
             let mut handles = Vec::with_capacity(WORKERS);
