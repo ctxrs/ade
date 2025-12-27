@@ -865,14 +865,8 @@ export default function SettingsPage() {
     <div className="settings-root">
       <div className="settings-shell">
         <aside className="settings-sidebar">
-          <div className="settings-user">
-            <div className="settings-avatar" aria-hidden="true">
-              C
-            </div>
-            <div className="settings-user-meta">
-              <div className="settings-user-name">Context</div>
-              <div className="settings-user-sub">Settings</div>
-            </div>
+          <div className="settings-user settings-user-single">
+            <div className="settings-user-name">Settings</div>
           </div>
 
           <div className="settings-search">
@@ -931,4 +925,3 @@ export default function SettingsPage() {
     </div>
   );
 }
-
