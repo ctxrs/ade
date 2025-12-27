@@ -20,6 +20,7 @@ import {
   verifyProviderForWorkspace,
 } from "../api/client";
 import { useSettingsSnapshot, useSettingsStore } from "../state/settingsStore";
+import { HARNESS_CATALOG } from "../utils/harnessCatalog";
 import { isDesktopApp } from "../utils/desktop";
 
 const MODEL_OPTIONS: Array<{ value: string; label: string }> = [
@@ -155,6 +156,7 @@ export default function SettingsPage() {
   }, [location.search]);
   const [active, setActive] = useState<SectionId>(() => sectionFromHash(window.location.hash) ?? "general");
   const [query, setQuery] = useState("");
+  const harnessCatalogById = useMemo(() => new Map(HARNESS_CATALOG.map((h) => [h.id, h])), []);
 
   const [loaded, setLoaded] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -711,6 +713,18 @@ export default function SettingsPage() {
 
     if (active === "agent_harnesses") {
       const anyWorkspace = workspaces.length > 0;
+      const order = new Map<string, number>(HARNESS_CATALOG.map((h, idx) => [h.id, idx]));
+      const sortedProviders = providers
+        .filter((p) => p.details?.ui_hidden !== "true")
+        .slice()
+        .sort((a, b) => {
+          const ao = order.get(a.provider_id);
+          const bo = order.get(b.provider_id);
+          if (typeof ao === "number" && typeof bo === "number") return ao - bo;
+          if (typeof ao === "number") return -1;
+          if (typeof bo === "number") return 1;
+          return a.provider_id.localeCompare(b.provider_id);
+        });
       return (
         <>
           <Card>
@@ -743,12 +757,10 @@ export default function SettingsPage() {
 
           <div className="settings-card settings-harness-list">
             <div className="settings-card-rows">
-              {providers
-                .filter((p) => p.details?.ui_hidden !== "true")
-                .slice()
-                .sort((a, b) => a.provider_id.localeCompare(b.provider_id))
-                .map((p) => {
+              {sortedProviders.map((p) => {
                   const id = p.provider_id;
+                  const entry = harnessCatalogById.get(id);
+                  const label = entry?.label ?? id;
                   const installed = p.installed === true && p.health === "ok";
                   const installSupported = p.details?.install_supported === "true";
                   const installUi = installs[id];
@@ -782,7 +794,16 @@ export default function SettingsPage() {
                     <div key={id} className={`settings-row settings-harness-row ${installed ? "" : "settings-harness-row-disabled"}`}>
                       <div className="settings-row-left">
                         <div className="settings-row-title settings-harness-title">
-                          {p.provider_id}
+                          {entry?.logoSrc ? (
+                            <img
+                              className={`settings-harness-logo ${entry.invertInDark ? "settings-harness-logo-invert" : ""}`}
+                              src={entry.logoSrc}
+                              alt=""
+                            />
+                          ) : (
+                            <span className="settings-harness-logo-fallback" aria-hidden="true" />
+                          )}
+                          {label}
                           {statusPill ? <span className="settings-harness-status">{statusPill}</span> : null}
                         </div>
                         <div className="settings-row-desc">
@@ -847,7 +868,7 @@ export default function SettingsPage() {
                     </div>
                   );
                 })}
-              {providers.filter((p) => p.details?.ui_hidden !== "true").length === 0 ? (
+              {sortedProviders.length === 0 ? (
                 <div className="settings-empty">No harnesses.</div>
               ) : null}
             </div>
