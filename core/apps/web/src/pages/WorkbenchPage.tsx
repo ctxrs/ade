@@ -1177,6 +1177,14 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     );
   }, [activeScrollKey, workbenchSnap.window.scrollByKey]);
 
+  const handleScrollStateChange = useCallback(
+    (next: { stickToBottom: boolean; anchorItemId: string | null; scrollTop: number | null }) => {
+      if (!activeScrollKey) return;
+      workbenchStore.setScrollState(activeScrollKey, next);
+    },
+    [activeScrollKey, workbenchStore],
+  );
+
   const showDebugIds = useMemo(() => {
     const params = new URLSearchParams(window.location.search);
     const ids = params.get("ids");
@@ -2800,7 +2808,6 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
               <div className="wb-session">
                 {activeSessionId ? (
                   <SessionView
-                    key={activeSessionId ?? "empty"}
                     sessionId={activeSessionId}
                     variant="workbench"
                     showDiffPane={false}
@@ -2813,11 +2820,16 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
                     onModeChange={(modeId) =>
                       activeSessionDraft.setValue({ text: activeSessionDraft.value.text, modeId })
                     }
-                    scrollState={activeScrollState ? { stickToBottom: activeScrollState.stickToBottom, anchorItemId: activeScrollState.anchorItemId } : null}
-                    onScrollStateChange={(next) => {
-                      if (!activeScrollKey) return;
-                      workbenchStore.setScrollState(activeScrollKey, next);
-                    }}
+                    scrollState={
+                      activeScrollState
+                        ? {
+                            stickToBottom: activeScrollState.stickToBottom,
+                            anchorItemId: activeScrollState.anchorItemId,
+                            scrollTop: activeScrollState.scrollTop ?? null,
+                          }
+                        : null
+                    }
+                    onScrollStateChange={handleScrollStateChange}
                   />
                 ) : (
                   <div className="wb-muted" style={{ padding: 16 }}>

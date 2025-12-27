@@ -41,6 +41,7 @@ export type SessionCacheEntry = {
   turns: SessionTurn[];
   turnToolsByTurnId: Record<string, SessionTurnTool[]>;
   turnToolsLoading: string[];
+  toolSummariesReady: boolean;
   hasMoreTurns: boolean;
   events: SessionEvent[];
   messages: Message[];
@@ -271,6 +272,7 @@ export class SessionSupervisor {
         turns: e.turns,
         turnToolsByTurnId: e.turnToolsByTurnId,
         turnToolsLoading: [...e.turnToolsLoadingSet],
+        toolSummariesReady: e.toolSummariesReady,
         hasMoreTurns: e.hasMoreTurns,
         events: e.events,
         messages: e.messages,
@@ -309,6 +311,7 @@ export class SessionSupervisor {
       turns: [],
       turnToolsByTurnId: {},
       turnToolsLoading: [],
+      toolSummariesReady: false,
       hasMoreTurns: true,
       events: [],
       messages: [],
@@ -446,6 +449,7 @@ export class SessionSupervisor {
         }
       }
     }
+    entry.toolSummariesReady = true;
     if (!opts?.fromCache) {
       entry.error = undefined;
     }

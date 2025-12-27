@@ -11,6 +11,16 @@ type SeedOptions = {
   workspaceName?: string;
   repoRoot?: string;
   throttleMs?: number;
+  includeToolSummaries?: boolean;
+  toolSummariesPerTurn?: number;
+  toolSummaryFixtures?: Array<{
+    kind: string;
+    title?: string;
+    input?: any;
+    output_text?: string;
+  }>;
+  awaitTurnCompletion?: boolean;
+  completionTimeoutMs?: number;
 };
 
 type SeedResult = {
@@ -26,6 +36,36 @@ const parseCount = (value: number | { min: number; max: number }, index: number)
 };
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const DEFAULT_TOOL_FIXTURES = [
+  { kind: "execute", title: "Run pwd", input: { command: "pwd" } },
+  { kind: "search", title: "Searched context", input: { query: "context" } },
+  { kind: "execute", title: "Explored .context", input: { command: "ls .context" } },
+  { kind: "read", title: "Read .context", input: { path: ".context" } },
+  { kind: "execute", title: "Explored specs", input: { command: "ls specs" } },
+  {
+    kind: "execute",
+    title: "Run ./scripts/supercat.sh context-pack/specs",
+    input: { command: "./scripts/supercat.sh context-pack/specs" },
+  },
+  { kind: "search", title: "Searched workbench", input: { query: "workbench" } },
+  { kind: "read", title: "Read context-pack", input: { path: "context-pack" } },
+];
+
+const chunkFixtures = (fixtures: SeedOptions["toolSummaryFixtures"], count: number, offset: number) => {
+  const list = (fixtures && fixtures.length > 0 ? fixtures : DEFAULT_TOOL_FIXTURES).slice();
+  if (list.length === 0 || count <= 0) return [];
+  const out = [];
+  for (let i = 0; i < count; i++) {
+    out.push(list[(offset + i) % list.length]);
+  }
+  return out;
+};
+
+const buildToolMarker = (fixtures: SeedOptions["toolSummaryFixtures"]) => {
+  if (!fixtures || fixtures.length === 0) return "";
+  return `\n[[tool_calls]]\n${JSON.stringify(fixtures)}\n[[/tool_calls]]`;
+};
 
 function initRepo(): string {
   const repo = mkdtempSync(path.join(tmpdir(), "context-e2e-fixture-"));
@@ -46,6 +86,14 @@ async function apiPost<T>(request: APIRequestContext, url: string, data: any): P
   return (await resp.json()) as T;
 }
 
+async function apiGet<T>(request: APIRequestContext, url: string): Promise<T> {
+  const resp = await request.get(url);
+  if (!resp.ok()) {
+    throw new Error(`seed request failed: ${url} (${resp.status()})`);
+  }
+  return (await resp.json()) as T;
+}
+
 export async function seedDummyWorkspace(
   request: APIRequestContext,
   opts: SeedOptions,
@@ -60,6 +108,11 @@ export async function seedDummyWorkspace(
   const taskIds: string[] = [];
   const sessionIdsByTask: Record<string, string[]> = {};
   const throttle = opts.throttleMs ?? 15;
+  const includeToolSummaries = Boolean(opts.includeToolSummaries);
+  const toolSummariesPerTurn = opts.toolSummariesPerTurn ?? 6;
+  const toolSummaryFixtures = opts.toolSummaryFixtures ?? DEFAULT_TOOL_FIXTURES;
+  const awaitTurnCompletion = Boolean(opts.awaitTurnCompletion);
+  const completionTimeoutMs = opts.completionTimeoutMs ?? 15_000;
 
   for (let i = 0; i < opts.tasks; i++) {
     const task = await apiPost<{ id: string }>(request, `/api/workspaces/${workspace.id}/tasks`, {
@@ -80,10 +133,30 @@ export async function seedDummyWorkspace(
       sessionIdsByTask[task.id].push(session.id);
 
       for (let t = 0; t < opts.turnsPerSession; t++) {
+        const toolFixtures = includeToolSummaries
+          ? chunkFixtures(toolSummaryFixtures, toolSummariesPerTurn, t * toolSummariesPerTurn)
+          : [];
+        const toolMarker = includeToolSummaries ? buildToolMarker(toolFixtures) : "";
         await apiPost(request, `/api/sessions/${session.id}/messages`, {
-          content: `fixture msg ${i + 1}.${s + 1}.${t + 1}`,
+          content: `fixture msg ${i + 1}.${s + 1}.${t + 1}${toolMarker}`,
           delivery: "immediate",
         });
+        if (awaitTurnCompletion) {
+          const start = Date.now();
+          while (true) {
+            const head = await apiGet<{
+              turns: Array<{ status: string; tool_total?: number | null }>;
+              tool_summaries?: any[];
+            }>(request, `/api/sessions/${session.id}/head?limit=1`);
+            const last = head.turns[head.turns.length - 1];
+            const done = last?.status === "completed" || last?.status === "done";
+            if (done) break;
+            if (Date.now() - start > completionTimeoutMs) {
+              throw new Error(`turn completion timeout for session ${session.id}`);
+            }
+            await sleep(50);
+          }
+        }
         if (throttle > 0) {
           await sleep(throttle);
         }

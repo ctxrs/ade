@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use async_trait::async_trait;
-use serde_json::json;
+use serde_json::{json, Value};
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::{sleep, Duration};
 use uuid::Uuid;
@@ -12,6 +12,55 @@ use context_core::models::SessionEventType;
 
 use crate::adapters::{ProviderAdapter, ProviderStatus, RunHandle, TurnInput};
 use crate::events::NormalizedEvent;
+
+#[derive(Debug, Clone)]
+struct FixtureToolCall {
+    kind: String,
+    title: Option<String>,
+    input: Option<Value>,
+    output_text: Option<String>,
+}
+
+fn parse_fixture_tools(content: &str) -> Option<Vec<FixtureToolCall>> {
+    let start = content.find("[[tool_calls]]")?;
+    let end = content.find("[[/tool_calls]]")?;
+    if end <= start {
+        return None;
+    }
+    let raw = &content[start + "[[tool_calls]]".len()..end];
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    let parsed: Value = serde_json::from_str(raw).ok()?;
+    let tools_value = if parsed.is_array() {
+        parsed
+    } else {
+        parsed.get("tool_calls")?.clone()
+    };
+    let list = tools_value.as_array()?.to_vec();
+    let mut out = Vec::new();
+    for tool in list {
+        let kind = tool.get("kind").and_then(|v| v.as_str()).unwrap_or("execute");
+        let title = tool.get("title").and_then(|v| v.as_str()).map(|v| v.to_string());
+        let input = tool.get("input").cloned();
+        let output_text = tool
+            .get("output_text")
+            .and_then(|v| v.as_str())
+            .map(|v| v.to_string());
+        out.push(FixtureToolCall {
+            kind: kind.to_string(),
+            title,
+            input,
+            output_text,
+        });
+    }
+    if out.is_empty() {
+        None
+    } else {
+        Some(out)
+    }
+}
 
 #[derive(Default)]
 pub struct FakeProviderAdapter;
@@ -64,8 +113,8 @@ impl ProviderAdapter for FakeProviderAdapter {
     ) -> Result<RunHandle> {
         let (cancel_tx, mut cancel_rx) = oneshot::channel::<()>();
         let join = tokio::spawn(async move {
-            let tool_call_id = Uuid::new_v4().to_string();
             let sink = event_sink;
+            let fixture_tools = parse_fixture_tools(&input.content);
 
             let send = |event_type, payload| async {
                 let _ = sink
@@ -87,10 +136,31 @@ impl ProviderAdapter for FakeProviderAdapter {
                 _ = async {
                     send(SessionEventType::AssistantChunk, json!({"content": format!("echo: {}", input.content)})).await;
                     sleep(delay).await;
-                    send(SessionEventType::ToolCall, json!({"tool_call_id": tool_call_id, "name": "fake_tool", "args": {}})).await;
-                    sleep(delay).await;
-                    send(SessionEventType::ToolResult, json!({"tool_call_id": tool_call_id, "result": "ok"})).await;
-                    sleep(delay).await;
+                    if let Some(tools) = fixture_tools {
+                        for tool in tools {
+                            let tool_call_id = Uuid::new_v4().to_string();
+                            send(SessionEventType::ToolCall, json!({
+                                "tool_call_id": tool_call_id,
+                                "kind": tool.kind,
+                                "title": tool.title,
+                                "rawInput": tool.input,
+                            })).await;
+                            sleep(delay).await;
+                            send(SessionEventType::ToolResult, json!({
+                                "tool_call_id": tool_call_id,
+                                "kind": tool.kind,
+                                "title": tool.title,
+                                "outputText": tool.output_text.unwrap_or_else(|| "ok".to_string()),
+                            })).await;
+                            sleep(delay).await;
+                        }
+                    } else {
+                        let tool_call_id = Uuid::new_v4().to_string();
+                        send(SessionEventType::ToolCall, json!({"tool_call_id": tool_call_id, "name": "fake_tool", "args": {}})).await;
+                        sleep(delay).await;
+                        send(SessionEventType::ToolResult, json!({"tool_call_id": tool_call_id, "result": "ok"})).await;
+                        sleep(delay).await;
+                    }
                     send(SessionEventType::AssistantComplete, json!({"content": format!("done: {}", input.content)})).await;
                     sleep(delay).await;
                     send(SessionEventType::Done, json!({})).await;

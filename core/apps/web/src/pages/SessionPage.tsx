@@ -224,6 +224,9 @@ export function SessionView({
     anchorItemId: string | null;
     scrollTop: number | null;
   } | null>(null);
+  const liveScrollTopRef = useRef<number | null>(null);
+  const scrollSyncRafRef = useRef<number | null>(null);
+  const userScrolledRef = useRef(false);
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const scrollPersistTimerRef = useRef<number | null>(null);
   const latestAnchorIdRef = useRef<string | null>(null);
@@ -339,6 +342,12 @@ export function SessionView({
     didInitialScrollRef.current = false;
     lastScrollPersistedRef.current = null;
     latestAnchorIdRef.current = null;
+    userScrolledRef.current = false;
+    liveScrollTopRef.current = null;
+    if (scrollSyncRafRef.current != null) {
+      window.cancelAnimationFrame(scrollSyncRafRef.current);
+      scrollSyncRafRef.current = null;
+    }
     setAtBottom(true);
     setHasNewActivity(false);
     lastActivityCountRef.current = 0;
@@ -359,6 +368,10 @@ export function SessionView({
       if (scrollPersistTimerRef.current) {
         window.clearTimeout(scrollPersistTimerRef.current);
         scrollPersistTimerRef.current = null;
+      }
+      if (scrollSyncRafRef.current != null) {
+        window.cancelAnimationFrame(scrollSyncRafRef.current);
+        scrollSyncRafRef.current = null;
       }
     };
   }, []);
@@ -391,6 +404,7 @@ export function SessionView({
   const turns = entry?.turns ?? [];
   const turnToolsByTurnId = entry?.turnToolsByTurnId ?? {};
   const turnToolsLoading = entry?.turnToolsLoading ?? [];
+  const toolSummariesReady = entry?.toolSummariesReady ?? false;
   const hasMoreTurns = entry?.hasMoreTurns ?? false;
   const events: SessionEvent[] = entry?.events ?? [];
   const messages: Message[] = entry?.messages ?? [];
@@ -400,6 +414,11 @@ export function SessionView({
   const turnsKey = deriveTurnsKey(turns);
   const messagesKey = deriveMessagesKey(messages);
   const streamConnected = supervisorSnap.connection === "connected";
+  const latestScrollStateRef = useRef(scrollState ?? null);
+
+  useEffect(() => {
+    latestScrollStateRef.current = scrollState ?? null;
+  }, [scrollState?.anchorItemId, scrollState?.scrollTop, scrollState?.stickToBottom]);
 
   const interruptBanner = useMemo(() => {
     const last = [...events].reverse().find((e) => e.event_type === "turn_interrupted");
@@ -629,12 +648,19 @@ export function SessionView({
   }, [perfEnabled, entry?.loading, entry?.events.length, entry?.diff]);
 
   const legacyThreadView = useMemo(() => buildThreadViewModel(events), [eventsKey]);
-  const workbenchThreadView = useMemo(
-    () => buildWorkbenchThreadViewModel(turns, messages, turnToolsByTurnId, events),
+  const workbenchThreadView = useMemo(() => {
+    if (turns.length === 0) {
+      return { groups: [], debugEvents: [] };
+    }
+    return buildWorkbenchThreadViewModelFromTurns(
+      turns,
+      messages,
+      toolSummariesReady ? turnToolsByTurnId : {},
+      events,
+    );
     // messages are canonical for turn headers; include in memo key
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [turnsKey, messagesKey, turnToolsByTurnId, eventsKey],
-  );
+  }, [turnsKey, messagesKey, toolSummariesReady ? turnToolsByTurnId : null, eventsKey, turns.length]);
 
   const debugEvents = variant === "workbench" ? workbenchThreadView.debugEvents : legacyThreadView.debugEvents;
   const threadItems = variant === "workbench" ? [] : legacyThreadView.items;
@@ -649,11 +675,25 @@ export function SessionView({
     }
     return out;
   }, [wbGroups]);
+  const workbenchItemsRef = useRef(wbListItems);
+  const threadItemsRef = useRef(threadItems);
+
+  useEffect(() => {
+    workbenchItemsRef.current = wbListItems;
+  }, [wbListItems]);
+
+  useEffect(() => {
+    threadItemsRef.current = threadItems;
+  }, [threadItems]);
 
   useLayoutEffect(() => {
     const items = variant === "workbench" ? wbListItems : threadItems;
     if (items.length === 0) return;
     if (didInitialScrollRef.current) return;
+    if (userScrolledRef.current) {
+      didInitialScrollRef.current = true;
+      return;
+    }
 
     const restoreAnchorId =
       scrollState && !scrollState.stickToBottom ? (scrollState.anchorItemId ?? null) : null;
@@ -1032,7 +1072,7 @@ export function SessionView({
     });
   }, [extractFilesFromTransfer, extractFirstUrlFromTransfer, hideDropOverlay, onDropFiles, showDropOverlay, urlToImageFile]);
 
-  const renderThreadItem = (item: ThreadItem) => {
+  const renderThreadItem = useCallback((item: ThreadItem) => {
     if (item.kind === "spacer") {
       return <div style={{ height: 1 }} />;
     }
@@ -1100,7 +1140,180 @@ export function SessionView({
         linkToken={deepLinkToken}
       />
     );
-  };
+  }, [
+    deepLinkToken,
+    expandedThoughtByAssistantId,
+    expandedToolById,
+    expandedTurnDetailsById,
+    handleFileOpenError,
+    id,
+    supervisor,
+    turnToolsLoading,
+    variant,
+    worktreeId,
+  ]);
+
+  const workbenchItemContent = useCallback(
+    (_: number, item: WorkbenchListItem) => {
+      if (!item) return <div style={{ height: 1 }} />;
+      if ((item as any).kind === "turn_header") {
+        const header = (item as Extract<WorkbenchListItem, { kind: "turn_header" }>).header;
+        const isLong = header.content.split("\n").length > 4 || header.content.length > 280;
+        const expanded = expandedTurnHeaders[header.id] ?? !isLong;
+        return (
+          <WorkbenchTurnHeaderView
+            header={header}
+            expanded={expanded}
+            onToggle={() => setExpandedTurnHeaders((prev) => ({ ...prev, [header.id]: !expanded }))}
+          />
+        );
+      }
+      return renderThreadItem(item as ThreadItem);
+    },
+    [expandedTurnHeaders, renderThreadItem],
+  );
+
+  const threadItemContent = useCallback(
+    (_: number, item: ThreadItem) => renderThreadItem(item),
+    [renderThreadItem],
+  );
+
+  const restoreScrollForNode = useCallback(
+    (node: HTMLDivElement | null) => {
+      if (!node) return;
+      const state = latestScrollStateRef.current;
+      if (!state) return;
+      const items = variant === "workbench" ? workbenchItemsRef.current : threadItemsRef.current;
+      const restoreAnchorId = !state.stickToBottom ? (state.anchorItemId ?? null) : null;
+      const restoreScrollTop = !state.stickToBottom ? (state.scrollTop ?? null) : null;
+      restoringScrollRef.current = true;
+      requestAnimationFrame(() => {
+        if (userScrolledRef.current && liveScrollTopRef.current != null) {
+          node.scrollTop = Math.max(0, liveScrollTopRef.current);
+          restoringScrollRef.current = false;
+          return;
+        }
+        if (restoreScrollTop !== null) {
+          node.scrollTop = Math.max(0, restoreScrollTop);
+          restoringScrollRef.current = false;
+          return;
+        }
+        if (restoreAnchorId) {
+          const idx = items.findIndex((it) => it?.id === restoreAnchorId);
+          if (idx >= 0) {
+            virtuosoRef.current?.scrollToIndex({ index: idx, align: "start" });
+            restoringScrollRef.current = false;
+            return;
+          }
+        }
+        virtuosoRef.current?.scrollToIndex({ index: items.length - 1, align: "end" });
+        restoringScrollRef.current = false;
+      });
+    },
+    [variant],
+  );
+
+  const workbenchComponents = useMemo(
+    () => ({
+      Scroller: forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>((props, ref) => (
+        <div
+          {...props}
+          ref={(node) => {
+            const prev = scrollerRef.current;
+            scrollerRef.current = node;
+            if (typeof ref === "function") ref(node);
+            else if (ref) (ref as React.MutableRefObject<HTMLDivElement | null>).current = node;
+            if (node && prev !== node && didInitialScrollRef.current) {
+              restoreScrollForNode(node);
+            }
+          }}
+          onScroll={(event) => {
+            props.onScroll?.(event);
+            userScrolledRef.current = true;
+            if (scrollerRef.current) {
+              liveScrollTopRef.current = scrollerRef.current.scrollTop;
+            }
+            if (!didInitialScrollRef.current) didInitialScrollRef.current = true;
+            if (restoringScrollRef.current) return;
+            if (scrollSyncRafRef.current != null) return;
+            scrollSyncRafRef.current = window.requestAnimationFrame(() => {
+              scrollSyncRafRef.current = null;
+              const el = scrollerRef.current;
+              if (!el) return;
+              const scrollTop = el.scrollTop;
+              const remaining = el.scrollHeight - (scrollTop + el.clientHeight);
+              const nearBottom = remaining <= 16;
+              setAtBottom(nearBottom);
+              if (nearBottom) setHasNewActivity(false);
+              if (nearBottom) {
+                persistScroll({ stickToBottom: true, anchorItemId: null, scrollTop: null });
+                return;
+              }
+              persistScroll({ stickToBottom: false, anchorItemId: latestAnchorIdRef.current, scrollTop });
+            });
+          }}
+        />
+      )),
+      List: forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>((props, ref) => (
+        <div {...props} ref={ref} role="list" />
+      )),
+      Item: forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>((props, ref) => (
+        <div {...props} ref={ref} role="listitem" />
+      )),
+    }),
+    [restoreScrollForNode, scheduleScrollPersist],
+  );
+
+  const threadComponents = useMemo(
+    () => ({
+      Scroller: forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>((props, ref) => (
+        <div
+          {...props}
+          ref={(node) => {
+            const prev = scrollerRef.current;
+            scrollerRef.current = node;
+            if (typeof ref === "function") ref(node);
+            else if (ref) (ref as React.MutableRefObject<HTMLDivElement | null>).current = node;
+            if (node && prev !== node && didInitialScrollRef.current) {
+              restoreScrollForNode(node);
+            }
+          }}
+          onScroll={(event) => {
+            props.onScroll?.(event);
+            userScrolledRef.current = true;
+            if (scrollerRef.current) {
+              liveScrollTopRef.current = scrollerRef.current.scrollTop;
+            }
+            if (!didInitialScrollRef.current) didInitialScrollRef.current = true;
+            if (restoringScrollRef.current) return;
+            if (scrollSyncRafRef.current != null) return;
+            scrollSyncRafRef.current = window.requestAnimationFrame(() => {
+              scrollSyncRafRef.current = null;
+              const el = scrollerRef.current;
+              if (!el) return;
+              const scrollTop = el.scrollTop;
+              const remaining = el.scrollHeight - (scrollTop + el.clientHeight);
+              const nearBottom = remaining <= 16;
+              setAtBottom(nearBottom);
+              if (nearBottom) setHasNewActivity(false);
+              if (nearBottom) {
+                persistScroll({ stickToBottom: true, anchorItemId: null, scrollTop: null });
+                return;
+              }
+              persistScroll({ stickToBottom: false, anchorItemId: latestAnchorIdRef.current, scrollTop });
+            });
+          }}
+        />
+      )),
+      List: forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>((props, ref) => (
+        <div {...props} ref={ref} role="list" />
+      )),
+      Item: forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>((props, ref) => (
+        <div {...props} ref={ref} role="listitem" />
+      )),
+    }),
+    [restoreScrollForNode, scheduleScrollPersist],
+  );
 
   return (
     <div
@@ -1363,7 +1576,10 @@ export function SessionView({
                   style={virtuosoStyle}
                   data={wbListItems}
                   ref={virtuosoRef}
-                  followOutput="auto"
+                  followOutput={atBottom ? "auto" : false}
+                  defaultItemHeight={56}
+                  initialItemCount={wbListItems.length}
+                  increaseViewportBy={{ top: 1000, bottom: 1000 }}
                   computeItemKey={(index, item) => item?.id ?? `i:${index}`}
                   startReached={() => {
                     if (!hasMoreTurns) return;
@@ -1386,46 +1602,8 @@ export function SessionView({
                       scrollTop: lastScrollPersistedRef.current?.scrollTop ?? null,
                     });
                   }}
-                  components={{
-                    Scroller: forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>((props, ref) => (
-                      <div
-                        {...props}
-                        ref={(node) => {
-                          scrollerRef.current = node;
-                          if (typeof ref === "function") ref(node);
-                          else if (ref) (ref as React.MutableRefObject<HTMLDivElement | null>).current = node;
-                        }}
-                        onScroll={(event) => {
-                          props.onScroll?.(event);
-                          scheduleScrollPersist();
-                        }}
-                      />
-                    )),
-                    List: forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>((props, ref) => (
-                      <div {...props} ref={ref} role="list" />
-                    )),
-                    Item: forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>((props, ref) => (
-                      <div {...props} ref={ref} role="listitem" />
-                    )),
-                  }}
-                  itemContent={(_, item) => {
-                    if (!item) return <div style={{ height: 1 }} />;
-                    if ((item as any).kind === "turn_header") {
-                      const header = (item as Extract<WorkbenchListItem, { kind: "turn_header" }>).header;
-                      const isLong = header.content.split("\n").length > 4 || header.content.length > 280;
-                      const expanded = expandedTurnHeaders[header.id] ?? !isLong;
-                      return (
-                        <WorkbenchTurnHeaderView
-                          header={header}
-                          expanded={expanded}
-                          onToggle={() =>
-                            setExpandedTurnHeaders((prev) => ({ ...prev, [header.id]: !expanded }))
-                          }
-                        />
-                      );
-                    }
-                    return renderThreadItem(item as ThreadItem);
-                  }}
+                  components={workbenchComponents}
+                  itemContent={workbenchItemContent}
                 />
 
                 {hasNewActivity && (
@@ -1449,7 +1627,8 @@ export function SessionView({
                 style={virtuosoStyle}
                 data={threadItems}
                 ref={virtuosoRef}
-                followOutput="auto"
+                followOutput={atBottom ? "auto" : false}
+                defaultItemHeight={56}
                 computeItemKey={(index, item) => item?.id ?? `i:${index}`}
                 atBottomStateChange={(b) => {
                   setAtBottom(b);
@@ -1468,29 +1647,8 @@ export function SessionView({
                     scrollTop: lastScrollPersistedRef.current?.scrollTop ?? null,
                   });
                 }}
-                components={{
-                  Scroller: forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>((props, ref) => (
-                    <div
-                      {...props}
-                      ref={(node) => {
-                        scrollerRef.current = node;
-                        if (typeof ref === "function") ref(node);
-                        else if (ref) (ref as React.MutableRefObject<HTMLDivElement | null>).current = node;
-                      }}
-                      onScroll={(event) => {
-                        props.onScroll?.(event);
-                        scheduleScrollPersist();
-                      }}
-                    />
-                  )),
-                  List: forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>((props, ref) => (
-                    <div {...props} ref={ref} role="list" />
-                  )),
-                  Item: forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>((props, ref) => (
-                    <div {...props} ref={ref} role="listitem" />
-                  )),
-                }}
-                itemContent={(_, item) => renderThreadItem(item)}
+                components={threadComponents}
+                itemContent={threadItemContent}
               />
 
               {hasNewActivity && (
