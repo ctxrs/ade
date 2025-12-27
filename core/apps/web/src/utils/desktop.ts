@@ -21,6 +21,40 @@ export type DesktopHttpResponse = {
   content_type?: string | null;
 };
 
+export type DesktopDeepLinkToken = {
+  token: string;
+  expires_at_ms: number;
+};
+
+export type DesktopOpenFileReq = {
+  worktree_id: string;
+  path: string;
+  line?: number | null;
+  col?: number | null;
+};
+
+export type DesktopOpenPathReq = {
+  path: string;
+  line?: number | null;
+  col?: number | null;
+};
+
+export type DesktopEditorSettings = {
+  target:
+    | "system"
+    | "vscode"
+    | "vscode_insiders"
+    | "cursor"
+    | "windsurf"
+    | "antigravity"
+    | "idea"
+    | "pycharm"
+    | "xcode"
+    | "android_studio"
+    | "custom";
+  custom_command?: string | null;
+};
+
 export const isDesktopApp = (): boolean => {
   try {
     return Boolean((window as any).__TAURI_INTERNALS__ || (window as any).__TAURI__);
@@ -64,6 +98,23 @@ export const desktopReadFile = async (args: {
   col?: number | null;
 }): Promise<{ path: string; text: string }> =>
   invoke<{ path: string; text: string }>("desktop_read_file", args);
+
+export const desktopGetDeepLinkToken = async (): Promise<DesktopDeepLinkToken> =>
+  invoke<DesktopDeepLinkToken>("desktop_get_deep_link_token");
+
+export const desktopOpenFile = async (req: DesktopOpenFileReq): Promise<void> =>
+  invoke<void>("desktop_open_file", { req });
+
+export const desktopOpenPath = async (req: DesktopOpenPathReq): Promise<void> =>
+  invoke<void>("desktop_open_path", { req });
+
+export const desktopGetEditorSettings = async (): Promise<DesktopEditorSettings> =>
+  invoke<DesktopEditorSettings>("desktop_get_editor_settings");
+
+export const desktopUpdateEditorSettings = async (
+  settings: DesktopEditorSettings,
+): Promise<DesktopEditorSettings> =>
+  invoke<DesktopEditorSettings>("desktop_update_editor_settings", { settings });
 
 export const desktopDaemonRequest = async (req: {
   method: string;
