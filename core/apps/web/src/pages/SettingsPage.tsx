@@ -1,5 +1,6 @@
-import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
+import type { User } from "@supabase/supabase-js";
 import {
   DictationSettings,
   InstallInfo,
@@ -29,6 +30,14 @@ import {
   isDesktopApp,
 } from "../utils/desktop";
 import { HARNESS_CATALOG, type HarnessCatalogEntry } from "../utils/harnessCatalog";
+import {
+  ENTITLEMENTS_CACHE_KEY,
+  ENTITLEMENTS_CACHE_TTL_MS,
+  readCachedValue,
+  shouldUseCachedValue,
+  writeCachedValue,
+} from "../utils/entitlementsCache";
+import { getSupabaseClient } from "../utils/supabaseClient";
 
 const MODEL_OPTIONS: Array<{ value: string; label: string }> = [
   { value: "auto", label: "Default (Deepgram Nova-3)" },
@@ -66,6 +75,7 @@ type SectionId =
   | "sandboxing"
   | "context_pack"
   | "dictation"
+  | "billing"
   | "team_enterprise"
   | "usage_analytics";
 
@@ -88,6 +98,7 @@ const SECTIONS: Array<{
   { id: "sandboxing", label: "Sandboxing", group: "main" },
   { id: "context_pack", label: "Context Pack", group: "main" },
   { id: "dictation", label: "Dictation", group: "advanced" },
+  { id: "billing", label: "Billing", group: "advanced" },
   { id: "team_enterprise", label: "Team & Enterprise", group: "advanced" },
   { id: "usage_analytics", label: "Usage Analytics", group: "advanced" },
 ];
@@ -162,6 +173,29 @@ export default function SettingsPage() {
   const location = useLocation();
   const [active, setActive] = useState<SectionId>(() => sectionFromHash(window.location.hash) ?? "general");
   const [query, setQuery] = useState("");
+  const supabase = useMemo(() => getSupabaseClient(), []);
+
+  type EntitlementsSnapshot = {
+    plan_type: "free_local" | "pro" | "team" | "enterprise";
+    features: Record<string, "enabled" | "disabled">;
+    expires_at?: string | null;
+    grace_expires_at?: string | null;
+  };
+
+  const [billingUser, setBillingUser] = useState<User | null>(null);
+  const [billingEmail, setBillingEmail] = useState("");
+  const [billingPassword, setBillingPassword] = useState("");
+  const [billingBusy, setBillingBusy] = useState(false);
+  const [billingError, setBillingError] = useState<string | null>(null);
+  const [entitlements, setEntitlements] = useState<EntitlementsSnapshot | null>(() => {
+    try {
+      const cached = readCachedValue<EntitlementsSnapshot>(window.localStorage, ENTITLEMENTS_CACHE_KEY);
+      return cached?.value ?? null;
+    } catch {
+      return null;
+    }
+  });
+  const [entitlementsBusy, setEntitlementsBusy] = useState(false);
 
   const [loaded, setLoaded] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -205,6 +239,53 @@ export default function SettingsPage() {
 
   const eventSourcesRef = useRef<Record<string, EventSource>>({});
   const pollTimeoutsRef = useRef<Record<string, number>>({});
+
+  useEffect(() => {
+    if (!supabase) return;
+    let cancelled = false;
+    supabase.auth
+      .getUser()
+      .then(({ data }) => {
+        if (cancelled) return;
+        setBillingUser(data.user ?? null);
+      })
+      .catch(() => {});
+    const { data } = supabase.auth.onAuthStateChange((_evt, session) => {
+      setBillingUser(session?.user ?? null);
+    });
+    return () => {
+      cancelled = true;
+      data.subscription.unsubscribe();
+    };
+  }, [supabase]);
+
+  const refreshEntitlements = useCallback(async () => {
+    if (!supabase) return;
+    const cached = readCachedValue<EntitlementsSnapshot>(window.localStorage, ENTITLEMENTS_CACHE_KEY);
+    if (cached && shouldUseCachedValue(cached, ENTITLEMENTS_CACHE_TTL_MS)) {
+      setEntitlements(cached.value);
+      setEntitlementsBusy(false);
+      return;
+    }
+    setEntitlementsBusy(true);
+    setBillingError(null);
+    try {
+      const res = await supabase.functions.invoke("entitlements", { method: "GET" });
+      if (res.error) throw res.error;
+      const next = (res.data ?? null) as any;
+      setEntitlements(next);
+      if (next) writeCachedValue(window.localStorage, ENTITLEMENTS_CACHE_KEY, next);
+    } catch (e: any) {
+      setBillingError(e?.message ?? String(e));
+    } finally {
+      setEntitlementsBusy(false);
+    }
+  }, [supabase]);
+
+  useEffect(() => {
+    if (!supabase) return;
+    refreshEntitlements().catch(() => {});
+  }, [supabase, billingUser, refreshEntitlements]);
 
   useEffect(() => {
     const onHash = () => {
@@ -784,6 +865,193 @@ export default function SettingsPage() {
           {!dictationCanSave && dictationEnabled ? (
             <div className="settings-banner settings-banner-error">Enter an API key and secret to enable dictation.</div>
           ) : null}
+        </>
+      );
+    }
+
+    if (active === "billing") {
+      if (!supabase) {
+        return (
+          <div className="settings-empty">
+            Billing is not configured. Set <code>VITE_SUPABASE_URL</code> and <code>VITE_SUPABASE_ANON_KEY</code> for the web app.
+          </div>
+        );
+      }
+
+      const plan = entitlements?.plan_type ?? "free_local";
+      const proEnabled = entitlements?.features?.remote_mobile_access === "enabled";
+      const checkoutStatus = new URLSearchParams(location.search).get("checkout");
+
+      const doSignIn = async () => {
+        setBillingBusy(true);
+        setBillingError(null);
+        try {
+          const { error } = await supabase.auth.signInWithPassword({
+            email: billingEmail.trim(),
+            password: billingPassword,
+          });
+          if (error) throw error;
+        } catch (e: any) {
+          setBillingError(e?.message ?? String(e));
+        } finally {
+          setBillingBusy(false);
+        }
+      };
+
+      const doSignUp = async () => {
+        setBillingBusy(true);
+        setBillingError(null);
+        try {
+          const { error } = await supabase.auth.signUp({
+            email: billingEmail.trim(),
+            password: billingPassword,
+          });
+          if (error) throw error;
+        } catch (e: any) {
+          setBillingError(e?.message ?? String(e));
+        } finally {
+          setBillingBusy(false);
+        }
+      };
+
+      const doSignOut = async () => {
+        setBillingBusy(true);
+        setBillingError(null);
+        try {
+          const { error } = await supabase.auth.signOut();
+          if (error) throw error;
+        } catch (e: any) {
+          setBillingError(e?.message ?? String(e));
+        } finally {
+          setBillingBusy(false);
+        }
+      };
+
+      const startCheckout = async (interval: "month" | "year") => {
+        setBillingBusy(true);
+        setBillingError(null);
+        try {
+          const res = await supabase.functions.invoke("billing-checkout", {
+            body: { interval },
+          });
+          if (res.error) throw res.error;
+          const url = String((res.data as any)?.url ?? "").trim();
+          if (!url) throw new Error("Checkout URL missing.");
+          window.location.href = url;
+        } catch (e: any) {
+          setBillingError(e?.message ?? String(e));
+          setBillingBusy(false);
+        }
+      };
+
+      const openPortal = async () => {
+        setBillingBusy(true);
+        setBillingError(null);
+        try {
+          const res = await supabase.functions.invoke("billing-portal", { body: {} });
+          if (res.error) throw res.error;
+          const url = String((res.data as any)?.url ?? "").trim();
+          if (!url) throw new Error("Portal URL missing.");
+          window.location.href = url;
+        } catch (e: any) {
+          setBillingError(e?.message ?? String(e));
+          setBillingBusy(false);
+        }
+      };
+
+      return (
+        <>
+          {checkoutStatus === "success" ? (
+            <div className="settings-banner">Checkout complete. Confirming subscription…</div>
+          ) : null}
+          {checkoutStatus === "cancel" ? (
+            <div className="settings-banner settings-banner-error">Checkout canceled.</div>
+          ) : null}
+          <Card title="Account">
+            {billingUser ? (
+              <Row
+                title="Signed in"
+                description={billingUser.email ?? "Signed in"}
+                control={
+                  <button type="button" className="settings-btn settings-btn-secondary" onClick={doSignOut} disabled={billingBusy}>
+                    Sign out
+                  </button>
+                }
+              />
+            ) : (
+              <>
+                <Row
+                  title="Email"
+                  control={
+                    <input
+                      className="settings-control settings-control-wide"
+                      value={billingEmail}
+                      onChange={(e) => setBillingEmail(e.target.value)}
+                      placeholder="you@company.com"
+                    />
+                  }
+                />
+                <Row
+                  title="Password"
+                  control={
+                    <input
+                      className="settings-control settings-control-wide"
+                      value={billingPassword}
+                      onChange={(e) => setBillingPassword(e.target.value)}
+                      type="password"
+                      placeholder="••••••••"
+                    />
+                  }
+                />
+                <Row
+                  title="Sign in / Create account"
+                  description="Subscriptions are purchased via Stripe on desktop; mobile devices inherit access when connected."
+                  control={
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <button type="button" className="settings-btn settings-btn-secondary" onClick={doSignIn} disabled={billingBusy}>
+                        Sign in
+                      </button>
+                      <button type="button" className="settings-btn" onClick={doSignUp} disabled={billingBusy}>
+                        Create account
+                      </button>
+                    </div>
+                  }
+                />
+              </>
+            )}
+          </Card>
+
+          <Card title="Subscription">
+            <Row
+              title="Plan"
+              description={entitlementsBusy ? "Loading…" : proEnabled ? "Pro enabled" : "Free/Local"}
+              control={<div className="settings-pill">{plan}</div>}
+            />
+            <Row
+              title="Remote mobile access"
+              description="Stable remote access + push notifications are Pro features. Purchase on desktop."
+              control={<div className="settings-pill">{proEnabled ? "Enabled" : "Disabled"}</div>}
+            />
+            <Row
+              title="Subscribe"
+              description="USD only. CTX Pro is $20/month or $200/year."
+              control={
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                  <button type="button" className="settings-btn settings-btn-secondary" onClick={() => startCheckout("month")} disabled={!billingUser || billingBusy}>
+                    $20 / month
+                  </button>
+                  <button type="button" className="settings-btn settings-btn-secondary" onClick={() => startCheckout("year")} disabled={!billingUser || billingBusy}>
+                    $200 / year
+                  </button>
+                  <button type="button" className="settings-btn" onClick={openPortal} disabled={!billingUser || billingBusy}>
+                    Manage
+                  </button>
+                </div>
+              }
+            />
+          </Card>
+
+          {billingError ? <div className="settings-banner settings-banner-error">{billingError}</div> : null}
         </>
       );
     }
