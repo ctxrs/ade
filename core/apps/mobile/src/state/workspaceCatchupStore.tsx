@@ -201,6 +201,11 @@ export class WorkspaceCatchupStoreImpl implements WorkspaceCatchupEventSource {
     this.publish();
   }
 
+  applyTaskDelete(taskId: string) {
+    this.deleteTask(taskId);
+    this.publish();
+  }
+
   private async loadCached() {
     if (this.destroyed) return;
     try {
@@ -716,9 +721,28 @@ export function useWorkspaceCatchupStore() {
   return store;
 }
 
+export function useMaybeWorkspaceCatchupStore(): WorkspaceCatchupStoreImpl | null {
+  return useContext(WorkspaceCatchupContext);
+}
+
 export function useWorkspaceCatchupSnapshot(): WorkspaceCatchupState {
   const store = useWorkspaceCatchupStore();
   return useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
+}
+
+export function useMaybeWorkspaceCatchupSnapshot(): WorkspaceCatchupState | null {
+  const store = useMaybeWorkspaceCatchupStore();
+  const subscribe = useMemo(() => store?.subscribe ?? (() => () => {}), [store]);
+  const getSnapshot = useMemo(
+    () => store?.getSnapshot ?? (() => null),
+    [store],
+  );
+  const snap = useSyncExternalStore<WorkspaceCatchupState | null>(
+    subscribe,
+    getSnapshot as () => WorkspaceCatchupState | null,
+    getSnapshot as () => WorkspaceCatchupState | null,
+  );
+  return store ? (snap as WorkspaceCatchupState) : null;
 }
 
 export function useWorkspaceCatchupEvents(handler: (event: WorkspaceCatchupEvent) => void) {

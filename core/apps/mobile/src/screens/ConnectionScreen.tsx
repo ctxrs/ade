@@ -30,7 +30,7 @@ export function ConnectionScreen({ navigation }: Props): React.JSX.Element {
       }
       await setConnection({ baseUrl: trimmedUrl, token: trimmedToken });
       if (!wasConnected) {
-        navigation.reset({ index: 0, routes: [{ name: "Workspaces" }] });
+        navigation.reset({ index: 0, routes: [{ name: "Workbench" }] });
       }
     } catch (e: any) {
       setError(e?.message ?? String(e));

@@ -66,6 +66,7 @@ export type SessionCacheEntry = {
 type OpenOptions = {
   watchDiff?: boolean;
   force?: boolean;
+  silent?: boolean;
 };
 
 type InternalEntry = SessionCacheEntry & {
@@ -105,6 +106,9 @@ export class SessionSupervisor {
   private catchupStore: WorkspaceCatchupEventSource | null = null;
   private catchupUnsub: (() => void) | null = null;
   private catchupSnapshotUnsub: (() => void) | null = null;
+  private activeTaskSessionIds: string[] = [];
+  private warmSessionIds: string[] = [];
+  private warmedSessionIds: string[] = [];
 
   constructor(private conn: ConnectionConfig) {}
 
@@ -127,6 +131,8 @@ export class SessionSupervisor {
     this.catchupStore = store;
     if (!store) {
       this.setConnection("disconnected");
+      this.setActiveTaskSessionIds([]);
+      this.setWarmSessionIds([]);
       return;
     }
     this.catchupUnsub = store.subscribeEvents((evt) => this.handleCatchupEvent(evt));
@@ -136,6 +142,7 @@ export class SessionSupervisor {
       this.setConnection(next);
     });
     this.setConnection(this.mapConnection(store.getSnapshot().connection));
+    this.refreshWarmHeads();
   }
 
   openSession = (sessionId: string, opts?: OpenOptions) => {
@@ -144,6 +151,7 @@ export class SessionSupervisor {
     if (opts?.watchDiff) entry.wantDiffCount += 1;
     entry.warmUntilMs = Date.now() + WARM_TTL_MS;
     this.ensureLoaded(sessionId, opts).catch(() => {});
+    this.refreshWarmHeads();
     return () => this.closeSession(sessionId, opts);
   };
 
@@ -153,6 +161,7 @@ export class SessionSupervisor {
     entry.refCount = Math.max(0, entry.refCount - 1);
     if (opts?.watchDiff) entry.wantDiffCount = Math.max(0, entry.wantDiffCount - 1);
     entry.warmUntilMs = Date.now() + WARM_TTL_MS;
+    this.refreshWarmHeads();
     this.publish();
   };
 
@@ -162,6 +171,20 @@ export class SessionSupervisor {
 
   refreshQueue = (sessionId: string) => {
     this.ensureLoaded(sessionId, { force: true }).catch(() => {});
+  };
+
+  setActiveTaskSessionIds = (sessionIds: string[]) => {
+    const next = dedupeIds(sessionIds);
+    if (sameIdList(next, this.activeTaskSessionIds)) return;
+    this.activeTaskSessionIds = next;
+    this.refreshWarmHeads();
+  };
+
+  setWarmSessionIds = (sessionIds: string[]) => {
+    const next = dedupeIds(sessionIds);
+    if (sameIdList(next, this.warmSessionIds)) return;
+    this.warmSessionIds = next;
+    this.refreshWarmHeads();
   };
 
   setSession = (session: Session) => {
@@ -236,8 +259,12 @@ export class SessionSupervisor {
   }
 
   private setConnection(next: ConnectionStatus) {
-    if (this.snapshot.connection === next) return;
+    const prev = this.snapshot.connection;
+    if (prev === next) return;
     this.snapshot = { ...this.snapshot, connection: next };
+    if (next === "connected" && prev !== "connected") {
+      this.refreshWarmHeads();
+    }
     for (const l of this.listeners) l();
   }
 
@@ -335,22 +362,60 @@ export class SessionSupervisor {
       return;
     }
     entry.fetching.head = true;
-    entry.loading = true;
-    this.publish();
+    if (!opts?.silent) {
+      entry.loading = true;
+      this.publish();
+    }
     try {
       const head = await getSessionHead(this.conn, sessionId, HEAD_LIMIT);
       this.applyHead(entry, head);
       await this.persistHead(entry);
     } catch (e: any) {
-      entry.error = e?.message ?? "Failed to load session";
+      if (!opts?.silent) {
+        entry.error = e?.message ?? "Failed to load session";
+      }
     } finally {
-      entry.loading = false;
+      if (!opts?.silent) {
+        entry.loading = false;
+      }
       entry.fetching.head = false;
       entry.updatedAtMs = Date.now();
       this.publish();
     }
     if (opts?.watchDiff) {
       void this.refreshDiff(entry);
+    }
+  }
+
+  private refreshWarmHeads() {
+    const openIds = Array.from(this.entries.values())
+      .filter((entry) => entry.refCount > 0)
+      .map((entry) => entry.sessionId);
+    const openSet = new Set(openIds);
+    const combined = mergeOrderedIds(openIds, this.activeTaskSessionIds, this.warmSessionIds);
+    const next = combined.slice(0, WARM_SESSION_BUDGET);
+    const key = next.join("|");
+    const prev = this.warmedSessionIds.join("|");
+    if (key === prev) return;
+
+    const nextSet = new Set(next);
+    const prevSet = new Set(this.warmedSessionIds);
+    this.warmedSessionIds = next;
+
+    // Ensure entries exist for the warmed set so the `subscribed` flag is accurate even for newly-warmed ids.
+    for (const sessionId of next) {
+      this.ensureEntry(sessionId);
+    }
+    for (const entry of this.entries.values()) {
+      entry.subscribed = nextSet.has(entry.sessionId);
+    }
+    for (const sessionId of next) {
+      if (!prevSet.has(sessionId)) {
+        if (openSet.has(sessionId)) continue;
+        const entry = this.entries.get(sessionId);
+        if (!entry || entry.turnsHydrated || entry.fetching.head) continue;
+        this.ensureLoaded(sessionId, { silent: true }).catch(() => {});
+      }
     }
   }
 
@@ -758,6 +823,40 @@ const appendFragment = (p: string | null | undefined, f: string | null | undefin
   if (f.startsWith(p)) return f;
   if (p.endsWith(f)) return p;
   return `${p}${f}`;
+};
+
+const dedupeIds = (ids: string[]) => {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const id of ids) {
+    const s = String(id ?? "").trim();
+    if (!s || seen.has(s)) continue;
+    seen.add(s);
+    out.push(s);
+  }
+  return out;
+};
+
+const sameIdList = (a: string[], b: string[]): boolean => {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+};
+
+const mergeOrderedIds = (...lists: string[][]) => {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const list of lists) {
+    for (const id of list) {
+      const s = String(id ?? "").trim();
+      if (!s || seen.has(s)) continue;
+      seen.add(s);
+      out.push(s);
+    }
+  }
+  return out;
 };
 
 function shouldRenderThoughtChunk(ev: SessionEvent): boolean {

@@ -68,7 +68,7 @@ export function QrScannerScreen({ navigation }: Props): React.JSX.Element {
       if (wasConnected) {
         navigation.goBack();
       } else {
-        navigation.reset({ index: 0, routes: [{ name: "Workspaces" }] });
+        navigation.reset({ index: 0, routes: [{ name: "Workbench" }] });
       }
     } catch (err: any) {
       Alert.alert("Scan failed", err?.message ?? String(err), [

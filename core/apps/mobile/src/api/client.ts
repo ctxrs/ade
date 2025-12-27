@@ -162,6 +162,12 @@ async function fetchJson<T>(conn: ConnectionConfig, path: string, init?: Request
 export const listWorkspaces = (conn: ConnectionConfig) =>
   fetchJson<Workspace[]>(conn, "/api/workspaces").then((items) => items.map(mapWorkspace));
 
+export const createWorkspace = (conn: ConnectionConfig, root_path: string, name?: string) =>
+  fetchJson<Workspace>(conn, "/api/workspaces", {
+    method: "POST",
+    body: JSON.stringify({ root_path, name }),
+  }).then(mapWorkspace);
+
 export const listTasks = (conn: ConnectionConfig, workspaceId: string) =>
   fetchJson<Task[]>(conn, `/api/workspaces/${workspaceId}/tasks`).then((items) => items.map(mapTask));
 
@@ -244,6 +250,56 @@ export const getWorkspaceCatchup = (
   return fetchJson<WorkspaceCatchupSnapshot>(conn, `/api/workspaces/${workspaceId}/catchup${suffix}`);
 };
 
+export const createTask = (
+  conn: ConnectionConfig,
+  workspaceId: string,
+  title: string,
+  description?: string,
+  opts?: { create_default_track?: boolean; default_track_label?: string },
+) =>
+  fetchJson<Task>(conn, `/api/workspaces/${workspaceId}/tasks`, {
+    method: "POST",
+    body: JSON.stringify({
+      title,
+      description,
+      ...(opts?.create_default_track === undefined ? {} : { create_default_track: opts.create_default_track }),
+      ...(opts?.default_track_label === undefined ? {} : { default_track_label: opts.default_track_label }),
+    }),
+  });
+
+export const updateTaskTitle = (conn: ConnectionConfig, taskId: string, title: string) =>
+  fetchJson<Task>(conn, `/api/tasks/${taskId}/title`, { method: "POST", body: JSON.stringify({ title }) });
+
+export const deleteTask = (conn: ConnectionConfig, taskId: string) =>
+  fetchJson<void>(conn, `/api/tasks/${taskId}`, { method: "DELETE" });
+
+export const archiveTask = (conn: ConnectionConfig, taskId: string) =>
+  fetchJson<Task>(conn, `/api/tasks/${taskId}/archive`, { method: "POST" });
+
+export const unarchiveTask = (conn: ConnectionConfig, taskId: string) =>
+  fetchJson<Task>(conn, `/api/tasks/${taskId}/unarchive`, { method: "POST" });
+
+export const markTaskRead = (conn: ConnectionConfig, taskId: string) =>
+  fetchJson<Task>(conn, `/api/tasks/${taskId}/mark_read`, { method: "POST" });
+
+export const markTaskUnread = (conn: ConnectionConfig, taskId: string) =>
+  fetchJson<Task>(conn, `/api/tasks/${taskId}/mark_unread`, { method: "POST" });
+
+export const createTrack = (conn: ConnectionConfig, taskId: string, label?: string, opts?: { env_target?: "worktree" | "local" }) =>
+  fetchJson<Track>(conn, `/api/tasks/${taskId}/tracks`, {
+    method: "POST",
+    body: JSON.stringify({
+      label,
+      ...(opts?.env_target ? { env_target: opts.env_target } : {}),
+    }),
+  });
+
+export const createSession = (conn: ConnectionConfig, trackId: string, provider_id: string, model_id: string) =>
+  fetchJson<Session>(conn, `/api/tracks/${trackId}/sessions`, {
+    method: "POST",
+    body: JSON.stringify({ provider_id, model_id }),
+  });
+
 export const getSessionHead = (conn: ConnectionConfig, sessionId: string, limit?: number) => {
   const qs = new URLSearchParams();
   if (limit) qs.set("limit", String(limit));
@@ -261,3 +317,22 @@ export const getSessionHistory = (conn: ConnectionConfig, sessionId: string, bef
 
 export const listTurnTools = (conn: ConnectionConfig, sessionId: string, turnId: string) =>
   fetchJson<SessionTurnTool[]>(conn, `/api/sessions/${sessionId}/turns/${turnId}/tools`);
+
+export type ProviderOptions = {
+  provider_id: string;
+  workspace_id: string;
+  installed?: boolean;
+  probe_ok?: boolean;
+  probe_error?: string;
+  supports_load: boolean;
+  auth_required: boolean;
+  auth_methods?: any;
+  modes?: any;
+  models?: any;
+  acp_error?: any;
+  verify?: any;
+  probed_at: string;
+};
+
+export const getProviderOptions = (conn: ConnectionConfig, workspaceId: string, providerId: string) =>
+  fetchJson<ProviderOptions>(conn, `/api/workspaces/${workspaceId}/providers/${providerId}/options`);

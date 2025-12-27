@@ -17,11 +17,14 @@ import { TrackDiffScreen } from "./src/screens/TrackDiffScreen";
 import { DiagnosticsScreen } from "./src/screens/DiagnosticsScreen";
 import { SettingsScreen } from "./src/screens/SettingsScreen";
 import { QrScannerScreen } from "./src/screens/QrScannerScreen";
+import { WorkbenchScreen } from "./src/screens/WorkbenchScreen";
+import { NewTaskScreen } from "./src/screens/NewTaskScreen";
 import type { RootStackParamList } from "./src/navigation/types";
 import { ConnectionProvider, useConnection } from "./src/state/ConnectionProvider";
 import { WorkspaceCatchupProvider, useWorkspaceCatchupStore } from "./src/state/workspaceCatchupStore";
 import { SessionSupervisorProvider, useSessionSupervisor } from "./src/state/sessionSupervisor";
 import { WorkspaceSelectionProvider, useWorkspaceSelection } from "./src/state/WorkspaceSelectionProvider";
+import { WorkbenchSelectionProvider } from "./src/state/WorkbenchSelectionProvider";
 import { LoadingView } from "./src/components/LoadingView";
 import { tokens } from "./src/theme";
 
@@ -44,13 +47,15 @@ export default function App(): React.JSX.Element {
       <QueryClientProvider client={queryClient}>
         <ConnectionProvider>
           <WorkspaceSelectionProvider>
-            <SessionSupervisorProvider>
-              <WorkspaceDataProviders>
-                <NavigationContainer>
-                  <RootNavigator />
-                </NavigationContainer>
-              </WorkspaceDataProviders>
-            </SessionSupervisorProvider>
+            <WorkbenchSelectionProvider>
+              <SessionSupervisorProvider>
+                <WorkspaceDataProviders>
+                  <NavigationContainer>
+                    <RootNavigator />
+                  </NavigationContainer>
+                </WorkspaceDataProviders>
+              </SessionSupervisorProvider>
+            </WorkbenchSelectionProvider>
           </WorkspaceSelectionProvider>
         </ConnectionProvider>
       </QueryClientProvider>
@@ -97,6 +102,8 @@ function RootNavigator(): React.JSX.Element {
         <Stack.Screen name="Connection" component={ConnectionScreen} options={{ headerShown: false }} />
       ) : (
         <>
+          <Stack.Screen name="Workbench" component={WorkbenchScreen} options={{ headerShown: false }} />
+          <Stack.Screen name="NewTask" component={NewTaskScreen} options={{ presentation: "modal", headerShown: false }} />
           <Stack.Screen
             name="Workspaces"
             component={WorkspaceListScreen}

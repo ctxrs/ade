@@ -1,12 +1,11 @@
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
-import React, { useEffect, useMemo } from "react";
+import React, { useMemo } from "react";
 import { FlatList, Pressable, RefreshControl, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import type { RootStackParamList } from "../navigation/types";
 import { useConnection } from "../state/ConnectionProvider";
 import { useWorkspaceCatchupSnapshot, useWorkspaceCatchupStore } from "../state/workspaceCatchupStore";
-import { useSessionSupervisor } from "../state/sessionSupervisor";
 import { LoadingView } from "../components/LoadingView";
 import { ErrorView } from "../components/ErrorView";
 import { createContextStyles, useContextTokens } from "../theme";
@@ -25,7 +24,6 @@ export function SessionListScreen({ route, navigation }: Props): React.JSX.Eleme
   const { config } = useConnection();
   const store = useWorkspaceCatchupStore();
   const snapshot = useWorkspaceCatchupSnapshot();
-  const supervisor = useSessionSupervisor();
   const theme = useContextTokens();
 
   if (!config) return <ErrorView message="Connect to a daemon first." />;
@@ -44,12 +42,6 @@ export function SessionListScreen({ route, navigation }: Props): React.JSX.Eleme
       String(a.session.created_at ?? "").localeCompare(String(b.session.created_at ?? "")),
     );
   }, [trackSummary]);
-
-  useEffect(() => {
-    if (sessions.length === 0) return;
-    const closers = sessions.map((s) => supervisor.openSession(idToString(s.session.id)));
-    return () => closers.forEach((close) => close());
-  }, [sessions, supervisor]);
 
   if (!trackSummary && !snapshot.initialized) return <LoadingView />;
   if (!trackSummary && snapshot.initialized) return <ErrorView message="Track not found." />;

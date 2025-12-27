@@ -1,5 +1,7 @@
 export type RootStackParamList = {
   Connection: undefined;
+  Workbench: undefined;
+  NewTask: undefined;
   Workspaces: undefined;
   Tasks: { workspaceId: string; workspaceName: string };
   Tracks: { taskId: string; taskTitle: string };

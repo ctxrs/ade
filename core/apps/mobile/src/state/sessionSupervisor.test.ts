@@ -113,7 +113,7 @@ describe("SessionSupervisor", () => {
 
     await waitForCondition(() => {
       const entry = sup.getSnapshot().sessions[sessionId];
-      return Boolean(entry && !entry.loading);
+      return Boolean(entry && entry.messages.length === cachedHead.messages.length);
     });
 
     expect(getSessionHead).not.toHaveBeenCalled();
