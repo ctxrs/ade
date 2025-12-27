@@ -201,6 +201,20 @@ pub struct SessionTurnTool {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionTurnToolSummary {
+    pub session_id: SessionId,
+    pub tool_call_id: String,
+    pub turn_id: TurnId,
+    pub tool_kind: Option<String>,
+    pub title: Option<String>,
+    pub status: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_preview: Option<serde_json::Value>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionSummary {
     pub id: SessionId,
     pub track_id: TrackId,
@@ -335,6 +349,8 @@ pub struct SessionHead {
     pub session: Session,
     #[serde(default)]
     pub turns: Vec<SessionTurn>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tool_summaries: Vec<SessionTurnToolSummary>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub events: Vec<SessionEvent>,
     #[serde(default)]

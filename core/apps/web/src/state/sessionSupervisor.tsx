@@ -10,6 +10,7 @@ import {
   type SessionEvent,
   type SessionTurn,
   type SessionTurnTool,
+  type SessionTurnToolSummary,
   type WorkspaceCatchupEvent,
 } from "../api/client";
 import type { WorkspaceCatchupEventSource } from "./workspaceCatchupStore";
@@ -70,6 +71,7 @@ type InternalEntry = SessionCacheEntry & {
   toolStatusByKey: Map<string, string>;
   toolIdsByTurn: Map<string, Set<string>>;
   turnToolsLoadingSet: Set<string>;
+  turnToolsHydratedByTurnId: Record<string, boolean>;
   trackId?: string;
   diagnosticsByPath: Record<string, any[]>;
   loadedFromCache: boolean;
@@ -222,7 +224,7 @@ export class SessionSupervisor {
   async loadTurnTools(sessionId: string, turnId: string) {
     const entry = this.entries.get(String(sessionId));
     if (!entry) return;
-    if (entry.turnToolsByTurnId[turnId]) return;
+    if (entry.turnToolsHydratedByTurnId?.[turnId]) return;
     if (entry.turnToolsLoadingSet.has(turnId)) return;
     entry.turnToolsLoadingSet.add(turnId);
     entry.turnToolsLoading = [...entry.turnToolsLoadingSet];
@@ -233,6 +235,7 @@ export class SessionSupervisor {
         ...entry.turnToolsByTurnId,
         [turnId]: tools,
       };
+      entry.turnToolsHydratedByTurnId[turnId] = true;
     } finally {
       entry.turnToolsLoadingSet.delete(turnId);
       entry.turnToolsLoading = [...entry.turnToolsLoadingSet];
@@ -327,6 +330,7 @@ export class SessionSupervisor {
       toolStatusByKey: new Map(),
       toolIdsByTurn: new Map(),
       turnToolsLoadingSet: new Set(),
+      turnToolsHydratedByTurnId: {},
       trackId: undefined,
       loadedFromCache: false,
       fetching: {
@@ -393,6 +397,7 @@ export class SessionSupervisor {
     head: {
       session: Session;
       turns: SessionTurn[];
+      tool_summaries?: SessionTurnToolSummary[];
       events?: SessionEvent[];
       messages: Message[];
       last_event_seq: number;
@@ -408,6 +413,39 @@ export class SessionSupervisor {
     this.mergeTurns(entry, head.turns ?? []);
     this.mergeEvents(entry, head.events ?? []);
     this.mergeMessages(entry, head.messages ?? []);
+    if (head.tool_summaries && head.tool_summaries.length > 0) {
+      const hydrated = entry.turnToolsHydratedByTurnId;
+      const nextByTurn: Record<string, SessionTurnTool[]> = {};
+      for (const summary of head.tool_summaries) {
+        const turnId = idToString(summary.turn_id);
+        if (!turnId) continue;
+        if (hydrated[turnId]) continue;
+        const list = nextByTurn[turnId] ?? [];
+        list.push({
+          session_id: summary.session_id,
+          tool_call_id: summary.tool_call_id,
+          turn_id: summary.turn_id,
+          tool_kind: summary.tool_kind,
+          title: summary.title,
+          status: summary.status,
+          input_json: summary.input_preview ?? null,
+          output_text: null,
+          created_at: summary.created_at,
+          updated_at: summary.updated_at,
+          summary_only: true,
+        } as SessionTurnTool & { summary_only: boolean });
+        nextByTurn[turnId] = list;
+      }
+      if (Object.keys(nextByTurn).length > 0) {
+        entry.turnToolsByTurnId = {
+          ...entry.turnToolsByTurnId,
+          ...nextByTurn,
+        };
+        for (const turnId of Object.keys(nextByTurn)) {
+          if (!hydrated[turnId]) hydrated[turnId] = false;
+        }
+      }
+    }
     if (!opts?.fromCache) {
       entry.error = undefined;
     }
@@ -437,11 +475,13 @@ export class SessionSupervisor {
 
   private async persistHead(entry: InternalEntry) {
     if (!entry.session) return;
+    const tool_summaries = buildToolSummaries(entry.turnToolsByTurnId);
     const head = {
       session: entry.session,
       turns: entry.turns,
       events: entry.events,
       messages: entry.messages,
+      tool_summaries,
       last_event_seq: entry.lastEventSeq ?? 0,
       has_more_turns: entry.hasMoreTurns,
     };
@@ -937,6 +977,38 @@ const mergeOrderedIds = (...groups: string[][]): string[] => {
       if (!id || seen.has(id)) continue;
       seen.add(id);
       out.push(id);
+    }
+  }
+  return out;
+};
+
+const TOOL_INPUT_PREVIEW_KEYS = ["command", "query", "pattern", "text", "path", "file", "glob", "parsed_cmd"];
+
+const toolInputPreview = (input: unknown): Record<string, unknown> | null => {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return null;
+  const obj = input as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  for (const key of TOOL_INPUT_PREVIEW_KEYS) {
+    if (obj[key] !== undefined) out[key] = obj[key];
+  }
+  return Object.keys(out).length > 0 ? out : null;
+};
+
+const buildToolSummaries = (byTurn: Record<string, SessionTurnTool[]>): SessionTurnToolSummary[] => {
+  const out: SessionTurnToolSummary[] = [];
+  for (const tools of Object.values(byTurn)) {
+    for (const tool of tools) {
+      out.push({
+        session_id: tool.session_id,
+        tool_call_id: tool.tool_call_id,
+        turn_id: tool.turn_id,
+        tool_kind: tool.tool_kind ?? null,
+        title: tool.title ?? null,
+        status: tool.status ?? null,
+        input_preview: toolInputPreview(tool.input_json) ?? undefined,
+        created_at: tool.created_at,
+        updated_at: tool.updated_at,
+      });
     }
   }
   return out;

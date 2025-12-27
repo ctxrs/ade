@@ -175,4 +175,69 @@ describe("SessionSupervisor", () => {
     expect(entry?.turns.length).toBe(1);
     expect(entry?.lastEventSeq).toBe(2);
   });
+
+  it("hydrates tool summaries from head and still loads full tools on demand", async () => {
+    const { SessionSupervisor } = await import("./sessionSupervisor");
+    const { listTurnTools } = await import("../api/client");
+
+    const sessionId = "session-3";
+    const trackId = "track-3";
+    const turnId = "turn-1";
+
+    (getSessionHead as any).mockResolvedValue({
+      session: mkSession(sessionId, trackId),
+      turns: [
+        {
+          turn_id: { 0: turnId },
+          session_id: { 0: sessionId },
+          run_id: null,
+          user_message_id: null,
+          status: "completed",
+          start_seq: 1,
+          end_seq: 2,
+          started_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          assistant_partial: null,
+          thought_partial: null,
+          metrics_json: null,
+          tool_total: 1,
+          tool_pending: 0,
+          tool_running: 0,
+          tool_completed: 1,
+          tool_failed: 0,
+        } as SessionTurn,
+      ],
+      tool_summaries: [
+        {
+          session_id: { 0: sessionId },
+          tool_call_id: "tool-1",
+          turn_id: { 0: turnId },
+          tool_kind: "execute",
+          title: "Run",
+          status: "completed",
+          input_preview: { command: "pwd" },
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        },
+      ],
+      events: [] as SessionEvent[],
+      messages: [] as Message[],
+      last_event_seq: 0,
+      has_more_turns: false,
+    });
+
+    const sup = new SessionSupervisor();
+    sup.openSession(sessionId);
+
+    await waitForCondition(() => {
+      const entry = sup.getSnapshot().sessions[sessionId];
+      return Boolean(entry && !entry.loading);
+    });
+
+    const entry = sup.getSnapshot().sessions[sessionId];
+    expect(entry?.turnToolsByTurnId[turnId]?.length).toBe(1);
+
+    await sup.loadTurnTools(sessionId, turnId);
+    expect(listTurnTools).toHaveBeenCalledWith(sessionId, turnId);
+  });
 });

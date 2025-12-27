@@ -102,6 +102,7 @@ type ThreadItem =
     output_text: string;
     raw: any;
     updates_seen: number;
+    has_details?: boolean;
   };
 
 type WorkbenchTurnHeader = {
@@ -206,6 +207,7 @@ export function SessionView({
   const deepLinkTokenTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
   const [atBottom, setAtBottom] = useState(true);
   const [hasNewActivity, setHasNewActivity] = useState(false);
+  const lastActivityCountRef = useRef(0);
   const [authMethodId, setAuthMethodId] = useState<string>("");
   const [authBusy, setAuthBusy] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
@@ -339,6 +341,7 @@ export function SessionView({
     latestAnchorIdRef.current = null;
     setAtBottom(true);
     setHasNewActivity(false);
+    lastActivityCountRef.current = 0;
     setExpandedTurnHeaders({});
     setExpandedThoughtByAssistantId({});
     setExpandedToolById({});
@@ -796,20 +799,12 @@ export function SessionView({
   const threadActivityCount = variant === "workbench" ? wbListItems.length : threadItems.length;
 
   useEffect(() => {
-    if (!id || variant !== "workbench") return;
-    for (const turn of turns) {
-      const turnId = idToString(turn.turn_id);
-      if (!turnId) continue;
-      if ((turn.tool_total ?? 0) <= 0) continue;
-      if (turnToolsByTurnId[turnId]) continue;
-      supervisor.loadTurnTools(id, turnId);
-    }
-  }, [id, variant, turnsKey, turnToolsByTurnId, supervisor, turns]);
-
-  useEffect(() => {
-    if (!atBottom && threadActivityCount > 0) {
-      setHasNewActivity(true);
-    }
+    if (!didInitialScrollRef.current) return;
+    const prev = lastActivityCountRef.current;
+    lastActivityCountRef.current = threadActivityCount;
+    if (atBottom) return;
+    if (prev === 0) return;
+    if (threadActivityCount > prev) setHasNewActivity(true);
   }, [threadActivityCount, atBottom]);
 
   const sendNow = async () => {
@@ -2249,7 +2244,7 @@ function WorkbenchToolRow({
   })();
 
   const { verb, rest, label } = labelParts;
-  const hasDetails = !!(item.input || item.output_text?.trim());
+  const hasDetails = item.has_details ?? !!(item.input || item.output_text?.trim());
 
   return (
     <div className="wb-tool-row">
@@ -3103,6 +3098,9 @@ function buildWorkbenchThreadViewModelFromTurns(
     const tools = (toolsByTurnId[turnId] ?? []).map((tool) => {
       const toolKind = String(tool.tool_kind ?? "tool");
       const title = String(tool.title ?? humanToolKind(toolKind));
+      const summaryOnly = (tool as any).summary_only === true;
+      const hasDetails =
+        !summaryOnly && (tool.input_json != null || String(tool.output_text ?? "").trim().length > 0);
       return {
         kind: "tool",
         id: `tool-${turnId}-${tool.tool_call_id}`,
@@ -3117,6 +3115,7 @@ function buildWorkbenchThreadViewModelFromTurns(
         output_text: String(tool.output_text ?? ""),
         raw: tool,
         updates_seen: 1,
+        has_details: hasDetails,
       } satisfies Extract<ThreadItem, { kind: "tool" }>;
     });
 
@@ -3315,6 +3314,7 @@ function buildToolItemsFromEventsForTurn(
         output_text: "",
         raw: null,
         updates_seen: 0,
+        has_details: true,
       };
       toolById.set(toolCallId, tool);
     }
@@ -3399,6 +3399,7 @@ function buildWorkbenchThreadViewModelFromEvents(events: SessionEvent[], message
       output_text: "",
       raw: null,
       updates_seen: 0,
+      has_details: true,
     };
     g.toolById.set(toolCallId, t);
     g.toolItems.push(t);
@@ -3957,6 +3958,7 @@ function buildThreadViewModel(events: SessionEvent[]): {
       output_text: "",
       raw: null,
       updates_seen: 0,
+      has_details: true,
     };
     toolById.set(toolCallId, item);
     items.push(item);
@@ -3999,6 +4001,7 @@ function buildThreadViewModel(events: SessionEvent[]): {
           output_text: output,
           raw: ev,
           updates_seen: 1,
+          has_details: true,
         });
         break;
       }

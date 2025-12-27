@@ -166,6 +166,7 @@ export type WorkspaceCatchupSnapshot = {
 export type SessionHead = {
   session: Session;
   turns: SessionTurn[];
+  tool_summaries?: SessionTurnToolSummary[];
   events?: SessionEvent[];
   messages: Message[];
   last_event_seq: number;
@@ -299,6 +300,18 @@ export type SessionTurnTool = {
   status?: string | null;
   input_json?: any;
   output_text?: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type SessionTurnToolSummary = {
+  session_id: { 0: string } | string;
+  tool_call_id: string;
+  turn_id: { 0: string } | string;
+  tool_kind?: string | null;
+  title?: string | null;
+  status?: string | null;
+  input_preview?: any;
   created_at: string;
   updated_at: string;
 };

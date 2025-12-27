@@ -2201,6 +2201,33 @@ impl Store {
 
         let turn_ids: Vec<TurnId> = out.iter().map(|t| t.turn_id).collect();
         let messages = self.list_messages_for_turns(session_id, &turn_ids).await?;
+        let mut tool_summaries = self
+            .list_turn_tool_summaries_for_turns(session_id, &turn_ids)
+            .await?;
+        if !turn_ids.is_empty() {
+            let mut tool_ids: HashMap<String, bool> = HashMap::new();
+            for tool in &tool_summaries {
+                tool_ids.insert(tool.tool_call_id.clone(), true);
+            }
+            for turn in &out {
+                if turn.tool_total <= 0 {
+                    continue;
+                }
+                let has_any = tool_summaries.iter().any(|tool| tool.turn_id == turn.turn_id);
+                if has_any {
+                    continue;
+                }
+                let tools = self.list_turn_tools(session_id, turn.turn_id).await?;
+                for tool in tools {
+                    if tool_ids.contains_key(&tool.tool_call_id) {
+                        continue;
+                    }
+                    tool_ids.insert(tool.tool_call_id.clone(), true);
+                    tool_summaries.push(summarize_session_turn_tool(&tool));
+                }
+            }
+            tool_summaries.sort_by(|a, b| a.created_at.cmp(&b.created_at));
+        }
         let last_event_seq = self.session_last_event_seq(session_id).await?;
         let events = if include_events {
             let mut events = self
@@ -2215,6 +2242,7 @@ impl Store {
         Ok(Some(SessionHead {
             session,
             turns: out,
+            tool_summaries,
             events,
             messages,
             last_event_seq,
@@ -2328,6 +2356,37 @@ impl Store {
             let _ = self.upsert_session_turn_tool(tool.clone()).await;
         }
         Ok(tools)
+    }
+
+    pub async fn list_turn_tool_summaries_for_turns(
+        &self,
+        session_id: SessionId,
+        turn_ids: &[TurnId],
+    ) -> Result<Vec<SessionTurnToolSummary>> {
+        if turn_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut qb = QueryBuilder::new(
+            r#"SELECT session_id, tool_call_id, turn_id, tool_kind, title, status, input_json,
+                      created_at, updated_at
+               FROM session_turn_tools
+               WHERE session_id = "#,
+        );
+        qb.push_bind(session_id.0.to_string());
+        qb.push(" AND turn_id IN (");
+        let mut separated = qb.separated(", ");
+        for turn_id in turn_ids {
+            separated.push_bind(turn_id.0.to_string());
+        }
+        qb.push(") ORDER BY created_at ASC");
+        let rows = qb.build().fetch_all(&self.pool).await?;
+        let mut out = Vec::with_capacity(rows.len());
+        for r in rows {
+            if let Ok(tool) = build_session_turn_tool_summary_from_row(r) {
+                out.push(tool);
+            }
+        }
+        Ok(out)
     }
 
     pub async fn get_session_turn_tool(
@@ -2467,6 +2526,11 @@ impl Store {
         .fetch_one(&self.pool)
         .await?;
         event.seq = seq;
+        if let Some(turn_id) = event.turn_id {
+            if let Some(tool) = build_turn_tool_from_event(&event, turn_id) {
+                let _ = self.upsert_session_turn_tool(tool).await;
+            }
+        }
         Ok(event)
     }
 
@@ -3168,6 +3232,72 @@ fn build_session_turn_tool_from_row(r: sqlx::sqlite::SqliteRow) -> Result<Sessio
     })
 }
 
+fn build_session_turn_tool_summary_from_row(r: sqlx::sqlite::SqliteRow) -> Result<SessionTurnToolSummary> {
+    let session_id: String = r.try_get("session_id")?;
+    let tool_call_id: String = r.try_get("tool_call_id")?;
+    let turn_id: String = r.try_get("turn_id")?;
+    let created_at: String = r.try_get("created_at")?;
+    let updated_at: String = r.try_get("updated_at")?;
+    let input_json: Option<String> = r.try_get("input_json")?;
+    let input_json = input_json
+        .as_deref()
+        .and_then(|s| serde_json::from_str::<Value>(s).ok());
+    let input_preview = tool_input_preview_from_value(input_json.as_ref());
+
+    Ok(SessionTurnToolSummary {
+        session_id: SessionId(uuid::Uuid::parse_str(&session_id)?),
+        tool_call_id,
+        turn_id: TurnId(uuid::Uuid::parse_str(&turn_id)?),
+        tool_kind: r.try_get("tool_kind")?,
+        title: r.try_get("title")?,
+        status: r.try_get("status")?,
+        input_preview,
+        created_at: parse_dt(&created_at)?,
+        updated_at: parse_dt(&updated_at)?,
+    })
+}
+
+fn summarize_session_turn_tool(tool: &SessionTurnTool) -> SessionTurnToolSummary {
+    SessionTurnToolSummary {
+        session_id: tool.session_id,
+        tool_call_id: tool.tool_call_id.clone(),
+        turn_id: tool.turn_id,
+        tool_kind: tool.tool_kind.clone(),
+        title: tool.title.clone(),
+        status: tool.status.clone(),
+        input_preview: tool_input_preview_from_value(tool.input_json.as_ref()),
+        created_at: tool.created_at,
+        updated_at: tool.updated_at,
+    }
+}
+
+fn tool_input_preview_from_value(input: Option<&Value>) -> Option<Value> {
+    let input = input?;
+    let obj = input.as_object()?;
+    let mut out = serde_json::Map::new();
+    for key in [
+        "command",
+        "query",
+        "pattern",
+        "text",
+        "path",
+        "file",
+        "glob",
+        "parsed_cmd",
+    ] {
+        if let Some(value) = obj.get(key) {
+            if value.is_string() || value.is_array() || value.is_object() {
+                out.insert(key.to_string(), value.clone());
+            }
+        }
+    }
+    if out.is_empty() {
+        None
+    } else {
+        Some(Value::Object(out))
+    }
+}
+
 fn normalize_tool_status(status: &str, event_type: SessionEventType) -> String {
     let s = status.trim().to_lowercase();
     if s == "inprogress" || s == "in_progress" || s == "running" {
@@ -3193,6 +3323,67 @@ fn normalize_tool_status(status: &str, event_type: SessionEventType) -> String {
 
 fn extract_tool_update(payload: &Value) -> &Value {
     payload.get("acp_update").unwrap_or(payload)
+}
+
+fn build_turn_tool_from_event(event: &SessionEvent, turn_id: TurnId) -> Option<SessionTurnTool> {
+    if !matches!(
+        event.event_type,
+        SessionEventType::ToolCall | SessionEventType::ToolCallUpdate | SessionEventType::ToolResult
+    ) {
+        return None;
+    }
+    let tool_call_id = tool_call_id_from_payload(&event.payload_json)?;
+    let update = extract_tool_update(&event.payload_json);
+
+    let tool_kind = update
+        .get("kind")
+        .and_then(|v| v.as_str())
+        .or_else(|| update.pointer("/toolCall/kind").and_then(|v| v.as_str()))
+        .map(|v| v.to_string());
+
+    let title = update
+        .get("title")
+        .and_then(|v| v.as_str())
+        .or_else(|| update.pointer("/toolCall/title").and_then(|v| v.as_str()))
+        .or_else(|| update.pointer("/toolCall/name").and_then(|v| v.as_str()))
+        .map(|v| v.to_string());
+
+    let raw_status = update
+        .get("status")
+        .and_then(|v| v.as_str())
+        .or_else(|| update.pointer("/toolCall/status").and_then(|v| v.as_str()));
+    let status = if let Some(raw_status) = raw_status {
+        Some(normalize_tool_status(raw_status, event.event_type.clone()))
+    } else if matches!(event.event_type, SessionEventType::ToolResult) {
+        Some("completed".to_string())
+    } else if matches!(event.event_type, SessionEventType::ToolCall) {
+        Some("pending".to_string())
+    } else {
+        None
+    };
+
+    let input = update
+        .pointer("/rawInput")
+        .or_else(|| update.pointer("/toolCall/rawInput"))
+        .or_else(|| update.pointer("/toolCall/input"))
+        .or_else(|| update.pointer("/input"))
+        .or_else(|| update.pointer("/args"));
+    let input_json = input.cloned();
+
+    let output_text = extract_tool_output_text(update);
+
+    Some(SessionTurnTool {
+        session_id: event.session_id,
+        tool_call_id,
+        turn_id,
+        tool_kind,
+        title,
+        status,
+        input_json,
+        output_text,
+        created_at: event.created_at,
+        updated_at: event.created_at,
+    })
 }
 
 fn tool_call_id_from_payload(payload: &Value) -> Option<String> {
