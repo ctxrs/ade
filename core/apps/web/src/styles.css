@@ -3936,7 +3936,7 @@ button.linklike:hover {
 .settings-sidebar-header {
   padding: 4px 10px 8px;
   display: grid;
-  gap: 6px;
+  gap: 10px;
 }
 
 .settings-backlink {
