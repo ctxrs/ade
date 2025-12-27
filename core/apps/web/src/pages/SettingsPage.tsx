@@ -1,4 +1,5 @@
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import type { Settings } from "../api/client";
 import {
   DictationSettings,
@@ -146,6 +147,12 @@ function Card({ children, title }: { title?: string; children: ReactNode }) {
 }
 
 export default function SettingsPage() {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const workspaceIdFromQuery = useMemo(() => {
+    const ws = new URLSearchParams(location.search).get("ws");
+    return ws && ws.trim() ? ws : null;
+  }, [location.search]);
   const [active, setActive] = useState<SectionId>(() => sectionFromHash(window.location.hash) ?? "general");
   const [query, setQuery] = useState("");
 
@@ -344,11 +351,16 @@ export default function SettingsPage() {
     listWorkspaces()
       .then((ws) => {
         setWorkspaces(ws);
-        if (!workspaceId && ws.length > 0) setWorkspaceId(idToString((ws[0] as any).id));
+        if (!workspaceIdFromQuery && !workspaceId && ws.length > 0) setWorkspaceId(idToString((ws[0] as any).id));
       })
       .catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (!workspaceIdFromQuery) return;
+    setWorkspaceId(workspaceIdFromQuery);
+  }, [workspaceIdFromQuery]);
 
   useEffect(() => {
     setProviderOptions({});
@@ -865,6 +877,19 @@ export default function SettingsPage() {
     <div className="settings-root">
       <div className="settings-shell">
         <aside className="settings-sidebar">
+          {workspaceIdFromQuery ? (
+            <button
+              type="button"
+              className="settings-back"
+              onClick={() => navigate(`/workspaces/${encodeURIComponent(workspaceIdFromQuery)}`)}
+              aria-label="Back to Workspace"
+            >
+              <span className="settings-back-arrow" aria-hidden="true">
+                ←
+              </span>
+              <span>Back to Workspace</span>
+            </button>
+          ) : null}
           <div className="settings-user settings-user-single">
             <div className="settings-user-name">Settings</div>
           </div>
