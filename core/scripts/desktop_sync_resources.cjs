@@ -1,5 +1,6 @@
 const fs = require("fs");
 const path = require("path");
+const childProcess = require("child_process");
 
 const args = process.argv.slice(2);
 const profileIdx = args.indexOf("--profile");
@@ -41,15 +42,33 @@ const ensureExecutable = (filePath) => {
   }
 };
 
+const resolveHostTarget = () => {
+  const envTarget = process.env.CARGO_BUILD_TARGET || process.env.TAURI_ENV_TARGET_TRIPLE;
+  if (envTarget) return envTarget;
+  try {
+    const info = childProcess.execSync("rustc -vV", { encoding: "utf8" });
+    const match = info.match(/^host:\s+(.+)$/m);
+    return match ? match[1].trim() : null;
+  } catch {
+    return null;
+  }
+};
+
 const copySidecar = (name) => {
   const src = path.join(coreRoot, "target", profile, `${name}${binExt}`);
   const dest = path.join(destBinDir, `${name}${binExt}`);
+  const target = resolveHostTarget();
+  const destTarget = target ? path.join(destBinDir, `${name}-${target}${binExt}`) : null;
   if (!fs.existsSync(src)) {
     throw new Error(`missing sidecar: ${src} (did you run cargo build?)`);
   }
   fs.mkdirSync(destBinDir, { recursive: true });
   fs.copyFileSync(src, dest);
   ensureExecutable(dest);
+  if (destTarget) {
+    fs.copyFileSync(src, destTarget);
+    ensureExecutable(destTarget);
+  }
   return dest;
 };
 
@@ -89,4 +108,3 @@ const main = () => {
 };
 
 main();
-

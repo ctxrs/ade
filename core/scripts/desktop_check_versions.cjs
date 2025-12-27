@@ -37,7 +37,8 @@ const readCargoVersion = (p) => {
 
 const main = () => {
   const desktopVersion = readJson(desktopPkgJsonPath).version;
-  const tauriVersion = readJson(tauriConfPath).package?.version;
+  const tauriConf = readJson(tauriConfPath);
+  const tauriVersion = tauriConf.package?.version ?? tauriConf.version;
   const cargoVersion = readCargoVersion(tauriCargoTomlPath);
 
   const problems = [];

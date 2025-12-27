@@ -3,4 +3,4 @@
 /bin/context*
 /bin/context-mcp*
 /web/dist/
-
+/gen/

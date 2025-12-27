@@ -1,16 +1,27 @@
+use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::time::Duration;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
 use tauri::Manager;
+use tauri_plugin_deep_link::DeepLinkExt;
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+use url::Url;
 
 fn main() {
     tauri::Builder::default()
         .manage(ConnectionManager::default())
+        .manage(DeepLinkTokenStore::default())
+        .manage(WorkspaceWindowRegistry::default())
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            focus_app_window(app);
+        }))
+        .plugin(tauri_plugin_deep_link::init())
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             desktop_get_connection,
             desktop_disconnect,
@@ -19,17 +30,30 @@ fn main() {
             desktop_pick_folder,
             desktop_git_clone,
             desktop_save_text_file,
+            desktop_get_editor_settings,
+            desktop_update_editor_settings,
+            desktop_open_file,
+            desktop_open_path,
+            desktop_read_file,
+            desktop_get_deep_link_token,
+            desktop_register_workspace_window,
+            desktop_unregister_workspace_window,
             desktop_upload_blob,
             desktop_daemon_request,
         ])
         .setup(|app| {
             open_main_window(&app.handle())?;
+            setup_deep_link_listener(&app.handle());
             Ok(())
         })
-        .on_window_event(|event| {
-            if matches!(event.event(), tauri::WindowEvent::CloseRequested { .. }) {
-                let manager = event.window().state::<ConnectionManager>();
+        .on_window_event(|window, event| {
+            if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
+                let manager = window.state::<ConnectionManager>();
                 manager.disconnect();
+            }
+            if matches!(event, tauri::WindowEvent::Destroyed) {
+                let registry = window.state::<WorkspaceWindowRegistry>();
+                registry.unregister_window(window.label());
             }
         })
         .run(tauri::generate_context!())
@@ -86,6 +110,143 @@ struct DesktopHttpResponse {
     content_type: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum DesktopEditorTarget {
+    #[serde(rename = "system")]
+    System,
+    #[serde(rename = "vscode")]
+    VsCode,
+    #[serde(rename = "vscode_insiders")]
+    VsCodeInsiders,
+    #[serde(rename = "cursor")]
+    Cursor,
+    #[serde(rename = "windsurf")]
+    Windsurf,
+    #[serde(rename = "antigravity")]
+    Antigravity,
+    #[serde(rename = "idea")]
+    Idea,
+    #[serde(rename = "pycharm")]
+    Pycharm,
+    #[serde(rename = "xcode")]
+    Xcode,
+    #[serde(rename = "android_studio")]
+    AndroidStudio,
+    #[serde(rename = "custom")]
+    Custom,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct DesktopEditorSettings {
+    target: DesktopEditorTarget,
+    #[serde(default)]
+    custom_command: Option<String>,
+}
+
+impl Default for DesktopEditorSettings {
+    fn default() -> Self {
+        Self {
+            target: DesktopEditorTarget::System,
+            custom_command: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+struct DesktopSettings {
+    #[serde(default)]
+    editor: DesktopEditorSettings,
+}
+
+#[derive(Debug, Deserialize)]
+struct DesktopOpenFileReq {
+    worktree_id: String,
+    path: String,
+    #[serde(default)]
+    line: Option<u32>,
+    #[serde(default)]
+    col: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DesktopOpenPathReq {
+    path: String,
+    #[serde(default)]
+    line: Option<u32>,
+    #[serde(default)]
+    col: Option<u32>,
+}
+
+#[derive(Debug, Serialize)]
+struct DesktopReadFileResp {
+    path: String,
+    text: String,
+}
+
+#[derive(Debug, Serialize)]
+struct DesktopDeepLinkToken {
+    token: String,
+    expires_at_ms: u64,
+}
+
+#[derive(Default)]
+struct DeepLinkTokenStore {
+    tokens: std::sync::Mutex<HashMap<String, Instant>>,
+}
+
+#[derive(Default)]
+struct WorkspaceWindowRegistry {
+    by_window: std::sync::Mutex<HashMap<String, String>>,
+}
+
+const DEEP_LINK_TOKEN_TTL: Duration = Duration::from_secs(600);
+
+impl DeepLinkTokenStore {
+    fn mint(&self) -> DesktopDeepLinkToken {
+        let token = uuid::Uuid::new_v4().to_string();
+        let mut tokens = self.tokens.lock().expect("deep link token lock");
+        tokens.insert(token.clone(), Instant::now() + DEEP_LINK_TOKEN_TTL);
+        let expires_at_ms = SystemTime::now()
+            .checked_add(DEEP_LINK_TOKEN_TTL)
+            .unwrap_or_else(SystemTime::now)
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        DesktopDeepLinkToken { token, expires_at_ms }
+    }
+
+    fn is_valid(&self, token: &str) -> bool {
+        let mut tokens = self.tokens.lock().expect("deep link token lock");
+        let now = Instant::now();
+        tokens.retain(|_, expiry| *expiry > now);
+        tokens.get(token).map(|expiry| *expiry > now).unwrap_or(false)
+    }
+}
+
+impl WorkspaceWindowRegistry {
+    fn register(&self, window_label: &str, workspace_id: &str) {
+        let mut map = self.by_window.lock().expect("workspace registry lock");
+        map.insert(window_label.to_string(), workspace_id.to_string());
+    }
+
+    fn unregister_window(&self, window_label: &str) {
+        let mut map = self.by_window.lock().expect("workspace registry lock");
+        map.remove(window_label);
+    }
+
+    fn window_for_workspace(&self, workspace_id: &str) -> Option<String> {
+        let map = self.by_window.lock().expect("workspace registry lock");
+        map.iter()
+            .find_map(|(label, id)| if id == workspace_id { Some(label.clone()) } else { None })
+    }
+
+    fn workspace_ids(&self) -> Vec<String> {
+        let map = self.by_window.lock().expect("workspace registry lock");
+        map.values().cloned().collect()
+    }
+}
+
 #[tauri::command]
 fn desktop_get_connection(state: tauri::State<ConnectionManager>) -> DesktopConnectionInfo {
     state.info()
@@ -98,9 +259,10 @@ fn desktop_disconnect(state: tauri::State<ConnectionManager>) -> Result<(), Stri
 }
 
 #[tauri::command]
-fn desktop_pick_folder() -> Result<Option<String>, String> {
+fn desktop_pick_folder(app: tauri::AppHandle) -> Result<Option<String>, String> {
     let (tx, rx) = std::sync::mpsc::channel::<Option<String>>();
-    tauri::api::dialog::FileDialogBuilder::new().pick_folder(move |path| {
+    app.dialog().file().pick_folder(move |path| {
+        let path = path.and_then(|p| p.into_path().ok());
         let _ = tx.send(path.map(|p| p.to_string_lossy().to_string()));
     });
     rx.recv_timeout(Duration::from_secs(60))
@@ -108,18 +270,25 @@ fn desktop_pick_folder() -> Result<Option<String>, String> {
 }
 
 #[tauri::command]
-fn desktop_save_text_file(suggested_name: Option<String>, contents: String) -> Result<Option<String>, String> {
+fn desktop_save_text_file(
+    app: tauri::AppHandle,
+    suggested_name: Option<String>,
+    contents: String,
+) -> Result<Option<String>, String> {
     let suggested = suggested_name.unwrap_or_else(|| "conversation.md".to_string());
     let suggested = suggested.trim();
 
     let (tx, rx) = std::sync::mpsc::channel::<Option<String>>();
-    let mut dialog = tauri::api::dialog::FileDialogBuilder::new()
+    let mut dialog = app
+        .dialog()
+        .file()
         .add_filter("Markdown", &["md"])
         .set_title("Save Conversation Export");
     if !suggested.is_empty() {
         dialog = dialog.set_file_name(suggested);
     }
     dialog.save_file(move |path| {
+        let path = path.and_then(|p| p.into_path().ok());
         let _ = tx.send(path.map(|p| p.to_string_lossy().to_string()));
     });
 
@@ -132,6 +301,134 @@ fn desktop_save_text_file(suggested_name: Option<String>, contents: String) -> R
 
     std::fs::write(&path, contents).map_err(|e| format!("failed to write file: {e}"))?;
     Ok(Some(path))
+}
+
+#[tauri::command]
+fn desktop_get_editor_settings(app: tauri::AppHandle) -> Result<DesktopEditorSettings, String> {
+    Ok(load_desktop_settings(&app).editor)
+}
+
+#[tauri::command]
+fn desktop_update_editor_settings(
+    app: tauri::AppHandle,
+    settings: DesktopEditorSettings,
+) -> Result<DesktopEditorSettings, String> {
+    let mut current = load_desktop_settings(&app);
+    current.editor = settings;
+    save_desktop_settings(&app, &current).map_err(to_err)?;
+    Ok(current.editor)
+}
+
+#[tauri::command]
+fn desktop_open_file(
+    state: tauri::State<ConnectionManager>,
+    app: tauri::AppHandle,
+    req: DesktopOpenFileReq,
+) -> Result<(), String> {
+    if state.is_remote() {
+        return Err("cannot open remote worktree paths in a local editor".to_string());
+    }
+    let worktree_id = req.worktree_id.trim();
+    if worktree_id.is_empty() {
+        return Err("worktree_id is required".to_string());
+    }
+    let path = req.path.trim();
+    if path.is_empty() {
+        return Err("path is required".to_string());
+    }
+
+    let worktree_root = resolve_worktree_root(&state, worktree_id).map_err(to_err)?;
+    let resolved = resolve_worktree_path(&worktree_root, path).map_err(to_err)?;
+    let line = req.line.filter(|v| *v > 0);
+    let col = req.col.filter(|v| *v > 0);
+    let editor_settings = load_desktop_settings(&app).editor;
+    open_in_editor(&editor_settings, &resolved, line, col).map_err(to_err)?;
+    Ok(())
+}
+
+#[tauri::command]
+fn desktop_open_path(
+    app: tauri::AppHandle,
+    req: DesktopOpenPathReq,
+) -> Result<(), String> {
+    let path = req.path.trim();
+    if path.is_empty() {
+        return Err("path is required".to_string());
+    }
+    let path = PathBuf::from(path);
+    if !path.is_absolute() {
+        return Err("path must be absolute".to_string());
+    }
+    let resolved = std::fs::canonicalize(&path).map_err(|e| format!("invalid path: {e}"))?;
+    if !resolved.exists() {
+        return Err("path does not exist".to_string());
+    }
+    let line = req.line.filter(|v| *v > 0);
+    let col = req.col.filter(|v| *v > 0);
+    let editor_settings = load_desktop_settings(&app).editor;
+    open_in_editor(&editor_settings, &resolved, line, col).map_err(to_err)?;
+    Ok(())
+}
+
+#[tauri::command]
+fn desktop_read_file(
+    req: DesktopOpenPathReq,
+) -> Result<DesktopReadFileResp, String> {
+    let path = req.path.trim();
+    if path.is_empty() {
+        return Err("path is required".to_string());
+    }
+    let path = PathBuf::from(path);
+    if !path.is_absolute() {
+        return Err("path must be absolute".to_string());
+    }
+    let resolved = std::fs::canonicalize(&path).map_err(|e| format!("invalid path: {e}"))?;
+    if !resolved.exists() {
+        return Err("path does not exist".to_string());
+    }
+    let text = std::fs::read_to_string(&resolved).map_err(|e| format!("failed to read file: {e}"))?;
+    Ok(DesktopReadFileResp {
+        path: resolved.to_string_lossy().to_string(),
+        text,
+    })
+}
+
+#[tauri::command]
+fn desktop_get_deep_link_token(
+    store: tauri::State<DeepLinkTokenStore>,
+) -> Result<DesktopDeepLinkToken, String> {
+    Ok(store.mint())
+}
+
+#[tauri::command]
+fn desktop_register_workspace_window(
+    registry: tauri::State<WorkspaceWindowRegistry>,
+    workspace_id: String,
+    window_label: String,
+) -> Result<(), String> {
+    let workspace_id = workspace_id.trim();
+    if workspace_id.is_empty() {
+        return Err("workspace_id is required".to_string());
+    }
+    let window_label = window_label.trim();
+    if window_label.is_empty() {
+        return Err("window_label is required".to_string());
+    }
+    registry.register(window_label, workspace_id);
+    Ok(())
+}
+
+#[tauri::command]
+fn desktop_unregister_workspace_window(
+    registry: tauri::State<WorkspaceWindowRegistry>,
+    window_label: String,
+) -> Result<(), String> {
+    let window_label = window_label.trim();
+    if window_label.is_empty() {
+        return Err("window_label is required".to_string());
+    }
+    registry.unregister_window(window_label);
+    Ok(())
 }
 
 #[tauri::command]
@@ -232,6 +529,17 @@ fn desktop_connect_ssh(
     Ok(state.info())
 }
 
+fn ensure_local_connection(app: &tauri::AppHandle, state: &ConnectionManager) -> Result<()> {
+    if !matches!(state.info().kind, DesktopConnectionKind::None) {
+        return Ok(());
+    }
+    let token = uuid::Uuid::new_v4().to_string();
+    let data_dir = daemon_data_dir(app)?;
+    let (url, child) = spawn_daemon(app, &token, &data_dir)?;
+    state.set_local(url, token, data_dir, child);
+    Ok(())
+}
+
 #[tauri::command]
 fn desktop_daemon_request(
     state: tauri::State<ConnectionManager>,
@@ -250,11 +558,686 @@ fn desktop_upload_blob(
     state.upload_blob(bytes, mime_type, name).map_err(to_err)
 }
 
-fn open_main_window(app: &tauri::AppHandle) -> Result<()> {
-    if app.get_window("main").is_some() {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DeepLinkOpenWith {
+    Context,
+    Editor,
+    System,
+}
+
+#[derive(Debug)]
+enum DeepLinkAction {
+    Open(DeepLinkOpen),
+    Reveal(DeepLinkReveal),
+    Workspace(DeepLinkWorkspace),
+    Focus,
+}
+
+#[derive(Debug)]
+struct DeepLinkOpen {
+    target: DeepLinkTarget,
+    line: Option<u32>,
+    col: Option<u32>,
+    open_with: DeepLinkOpenWith,
+    editor_override: Option<DesktopEditorTarget>,
+    token: Option<String>,
+}
+
+#[derive(Debug)]
+struct DeepLinkReveal {
+    target: DeepLinkTarget,
+    token: Option<String>,
+}
+
+#[derive(Debug)]
+struct DeepLinkWorkspace {
+    workspace_id: Option<String>,
+    path: Option<String>,
+}
+
+#[derive(Debug)]
+enum DeepLinkTarget {
+    WorktreeFile { worktree_id: String, file: String },
+    Path { path: String },
+}
+
+#[derive(Debug)]
+struct WorktreeInfo {
+    root: PathBuf,
+    workspace_id: String,
+}
+
+fn setup_deep_link_listener(app: &tauri::AppHandle) {
+    let handle = app.clone();
+    app.deep_link().on_open_url(move |event| {
+        for url in event.urls() {
+            handle_deep_link(handle.clone(), url);
+        }
+    });
+
+    if let Ok(Some(urls)) = app.deep_link().get_current() {
+        for url in urls {
+            handle_deep_link(app.clone(), url);
+        }
+    }
+
+    if let Err(err) = app.deep_link().register_all() {
+        eprintln!("deep link register skipped: {err}");
+    }
+}
+
+fn handle_deep_link(app: tauri::AppHandle, url: Url) {
+    std::thread::spawn(move || {
+        if let Err(err) = handle_deep_link_inner(&app, &url) {
+            show_error_dialog(&app, &format!("Deep link failed: {err:#}"));
+        }
+    });
+}
+
+fn handle_deep_link_inner(app: &tauri::AppHandle, url: &Url) -> Result<()> {
+    let action = parse_deep_link(url)?;
+    let state = app.state::<ConnectionManager>();
+    let tokens = app.state::<DeepLinkTokenStore>();
+    let registry = app.state::<WorkspaceWindowRegistry>();
+
+    match action {
+        DeepLinkAction::Open(req) => handle_open(app, &state, &tokens, &registry, req),
+        DeepLinkAction::Reveal(req) => handle_reveal(app, &state, &tokens, &registry, req),
+        DeepLinkAction::Workspace(req) => handle_workspace(app, &state, &registry, req),
+        DeepLinkAction::Focus => {
+            focus_app_window(app);
+            Ok(())
+        }
+    }
+}
+
+fn parse_deep_link(url: &Url) -> Result<DeepLinkAction> {
+    if url.scheme() != "context" {
+        anyhow::bail!("unsupported scheme: {}", url.scheme());
+    }
+    let action = url.host_str().unwrap_or_default();
+    let params: HashMap<String, String> =
+        url.query_pairs().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+    let version = params
+        .get("v")
+        .map(|v| v.parse::<u32>())
+        .transpose()
+        .context("invalid version")?
+        .unwrap_or(1);
+    if version != 1 {
+        anyhow::bail!("unsupported version: {version}");
+    }
+
+    match action {
+        "open" => parse_open(&params).map(DeepLinkAction::Open),
+        "reveal" => parse_reveal(&params).map(DeepLinkAction::Reveal),
+        "workspace" => parse_workspace(&params).map(DeepLinkAction::Workspace),
+        "focus" => Ok(DeepLinkAction::Focus),
+        _ => anyhow::bail!("unknown action: {action}"),
+    }
+}
+
+fn parse_open(params: &HashMap<String, String>) -> Result<DeepLinkOpen> {
+    let target = parse_target(params)?;
+    let line = parse_optional_positive(params.get("line"));
+    let col = parse_optional_positive(params.get("col"));
+    let open_with = parse_open_with(params.get("openWith"))?;
+    let editor_override = match params.get("editor") {
+        Some(value) => Some(parse_editor_target(value)?),
+        None => None,
+    };
+    let token = params.get("token").cloned();
+    Ok(DeepLinkOpen {
+        target,
+        line,
+        col,
+        open_with,
+        editor_override,
+        token,
+    })
+}
+
+fn parse_reveal(params: &HashMap<String, String>) -> Result<DeepLinkReveal> {
+    let target = parse_target(params)?;
+    let token = params.get("token").cloned();
+    Ok(DeepLinkReveal { target, token })
+}
+
+fn parse_workspace(params: &HashMap<String, String>) -> Result<DeepLinkWorkspace> {
+    let workspace_id = params.get("workspaceId").cloned();
+    let path = params.get("path").cloned();
+    if workspace_id.is_none() && path.is_none() {
+        anyhow::bail!("workspaceId or path is required");
+    }
+    Ok(DeepLinkWorkspace { workspace_id, path })
+}
+
+fn parse_target(params: &HashMap<String, String>) -> Result<DeepLinkTarget> {
+    let worktree_id = params.get("worktreeId").cloned();
+    let file = params.get("file").cloned();
+    let path = params.get("path").cloned();
+
+    if let Some(worktree_id) = worktree_id {
+        let file = file.ok_or_else(|| anyhow!("file is required when worktreeId is set"))?;
+        let file = validate_relative_file(&file)?;
+        return Ok(DeepLinkTarget::WorktreeFile { worktree_id, file });
+    }
+
+    let path = path.ok_or_else(|| anyhow!("path is required"))?;
+    let path = validate_absolute_path(&path)?;
+    Ok(DeepLinkTarget::Path { path })
+}
+
+fn parse_open_with(value: Option<&String>) -> Result<DeepLinkOpenWith> {
+    match value.map(|v| v.trim().to_lowercase()) {
+        None => Ok(DeepLinkOpenWith::Context),
+        Some(v) if v == "context" => Ok(DeepLinkOpenWith::Context),
+        Some(v) if v == "editor" => Ok(DeepLinkOpenWith::Editor),
+        Some(v) if v == "system" => Ok(DeepLinkOpenWith::System),
+        Some(v) => anyhow::bail!("unsupported openWith: {v}"),
+    }
+}
+
+fn parse_editor_target(value: &str) -> Result<DesktopEditorTarget> {
+    match value.trim().to_lowercase().as_str() {
+        "vscode" => Ok(DesktopEditorTarget::VsCode),
+        "vscode_insiders" => Ok(DesktopEditorTarget::VsCodeInsiders),
+        "cursor" => Ok(DesktopEditorTarget::Cursor),
+        "windsurf" => Ok(DesktopEditorTarget::Windsurf),
+        "antigravity" => Ok(DesktopEditorTarget::Antigravity),
+        "idea" => Ok(DesktopEditorTarget::Idea),
+        "pycharm" => Ok(DesktopEditorTarget::Pycharm),
+        "xcode" => Ok(DesktopEditorTarget::Xcode),
+        "android_studio" => Ok(DesktopEditorTarget::AndroidStudio),
+        "custom" => Ok(DesktopEditorTarget::Custom),
+        "system" => Ok(DesktopEditorTarget::System),
+        other => anyhow::bail!("unknown editor: {other}"),
+    }
+}
+
+fn parse_optional_positive(value: Option<&String>) -> Option<u32> {
+    value
+        .and_then(|v| v.parse::<u32>().ok())
+        .filter(|v| *v > 0)
+}
+
+fn validate_relative_file(path: &str) -> Result<String> {
+    if path.trim().is_empty() {
+        anyhow::bail!("file is empty");
+    }
+    let candidate = Path::new(path);
+    if candidate.is_absolute() {
+        anyhow::bail!("file must be relative");
+    }
+    if path.contains(':') {
+        anyhow::bail!("file must be a relative path");
+    }
+    if candidate.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+        anyhow::bail!("file must not contain ..");
+    }
+    Ok(path.to_string())
+}
+
+fn validate_absolute_path(path: &str) -> Result<String> {
+    if path.trim().is_empty() {
+        anyhow::bail!("path is empty");
+    }
+    let candidate = Path::new(path);
+    if !candidate.is_absolute() {
+        anyhow::bail!("path must be absolute");
+    }
+    Ok(path.to_string())
+}
+
+fn handle_open(
+    app: &tauri::AppHandle,
+    state: &ConnectionManager,
+    tokens: &DeepLinkTokenStore,
+    registry: &WorkspaceWindowRegistry,
+    req: DeepLinkOpen,
+) -> Result<()> {
+    if matches!(req.target, DeepLinkTarget::WorktreeFile { .. })
+        && matches!(state.info().kind, DesktopConnectionKind::None)
+    {
+        ensure_local_connection(app, state)?;
+    }
+
+    if matches!(req.target, DeepLinkTarget::WorktreeFile { .. })
+        && state.is_remote()
+        && req.open_with != DeepLinkOpenWith::Context
+    {
+        anyhow::bail!("cannot open remote worktree paths in local editors");
+    }
+
+    let token_ok = req
+        .token
+        .as_deref()
+        .map(|t| tokens.is_valid(t))
+        .unwrap_or(false);
+    let in_open_workspace = is_target_in_open_workspace(state, registry, &req.target).unwrap_or(false);
+    let needs_prompt = if req.open_with == DeepLinkOpenWith::System {
+        true
+    } else if token_ok {
+        false
+    } else {
+        !in_open_workspace
+    };
+    if needs_prompt && !confirm_action(app, "Open this file from an external link?") {
         return Ok(());
     }
-    tauri::WindowBuilder::new(app, "main", tauri::WindowUrl::App("index.html".into()))
+
+    match req.open_with {
+        DeepLinkOpenWith::Context => open_in_context(app, &req.target, req.line, req.col),
+        DeepLinkOpenWith::Editor => {
+            let settings = load_desktop_settings(app).editor;
+            let target = resolve_editor_target(&settings, req.editor_override.as_ref())?;
+            let Some(target) = target else {
+                offer_editor_settings(app);
+                return Ok(());
+            };
+            open_in_editor_with_target(
+                &settings,
+                target,
+                &resolve_target_path(state, &req.target)?,
+                req.line,
+                req.col,
+            )
+        }
+        DeepLinkOpenWith::System => {
+            let path = resolve_target_path(state, &req.target)?;
+            open_with_system(path.to_string_lossy().as_ref())
+        }
+    }
+}
+
+fn handle_reveal(
+    app: &tauri::AppHandle,
+    state: &ConnectionManager,
+    tokens: &DeepLinkTokenStore,
+    registry: &WorkspaceWindowRegistry,
+    req: DeepLinkReveal,
+) -> Result<()> {
+    if matches!(req.target, DeepLinkTarget::WorktreeFile { .. })
+        && matches!(state.info().kind, DesktopConnectionKind::None)
+    {
+        ensure_local_connection(app, state)?;
+    }
+
+    if matches!(req.target, DeepLinkTarget::WorktreeFile { .. }) && state.is_remote() {
+        anyhow::bail!("cannot reveal remote worktree paths on this device");
+    }
+
+    let token_ok = req
+        .token
+        .as_deref()
+        .map(|t| tokens.is_valid(t))
+        .unwrap_or(false);
+    let in_open_workspace = is_target_in_open_workspace(state, registry, &req.target).unwrap_or(false);
+    let needs_prompt = !token_ok && !in_open_workspace;
+    if needs_prompt && !confirm_action(app, "Reveal this path from an external link?") {
+        return Ok(());
+    }
+
+    let path = resolve_target_path(state, &req.target)?;
+    reveal_in_file_manager(&path)
+}
+
+fn handle_workspace(
+    app: &tauri::AppHandle,
+    state: &ConnectionManager,
+    registry: &WorkspaceWindowRegistry,
+    req: DeepLinkWorkspace,
+) -> Result<()> {
+    if matches!(state.info().kind, DesktopConnectionKind::None) {
+        ensure_local_connection(app, state)?;
+    }
+
+    let workspace_id = if let Some(id) = req.workspace_id {
+        id
+    } else if let Some(path) = req.path {
+        resolve_or_create_workspace_id(state, &path)?
+    } else {
+        anyhow::bail!("workspaceId or path is required");
+    };
+    open_workspace_window(app, registry, &workspace_id)
+}
+
+fn open_in_context(app: &tauri::AppHandle, target: &DeepLinkTarget, line: Option<u32>, col: Option<u32>) -> Result<()> {
+    let url = build_file_preview_url(target, line, col);
+    let label = format!("file:{}", uuid::Uuid::new_v4());
+    tauri::WebviewWindowBuilder::new(app, label, tauri::WebviewUrl::App(url.into()))
+        .title("Context")
+        .inner_size(1000.0, 780.0)
+        .build()
+        .context("creating file preview window")?;
+    Ok(())
+}
+
+fn build_file_preview_url(target: &DeepLinkTarget, line: Option<u32>, col: Option<u32>) -> String {
+    let mut serializer = url::form_urlencoded::Serializer::new(String::new());
+    match target {
+        DeepLinkTarget::WorktreeFile { worktree_id, file } => {
+            serializer.append_pair("worktreeId", worktree_id);
+            serializer.append_pair("file", file);
+        }
+        DeepLinkTarget::Path { path } => {
+            serializer.append_pair("path", path);
+        }
+    }
+    if let Some(line) = line {
+        serializer.append_pair("line", &line.to_string());
+    }
+    if let Some(col) = col {
+        serializer.append_pair("col", &col.to_string());
+    }
+    format!("/file?{}", serializer.finish())
+}
+
+fn resolve_editor_target(
+    settings: &DesktopEditorSettings,
+    override_target: Option<&DesktopEditorTarget>,
+) -> Result<Option<DesktopEditorTarget>> {
+    let target = override_target.cloned().unwrap_or_else(|| settings.target.clone());
+    let has_custom = settings
+        .custom_command
+        .as_ref()
+        .map(|s| !s.trim().is_empty())
+        .unwrap_or(false);
+    if matches!(target, DesktopEditorTarget::System) {
+        return Ok(None);
+    }
+    if matches!(target, DesktopEditorTarget::Custom) && !has_custom {
+        return Ok(None);
+    }
+    Ok(Some(target))
+}
+
+fn offer_editor_settings(app: &tauri::AppHandle) {
+    let should_open = app
+        .dialog()
+        .message("No editor is configured. Open Settings to pick one?")
+        .kind(MessageDialogKind::Error)
+        .buttons(MessageDialogButtons::OkCancelCustom(
+            "Open Settings".into(),
+            "Cancel".into(),
+        ))
+        .blocking_show();
+    if should_open {
+        let _ = open_settings_window(app);
+    }
+}
+
+fn open_settings_window(app: &tauri::AppHandle) -> Result<()> {
+    let label = "settings";
+    if let Some(window) = app.get_webview_window(label) {
+        let _ = window.show();
+        let _ = window.set_focus();
+        return Ok(());
+    }
+    tauri::WebviewWindowBuilder::new(app, label, tauri::WebviewUrl::App("/settings".into()))
+        .title("Context Settings")
+        .inner_size(1000.0, 780.0)
+        .build()
+        .context("creating settings window")?;
+    Ok(())
+}
+
+fn open_in_editor_with_target(
+    settings: &DesktopEditorSettings,
+    target: DesktopEditorTarget,
+    path: &Path,
+    line: Option<u32>,
+    col: Option<u32>,
+) -> Result<()> {
+    let adjusted = DesktopEditorSettings {
+        target,
+        custom_command: settings.custom_command.clone(),
+    };
+    open_in_editor(&adjusted, path, line, col)
+}
+
+fn resolve_target_path(state: &ConnectionManager, target: &DeepLinkTarget) -> Result<PathBuf> {
+    match target {
+        DeepLinkTarget::WorktreeFile { worktree_id, file } => {
+            let info = resolve_worktree_info(state, worktree_id)?;
+            resolve_worktree_path(&info.root, file)
+        }
+        DeepLinkTarget::Path { path } => {
+            let path = PathBuf::from(path);
+            let resolved = std::fs::canonicalize(&path)
+                .with_context(|| format!("resolving {}", path.display()))?;
+            if !resolved.exists() {
+                anyhow::bail!("path does not exist");
+            }
+            Ok(resolved)
+        }
+    }
+}
+
+fn is_target_in_open_workspace(
+    state: &ConnectionManager,
+    registry: &WorkspaceWindowRegistry,
+    target: &DeepLinkTarget,
+) -> Result<bool> {
+    let workspace_ids = registry.workspace_ids();
+    if workspace_ids.is_empty() {
+        return Ok(false);
+    }
+
+    match target {
+        DeepLinkTarget::WorktreeFile { worktree_id, .. } => {
+            let info = resolve_worktree_info(state, worktree_id)?;
+            Ok(workspace_ids.iter().any(|id| id == &info.workspace_id))
+        }
+        DeepLinkTarget::Path { path } => {
+            let candidate = std::fs::canonicalize(PathBuf::from(path))?;
+            for ws_id in workspace_ids {
+                if let Ok(root) = resolve_workspace_root(state, &ws_id) {
+                    if candidate.starts_with(&root) {
+                        return Ok(true);
+                    }
+                }
+            }
+            Ok(false)
+        }
+    }
+}
+
+fn resolve_or_create_workspace_id(state: &ConnectionManager, root_path: &str) -> Result<String> {
+    if let Some(existing) = resolve_workspace_id_by_path(state, root_path)? {
+        return Ok(existing);
+    }
+
+    let body = serde_json::json!({ "root_path": root_path });
+    let resp = state.daemon_request(DesktopDaemonRequest {
+        method: "POST".to_string(),
+        path: "/api/workspaces".to_string(),
+        body: Some(body.to_string()),
+        headers: vec![],
+    })?;
+    if resp.status != 200 && resp.status != 201 {
+        anyhow::bail!("failed to create workspace ({status}): {body}", status = resp.status, body = resp.body);
+    }
+    let value: serde_json::Value =
+        serde_json::from_str(&resp.body).context("parsing workspace response")?;
+    parse_id_value(&value["id"]).ok_or_else(|| anyhow!("workspace id missing"))
+}
+
+fn resolve_workspace_id_by_path(state: &ConnectionManager, root_path: &str) -> Result<Option<String>> {
+    let resp = state.daemon_request(DesktopDaemonRequest {
+        method: "GET".to_string(),
+        path: "/api/workspaces".to_string(),
+        body: None,
+        headers: vec![],
+    })?;
+    if resp.status != 200 {
+        anyhow::bail!("failed to list workspaces ({status}): {body}", status = resp.status, body = resp.body);
+    }
+    let value: serde_json::Value =
+        serde_json::from_str(&resp.body).context("parsing workspaces response")?;
+    let arr = value.as_array().ok_or_else(|| anyhow!("workspaces response is not a list"))?;
+    for entry in arr {
+        let ws_root = entry.get("root_path").and_then(|v| v.as_str()).unwrap_or_default();
+        if ws_root == root_path {
+            if let Some(id) = entry.get("id").and_then(parse_id_value) {
+                return Ok(Some(id));
+            }
+        }
+    }
+    Ok(None)
+}
+
+fn resolve_workspace_root(state: &ConnectionManager, workspace_id: &str) -> Result<PathBuf> {
+    let resp = state.daemon_request(DesktopDaemonRequest {
+        method: "GET".to_string(),
+        path: format!("/api/workspaces/{workspace_id}"),
+        body: None,
+        headers: vec![],
+    })?;
+    if resp.status != 200 {
+        anyhow::bail!("failed to load workspace ({status}): {body}", status = resp.status, body = resp.body);
+    }
+    let value: serde_json::Value =
+        serde_json::from_str(&resp.body).context("parsing workspace response")?;
+    let root = value
+        .get("root_path")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow!("workspace root_path missing"))?;
+    Ok(PathBuf::from(root))
+}
+
+fn resolve_worktree_info(state: &ConnectionManager, worktree_id: &str) -> Result<WorktreeInfo> {
+    let resp = state.daemon_request(DesktopDaemonRequest {
+        method: "GET".to_string(),
+        path: format!("/api/worktrees/{worktree_id}"),
+        body: None,
+        headers: vec![],
+    })?;
+    if resp.status != 200 {
+        anyhow::bail!("failed to load worktree ({status}): {body}", status = resp.status, body = resp.body);
+    }
+    let value: serde_json::Value =
+        serde_json::from_str(&resp.body).context("parsing worktree response")?;
+    let root = value
+        .get("root_path")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow!("worktree root_path missing"))?;
+    let workspace_id = value
+        .get("workspace_id")
+        .and_then(parse_id_value)
+        .ok_or_else(|| anyhow!("worktree workspace_id missing"))?;
+    Ok(WorktreeInfo {
+        root: PathBuf::from(root),
+        workspace_id,
+    })
+}
+
+fn parse_id_value(value: &serde_json::Value) -> Option<String> {
+    value
+        .as_str()
+        .map(|s| s.to_string())
+        .or_else(|| value.get("0").and_then(|v| v.as_str()).map(|s| s.to_string()))
+        .or_else(|| value.get(0).and_then(|v| v.as_str()).map(|s| s.to_string()))
+}
+
+fn open_workspace_window(
+    app: &tauri::AppHandle,
+    registry: &WorkspaceWindowRegistry,
+    workspace_id: &str,
+) -> Result<()> {
+    if let Some(label) = registry.window_for_workspace(workspace_id) {
+        if let Some(window) = app.get_webview_window(&label) {
+            let _ = window.show();
+            let _ = window.set_focus();
+            return Ok(());
+        }
+    }
+
+    let label = format!("workspace:{workspace_id}");
+    if let Some(window) = app.get_webview_window(&label) {
+        let _ = window.show();
+        let _ = window.set_focus();
+        registry.register(&label, workspace_id);
+        return Ok(());
+    }
+
+    let url = format!("/workspaces/{workspace_id}");
+    tauri::WebviewWindowBuilder::new(app, &label, tauri::WebviewUrl::App(url.into()))
+        .title("Context")
+        .inner_size(1200.0, 900.0)
+        .build()
+        .context("creating workspace window")?;
+    registry.register(&label, workspace_id);
+    Ok(())
+}
+
+fn focus_app_window(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.set_focus();
+        return;
+    }
+    if let Some(window) = app.webview_windows().values().next() {
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
+
+fn confirm_action(app: &tauri::AppHandle, message: &str) -> bool {
+    app.dialog()
+        .message(message)
+        .kind(MessageDialogKind::Warning)
+        .buttons(MessageDialogButtons::OkCancelCustom("Open".into(), "Cancel".into()))
+        .blocking_show()
+}
+
+fn show_error_dialog(app: &tauri::AppHandle, message: &str) {
+    app.dialog()
+        .message(message)
+        .kind(MessageDialogKind::Error)
+        .buttons(MessageDialogButtons::Ok)
+        .show(|_| {});
+}
+
+fn reveal_in_file_manager(path: &Path) -> Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        let status = Command::new("open").arg("-R").arg(path).status()?;
+        if !status.success() {
+            anyhow::bail!("failed to reveal file (exit={status})");
+        }
+        return Ok(());
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let target = path.to_string_lossy();
+        let status = Command::new("explorer")
+            .arg("/select,")
+            .arg(target.as_ref())
+            .status()?;
+        if !status.success() {
+            anyhow::bail!("failed to reveal file (exit={status})");
+        }
+        return Ok(());
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let dir = path.parent().unwrap_or(path);
+        let status = Command::new("xdg-open").arg(dir).status()?;
+        if !status.success() {
+            anyhow::bail!("failed to reveal file (exit={status})");
+        }
+        return Ok(());
+    }
+}
+
+fn open_main_window(app: &tauri::AppHandle) -> Result<()> {
+    if app.get_webview_window("main").is_some() {
+        return Ok(());
+    }
+    tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App("index.html".into()))
         .title("Context")
         .inner_size(1200.0, 900.0)
         .build()
@@ -307,6 +1290,11 @@ impl ConnectionManager {
                 token: c.token.clone(),
             },
         }
+    }
+
+    fn is_remote(&self) -> bool {
+        let guard = self.0.lock().ok();
+        matches!(guard.as_ref().and_then(|g| g.active.as_ref()), Some(ActiveConnection::Ssh(_)))
     }
 
     fn disconnect(&self) {
@@ -450,6 +1438,244 @@ fn to_err(e: impl std::fmt::Display) -> String {
     e.to_string()
 }
 
+fn desktop_settings_path(app: &tauri::AppHandle) -> Result<PathBuf> {
+    let root = app
+        .path()
+        .app_data_dir()
+        .context("resolving app_data_dir")?;
+    Ok(root.join("desktop-settings.json"))
+}
+
+fn load_desktop_settings(app: &tauri::AppHandle) -> DesktopSettings {
+    let path = match desktop_settings_path(app) {
+        Ok(path) => path,
+        Err(_) => return DesktopSettings::default(),
+    };
+    let data = match std::fs::read_to_string(&path) {
+        Ok(data) => data,
+        Err(_) => return DesktopSettings::default(),
+    };
+    serde_json::from_str::<DesktopSettings>(&data).unwrap_or_default()
+}
+
+fn save_desktop_settings(app: &tauri::AppHandle, settings: &DesktopSettings) -> Result<()> {
+    let path = desktop_settings_path(app)?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).ok();
+    }
+    let tmp = path.with_extension("json.tmp");
+    let bytes = serde_json::to_vec_pretty(settings)?;
+    std::fs::write(&tmp, bytes)?;
+    std::fs::rename(&tmp, &path)?;
+    Ok(())
+}
+
+fn resolve_worktree_root(state: &ConnectionManager, worktree_id: &str) -> Result<PathBuf> {
+    let resp = state.daemon_request(DesktopDaemonRequest {
+        method: "GET".to_string(),
+        path: format!("/api/worktrees/{worktree_id}"),
+        body: None,
+        headers: vec![],
+    })?;
+    if resp.status != 200 {
+        return Err(anyhow!(
+            "failed to load worktree ({status}): {body}",
+            status = resp.status,
+            body = resp.body
+        ));
+    }
+    let value: serde_json::Value =
+        serde_json::from_str(&resp.body).context("parsing worktree response")?;
+    let root = value
+        .get("root_path")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow!("worktree root_path missing"))?;
+    Ok(PathBuf::from(root))
+}
+
+fn resolve_worktree_path(worktree_root: &Path, raw_path: &str) -> Result<PathBuf> {
+    let root = std::fs::canonicalize(worktree_root)
+        .with_context(|| format!("canonicalizing {}", worktree_root.display()))?;
+    let mut candidate = PathBuf::from(raw_path);
+    if !candidate.is_absolute() {
+        candidate = root.join(raw_path);
+    }
+    let candidate = std::fs::canonicalize(&candidate)
+        .with_context(|| format!("resolving {}", candidate.display()))?;
+    if !candidate.starts_with(&root) {
+        return Err(anyhow!("path is outside the worktree root"));
+    }
+    if !candidate.exists() {
+        return Err(anyhow!("path does not exist"));
+    }
+    Ok(candidate)
+}
+
+fn open_in_editor(
+    settings: &DesktopEditorSettings,
+    path: &Path,
+    line: Option<u32>,
+    col: Option<u32>,
+) -> Result<()> {
+    match settings.target {
+        DesktopEditorTarget::System => open_with_system(path.to_string_lossy().as_ref()),
+        DesktopEditorTarget::VsCode => open_with_system(&vscode_uri("vscode", path, line, col)),
+        DesktopEditorTarget::VsCodeInsiders => {
+            open_with_system(&vscode_uri("vscode-insiders", path, line, col))
+        }
+        DesktopEditorTarget::Cursor => open_with_system(&vscode_uri("cursor", path, line, col)),
+        DesktopEditorTarget::Windsurf => open_with_system(&vscode_uri("windsurf", path, line, col)),
+        DesktopEditorTarget::Antigravity => {
+            open_with_system(&vscode_uri("antigravity", path, line, col))
+        }
+        DesktopEditorTarget::Idea => open_with_system(&jetbrains_uri("idea", path, line)),
+        DesktopEditorTarget::Pycharm => open_with_system(&jetbrains_uri("pycharm", path, line)),
+        DesktopEditorTarget::Xcode => open_xcode(path, line),
+        DesktopEditorTarget::AndroidStudio => open_android_studio(path, line),
+        DesktopEditorTarget::Custom => {
+            let cmd = settings
+                .custom_command
+                .as_ref()
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| anyhow!("custom command is not configured"))?;
+            open_custom_command(cmd, path, line, col)
+        }
+    }
+}
+
+fn open_with_system(target: &str) -> Result<()> {
+    #[cfg(target_os = "macos")]
+    let mut cmd = Command::new("open");
+    #[cfg(target_os = "linux")]
+    let mut cmd = Command::new("xdg-open");
+    #[cfg(target_os = "windows")]
+    let mut cmd = Command::new("explorer");
+
+    cmd.arg(target);
+    let status = cmd.status().context("spawning open command")?;
+    if !status.success() {
+        anyhow::bail!("open command failed (exit={status})");
+    }
+    Ok(())
+}
+
+fn open_xcode(path: &Path, line: Option<u32>) -> Result<()> {
+    if !cfg!(target_os = "macos") {
+        anyhow::bail!("Xcode is only available on macOS");
+    }
+    let mut cmd = Command::new("xcrun");
+    cmd.arg("xed");
+    if let Some(line) = line {
+        cmd.arg("-l").arg(line.to_string());
+    }
+    cmd.arg(path);
+    let status = cmd.status().context("launching xed")?;
+    if !status.success() {
+        anyhow::bail!("xed failed (exit={status})");
+    }
+    Ok(())
+}
+
+fn open_android_studio(path: &Path, _line: Option<u32>) -> Result<()> {
+    if cfg!(target_os = "macos") {
+        let status = Command::new("open")
+            .arg("-a")
+            .arg("Android Studio")
+            .arg(path)
+            .status()
+            .context("opening Android Studio")?;
+        if !status.success() {
+            anyhow::bail!("failed to open Android Studio (exit={status})");
+        }
+        return Ok(());
+    }
+
+    let status = Command::new("studio")
+        .arg(path)
+        .status()
+        .context("launching Android Studio")?;
+    if !status.success() {
+        anyhow::bail!("studio command failed (exit={status})");
+    }
+    Ok(())
+}
+
+fn open_custom_command(
+    command: &str,
+    path: &Path,
+    line: Option<u32>,
+    col: Option<u32>,
+) -> Result<()> {
+    let path_str = path.to_string_lossy();
+    let line_str = line.map(|v| v.to_string()).unwrap_or_default();
+    let col_str = col.map(|v| v.to_string()).unwrap_or_default();
+    let rendered = command
+        .replace("{path}", &path_str)
+        .replace("{line}", &line_str)
+        .replace("{col}", &col_str);
+    let parts = shell_words::split(&rendered).context("parsing custom command")?;
+    if parts.is_empty() {
+        anyhow::bail!("custom command is empty");
+    }
+    let mut cmd = Command::new(&parts[0]);
+    if parts.len() > 1 {
+        cmd.args(&parts[1..]);
+    }
+    let status = cmd.status().context("launching custom command")?;
+    if !status.success() {
+        anyhow::bail!("custom command failed (exit={status})");
+    }
+    Ok(())
+}
+
+fn vscode_uri(scheme: &str, path: &Path, line: Option<u32>, col: Option<u32>) -> String {
+    let mut uri = format!("{scheme}://file/{}", encode_uri_path(path));
+    if let Some(line) = line {
+        uri.push(':');
+        uri.push_str(&line.to_string());
+        if let Some(col) = col {
+            uri.push(':');
+            uri.push_str(&col.to_string());
+        }
+    }
+    uri
+}
+
+fn jetbrains_uri(scheme: &str, path: &Path, line: Option<u32>) -> String {
+    let raw = path.to_string_lossy();
+    let encoded = urlencoding::encode(&raw);
+    let mut uri = format!("{scheme}://open?file={encoded}");
+    if let Some(line) = line {
+        uri.push_str(&format!("&line={line}"));
+    }
+    uri
+}
+
+fn encode_uri_path(path: &Path) -> String {
+    let mut raw = path.to_string_lossy().replace('\\', "/");
+    if cfg!(target_os = "windows") {
+        if raw.len() >= 2 && raw.as_bytes().get(1) == Some(&b':') {
+            raw = format!("/{raw}");
+        }
+    }
+    percent_encode_path(&raw)
+}
+
+fn percent_encode_path(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    for b in raw.bytes() {
+        let ch = b as char;
+        let keep = ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.' | '~' | '/' | ':');
+        if keep {
+            out.push(ch);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
+}
+
 fn derive_repo_name(url: &str) -> Option<String> {
     let trimmed = url.trim().trim_end_matches('/');
     let last = trimmed.rsplit('/').next()?;
@@ -564,7 +1790,7 @@ fn probe_daemon_health(base_url: &str, token: Option<&str>) -> Result<()> {
 
 fn daemon_data_dir(app: &tauri::AppHandle) -> Result<PathBuf> {
     let root = app
-        .path_resolver()
+        .path()
         .app_data_dir()
         .context("resolving app_data_dir")?;
     Ok(root.join("daemon"))
@@ -582,7 +1808,7 @@ fn current_arch_token() -> &'static str {
 
 fn resource_bin(app: &tauri::AppHandle, name: &str) -> Option<PathBuf> {
     let mut candidates = Vec::new();
-    if let Some(res) = app.path_resolver().resource_dir() {
+    if let Some(res) = app.path().resource_dir().ok() {
         let bin_ext = if cfg!(target_os = "windows") { ".exe" } else { "" };
         candidates.push(res.join("bin").join(format!("{name}{bin_ext}")));
         candidates.push(res.join(format!("{name}{bin_ext}")));
@@ -656,8 +1882,9 @@ fn spawn_daemon(app: &tauri::AppHandle, token: &str, data_dir: &Path) -> Result<
         .or_else(|| dev_bin("context-mcp"));
 
     let web_dist = app
-        .path_resolver()
+        .path()
         .resource_dir()
+        .ok()
         .and_then(|p| {
             let candidates = [p.join("web").join("dist"), p.join("web-dist"), p.join("dist")];
             candidates.into_iter().find(|c| c.exists())

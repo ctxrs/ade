@@ -5,7 +5,7 @@ if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   cat <<'EOF'
 Usage: scripts/install_desktop_deps_linux_ubuntu.sh
 
-Installs system packages required to build the Tauri v1 desktop app on Ubuntu/Debian.
+Installs system packages required to build the Tauri v2 desktop app on Ubuntu/Debian.
 
 This script intentionally does NOT install:
   - Rust toolchain (rustup/cargo)
@@ -73,7 +73,7 @@ packages=(
   libssl-dev
 )
 
-echo "${BOLD}Installing desktop (Tauri v1) Linux build dependencies (Ubuntu/Debian)${RESET}"
+echo "${BOLD}Installing desktop (Tauri v2) Linux build dependencies (Ubuntu/Debian)${RESET}"
 
 "${SUDO[@]}" apt-get update
 
@@ -116,4 +116,3 @@ cat <<'EOF'
 - Prep web + daemons: pnpm -C core desktop:prep
 - Run desktop dev:    pnpm -C core/apps/desktop dev
 EOF
-
