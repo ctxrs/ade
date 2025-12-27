@@ -13,13 +13,7 @@ import {
   type WorkspaceCatchupEvent,
 } from "../api/client";
 import type { WorkspaceCatchupEventSource } from "./workspaceCatchupStore";
-import {
-  deleteTrackDiffV1,
-  loadSessionHeadV1,
-  loadTrackDiffV1,
-  saveSessionHeadV1,
-  saveTrackDiffV1,
-} from "./uiStateStore";
+import { loadSessionHeadV1, saveSessionHeadV1 } from "./uiStateStore";
 
 const readTunableInt = (key: string, fallback: number) => {
   try {
@@ -72,6 +66,7 @@ type InternalEntry = SessionCacheEntry & {
   seqSet: Set<number>;
   turnsHydrated: boolean;
   oldestTurnSeq?: number;
+  diffFetchedAtMs?: number;
   toolStatusByKey: Map<string, string>;
   toolIdsByTurn: Map<string, Set<string>>;
   turnToolsLoadingSet: Set<string>;
@@ -95,8 +90,7 @@ const MAX_CACHED_SESSIONS = readTunableInt(
 const WARM_TTL_MS = readTunableInt("contextWarmSessionTtlMs", 10 * 60 * 1000);
 const HEAD_LIMIT = readTunableInt("contextSessionHeadLimit", TURN_PAGE_LIMIT);
 const SUBSCRIBE_LIMIT = readTunableInt("contextSubscribeLimit", 20);
-const MAX_CACHED_DIFFS = readTunableInt("contextMaxCachedDiffs", 20);
-const MAX_DIFF_CHARS = readTunableInt("contextMaxDiffChars", 1_000_000);
+const DIFF_REFRESH_MS = readTunableInt("contextDiffRefreshMs", 30 * 1000);
 
 export class SessionSupervisor {
   private listeners = new Set<() => void>();
@@ -108,9 +102,6 @@ export class SessionSupervisor {
   private activeTaskSessionIds: string[] = [];
   private warmSessionIds: string[] = [];
   private subscribedSessionIds: string[] = [];
-  private diffCache = new Map<string, { diff: string; updatedAtMs: number }>();
-  private diffCacheLoading = new Set<string>();
-  private diffCacheInFlight = new Map<string, Promise<string | null>>();
 
   subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener);
@@ -185,14 +176,6 @@ export class SessionSupervisor {
     this.refreshSubscriptions();
   };
 
-  prefetchDiffs = (trackIds: string[]) => {
-    const next = dedupeIds(trackIds);
-    for (const trackId of next) {
-      if (!trackId) continue;
-      void this.ensureTrackDiff(trackId, { fetchIfMissing: true });
-    }
-  };
-
   setSession = (session: Session) => {
     const sessionId = idToString(session.id);
     if (!sessionId) return;
@@ -206,9 +189,7 @@ export class SessionSupervisor {
   setDiff = (sessionId: string, diff: string) => {
     const entry = this.ensureEntry(sessionId);
     entry.diff = diff;
-    if (entry.trackId) {
-      this.cacheDiff(entry.trackId, diff);
-    }
+    entry.diffFetchedAtMs = Date.now();
     entry.updatedAtMs = Date.now();
     this.publish();
   };
@@ -342,6 +323,7 @@ export class SessionSupervisor {
       seqSet: new Set<number>(),
       turnsHydrated: false,
       oldestTurnSeq: undefined,
+      diffFetchedAtMs: undefined,
       toolStatusByKey: new Map(),
       toolIdsByTurn: new Map(),
       turnToolsLoadingSet: new Set(),
@@ -378,9 +360,6 @@ export class SessionSupervisor {
     try {
       const head = await getSessionHead(sessionId, HEAD_LIMIT, false);
       this.applyHead(entry, head);
-      if (entry.trackId) {
-        void this.ensureTrackDiff(entry.trackId, { fetchIfMissing: false });
-      }
       await this.persistHead(entry);
     } catch (e: any) {
       if (!opts?.silent) {
@@ -440,19 +419,15 @@ export class SessionSupervisor {
     if (entry.fetching.diff) return;
     if (!entry.trackId) return;
     if (entry.wantDiffCount <= 0) return;
-    const cached = await this.ensureTrackDiff(entry.trackId, { fetchIfMissing: false });
-    if (cached != null) {
-      entry.diff = cached;
-      entry.updatedAtMs = Date.now();
-      this.publish();
-      return;
+    if (entry.diff !== undefined && entry.diffFetchedAtMs) {
+      const ageMs = Date.now() - entry.diffFetchedAtMs;
+      if (ageMs < DIFF_REFRESH_MS) return;
     }
     entry.fetching.diff = true;
     try {
       const resp = await trackDiff(entry.trackId);
-      const diff = resp.diff ?? "";
-      entry.diff = diff;
-      this.cacheDiff(entry.trackId, diff);
+      entry.diff = resp.diff ?? "";
+      entry.diffFetchedAtMs = Date.now();
       entry.updatedAtMs = Date.now();
       this.publish();
     } finally {
@@ -725,16 +700,6 @@ export class SessionSupervisor {
   }
 
   private handleCatchupEvent(evt: WorkspaceCatchupEvent) {
-    if (evt.type === "track_upsert") {
-      const trackId = idToString(evt.track?.track?.id ?? "");
-      if (trackId) {
-        void this.invalidateDiff(trackId);
-        if (this.shouldPrefetchTrack(trackId)) {
-          void this.ensureTrackDiff(trackId, { fetchIfMissing: true });
-        }
-      }
-      return;
-    }
     if (evt.type !== "session_head_delta") return;
     const delta = evt.delta;
     const sid = idToString(delta.session_id);
@@ -780,99 +745,6 @@ export class SessionSupervisor {
     if (changed) {
       entry.updatedAtMs = Date.now();
       this.publish();
-    }
-  }
-
-  private shouldPrefetchTrack(trackId: string): boolean {
-    for (const entry of this.entries.values()) {
-      if (entry.trackId !== trackId) continue;
-      if (entry.refCount > 0 || entry.wantDiffCount > 0) return true;
-    }
-    return false;
-  }
-
-  private applyDiffToEntries(trackId: string, diff: string) {
-    let changed = false;
-    for (const entry of this.entries.values()) {
-      if (entry.trackId !== trackId) continue;
-      if (entry.diff === diff) continue;
-      entry.diff = diff;
-      entry.updatedAtMs = Date.now();
-      changed = true;
-    }
-    if (changed) this.publish();
-  }
-
-  private cacheDiff(trackId: string, diff: string) {
-    if (!trackId) return;
-    if (diff.length > MAX_DIFF_CHARS) return;
-    if (this.diffCache.has(trackId)) {
-      this.diffCache.delete(trackId);
-    }
-    this.diffCache.set(trackId, { diff, updatedAtMs: Date.now() });
-    while (this.diffCache.size > MAX_CACHED_DIFFS) {
-      const firstKey = this.diffCache.keys().next().value;
-      if (!firstKey) break;
-      this.diffCache.delete(firstKey);
-    }
-    void saveTrackDiffV1(trackId, diff).catch(() => {});
-  }
-
-  private async invalidateDiff(trackId: string) {
-    if (!trackId) return;
-    this.diffCache.delete(trackId);
-    this.diffCacheInFlight.delete(trackId);
-    this.diffCacheLoading.delete(trackId);
-    void deleteTrackDiffV1(trackId).catch(() => {});
-    let changed = false;
-    for (const entry of this.entries.values()) {
-      if (entry.trackId !== trackId) continue;
-      if (!entry.diff) continue;
-      entry.diff = "";
-      entry.updatedAtMs = Date.now();
-      changed = true;
-    }
-    if (changed) this.publish();
-  }
-
-  private async ensureTrackDiff(
-    trackId: string,
-    opts: { fetchIfMissing: boolean },
-  ): Promise<string | null> {
-    if (!trackId) return null;
-    const cached = this.diffCache.get(trackId);
-    if (cached) {
-      this.applyDiffToEntries(trackId, cached.diff);
-      return cached.diff;
-    }
-    const inflight = this.diffCacheInFlight.get(trackId);
-    if (inflight) return inflight;
-    const p = (async () => {
-      if (!this.diffCacheLoading.has(trackId)) {
-        this.diffCacheLoading.add(trackId);
-        try {
-          const stored = await loadTrackDiffV1(trackId);
-          if (stored?.diff != null) {
-            this.diffCache.set(trackId, { diff: stored.diff, updatedAtMs: stored.updatedAtMs });
-            this.applyDiffToEntries(trackId, stored.diff);
-            return stored.diff;
-          }
-        } finally {
-          this.diffCacheLoading.delete(trackId);
-        }
-      }
-      if (!opts.fetchIfMissing) return null;
-      const resp = await trackDiff(trackId);
-      const diff = resp.diff ?? "";
-      this.applyDiffToEntries(trackId, diff);
-      this.cacheDiff(trackId, diff);
-      return diff;
-    })();
-    this.diffCacheInFlight.set(trackId, p);
-    try {
-      return await p;
-    } finally {
-      this.diffCacheInFlight.delete(trackId);
     }
   }
 }

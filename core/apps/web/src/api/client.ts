@@ -26,12 +26,6 @@ import type {
   WorkspaceCatchupSnapshot,
   WorkspaceCatchupTaskSummary,
   WorkspaceCatchupTrackSummary,
-  WorkspaceAttachment,
-  WorkspaceIndexCursor,
-  WorkspaceIndexEvent,
-  WorkspaceIndexPage,
-  WorkspaceTaskSummary,
-  TrackAttachmentMount,
   Worktree,
 } from "@context/types";
 import { desktopDaemonRequest, desktopUploadBlob, isDesktopApp } from "../utils/desktop";
@@ -64,12 +58,6 @@ export type {
   WorkspaceCatchupSnapshot,
   WorkspaceCatchupTaskSummary,
   WorkspaceCatchupTrackSummary,
-  WorkspaceAttachment,
-  WorkspaceIndexCursor,
-  WorkspaceIndexEvent,
-  WorkspaceIndexPage,
-  WorkspaceTaskSummary,
-  TrackAttachmentMount,
   Worktree,
 } from "@context/types";
 
@@ -227,6 +215,7 @@ export type LspServerStatus = {
 
 export type LspStatus = {
   enabled: boolean;
+  edit_plans_enabled: boolean;
   servers: LspServerStatus[];
 };
 
@@ -253,6 +242,15 @@ export type TelemetrySettings = {
 export type Settings = {
   dictation?: DictationSettings | null;
   telemetry?: TelemetrySettings | null;
+};
+
+export type EditPlanSummary = {
+  id: { 0: string } | string;
+  title: string;
+  created_at: string;
+  remaining_files: number;
+  remaining_hunks: number;
+  diff: string;
 };
 
 const authToken = (): string | null => {
@@ -558,32 +556,6 @@ export const createWorkspace = (root_path: string, name?: string) =>
 export const getWorkspace = (id: string) =>
   apiAny<Workspace>(`/api/workspaces/${id}`);
 
-export type WorkspaceAttachmentCreate = {
-  kind: "reference_repo" | "doc_mirror";
-  name: string;
-  source: string;
-  revision?: string;
-  subpath?: string;
-  mount_relpath?: string;
-  mode?: "ro" | "rw";
-  update_policy?: "manual" | "on_open" | "scheduled";
-};
-
-export const listWorkspaceAttachments = (workspaceId: string) =>
-  apiAny<WorkspaceAttachment[]>(`/api/workspaces/${workspaceId}/attachments`);
-
-export const syncWorkspaceAttachments = (workspaceId: string, opts?: { refresh?: boolean }) =>
-  apiAny<WorkspaceAttachment[]>(`/api/workspaces/${workspaceId}/attachments/sync`, {
-    method: "POST",
-    body: JSON.stringify(opts ?? {}),
-  });
-
-export const createWorkspaceAttachment = (workspaceId: string, attachment: WorkspaceAttachmentCreate) =>
-  apiAny<WorkspaceAttachment[]>(`/api/workspaces/${workspaceId}/attachments`, {
-    method: "POST",
-    body: JSON.stringify(attachment),
-  });
-
 export type WorkspaceCatchupParams = {
   limit?: number;
   includeArchived?: boolean;
@@ -660,19 +632,9 @@ export const createSession = (trackId: string, provider_id: string, model_id: st
     body: JSON.stringify({ provider_id, model_id }),
   });
 
-type WorktreeFile = {
-  path: string;
-  text: string;
-};
 
 export const getWorktree = (worktreeId: string) =>
   apiAny<Worktree>(`/api/worktrees/${worktreeId}`);
-
-export const getWorktreeFile = (worktreeId: string, path: string) => {
-  const qs = new URLSearchParams();
-  qs.set("path", path);
-  return apiAny<WorktreeFile>(`/api/worktrees/${worktreeId}/file?${qs.toString()}`);
-};
 
 export const getSessionHead = (sessionId: string, limit?: number, includeEvents?: boolean) => {
   const qs = new URLSearchParams();
@@ -806,6 +768,24 @@ export const applyTrackDiffPatch = (trackId: string, action: "accept" | "reject"
   apiAny<{ diff: string }>(`/api/tracks/${trackId}/diff/apply`, {
     method: "POST",
     body: JSON.stringify({ action, patch }),
+  });
+
+export const listEditPlansForTrack = (trackId: string) =>
+  apiAny<EditPlanSummary[]>(`/api/tracks/${trackId}/edit_plans`);
+
+export const getEditPlan = (planId: string) =>
+  apiAny<EditPlanSummary>(`/api/edit_plans/${planId}`);
+
+export const applyEditPlanPatch = (planId: string, action: "accept" | "reject", patch: string) =>
+  apiAny<EditPlanSummary>(`/api/edit_plans/${planId}/apply`, {
+    method: "POST",
+    body: JSON.stringify({ action, patch }),
+  });
+
+export const discardEditPlan = (planId: string) =>
+  apiAny<void>(`/api/edit_plans/${planId}/discard`, {
+    method: "POST",
+    body: JSON.stringify({}),
   });
 
 

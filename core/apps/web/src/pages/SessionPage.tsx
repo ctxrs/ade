@@ -427,19 +427,6 @@ export function SessionView({
     return null;
   }, [eventsKey, optimisticAskAnswered]);
 
-  useEffect(() => {
-    let cancelled = false;
-    getSettings()
-      .then((s) => {
-        if (cancelled) return;
-        setDictationSettings(s.dictation ?? null);
-      })
-      .catch(() => { });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
   const stopDictation = useCallback(async (): Promise<string> => {
     const ws = dictationWsRef.current;
     const mic = dictationMicRef.current;
@@ -475,8 +462,19 @@ export function SessionView({
   const startDictation = useCallback(async () => {
     setDictationError(null);
 
-    const enabled =
-      Boolean(dictationSettings?.enabled) && dictationSettings?.provider === "livekit_inference";
+    let settings = dictationSettings;
+    if (!settings) {
+      try {
+        const s = await getSettings();
+        settings = s.dictation ?? null;
+        setDictationSettings(settings);
+      } catch (e: any) {
+        setDictationError(e?.message ?? "Failed to load dictation settings.");
+        return;
+      }
+    }
+
+    const enabled = Boolean(settings?.enabled) && settings?.provider === "livekit_inference";
     if (!enabled) {
       setDictationError("Dictation is disabled. Configure it in Settings.");
       return;

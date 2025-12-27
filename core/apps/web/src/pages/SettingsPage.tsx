@@ -186,7 +186,7 @@ export default function SettingsPage() {
   };
 
   return (
-    <div className="page">
+    <div className="page settings-shell">
       <div className="header">
         <Link to="/workspaces">← Workspaces</Link>
       </div>

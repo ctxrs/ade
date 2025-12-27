@@ -119,40 +119,8 @@ export type PersistedWorkspaceCatchupV1 = {
   updatedAtMs: number;
 };
 
-export type PersistedSettingsV1 = {
-  v: 1;
-  settings: import("../api/client").Settings;
-  updatedAtMs: number;
-};
-
-export type PersistedTrackDiffV1 = {
-  v: 1;
-  trackId: string;
-  diff: string;
-  updatedAtMs: number;
-};
-
-export type PersistedWorktreeV1 = {
-  v: 1;
-  worktreeId: string;
-  rootPath: string;
-  updatedAtMs: number;
-};
-
 export function workspaceCatchupKeyV1(workspaceId: string) {
   return `wb.catchup.v1.${workspaceId}`;
-}
-
-export function settingsKeyV1() {
-  return "ui.settings.v1";
-}
-
-export function trackDiffKeyV1(trackId: string) {
-  return `wb.track_diff.v1.${trackId}`;
-}
-
-export function worktreeKeyV1(worktreeId: string) {
-  return `wb.worktree.v1.${worktreeId}`;
 }
 
 export async function loadWorkspaceCatchupV1(
@@ -174,60 +142,6 @@ export async function saveWorkspaceCatchupV1(
     snapshot,
     updatedAtMs: Date.now(),
   } satisfies PersistedWorkspaceCatchupV1);
-}
-
-export async function loadSettingsV1(): Promise<PersistedSettingsV1 | null> {
-  const raw = await uiStateGet(settingsKeyV1());
-  if (!raw || typeof raw !== "object") return null;
-  const rec = raw as PersistedSettingsV1;
-  if (rec.v !== 1 || !rec.settings) return null;
-  return rec;
-}
-
-export async function saveSettingsV1(settings: PersistedSettingsV1["settings"]): Promise<void> {
-  await uiStateSet(settingsKeyV1(), {
-    v: 1,
-    settings,
-    updatedAtMs: Date.now(),
-  } satisfies PersistedSettingsV1);
-}
-
-export async function loadTrackDiffV1(trackId: string): Promise<PersistedTrackDiffV1 | null> {
-  const raw = await uiStateGet(trackDiffKeyV1(trackId));
-  if (!raw || typeof raw !== "object") return null;
-  const rec = raw as PersistedTrackDiffV1;
-  if (rec.v !== 1 || rec.trackId !== trackId || typeof rec.diff !== "string") return null;
-  return rec;
-}
-
-export async function saveTrackDiffV1(trackId: string, diff: string): Promise<void> {
-  await uiStateSet(trackDiffKeyV1(trackId), {
-    v: 1,
-    trackId,
-    diff,
-    updatedAtMs: Date.now(),
-  } satisfies PersistedTrackDiffV1);
-}
-
-export async function deleteTrackDiffV1(trackId: string): Promise<void> {
-  await uiStateDelete(trackDiffKeyV1(trackId));
-}
-
-export async function loadWorktreeV1(worktreeId: string): Promise<PersistedWorktreeV1 | null> {
-  const raw = await uiStateGet(worktreeKeyV1(worktreeId));
-  if (!raw || typeof raw !== "object") return null;
-  const rec = raw as PersistedWorktreeV1;
-  if (rec.v !== 1 || rec.worktreeId !== worktreeId || typeof rec.rootPath !== "string") return null;
-  return rec;
-}
-
-export async function saveWorktreeV1(worktreeId: string, rootPath: string): Promise<void> {
-  await uiStateSet(worktreeKeyV1(worktreeId), {
-    v: 1,
-    worktreeId,
-    rootPath,
-    updatedAtMs: Date.now(),
-  } satisfies PersistedWorktreeV1);
 }
 
 export type PersistedSessionHeadV1 = {

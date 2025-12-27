@@ -18,10 +18,12 @@ import {
   Settings,
 } from "lucide-react";
 import {
+  DictationSettings,
   InstallInfo,
   MessageAttachment,
   ProviderOptions,
   ProviderStatus,
+  Worktree,
   Workspace,
   archiveTask,
   applyTrackDiffPatch,
@@ -32,6 +34,7 @@ import {
   getDaemonBaseUrl,
   getInstall,
   getProviderOptions,
+  getSettings,
   getWorktree,
   getWorkspace,
   idToString,
@@ -47,8 +50,6 @@ import {
   verifyProviderForWorkspace,
 } from "../api/client";
 import { useSessionCacheSnapshot, useSessionEntry, useSessionSupervisor } from "../state/sessionSupervisor";
-import { useSettingsSnapshot } from "../state/settingsStore";
-import { loadWorktreeV1, saveWorktreeV1 } from "../state/uiStateStore";
 import { DiffReviewPane } from "../components/DiffReviewPane";
 import { SessionView, buildWorkbenchThreadViewModel } from "./SessionPage";
 import { HARNESS_CATALOG } from "../utils/harnessCatalog";
@@ -267,6 +268,9 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const [convoMenu, setConvoMenu] = useState<{ style: React.CSSProperties } | null>(null);
   const convoMenuRef = useRef<HTMLDivElement | null>(null);
 
+  const [activeWorktree, setActiveWorktree] = useState<Worktree | null>(null);
+  const worktreeCacheRef = useRef<Map<string, Worktree>>(new Map());
+  const worktreeFetchRef = useRef<Map<string, Promise<Worktree | null>>>(new Map());
 
   const focusNewTask = useCallback(() => {
     workbenchStore.focusNewTask();
@@ -291,8 +295,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const [dropActive, setDropActive] = useState(false);
   const dropHideTimerRef = useRef<number | null>(null);
 
-  const settingsSnapshot = useSettingsSnapshot();
-  const dictationSettings = settingsSnapshot.settings?.dictation ?? null;
+  const [dictationSettings, setDictationSettings] = useState<DictationSettings | null>(null);
   const [dictationRecording, setDictationRecording] = useState(false);
   const [dictationError, setDictationError] = useState<string | null>(null);
   const dictationWsRef = useRef<WebSocket | null>(null);
@@ -315,6 +318,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const dictationTranscriptMsgsRef = useRef(0);
 
   const [diffWidth, setDiffWidth] = useState(480);
+  const reviewTab: "git" = "git";
 
   useEffect(() => {
     document.documentElement.classList.add("wb-no-scroll");
@@ -407,7 +411,6 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       window.removeEventListener("keydown", onKeyDown);
     };
   }, [convoMenu]);
-
 
   useEffect(() => {
     if (useMultipleAgents) return;
@@ -719,29 +722,6 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     return ids.map((s) => s.id).slice(0, 20);
   }, [activeTaskSessionIds, tasksById, workspaceCatchup.activeIds]);
 
-  const diffPrefetchTrackIds = useMemo(() => {
-    const out = new Set<string>();
-    for (const summary of trackSummaries) {
-      const trackId = idToString(summary.track.id);
-      if (trackId) out.add(trackId);
-    }
-    const warmSet = new Set(warmSessionIds);
-    for (const taskId of workspaceCatchup.activeIds) {
-      const task = tasksById[taskId];
-      if (!task) continue;
-      for (const summary of task.tracks) {
-        const trackId = idToString(summary.track.id);
-        if (!trackId) continue;
-        for (const sess of summary.sessions) {
-          const sid = idToString(sess.session.id);
-          if (!sid || !warmSet.has(sid)) continue;
-          out.add(trackId);
-        }
-      }
-    }
-    return Array.from(out);
-  }, [trackSummaries, warmSessionIds, tasksById, workspaceCatchup.activeIds]);
-
   useEffect(() => {
     if (!activeTaskId) {
       return;
@@ -761,12 +741,6 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   useEffect(() => {
     supervisor.setWarmSessionIds(warmSessionIds);
   }, [supervisor, warmSessionIds]);
-
-  useEffect(() => {
-    if (diffPrefetchTrackIds.length === 0) return;
-    supervisor.prefetchDiffs(diffPrefetchTrackIds);
-  }, [supervisor, diffPrefetchTrackIds]);
-
 
   const normalizedTaskQuery = taskQuery.trim().toLowerCase();
   const filteredActiveIds = useMemo(() => {
@@ -1198,7 +1172,6 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       workbenchSnap.window.scrollByKey[activeScrollKey] ?? {
         stickToBottom: true,
         anchorItemId: null,
-        scrollTop: null,
         updatedAtMs: 0,
       }
     );
@@ -1232,70 +1205,45 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const activeTrackDiff = activeEntry?.diff ?? "";
   const activeTrackIdFromSession = activeEntry?.session ? idToString(activeEntry.session.track_id) : "";
   const activeWorktreeId = activeEntry?.session ? idToString(activeEntry.session.worktree_id) : "";
-  const [worktreePaths, setWorktreePaths] = useState<Record<string, string>>({});
-  const worktreeRequestsRef = useRef<Record<string, Promise<string | null>>>({});
-  const activeWorktreePath = activeWorktreeId ? worktreePaths[activeWorktreeId] ?? "" : "";
 
-  const rememberWorktreePath = useCallback((worktreeId: string, rootPath: string) => {
-    if (!worktreeId || !rootPath) return;
-    setWorktreePaths((prev) => (prev[worktreeId] === rootPath ? prev : { ...prev, [worktreeId]: rootPath }));
-  }, []);
+  useEffect(() => {
+    if (!activeWorktreeId) {
+      setActiveWorktree(null);
+      return;
+    }
+    const cached = worktreeCacheRef.current.get(activeWorktreeId);
+    if (cached) {
+      setActiveWorktree(cached);
+      return;
+    }
 
-  const ensureWorktreePath = useCallback(
-    async (worktreeId: string) => {
-      if (!worktreeId) return null;
-      if (worktreePaths[worktreeId]) return worktreePaths[worktreeId];
-      const existing = worktreeRequestsRef.current[worktreeId];
-      if (existing) return existing;
-
-      const task = (async () => {
-        const cached = await loadWorktreeV1(worktreeId);
-        if (cached?.rootPath) {
-          rememberWorktreePath(worktreeId, cached.rootPath);
-          return cached.rootPath;
-        }
-        const worktree = await getWorktree(worktreeId);
-        const rootPath = String(worktree?.root_path ?? "");
-        if (rootPath) {
-          rememberWorktreePath(worktreeId, rootPath);
-          await saveWorktreeV1(worktreeId, rootPath);
-          return rootPath;
-        }
-        return null;
-      })().finally(() => {
-        delete worktreeRequestsRef.current[worktreeId];
+    let cancelled = false;
+    const existing = worktreeFetchRef.current.get(activeWorktreeId);
+    const fetchPromise =
+      existing ??
+      getWorktree(activeWorktreeId)
+        .then((wt) => {
+          worktreeCacheRef.current.set(activeWorktreeId, wt);
+          return wt;
+        })
+        .catch(() => null)
+        .finally(() => {
+          worktreeFetchRef.current.delete(activeWorktreeId);
+        });
+    worktreeFetchRef.current.set(activeWorktreeId, fetchPromise);
+    fetchPromise
+      .then((wt) => {
+        if (cancelled) return;
+        setActiveWorktree(wt);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setActiveWorktree(null);
       });
-
-      worktreeRequestsRef.current[worktreeId] = task;
-      return task;
-    },
-    [rememberWorktreePath, worktreePaths],
-  );
-
-  useEffect(() => {
-    if (!activeWorktreeId) return;
-    void ensureWorktreePath(activeWorktreeId);
-  }, [activeWorktreeId, ensureWorktreePath]);
-
-  const worktreePrefetchIds = useMemo(() => {
-    const ids = new Set<string>();
-    for (const taskId of workspaceCatchup.activeIds) {
-      const task = tasksById[taskId];
-      if (!task) continue;
-      for (const summary of task.tracks) {
-        const worktreeId = idToString(summary.track.worktree_id);
-        if (worktreeId) ids.add(worktreeId);
-      }
-    }
-    return Array.from(ids);
-  }, [tasksById, workspaceCatchup.activeIds]);
-
-  useEffect(() => {
-    if (worktreePrefetchIds.length === 0) return;
-    for (const worktreeId of worktreePrefetchIds) {
-      void ensureWorktreePath(worktreeId);
-    }
-  }, [ensureWorktreePath, worktreePrefetchIds]);
+    return () => {
+      cancelled = true;
+    };
+  }, [activeWorktreeId]);
 
   const hasDiff = activeTrackDiff.trim().length > 0;
   const showReviewPane = hasDiff;
@@ -1304,7 +1252,6 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     const m = activeTrackDiff.match(/^diff --git /gm);
     return m ? m.length : 1;
   }, [activeTrackDiff, hasDiff]);
-
 
 
   const providerOptionsInFlightRef = useRef<Record<string, Promise<ProviderOptions | undefined>>>({});
@@ -1396,8 +1343,19 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const startDictation = useCallback(async () => {
     setDictationError(null);
 
-    const enabled =
-      Boolean(dictationSettings?.enabled) && dictationSettings?.provider === "livekit_inference";
+    let settings = dictationSettings;
+    if (!settings) {
+      try {
+        const s = await getSettings();
+        settings = s.dictation ?? null;
+        setDictationSettings(settings);
+      } catch (e: any) {
+        setDictationError(e?.message ?? "Failed to load dictation settings.");
+        return;
+      }
+    }
+
+    const enabled = Boolean(settings?.enabled) && settings?.provider === "livekit_inference";
     if (!enabled) {
       setDictationError("Dictation is disabled. Configure it in Settings.");
       return;
@@ -1574,9 +1532,9 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
           firstSessionId = sessionId;
           focusTask(taskId, trackId, sessionId);
         }
-        supervisor.refreshSession(sessionId, { watchDiff: false });
+        supervisor.refreshSession(sessionId, { watchDiff: true });
         await postMessage(sessionId, prompt, "immediate", draftAttachments);
-        supervisor.refreshSession(sessionId, { watchDiff: false });
+        supervisor.refreshSession(sessionId, { watchDiff: true });
       }
 
       setNewTaskDraft({ text: "", modeId: "default" });
@@ -1765,7 +1723,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     })();
 
     const age = formatRelativeAgeShort(lastIso) || "Now";
-    const worktreePath = sess?.env_target === "worktree" ? String(activeWorktreePath ?? "") : "";
+    const worktreePath = sess?.env_target === "worktree" ? String(activeWorktree?.root_path ?? "") : "";
     const worktreeSlug = worktreePath ? lastPathSegment(worktreePath) : "";
 
     return {
@@ -1778,7 +1736,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       worktreePath,
       canCopyWorktree: Boolean(worktreePath),
     };
-  }, [activeEntry, activeTask?.title, activeWorktreePath, tracks.length]);
+  }, [activeEntry, activeTask?.title, activeWorktree?.root_path, tracks.length]);
 
   const singleTrackHeaderForRender = useMemo(() => {
     if (singleTrackHeader) return singleTrackHeader;
@@ -2060,12 +2018,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
               {debugIdLabel}
             </button>
           )}
-          <Link
-            className="wb-topbar-icon"
-            to={`/settings?ws=${encodeURIComponent(workspaceId)}`}
-            title="Settings"
-            aria-label="Settings"
-          >
+          <Link className="wb-topbar-icon" to="/settings" title="Settings" aria-label="Settings">
             <Settings size={14} />
           </Link>
         </div>
@@ -2861,15 +2814,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
                     onModeChange={(modeId) =>
                       activeSessionDraft.setValue({ text: activeSessionDraft.value.text, modeId })
                     }
-                    scrollState={
-                      activeScrollState
-                        ? {
-                            stickToBottom: activeScrollState.stickToBottom,
-                            anchorItemId: activeScrollState.anchorItemId,
-                            scrollTop: activeScrollState.scrollTop ?? null,
-                          }
-                        : null
-                    }
+                    scrollState={activeScrollState ? { stickToBottom: activeScrollState.stickToBottom, anchorItemId: activeScrollState.anchorItemId } : null}
                     onScrollStateChange={(next) => {
                       if (!activeScrollKey) return;
                       workbenchStore.setScrollState(activeScrollKey, next);
@@ -2889,22 +2834,35 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
                 <div className="wb-diff" style={{ width: diffWidth }}>
                   <div className="wb-diff-top">
                     <div className="wb-diff-tabs">
-                      <div className="wb-diff-tab wb-diff-tab-active">All Changes</div>
-                      <div className="wb-diff-pill">
-                        {diffFileCount} Pending Change{diffFileCount === 1 ? "" : "s"}
-                      </div>
+                      {hasDiff && (
+                        <button
+                          type="button"
+                          className={`wb-diff-tab wb-diff-tab-button ${reviewTab === "git" ? "wb-diff-tab-active" : ""}`}
+                        >
+                          All Changes
+                        </button>
+                      )}
+                      {reviewTab === "git" && hasDiff && (
+                        <div className="wb-diff-pill">
+                          {diffFileCount} Pending Change{diffFileCount === 1 ? "" : "s"}
+                        </div>
+                      )}
                     </div>
                     <div className="wb-diff-actions">
-                      <button type="button" className="wb-primary" onClick={approveAll}>
-                        Approve
-                      </button>
-                      <button type="button" className="wb-small" onClick={rejectAll}>
-                        Reject
-                      </button>
+                      {reviewTab === "git" && hasDiff && (
+                        <>
+                          <button type="button" className="wb-primary" onClick={approveAll}>
+                            Approve
+                          </button>
+                          <button type="button" className="wb-small" onClick={rejectAll}>
+                            Reject
+                          </button>
+                        </>
+                      )}
                     </div>
                   </div>
 
-                  {hasDiff && (
+                  {reviewTab === "git" && hasDiff && (
                     <DiffReviewPane
                       diff={activeTrackDiff}
                       trackId={activeTrackIdFromSession}

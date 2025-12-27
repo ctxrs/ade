@@ -3,7 +3,6 @@ import { mkdtempSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import path from "path";
 import { execSync } from "child_process";
-import { createWorkspaceAndOpenWorkbench } from "./utils/workbench";
 
 test("workbench catchup snapshot+stream keeps network lean", async ({ page }) => {
   const repo = mkdtempSync(path.join(tmpdir(), "context-e2e-"));
@@ -22,7 +21,21 @@ test("workbench catchup snapshot+stream keeps network lean", async ({ page }) =>
     requests.push({ url, method: req.method() });
   });
 
-  const workspaceId = await createWorkspaceAndOpenWorkbench({ page, request: page.request, repo, workspaceName });
+  await page.goto("/");
+  await page.getByLabel("Root path").fill(repo);
+  await page.getByLabel("Name (optional)").fill(workspaceName);
+  await page.getByRole("button", { name: "Add workspace" }).click();
+  const workspaceLink = page
+    .getByRole("listitem")
+    .filter({ hasText: repo })
+    .getByRole("link", { name: workspaceName });
+  const catchupPromise = page.waitForResponse((resp) => /\/api\/workspaces\/[^/]+\/catchup/.test(resp.url()));
+  await workspaceLink.click();
+  await page.waitForURL(/\/workspaces\/[^/]+$/);
+  await catchupPromise;
+
+  const url = new URL(page.url());
+  const workspaceId = url.pathname.split("/").pop() ?? "";
   expect(workspaceId).not.toEqual("");
 
   const apiRequests = requests.filter((r) => r.url.includes("/api/"));
