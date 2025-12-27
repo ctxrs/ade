@@ -278,6 +278,13 @@ button.linklike:hover {
   line-height: 1.1;
 }
 
+.settings-user-single .settings-user-name {
+  font-size: 18px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.9);
+  line-height: 1.2;
+}
+
 .settings-user-sub {
   font-size: 11px;
   color: rgba(255, 255, 255, 0.45);
