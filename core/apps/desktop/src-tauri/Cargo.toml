@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2021"
 build = "build.rs"
 
+[[bin]]
+name = "ctx"
+path = "src/main.rs"
+
 [build-dependencies]
 tauri-build = { version = "2.5.3", features = [] }
 
@@ -14,7 +18,7 @@ reqwest = { version = "0.12", features = ["blocking", "json", "multipart", "rust
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 shell-words = "1.1.1"
-tauri = { version = "2.9.5" }
+tauri = { version = "2.9.5", features = [] }
 tauri-plugin-deep-link = "2.4.5"
 tauri-plugin-dialog = "2.4.2"
 tauri-plugin-single-instance = { version = "2.3.6", features = ["deep-link"] }

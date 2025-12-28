@@ -259,48 +259,50 @@ fn desktop_disconnect(state: tauri::State<ConnectionManager>) -> Result<(), Stri
 }
 
 #[tauri::command]
-fn desktop_pick_folder(app: tauri::AppHandle) -> Result<Option<String>, String> {
-    let (tx, rx) = std::sync::mpsc::channel::<Option<String>>();
-    app.dialog().file().pick_folder(move |path| {
-        let path = path.and_then(|p| p.into_path().ok());
-        let _ = tx.send(path.map(|p| p.to_string_lossy().to_string()));
-    });
-    rx.recv_timeout(Duration::from_secs(60))
-        .map_err(|_| "folder picker timed out".to_string())
+async fn desktop_pick_folder(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        app.dialog()
+            .file()
+            .blocking_pick_folder()
+            .and_then(|path| path.into_path().ok())
+            .map(|path| path.to_string_lossy().to_string())
+    })
+    .await
+    .map_err(|e| format!("folder picker failed: {e}"))
 }
 
 #[tauri::command]
-fn desktop_save_text_file(
+async fn desktop_save_text_file(
     app: tauri::AppHandle,
     suggested_name: Option<String>,
     contents: String,
 ) -> Result<Option<String>, String> {
     let suggested = suggested_name.unwrap_or_else(|| "conversation.md".to_string());
-    let suggested = suggested.trim();
+    let suggested = suggested.trim().to_string();
 
-    let (tx, rx) = std::sync::mpsc::channel::<Option<String>>();
-    let mut dialog = app
-        .dialog()
-        .file()
-        .add_filter("Markdown", &["md"])
-        .set_title("Save Conversation Export");
-    if !suggested.is_empty() {
-        dialog = dialog.set_file_name(suggested);
-    }
-    dialog.save_file(move |path| {
-        let path = path.and_then(|p| p.into_path().ok());
-        let _ = tx.send(path.map(|p| p.to_string_lossy().to_string()));
-    });
+    let picked = tauri::async_runtime::spawn_blocking(move || {
+        let mut dialog = app
+            .dialog()
+            .file()
+            .add_filter("Markdown", &["md"])
+            .set_title("Save Conversation Export");
+        if !suggested.is_empty() {
+            dialog = dialog.set_file_name(&suggested);
+        }
+        let picked = dialog
+            .blocking_save_file()
+            .and_then(|path| path.into_path().ok())
+            .map(|path| path.to_string_lossy().to_string());
+        let Some(path) = picked else {
+            return Ok::<Option<String>, String>(None);
+        };
 
-    let picked = rx
-        .recv_timeout(Duration::from_secs(60))
-        .map_err(|_| "save file dialog timed out".to_string())?;
-    let Some(path) = picked else {
-        return Ok(None);
-    };
-
-    std::fs::write(&path, contents).map_err(|e| format!("failed to write file: {e}"))?;
-    Ok(Some(path))
+        std::fs::write(&path, contents).map_err(|e| format!("failed to write file: {e}"))?;
+        Ok(Some(path))
+    })
+    .await
+    .map_err(|e| format!("save file dialog failed: {e}"))??;
+    Ok(picked)
 }
 
 #[tauri::command]
@@ -906,7 +908,7 @@ fn open_in_context(app: &tauri::AppHandle, target: &DeepLinkTarget, line: Option
     let url = build_file_preview_url(target, line, col);
     let label = format!("file:{}", uuid::Uuid::new_v4());
     tauri::WebviewWindowBuilder::new(app, label, tauri::WebviewUrl::App(url.into()))
-        .title("Context")
+        .title("ctx")
         .inner_size(1000.0, 780.0)
         .build()
         .context("creating file preview window")?;
