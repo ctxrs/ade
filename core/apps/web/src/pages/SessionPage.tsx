@@ -1685,7 +1685,7 @@ export function SessionView({
                   defaultItemHeight={56}
                   increaseViewportBy={{ top: 1000, bottom: 1000 }}
                   computeItemKey={(index, item) => item?.id ?? `i:${index}`}
-                  restoreStateFrom={scrollState?.virtuosoState as StateSnapshot | undefined}
+                  restoreStateFrom={(scrollState?.virtuosoState ?? undefined) as StateSnapshot | undefined}
                   startReached={() => {
                     if (!hasMoreTurns) return;
                     supervisor.loadMoreTurns(id);
@@ -1731,7 +1731,7 @@ export function SessionView({
                 followOutput={restoreInProgress ? false : atBottom ? "auto" : false}
                 defaultItemHeight={56}
                 computeItemKey={(index, item) => item?.id ?? `i:${index}`}
-                restoreStateFrom={scrollState?.virtuosoState as StateSnapshot | undefined}
+                restoreStateFrom={(scrollState?.virtuosoState ?? undefined) as StateSnapshot | undefined}
                 atBottomStateChange={(b) => {
                   if (restoringScrollRef.current) return;
                   setAtBottom(b);
