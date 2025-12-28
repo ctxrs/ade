@@ -111,7 +111,7 @@ describe("SessionSupervisor", () => {
         listeners.add(listener);
         return () => listeners.delete(listener);
       },
-      setSubscriptions: () => {},
+      setSubscriptions: (_subs) => {},
       getSnapshot: () => ({
         workspaceId: "ws-1",
         initialized: true,

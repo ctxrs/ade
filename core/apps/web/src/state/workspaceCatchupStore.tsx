@@ -5,6 +5,7 @@ import type {
   WorkspaceCatchupCursor,
   WorkspaceCatchupClientMessage,
   WorkspaceCatchupEvent,
+  WorkspaceCatchupSessionSubscription,
   WorkspaceCatchupSnapshot,
   WorkspaceCatchupTaskSummary,
   WorkspaceCatchupTrackSummary,
@@ -46,7 +47,7 @@ export type WorkspaceCatchupEventSource = {
   subscribe: (listener: () => void) => () => void;
   subscribeEvents: (listener: (event: WorkspaceCatchupEvent) => void) => () => void;
   getSnapshot: () => WorkspaceCatchupState;
-  setSubscriptions: (sessionIds: string[]) => void;
+  setSubscriptions: (subscriptions: WorkspaceCatchupSessionSubscription[]) => void;
 };
 
 const authToken = (): string | null => {
@@ -68,16 +69,24 @@ const dedupeUrls = (urls: string[]): string[] => {
   return out;
 };
 
-const dedupeSorted = (ids: string[]): string[] => {
+const normalizeSubscriptions = (
+  subs: WorkspaceCatchupSessionSubscription[],
+  lastSeqBySession: Map<string, number>,
+): WorkspaceCatchupSessionSubscription[] => {
   const seen = new Set<string>();
-  const out: string[] = [];
-  for (const raw of ids) {
-    const id = String(raw || "").trim();
+  const out: WorkspaceCatchupSessionSubscription[] = [];
+  for (const sub of subs) {
+    const id = idToString(sub.session_id);
     if (!id || seen.has(id)) continue;
     seen.add(id);
-    out.push(id);
+    let afterSeq =
+      typeof sub.after_seq === "number" ? sub.after_seq : lastSeqBySession.get(id);
+    if (!Number.isFinite(afterSeq as number) || (afterSeq as number) < 0) {
+      afterSeq = 0;
+    }
+    out.push({ session_id: id, after_seq: afterSeq ?? 0 });
   }
-  out.sort();
+  out.sort((a, b) => String(idToString(a.session_id)).localeCompare(String(idToString(b.session_id))));
   return out;
 };
 
@@ -99,7 +108,8 @@ class WorkspaceCatchupStoreImpl implements WorkspaceCatchupEventSource {
   private reconnectTimer: number | null = null;
   private reconnectDelayMs = 1000;
   private snapshotRev = 0;
-  private subscriptions: string[] = [];
+  private subscriptions: WorkspaceCatchupSessionSubscription[] = [];
+  private sessionLastEventSeq = new Map<string, number>();
   private subscriptionKey = "";
   private destroyed = false;
   private persistTimer: number | null = null;
@@ -133,9 +143,9 @@ class WorkspaceCatchupStoreImpl implements WorkspaceCatchupEventSource {
 
   getSnapshot = (): WorkspaceCatchupState => this.snapshot;
 
-  setSubscriptions = (sessionIds: string[]) => {
-    const next = dedupeSorted(sessionIds);
-    const key = next.join("|");
+  setSubscriptions = (subscriptions: WorkspaceCatchupSessionSubscription[]) => {
+    const next = normalizeSubscriptions(subscriptions, this.sessionLastEventSeq);
+    const key = next.map((sub) => `${idToString(sub.session_id)}:${sub.after_seq ?? 0}`).join("|");
     if (key === this.subscriptionKey) return;
     this.subscriptionKey = key;
     this.subscriptions = next;
@@ -231,6 +241,7 @@ class WorkspaceCatchupStoreImpl implements WorkspaceCatchupEventSource {
       this.tasks.clear();
       this.activeOrder = [];
       this.archivedOrder = [];
+      this.sessionLastEventSeq.clear();
     }
 
     active.tasks.forEach((summary) => this.upsertSummary(summary));
@@ -251,6 +262,7 @@ class WorkspaceCatchupStoreImpl implements WorkspaceCatchupEventSource {
         : this.archivedOrder.length;
 
     this.snapshot.initialized = true;
+    this.rebuildSessionLastEventSeq();
     this.publish();
   }
 
@@ -493,12 +505,27 @@ class WorkspaceCatchupStoreImpl implements WorkspaceCatchupEventSource {
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
     const message: WorkspaceCatchupClientMessage = {
       type: "subscribe",
-      session_ids: this.subscriptions,
+      sessions: this.subscriptions,
     };
     try {
       ws.send(JSON.stringify(message));
     } catch {
       // ignore send errors
+    }
+  }
+
+  private rebuildSessionLastEventSeq() {
+    this.sessionLastEventSeq.clear();
+    for (const task of this.tasks.values()) {
+      for (const track of task.tracks) {
+        for (const summary of track.sessions) {
+          const id = idToString(summary.session.id);
+          if (!id) continue;
+          if (typeof summary.last_event_seq === "number") {
+            this.sessionLastEventSeq.set(id, summary.last_event_seq);
+          }
+        }
+      }
     }
   }
 
@@ -515,6 +542,7 @@ class WorkspaceCatchupStoreImpl implements WorkspaceCatchupEventSource {
     } else {
       this.totalActive = Math.max(0, this.totalActive - 1);
     }
+    this.rebuildSessionLastEventSeq();
   }
 
   private upsertSummary(summary: WorkspaceCatchupTaskSummary) {
@@ -531,6 +559,7 @@ class WorkspaceCatchupStoreImpl implements WorkspaceCatchupEventSource {
       }
     }
     this.placeInOrders(normalized);
+    this.rebuildSessionLastEventSeq();
   }
 
   private updateCountsForMove(prev: WorkspaceCatchupItem, next: WorkspaceCatchupItem) {
@@ -563,6 +592,7 @@ class WorkspaceCatchupStoreImpl implements WorkspaceCatchupEventSource {
     }
     nextTracks.sort((a, b) => String(a.track.created_at ?? "").localeCompare(String(b.track.created_at ?? "")));
     this.tasks.set(taskId, { ...task, tracks: nextTracks });
+    this.rebuildSessionLastEventSeq();
   }
 
   private applySessionSummary(summary: SessionCatchupSummary) {
@@ -588,6 +618,7 @@ class WorkspaceCatchupStoreImpl implements WorkspaceCatchupEventSource {
     nextSessions.sort((a, b) => String(a.session.created_at ?? "").localeCompare(String(b.session.created_at ?? "")));
     nextTracks[trackIdx] = { ...track, sessions: nextSessions };
     this.tasks.set(taskId, { ...task, tracks: nextTracks });
+    this.rebuildSessionLastEventSeq();
   }
 
   private normalizeSummary(summary: WorkspaceCatchupTaskSummary): WorkspaceCatchupItem {

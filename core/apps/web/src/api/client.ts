@@ -14,6 +14,7 @@ import type {
   SessionHead,
   SessionHeadDelta,
   SessionHistoryPage,
+  SessionEventsPage,
   SessionCatchupSummary,
   Task,
   Track,
@@ -23,6 +24,7 @@ import type {
   Workspace,
   WorkspaceCatchupCursor,
   WorkspaceCatchupClientMessage,
+  WorkspaceCatchupSessionSubscription,
   WorkspaceCatchupEvent,
   WorkspaceCatchupSnapshot,
   WorkspaceCatchupTaskSummary,
@@ -47,6 +49,7 @@ export type {
   SessionHead,
   SessionHeadDelta,
   SessionHistoryPage,
+  SessionEventsPage,
   SessionCatchupSummary,
   Task,
   Track,
@@ -56,6 +59,7 @@ export type {
   Workspace,
   WorkspaceCatchupCursor,
   WorkspaceCatchupClientMessage,
+  WorkspaceCatchupSessionSubscription,
   WorkspaceCatchupEvent,
   WorkspaceCatchupSnapshot,
   WorkspaceCatchupTaskSummary,
@@ -568,6 +572,18 @@ export const getSessionHead = (sessionId: string, limit?: number, includeEvents?
   if (includeEvents !== undefined) qs.set("include_events", includeEvents ? "1" : "0");
   const suffix = qs.toString() ? `?${qs.toString()}` : "";
   return apiAny<SessionHead>(`/api/sessions/${sessionId}/head${suffix}`);
+};
+
+export const getSessionEvents = (
+  sessionId: string,
+  opts?: { afterSeq?: number; limit?: number; tail?: number },
+) => {
+  const qs = new URLSearchParams();
+  if (typeof opts?.afterSeq === "number") qs.set("after_seq", String(opts.afterSeq));
+  if (opts?.limit) qs.set("limit", String(opts.limit));
+  if (opts?.tail) qs.set("tail", String(opts.tail));
+  const suffix = qs.toString() ? `?${qs.toString()}` : "";
+  return apiAny<SessionEventsPage>(`/api/sessions/${sessionId}/events${suffix}`);
 };
 
 export const getSessionHistory = (sessionId: string, beforeSeq?: number, limit?: number) => {

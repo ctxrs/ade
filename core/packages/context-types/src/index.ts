@@ -189,6 +189,13 @@ export type SessionHistoryPage = {
   has_more: boolean;
 };
 
+export type SessionEventsPage = {
+  session_id: { 0: string } | string;
+  events: SessionEvent[];
+  next_cursor?: number | null;
+  has_more: boolean;
+};
+
 export type WorkspaceCatchupEvent =
   | {
       type: "ready";
@@ -224,12 +231,26 @@ export type WorkspaceCatchupEvent =
       workspace_id: { 0: string } | string;
       snapshot_rev: number;
       delta: SessionHeadDelta;
+    }
+  | {
+      type: "session_gap";
+      workspace_id: { 0: string } | string;
+      snapshot_rev: number;
+      session_id: { 0: string } | string;
+      after_seq: number;
+      reason?: string | null;
     };
+
+export type WorkspaceCatchupSessionSubscription = {
+  session_id: { 0: string } | string;
+  after_seq?: number | null;
+};
 
 export type WorkspaceCatchupClientMessage =
   | {
       type: "subscribe";
-      session_ids: ({ 0: string } | string)[];
+      session_ids?: ({ 0: string } | string)[];
+      sessions?: WorkspaceCatchupSessionSubscription[];
     };
 
 export type Message = {

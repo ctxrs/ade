@@ -36,6 +36,7 @@ import {
   uploadBlob,
 } from "../api/client";
 import { useOpenSession, useSessionCacheSnapshot, useSessionEntry, useSessionSupervisor } from "../state/sessionSupervisor";
+import { WorkspaceCatchupProvider, useWorkspaceCatchupStore } from "../state/workspaceCatchupStore";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { DiffReviewPane } from "../components/DiffReviewPane";
@@ -176,7 +177,30 @@ type WorkbenchThreadView = {
 export default function SessionPage() {
   const { id } = useParams<{ id: string }>();
   if (!id) return null;
-  return <SessionView sessionId={id} variant="legacy" showDiffPane />;
+  return <SessionPageWithCatchup sessionId={id} />;
+}
+
+function SessionPageWithCatchup({ sessionId }: { sessionId: string }) {
+  const entry = useSessionEntry(sessionId);
+  const workspaceId = entry?.session ? idToString(entry.session.workspace_id) : null;
+  if (!workspaceId) {
+    return <SessionView sessionId={sessionId} variant="legacy" showDiffPane />;
+  }
+  return (
+    <WorkspaceCatchupProvider workspaceId={workspaceId}>
+      <SessionPageCatchupBridge sessionId={sessionId} />
+    </WorkspaceCatchupProvider>
+  );
+}
+
+function SessionPageCatchupBridge({ sessionId }: { sessionId: string }) {
+  const supervisor = useSessionSupervisor();
+  const workspaceCatchupStore = useWorkspaceCatchupStore();
+  useEffect(() => {
+    supervisor.bindWorkspaceCatchupStore(workspaceCatchupStore);
+    return () => supervisor.bindWorkspaceCatchupStore(null);
+  }, [supervisor, workspaceCatchupStore]);
+  return <SessionView sessionId={sessionId} variant="legacy" showDiffPane />;
 }
 
 export type SessionViewVariant = "legacy" | "workbench";

@@ -2754,6 +2754,10 @@ impl Store {
         Ok(seq.unwrap_or(0))
     }
 
+    pub async fn get_session_last_event_seq(&self, session_id: SessionId) -> Result<i64> {
+        self.session_last_event_seq(session_id).await
+    }
+
     pub async fn list_session_events_page_by_seq(
         &self,
         session_id: SessionId,

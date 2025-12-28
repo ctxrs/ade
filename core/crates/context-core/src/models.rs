@@ -441,6 +441,16 @@ pub struct SessionHistoryPage {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionEventsPage {
+    pub session_id: SessionId,
+    #[serde(default)]
+    pub events: Vec<SessionEvent>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<i64>,
+    pub has_more: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum WorkspaceCatchupEvent {
     Ready {
@@ -472,6 +482,21 @@ pub enum WorkspaceCatchupEvent {
         snapshot_rev: i64,
         delta: Box<SessionHeadDelta>,
     },
+    SessionGap {
+        workspace_id: WorkspaceId,
+        snapshot_rev: i64,
+        session_id: SessionId,
+        after_seq: i64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkspaceCatchupSessionSubscription {
+    pub session_id: SessionId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub after_seq: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -480,6 +505,8 @@ pub enum WorkspaceCatchupClientMessage {
     Subscribe {
         #[serde(default)]
         session_ids: Vec<SessionId>,
+        #[serde(default)]
+        sessions: Vec<WorkspaceCatchupSessionSubscription>,
     },
 }
 

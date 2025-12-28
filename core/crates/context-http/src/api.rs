@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::path::{Path as StdPath, PathBuf};
 use std::sync::Arc;
 
@@ -277,6 +277,7 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
         .route("/api/sessions/:id/model", post(set_session_model))
         .route("/api/sessions/:id/mode", post(set_session_mode))
         .route("/api/sessions/:id/head", get(get_session_head))
+        .route("/api/sessions/:id/events", get(get_session_events))
         .route("/api/sessions/:id/history", get(get_session_history))
         .route(
             "/api/sessions/:id/turns/:turn_id/tools",
@@ -5312,6 +5313,59 @@ async fn get_session_head(
 }
 
 #[derive(Debug, Deserialize, Default)]
+struct SessionEventsQuery {
+    after_seq: Option<i64>,
+    limit: Option<u32>,
+    tail: Option<u32>,
+}
+
+async fn get_session_events(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Query(q): Query<SessionEventsQuery>,
+) -> Result<Json<context_core::models::SessionEventsPage>, StatusCode> {
+    const DEFAULT_LIMIT: u32 = 200;
+    const MAX_LIMIT: u32 = 1000;
+
+    let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
+    let limit = q.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
+
+    let (events, has_more, next_cursor) = if let Some(tail) = q.tail {
+        let tail = tail.clamp(1, MAX_LIMIT);
+        let mut rows = state
+            .store
+            .list_session_events_tail_by_seq(session_id, tail + 1)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        let has_more = rows.len() as u32 > tail;
+        if has_more {
+            rows = rows.split_off(rows.len().saturating_sub(tail as usize));
+        }
+        let next_cursor = rows.last().map(|ev| ev.seq);
+        (rows, has_more, next_cursor)
+    } else {
+        let mut rows = state
+            .store
+            .list_session_events_page_by_seq(session_id, q.after_seq, Some(limit + 1))
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        let has_more = rows.len() as u32 > limit;
+        if has_more {
+            rows.truncate(limit as usize);
+        }
+        let next_cursor = rows.last().map(|ev| ev.seq);
+        (rows, has_more, next_cursor)
+    };
+
+    Ok(Json(context_core::models::SessionEventsPage {
+        session_id,
+        events,
+        next_cursor,
+        has_more,
+    }))
+}
+
+#[derive(Debug, Deserialize, Default)]
 struct SessionHistoryQuery {
     before_seq: Option<i64>,
     limit: Option<u32>,
@@ -5597,11 +5651,116 @@ async fn workspace_catchup_stream_ws(
     ws.on_upgrade(move |socket| handle_workspace_catchup_ws(socket, state, workspace_id))
 }
 
+const SESSION_REPLAY_MAX_EVENTS: usize = 2000;
+
+async fn send_workspace_gap(
+    socket: &mut WebSocket,
+    state: &Arc<AppState>,
+    workspace_id: WorkspaceId,
+    session_id: SessionId,
+    after_seq: i64,
+    reason: &str,
+) -> bool {
+    let snapshot_rev = state.workspace_catchup.current_rev(workspace_id).await;
+    let event = WorkspaceCatchupEvent::SessionGap {
+        workspace_id,
+        snapshot_rev,
+        session_id,
+        after_seq,
+        reason: Some(reason.to_string()),
+    };
+    if let Ok(text) = serde_json::to_string(&event) {
+        socket.send(WsMessage::Text(text)).await.is_ok()
+    } else {
+        false
+    }
+}
+
+async fn replay_session_events(
+    socket: &mut WebSocket,
+    state: &Arc<AppState>,
+    workspace_id: WorkspaceId,
+    session_id: SessionId,
+    after_seq: i64,
+) -> Result<(i64, bool), ()> {
+    let snapshot_rev = state.workspace_catchup.current_rev(workspace_id).await;
+    let mut last_sent = after_seq.max(0);
+    let limit = u32::try_from(SESSION_REPLAY_MAX_EVENTS + 1).unwrap_or(u32::MAX);
+    let events = state
+        .store
+        .list_session_events_page_by_seq(session_id, Some(last_sent), Some(limit))
+        .await
+        .map_err(|_| ())?;
+
+    if events.len() > SESSION_REPLAY_MAX_EVENTS {
+        let latest = state
+            .store
+            .get_session_last_event_seq(session_id)
+            .await
+            .unwrap_or(last_sent);
+        if !send_workspace_gap(
+            socket,
+            state,
+            workspace_id,
+            session_id,
+            latest,
+            "replay_too_large",
+        )
+        .await
+        {
+            return Err(());
+        }
+        return Ok((latest, true));
+    }
+
+    for event in events {
+        let message = if matches!(
+            event.event_type,
+            SessionEventType::UserMessage | SessionEventType::AssistantMessageInserted
+        ) {
+            let message_id = event
+                .payload_json
+                .get("message_id")
+                .and_then(|v| v.as_str())
+                .and_then(|id| uuid::Uuid::parse_str(id).ok())
+                .map(MessageId);
+            match message_id {
+                Some(id) => state.store.get_message(id).await.ok().flatten(),
+                None => None,
+            }
+        } else {
+            None
+        };
+
+        let delta = SessionHeadDelta {
+            session_id: event.session_id,
+            last_event_seq: event.seq,
+            event: Some(event),
+            turn: None,
+            message,
+        };
+        let next_seq = delta.last_event_seq;
+        let wrapped = WorkspaceCatchupEvent::SessionHeadDelta {
+            workspace_id,
+            snapshot_rev,
+            delta: Box::new(delta),
+        };
+        let text = serde_json::to_string(&wrapped).map_err(|_| ())?;
+        socket.send(WsMessage::Text(text)).await.map_err(|_| ())?;
+        last_sent = next_seq;
+    }
+    Ok((last_sent, false))
+}
+
 async fn handle_workspace_catchup_ws(
     mut socket: WebSocket,
     state: Arc<AppState>,
     workspace_id: WorkspaceId,
 ) {
+    struct SessionCursor {
+        last_sent: i64,
+    }
+
     let ready = WorkspaceCatchupEvent::Ready {
         workspace_id,
         snapshot_rev: state.workspace_catchup.current_rev(workspace_id).await,
@@ -5612,28 +5771,87 @@ async fn handle_workspace_catchup_ws(
         }
     }
     let mut rx = state.workspace_catchup.subscribe(workspace_id).await;
-    let mut subscriptions: Option<HashSet<SessionId>> = None;
+    let mut subscriptions: HashMap<SessionId, SessionCursor> = HashMap::new();
+
     loop {
         tokio::select! {
             msg = socket.recv() => {
                 match msg {
                     Some(Ok(WsMessage::Text(text))) => {
                         if let Ok(message) = serde_json::from_str::<WorkspaceCatchupClientMessage>(&text) {
-                            match message {
-                                WorkspaceCatchupClientMessage::Subscribe { session_ids } => {
-                                    subscriptions = Some(session_ids.into_iter().collect());
+                            let (session_ids, sessions) = match message {
+                                WorkspaceCatchupClientMessage::Subscribe { session_ids, sessions } => (session_ids, sessions),
+                            };
+                            let mut next: Vec<WorkspaceCatchupSessionSubscription> = if !sessions.is_empty() {
+                                sessions
+                            } else {
+                                session_ids
+                                    .into_iter()
+                                    .map(|session_id| WorkspaceCatchupSessionSubscription { session_id, after_seq: None })
+                                    .collect()
+                            };
+                            next.sort_by(|a, b| a.session_id.0.cmp(&b.session_id.0));
+                            let mut next_map = HashMap::new();
+                            for sub in next {
+                                let after_seq = sub.after_seq.unwrap_or(0);
+                                let (last_sent, gap) = match replay_session_events(
+                                    &mut socket,
+                                    &state,
+                                    workspace_id,
+                                    sub.session_id,
+                                    after_seq,
+                                )
+                                .await
+                                {
+                                    Ok(v) => v,
+                                    Err(_) => return,
+                                };
+                                if gap {
+                                    next_map.insert(sub.session_id, SessionCursor { last_sent });
+                                    continue;
                                 }
+                                next_map.insert(sub.session_id, SessionCursor { last_sent });
                             }
+                            subscriptions = next_map;
                         }
                     }
                     Some(Ok(WsMessage::Binary(bytes))) => {
                         if let Ok(text) = String::from_utf8(bytes.to_vec()) {
                             if let Ok(message) = serde_json::from_str::<WorkspaceCatchupClientMessage>(&text) {
-                                match message {
-                                    WorkspaceCatchupClientMessage::Subscribe { session_ids } => {
-                                        subscriptions = Some(session_ids.into_iter().collect());
+                                let (session_ids, sessions) = match message {
+                                    WorkspaceCatchupClientMessage::Subscribe { session_ids, sessions } => (session_ids, sessions),
+                                };
+                                let mut next: Vec<WorkspaceCatchupSessionSubscription> = if !sessions.is_empty() {
+                                    sessions
+                                } else {
+                                    session_ids
+                                        .into_iter()
+                                        .map(|session_id| WorkspaceCatchupSessionSubscription { session_id, after_seq: None })
+                                        .collect()
+                                };
+                                next.sort_by(|a, b| a.session_id.0.cmp(&b.session_id.0));
+                                let mut next_map = HashMap::new();
+                                for sub in next {
+                                    let after_seq = sub.after_seq.unwrap_or(0);
+                                    let (last_sent, gap) = match replay_session_events(
+                                        &mut socket,
+                                        &state,
+                                        workspace_id,
+                                        sub.session_id,
+                                        after_seq,
+                                    )
+                                    .await
+                                    {
+                                        Ok(v) => v,
+                                        Err(_) => return,
+                                    };
+                                    if gap {
+                                        next_map.insert(sub.session_id, SessionCursor { last_sent });
+                                        continue;
                                     }
+                                    next_map.insert(sub.session_id, SessionCursor { last_sent });
                                 }
+                                subscriptions = next_map;
                             }
                         }
                     }
@@ -5646,15 +5864,44 @@ async fn handle_workspace_catchup_ws(
             event = rx.recv() => {
                 let event = match event {
                     Ok(event) => event,
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                        let mut failed = false;
+                        for (session_id, cursor) in &mut subscriptions {
+                            let latest = state
+                                .store
+                                .get_session_last_event_seq(*session_id)
+                                .await
+                                .unwrap_or(cursor.last_sent);
+                            cursor.last_sent = latest;
+                            if !send_workspace_gap(&mut socket, &state, workspace_id, *session_id, latest, "stream_lagged").await {
+                                failed = true;
+                                break;
+                            }
+                        }
+                        if failed {
+                            break;
+                        }
+                        break;
+                    }
                     Err(_) => break,
                 };
+
                 if let WorkspaceCatchupEvent::SessionHeadDelta { delta, .. } = &event {
-                    if let Some(subscriptions) = &subscriptions {
-                        if !subscriptions.contains(&delta.session_id) {
+                    let Some(cursor) = subscriptions.get_mut(&delta.session_id) else {
+                        continue;
+                    };
+                    if let Some(ev) = &delta.event {
+                        if ev.seq <= cursor.last_sent {
                             continue;
                         }
+                        cursor.last_sent = ev.seq;
+                    } else if delta.last_event_seq <= cursor.last_sent {
+                        continue;
+                    } else {
+                        cursor.last_sent = delta.last_event_seq;
                     }
                 }
+
                 if let Ok(text) = serde_json::to_string(&event) {
                     if socket.send(WsMessage::Text(text)).await.is_err() {
                         break;

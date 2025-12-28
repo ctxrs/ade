@@ -25,7 +25,7 @@ mod tests {
 
     use axum::body::{to_bytes, Body};
     use axum::http::{Request, StatusCode};
-    use futures::StreamExt;
+    use futures::{SinkExt, StreamExt};
     use serde_json::json;
     use tokio::process::Command;
     use tower::ServiceExt;
@@ -303,6 +303,20 @@ mod tests {
         // open workspace stream before sending message
         let ws_url = format!("ws://{}/api/workspaces/{}/stream", addr, ws.id.0);
         let (mut ws_stream, _) = tokio_tungstenite::connect_async(ws_url).await.unwrap();
+        let subscribe = serde_json::json!({
+            "type": "subscribe",
+            "sessions": [{
+                "session_id": session.id.0,
+                "after_seq": 0,
+            }],
+        })
+        .to_string();
+        ws_stream
+            .send(tokio_tungstenite::tungstenite::Message::Text(
+                subscribe.into(),
+            ))
+            .await
+            .unwrap();
 
         // post message
         let _msg: context_core::models::Message = client

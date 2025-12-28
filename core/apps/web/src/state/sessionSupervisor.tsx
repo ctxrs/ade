@@ -513,7 +513,15 @@ export class SessionSupervisor {
       }
     }
     if (this.catchupStore) {
-      this.catchupStore.setSubscriptions(next);
+      const subs = next.map((sessionId) => {
+        const entry = this.entries.get(sessionId);
+        const afterSeq = entry?.lastEventSeq;
+        return {
+          session_id: sessionId,
+          ...(typeof afterSeq === "number" ? { after_seq: afterSeq } : {}),
+        };
+      });
+      this.catchupStore.setSubscriptions(subs);
     }
     this.publish();
   }
@@ -754,6 +762,16 @@ export class SessionSupervisor {
       }
       return;
     }
+    if (evt.type === "session_gap") {
+      const sid = idToString(evt.session_id);
+      if (!sid) return;
+      const entry = this.entries.get(sid);
+      if (!entry) return;
+      entry.lastEventSeq = evt.after_seq;
+      this.resetEntryForGap(entry);
+      this.ensureLoaded(sid, { force: true, silent: true }).catch(() => {});
+      return;
+    }
     if (evt.type !== "session_head_delta") return;
     const delta = evt.delta;
     const sid = idToString(delta.session_id);
@@ -800,6 +818,25 @@ export class SessionSupervisor {
       entry.updatedAtMs = Date.now();
       this.publish();
     }
+  }
+
+  private resetEntryForGap(entry: InternalEntry) {
+    entry.turns = [];
+    entry.events = [];
+    entry.messages = [];
+    entry.queue = [];
+    entry.turnToolsByTurnId = {};
+    entry.turnToolsHydratedByTurnId = {};
+    entry.turnToolsLoadingSet.clear();
+    entry.turnToolsLoading = [];
+    entry.toolStatusByKey.clear();
+    entry.toolIdsByTurn.clear();
+    entry.seqSet.clear();
+    entry.turnsHydrated = false;
+    entry.toolSummariesReady = false;
+    entry.hasMoreTurns = true;
+    entry.updatedAtMs = Date.now();
+    this.publish();
   }
 }
 
