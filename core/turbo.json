@@ -17,17 +17,16 @@
       "outputs": []
     },
     "rust:fmt": {
-      "outputs": []
+      "outputs": [],
+      "cache": false
     },
     "rust:clippy": {
-      "outputs": [
-        ".turbo/cargo-target/**"
-      ]
+      "outputs": [],
+      "cache": false
     },
     "rust:test": {
-      "outputs": [
-        ".turbo/cargo-target/**"
-      ]
+      "outputs": [],
+      "cache": false
     }
   }
 }

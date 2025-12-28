@@ -9,7 +9,6 @@ import {
   type Session,
   type SessionEvent,
   type SessionTurn,
-  type SessionTurnStatus,
   type SessionTurnTool,
   type SessionTurnToolSummary,
   type WorkspaceCatchupEvent,
@@ -601,7 +600,7 @@ export class SessionSupervisor {
     const createdAt = event.created_at ?? new Date().toISOString();
     const status = deriveTurnStatusFromEvent(String(event.event_type ?? ""));
     const turn: SessionTurn = {
-      turn_id: turnId,
+      turn_id: event.turn_id ?? turnId,
       session_id: event.session_id,
       run_id: event.run_id ?? null,
       user_message_id: event.payload_json?.user_message_id ?? null,
@@ -947,7 +946,7 @@ const applyToolBucketDelta = (turn: SessionTurn, bucket: string | null, delta: n
   }
 };
 
-const deriveTurnStatusFromEvent = (eventType: string): SessionTurnStatus => {
+const deriveTurnStatusFromEvent = (eventType: string): SessionTurn["status"] => {
   switch (eventType) {
     case "done":
     case "assistant_complete":

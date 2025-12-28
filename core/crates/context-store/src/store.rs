@@ -689,39 +689,6 @@ impl Store {
         Ok(())
     }
 
-    pub async fn list_tracks_for_workspace(&self, workspace_id: WorkspaceId) -> Result<Vec<Track>> {
-        let rows = sqlx::query(
-            r#"SELECT id, task_id, workspace_id, worktree_id, label, status, created_at, updated_at
-               FROM tracks
-               WHERE workspace_id = ?
-               ORDER BY created_at ASC"#,
-        )
-        .bind(workspace_id.0.to_string())
-        .fetch_all(&self.pool)
-        .await?;
-
-        let mut out = Vec::with_capacity(rows.len());
-        for r in rows {
-            let id: String = r.try_get("id")?;
-            let task_id: String = r.try_get("task_id")?;
-            let ws_id: String = r.try_get("workspace_id")?;
-            let worktree_id: String = r.try_get("worktree_id")?;
-            let status: String = r.try_get("status")?;
-            let created_at: String = r.try_get("created_at")?;
-            let updated_at: String = r.try_get("updated_at")?;
-            out.push(Track {
-                id: TrackId(uuid::Uuid::parse_str(&id)?),
-                task_id: TaskId(uuid::Uuid::parse_str(&task_id)?),
-                workspace_id: WorkspaceId(uuid::Uuid::parse_str(&ws_id)?),
-                worktree_id: WorktreeId(uuid::Uuid::parse_str(&worktree_id)?),
-                label: r.try_get("label")?,
-                status: parse_track_status(&status),
-                created_at: parse_dt(&created_at)?,
-                updated_at: parse_dt(&updated_at)?,
-            });
-        }
-        Ok(out)
-    }
     // Track APIs
     pub async fn create_track(
         &self,
@@ -789,10 +756,7 @@ impl Store {
         Ok(out)
     }
 
-    pub async fn list_tracks_for_workspace(
-        &self,
-        workspace_id: WorkspaceId,
-    ) -> Result<Vec<Track>> {
+    pub async fn list_tracks_for_workspace(&self, workspace_id: WorkspaceId) -> Result<Vec<Track>> {
         let rows = sqlx::query(
             r#"SELECT id, task_id, workspace_id, worktree_id, label, status, created_at, updated_at
                FROM tracks
@@ -2452,7 +2416,9 @@ impl Store {
                 if turn.tool_total <= 0 {
                     continue;
                 }
-                let has_any = tool_summaries.iter().any(|tool| tool.turn_id == turn.turn_id);
+                let has_any = tool_summaries
+                    .iter()
+                    .any(|tool| tool.turn_id == turn.turn_id);
                 if has_any {
                     continue;
                 }
@@ -3536,7 +3502,9 @@ fn build_session_turn_tool_from_row(r: sqlx::sqlite::SqliteRow) -> Result<Sessio
     })
 }
 
-fn build_session_turn_tool_summary_from_row(r: sqlx::sqlite::SqliteRow) -> Result<SessionTurnToolSummary> {
+fn build_session_turn_tool_summary_from_row(
+    r: sqlx::sqlite::SqliteRow,
+) -> Result<SessionTurnToolSummary> {
     let session_id: String = r.try_get("session_id")?;
     let tool_call_id: String = r.try_get("tool_call_id")?;
     let turn_id: String = r.try_get("turn_id")?;
@@ -3632,7 +3600,9 @@ fn extract_tool_update(payload: &Value) -> &Value {
 fn build_turn_tool_from_event(event: &SessionEvent, turn_id: TurnId) -> Option<SessionTurnTool> {
     if !matches!(
         event.event_type,
-        SessionEventType::ToolCall | SessionEventType::ToolCallUpdate | SessionEventType::ToolResult
+        SessionEventType::ToolCall
+            | SessionEventType::ToolCallUpdate
+            | SessionEventType::ToolResult
     ) {
         return None;
     }

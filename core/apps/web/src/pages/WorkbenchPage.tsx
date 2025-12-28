@@ -323,7 +323,6 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const [activeWorktree, setActiveWorktree] = useState<Worktree | null>(null);
   const worktreeCacheRef = useRef<Map<string, Worktree>>(new Map());
   const worktreeFetchRef = useRef<Map<string, Promise<Worktree | null>>>(new Map());
-  const editPlansLoadSeqRef = useRef(0);
 
   const focusNewTask = useCallback(() => {
     workbenchStore.focusNewTask();
@@ -795,28 +794,6 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     supervisor.setWarmSessionIds(warmSessionIds);
   }, [supervisor, warmSessionIds]);
 
-  useEffect(() => {
-    const seq = ++editPlansLoadSeqRef.current;
-
-    if (!activeTrackId) {
-      setEditPlans([]);
-      setActiveEditPlanId(null);
-      return;
-    }
-    setEditPlans([]);
-    setActiveEditPlanId(null);
-    listEditPlansForTrack(activeTrackId)
-      .then((plans) => {
-        if (seq !== editPlansLoadSeqRef.current) return;
-        setEditPlans(plans);
-        const first = plans[0] ? idToString(plans[0].id) : null;
-        setActiveEditPlanId((prev) => (prev && plans.some((p) => idToString(p.id) === prev) ? prev : first));
-      })
-      .catch(() => {
-        setEditPlans([]);
-        setActiveEditPlanId(null);
-      });
-  }, [activeTrackId]);
   const normalizedTaskQuery = taskQuery.trim().toLowerCase();
   const filteredActiveIds = useMemo(() => {
     return workspaceCatchup.activeIds.filter((id) => {

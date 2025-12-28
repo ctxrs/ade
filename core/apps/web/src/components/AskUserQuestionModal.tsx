@@ -22,13 +22,13 @@ function normalizeOptions(raw: unknown): AskUserQuestionOption[] {
       }
       return null;
     })
-    .filter((o): o is AskUserQuestionOption => Boolean(o));
+    .filter((o: AskUserQuestionOption | null): o is AskUserQuestionOption => Boolean(o));
 }
 
 function normalizeQuestions(input: any): AskUserQuestionItem[] {
-  const questions: unknown[] = Array.isArray(input?.questions) ? input.questions : [];
+  const questions = Array.isArray(input?.questions) ? input.questions : [];
   return questions
-    .map((q: any, idx: number): AskUserQuestionItem | null => {
+    .map((q: any, idx: number) => {
       const question = typeof q?.question === "string" ? q.question : "";
       if (!question.trim()) return null;
       const header = typeof q?.header === "string" ? q.header : `Question ${idx + 1}`;
@@ -36,7 +36,7 @@ function normalizeQuestions(input: any): AskUserQuestionItem[] {
       const multiSelect = Boolean(q?.multiSelect);
       return { header, question, options, multiSelect };
     })
-    .filter((q): q is AskUserQuestionItem => Boolean(q));
+    .filter((q: AskUserQuestionItem | null): q is AskUserQuestionItem => Boolean(q));
 }
 
 export function AskUserQuestionModal({

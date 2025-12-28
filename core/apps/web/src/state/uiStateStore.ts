@@ -174,3 +174,29 @@ export async function saveSessionHeadV1(
     updatedAtMs: Date.now(),
   } satisfies PersistedSessionHeadV1);
 }
+
+export type PersistedSettingsV1 = {
+  v: 1;
+  settings: import("../api/client").Settings;
+  updatedAtMs: number;
+};
+
+export function settingsKeyV1() {
+  return "wb.settings.v1";
+}
+
+export async function loadSettingsV1(): Promise<PersistedSettingsV1 | null> {
+  const raw = await uiStateGet(settingsKeyV1());
+  if (!raw || typeof raw !== "object") return null;
+  const rec = raw as PersistedSettingsV1;
+  if (rec.v !== 1 || !rec.settings) return null;
+  return rec;
+}
+
+export async function saveSettingsV1(settings: PersistedSettingsV1["settings"]): Promise<void> {
+  await uiStateSet(settingsKeyV1(), {
+    v: 1,
+    settings,
+    updatedAtMs: Date.now(),
+  } satisfies PersistedSettingsV1);
+}

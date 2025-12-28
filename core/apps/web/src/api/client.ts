@@ -1,9 +1,15 @@
 import type {
+  Diagnostics,
   Message,
   MessageAttachment,
   MobileConnectionProfile,
   MobileDeviceRegistration,
+  ProviderStatus,
   Session,
+  SessionEvent,
+  SessionTurn,
+  SessionTurnTool,
+  SessionTurnToolSummary,
   SessionSummary,
   SessionHead,
   SessionHeadDelta,
@@ -26,11 +32,17 @@ import type {
 import { desktopDaemonRequest, desktopUploadBlob, isDesktopApp } from "../utils/desktop";
 
 export type {
+  Diagnostics,
   Message,
   MessageAttachment,
   MobileConnectionProfile,
   MobileDeviceRegistration,
+  ProviderStatus,
   Session,
+  SessionEvent,
+  SessionTurn,
+  SessionTurnTool,
+  SessionTurnToolSummary,
   SessionSummary,
   SessionHead,
   SessionHeadDelta,
@@ -57,62 +69,6 @@ export type BlobUploadResp = {
   bytes: number;
   mime_type: string;
   name?: string | null;
-};
-
-export type SessionEvent = {
-  seq: number;
-  id: { 0: string } | string;
-  session_id: { 0: string } | string;
-  run_id?: { 0: string } | string | null;
-  turn_id?: { 0: string } | string | null;
-  event_type: string;
-  payload_json: any;
-  created_at: string;
-};
-
-export type SessionTurnStatus = "queued" | "running" | "completed" | "interrupted" | "failed";
-
-export type SessionTurn = {
-  turn_id: { 0: string } | string;
-  session_id: { 0: string } | string;
-  run_id?: { 0: string } | string | null;
-  user_message_id?: { 0: string } | string | null;
-  status: SessionTurnStatus;
-  start_seq?: number | null;
-  end_seq?: number | null;
-  started_at: string;
-  updated_at: string;
-  assistant_partial?: string | null;
-  thought_partial?: string | null;
-  metrics_json?: any;
-  tool_total: number;
-  tool_pending: number;
-  tool_running: number;
-  tool_completed: number;
-  tool_failed: number;
-};
-
-export type SessionTurnTool = {
-  session_id: { 0: string } | string;
-  tool_call_id: string;
-  turn_id: { 0: string } | string;
-  tool_kind?: string | null;
-  title?: string | null;
-  status?: string | null;
-  input_json?: any;
-  output_text?: string | null;
-  created_at: string;
-  updated_at: string;
-};
-
-export type ProviderStatus = {
-  provider_id: string;
-  installed: boolean;
-  detected_path?: string | null;
-  version?: string | null;
-  health: string;
-  diagnostics: string[];
-  details?: Record<string, string>;
 };
 
 export type InstallEventLevel = "info" | "warning" | "error" | "success";
@@ -142,26 +98,6 @@ export type InstallInfo = {
 export type InstallStartResponse = {
   provider_id: string;
   install_id: string;
-};
-
-export type LogFileInfo = {
-  name: string;
-  bytes: number;
-  modified_utc?: string | null;
-};
-
-export type Diagnostics = {
-  daemon: {
-    version: string;
-    pid: number;
-    data_root: string;
-    daemon_url: string;
-    auth_required: boolean;
-  };
-  platform: { os: string; arch: string };
-  logs: { dir: string; files: LogFileInfo[] };
-  providers: ProviderStatus[];
-  managed_installs: any;
 };
 
 export type Health = {

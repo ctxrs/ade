@@ -106,10 +106,7 @@ async fn workspace_catchup_snapshot_includes_tracks() {
         .await
         .unwrap();
 
-    let tracks = store
-        .list_tracks_for_task(task_active.id)
-        .await
-        .unwrap();
+    let tracks = store.list_tracks_for_task(task_active.id).await.unwrap();
     let track = &tracks[0];
     client
         .post(format!("{base}/api/tracks/{}/sessions", track.id.0))
@@ -231,8 +228,7 @@ async fn workspace_catchup_stream_pushes_updates() {
         .unwrap()
         .unwrap();
     if let WsMessage::Text(txt) = ready_msg {
-        let evt: context_core::models::WorkspaceCatchupEvent =
-            serde_json::from_str(&txt).unwrap();
+        let evt: context_core::models::WorkspaceCatchupEvent = serde_json::from_str(&txt).unwrap();
         match evt {
             context_core::models::WorkspaceCatchupEvent::Ready { .. } => {}
             other => panic!("expected ready, got {other:?}"),
@@ -254,18 +250,15 @@ async fn workspace_catchup_stream_pushes_updates() {
     let mut saw_upsert = false;
     let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
     while tokio::time::Instant::now() < deadline {
-        if let Some(Ok(frame)) = socket.next().await {
-            if let WsMessage::Text(txt) = frame {
-                let evt: context_core::models::WorkspaceCatchupEvent =
-                    serde_json::from_str(&txt).unwrap();
-                if let context_core::models::WorkspaceCatchupEvent::TaskUpsert {
-                    task: summary, ..
-                } = evt
-                {
-                    if summary.task.id == task.id {
-                        saw_upsert = true;
-                        break;
-                    }
+        if let Some(Ok(WsMessage::Text(txt))) = socket.next().await {
+            if let context_core::models::WorkspaceCatchupEvent::TaskUpsert {
+                task: summary, ..
+            } =
+                serde_json::from_str::<context_core::models::WorkspaceCatchupEvent>(&txt).unwrap()
+            {
+                if summary.task.id == task.id {
+                    saw_upsert = true;
+                    break;
                 }
             }
         }
@@ -382,19 +375,16 @@ async fn workspace_catchup_stream_filters_session_head_deltas() {
     let mut seen_b = false;
     let deadline = tokio::time::Instant::now() + Duration::from_secs(4);
     while tokio::time::Instant::now() < deadline {
-        if let Some(Ok(frame)) = socket.next().await {
-            if let WsMessage::Text(txt) = frame {
-                if let Ok(evt) =
-                    serde_json::from_str::<context_core::models::WorkspaceCatchupEvent>(&txt)
-                {
-                    if let context_core::models::WorkspaceCatchupEvent::SessionHeadDelta { delta, .. } = evt {
-                        if delta.session_id == session_a.id {
-                            seen_a = true;
-                        }
-                        if delta.session_id == session_b.id {
-                            seen_b = true;
-                        }
-                    }
+        if let Some(Ok(WsMessage::Text(txt))) = socket.next().await {
+            if let Ok(context_core::models::WorkspaceCatchupEvent::SessionHeadDelta {
+                delta, ..
+            }) = serde_json::from_str::<context_core::models::WorkspaceCatchupEvent>(&txt)
+            {
+                if delta.session_id == session_a.id {
+                    seen_a = true;
+                }
+                if delta.session_id == session_b.id {
+                    seen_b = true;
                 }
             }
         }

@@ -41,8 +41,14 @@ fn parse_fixture_tools(content: &str) -> Option<Vec<FixtureToolCall>> {
     let list = tools_value.as_array()?.to_vec();
     let mut out = Vec::new();
     for tool in list {
-        let kind = tool.get("kind").and_then(|v| v.as_str()).unwrap_or("execute");
-        let title = tool.get("title").and_then(|v| v.as_str()).map(|v| v.to_string());
+        let kind = tool
+            .get("kind")
+            .and_then(|v| v.as_str())
+            .unwrap_or("execute");
+        let title = tool
+            .get("title")
+            .and_then(|v| v.as_str())
+            .map(|v| v.to_string());
         let input = tool.get("input").cloned();
         let output_text = tool
             .get("output_text")

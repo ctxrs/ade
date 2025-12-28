@@ -1,7 +1,17 @@
-import { forwardRef, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent } from "react";
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent,
+  type ReactNode,
+} from "react";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Virtuoso, VirtuosoHandle } from "react-virtuoso";
+import { Virtuoso, VirtuosoHandle, type StateSnapshot } from "react-virtuoso";
 import { Link, useParams } from "react-router-dom";
 import {
   cancelSession,
@@ -234,7 +244,7 @@ export function SessionView({
   const [sendError, setSendError] = useState<string | null>(null);
   const [fileOpenError, setFileOpenError] = useState<string | null>(null);
   const [deepLinkToken, setDeepLinkToken] = useState<string | null>(null);
-  const deepLinkTokenTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
+  const deepLinkTokenTimerRef = useRef<number | null>(null);
   const [atBottom, setAtBottom] = useState(true);
   const [hasNewActivity, setHasNewActivity] = useState(false);
   const lastActivityCountRef = useRef(0);
@@ -253,6 +263,7 @@ export function SessionView({
     stickToBottom: boolean;
     anchorItemId: string | null;
     scrollTop: number | null;
+    virtuosoState?: unknown | null;
   } | null>(null);
   const liveScrollTopRef = useRef<number | null>(null);
   const scrollSyncRafRef = useRef<number | null>(null);
@@ -354,6 +365,11 @@ export function SessionView({
   }, []);
 
   useOpenSession(id ?? "", { watchDiff: true });
+  const refreshAll = useCallback(async () => {
+    if (!id) return;
+    await supervisor.refreshQueue(id);
+    supervisor.refreshSession(id, { watchDiff: true });
+  }, [id, supervisor]);
 
   useLayoutEffect(() => {
     restorePendingRef.current = true;
@@ -1595,8 +1611,7 @@ export function SessionView({
                     setAuthError(null);
                     try {
                       await authenticateSession(id, authMethodId);
-                      await supervisor.refreshQueue(id);
-                      supervisor.refreshSession(id, { watchDiff: true });
+                      await refreshAll();
                     } catch (e: any) {
                       setAuthError(e?.message ?? String(e));
                     } finally {
@@ -1670,7 +1685,7 @@ export function SessionView({
                   defaultItemHeight={56}
                   increaseViewportBy={{ top: 1000, bottom: 1000 }}
                   computeItemKey={(index, item) => item?.id ?? `i:${index}`}
-                  restoreStateFrom={scrollState?.virtuosoState ?? undefined}
+                  restoreStateFrom={scrollState?.virtuosoState as StateSnapshot | undefined}
                   startReached={() => {
                     if (!hasMoreTurns) return;
                     supervisor.loadMoreTurns(id);
@@ -1716,7 +1731,7 @@ export function SessionView({
                 followOutput={restoreInProgress ? false : atBottom ? "auto" : false}
                 defaultItemHeight={56}
                 computeItemKey={(index, item) => item?.id ?? `i:${index}`}
-                restoreStateFrom={scrollState?.virtuosoState ?? undefined}
+                restoreStateFrom={scrollState?.virtuosoState as StateSnapshot | undefined}
                 atBottomStateChange={(b) => {
                   if (restoringScrollRef.current) return;
                   setAtBottom(b);
@@ -3198,15 +3213,7 @@ function Markdown({
         pre({ children }) {
           return <>{children}</>;
         },
-        code({
-          inline,
-          className,
-          children,
-        }: {
-          inline?: boolean;
-          className?: string;
-          children?: React.ReactNode;
-        }) {
+        code({ inline, className, children }: { inline?: boolean; className?: string; children?: ReactNode }) {
           const match = /language-([A-Za-z0-9_-]+)/.exec(className || "");
           const rawLang = match?.[1];
           const lang = rawLang && rawLang !== "code" ? rawLang : undefined;
@@ -3259,8 +3266,17 @@ export function deriveMessagesKey(messages: Message[]): string {
   if (messages.length === 0) return "0";
   const last = messages[messages.length - 1];
   const lastId = idToString(last?.id);
-  const lastUpdated = last?.updated_at ?? last?.created_at ?? "";
-  return `${messages.length}:${lastId}:${lastUpdated}`;
+  const lastUpdated = last?.created_at ?? "";
+  const contentHash = hashString(String(last?.content ?? ""));
+  return `${messages.length}:${lastId}:${lastUpdated}:${contentHash}`;
+}
+
+function hashString(value: string): string {
+  let hash = 5381;
+  for (let i = 0; i < value.length; i += 1) {
+    hash = ((hash << 5) + hash) ^ value.charCodeAt(i);
+  }
+  return (hash >>> 0).toString(36);
 }
 
 function deriveTurnsKey(turns: SessionTurn[]): string {
@@ -3351,7 +3367,7 @@ function buildWorkbenchThreadViewModelFromTurns(
         tool_kind: toolKind,
         title,
         status: String(tool.status ?? "pending"),
-        locations: [] as Array<{ path?: string; range?: any }>,
+        locations: [],
         input: tool.input_json ?? null,
         output_text: String(tool.output_text ?? ""),
         raw: tool,
@@ -3529,7 +3545,7 @@ function buildToolItemsFromEventsForTurn(
         tool_kind: "tool",
         title: "Tool",
         status: "pending",
-        locations: [] as Array<{ path?: string; range?: any }>,
+        locations: [],
         input: null,
         output_text: "",
         raw: null,
@@ -3906,6 +3922,7 @@ function buildWorkbenchThreadViewModelFromEvents(events: SessionEvent[], message
       header: {
         id: mid,
         content: u.content ?? "",
+        plain_text: u.content ?? "",
         attachments: Array.isArray((u as any).attachments) ? ((u as any).attachments as MessageAttachment[]) : [],
         created_at: u.created_at,
       },

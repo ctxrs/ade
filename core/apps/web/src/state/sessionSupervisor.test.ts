@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { Message, Session, SessionEvent, SessionTurn, WorkspaceCatchupEvent } from "../api/client";
+import type { WorkspaceCatchupEventSource } from "./workspaceCatchupStore";
 
 vi.mock("../api/client", () => {
   const idToString = (id: any): string => (typeof id === "string" ? id : id?.["0"]);
@@ -104,7 +105,7 @@ describe("SessionSupervisor", () => {
     const sup = new SessionSupervisor();
 
     const listeners = new Set<(evt: WorkspaceCatchupEvent) => void>();
-    const store = {
+    const store: WorkspaceCatchupEventSource = {
       subscribe: () => () => {},
       subscribeEvents: (listener: (evt: WorkspaceCatchupEvent) => void) => {
         listeners.add(listener);
@@ -120,7 +121,7 @@ describe("SessionSupervisor", () => {
         archivedIds: [],
         totalActive: 0,
         totalArchived: 0,
-        fetchState: { active: "idle" as const, archived: "idle" as const },
+        fetchState: { active: "idle", archived: "idle" },
         hasMoreActive: false,
         hasMoreArchived: false,
         archivedLoaded: false,

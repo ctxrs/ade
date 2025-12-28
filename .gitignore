@@ -19,6 +19,8 @@ dist/
 .vite/
 .turbo/
 **/.turbo/
+.turbo-cache/
+**/.turbo-cache/
 coverage/
 *.log
 npm-debug.log*

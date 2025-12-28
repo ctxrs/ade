@@ -39,7 +39,8 @@ export async function parseWsJson(data: unknown): Promise<any | null> {
     return null;
   }
 
-  if (text == null) return null;
+  if (text === null) return null;
+
   try {
     return JSON.parse(text);
   } catch {
