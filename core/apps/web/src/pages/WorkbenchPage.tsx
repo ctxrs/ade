@@ -182,7 +182,7 @@ function WorkbenchSessionSlot({ sessionId, active, scrollState }: WorkbenchSessi
                 stickToBottom: scrollState.stickToBottom,
                 anchorItemId: scrollState.anchorItemId,
                 scrollTop: scrollState.scrollTop ?? null,
-                virtuosoState: null,
+                virtuosoState: scrollState.virtuosoState ?? null,
               }
             : null
         }

@@ -272,19 +272,25 @@ export function SessionView({
   );
 
   const persistScroll = useCallback(
-    (next: { stickToBottom: boolean; anchorItemId: string | null; scrollTop: number | null }) => {
+    (next: {
+      stickToBottom: boolean;
+      anchorItemId: string | null;
+      scrollTop: number | null;
+      virtuosoState?: unknown | null;
+    }) => {
       if (!onScrollStateChange) return;
       const prev = lastScrollPersistedRef.current;
       if (
         prev &&
         prev.stickToBottom === next.stickToBottom &&
         prev.anchorItemId === next.anchorItemId &&
-        prev.scrollTop === next.scrollTop
+        prev.scrollTop === next.scrollTop &&
+        prev.virtuosoState === (next.virtuosoState ?? null)
       ) {
         return;
       }
-      lastScrollPersistedRef.current = next;
-      onScrollStateChange({ ...next, virtuosoState: null });
+      lastScrollPersistedRef.current = { ...next, virtuosoState: next.virtuosoState ?? null };
+      onScrollStateChange({ ...next, virtuosoState: next.virtuosoState ?? null });
     },
     [onScrollStateChange],
   );
@@ -386,6 +392,7 @@ export function SessionView({
         stickToBottom: nearBottom,
         anchorItemId: nearBottom ? null : latestAnchorIdRef.current,
         scrollTop: nearBottom ? null : scrollTop,
+        virtuosoState: lastScrollPersistedRef.current?.virtuosoState ?? undefined,
       });
     };
   }, [id, onScrollStateChange, persistScroll]);
@@ -687,21 +694,41 @@ export function SessionView({
   const isActiveRef = useRef(isActive);
   isActiveRef.current = isActive;
   const wasActiveRef = useRef(isActive);
+  const virtuosoPersistTimerRef = useRef<number | null>(null);
+  const [restoreInProgress, setRestoreInProgress] = useState(false);
   useLayoutEffect(() => {
     if (isActive && !wasActiveRef.current) {
-      restorePendingRef.current = true;
+      const hasVirtuosoState = Boolean(scrollState?.virtuosoState);
+      restorePendingRef.current = !hasVirtuosoState;
       didInitialScrollRef.current = false;
       restoringScrollRef.current = false;
       userScrolledRef.current = false;
       liveScrollTopRef.current = null;
+      if (hasVirtuosoState) {
+        restoringScrollRef.current = true;
+        setRestoreInProgress(true);
+        const timer = window.setTimeout(() => {
+          restoringScrollRef.current = false;
+          setRestoreInProgress(false);
+        }, 200);
+        return () => window.clearTimeout(timer);
+      }
     }
     wasActiveRef.current = isActive;
+  }, [isActive, scrollState?.virtuosoState]);
+
+  useEffect(() => {
+    if (!isActive) setRestoreInProgress(false);
   }, [isActive]);
 
   useLayoutEffect(() => {
     if (!isActive) return;
     const items = variant === "workbench" ? wbListItems : threadItems;
     if (items.length === 0) return;
+    if (scrollState?.virtuosoState) {
+      restorePendingRef.current = false;
+      return;
+    }
     if (!restorePendingRef.current) return;
     if (userScrolledRef.current) {
       restorePendingRef.current = false;
@@ -715,10 +742,12 @@ export function SessionView({
     const restoreScrollTop = !state.stickToBottom ? (state.scrollTop ?? null) : null;
 
     restoringScrollRef.current = true;
+    setRestoreInProgress(true);
     requestAnimationFrame(() => {
       const el = scrollerRef.current;
       if (!el) {
         restoringScrollRef.current = false;
+        setRestoreInProgress(false);
         return;
       }
       if (restoreScrollTop !== null) {
@@ -741,6 +770,7 @@ export function SessionView({
       restoreCooldownRef.current = window.setTimeout(() => {
         restoreCooldownRef.current = null;
         restoringScrollRef.current = false;
+        setRestoreInProgress(false);
       }, 200);
     });
   }, [
@@ -749,6 +779,7 @@ export function SessionView({
     scrollState?.anchorItemId,
     scrollState?.stickToBottom,
     scrollState?.scrollTop,
+    scrollState?.virtuosoState,
     threadItems.length,
     variant,
     wbListItems.length,
@@ -1245,11 +1276,26 @@ export function SessionView({
               const nearBottom = remaining <= 16;
               setAtBottom(nearBottom);
               if (nearBottom) setHasNewActivity(false);
-              persistScroll({
+              const next = {
                 stickToBottom: nearBottom,
                 anchorItemId: nearBottom ? null : latestAnchorIdRef.current,
                 scrollTop: nearBottom ? null : scrollTop,
-              });
+              };
+              if (virtuosoPersistTimerRef.current) {
+                window.clearTimeout(virtuosoPersistTimerRef.current);
+                virtuosoPersistTimerRef.current = null;
+              }
+              const handle = virtuosoRef.current;
+              if (handle) {
+                virtuosoPersistTimerRef.current = window.setTimeout(() => {
+                  virtuosoPersistTimerRef.current = null;
+                  handle.getState((state) => {
+                    persistScroll({ ...next, virtuosoState: state });
+                  });
+                }, 120);
+              } else {
+                persistScroll(next);
+              }
             });
           }}
         />
@@ -1308,11 +1354,26 @@ export function SessionView({
               const nearBottom = remaining <= 16;
               setAtBottom(nearBottom);
               if (nearBottom) setHasNewActivity(false);
-              persistScroll({
+              const next = {
                 stickToBottom: nearBottom,
                 anchorItemId: nearBottom ? null : latestAnchorIdRef.current,
                 scrollTop: nearBottom ? null : scrollTop,
-              });
+              };
+              if (virtuosoPersistTimerRef.current) {
+                window.clearTimeout(virtuosoPersistTimerRef.current);
+                virtuosoPersistTimerRef.current = null;
+              }
+              const handle = virtuosoRef.current;
+              if (handle) {
+                virtuosoPersistTimerRef.current = window.setTimeout(() => {
+                  virtuosoPersistTimerRef.current = null;
+                  handle.getState((state) => {
+                    persistScroll({ ...next, virtuosoState: state });
+                  });
+                }, 120);
+              } else {
+                persistScroll(next);
+              }
             });
           }}
         />
@@ -1588,11 +1649,12 @@ export function SessionView({
                   style={virtuosoStyle}
                   data={wbListItems}
                   ref={virtuosoRef}
-                  followOutput={atBottom ? "auto" : false}
+                  followOutput={restoreInProgress ? false : atBottom ? "auto" : false}
                   defaultItemHeight={56}
                   initialItemCount={wbListItems.length}
                   increaseViewportBy={{ top: 1000, bottom: 1000 }}
                   computeItemKey={(index, item) => item?.id ?? `i:${index}`}
+                  restoreStateFrom={scrollState?.virtuosoState ?? undefined}
                   startReached={() => {
                     if (!hasMoreTurns) return;
                     supervisor.loadMoreTurns(id);
@@ -1635,9 +1697,10 @@ export function SessionView({
                 style={virtuosoStyle}
                 data={threadItems}
                 ref={virtuosoRef}
-                followOutput={atBottom ? "auto" : false}
+                followOutput={restoreInProgress ? false : atBottom ? "auto" : false}
                 defaultItemHeight={56}
                 computeItemKey={(index, item) => item?.id ?? `i:${index}`}
+                restoreStateFrom={scrollState?.virtuosoState ?? undefined}
                 atBottomStateChange={(b) => {
                   if (restoringScrollRef.current) return;
                   setAtBottom(b);

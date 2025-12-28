@@ -330,11 +330,14 @@ export class WorkbenchStore {
     const now = Date.now();
     const current = this.snapshot.window.scrollByKey[key];
     const updatedAtMs = next.updatedAtMs ?? now;
+    const nextVirtuosoState =
+      typeof next.virtuosoState === "undefined" ? current?.virtuosoState ?? null : next.virtuosoState ?? null;
     if (
       current &&
       current.stickToBottom === next.stickToBottom &&
       current.anchorItemId === next.anchorItemId &&
       (current.scrollTop ?? null) === (next.scrollTop ?? null) &&
+      current.virtuosoState === nextVirtuosoState &&
       Math.abs(current.updatedAtMs - updatedAtMs) < 5
     ) {
       return;
@@ -349,7 +352,7 @@ export class WorkbenchStore {
             stickToBottom: next.stickToBottom,
             anchorItemId: next.anchorItemId,
             scrollTop: next.scrollTop ?? null,
-            virtuosoState: null,
+            virtuosoState: nextVirtuosoState,
             updatedAtMs,
           },
         },
