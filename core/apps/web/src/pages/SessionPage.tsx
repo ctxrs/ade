@@ -242,13 +242,11 @@ export function SessionView({
   const scrollSyncRafRef = useRef<number | null>(null);
   const userScrolledRef = useRef(false);
   const scrollerRef = useRef<HTMLDivElement | null>(null);
-  const scrollPersistTimerRef = useRef<number | null>(null);
   const latestAnchorIdRef = useRef<string | null>(null);
   const restoringScrollRef = useRef(false);
   const dropHideTimerRef = useRef<number | null>(null);
-  const latestVirtuosoStateRef = useRef<unknown | null>(null);
   const restoreCooldownRef = useRef<number | null>(null);
-  const forceScrollRestoreRef = useRef(false);
+  const restorePendingRef = useRef(true);
 
   const input = variant === "workbench" ? (draft?.text ?? "") : inputInternal;
   const setInput = useCallback(
@@ -286,32 +284,11 @@ export function SessionView({
         return;
       }
       lastScrollPersistedRef.current = next;
-      onScrollStateChange({ ...next, virtuosoState: latestVirtuosoStateRef.current });
+      onScrollStateChange({ ...next, virtuosoState: null });
     },
     [onScrollStateChange],
   );
 
-  const scheduleScrollPersist = useCallback(() => {
-    if (!onScrollStateChange) return;
-    if (restoringScrollRef.current) return;
-    if (scrollPersistTimerRef.current) window.clearTimeout(scrollPersistTimerRef.current);
-    scrollPersistTimerRef.current = window.setTimeout(() => {
-      scrollPersistTimerRef.current = null;
-      if (!isActiveRef.current) return;
-      const el = scrollerRef.current;
-      if (!el) return;
-      const scrollTop = el.scrollTop;
-      const scrollHeight = el.scrollHeight;
-      const clientHeight = el.clientHeight;
-      const remaining = scrollHeight - (scrollTop + clientHeight);
-      const nearBottom = remaining <= 16;
-      if (nearBottom) {
-        persistScroll({ stickToBottom: true, anchorItemId: null, scrollTop: null });
-        return;
-      }
-      persistScroll({ stickToBottom: false, anchorItemId: latestAnchorIdRef.current, scrollTop });
-    }, 80);
-  }, [onScrollStateChange, persistScroll]);
 
   const handleFileOpenError = useCallback((message: string | null) => {
     setFileOpenError(message);
@@ -357,12 +334,13 @@ export function SessionView({
   useOpenSession(id ?? "", { watchDiff: true });
 
   useLayoutEffect(() => {
+    restorePendingRef.current = true;
     didInitialScrollRef.current = false;
     lastScrollPersistedRef.current = null;
     latestAnchorIdRef.current = null;
     userScrolledRef.current = false;
     liveScrollTopRef.current = null;
-    latestVirtuosoStateRef.current = null;
+    restoringScrollRef.current = false;
     if (scrollSyncRafRef.current != null) {
       window.cancelAnimationFrame(scrollSyncRafRef.current);
       scrollSyncRafRef.current = null;
@@ -384,10 +362,6 @@ export function SessionView({
 
   useEffect(() => {
     return () => {
-      if (scrollPersistTimerRef.current) {
-        window.clearTimeout(scrollPersistTimerRef.current);
-        scrollPersistTimerRef.current = null;
-      }
       if (scrollSyncRafRef.current != null) {
         window.cancelAnimationFrame(scrollSyncRafRef.current);
         scrollSyncRafRef.current = null;
@@ -407,17 +381,6 @@ export function SessionView({
       const scrollTop = el.scrollTop;
       const remaining = el.scrollHeight - (scrollTop + el.clientHeight);
       const nearBottom = remaining <= 16;
-      if (virtuosoRef.current) {
-        virtuosoRef.current.getState((state) => {
-          latestVirtuosoStateRef.current = state;
-          persistScroll({
-            stickToBottom: nearBottom,
-            anchorItemId: nearBottom ? null : latestAnchorIdRef.current,
-            scrollTop: nearBottom ? null : scrollTop,
-          });
-        });
-        return;
-      }
       persistScroll({
         stickToBottom: nearBottom,
         anchorItemId: nearBottom ? null : latestAnchorIdRef.current,
@@ -464,11 +427,6 @@ export function SessionView({
   const turnsKey = deriveTurnsKey(turns);
   const messagesKey = deriveMessagesKey(messages);
   const streamConnected = supervisorSnap.connection === "connected";
-  const latestScrollStateRef = useRef(scrollState ?? null);
-
-  useEffect(() => {
-    latestScrollStateRef.current = scrollState ?? null;
-  }, [scrollState?.anchorItemId, scrollState?.scrollTop, scrollState?.stickToBottom, scrollState?.virtuosoState]);
 
   const interruptBanner = useMemo(() => {
     const last = [...events].reverse().find((e) => e.event_type === "turn_interrupted");
@@ -725,25 +683,14 @@ export function SessionView({
     }
     return out;
   }, [wbGroups]);
-  const workbenchItemsRef = useRef(wbListItems);
-  const threadItemsRef = useRef(threadItems);
-
-  useEffect(() => {
-    workbenchItemsRef.current = wbListItems;
-  }, [wbListItems]);
-
-  useEffect(() => {
-    threadItemsRef.current = threadItems;
-  }, [threadItems]);
-
   const isActiveRef = useRef(isActive);
   isActiveRef.current = isActive;
   const wasActiveRef = useRef(isActive);
   useLayoutEffect(() => {
     if (isActive && !wasActiveRef.current) {
-      forceScrollRestoreRef.current = true;
+      restorePendingRef.current = true;
       didInitialScrollRef.current = false;
-      restoringScrollRef.current = true;
+      restoringScrollRef.current = false;
       userScrolledRef.current = false;
       liveScrollTopRef.current = null;
     }
@@ -752,82 +699,47 @@ export function SessionView({
 
   useLayoutEffect(() => {
     if (!isActive) return;
-    const forceRestore = forceScrollRestoreRef.current;
-    if (forceRestore) forceScrollRestoreRef.current = false;
     const items = variant === "workbench" ? wbListItems : threadItems;
     if (items.length === 0) return;
-    if (didInitialScrollRef.current) return;
-    if (scrollState?.virtuosoState && !forceRestore) {
-      latestVirtuosoStateRef.current = scrollState.virtuosoState ?? null;
-      restoringScrollRef.current = true;
-      if (restoreCooldownRef.current) window.clearTimeout(restoreCooldownRef.current);
-      restoreCooldownRef.current = window.setTimeout(() => {
-        restoreCooldownRef.current = null;
-        restoringScrollRef.current = false;
-      }, 400);
-      didInitialScrollRef.current = true;
-      return;
-    }
+    if (!restorePendingRef.current) return;
     if (userScrolledRef.current) {
+      restorePendingRef.current = false;
       didInitialScrollRef.current = true;
       return;
     }
 
-    const restoreAnchorId =
-      scrollState && !scrollState.stickToBottom ? (scrollState.anchorItemId ?? null) : null;
-    const restoreScrollTop =
-      scrollState && !scrollState.stickToBottom ? (scrollState.scrollTop ?? null) : null;
+    const state = scrollState ?? { stickToBottom: true, anchorItemId: null, scrollTop: null };
+    const restoreAnchorId = !state.stickToBottom ? (state.anchorItemId ?? null) : null;
+    const restoreScrollTop = !state.stickToBottom ? (state.scrollTop ?? null) : null;
 
     restoringScrollRef.current = true;
     requestAnimationFrame(() => {
-      if (restoreScrollTop !== null) {
-        let tries = 0;
-        const target = Math.max(0, restoreScrollTop);
-        const apply = () => {
-          const el = scrollerRef.current;
-          if (!el) {
-            restoringScrollRef.current = false;
-            return;
-          }
-          if (virtuosoRef.current) {
-            virtuosoRef.current.scrollTo({ top: target });
-          }
-          el.scrollTop = target;
-          tries += 1;
-          if (tries < 6 && Math.abs(el.scrollTop - target) > 8) {
-            requestAnimationFrame(apply);
-            return;
-          }
-          didInitialScrollRef.current = true;
-          if (restoreCooldownRef.current) window.clearTimeout(restoreCooldownRef.current);
-          restoreCooldownRef.current = window.setTimeout(() => {
-            restoreCooldownRef.current = null;
-            restoringScrollRef.current = false;
-          }, 250);
-        };
-        apply();
+      const el = scrollerRef.current;
+      if (!el) {
+        restoringScrollRef.current = false;
         return;
       }
-      if (restoreAnchorId) {
+      if (restoreScrollTop !== null) {
+        const target = Math.max(0, restoreScrollTop);
+        virtuosoRef.current?.scrollTo({ top: target });
+        el.scrollTop = target;
+      } else if (restoreAnchorId) {
         const idx = items.findIndex((it) => it?.id === restoreAnchorId);
         if (idx >= 0) {
           virtuosoRef.current?.scrollToIndex({ index: idx, align: "start" });
-          didInitialScrollRef.current = true;
-          if (restoreCooldownRef.current) window.clearTimeout(restoreCooldownRef.current);
-          restoreCooldownRef.current = window.setTimeout(() => {
-            restoreCooldownRef.current = null;
-            restoringScrollRef.current = false;
-          }, 250);
-          return;
+        } else {
+          virtuosoRef.current?.scrollToIndex({ index: items.length - 1, align: "end" });
         }
+      } else {
+        virtuosoRef.current?.scrollToIndex({ index: items.length - 1, align: "end" });
       }
-      virtuosoRef.current?.scrollToIndex({ index: items.length - 1, align: "end" });
+      restorePendingRef.current = false;
       didInitialScrollRef.current = true;
       if (restoreCooldownRef.current) window.clearTimeout(restoreCooldownRef.current);
       restoreCooldownRef.current = window.setTimeout(() => {
         restoreCooldownRef.current = null;
         restoringScrollRef.current = false;
-      }, 250);
+      }, 200);
     });
   }, [
     id,
@@ -835,7 +747,6 @@ export function SessionView({
     scrollState?.anchorItemId,
     scrollState?.stickToBottom,
     scrollState?.scrollTop,
-    scrollState?.virtuosoState,
     threadItems.length,
     variant,
     wbListItems.length,
@@ -1288,67 +1199,6 @@ export function SessionView({
     [renderThreadItem],
   );
 
-  const restoreScrollForNode = useCallback(
-    (node: HTMLDivElement | null) => {
-      if (!node) return;
-      const state = latestScrollStateRef.current;
-      if (!state) return;
-      if (state.virtuosoState) return;
-      const items = variant === "workbench" ? workbenchItemsRef.current : threadItemsRef.current;
-      const restoreAnchorId = !state.stickToBottom ? (state.anchorItemId ?? null) : null;
-      const restoreScrollTop = !state.stickToBottom ? (state.scrollTop ?? null) : null;
-      restoringScrollRef.current = true;
-      requestAnimationFrame(() => {
-        if (userScrolledRef.current && liveScrollTopRef.current != null) {
-          node.scrollTop = Math.max(0, liveScrollTopRef.current);
-          restoringScrollRef.current = false;
-          return;
-        }
-        if (restoreScrollTop !== null) {
-          let tries = 0;
-          const target = Math.max(0, restoreScrollTop);
-          const apply = () => {
-            if (virtuosoRef.current) {
-              virtuosoRef.current.scrollTo({ top: target });
-            }
-            node.scrollTop = target;
-            tries += 1;
-            if (tries < 6 && Math.abs(node.scrollTop - target) > 8) {
-              requestAnimationFrame(apply);
-              return;
-            }
-            if (restoreCooldownRef.current) window.clearTimeout(restoreCooldownRef.current);
-            restoreCooldownRef.current = window.setTimeout(() => {
-              restoreCooldownRef.current = null;
-              restoringScrollRef.current = false;
-            }, 250);
-          };
-          apply();
-          return;
-        }
-        if (restoreAnchorId) {
-          const idx = items.findIndex((it) => it?.id === restoreAnchorId);
-          if (idx >= 0) {
-            virtuosoRef.current?.scrollToIndex({ index: idx, align: "start" });
-            if (restoreCooldownRef.current) window.clearTimeout(restoreCooldownRef.current);
-            restoreCooldownRef.current = window.setTimeout(() => {
-              restoreCooldownRef.current = null;
-              restoringScrollRef.current = false;
-            }, 250);
-            return;
-          }
-        }
-        virtuosoRef.current?.scrollToIndex({ index: items.length - 1, align: "end" });
-        if (restoreCooldownRef.current) window.clearTimeout(restoreCooldownRef.current);
-        restoreCooldownRef.current = window.setTimeout(() => {
-          restoreCooldownRef.current = null;
-          restoringScrollRef.current = false;
-        }, 250);
-      });
-    },
-    [variant],
-  );
-
   const workbenchComponents = useMemo(
     () => ({
       Scroller: forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>((props, ref) => (
@@ -1359,14 +1209,17 @@ export function SessionView({
             scrollerRef.current = node;
             if (typeof ref === "function") ref(node);
             else if (ref) (ref as React.MutableRefObject<HTMLDivElement | null>).current = node;
-            if (node && prev !== node && didInitialScrollRef.current) {
-              restoreScrollForNode(node);
-            }
           }}
           onScroll={(event) => {
             props.onScroll?.(event);
             if (!isActiveRef.current) return;
-            if (restoringScrollRef.current) return;
+            if (restoringScrollRef.current) {
+              restoringScrollRef.current = false;
+              if (restoreCooldownRef.current) {
+                window.clearTimeout(restoreCooldownRef.current);
+                restoreCooldownRef.current = null;
+              }
+            }
             userScrolledRef.current = true;
             if (scrollerRef.current) {
               liveScrollTopRef.current = scrollerRef.current.scrollTop;
@@ -1382,17 +1235,6 @@ export function SessionView({
               const nearBottom = remaining <= 16;
               setAtBottom(nearBottom);
               if (nearBottom) setHasNewActivity(false);
-              if (virtuosoRef.current) {
-                virtuosoRef.current.getState((state) => {
-                  latestVirtuosoStateRef.current = state;
-                  if (nearBottom) {
-                    persistScroll({ stickToBottom: true, anchorItemId: null, scrollTop: null });
-                    return;
-                  }
-                  persistScroll({ stickToBottom: false, anchorItemId: latestAnchorIdRef.current, scrollTop });
-                });
-                return;
-              }
               if (nearBottom) {
                 persistScroll({ stickToBottom: true, anchorItemId: null, scrollTop: null });
                 return;
@@ -1409,7 +1251,7 @@ export function SessionView({
         <div {...props} ref={ref} role="listitem" />
       )),
     }),
-    [restoreScrollForNode, scheduleScrollPersist],
+    [persistScroll],
   );
 
   const threadComponents = useMemo(
@@ -1422,14 +1264,17 @@ export function SessionView({
             scrollerRef.current = node;
             if (typeof ref === "function") ref(node);
             else if (ref) (ref as React.MutableRefObject<HTMLDivElement | null>).current = node;
-            if (node && prev !== node && didInitialScrollRef.current) {
-              restoreScrollForNode(node);
-            }
           }}
           onScroll={(event) => {
             props.onScroll?.(event);
             if (!isActiveRef.current) return;
-            if (restoringScrollRef.current) return;
+            if (restoringScrollRef.current) {
+              restoringScrollRef.current = false;
+              if (restoreCooldownRef.current) {
+                window.clearTimeout(restoreCooldownRef.current);
+                restoreCooldownRef.current = null;
+              }
+            }
             userScrolledRef.current = true;
             if (scrollerRef.current) {
               liveScrollTopRef.current = scrollerRef.current.scrollTop;
@@ -1445,17 +1290,6 @@ export function SessionView({
               const nearBottom = remaining <= 16;
               setAtBottom(nearBottom);
               if (nearBottom) setHasNewActivity(false);
-              if (virtuosoRef.current) {
-                virtuosoRef.current.getState((state) => {
-                  latestVirtuosoStateRef.current = state;
-                  if (nearBottom) {
-                    persistScroll({ stickToBottom: true, anchorItemId: null, scrollTop: null });
-                    return;
-                  }
-                  persistScroll({ stickToBottom: false, anchorItemId: latestAnchorIdRef.current, scrollTop });
-                });
-                return;
-              }
               if (nearBottom) {
                 persistScroll({ stickToBottom: true, anchorItemId: null, scrollTop: null });
                 return;
@@ -1472,7 +1306,7 @@ export function SessionView({
         <div {...props} ref={ref} role="listitem" />
       )),
     }),
-    [restoreScrollForNode, scheduleScrollPersist],
+    [persistScroll],
   );
 
   return (
@@ -1737,7 +1571,6 @@ export function SessionView({
                   data={wbListItems}
                   ref={virtuosoRef}
                   followOutput={atBottom ? "auto" : false}
-                  restoreStateFrom={scrollState?.virtuosoState ?? undefined}
                   defaultItemHeight={56}
                   initialItemCount={wbListItems.length}
                   increaseViewportBy={{ top: 1000, bottom: 1000 }}
@@ -1792,7 +1625,6 @@ export function SessionView({
                 data={threadItems}
                 ref={virtuosoRef}
                 followOutput={atBottom ? "auto" : false}
-                restoreStateFrom={scrollState?.virtuosoState ?? undefined}
                 defaultItemHeight={56}
                 computeItemKey={(index, item) => item?.id ?? `i:${index}`}
                 atBottomStateChange={(b) => {

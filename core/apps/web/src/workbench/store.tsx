@@ -335,7 +335,6 @@ export class WorkbenchStore {
       current.stickToBottom === next.stickToBottom &&
       current.anchorItemId === next.anchorItemId &&
       (current.scrollTop ?? null) === (next.scrollTop ?? null) &&
-      (current.virtuosoState ?? null) === (next.virtuosoState ?? null) &&
       Math.abs(current.updatedAtMs - updatedAtMs) < 5
     ) {
       return;
@@ -350,7 +349,7 @@ export class WorkbenchStore {
             stickToBottom: next.stickToBottom,
             anchorItemId: next.anchorItemId,
             scrollTop: next.scrollTop ?? null,
-            virtuosoState: next.virtuosoState ?? null,
+            virtuosoState: null,
             updatedAtMs,
           },
         },

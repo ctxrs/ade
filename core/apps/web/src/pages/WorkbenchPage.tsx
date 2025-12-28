@@ -182,7 +182,7 @@ function WorkbenchSessionSlot({ sessionId, active, scrollState }: WorkbenchSessi
                 stickToBottom: scrollState.stickToBottom,
                 anchorItemId: scrollState.anchorItemId,
                 scrollTop: scrollState.scrollTop ?? null,
-                virtuosoState: scrollState.virtuosoState ?? null,
+                virtuosoState: null,
               }
             : null
         }
@@ -1217,25 +1217,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     [],
   );
 
-  const sessionIdsToRender = useMemo(() => {
-    const ids: string[] = [];
-    const seen = new Set<string>();
-    if (activeSessionId) {
-      ids.push(activeSessionId);
-      seen.add(activeSessionId);
-    }
-    for (const id of activeTaskSessionIds) {
-      if (seen.has(id)) continue;
-      ids.push(id);
-      seen.add(id);
-    }
-    for (const id of warmSessionIds) {
-      if (seen.has(id)) continue;
-      ids.push(id);
-      seen.add(id);
-    }
-    return ids;
-  }, [activeSessionId, activeTaskSessionIds, warmSessionIds]);
+  const sessionIdsToRender = useMemo(() => (activeSessionId ? [activeSessionId] : []), [activeSessionId]);
 
   const showDebugIds = useMemo(() => {
     const params = new URLSearchParams(window.location.search);
