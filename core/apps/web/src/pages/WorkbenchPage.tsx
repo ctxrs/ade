@@ -49,7 +49,7 @@ import {
   updateTaskTitle,
   verifyProviderForWorkspace,
 } from "../api/client";
-import { useSessionCacheSnapshot, useSessionEntry, useSessionSupervisor } from "../state/sessionSupervisor";
+import { useOpenSession, useSessionCacheSnapshot, useSessionEntry, useSessionSupervisor } from "../state/sessionSupervisor";
 import { DiffReviewPane } from "../components/DiffReviewPane";
 import { SessionView, buildWorkbenchThreadViewModel } from "./SessionPage";
 import { HARNESS_CATALOG } from "../utils/harnessCatalog";
@@ -75,6 +75,7 @@ import {
   useWorkbenchSnapshot,
   useWorkbenchStore,
 } from "../workbench/store";
+import { loadWorkbenchDiffPaneOpenV1, saveWorkbenchDiffPaneOpenV1 } from "../workbench/persistence";
 import type { WorkbenchScrollState } from "../workbench/types";
 import {
   WorkspaceCatchupProvider,
@@ -370,6 +371,9 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const dictationTranscriptMsgsRef = useRef(0);
 
   const [diffWidth, setDiffWidth] = useState(480);
+  const [diffResizing, setDiffResizing] = useState(false);
+  const [diffOpen, setDiffOpen] = useState(false);
+  const [diffOpenHydrated, setDiffOpenHydrated] = useState(false);
   const reviewTab: "git" = "git";
 
   useEffect(() => {
@@ -1218,6 +1222,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   );
 
   const sessionIdsToRender = useMemo(() => (activeSessionId ? [activeSessionId] : []), [activeSessionId]);
+  useOpenSession(activeSessionId ?? "", { watchDiff: diffOpen });
 
   const showDebugIds = useMemo(() => {
     const params = new URLSearchParams(window.location.search);
@@ -1288,12 +1293,52 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   }, [activeWorktreeId]);
 
   const hasDiff = activeTrackDiff.trim().length > 0;
-  const showReviewPane = hasDiff;
+  const showReviewPane = diffOpen;
   const diffFileCount = useMemo(() => {
     if (!hasDiff) return 0;
     const m = activeTrackDiff.match(/^diff --git /gm);
     return m ? m.length : 1;
   }, [activeTrackDiff, hasDiff]);
+
+  const toggleDiffPane = useCallback(() => {
+    setDiffOpen((open) => !open);
+  }, []);
+
+  const diffPaneScope = useMemo(() => {
+    if (activeSessionId) return `session:${activeSessionId}`;
+    if (activeTrackId) return `track:${activeTrackId}`;
+    return null;
+  }, [activeSessionId, activeTrackId]);
+
+  useEffect(() => {
+    setDiffOpenHydrated(false);
+    if (!workspaceId || !diffPaneScope) {
+      setDiffOpen(false);
+      setDiffOpenHydrated(true);
+      return;
+    }
+    let cancelled = false;
+    loadWorkbenchDiffPaneOpenV1(workspaceId, diffPaneScope)
+      .then((open) => {
+        if (cancelled) return;
+        setDiffOpen(open ?? false);
+        setDiffOpenHydrated(true);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setDiffOpen(false);
+        setDiffOpenHydrated(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [workspaceId, diffPaneScope]);
+
+  useEffect(() => {
+    if (!diffOpenHydrated) return;
+    if (!workspaceId || !diffPaneScope) return;
+    saveWorkbenchDiffPaneOpenV1(workspaceId, diffPaneScope, diffOpen).catch(() => {});
+  }, [diffOpen, diffOpenHydrated, workspaceId, diffPaneScope]);
 
 
   const providerOptionsInFlightRef = useRef<Record<string, Promise<ProviderOptions | undefined>>>({});
@@ -1611,12 +1656,14 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     e.preventDefault();
     const startX = e.clientX;
     const startW = diffWidth;
+    setDiffResizing(true);
     const onMove = (ev: MouseEvent) => {
       const dx = startX - ev.clientX;
       const next = Math.min(900, Math.max(320, startW + dx));
       setDiffWidth(next);
     };
     const onUp = () => {
+      setDiffResizing(false);
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
     };
@@ -2000,7 +2047,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   if (!workbenchSnap.hydrated) {
     return (
       <div
-        className={`wb-root ${sidebarCollapsed ? "wb-root-collapsed" : ""} ${sidebarResizing ? "wb-root-resizing" : ""}`}
+        className={`wb-root ${sidebarCollapsed ? "wb-root-collapsed" : ""} ${sidebarResizing ? "wb-root-resizing" : ""} ${diffResizing ? "wb-root-diff-resizing" : ""}`}
         style={rootStyle}
       >
         <div className="wb-topbar">
@@ -2019,7 +2066,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
 
   return (
     <div
-      className={`wb-root ${sidebarCollapsed ? "wb-root-collapsed" : ""} ${sidebarResizing ? "wb-root-resizing" : ""}`}
+      className={`wb-root ${sidebarCollapsed ? "wb-root-collapsed" : ""} ${sidebarResizing ? "wb-root-resizing" : ""} ${diffResizing ? "wb-root-diff-resizing" : ""}`}
       style={rootStyle}
     >
       <div className="wb-topbar">
@@ -2192,8 +2239,6 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
           />
         </div>
 
-        <div className="wb-sidebar-bottom">
-        </div>
       </div>
 
       {!sidebarCollapsed && (
@@ -2322,15 +2367,27 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
                         </>
                       )}
                     </div>
-                    <button
-                      type="button"
-                      className="wb-icon wb-convo-menu-trigger"
-                      aria-label="Conversation options"
-                      title="Conversation options"
-                      onClick={(e) => openConvoMenu(e.currentTarget)}
-                    >
-                      <Ellipsis size={14} />
-                    </button>
+                    <div className="wb-icon-row">
+                      <button
+                        type="button"
+                        className={`wb-icon ${showReviewPane ? "wb-icon-active" : ""}`}
+                        aria-label="Toggle diff view"
+                        aria-pressed={showReviewPane}
+                        title={showReviewPane ? "Hide diff view" : "Show diff view"}
+                        onClick={toggleDiffPane}
+                      >
+                        <GitBranch size={14} />
+                      </button>
+                      <button
+                        type="button"
+                        className="wb-icon wb-convo-menu-trigger"
+                        aria-label="Conversation options"
+                        title="Conversation options"
+                        onClick={(e) => openConvoMenu(e.currentTarget)}
+                      >
+                        <Ellipsis size={14} />
+                      </button>
+                    </div>
                   </div>
                 </div>
               ) : (
@@ -2396,15 +2453,13 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
                 <div className="wb-diff" style={{ width: diffWidth }}>
                   <div className="wb-diff-top">
                     <div className="wb-diff-tabs">
-                      {hasDiff && (
-                        <button
-                          type="button"
-                          className={`wb-diff-tab wb-diff-tab-button ${reviewTab === "git" ? "wb-diff-tab-active" : ""}`}
-                        >
-                          All Changes
-                        </button>
-                      )}
-                      {reviewTab === "git" && hasDiff && (
+                      <button
+                        type="button"
+                        className={`wb-diff-tab wb-diff-tab-button ${reviewTab === "git" ? "wb-diff-tab-active" : ""}`}
+                      >
+                        All Changes
+                      </button>
+                      {reviewTab === "git" && (
                         <div className="wb-diff-pill">
                           {diffFileCount} Pending Change{diffFileCount === 1 ? "" : "s"}
                         </div>
@@ -2424,7 +2479,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
                     </div>
                   </div>
 
-                  {reviewTab === "git" && hasDiff && (
+                  {reviewTab === "git" && hasDiff ? (
                     <DiffReviewPane
                       diff={activeTrackDiff}
                       trackId={activeTrackIdFromSession}
@@ -2439,6 +2494,10 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
                         reject: "Reject",
                       }}
                     />
+                  ) : (
+                    <div className="wb-diff-empty">
+                      <div className="wb-muted">No unstaged changes on this branch.</div>
+                    </div>
                   )}
                 </div>
               </>

@@ -12,6 +12,7 @@ import type {
 
 const WINDOW_DB_VERSION = 1 as const;
 const DRAFT_DB_VERSION = 1 as const;
+const DIFF_PANE_DB_VERSION = 1 as const;
 
 export function workbenchDaemonKey(): string {
   return String(getDaemonBaseUrl() || window.location.origin || "unknown").trim() || "unknown";
@@ -27,6 +28,10 @@ export function workbenchWindowKeyV1(workspaceId: string, windowId: string): str
 
 export function workbenchDraftKeyV1(workspaceId: string, key: string): string {
   return `wb.draft.v${DRAFT_DB_VERSION}.${safeKeyPart(workbenchDaemonKey())}.${safeKeyPart(workspaceId)}.${safeKeyPart(key)}`;
+}
+
+export function workbenchDiffPaneKeyV1(workspaceId: string, scopeId: string): string {
+  return `wb.diff_pane.v${DIFF_PANE_DB_VERSION}.${safeKeyPart(workbenchDaemonKey())}.${safeKeyPart(workspaceId)}.${safeKeyPart(scopeId)}`;
 }
 
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -183,6 +188,23 @@ export async function saveWorkbenchDraftV1(workspaceId: string, key: string, dra
 
 export async function deleteWorkbenchDraftV1(workspaceId: string, key: string): Promise<void> {
   await uiStateDelete(workbenchDraftKeyV1(workspaceId, key));
+}
+
+export async function loadWorkbenchDiffPaneOpenV1(workspaceId: string, scopeId: string): Promise<boolean | null> {
+  const raw = await uiStateGet(workbenchDiffPaneKeyV1(workspaceId, scopeId));
+  return typeof raw === "boolean" ? raw : null;
+}
+
+export async function saveWorkbenchDiffPaneOpenV1(
+  workspaceId: string,
+  scopeId: string,
+  open: boolean,
+): Promise<void> {
+  await uiStateSet(workbenchDiffPaneKeyV1(workspaceId, scopeId), open);
+}
+
+export async function deleteWorkbenchDiffPaneOpenV1(workspaceId: string, scopeId: string): Promise<void> {
+  await uiStateDelete(workbenchDiffPaneKeyV1(workspaceId, scopeId));
 }
 
 export async function migrateLegacySelectionToWindowV1(opts: {

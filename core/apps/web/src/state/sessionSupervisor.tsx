@@ -457,11 +457,11 @@ export class SessionSupervisor {
     this.publish();
   }
 
-  private async refreshDiff(entry: InternalEntry) {
+  private async refreshDiff(entry: InternalEntry, force = false) {
     if (entry.fetching.diff) return;
     if (!entry.trackId) return;
     if (entry.wantDiffCount <= 0) return;
-    if (entry.diff !== undefined && entry.diffFetchedAtMs) {
+    if (!force && entry.diff !== undefined && entry.diffFetchedAtMs) {
       const ageMs = Date.now() - entry.diffFetchedAtMs;
       if (ageMs < DIFF_REFRESH_MS) return;
     }
@@ -744,6 +744,16 @@ export class SessionSupervisor {
   }
 
   private handleCatchupEvent(evt: WorkspaceCatchupEvent) {
+    if (evt.type === "track_upsert") {
+      const trackId = idToString(evt.track.track.id);
+      if (!trackId) return;
+      for (const entry of this.entries.values()) {
+        if (entry.trackId !== trackId) continue;
+        if (entry.wantDiffCount <= 0) continue;
+        void this.refreshDiff(entry, true);
+      }
+      return;
+    }
     if (evt.type !== "session_head_delta") return;
     const delta = evt.delta;
     const sid = idToString(delta.session_id);

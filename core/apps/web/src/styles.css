@@ -1751,13 +1751,6 @@ button.linklike:hover {
   border-color: rgba(255, 69, 58, 0.16);
 }
 
-.wb-sidebar-bottom {
-  padding: 10px 12px;
-  border-top: 1px solid var(--border);
-  display: flex;
-  gap: 12px;
-}
-
 .wb-link {
   color: var(--muted);
   text-decoration: none;
@@ -3643,17 +3636,34 @@ button.linklike:hover {
 }
 
 .wb-splitter {
+  position: relative;
   width: 6px;
   cursor: col-resize;
-  background: transparent;
-  border-left: 1px solid var(--border);
-  border-right: 1px solid transparent;
+  background: linear-gradient(to right, transparent 0 50%, rgba(255, 255, 255, 0.01) 50% 100%);
+}
+
+.wb-splitter::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  border-radius: 99px;
+  background: var(--border);
+  transition: background 120ms ease, width 120ms ease;
+}
+
+.wb-splitter:hover::after,
+.wb-root.wb-root-diff-resizing .wb-splitter::after {
+  background: rgba(78, 163, 255, 0.35);
+  width: 2px;
 }
 
 .wb-diff {
   min-width: 320px;
   max-width: 60vw;
-  border-left: 1px solid var(--border);
   background: rgba(255, 255, 255, 0.01);
   min-height: 0;
   display: flex;
@@ -3718,6 +3728,10 @@ button.linklike:hover {
 .wb-diff .diff-pane {
   padding: 12px;
   overflow: auto;
+}
+
+.wb-diff-empty {
+  padding: 16px;
 }
 
 .wb-editplans {
