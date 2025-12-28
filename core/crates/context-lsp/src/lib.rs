@@ -302,10 +302,14 @@ impl Language {
     }
 }
 
+type LspSessionKey = (PathBuf, Language);
+type LspSessionMap = HashMap<LspSessionKey, Arc<LspSession>>;
+type SharedLspSessionMap = Arc<Mutex<LspSessionMap>>;
+
 #[derive(Clone)]
 pub struct LspManager {
     cfg: LspManagerConfig,
-    sessions: Arc<Mutex<HashMap<(PathBuf, Language), Arc<LspSession>>>>,
+    sessions: SharedLspSessionMap,
 }
 
 #[derive(Debug, Clone)]

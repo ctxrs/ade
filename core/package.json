@@ -16,6 +16,21 @@
     "mobile:android": "pnpm -C apps/mobile android",
     "mobile:ios": "pnpm -C apps/mobile ios",
     "mobile:web": "pnpm -C apps/mobile web",
-    "verify:quiet": "pnpm test"
+    "rust:fmt": "cargo fmt --all -- --check",
+    "rust:clippy": "CARGO_TARGET_DIR=.turbo/cargo-target cargo clippy --workspace --all-targets --all-features -- -D warnings",
+    "rust:test": "CARGO_TARGET_DIR=.turbo/cargo-target cargo test -q",
+    "verify:quiet": "turbo run typecheck --filter=context-web --filter=mobile --filter=@context/design --filter=@context/types --cache-dir=.turbo --output-logs=errors-only && turbo run test:quiet --filter=context-web --filter=mobile --cache-dir=.turbo --output-logs=errors-only && turbo run rust:fmt rust:clippy rust:test --filter=context-monorepo --cache-dir=.turbo --output-logs=errors-only"
+  },
+  "devDependencies": {
+    "turbo": "^2.3.0",
+    "typescript": "^5.6.3"
+  },
+  "pnpm": {
+    "overrides": {
+      "react": "19.2.3",
+      "react-dom": "19.2.3",
+      "@types/react": "19.2.7",
+      "@types/react-dom": "19.2.3"
+    }
   }
 }

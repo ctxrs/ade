@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -65,6 +65,16 @@ struct CreatedAcpSession {
     session_id: String,
 }
 
+pub struct AcpPromptRequest {
+    pub session_key: String,
+    pub client: AcpClientConfig,
+    pub prompt: Vec<serde_json::Value>,
+    pub workdir: PathBuf,
+    pub env: HashMap<String, String>,
+    pub event_sink: mpsc::Sender<NormalizedEvent>,
+    pub cancel_rx: oneshot::Receiver<()>,
+}
+
 impl AcpSessionPool {
     pub fn new(agent: AcpAgentConfig) -> Self {
         Self {
@@ -119,16 +129,17 @@ impl AcpSessionPool {
         Ok(())
     }
 
-    pub async fn prompt(
-        &self,
-        session_key: String,
-        client: AcpClientConfig,
-        prompt: Vec<serde_json::Value>,
-        workdir: PathBuf,
-        env: HashMap<String, String>,
-        event_sink: mpsc::Sender<NormalizedEvent>,
-        cancel_rx: oneshot::Receiver<()>,
-    ) -> Result<()> {
+    pub async fn prompt(&self, request: AcpPromptRequest) -> Result<()> {
+        let AcpPromptRequest {
+            session_key,
+            client,
+            prompt,
+            workdir,
+            env,
+            event_sink,
+            cancel_rx,
+        } = request;
+
         self.ensure_process(&client, workdir.clone(), env.clone(), event_sink.clone())
             .await?;
 
@@ -262,7 +273,7 @@ impl AcpSessionPool {
         session_key: &str,
         process: &mut AcpProcess,
         client: &AcpClientConfig,
-        workdir: &PathBuf,
+        workdir: &Path,
         env: &HashMap<String, String>,
         event_sink: &mpsc::Sender<NormalizedEvent>,
     ) -> Result<String> {
@@ -302,6 +313,28 @@ struct AcpProcess {
     stderr_lines: Vec<String>,
     stdout_non_json: Vec<String>,
     ask_user_question: Option<Arc<AskUserQuestionBroker>>,
+}
+
+struct DriveUntilResponseOptions<'a> {
+    event_sink: mpsc::Sender<NormalizedEvent>,
+    cancel_rx: Option<&'a mut oneshot::Receiver<()>>,
+    stream_state: Option<&'a mut StreamState>,
+    emit_raw_notifications: bool,
+    cancel_session_id: Option<&'a str>,
+    context_session_id: Option<&'a str>,
+}
+
+impl<'a> DriveUntilResponseOptions<'a> {
+    fn new(event_sink: mpsc::Sender<NormalizedEvent>) -> Self {
+        Self {
+            event_sink,
+            cancel_rx: None,
+            stream_state: None,
+            emit_raw_notifications: false,
+            cancel_session_id: None,
+            context_session_id: None,
+        }
+    }
 }
 
 impl AcpProcess {
@@ -394,7 +427,7 @@ impl AcpProcess {
             .send(init_line)
             .map_err(|_| anyhow::anyhow!("ACP writer task unavailable"))?;
         let init_resp = self
-            .drive_until_response(init_rx, None, event_sink.clone(), None, false, None, None)
+            .drive_until_response(init_rx, DriveUntilResponseOptions::new(event_sink.clone()))
             .await
             .context("waiting for initialize response")?;
         if let Some(err) = init_resp.get("error") {
@@ -432,9 +465,7 @@ impl AcpProcess {
     }
 
     fn default_auth_method_id(&self) -> Option<String> {
-        let Some(methods) = self.auth_methods.as_ref() else {
-            return None;
-        };
+        let methods = self.auth_methods.as_ref()?;
         let list = methods.as_array()?;
         for m in list {
             if let Some(id) = m
@@ -466,7 +497,7 @@ impl AcpProcess {
             .send(line)
             .map_err(|_| anyhow::anyhow!("ACP writer task unavailable"))?;
         let resp = self
-            .drive_until_response(rx, None, event_sink.clone(), None, false, None, None)
+            .drive_until_response(rx, DriveUntilResponseOptions::new(event_sink.clone()))
             .await
             .context("waiting for authenticate response")?;
 
@@ -478,14 +509,14 @@ impl AcpProcess {
 
     async fn create_or_load_session(
         &mut self,
-        workdir: &PathBuf,
+        workdir: &Path,
         client: &AcpClientConfig,
         resume_session_id: Option<String>,
         event_sink: mpsc::Sender<NormalizedEvent>,
     ) -> Result<CreatedAcpSession> {
         let cwd = workdir
             .canonicalize()
-            .unwrap_or_else(|_| workdir.clone())
+            .unwrap_or_else(|_| workdir.to_path_buf())
             .to_string_lossy()
             .to_string();
         let mcp_servers = client
@@ -520,12 +551,7 @@ impl AcpProcess {
                 let load_resp = self
                     .drive_until_response(
                         load_rx,
-                        None,
-                        event_sink.clone(),
-                        None,
-                        false,
-                        None,
-                        None,
+                        DriveUntilResponseOptions::new(event_sink.clone()),
                     )
                     .await
                     .context("waiting for session/load response")?;
@@ -582,7 +608,7 @@ impl AcpProcess {
                 .send(new_line)
                 .map_err(|_| anyhow::anyhow!("ACP writer task unavailable"))?;
             let new_resp = self
-                .drive_until_response(new_rx, None, event_sink.clone(), None, false, None, None)
+                .drive_until_response(new_rx, DriveUntilResponseOptions::new(event_sink.clone()))
                 .await
                 .context("waiting for session/new response")?;
             if let Some(err) = new_resp.get("error") {
@@ -657,16 +683,14 @@ impl AcpProcess {
             .send(prompt_line)
             .map_err(|_| anyhow::anyhow!("ACP writer task unavailable"))?;
 
+        let mut options = DriveUntilResponseOptions::new(event_sink.clone());
+        options.cancel_rx = Some(&mut cancel_rx);
+        options.stream_state = Some(&mut state);
+        options.emit_raw_notifications = true;
+        options.cancel_session_id = Some(acp_session_id);
+        options.context_session_id = Some(context_session_id);
         let prompt_resp = self
-            .drive_until_response(
-                prompt_rx,
-                Some(&mut cancel_rx),
-                event_sink.clone(),
-                Some(&mut state),
-                true,
-                Some(acp_session_id),
-                Some(context_session_id),
-            )
+            .drive_until_response(prompt_rx, options)
             .await
             .context("waiting for session/prompt response")?;
         state.saw_done = true;
@@ -743,7 +767,7 @@ impl AcpProcess {
             .send(line)
             .map_err(|_| anyhow::anyhow!("ACP writer task unavailable"))?;
         let resp = self
-            .drive_until_response(rx, None, event_sink, None, false, None, None)
+            .drive_until_response(rx, DriveUntilResponseOptions::new(event_sink))
             .await
             .context("waiting for session/set_model response")?;
         if let Some(err) = resp.get("error") {
@@ -768,7 +792,7 @@ impl AcpProcess {
             .send(line)
             .map_err(|_| anyhow::anyhow!("ACP writer task unavailable"))?;
         let resp = self
-            .drive_until_response(rx, None, event_sink, None, false, None, None)
+            .drive_until_response(rx, DriveUntilResponseOptions::new(event_sink))
             .await
             .context("waiting for session/set_mode response")?;
         if let Some(err) = resp.get("error") {
@@ -780,13 +804,14 @@ impl AcpProcess {
     async fn drive_until_response(
         &mut self,
         mut target_rx: oneshot::Receiver<serde_json::Value>,
-        mut cancel_rx: Option<&mut oneshot::Receiver<()>>,
-        event_sink: mpsc::Sender<NormalizedEvent>,
-        mut stream_state: Option<&mut StreamState>,
-        emit_raw_notifications: bool,
-        cancel_session_id: Option<&str>,
-        context_session_id: Option<&str>,
+        options: DriveUntilResponseOptions<'_>,
     ) -> Result<serde_json::Value> {
+        let event_sink = options.event_sink;
+        let mut cancel_rx = options.cancel_rx;
+        let mut stream_state = options.stream_state;
+        let emit_raw_notifications = options.emit_raw_notifications;
+        let cancel_session_id = options.cancel_session_id;
+        let context_session_id = options.context_session_id;
         let mut ask_req_id: Option<u64> = None;
         let mut ask_tool_call_id: Option<String> = None;
         let mut ask_rx: Option<oneshot::Receiver<AskUserQuestionAnswer>> = None;

@@ -8,7 +8,7 @@ use tokio::process::Command;
 
 use context_core::ids::{TrackId, WorkspaceAttachmentId, WorkspaceId};
 use context_core::models::{
-    AttachmentMode, AttachmentUpdatePolicy, TrackAttachmentMount, TrackAttachmentStatus, Track,
+    AttachmentMode, AttachmentUpdatePolicy, Track, TrackAttachmentMount, TrackAttachmentStatus,
     Workspace, WorkspaceAttachment, WorkspaceAttachmentKind, Worktree,
 };
 
@@ -58,7 +58,10 @@ pub async fn sync_workspace_attachments(
     let mut existing_map: HashMap<(WorkspaceAttachmentKind, String), WorkspaceAttachment> =
         HashMap::new();
     for attachment in existing {
-        existing_map.insert((attachment.kind.clone(), attachment.name.clone()), attachment);
+        existing_map.insert(
+            (attachment.kind.clone(), attachment.name.clone()),
+            attachment,
+        );
     }
 
     let mut keep_ids = HashSet::new();
@@ -91,10 +94,7 @@ pub async fn ensure_track_attachment_mounts(
     worktree: &Worktree,
     refresh: bool,
 ) -> Result<Vec<TrackAttachmentMount>> {
-    let attachments = state
-        .store
-        .list_workspace_attachments(workspace.id)
-        .await?;
+    let attachments = state.store.list_workspace_attachments(workspace.id).await?;
     ensure_track_attachment_mounts_for_attachments(
         state,
         workspace,
@@ -146,7 +146,7 @@ pub async fn ensure_track_attachment_mounts_for_attachments(
                         .join(&attachment.mount_relpath)
                         .to_string_lossy()
                         .to_string(),
-                    materialized_id: revision_key(&attachment),
+                    materialized_id: revision_key(attachment),
                     status: TrackAttachmentStatus::Error,
                     last_sync_at: Some(now),
                     error_message: Some(e.to_string()),
@@ -167,10 +167,7 @@ pub async fn ensure_workspace_attachments_for_tracks(
     workspace: &Workspace,
     refresh: bool,
 ) -> Result<()> {
-    let attachments = state
-        .store
-        .list_workspace_attachments(workspace.id)
-        .await?;
+    let attachments = state.store.list_workspace_attachments(workspace.id).await?;
     ensure_workspace_attachments_for_tracks_with_attachments(
         state,
         workspace,
@@ -188,10 +185,7 @@ pub async fn ensure_workspace_attachments_for_tracks_with_attachments(
     refresh: bool,
     materialize: bool,
 ) -> Result<()> {
-    let tracks = state
-        .store
-        .list_tracks_for_workspace(workspace.id)
-        .await?;
+    let tracks = state.store.list_tracks_for_workspace(workspace.id).await?;
     for track in tracks {
         let Some(worktree) = state.store.get_worktree(track.worktree_id).await? else {
             continue;
@@ -201,7 +195,7 @@ pub async fn ensure_workspace_attachments_for_tracks_with_attachments(
             workspace,
             &track,
             &worktree,
-            &attachments,
+            attachments,
             refresh,
             materialize,
         )
@@ -218,8 +212,7 @@ async fn load_attachments_config(workspace_root: &Path) -> Result<Option<Attachm
     let txt = tokio::fs::read_to_string(&path)
         .await
         .with_context(|| format!("reading {}", path.display()))?;
-    let cfg: AttachmentsConfigFile =
-        toml::from_str(&txt).context("parsing attachments.toml")?;
+    let cfg: AttachmentsConfigFile = toml::from_str(&txt).context("parsing attachments.toml")?;
     Ok(Some(cfg))
 }
 
@@ -286,8 +279,14 @@ fn normalize_attachment_config(
         kind: cfg.kind,
         name,
         source: cfg.source.trim().to_string(),
-        revision: cfg.revision.map(|v| v.trim().to_string()).filter(|v| !v.is_empty()),
-        subpath: cfg.subpath.map(|v| v.trim().to_string()).filter(|v| !v.is_empty()),
+        revision: cfg
+            .revision
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty()),
+        subpath: cfg
+            .subpath
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty()),
         mount_relpath,
         mode: cfg.mode.unwrap_or(AttachmentMode::Ro),
         update_policy: cfg.update_policy.unwrap_or(AttachmentUpdatePolicy::Manual),
@@ -322,10 +321,7 @@ async fn ensure_attachment_mount(
     } else {
         let path = materialized_path_for_attachment(state, attachment);
         if !path.exists() {
-            anyhow::bail!(
-                "attachment materialization not found at {}",
-                path.display()
-            );
+            anyhow::bail!("attachment materialization not found at {}", path.display());
         }
         MaterializationResult {
             path,
@@ -582,8 +578,7 @@ async fn ensure_mount(target: &Path, source: &Path) -> Result<()> {
         tracing::debug!("symlink failed ({}); falling back to copy", err);
         let source = source.to_path_buf();
         let target = target.to_path_buf();
-        tokio::task::spawn_blocking(move || copy_dir_recursive(&source, &target))
-            .await??;
+        tokio::task::spawn_blocking(move || copy_dir_recursive(&source, &target)).await??;
     }
     Ok(())
 }
@@ -701,16 +696,13 @@ fn sanitize_name(name: &str) -> String {
 }
 
 fn revision_key(attachment: &WorkspaceAttachment) -> String {
-    let base = attachment
-        .revision
-        .as_deref()
-        .unwrap_or("default");
+    let base = attachment.revision.as_deref().unwrap_or("default");
     sanitize_name(base)
 }
 
 fn looks_like_sha(value: &str) -> bool {
     let len = value.len();
-    if len < 7 || len > 40 {
+    if !(7..=40).contains(&len) {
         return false;
     }
     value.chars().all(|c| c.is_ascii_hexdigit())

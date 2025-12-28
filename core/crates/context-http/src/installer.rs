@@ -336,6 +336,7 @@ fn extract_tar_bz2_to_dir(tar_bz2_path: &Path, out_dir: &Path) -> Result<()> {
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn install_agent_server_url_binary(
     state: &AppState,
     install_id: Option<InstallId>,
@@ -426,6 +427,7 @@ async fn install_agent_server_url_binary(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn install_url_binary(
     state: &AppState,
     install_id: Option<InstallId>,
@@ -807,6 +809,7 @@ struct ManagedDependencyInstall {
     meta: ManagedInstallMetadata,
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn install_managed_npm_provider(
     state: &AppState,
     install_id: Option<InstallId>,
@@ -1006,6 +1009,7 @@ async fn patch_claude_code_acp_for_ask_user_question(script_path: &Path) -> Resu
     Ok(true)
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn install_managed_archive_provider(
     state: &AppState,
     install_id: Option<InstallId>,
@@ -1053,6 +1057,7 @@ async fn install_managed_archive_provider(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn install_managed_python_provider(
     state: &AppState,
     install_id: Option<InstallId>,
@@ -1291,6 +1296,7 @@ async fn install_managed_npm_dependency(
     Ok(ManagedDependencyInstall { meta })
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn install_managed_archive_dependency(
     state: &AppState,
     install_id: Option<InstallId>,
@@ -1771,6 +1777,7 @@ async fn install_provider_impl(
     res
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn emit_install(
     state: &AppState,
     install_id: Option<InstallId>,
@@ -1964,7 +1971,7 @@ pub async fn load_agent_server_config(data_root: &Path) -> Result<AgentServerCon
     if txt.trim().is_empty() {
         return Ok(AgentServerConfigFile::default());
     }
-    Ok(serde_json::from_str(&txt).context("parsing agent server config")?)
+    serde_json::from_str(&txt).context("parsing agent server config")
 }
 
 pub async fn save_agent_server_config(data_root: &Path, cfg: &AgentServerConfigFile) -> Result<()> {
@@ -2005,7 +2012,7 @@ pub async fn load_lsp_server_config(data_root: &Path) -> Result<LspServerConfigF
     if txt.trim().is_empty() {
         return Ok(LspServerConfigFile::default());
     }
-    Ok(serde_json::from_str(&txt).context("parsing lsp server config")?)
+    serde_json::from_str(&txt).context("parsing lsp server config")
 }
 
 pub async fn save_lsp_server_config(data_root: &Path, cfg: &LspServerConfigFile) -> Result<()> {
@@ -2215,7 +2222,7 @@ pub async fn load_user_lsp_config(data_root: &Path) -> Result<UserLspConfigFile>
         return Ok(UserLspConfigFile::default());
     }
     let txt = tokio::fs::read_to_string(&path).await?;
-    Ok(serde_json::from_str(&txt).context("parsing user lsp server config")?)
+    serde_json::from_str(&txt).context("parsing user lsp server config")
 }
 
 pub async fn apply_user_lsp_server_config(
@@ -2762,10 +2769,7 @@ async fn npm_install(
 ) -> Result<()> {
     let cache_dir = install_dir.join(".npm-cache");
     tokio::fs::create_dir_all(&cache_dir).await.ok();
-    let node_bin_dir = node
-        .node_bin
-        .parent()
-        .unwrap_or_else(|| node.node_root.as_path());
+    let node_bin_dir = node.node_bin.parent().unwrap_or(node.node_root.as_path());
     let path_sep = if cfg!(windows) { ";" } else { ":" };
     let mut combined_path = std::ffi::OsString::new();
     combined_path.push(node_bin_dir);
@@ -2995,8 +2999,7 @@ async fn run_command_with_timeout(mut cmd: Command, dur: Duration) -> Result<std
 fn sanitize_npm_package_for_path(pkg: &str) -> String {
     pkg.trim()
         .trim_start_matches('@')
-        .replace('/', "__")
-        .replace('\\', "__")
+        .replace(['/', '\\'], "__")
 }
 
 async fn npm_install_one(

@@ -14,6 +14,23 @@ pub struct Store {
     pool: Pool<Sqlite>,
 }
 
+pub struct SessionTurnToolCountDeltas {
+    pub total: i64,
+    pub pending: i64,
+    pub running: i64,
+    pub completed: i64,
+    pub failed: i64,
+}
+
+pub struct MobileDeviceUpsert {
+    pub device_label: Option<String>,
+    pub platform: Option<String>,
+    pub push_token: Option<String>,
+    pub push_provider: Option<String>,
+    pub public_key: Option<String>,
+    pub app_version: Option<String>,
+}
+
 impl Store {
     pub async fn open(path: impl AsRef<Path>) -> Result<Self> {
         let options = sqlx::sqlite::SqliteConnectOptions::new()
@@ -645,10 +662,7 @@ impl Store {
         Ok(out)
     }
 
-    pub async fn upsert_track_attachment_mount(
-        &self,
-        mount: &TrackAttachmentMount,
-    ) -> Result<()> {
+    pub async fn upsert_track_attachment_mount(&self, mount: &TrackAttachmentMount) -> Result<()> {
         sqlx::query(
             r#"INSERT INTO track_attachment_mounts
                (track_id, attachment_id, mount_abs_path, materialized_id, status, last_sync_at, error_message, created_at, updated_at)
@@ -675,10 +689,7 @@ impl Store {
         Ok(())
     }
 
-    pub async fn list_tracks_for_workspace(
-        &self,
-        workspace_id: WorkspaceId,
-    ) -> Result<Vec<Track>> {
+    pub async fn list_tracks_for_workspace(&self, workspace_id: WorkspaceId) -> Result<Vec<Track>> {
         let rows = sqlx::query(
             r#"SELECT id, task_id, workspace_id, worktree_id, label, status, created_at, updated_at
                FROM tracks
@@ -1153,7 +1164,10 @@ impl Store {
         cursor: Option<WorkspaceCatchupCursor>,
         limit: i64,
         archived_only: bool,
-    ) -> Result<(Vec<WorkspaceCatchupTaskSummary>, Option<WorkspaceCatchupCursor>)> {
+    ) -> Result<(
+        Vec<WorkspaceCatchupTaskSummary>,
+        Option<WorkspaceCatchupCursor>,
+    )> {
         const MAX_LIMIT: i64 = 200;
         let limit = limit.clamp(1, MAX_LIMIT);
 
@@ -1273,7 +1287,9 @@ impl Store {
             }
         }
 
-        let summaries = self.build_workspace_catchup_task_summaries(task_rows).await?;
+        let summaries = self
+            .build_workspace_catchup_task_summaries(task_rows)
+            .await?;
         Ok((summaries, next_cursor))
     }
 
@@ -1743,9 +1759,7 @@ impl Store {
             diff_summary: None,
         };
 
-        let session_rows = self
-            .list_session_catchup_rows(&[track_id])
-            .await?;
+        let session_rows = self.list_session_catchup_rows(&[track_id]).await?;
 
         let mut primary: Option<(i32, DateTime<Utc>, SessionId)> = None;
         for row in session_rows {
@@ -2275,11 +2289,7 @@ impl Store {
         &self,
         session_id: SessionId,
         turn_id: TurnId,
-        delta_total: i64,
-        delta_pending: i64,
-        delta_running: i64,
-        delta_completed: i64,
-        delta_failed: i64,
+        deltas: SessionTurnToolCountDeltas,
         updated_at: DateTime<Utc>,
     ) -> Result<()> {
         sqlx::query(
@@ -2292,11 +2302,11 @@ impl Store {
                    updated_at = ?
                WHERE session_id = ? AND turn_id = ?"#,
         )
-        .bind(delta_total)
-        .bind(delta_pending)
-        .bind(delta_running)
-        .bind(delta_completed)
-        .bind(delta_failed)
+        .bind(deltas.total)
+        .bind(deltas.pending)
+        .bind(deltas.running)
+        .bind(deltas.completed)
+        .bind(deltas.failed)
         .bind(updated_at.to_rfc3339())
         .bind(session_id.0.to_string())
         .bind(turn_id.0.to_string())
@@ -2960,9 +2970,8 @@ impl Store {
         .bind(id.0.to_string())
         .fetch_optional(&self.pool)
         .await?;
-        Ok(row
-            .map(build_mobile_connection_profile_from_row)
-            .transpose()?)
+        row.map(build_mobile_connection_profile_from_row)
+            .transpose()
     }
 
     pub async fn get_mobile_connection_profile_by_token_hash(
@@ -2976,9 +2985,8 @@ impl Store {
         .bind(token_hash)
         .fetch_optional(&self.pool)
         .await?;
-        Ok(row
-            .map(build_mobile_connection_profile_from_row)
-            .transpose()?)
+        row.map(build_mobile_connection_profile_from_row)
+            .transpose()
     }
 
     pub async fn mark_mobile_connection_profile_used(&self, id: ConnectionProfileId) -> Result<()> {
@@ -3002,13 +3010,16 @@ impl Store {
         &self,
         id: MobileDeviceId,
         profile_id: ConnectionProfileId,
-        device_label: Option<String>,
-        platform: Option<String>,
-        push_token: Option<String>,
-        push_provider: Option<String>,
-        public_key: Option<String>,
-        app_version: Option<String>,
+        update: MobileDeviceUpsert,
     ) -> Result<MobileDeviceRegistration> {
+        let MobileDeviceUpsert {
+            device_label,
+            platform,
+            push_token,
+            push_provider,
+            public_key,
+            app_version,
+        } = update;
         let now = Utc::now();
         sqlx::query(
             r#"INSERT INTO mobile_devices
@@ -3052,7 +3063,7 @@ impl Store {
         .bind(id.0.to_string())
         .fetch_optional(&self.pool)
         .await?;
-        Ok(row.map(build_mobile_device_from_row).transpose()?)
+        row.map(build_mobile_device_from_row).transpose()
     }
 
     pub async fn list_mobile_devices(
@@ -3579,9 +3590,7 @@ fn build_turn_tools_from_events(
             None => continue,
         };
         let update = extract_tool_update(&ev.payload_json);
-        let entry = map
-            .entry(tool_call_id.clone())
-            .or_insert_with(ToolAgg::default);
+        let entry = map.entry(tool_call_id.clone()).or_default();
         if !entry.initialized {
             entry.created_at = ev.created_at;
             entry.updated_at = ev.created_at;

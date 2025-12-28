@@ -1954,8 +1954,12 @@ async fn list_edit_plans_call(
             .map(|s| s.to_string())
             .or_else(|| std::env::var("CONTEXT_SESSION_ID").ok())
             .context("missing track_id and session_id")?;
-        let head =
-            daemon_get_json(client, daemon_url, &format!("/api/sessions/{}/head", session_id)).await?;
+        let head = daemon_get_json(
+            client,
+            daemon_url,
+            &format!("/api/sessions/{}/head", session_id),
+        )
+        .await?;
         let tid = head
             .get("session")
             .and_then(|v| v.get("track_id"))

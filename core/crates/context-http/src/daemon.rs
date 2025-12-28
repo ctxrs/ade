@@ -16,7 +16,9 @@ use tokio::sync::{broadcast, mpsc, watch, Mutex};
 use crate::buffers::BufferStore;
 use crate::edit_plans::{EditPlan, EditPlanId};
 use context_core::ids::{MessageId, SessionId, TaskId, TrackId, WorkspaceId, WorktreeId};
-use context_core::models::{Session, SessionEvent, SessionEventType, SessionHeadDelta, TrackDiffSummary};
+use context_core::models::{
+    Session, SessionEvent, SessionEventType, SessionHeadDelta, TrackDiffSummary,
+};
 use context_lsp::Language as LspLanguage;
 use context_lsp::{LspManager, LspManagerConfig};
 use context_providers::adapters::ProviderAdapter;
@@ -40,6 +42,7 @@ fn acquire_daemon_lock(data_root: &Path) -> Result<std::fs::File> {
         .create(true)
         .read(true)
         .write(true)
+        .truncate(true)
         .open(&path)
         .with_context(|| format!("opening daemon lockfile {}", path.display()))?;
 
@@ -289,7 +292,11 @@ impl AppState {
     }
 
     pub async fn emit_workspace_task_upsert(&self, task_id: TaskId) -> Result<()> {
-        if let Some(summary) = self.store.get_workspace_catchup_task_summary(task_id).await? {
+        if let Some(summary) = self
+            .store
+            .get_workspace_catchup_task_summary(task_id)
+            .await?
+        {
             let workspace_id = summary.task.workspace_id;
             self.workspace_catchup
                 .publish_task_upsert(workspace_id, summary)
@@ -299,7 +306,11 @@ impl AppState {
     }
 
     pub async fn emit_workspace_track_upsert(&self, track_id: TrackId) -> Result<()> {
-        if let Some(summary) = self.store.get_workspace_catchup_track_summary(track_id).await? {
+        if let Some(summary) = self
+            .store
+            .get_workspace_catchup_track_summary(track_id)
+            .await?
+        {
             let workspace_id = summary.track.workspace_id;
             self.workspace_catchup
                 .publish_track_upsert(workspace_id, summary)
@@ -899,10 +910,7 @@ pub async fn serve(
     let app: Router = api::router(state);
 
     tracing::info!("context daemon listening on {daemon_url}");
-    println!(
-        "{}",
-        json!({"event":"listening","url": daemon_url}).to_string()
-    );
+    println!("{}", json!({"event":"listening","url": daemon_url}));
     axum::serve(listener, app)
         .with_graceful_shutdown(async move {
             let _ = shutdown_rx.recv().await;

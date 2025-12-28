@@ -316,7 +316,7 @@ pub enum WorkspaceIndexEvent {
     TaskUpsert {
         workspace_id: WorkspaceId,
         snapshot_rev: i64,
-        task: WorkspaceTaskSummary,
+        task: Box<WorkspaceTaskSummary>,
     },
     TaskDelete {
         workspace_id: WorkspaceId,
@@ -454,14 +454,17 @@ pub enum WorkspaceCatchupEvent {
     SessionHeadDelta {
         workspace_id: WorkspaceId,
         snapshot_rev: i64,
-        delta: SessionHeadDelta,
+        delta: Box<SessionHeadDelta>,
     },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum WorkspaceCatchupClientMessage {
-    Subscribe { #[serde(default)] session_ids: Vec<SessionId> },
+    Subscribe {
+        #[serde(default)]
+        session_ids: Vec<SessionId>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

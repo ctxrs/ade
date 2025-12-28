@@ -316,7 +316,7 @@ async fn telemetry_worker(data_root: PathBuf, mut rx: mpsc::Receiver<TelemetryCo
             _ = flush_tick.tick() => {
                 if runtime.cfg.enabled && !runtime.buffer.is_empty() {
                     let batch = runtime.buffer.drain(..runtime.buffer.len().min(FLUSH_BATCH)).collect::<Vec<_>>();
-                    if let Err(_) = send_batch(&runtime, &batch).await {
+                    if send_batch(&runtime, &batch).await.is_err() {
                         runtime.buffer.splice(0..0, batch);
                         if runtime.buffer.len() > MAX_BUFFER {
                             runtime.buffer.truncate(MAX_BUFFER);
@@ -336,7 +336,7 @@ async fn telemetry_worker(data_root: PathBuf, mut rx: mpsc::Receiver<TelemetryCo
                             runtime.buffer.push(event);
                             if runtime.buffer.len() >= FLUSH_BATCH {
                                 let batch = runtime.buffer.drain(..).collect::<Vec<_>>();
-                                if let Err(_) = send_batch(&runtime, &batch).await {
+                                if send_batch(&runtime, &batch).await.is_err() {
                                     runtime.buffer = batch;
                                     if runtime.buffer.len() > MAX_BUFFER {
                                         runtime.buffer.truncate(MAX_BUFFER);

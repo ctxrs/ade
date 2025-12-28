@@ -141,18 +141,13 @@ pub struct ProviderRelease {
     pub notes: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ProviderReleaseStatus {
+    #[default]
     Supported,
     Blocked,
     Deprecated,
-}
-
-impl Default for ProviderReleaseStatus {
-    fn default() -> Self {
-        ProviderReleaseStatus::Supported
-    }
 }
 
 #[derive(Debug, Default)]
@@ -266,7 +261,7 @@ pub fn recommended_release<'a>(
     select_latest_release(&candidates)
 }
 
-pub fn latest_release<'a>(entry: &'a ProviderMatrixEntry) -> Option<&'a ProviderRelease> {
+pub fn latest_release(entry: &ProviderMatrixEntry) -> Option<&ProviderRelease> {
     let candidates: Vec<&ProviderRelease> = entry
         .releases
         .iter()
@@ -712,7 +707,7 @@ mod tests {
 
     #[test]
     fn select_latest_release_prefers_semver() {
-        let releases = vec![
+        let releases = [
             ProviderRelease {
                 version: "0.7.1".to_string(),
                 status: ProviderReleaseStatus::Supported,

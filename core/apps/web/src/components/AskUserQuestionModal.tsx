@@ -26,9 +26,9 @@ function normalizeOptions(raw: unknown): AskUserQuestionOption[] {
 }
 
 function normalizeQuestions(input: any): AskUserQuestionItem[] {
-  const questions = Array.isArray(input?.questions) ? input.questions : [];
+  const questions: unknown[] = Array.isArray(input?.questions) ? input.questions : [];
   return questions
-    .map((q: any, idx: number) => {
+    .map((q: any, idx: number): AskUserQuestionItem | null => {
       const question = typeof q?.question === "string" ? q.question : "";
       if (!question.trim()) return null;
       const header = typeof q?.header === "string" ? q.header : `Question ${idx + 1}`;
@@ -207,4 +207,3 @@ export function AskUserQuestionModal({
     </div>
   );
 }
-

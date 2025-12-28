@@ -252,20 +252,16 @@ async fn lsp_status_endpoint_returns_expected_shape() {
         assert!(langs.contains(required), "missing {required}");
     }
     for s in servers {
-        assert!(
-            s.get("language")
-                .and_then(|x| x.as_str())
-                .unwrap_or("")
-                .len()
-                > 0
-        );
-        assert!(
-            s.get("command")
-                .and_then(|x| x.as_str())
-                .unwrap_or("")
-                .len()
-                > 0
-        );
+        assert!(!s
+            .get("language")
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .is_empty());
+        assert!(!s
+            .get("command")
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .is_empty());
         assert!(s.get("found").and_then(|x| x.as_bool()).is_some());
     }
 }

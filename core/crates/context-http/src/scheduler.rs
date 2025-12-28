@@ -1,5 +1,5 @@
 use std::collections::{HashMap, VecDeque};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -15,6 +15,7 @@ use context_core::models::{
 };
 use context_providers::adapters::{ProviderAdapter, RunHandle, TurnInput};
 use context_providers::events::NormalizedEvent;
+use context_store::store::SessionTurnToolCountDeltas;
 
 use crate::daemon::AppState;
 use crate::installer;
@@ -150,7 +151,7 @@ pub async fn session_worker(
 async fn start_turn(
     state: &Arc<AppState>,
     session: &Session,
-    workdir: &PathBuf,
+    workdir: &Path,
     env_target: &str,
     message: Message,
 ) -> Result<RunningTurn> {
@@ -264,7 +265,7 @@ async fn start_turn(
                 attachments: message.attachments.clone(),
                 context_blocks,
             },
-            workdir.clone(),
+            workdir.to_path_buf(),
             provider_env,
             ev_tx,
         )
@@ -451,11 +452,13 @@ async fn start_turn(
                                     .update_session_turn_tool_counts(
                                         session_id,
                                         turn_id,
-                                        delta_total,
-                                        delta_pending,
-                                        delta_running,
-                                        delta_completed,
-                                        delta_failed,
+                                        SessionTurnToolCountDeltas {
+                                            total: delta_total,
+                                            pending: delta_pending,
+                                            running: delta_running,
+                                            completed: delta_completed,
+                                            failed: delta_failed,
+                                        },
                                         event.created_at,
                                     )
                                     .await;
@@ -761,6 +764,7 @@ fn should_track_thought_chunk(payload: &serde_json::Value) -> bool {
     reasoning_kind != Some("summary")
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn persist_assistant_message(
     store: &context_store::Store,
     session_id: context_core::ids::SessionId,
@@ -819,7 +823,7 @@ fn model_context_window(provider_id: &str, model_id: &str) -> Option<usize> {
 
 fn estimate_tokens(text: &str) -> usize {
     let chars = text.chars().count();
-    (chars + 3) / 4
+    chars.div_ceil(4)
 }
 
 #[derive(Clone, Debug)]

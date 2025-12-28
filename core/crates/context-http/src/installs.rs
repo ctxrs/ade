@@ -96,6 +96,6 @@ pub fn truncate_for_storage(s: &str, max_len: usize) -> String {
         return s.to_string();
     }
     let mut out = s.chars().take(max_len).collect::<String>();
-    out.push_str("…");
+    out.push('…');
     out
 }

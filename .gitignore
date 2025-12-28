@@ -17,6 +17,8 @@ node_modules/
 dist/
 **/dist/
 .vite/
+.turbo/
+**/.turbo/
 coverage/
 *.log
 npm-debug.log*

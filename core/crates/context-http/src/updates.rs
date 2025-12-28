@@ -85,7 +85,7 @@ pub async fn fetch_latest_manifest_with_params(
         .text()
         .await
         .context("reading release manifest body")?;
-    Ok(serde_json::from_str(&txt).context("parsing release manifest JSON")?)
+    serde_json::from_str(&txt).context("parsing release manifest JSON")
 }
 
 pub async fn download_to_path(url: &str, dest: &Path) -> Result<()> {
@@ -213,7 +213,7 @@ pub async fn self_update_daemon(
     download_to_path(&download_url, &tmp_path).await?;
 
     let got = sha256_hex_file(&tmp_path).await?;
-    if got.to_ascii_lowercase() != artifact.sha256.to_ascii_lowercase() {
+    if !got.eq_ignore_ascii_case(&artifact.sha256) {
         anyhow::bail!(
             "checksum mismatch for downloaded binary: expected {}, got {}",
             artifact.sha256,
@@ -248,7 +248,7 @@ pub fn join_url(base_url: &str, url_path: &str) -> String {
 pub async fn download_and_verify(url: &str, expected_sha256: &str, dest: &Path) -> Result<()> {
     download_to_path(url, dest).await?;
     let got = sha256_hex_file(dest).await?;
-    if got.to_ascii_lowercase() != expected_sha256.to_ascii_lowercase() {
+    if !got.eq_ignore_ascii_case(expected_sha256) {
         anyhow::bail!(
             "checksum mismatch: expected {}, got {}",
             expected_sha256,

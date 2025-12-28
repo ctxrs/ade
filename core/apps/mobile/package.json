@@ -7,7 +7,9 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:quiet": "vitest run --silent --reporter=dot",
+    "typecheck": "tsc --noEmit --incremental --tsBuildInfoFile .turbo/tsbuildinfo/apps-mobile.tsbuildinfo"
   },
   "dependencies": {
     "@context/design": "workspace:*",
@@ -25,7 +27,7 @@
     "expo-secure-store": "^15.0.8",
     "expo-status-bar": "~3.0.9",
     "expo-task-manager": "^14.0.9",
-    "react": "19.1.0",
+    "react": "19.2.3",
     "react-native": "0.81.5",
     "react-native-gesture-handler": "^2.30.0",
     "react-native-get-random-values": "^1.11.0",
@@ -35,10 +37,10 @@
     "tweetnacl": "^1.0.3",
     "uuid": "^9.0.1",
     "@react-native-async-storage/async-storage": "^2.2.0",
-    "react-dom": "19.1.0"
+    "react-dom": "19.2.3"
   },
   "devDependencies": {
-    "@types/react": "~19.1.0",
+    "@types/react": "~19.2.0",
     "@types/uuid": "^9.0.7",
     "typescript": "~5.9.2",
     "vitest": "^2.1.8"

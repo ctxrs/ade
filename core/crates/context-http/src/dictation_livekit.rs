@@ -340,10 +340,9 @@ pub async fn dictation_livekit_stream(mut socket: WebSocket, state: std::sync::A
                 } else {
                     Duration::from_secs(60)
                 };
-                match tokio::time::timeout(idle_timeout, lk_rx.next()).await {
-                    Ok(v) => v,
-                    Err(_) => None,
-                }
+                tokio::time::timeout(idle_timeout, lk_rx.next())
+                    .await
+                    .unwrap_or_default()
             } else {
                 lk_rx.next().await
             }

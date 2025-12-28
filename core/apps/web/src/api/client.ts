@@ -1,14 +1,9 @@
 import type {
-  Diagnostics,
   Message,
   MessageAttachment,
   MobileConnectionProfile,
   MobileDeviceRegistration,
-  ProviderStatus,
   Session,
-  SessionEvent,
-  SessionTurn,
-  SessionTurnTool,
   SessionSummary,
   SessionHead,
   SessionHeadDelta,
@@ -37,16 +32,11 @@ import type {
 import { desktopDaemonRequest, desktopUploadBlob, isDesktopApp } from "../utils/desktop";
 
 export type {
-  Diagnostics,
   Message,
   MessageAttachment,
   MobileConnectionProfile,
   MobileDeviceRegistration,
-  ProviderStatus,
   Session,
-  SessionEvent,
-  SessionTurn,
-  SessionTurnTool,
   SessionSummary,
   SessionHead,
   SessionHeadDelta,

@@ -31,7 +31,10 @@ impl WorkspaceCatchupHub {
         }
     }
 
-    async fn ensure_entry(&self, workspace_id: WorkspaceId) -> broadcast::Sender<WorkspaceCatchupEvent> {
+    async fn ensure_entry(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> broadcast::Sender<WorkspaceCatchupEvent> {
         let mut guard = self.inner.lock().await;
         guard
             .entry(workspace_id)
@@ -45,7 +48,10 @@ impl WorkspaceCatchupHub {
         guard.get(&workspace_id).map(|entry| entry.rev).unwrap_or(0)
     }
 
-    pub async fn subscribe(&self, workspace_id: WorkspaceId) -> broadcast::Receiver<WorkspaceCatchupEvent> {
+    pub async fn subscribe(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> broadcast::Receiver<WorkspaceCatchupEvent> {
         self.ensure_entry(workspace_id).await.subscribe()
     }
 
@@ -126,7 +132,13 @@ impl WorkspaceCatchupHub {
         let _ = entry.tx.send(WorkspaceCatchupEvent::SessionHeadDelta {
             workspace_id,
             snapshot_rev: entry.rev,
-            delta,
+            delta: Box::new(delta),
         });
+    }
+}
+
+impl Default for WorkspaceCatchupHub {
+    fn default() -> Self {
+        Self::new()
     }
 }
