@@ -40,12 +40,20 @@ test("workbench: restores scroll position across session switches", async ({ pag
   await taskRowA.click();
   await page.waitForSelector(scrollSelector);
 
-  const scrollBefore = await page.evaluate((selector) => {
-    const el = document.querySelector(selector) as HTMLElement | null;
-    if (!el) return null;
-    el.scrollTop = Math.floor(el.scrollHeight * 0.4);
-    return { top: el.scrollTop, height: el.scrollHeight, client: el.clientHeight };
-  }, scrollSelector);
+  const scroller = page.locator(scrollSelector).first();
+  await expect
+    .poll(async () => scroller.evaluate((el) => el.scrollHeight), { timeout: 10_000 })
+    .toBeGreaterThan(0);
+
+  await scroller.hover();
+  await page.mouse.wheel(0, 600);
+  await page.waitForTimeout(300);
+
+  const scrollBefore = await scroller.evaluate((el) => ({
+    top: el.scrollTop,
+    height: el.scrollHeight,
+    client: el.clientHeight,
+  }));
   expect(scrollBefore).not.toBeNull();
   await page.waitForTimeout(300);
 

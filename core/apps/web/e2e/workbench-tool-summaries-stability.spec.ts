@@ -56,10 +56,8 @@ test.describe.serial("workbench: tool summaries stability", () => {
       .poll(async () => scroller.evaluate((el) => el.scrollHeight), { timeout: 10_000 })
       .toBeGreaterThan(0);
 
-    await scroller.evaluate((el) => {
-      el.scrollTop = Math.min(400, el.scrollHeight - el.clientHeight - 1);
-      el.dispatchEvent(new Event("scroll", { bubbles: true }));
-    });
+    await scroller.hover();
+    await page.mouse.wheel(0, 400);
 
     await page.waitForTimeout(400);
     const scrollTop = await scroller.evaluate((el) => el.scrollTop);

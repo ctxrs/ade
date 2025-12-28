@@ -376,6 +376,7 @@ export function SessionView({
   useEffect(() => {
     return () => {
       if (!onScrollStateChange) return;
+      if (!userScrolledRef.current) return;
       const el = scrollerRef.current;
       if (!el) return;
       const scrollTop = el.scrollTop;
@@ -709,6 +710,7 @@ export function SessionView({
     }
 
     const state = scrollState ?? { stickToBottom: true, anchorItemId: null, scrollTop: null };
+    setAtBottom(state.stickToBottom);
     const restoreAnchorId = !state.stickToBottom ? (state.anchorItemId ?? null) : null;
     const restoreScrollTop = !state.stickToBottom ? (state.scrollTop ?? null) : null;
 
@@ -1213,14 +1215,22 @@ export function SessionView({
           onScroll={(event) => {
             props.onScroll?.(event);
             if (!isActiveRef.current) return;
-            if (restoringScrollRef.current) {
+            const trusted =
+              typeof (event as any).isTrusted === "boolean"
+                ? (event as any).isTrusted
+                : typeof (event as any).nativeEvent?.isTrusted === "boolean"
+                  ? (event as any).nativeEvent.isTrusted
+                  : true;
+            if (restoringScrollRef.current && !trusted) return;
+            if (restoringScrollRef.current && trusted) {
               restoringScrollRef.current = false;
               if (restoreCooldownRef.current) {
                 window.clearTimeout(restoreCooldownRef.current);
                 restoreCooldownRef.current = null;
               }
             }
-            userScrolledRef.current = true;
+            if (!trusted && !userScrolledRef.current) return;
+            if (trusted) userScrolledRef.current = true;
             if (scrollerRef.current) {
               liveScrollTopRef.current = scrollerRef.current.scrollTop;
             }
@@ -1235,11 +1245,11 @@ export function SessionView({
               const nearBottom = remaining <= 16;
               setAtBottom(nearBottom);
               if (nearBottom) setHasNewActivity(false);
-              if (nearBottom) {
-                persistScroll({ stickToBottom: true, anchorItemId: null, scrollTop: null });
-                return;
-              }
-              persistScroll({ stickToBottom: false, anchorItemId: latestAnchorIdRef.current, scrollTop });
+              persistScroll({
+                stickToBottom: nearBottom,
+                anchorItemId: nearBottom ? null : latestAnchorIdRef.current,
+                scrollTop: nearBottom ? null : scrollTop,
+              });
             });
           }}
         />
@@ -1268,14 +1278,22 @@ export function SessionView({
           onScroll={(event) => {
             props.onScroll?.(event);
             if (!isActiveRef.current) return;
-            if (restoringScrollRef.current) {
+            const trusted =
+              typeof (event as any).isTrusted === "boolean"
+                ? (event as any).isTrusted
+                : typeof (event as any).nativeEvent?.isTrusted === "boolean"
+                  ? (event as any).nativeEvent.isTrusted
+                  : true;
+            if (restoringScrollRef.current && !trusted) return;
+            if (restoringScrollRef.current && trusted) {
               restoringScrollRef.current = false;
               if (restoreCooldownRef.current) {
                 window.clearTimeout(restoreCooldownRef.current);
                 restoreCooldownRef.current = null;
               }
             }
-            userScrolledRef.current = true;
+            if (!trusted && !userScrolledRef.current) return;
+            if (trusted) userScrolledRef.current = true;
             if (scrollerRef.current) {
               liveScrollTopRef.current = scrollerRef.current.scrollTop;
             }
@@ -1290,11 +1308,11 @@ export function SessionView({
               const nearBottom = remaining <= 16;
               setAtBottom(nearBottom);
               if (nearBottom) setHasNewActivity(false);
-              if (nearBottom) {
-                persistScroll({ stickToBottom: true, anchorItemId: null, scrollTop: null });
-                return;
-              }
-              persistScroll({ stickToBottom: false, anchorItemId: latestAnchorIdRef.current, scrollTop });
+              persistScroll({
+                stickToBottom: nearBottom,
+                anchorItemId: nearBottom ? null : latestAnchorIdRef.current,
+                scrollTop: nearBottom ? null : scrollTop,
+              });
             });
           }}
         />
@@ -1583,7 +1601,6 @@ export function SessionView({
                     if (restoringScrollRef.current) return;
                     setAtBottom(b);
                     if (b) setHasNewActivity(false);
-                    if (b) persistScroll({ stickToBottom: true, anchorItemId: null, scrollTop: null });
                   }}
                   rangeChanged={(range) => {
                     if (restoringScrollRef.current) return;
@@ -1592,12 +1609,6 @@ export function SessionView({
                     if (!item) return;
                     const anchorId = item.id ?? null;
                     latestAnchorIdRef.current = anchorId;
-                    const scrollTop = scrollerRef.current ? scrollerRef.current.scrollTop : null;
-                    persistScroll({
-                      stickToBottom: false,
-                      anchorItemId: anchorId,
-                      scrollTop,
-                    });
                   }}
                   components={workbenchComponents}
                   itemContent={workbenchItemContent}
@@ -1631,7 +1642,6 @@ export function SessionView({
                   if (restoringScrollRef.current) return;
                   setAtBottom(b);
                   if (b) setHasNewActivity(false);
-                  if (b) persistScroll({ stickToBottom: true, anchorItemId: null, scrollTop: null });
                 }}
                 rangeChanged={(range) => {
                   if (restoringScrollRef.current) return;
@@ -1640,12 +1650,6 @@ export function SessionView({
                   if (!item) return;
                   const anchorId = item.id ?? null;
                   latestAnchorIdRef.current = anchorId;
-                  const scrollTop = scrollerRef.current ? scrollerRef.current.scrollTop : null;
-                  persistScroll({
-                    stickToBottom: false,
-                    anchorItemId: anchorId,
-                    scrollTop,
-                  });
                 }}
                 components={threadComponents}
                 itemContent={threadItemContent}
