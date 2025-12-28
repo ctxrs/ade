@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -10,7 +10,7 @@ use tokio::sync::{mpsc, oneshot};
 
 use context_core::models::SessionEventType;
 
-use crate::acp::{AcpAgentConfig, AcpClientConfig, AcpMcpServer, AcpSessionPool};
+use crate::acp::{AcpAgentConfig, AcpClientConfig, AcpMcpServer, AcpPromptRequest, AcpSessionPool};
 use crate::adapters::{
     ProviderAdapter, ProviderCapabilities, ProviderHealth, ProviderStatus, RunHandle, TurnInput,
 };
@@ -257,18 +257,16 @@ impl ProviderAdapter for Tier1AcpAdapter {
             }
 
             prompt.push(json!({"type":"text","text": input.content}));
-            if let Err(e) = pool
-                .prompt(
-                    session_key,
-                    client,
-                    prompt,
-                    workdir,
-                    env,
-                    event_sink.clone(),
-                    cancel_rx,
-                )
-                .await
-            {
+            let request = AcpPromptRequest {
+                session_key,
+                client,
+                prompt,
+                workdir,
+                env,
+                event_sink: event_sink.clone(),
+                cancel_rx,
+            };
+            if let Err(e) = pool.prompt(request).await {
                 let _ = event_sink
                     .send(NormalizedEvent {
                         event_type: SessionEventType::Error,
@@ -374,9 +372,11 @@ fn build_acp_client_config(env: &HashMap<String, String>) -> AcpClientConfig {
     }
 }
 
-async fn embed_at_file_refs(workdir: &PathBuf, input: &str) -> Result<Vec<serde_json::Value>> {
+async fn embed_at_file_refs(workdir: &Path, input: &str) -> Result<Vec<serde_json::Value>> {
     let mut out = Vec::new();
-    let root = workdir.canonicalize().unwrap_or_else(|_| workdir.clone());
+    let root = workdir
+        .canonicalize()
+        .unwrap_or_else(|_| workdir.to_path_buf());
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     for tok in input.split_whitespace() {

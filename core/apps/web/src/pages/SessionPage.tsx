@@ -956,7 +956,7 @@ export function SessionView({
   const insertIntoComposer = (text: string) => {
     const el = textareaRef.current;
     if (!el) {
-      setInput((v) => v + text);
+      setInput(`${input}${text}`);
       return;
     }
     const start = el.selectionStart ?? input.length;
@@ -1595,7 +1595,8 @@ export function SessionView({
                     setAuthError(null);
                     try {
                       await authenticateSession(id, authMethodId);
-                      await refreshAll();
+                      await supervisor.refreshQueue(id);
+                      supervisor.refreshSession(id, { watchDiff: true });
                     } catch (e: any) {
                       setAuthError(e?.message ?? String(e));
                     } finally {
@@ -3197,7 +3198,15 @@ function Markdown({
         pre({ children }) {
           return <>{children}</>;
         },
-        code({ inline, className, children }) {
+        code({
+          inline,
+          className,
+          children,
+        }: {
+          inline?: boolean;
+          className?: string;
+          children?: React.ReactNode;
+        }) {
           const match = /language-([A-Za-z0-9_-]+)/.exec(className || "");
           const rawLang = match?.[1];
           const lang = rawLang && rawLang !== "code" ? rawLang : undefined;
@@ -3342,7 +3351,7 @@ function buildWorkbenchThreadViewModelFromTurns(
         tool_kind: toolKind,
         title,
         status: String(tool.status ?? "pending"),
-        locations: [],
+        locations: [] as Array<{ path?: string; range?: any }>,
         input: tool.input_json ?? null,
         output_text: String(tool.output_text ?? ""),
         raw: tool,
@@ -3520,7 +3529,7 @@ function buildToolItemsFromEventsForTurn(
         tool_kind: "tool",
         title: "Tool",
         status: "pending",
-        locations: [],
+        locations: [] as Array<{ path?: string; range?: any }>,
         input: null,
         output_text: "",
         raw: null,

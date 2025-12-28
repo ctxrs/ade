@@ -1,10 +1,33 @@
 {
   "$schema": "https://turbo.build/schema.json",
-  "pipeline": {
-    "test": {
-      "dependsOn": [],
+  "tasks": {
+    "typecheck": {
+      "dependsOn": [
+        "^typecheck"
+      ],
+      "outputs": [
+        ".turbo/tsbuildinfo/**"
+      ]
+    },
+    "test:quiet": {
+      "dependsOn": [
+        "typecheck",
+        "^typecheck"
+      ],
       "outputs": []
+    },
+    "rust:fmt": {
+      "outputs": []
+    },
+    "rust:clippy": {
+      "outputs": [
+        ".turbo/cargo-target/**"
+      ]
+    },
+    "rust:test": {
+      "outputs": [
+        ".turbo/cargo-target/**"
+      ]
     }
   }
 }
-

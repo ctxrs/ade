@@ -109,15 +109,9 @@ async fn attachments_demo_react_smoketest() {
     attachments::sync_workspace_attachments(&state, &ws, true)
         .await
         .unwrap();
-    let mounts = attachments::ensure_track_attachment_mounts(
-        &state,
-        &ws,
-        &track,
-        &worktree,
-        true,
-    )
-    .await
-    .unwrap();
+    let mounts = attachments::ensure_track_attachment_mounts(&state, &ws, &track, &worktree, true)
+        .await
+        .unwrap();
 
     assert!(!mounts.is_empty());
     assert!(ws_root.join(".context/.refs/react").exists());

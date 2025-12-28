@@ -17,6 +17,12 @@ impl EditPlanId {
     }
 }
 
+impl Default for EditPlanId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EditPlanSummary {
     pub id: EditPlanId,
@@ -103,9 +109,7 @@ fn hunk_lines_match(a: &[String], b: &[String]) -> bool {
 }
 
 fn paths_match(a_old: &str, a_new: &str, b_old: &str, b_new: &str) -> bool {
-    (a_old == b_old && a_new == b_new)
-        || (a_new == b_new && !a_new.is_empty())
-        || (a_old == b_old && !a_old.is_empty())
+    (!a_new.is_empty() || a_old == b_old) && a_new == b_new
 }
 
 pub fn render_unified_diff(files: &[PlanFile]) -> String {
@@ -349,12 +353,13 @@ enum LspFileOp {
     Rename { old_path: String, new_path: String },
 }
 
-fn collect_workspace_edit(
-    root: &Path,
-    edit: &WorkspaceEdit,
-) -> Result<(HashMap<String, Vec<TextEdit>>, Vec<LspFileOp>)> {
-    let mut out: HashMap<String, Vec<TextEdit>> = HashMap::new();
-    let mut ops: Vec<LspFileOp> = Vec::new();
+type WorkspaceEditFileMap = HashMap<String, Vec<TextEdit>>;
+type WorkspaceEditOps = Vec<LspFileOp>;
+type WorkspaceEditCollection = (WorkspaceEditFileMap, WorkspaceEditOps);
+
+fn collect_workspace_edit(root: &Path, edit: &WorkspaceEdit) -> Result<WorkspaceEditCollection> {
+    let mut out: WorkspaceEditFileMap = HashMap::new();
+    let mut ops: WorkspaceEditOps = Vec::new();
 
     if let Some(changes) = &edit.changes {
         for (uri, edits) in changes {

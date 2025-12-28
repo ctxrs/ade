@@ -59,7 +59,7 @@ describe("useComposerAutocomplete integration", () => {
     const onSend = vi.fn();
     render(<TestHarness initial={"do /rev"} onSend={onSend} />);
 
-    const textarea = await screen.findByDisplayValue("do /rev");
+    const textarea = (await screen.findByDisplayValue("do /rev")) as HTMLTextAreaElement;
     textarea.setSelectionRange(textarea.value.length, textarea.value.length);
     await act(async () => {
       fireEvent.click(textarea);

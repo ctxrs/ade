@@ -440,7 +440,6 @@ function DecoratedDiffEditor({ file }: { file: DiffFile }) {
           alwaysConsumeMouseWheel: false,
         },
         scrollBeyondLastLine: false,
-        renderOverviewRuler: false,
         overviewRulerLanes: 0,
         hideCursorInOverviewRuler: true,
         glyphMargin: false,

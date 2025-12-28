@@ -29,6 +29,7 @@ use context_core::ids::*;
 use context_core::models::*;
 use context_fs::git::{assert_git_repo, list_tracked_files, list_untracked_files, rev_parse_head};
 use context_fs::worktrees::{create_worktree, diff_worktree_summary, managed_worktree_path};
+use context_store::store::MobileDeviceUpsert;
 
 use crate::attachments;
 use crate::buffers::{
@@ -221,7 +222,10 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
             delete(delete_workspace).get(get_workspace),
         )
         .route("/api/workspaces/:id/catchup", get(get_workspace_catchup))
-        .route("/api/workspaces/:id/stream", get(workspace_catchup_stream_ws))
+        .route(
+            "/api/workspaces/:id/stream",
+            get(workspace_catchup_stream_ws),
+        )
         .route(
             "/api/workspaces/:id/completions/files",
             get(workspace_file_completions),
@@ -933,9 +937,7 @@ fn sha256_hex(text: &str) -> String {
 }
 
 fn plan_paths_match(a_old: &str, a_new: &str, b_old: &str, b_new: &str) -> bool {
-    (a_old == b_old && a_new == b_new)
-        || (a_new == b_new && !a_new.is_empty())
-        || (a_old == b_old && !a_old.is_empty())
+    (!a_new.is_empty() || a_old == b_old) && a_new == b_new
 }
 
 async fn lsp_diagnostics(
@@ -2954,7 +2956,7 @@ async fn apply_edit_plan_patch(
             } else if removed {
                 state.delete_edit_plan_file(pid);
             }
-            return Ok(Json(summary));
+            Ok(Json(summary))
         }
         "reject" => {
             let (summary, to_persist, removed) = {
@@ -2981,16 +2983,14 @@ async fn apply_edit_plan_patch(
             } else if removed {
                 state.delete_edit_plan_file(pid);
             }
-            return Ok(Json(summary));
+            Ok(Json(summary))
         }
-        _ => {
-            return Err((
-                StatusCode::BAD_REQUEST,
-                Json(ApiErrorResp {
-                    error: "action must be accept or reject".to_string(),
-                }),
-            ));
-        }
+        _ => Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "action must be accept or reject".to_string(),
+            }),
+        )),
     }
 }
 
@@ -3508,12 +3508,14 @@ async fn register_mobile_device(
         .upsert_mobile_device(
             MobileDeviceId(device_uuid),
             mobile_auth.profile_id,
-            sanitize(req.device_label),
-            sanitize(req.platform),
-            sanitize(req.push_token),
-            sanitize(req.push_provider),
-            sanitize(req.public_key),
-            sanitize(req.app_version),
+            MobileDeviceUpsert {
+                device_label: sanitize(req.device_label),
+                platform: sanitize(req.platform),
+                push_token: sanitize(req.push_token),
+                push_provider: sanitize(req.push_provider),
+                public_key: sanitize(req.public_key),
+                app_version: sanitize(req.app_version),
+            },
         )
         .await
         .map_err(|e| {
@@ -4884,14 +4886,18 @@ async fn create_task(
         git_branch: Some(branch_name),
         created_at: chrono::Utc::now(),
     };
-    state.store.insert_worktree(worktree.clone()).await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiErrorResp {
-                error: logs::redact_sensitive(&e.to_string()),
-            }),
-        )
-    })?;
+    state
+        .store
+        .insert_worktree(worktree.clone())
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
 
     let label = req
         .default_track_label
@@ -5128,8 +5134,7 @@ async fn create_track(
         )
     })? {
         if let Err(e) =
-            attachments::ensure_track_attachment_mounts(&state, &ws, &track, &worktree, false)
-                .await
+            attachments::ensure_track_attachment_mounts(&state, &ws, &track, &worktree, false).await
         {
             tracing::warn!(task_id = %track.task_id.0, "attachment mounts failed: {e:?}");
         }
@@ -5462,9 +5467,10 @@ fn parse_boolish_flag(raw: Option<&str>, label: &str) -> Result<bool, String> {
             let normalized = value.trim();
             if normalized.eq_ignore_ascii_case("true") || normalized == "1" {
                 Ok(true)
-            } else if normalized.eq_ignore_ascii_case("false") || normalized == "0" {
-                Ok(false)
-            } else if normalized.is_empty() {
+            } else if normalized.is_empty()
+                || normalized.eq_ignore_ascii_case("false")
+                || normalized == "0"
+            {
                 Ok(false)
             } else {
                 Err(format!("{label} must be true/false or 1/0"))
@@ -5489,8 +5495,9 @@ async fn get_workspace_catchup(
     })?);
 
     let limit = query.limit.unwrap_or(50);
-    let include_archived = parse_boolish_flag(query.include_archived.as_deref(), "include_archived")
-        .map_err(|msg| (StatusCode::BAD_REQUEST, Json(ApiErrorResp { error: msg })))?;
+    let include_archived =
+        parse_boolish_flag(query.include_archived.as_deref(), "include_archived")
+            .map_err(|msg| (StatusCode::BAD_REQUEST, Json(ApiErrorResp { error: msg })))?;
     let archived_only = parse_boolish_flag(query.archived_only.as_deref(), "archived_only")
         .map_err(|msg| (StatusCode::BAD_REQUEST, Json(ApiErrorResp { error: msg })))?;
     let include_archived = include_archived || archived_only;
@@ -6441,7 +6448,8 @@ fn diff_summary_cache_ttl(too_large: bool) -> Duration {
 }
 
 fn diff_summary_is_too_large(file_count: i64, additions: i64, deletions: i64) -> bool {
-    file_count > DIFF_SUMMARY_MAX_FILES || additions.saturating_add(deletions) > DIFF_SUMMARY_MAX_LINES
+    file_count > DIFF_SUMMARY_MAX_FILES
+        || additions.saturating_add(deletions) > DIFF_SUMMARY_MAX_LINES
 }
 
 fn build_diff_summary(
@@ -6549,10 +6557,9 @@ async fn track_diff_summary(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    let (file_count, line_additions, line_deletions) =
-        diff_worktree_summary(&worktree.root_path)
-            .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let (file_count, line_additions, line_deletions) = diff_worktree_summary(&worktree.root_path)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let (summary, too_large) = build_diff_summary(file_count, line_additions, line_deletions);
     let entry = write_diff_summary_cache(&state, track_id, summary.clone(), too_large).await;
 
@@ -6776,7 +6783,8 @@ async fn track_diff_apply(
         );
     }
 
-    if let Ok((file_count, additions, deletions)) = diff_worktree_summary(&worktree.root_path).await {
+    if let Ok((file_count, additions, deletions)) = diff_worktree_summary(&worktree.root_path).await
+    {
         let (summary, too_large) = build_diff_summary(file_count, additions, deletions);
         let entry = write_diff_summary_cache(&state, track_id, summary.clone(), too_large).await;
         if let Ok(Some(mut catchup_summary)) = state

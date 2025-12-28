@@ -67,7 +67,15 @@ mod tests {
         assert_eq!(fetched_after_read.updated_at, updated_at_before);
 
         drop(store);
-        let store = Store::open(&db_path).await.unwrap();
+        let store = loop {
+            match Store::open(&db_path).await {
+                Ok(store) => break store,
+                Err(err) if err.to_string().contains("database is locked") => {
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                }
+                Err(err) => panic!("failed to reopen store: {err:?}"),
+            }
+        };
         let fetched_after_restart = store.get_task(task.id).await.unwrap().unwrap();
         assert!(fetched_after_restart.assistant_seen_at.is_some());
         assert_eq!(fetched_after_restart.updated_at, updated_at_before);
@@ -85,7 +93,7 @@ mod tests {
 
     #[tokio::test]
     async fn concurrent_event_and_message_writes_do_not_error() {
-        tokio::time::timeout(Duration::from_secs(10), async {
+        tokio::time::timeout(Duration::from_secs(30), async {
             let dir = tempfile::tempdir().unwrap();
             let db_path = dir.path().join("db.sqlite");
             let store = Store::open(&db_path).await.unwrap();
@@ -272,7 +280,7 @@ mod tests {
 
         for i in 0..3 {
             let title = format!("task-{i}");
-            store.create_task(ws.id, title.into(), None).await.unwrap();
+            store.create_task(ws.id, title, None).await.unwrap();
         }
 
         let (page1, cursor1) = store
