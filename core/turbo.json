@@ -1,5 +1,12 @@
 {
   "$schema": "https://turbo.build/schema.json",
+  "globalDependencies": [
+    "Cargo.lock",
+    "rust-toolchain.toml",
+    "rustfmt.toml",
+    "clippy.toml",
+    ".cargo/config.toml"
+  ],
   "tasks": {
     "typecheck": {
       "dependsOn": [
@@ -17,16 +24,13 @@
       "outputs": []
     },
     "rust:fmt": {
-      "outputs": [],
-      "cache": false
+      "outputs": []
     },
     "rust:clippy": {
-      "outputs": [],
-      "cache": false
+      "outputs": []
     },
     "rust:test": {
-      "outputs": [],
-      "cache": false
+      "outputs": []
     }
   }
 }
