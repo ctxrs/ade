@@ -108,6 +108,7 @@ type ThreadItem =
 type WorkbenchTurnHeader = {
   id: string;
   content: string;
+  plain_text: string;
   attachments: MessageAttachment[];
   created_at: string;
 };
@@ -138,6 +139,21 @@ function appendSegment(base: string, addition: string): string {
   return `${base}${needsSpace ? " " : ""}${trimmed}`;
 }
 
+function markdownToPlainText(input: string): string {
+  if (!input) return "";
+  let text = input.replace(/\r/g, "");
+  text = text.replace(/```[a-zA-Z0-9_-]*\n/g, "");
+  text = text.replace(/```/g, "");
+  text = text.replace(/`([^`]*)`/g, "$1");
+  text = text.replace(/!\[([^\]]*)\]\([^)]+\)/g, "$1");
+  text = text.replace(/\[([^\]]+)\]\([^)]+\)/g, "$1");
+  text = text
+    .split("\n")
+    .map((line) => line.replace(/^\s*(?:[#>*+-]|\d+\.)\s+/, ""))
+    .join("\n");
+  text = text.replace(/\n{3,}/g, "\n\n");
+  return text.trim();
+}
 type WorkbenchThreadView = {
   groups: Array<{
     key: string;
@@ -1212,7 +1228,7 @@ export function SessionView({
       if (!item) return <div style={{ height: 1 }} />;
       if ((item as any).kind === "turn_header") {
         const header = (item as Extract<WorkbenchListItem, { kind: "turn_header" }>).header;
-        const isLong = header.content.split("\n").length > 4 || header.content.length > 280;
+        const isLong = header.plain_text.split("\n").length > 4 || header.plain_text.length > 280;
         const expanded = expandedTurnHeaders[header.id] ?? !isLong;
         return (
           <WorkbenchTurnHeaderView
@@ -1651,7 +1667,6 @@ export function SessionView({
                   ref={virtuosoRef}
                   followOutput={restoreInProgress ? false : atBottom ? "auto" : false}
                   defaultItemHeight={56}
-                  initialItemCount={wbListItems.length}
                   increaseViewportBy={{ top: 1000, bottom: 1000 }}
                   computeItemKey={(index, item) => item?.id ?? `i:${index}`}
                   restoreStateFrom={scrollState?.virtuosoState ?? undefined}
@@ -1968,7 +1983,12 @@ function WorkbenchTurnHeaderView({
     >
       <div className="wb-turn-header-bubble">
         <div className="wb-turn-header-content">
-          <Markdown content={header.content} />
+          {header.plain_text.split("\n").map((line, idx, list) => (
+            <span key={`${header.id}-${idx}`}>
+              {line}
+              {idx < list.length - 1 ? <br /> : null}
+            </span>
+          ))}
         </div>
         {header.attachments.length > 0 && (
           <div className="wb-turn-header-attachments" aria-label="Attachments">
@@ -3226,26 +3246,12 @@ function Markdown({
   );
 }
 
-function hashFNV1a32(current: number, text: string): number {
-  let h = current;
-  for (let i = 0; i < text.length; i++) {
-    h ^= text.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  return h;
-}
-
 export function deriveMessagesKey(messages: Message[]): string {
-  let h = 2166136261;
-  for (const m of messages) {
-    h = hashFNV1a32(h, idToString(m.id));
-    h = hashFNV1a32(h, "\u0000");
-    h = hashFNV1a32(h, m.created_at);
-    h = hashFNV1a32(h, "\u0000");
-    h = hashFNV1a32(h, m.content);
-    h = hashFNV1a32(h, "\u0000");
-  }
-  return `${messages.length}:${(h >>> 0).toString(16)}`;
+  if (messages.length === 0) return "0";
+  const last = messages[messages.length - 1];
+  const lastId = idToString(last?.id);
+  const lastUpdated = last?.updated_at ?? last?.created_at ?? "";
+  return `${messages.length}:${lastId}:${lastUpdated}`;
 }
 
 function deriveTurnsKey(turns: SessionTurn[]): string {
@@ -3313,6 +3319,7 @@ function buildWorkbenchThreadViewModelFromTurns(
       ? {
         id: userMessageId || turnId,
         content: userMessage.content ?? "",
+        plain_text: markdownToPlainText(userMessage.content ?? ""),
         attachments: Array.isArray((userMessage as any).attachments)
           ? ((userMessage as any).attachments as MessageAttachment[])
           : [],
@@ -3344,29 +3351,8 @@ function buildWorkbenchThreadViewModelFromTurns(
       } satisfies Extract<ThreadItem, { kind: "tool" }>;
     });
 
-    const eventTools = buildToolItemsFromEventsForTurn(events, turnId);
-    if (eventTools.length > 0) {
-      const mergedById = new Map<string, Extract<ThreadItem, { kind: "tool" }>>();
-      for (const tool of tools) mergedById.set(tool.tool_call_id, tool);
-      for (const tool of eventTools) {
-        const existing = mergedById.get(tool.tool_call_id);
-        if (!existing) {
-          mergedById.set(tool.tool_call_id, tool);
-          continue;
-        }
-        existing.updated_at = tool.updated_at ?? existing.updated_at;
-        existing.status = tool.status || existing.status;
-        existing.tool_kind = tool.tool_kind || existing.tool_kind;
-        existing.title = tool.title || existing.title;
-        existing.input ??= tool.input;
-        if (tool.output_text?.trim()) existing.output_text = tool.output_text;
-        existing.locations = tool.locations?.length ? tool.locations : existing.locations;
-        existing.raw = tool.raw ?? existing.raw;
-        existing.updates_seen = Math.max(existing.updates_seen, tool.updates_seen);
-      }
-      tools.length = 0;
-      tools.push(...Array.from(mergedById.values()).sort((a, b) => String(a.created_at).localeCompare(String(b.created_at))));
-    }
+    // Tool summaries are supplied by the session head (toolsByTurnId).
+    // Avoid rebuilding tool rows from events here to keep workbench switching fast.
 
     const thought = String(turn.thought_partial ?? "");
     const hasThought = thought.trim().length > 0;
@@ -3707,6 +3693,7 @@ function buildWorkbenchThreadViewModelFromEvents(events: SessionEvent[], message
       const header: WorkbenchTurnHeader = {
         id: mid,
         content: String(u.payload_json?.content ?? ""),
+        plain_text: markdownToPlainText(String(u.payload_json?.content ?? "")),
         attachments: Array.isArray(u.payload_json?.attachments)
           ? (u.payload_json.attachments as MessageAttachment[])
           : [],
