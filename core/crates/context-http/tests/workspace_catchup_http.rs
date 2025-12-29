@@ -331,6 +331,161 @@ async fn workspace_stream_replays_from_after_seq() {
 }
 
 #[tokio::test]
+async fn workspace_stream_replays_tool_events() {
+    let repo = setup_git_repo().await;
+    let data_dir = tempfile::tempdir().unwrap();
+    let db_dir = data_dir.path().join("db");
+    tokio::fs::create_dir_all(&db_dir).await.unwrap();
+    let db_path = db_dir.join("db.sqlite");
+    let store = Store::open(&db_path).await.unwrap();
+
+    let mut providers: HashMap<String, Arc<dyn context_providers::adapters::ProviderAdapter>> =
+        HashMap::new();
+    providers.insert("fake".into(), Arc::new(FakeProviderAdapter::new()));
+
+    let state = Arc::new(AppState::new(
+        data_dir.path().to_path_buf(),
+        store.clone(),
+        providers,
+        "http://127.0.0.1:0".to_string(),
+        None,
+    ));
+    state.start_workspace_catchup_listener();
+    let app = api::router(state.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let base = format!("http://{}", addr);
+    let client = reqwest::Client::new();
+
+    let ws: context_core::models::Workspace = client
+        .post(format!("{base}/api/workspaces"))
+        .json(&json!({"root_path": repo.path(), "name": "ws"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let task: context_core::models::Task = client
+        .post(format!("{base}/api/workspaces/{}/tasks", ws.id.0))
+        .json(&json!({"title":"tool-replay"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let tracks = store.list_tracks_for_task(task.id).await.unwrap();
+    let track = &tracks[0];
+    let session: context_core::models::Session = client
+        .post(format!("{base}/api/tracks/{}/sessions", track.id.0))
+        .json(&json!({"provider_id":"fake","model_id":"fake-model"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let ev1 = store
+        .append_session_event(
+            session.id,
+            None,
+            None,
+            SessionEventType::Notice,
+            json!({"msg":"seed"}),
+        )
+        .await
+        .unwrap();
+    let tool_call_id = "tool-1";
+    let ev2 = store
+        .append_session_event(
+            session.id,
+            None,
+            None,
+            SessionEventType::ToolCall,
+            json!({"tool_call_id": tool_call_id, "name": "fake_tool", "args": {}}),
+        )
+        .await
+        .unwrap();
+    let ev3 = store
+        .append_session_event(
+            session.id,
+            None,
+            None,
+            SessionEventType::ToolResult,
+            json!({"tool_call_id": tool_call_id, "result": "ok"}),
+        )
+        .await
+        .unwrap();
+
+    let ws_url = format!("ws://{}/api/workspaces/{}/stream", addr, ws.id.0);
+    let (mut socket, _) = connect_async(&ws_url).await.unwrap();
+    let _ = tokio::time::timeout(Duration::from_secs(2), socket.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+
+    let subscribe = json!({
+        "type": "subscribe",
+        "sessions": [{
+            "session_id": session.id.0,
+            "after_seq": ev1.seq,
+        }],
+    })
+    .to_string();
+    socket
+        .send(WsMessage::Text(subscribe.into()))
+        .await
+        .unwrap();
+
+    let mut saw_call = false;
+    let mut saw_result = false;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(4);
+    while tokio::time::Instant::now() < deadline {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            break;
+        }
+        let wait = remaining.min(Duration::from_millis(250));
+        let next = tokio::time::timeout(wait, socket.next()).await;
+        if let Ok(Some(Ok(WsMessage::Text(txt)))) = next {
+            if let Ok(context_core::models::WorkspaceCatchupEvent::SessionHeadDelta {
+                delta, ..
+            }) = serde_json::from_str::<context_core::models::WorkspaceCatchupEvent>(&txt)
+            {
+                if delta.session_id != session.id {
+                    continue;
+                }
+                if let Some(event) = delta.event {
+                    match event.event_type {
+                        SessionEventType::ToolCall => saw_call = true,
+                        SessionEventType::ToolResult => saw_result = true,
+                        _ => {}
+                    }
+                }
+            }
+        }
+        if saw_call && saw_result {
+            break;
+        }
+    }
+
+    assert!(saw_call, "expected tool_call event replay");
+    assert!(saw_result, "expected tool_result event replay");
+    assert!(ev1.seq < ev2.seq && ev2.seq < ev3.seq);
+
+    server.abort();
+    drop(state);
+}
+
+#[tokio::test]
 async fn workspace_stream_emits_gap_on_large_replay() {
     let repo = setup_git_repo().await;
     let data_dir = tempfile::tempdir().unwrap();
