@@ -363,11 +363,25 @@ impl AppState {
                     None
                 };
 
+                let turn = if matches!(event.event_type, SessionEventType::UserMessage) {
+                    match event.turn_id {
+                        Some(turn_id) => state
+                            .store
+                            .get_session_turn(event.session_id, turn_id)
+                            .await
+                            .ok()
+                            .flatten(),
+                        None => None,
+                    }
+                } else {
+                    None
+                };
+
                 let delta = SessionHeadDelta {
                     session_id: event.session_id,
                     last_event_seq: event.seq,
                     event: Some(event.clone()),
-                    turn: None,
+                    turn,
                     message,
                 };
                 state

@@ -5234,7 +5234,6 @@ async fn create_session_for_track(
             .await
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
         let start_seq = event.seq;
-        state.publish_event(event).await;
 
         let turn = SessionTurn {
             turn_id,
@@ -5256,6 +5255,7 @@ async fn create_session_for_track(
             tool_failed: 0,
         };
         let _ = state.store.insert_session_turn(turn).await;
+        state.publish_event(event).await;
 
         let tx = state.ensure_scheduler(session.clone()).await;
         let _ = tx.send(SchedulerCommand::Enqueue(saved)).await;
@@ -5732,11 +5732,25 @@ async fn replay_session_events(
             None
         };
 
+        let turn = if matches!(event.event_type, SessionEventType::UserMessage) {
+            match event.turn_id {
+                Some(turn_id) => state
+                    .store
+                    .get_session_turn(event.session_id, turn_id)
+                    .await
+                    .ok()
+                    .flatten(),
+                None => None,
+            }
+        } else {
+            None
+        };
+
         let delta = SessionHeadDelta {
             session_id: event.session_id,
             last_event_seq: event.seq,
             event: Some(event),
-            turn: None,
+            turn,
             message,
         };
         let next_seq = delta.last_event_seq;
@@ -6169,7 +6183,6 @@ async fn post_message(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let start_seq = event.seq;
-    state.publish_event(event).await;
 
     let turn_status = if matches!(saved.delivery, MessageDelivery::Queued) {
         SessionTurnStatus::Queued
@@ -6196,6 +6209,7 @@ async fn post_message(
         tool_failed: 0,
     };
     let _ = state.store.insert_session_turn(turn).await;
+    state.publish_event(event).await;
 
     if matches!(saved.delivery, MessageDelivery::Queued) {
         let queued = state
