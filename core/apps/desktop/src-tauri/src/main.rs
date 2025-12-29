@@ -481,7 +481,7 @@ fn desktop_connect_local(
     let token = uuid::Uuid::new_v4().to_string();
     let data_dir = daemon_data_dir(&app).map_err(to_err)?;
     let (url, child) = spawn_daemon(&app, &token, &data_dir).map_err(to_err)?;
-    state.set_local(url.clone(), token.clone(), data_dir, child);
+    state.set_local(url.clone(), token.clone(), child);
     Ok(state.info())
 }
 
@@ -532,17 +532,17 @@ async fn desktop_connect_ssh(
             start_ssh_tunnel(&host, user.as_deref(), local_port, remote_port)?;
         let base_url = format!("http://127.0.0.1:{local_port}");
 
-        probe_daemon_health_with_retry(
+        let health = probe_daemon_health_with_retry(
             &base_url,
             token_for_connect.as_deref(),
             local_port,
             &mut tunnel,
             &tunnel_stderr,
-        )
-        .map_err(|e| {
+        );
+        if let Err(e) = health {
             let _ = try_kill_child(tunnel);
-            e
-        })?;
+            return Err(e);
+        }
         Ok((base_url, tunnel))
     })
     .await
@@ -560,7 +560,7 @@ fn ensure_local_connection(app: &tauri::AppHandle, state: &ConnectionManager) ->
     let token = uuid::Uuid::new_v4().to_string();
     let data_dir = daemon_data_dir(app)?;
     let (url, child) = spawn_daemon(app, &token, &data_dir)?;
-    state.set_local(url, token, data_dir, child);
+    state.set_local(url, token, child);
     Ok(())
 }
 
@@ -1285,7 +1285,6 @@ enum ActiveConnection {
 struct LocalConnection {
     base_url: String,
     token: String,
-    data_dir: PathBuf,
     child: Child,
 }
 
@@ -1338,9 +1337,9 @@ impl ConnectionManager {
         }
     }
 
-    fn set_local(&self, base_url: String, token: String, data_dir: PathBuf, child: Child) {
+    fn set_local(&self, base_url: String, token: String, child: Child) {
         let mut guard = self.0.lock().expect("connection manager lock");
-        guard.active = Some(ActiveConnection::Local(LocalConnection { base_url, token, data_dir, child }));
+        guard.active = Some(ActiveConnection::Local(LocalConnection { base_url, token, child }));
     }
 
     fn set_ssh(&self, base_url: String, token: Option<String>, tunnel: Child) {
