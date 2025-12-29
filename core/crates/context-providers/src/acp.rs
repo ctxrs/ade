@@ -1,13 +1,16 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicBool, AtomicU64, Ordering},
+    Arc, Mutex as StdMutex,
+};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
 use serde_json::json;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
-use tokio::sync::{mpsc, oneshot, Mutex};
+use tokio::sync::{mpsc, oneshot, Mutex, RwLock};
 use tokio::time::timeout;
 
 use context_core::models::SessionEventType;
@@ -51,8 +54,9 @@ struct StreamState {
 pub struct AcpSessionPool {
     agent: AcpAgentConfig,
     ask_user_question: Option<Arc<AskUserQuestionBroker>>,
-    process: Mutex<Option<AcpProcess>>,
+    process: Mutex<Option<Arc<AcpProcess>>>,
     sessions: Mutex<HashMap<String, AcpContextSession>>,
+    active_prompts: Arc<StdMutex<HashSet<String>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -63,6 +67,28 @@ struct AcpContextSession {
 #[derive(Debug, Clone)]
 struct CreatedAcpSession {
     session_id: String,
+}
+
+struct ActivePromptGuard {
+    session_key: String,
+    active_prompts: Arc<StdMutex<HashSet<String>>>,
+}
+
+impl ActivePromptGuard {
+    fn new(active_prompts: Arc<StdMutex<HashSet<String>>>, session_key: String) -> Self {
+        Self {
+            session_key,
+            active_prompts,
+        }
+    }
+}
+
+impl Drop for ActivePromptGuard {
+    fn drop(&mut self) {
+        if let Ok(mut active) = self.active_prompts.lock() {
+            active.remove(&self.session_key);
+        }
+    }
 }
 
 pub struct AcpPromptRequest {
@@ -82,6 +108,7 @@ impl AcpSessionPool {
             ask_user_question: None,
             process: Mutex::new(None),
             sessions: Mutex::new(HashMap::new()),
+            active_prompts: Arc::new(StdMutex::new(HashSet::new())),
         }
     }
 
@@ -94,6 +121,7 @@ impl AcpSessionPool {
             ask_user_question: Some(ask_user_question),
             process: Mutex::new(None),
             sessions: Mutex::new(HashMap::new()),
+            active_prompts: Arc::new(StdMutex::new(HashSet::new())),
         }
     }
 
@@ -143,14 +171,44 @@ impl AcpSessionPool {
         self.ensure_process(&client, workdir.clone(), env.clone(), event_sink.clone())
             .await?;
 
-        let mut proc_guard = self.process.lock().await;
-        let process = proc_guard.as_mut().context("no active ACP process")?;
+        let process = {
+            let proc_guard = self.process.lock().await;
+            proc_guard
+                .as_ref()
+                .cloned()
+                .context("no active ACP process")?
+        };
 
-        let acp_session_id = self
-            .ensure_context_session(&session_key, process, &client, &workdir, &env, &event_sink)
-            .await?;
+        let active_guard = {
+            let mut active = self
+                .active_prompts
+                .lock()
+                .expect("active_prompts lock poisoned");
+            if active.contains(&session_key) {
+                None
+            } else {
+                active.insert(session_key.clone());
+                Some(ActivePromptGuard::new(
+                    Arc::clone(&self.active_prompts),
+                    session_key.clone(),
+                ))
+            }
+        };
+        if active_guard.is_none() {
+            anyhow::bail!("prompt already running for session {session_key}");
+        }
 
-        match process
+        let acp_session_id = match self
+            .ensure_context_session(&session_key, &process, &client, &workdir, &env, &event_sink)
+            .await
+        {
+            Ok(id) => id,
+            Err(e) => {
+                return Err(e);
+            }
+        };
+
+        let result = process
             .prompt(
                 &session_key,
                 &acp_session_id,
@@ -158,14 +216,22 @@ impl AcpSessionPool {
                 event_sink.clone(),
                 cancel_rx,
             )
-            .await
-        {
+            .await;
+
+        match result {
             Ok(()) => Ok(()),
             Err(e) => {
                 // If the agent process crashed, drop it so the next turn can recreate it.
                 let is_alive = process.is_alive().await.unwrap_or(false);
                 if !is_alive {
-                    *proc_guard = None;
+                    let mut proc_guard = self.process.lock().await;
+                    let same = proc_guard
+                        .as_ref()
+                        .map(|p| Arc::ptr_eq(p, &process))
+                        .unwrap_or(false);
+                    if same {
+                        *proc_guard = None;
+                    }
                     drop(proc_guard);
                     self.sessions.lock().await.clear();
                 }
@@ -175,18 +241,27 @@ impl AcpSessionPool {
     }
 
     pub async fn has_session(&self, session_key: &str) -> bool {
-        let mut proc_guard = self.process.lock().await;
-        let Some(process) = proc_guard.as_mut() else {
+        let process = {
+            let proc_guard = self.process.lock().await;
+            proc_guard.as_ref().cloned()
+        };
+        let Some(process) = process else {
             return false;
         };
         let alive = process.is_alive().await.unwrap_or(false);
         if !alive {
-            *proc_guard = None;
+            let mut proc_guard = self.process.lock().await;
+            let same = proc_guard
+                .as_ref()
+                .map(|p| Arc::ptr_eq(p, &process))
+                .unwrap_or(false);
+            if same {
+                *proc_guard = None;
+            }
             drop(proc_guard);
             self.sessions.lock().await.clear();
             return false;
         }
-        drop(proc_guard);
         self.sessions.lock().await.contains_key(session_key)
     }
 
@@ -198,8 +273,13 @@ impl AcpSessionPool {
                 .context("no active ACP session for this Context session")?
         };
         let (tx, _rx) = mpsc::channel::<NormalizedEvent>(1);
-        let mut proc_guard = self.process.lock().await;
-        let process = proc_guard.as_mut().context("no active ACP process")?;
+        let process = {
+            let proc_guard = self.process.lock().await;
+            proc_guard
+                .as_ref()
+                .cloned()
+                .context("no active ACP process")?
+        };
         process.set_model(&acp_session_id, model_id, tx).await
     }
 
@@ -211,8 +291,13 @@ impl AcpSessionPool {
                 .context("no active ACP session for this Context session")?
         };
         let (tx, _rx) = mpsc::channel::<NormalizedEvent>(1);
-        let mut proc_guard = self.process.lock().await;
-        let process = proc_guard.as_mut().context("no active ACP process")?;
+        let process = {
+            let proc_guard = self.process.lock().await;
+            proc_guard
+                .as_ref()
+                .cloned()
+                .context("no active ACP process")?
+        };
         process.set_mode(&acp_session_id, mode_id, tx).await
     }
 
@@ -227,18 +312,24 @@ impl AcpSessionPool {
     ) -> Result<()> {
         self.ensure_process(&client, workdir.clone(), env.clone(), event_sink.clone())
             .await?;
-        let mut proc_guard = self.process.lock().await;
-        let process = proc_guard.as_mut().context("no active ACP process")?;
+        let process = {
+            let proc_guard = self.process.lock().await;
+            proc_guard
+                .as_ref()
+                .cloned()
+                .context("no active ACP process")?
+        };
         let method_id = if let Some(method_id) = method_id {
             method_id
         } else {
             process
                 .default_auth_method_id()
+                .await
                 .context("no auth method id provided and no authMethods advertised")?
         };
-        process.authenticate(method_id, event_sink.clone()).await?;
+        process.authenticate(method_id).await?;
         let _ = self
-            .ensure_context_session(&session_key, process, &client, &workdir, &env, &event_sink)
+            .ensure_context_session(&session_key, &process, &client, &workdir, &env, &event_sink)
             .await?;
         Ok(())
     }
@@ -271,7 +362,7 @@ impl AcpSessionPool {
     async fn ensure_context_session(
         &self,
         session_key: &str,
-        process: &mut AcpProcess,
+        process: &Arc<AcpProcess>,
         client: &AcpClientConfig,
         workdir: &Path,
         env: &HashMap<String, String>,
@@ -302,37 +393,74 @@ impl AcpSessionPool {
 
 struct AcpProcess {
     agent: AcpAgentConfig,
-    child: Child,
+    child: Mutex<Child>,
     write_tx: mpsc::UnboundedSender<String>,
-    stdout_reader: tokio::io::Lines<BufReader<tokio::process::ChildStdout>>,
-    stderr_reader: tokio::io::Lines<BufReader<tokio::process::ChildStderr>>,
-    next_id: u64,
-    pending: HashMap<u64, oneshot::Sender<serde_json::Value>>,
-    supports_load: bool,
-    auth_methods: Option<serde_json::Value>,
-    stderr_lines: Vec<String>,
-    stdout_non_json: Vec<String>,
+    next_id: AtomicU64,
+    pending: Mutex<HashMap<u64, oneshot::Sender<serde_json::Value>>>,
+    supports_load: AtomicBool,
+    auth_methods: Mutex<Option<serde_json::Value>>,
+    stderr_lines: Mutex<Vec<String>>,
+    stdout_non_json: Mutex<Vec<String>>,
     ask_user_question: Option<Arc<AskUserQuestionBroker>>,
+    router: SessionRouter,
 }
 
-struct DriveUntilResponseOptions<'a> {
-    event_sink: mpsc::Sender<NormalizedEvent>,
-    cancel_rx: Option<&'a mut oneshot::Receiver<()>>,
-    stream_state: Option<&'a mut StreamState>,
-    emit_raw_notifications: bool,
-    cancel_session_id: Option<&'a str>,
-    context_session_id: Option<&'a str>,
+#[derive(Default)]
+struct SessionRouter {
+    sessions: RwLock<HashMap<String, mpsc::UnboundedSender<AcpSessionNotification>>>,
 }
 
-impl<'a> DriveUntilResponseOptions<'a> {
-    fn new(event_sink: mpsc::Sender<NormalizedEvent>) -> Self {
-        Self {
-            event_sink,
-            cancel_rx: None,
-            stream_state: None,
-            emit_raw_notifications: false,
-            cancel_session_id: None,
-            context_session_id: None,
+enum AcpSessionNotification {
+    Update(serde_json::Value),
+    AskUserQuestion {
+        req_id: u64,
+        tool_call_id: String,
+        input: serde_json::Value,
+    },
+    Raw(serde_json::Value),
+    Shutdown {
+        message: String,
+    },
+}
+
+impl SessionRouter {
+    async fn register(
+        &self,
+        session_id: &str,
+    ) -> Result<mpsc::UnboundedReceiver<AcpSessionNotification>> {
+        let (tx, rx) = mpsc::unbounded_channel();
+        let mut sessions = self.sessions.write().await;
+        if sessions.contains_key(session_id) {
+            anyhow::bail!("session {session_id} already has an active prompt");
+        }
+        sessions.insert(session_id.to_string(), tx);
+        Ok(rx)
+    }
+
+    async fn unregister(&self, session_id: &str) {
+        let mut sessions = self.sessions.write().await;
+        sessions.remove(session_id);
+    }
+
+    async fn send(&self, session_id: &str, msg: AcpSessionNotification) -> bool {
+        let sender = {
+            let sessions = self.sessions.read().await;
+            sessions.get(session_id).cloned()
+        };
+        if let Some(sender) = sender {
+            let _ = sender.send(msg);
+            true
+        } else {
+            false
+        }
+    }
+
+    async fn broadcast_shutdown(&self, message: String) {
+        let sessions = self.sessions.read().await;
+        for sender in sessions.values() {
+            let _ = sender.send(AcpSessionNotification::Shutdown {
+                message: message.clone(),
+            });
         }
     }
 }
@@ -345,7 +473,7 @@ impl AcpProcess {
         env: HashMap<String, String>,
         ask_user_question: Option<Arc<AskUserQuestionBroker>>,
         event_sink: mpsc::Sender<NormalizedEvent>,
-    ) -> Result<Self> {
+    ) -> Result<Arc<Self>> {
         let mut cmd = Command::new(&agent.command);
         cmd.args(&agent.args);
         cmd.current_dir(&workdir);
@@ -384,50 +512,52 @@ impl AcpProcess {
             }
         });
 
-        let mut session = Self {
+        let process = Arc::new(Self {
             agent,
-            child,
+            child: Mutex::new(child),
             write_tx,
-            stdout_reader,
-            stderr_reader,
-            next_id: 1,
-            pending: HashMap::new(),
-            supports_load: false,
-            auth_methods: None,
-            stderr_lines: Vec::new(),
-            stdout_non_json: Vec::new(),
+            next_id: AtomicU64::new(1),
+            pending: Mutex::new(HashMap::new()),
+            supports_load: AtomicBool::new(false),
+            auth_methods: Mutex::new(None),
+            stderr_lines: Mutex::new(Vec::new()),
+            stdout_non_json: Mutex::new(Vec::new()),
             ask_user_question,
-        };
+            router: SessionRouter::default(),
+        });
 
-        session.initialize(client, event_sink).await?;
-        Ok(session)
+        let stdout_process = Arc::clone(&process);
+        tokio::spawn(async move {
+            stdout_pump(stdout_process, stdout_reader).await;
+        });
+
+        let stderr_process = Arc::clone(&process);
+        tokio::spawn(async move {
+            stderr_pump(stderr_process, stderr_reader).await;
+        });
+
+        process.initialize(client, event_sink).await?;
+        Ok(process)
     }
 
     async fn initialize(
-        &mut self,
+        &self,
         client: AcpClientConfig,
         event_sink: mpsc::Sender<NormalizedEvent>,
     ) -> Result<()> {
-        // initialize
-        let (init_rx, init_line, _init_id) = make_request(
-            &mut self.next_id,
-            &mut self.pending,
-            "initialize",
-            json!({
-                "protocolVersion": 1,
-                "clientCapabilities": client.client_capabilities,
-                "clientInfo": {
-                    "name": client.client_name,
-                    "title": client.client_title,
-                    "version": client.client_version,
-                }
-            }),
-        )?;
-        self.write_tx
-            .send(init_line)
-            .map_err(|_| anyhow::anyhow!("ACP writer task unavailable"))?;
         let init_resp = self
-            .drive_until_response(init_rx, DriveUntilResponseOptions::new(event_sink.clone()))
+            .send_request(
+                "initialize",
+                json!({
+                    "protocolVersion": 1,
+                    "clientCapabilities": client.client_capabilities,
+                    "clientInfo": {
+                        "name": client.client_name,
+                        "title": client.client_title,
+                        "version": client.client_version,
+                    }
+                }),
+            )
             .await
             .context("waiting for initialize response")?;
         if let Some(err) = init_resp.get("error") {
@@ -438,8 +568,6 @@ impl AcpProcess {
             .get("result")
             .and_then(|v| v.get("authMethods").or_else(|| v.get("auth_methods")))
             .cloned();
-        self.auth_methods = auth_methods.clone();
-
         let supports_load = init_resp
             .get("result")
             .and_then(|v| v.get("capabilities").or_else(|| v.get("agentCapabilities")))
@@ -447,7 +575,11 @@ impl AcpProcess {
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
-        self.supports_load = supports_load;
+        {
+            let mut guard = self.auth_methods.lock().await;
+            *guard = auth_methods.clone();
+        }
+        self.supports_load.store(supports_load, Ordering::SeqCst);
 
         let _ = event_sink
             .send(NormalizedEvent {
@@ -464,8 +596,8 @@ impl AcpProcess {
         Ok(())
     }
 
-    fn default_auth_method_id(&self) -> Option<String> {
-        let methods = self.auth_methods.as_ref()?;
+    async fn default_auth_method_id(&self) -> Option<String> {
+        let methods = { self.auth_methods.lock().await.clone() }?;
         let list = methods.as_array()?;
         for m in list {
             if let Some(id) = m
@@ -482,33 +614,21 @@ impl AcpProcess {
         None
     }
 
-    async fn authenticate(
-        &mut self,
-        method_id: String,
-        event_sink: mpsc::Sender<NormalizedEvent>,
-    ) -> Result<()> {
-        let (rx, line, _id) = make_request(
-            &mut self.next_id,
-            &mut self.pending,
-            "authenticate",
-            json!({"methodId": method_id}),
-        )?;
-        self.write_tx
-            .send(line)
-            .map_err(|_| anyhow::anyhow!("ACP writer task unavailable"))?;
+    async fn authenticate(&self, method_id: String) -> Result<()> {
         let resp = self
-            .drive_until_response(rx, DriveUntilResponseOptions::new(event_sink.clone()))
+            .send_request("authenticate", json!({"methodId": method_id}))
             .await
             .context("waiting for authenticate response")?;
 
         if let Some(err) = resp.get("error") {
             anyhow::bail!("ACP authenticate error: {err}");
         }
+
         Ok(())
     }
 
     async fn create_or_load_session(
-        &mut self,
+        &self,
         workdir: &Path,
         client: &AcpClientConfig,
         resume_session_id: Option<String>,
@@ -538,20 +658,11 @@ impl AcpProcess {
         let mut models: Option<serde_json::Value> = None;
 
         if let Some(resume_id) = resume_session_id.clone() {
-            if self.supports_load {
-                let (load_rx, load_line, _load_id) = make_request(
-                    &mut self.next_id,
-                    &mut self.pending,
-                    "session/load",
-                    json!({"sessionId": resume_id, "cwd": cwd, "mcpServers": mcp_servers}),
-                )?;
-                self.write_tx
-                    .send(load_line)
-                    .map_err(|_| anyhow::anyhow!("ACP writer task unavailable"))?;
+            if self.supports_load.load(Ordering::SeqCst) {
                 let load_resp = self
-                    .drive_until_response(
-                        load_rx,
-                        DriveUntilResponseOptions::new(event_sink.clone()),
+                    .send_request(
+                        "session/load",
+                        json!({"sessionId": resume_id, "cwd": cwd, "mcpServers": mcp_servers}),
                     )
                     .await
                     .context("waiting for session/load response")?;
@@ -568,6 +679,7 @@ impl AcpProcess {
                         .cloned();
                 } else if let Some(err) = load_resp.get("error") {
                     if is_auth_required_error(err) {
+                        let auth_methods = self.auth_methods.lock().await.clone();
                         let _ = event_sink
                             .send(NormalizedEvent {
                                 event_type: SessionEventType::AuthRequired,
@@ -575,8 +687,8 @@ impl AcpProcess {
                                     "kind": "auth_required",
                                     "provider": self.agent.provider_id,
                                     "message": "Provider requires authentication before loading a session.",
-                                    "auth_methods": self.auth_methods.clone(),
-                                    "authMethods": self.auth_methods,
+                                    "auth_methods": auth_methods.clone(),
+                                    "authMethods": auth_methods,
                                     "acp_error": err,
                                 }),
                             })
@@ -598,21 +710,16 @@ impl AcpProcess {
         }
 
         if session_id.is_none() {
-            let (new_rx, new_line, _new_id) = make_request(
-                &mut self.next_id,
-                &mut self.pending,
-                "session/new",
-                json!({"cwd": cwd, "mcpServers": mcp_servers}),
-            )?;
-            self.write_tx
-                .send(new_line)
-                .map_err(|_| anyhow::anyhow!("ACP writer task unavailable"))?;
             let new_resp = self
-                .drive_until_response(new_rx, DriveUntilResponseOptions::new(event_sink.clone()))
+                .send_request(
+                    "session/new",
+                    json!({"cwd": cwd, "mcpServers": mcp_servers}),
+                )
                 .await
                 .context("waiting for session/new response")?;
             if let Some(err) = new_resp.get("error") {
                 if is_auth_required_error(err) {
+                    let auth_methods = self.auth_methods.lock().await.clone();
                     let _ = event_sink
                         .send(NormalizedEvent {
                             event_type: SessionEventType::AuthRequired,
@@ -620,8 +727,8 @@ impl AcpProcess {
                                 "kind": "auth_required",
                                 "provider": self.agent.provider_id,
                                 "message": "Provider requires authentication before starting a session.",
-                                "auth_methods": self.auth_methods.clone(),
-                                "authMethods": self.auth_methods,
+                                "auth_methods": auth_methods.clone(),
+                                "authMethods": auth_methods,
                                 "acp_error": err,
                             }),
                         })
@@ -645,6 +752,7 @@ impl AcpProcess {
         }
 
         let session_id = session_id.context("missing ACP sessionId")?;
+        let auth_methods = self.auth_methods.lock().await.clone();
         let _ = event_sink
             .send(NormalizedEvent {
                 event_type: SessionEventType::Init,
@@ -652,11 +760,11 @@ impl AcpProcess {
                     "provider": self.agent.provider_id,
                     "acp_session_id": session_id,
                     "resumed": resumed,
-                    "supports_load": self.supports_load,
+                    "supports_load": self.supports_load.load(Ordering::SeqCst),
                     "modes": modes,
                     "models": models,
-                    "auth_methods": self.auth_methods.clone(),
-                    "authMethods": self.auth_methods,
+                    "auth_methods": auth_methods.clone(),
+                    "authMethods": auth_methods,
                 }),
             })
             .await;
@@ -664,7 +772,7 @@ impl AcpProcess {
     }
 
     async fn prompt(
-        &mut self,
+        &self,
         context_session_id: &str,
         acp_session_id: &str,
         prompt: Vec<serde_json::Value>,
@@ -672,31 +780,190 @@ impl AcpProcess {
         mut cancel_rx: oneshot::Receiver<()>,
     ) -> Result<()> {
         let mut state = StreamState::default();
+        let mut session_rx = self.router.register(acp_session_id).await?;
 
-        let (prompt_rx, prompt_line, _prompt_id) = make_request(
-            &mut self.next_id,
-            &mut self.pending,
-            "session/prompt",
-            json!({"sessionId": acp_session_id, "prompt": prompt}),
-        )?;
-        self.write_tx
-            .send(prompt_line)
-            .map_err(|_| anyhow::anyhow!("ACP writer task unavailable"))?;
+        let mut prompt_rx = self
+            .send_request_raw(
+                "session/prompt",
+                json!({"sessionId": acp_session_id, "prompt": prompt}),
+            )
+            .await?;
 
-        let mut options = DriveUntilResponseOptions::new(event_sink.clone());
-        options.cancel_rx = Some(&mut cancel_rx);
-        options.stream_state = Some(&mut state);
-        options.emit_raw_notifications = true;
-        options.cancel_session_id = Some(acp_session_id);
-        options.context_session_id = Some(context_session_id);
-        let prompt_resp = self
-            .drive_until_response(prompt_rx, options)
-            .await
-            .context("waiting for session/prompt response")?;
+        let emit_raw_notifications = true;
+        let mut ask_req_id: Option<u64> = None;
+        let mut ask_tool_call_id: Option<String> = None;
+        let mut ask_rx: Option<oneshot::Receiver<AskUserQuestionAnswer>> = None;
+
+        let prompt_resp = loop {
+            tokio::select! {
+                answer = async {
+                    if let Some(rx) = ask_rx.as_mut() {
+                        rx.await
+                    } else {
+                        std::future::pending::<
+                            Result<AskUserQuestionAnswer, tokio::sync::oneshot::error::RecvError>,
+                        >()
+                        .await
+                    }
+                } => {
+                    let req_id = ask_req_id.take().context("missing AskUserQuestion request id")?;
+                    let tool_call_id = ask_tool_call_id.take().unwrap_or_default();
+
+                    let answer = match answer {
+                        Ok(v) => v,
+                        Err(_) => AskUserQuestionAnswer {
+                            outcome: AskUserQuestionOutcome::Cancelled,
+                            answers: Default::default(),
+                        },
+                    };
+
+                    let resp = json!({
+                        "jsonrpc": "2.0",
+                        "id": req_id,
+                        "result": {
+                            "outcome": answer.outcome.as_str(),
+                            "answers": answer.answers,
+                        }
+                    });
+                    let line = serde_json::to_string(&resp).context("serializing AskUserQuestion response")?;
+                    let _ = self.write_tx.send(line);
+
+                    if let Some(broker) = self.ask_user_question.as_ref() {
+                        broker.abandon(context_session_id, &tool_call_id).await;
+                    }
+
+                    ask_rx = None;
+                    continue;
+                }
+                _ = &mut cancel_rx => {
+                    let _ = self.send_cancel_notification(acp_session_id);
+
+                    if let Some(req_id) = ask_req_id.take() {
+                        let resp = json!({
+                            "jsonrpc": "2.0",
+                            "id": req_id,
+                            "result": {
+                                "outcome": AskUserQuestionOutcome::Cancelled.as_str(),
+                                "answers": {},
+                            }
+                        });
+                        if let Ok(line) = serde_json::to_string(&resp) {
+                            let _ = self.write_tx.send(line);
+                        }
+                    }
+                    if let (Some(tool_call_id), Some(broker)) =
+                        (ask_tool_call_id.as_deref(), self.ask_user_question.as_ref())
+                    {
+                        broker.abandon(context_session_id, tool_call_id).await;
+                    }
+
+                    let _ = event_sink.send(NormalizedEvent {
+                        event_type: SessionEventType::InterruptRequested,
+                        payload_json: json!({"provider": self.agent.provider_id}),
+                    }).await;
+                    break json!({"result": { "stopReason": "cancelled" }});
+                }
+                msg = session_rx.recv() => {
+                    match msg {
+                        Some(AcpSessionNotification::Update(parsed)) => {
+                            let events = normalize_session_update(&parsed, &mut state);
+                            for ev in events {
+                                let _ = event_sink.send(ev).await;
+                            }
+                        }
+                        Some(AcpSessionNotification::AskUserQuestion { req_id, tool_call_id, input }) => {
+                            if ask_rx.is_some() {
+                                let resp = json!({"jsonrpc":"2.0","id": req_id, "error": {"code": -32603, "message": "nested AskUserQuestion not supported"}});
+                                let line = serde_json::to_string(&resp)?;
+                                let _ = self.write_tx.send(line);
+                                continue;
+                            }
+
+                            let Some(broker) = self.ask_user_question.as_ref() else {
+                                let resp = json!({"jsonrpc":"2.0","id": req_id, "error": {"code": -32601, "message": "AskUserQuestion not supported by this client"}} );
+                                let line = serde_json::to_string(&resp)?;
+                                let _ = self.write_tx.send(line);
+                                continue;
+                            };
+
+                            ask_req_id = Some(req_id);
+                            ask_tool_call_id = Some(tool_call_id.clone());
+                            ask_rx = Some(broker.begin(context_session_id.to_string(), tool_call_id.clone()).await);
+
+                            let _ = event_sink.send(NormalizedEvent {
+                                event_type: SessionEventType::Notice,
+                                payload_json: json!({
+                                    "kind": "ask_user_question",
+                                    "provider": self.agent.provider_id,
+                                    "tool_call_id": tool_call_id,
+                                    "input": input,
+                                }),
+                            }).await;
+                        }
+                        Some(AcpSessionNotification::Raw(parsed)) => {
+                            if emit_raw_notifications {
+                                let _ = event_sink.send(NormalizedEvent {
+                                    event_type: SessionEventType::Init,
+                                    payload_json: json!({"provider": self.agent.provider_id, "acp_event": parsed}),
+                                }).await;
+                            }
+                        }
+                        Some(AcpSessionNotification::Shutdown { message }) => {
+                            anyhow::bail!("ACP process closed: {message}");
+                        }
+                        None => {
+                            anyhow::bail!("ACP session channel closed");
+                        }
+                    }
+                }
+                resp = &mut prompt_rx => {
+                    let resp = resp.context("awaiting ACP response")?;
+                    loop {
+                        match session_rx.try_recv() {
+                            Ok(msg) => {
+                                match msg {
+                                    AcpSessionNotification::Update(parsed) => {
+                                        let events = normalize_session_update(&parsed, &mut state);
+                                        for ev in events {
+                                            let _ = event_sink.send(ev).await;
+                                        }
+                                    }
+                                    AcpSessionNotification::AskUserQuestion { req_id, tool_call_id, .. } => {
+                                        let resp = json!({"jsonrpc":"2.0","id": req_id, "error": {"code": -32603, "message": "AskUserQuestion received after prompt completed"}});
+                                        let line = serde_json::to_string(&resp)?;
+                                        let _ = self.write_tx.send(line);
+                                        if let Some(broker) = self.ask_user_question.as_ref() {
+                                            broker.abandon(context_session_id, &tool_call_id).await;
+                                        }
+                                    }
+                                    AcpSessionNotification::Raw(parsed) => {
+                                        if emit_raw_notifications {
+                                            let _ = event_sink.send(NormalizedEvent {
+                                                event_type: SessionEventType::Init,
+                                                payload_json: json!({"provider": self.agent.provider_id, "acp_event": parsed}),
+                                            }).await;
+                                        }
+                                    }
+                                    AcpSessionNotification::Shutdown { message } => {
+                                        anyhow::bail!("ACP process closed: {message}");
+                                    }
+                                }
+                            }
+                            Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
+                            Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => break,
+                        }
+                    }
+                    break resp;
+                }
+            }
+        };
+
+        self.router.unregister(acp_session_id).await;
         state.saw_done = true;
 
         if let Some(err) = prompt_resp.get("error") {
             if is_auth_required_error(err) {
+                let auth_methods = self.auth_methods.lock().await.clone();
                 let _ = event_sink
                     .send(NormalizedEvent {
                         event_type: SessionEventType::AuthRequired,
@@ -704,8 +971,8 @@ impl AcpProcess {
                             "kind": "auth_required",
                             "provider": self.agent.provider_id,
                             "message": "Provider requires authentication to continue.",
-                            "auth_methods": self.auth_methods.clone(),
-                            "authMethods": self.auth_methods,
+                            "auth_methods": auth_methods.clone(),
+                            "authMethods": auth_methods,
                             "acp_error": err,
                         }),
                     })
@@ -752,22 +1019,16 @@ impl AcpProcess {
     }
 
     async fn set_model(
-        &mut self,
+        &self,
         acp_session_id: &str,
         model_id: String,
-        event_sink: mpsc::Sender<NormalizedEvent>,
+        _event_sink: mpsc::Sender<NormalizedEvent>,
     ) -> Result<()> {
-        let (rx, line, _id) = make_request(
-            &mut self.next_id,
-            &mut self.pending,
-            "session/set_model",
-            json!({"sessionId": acp_session_id, "modelId": model_id}),
-        )?;
-        self.write_tx
-            .send(line)
-            .map_err(|_| anyhow::anyhow!("ACP writer task unavailable"))?;
         let resp = self
-            .drive_until_response(rx, DriveUntilResponseOptions::new(event_sink))
+            .send_request(
+                "session/set_model",
+                json!({"sessionId": acp_session_id, "modelId": model_id}),
+            )
             .await
             .context("waiting for session/set_model response")?;
         if let Some(err) = resp.get("error") {
@@ -777,22 +1038,16 @@ impl AcpProcess {
     }
 
     async fn set_mode(
-        &mut self,
+        &self,
         acp_session_id: &str,
         mode_id: String,
-        event_sink: mpsc::Sender<NormalizedEvent>,
+        _event_sink: mpsc::Sender<NormalizedEvent>,
     ) -> Result<()> {
-        let (rx, line, _id) = make_request(
-            &mut self.next_id,
-            &mut self.pending,
-            "session/set_mode",
-            json!({"sessionId": acp_session_id, "modeId": mode_id}),
-        )?;
-        self.write_tx
-            .send(line)
-            .map_err(|_| anyhow::anyhow!("ACP writer task unavailable"))?;
         let resp = self
-            .drive_until_response(rx, DriveUntilResponseOptions::new(event_sink))
+            .send_request(
+                "session/set_mode",
+                json!({"sessionId": acp_session_id, "modeId": mode_id}),
+            )
             .await
             .context("waiting for session/set_mode response")?;
         if let Some(err) = resp.get("error") {
@@ -801,252 +1056,39 @@ impl AcpProcess {
         Ok(())
     }
 
-    async fn drive_until_response(
-        &mut self,
-        mut target_rx: oneshot::Receiver<serde_json::Value>,
-        options: DriveUntilResponseOptions<'_>,
+    async fn send_request(
+        &self,
+        method: &str,
+        params: serde_json::Value,
     ) -> Result<serde_json::Value> {
-        let event_sink = options.event_sink;
-        let mut cancel_rx = options.cancel_rx;
-        let mut stream_state = options.stream_state;
-        let emit_raw_notifications = options.emit_raw_notifications;
-        let cancel_session_id = options.cancel_session_id;
-        let context_session_id = options.context_session_id;
-        let mut ask_req_id: Option<u64> = None;
-        let mut ask_tool_call_id: Option<String> = None;
-        let mut ask_rx: Option<oneshot::Receiver<AskUserQuestionAnswer>> = None;
+        let rx = self.send_request_raw(method, params).await?;
+        rx.await.context("awaiting ACP response")
+    }
 
-        loop {
-            tokio::select! {
-                answer = async {
-                    if let Some(rx) = ask_rx.as_mut() {
-                        rx.await
-                    } else {
-                        std::future::pending::<
-                            Result<AskUserQuestionAnswer, tokio::sync::oneshot::error::RecvError>,
-                        >()
-                        .await
-                    }
-                } => {
-                    let req_id = ask_req_id.take().context("missing AskUserQuestion request id")?;
-                    let tool_call_id = ask_tool_call_id.take().unwrap_or_default();
-
-                    let answer = match answer {
-                        Ok(v) => v,
-                        Err(_) => AskUserQuestionAnswer {
-                            outcome: AskUserQuestionOutcome::Cancelled,
-                            answers: Default::default(),
-                        },
-                    };
-
-                    let resp = json!({
-                        "jsonrpc": "2.0",
-                        "id": req_id,
-                        "result": {
-                            "outcome": answer.outcome.as_str(),
-                            "answers": answer.answers,
-                        }
-                    });
-                    let line = serde_json::to_string(&resp).context("serializing AskUserQuestion response")?;
-                    let _ = self.write_tx.send(line);
-
-                    if let (Some(broker), Some(session_id)) =
-                        (self.ask_user_question.as_ref(), context_session_id)
-                    {
-                        broker.abandon(session_id, &tool_call_id).await;
-                    }
-
-                    ask_rx = None;
-                    continue;
-                }
-                _ = async { if let Some(rx) = cancel_rx.as_mut() { rx.await.ok(); } }, if cancel_rx.is_some() => {
-                    if let Some(session_id) = cancel_session_id {
-                        let _ = self.send_cancel_notification(session_id);
-                    }
-
-                    // If we are currently blocking an AskUserQuestion request, unblock it too.
-                    if let Some(req_id) = ask_req_id.take() {
-                        let resp = json!({
-                            "jsonrpc": "2.0",
-                            "id": req_id,
-                            "result": {
-                                "outcome": AskUserQuestionOutcome::Cancelled.as_str(),
-                                "answers": {},
-                            }
-                        });
-                        if let Ok(line) = serde_json::to_string(&resp) {
-                            let _ = self.write_tx.send(line);
-                        }
-                    }
-                    if let (Some(tool_call_id), Some(broker), Some(session_id)) = (
-                        ask_tool_call_id.as_deref(),
-                        self.ask_user_question.as_ref(),
-                        context_session_id,
-                    ) {
-                        broker.abandon(session_id, tool_call_id).await;
-                    }
-                    let _ = event_sink.send(NormalizedEvent {
-                        event_type: SessionEventType::InterruptRequested,
-                        payload_json: json!({"provider": self.agent.provider_id}),
-                    }).await;
-                    return Ok(json!({"result": { "stopReason": "cancelled" }}));
-                }
-                line = self.stdout_reader.next_line() => {
-                    match line {
-                        Ok(Some(l)) => {
-                            let parsed = match serde_json::from_str::<serde_json::Value>(&l) {
-                                Ok(v) => v,
-                                Err(_) => {
-                                    self.stdout_non_json.push(l);
-                                    continue;
-                                }
-                            };
-
-                            // Responses to our requests
-                            if parsed.get("method").is_none() {
-                                if let Some(id) = parsed.get("id").and_then(jsonrpc_id_u64) {
-                                    if let Some(tx) = self.pending.remove(&id) {
-                                        let _ = tx.send(parsed);
-                                    }
-                                    continue;
-                                }
-                            }
-
-                            // Agent -> Client request: session/request_permission
-                            if parsed.get("method").and_then(|v| v.as_str()) == Some("session/request_permission") {
-                                if let Some(line) = build_request_permission_response(&self.agent.provider_id, &parsed)? {
-                                    let _ = self.write_tx.send(line);
-                                }
-                                continue;
-                            }
-
-                            // Agent -> Client request: Claude Code AskUserQuestion (ACP extMethod)
-                            //
-                            // In ACP JS SDKs, `extMethod(method, ...)` sends JSON-RPC method `_${method}`.
-                            // Correct wire method is `_claude_code_acp/ask_user_question`, but if the agent
-                            // passes a leading underscore to `extMethod`, it becomes `__claude_code_acp/...`.
-                            let is_ask_user_question = matches!(
-                                parsed.get("method").and_then(|v| v.as_str()),
-                                Some("_claude_code_acp/ask_user_question")
-                                    | Some("__claude_code_acp/ask_user_question")
-                            );
-                            if is_ask_user_question {
-                                let req_id = parsed
-                                    .get("id")
-                                    .and_then(jsonrpc_id_u64)
-                                    .context("AskUserQuestion missing id")?;
-                                let params = parsed.get("params").cloned().unwrap_or(json!({}));
-                                let tool_call_id = params
-                                    .get("toolCallId")
-                                    .or_else(|| params.get("tool_call_id"))
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("")
-                                    .trim()
-                                    .to_string();
-
-                                if tool_call_id.is_empty() {
-                                    let resp = json!({"jsonrpc":"2.0","id": req_id, "error": {"code": -32602, "message": "missing toolCallId"}});
-                                    let line = serde_json::to_string(&resp)?;
-                                    let _ = self.write_tx.send(line);
-                                    continue;
-                                }
-
-                                let Some(broker) = self.ask_user_question.as_ref() else {
-                                    let resp = json!({"jsonrpc":"2.0","id": req_id, "error": {"code": -32601, "message": "AskUserQuestion not supported by this client"}});
-                                    let line = serde_json::to_string(&resp)?;
-                                    let _ = self.write_tx.send(line);
-                                    continue;
-                                };
-
-                                let Some(context_session_id) = context_session_id else {
-                                    let resp = json!({"jsonrpc":"2.0","id": req_id, "error": {"code": -32603, "message": "AskUserQuestion received outside of an active session prompt"}});
-                                    let line = serde_json::to_string(&resp)?;
-                                    let _ = self.write_tx.send(line);
-                                    continue;
-                                };
-
-                                if ask_rx.is_some() {
-                                    let resp = json!({"jsonrpc":"2.0","id": req_id, "error": {"code": -32603, "message": "nested AskUserQuestion not supported"}});
-                                    let line = serde_json::to_string(&resp)?;
-                                    let _ = self.write_tx.send(line);
-                                    continue;
-                                }
-
-                                let input = params.get("input").cloned().unwrap_or(json!({}));
-
-                                ask_req_id = Some(req_id);
-                                ask_tool_call_id = Some(tool_call_id.clone());
-                                ask_rx = Some(broker.begin(context_session_id.to_string(), tool_call_id.clone()).await);
-
-                                let _ = event_sink.send(NormalizedEvent {
-                                    event_type: SessionEventType::Notice,
-                                    payload_json: json!({
-                                        "kind": "ask_user_question",
-                                        "provider": self.agent.provider_id,
-                                        "tool_call_id": tool_call_id,
-                                        "input": input,
-                                    }),
-                                }).await;
-                                continue;
-                            }
-
-                            // Agent -> Client notification: session/update
-                            if parsed.get("method").and_then(|v| v.as_str()) == Some("session/update") {
-                                if let Some(state) = stream_state.as_deref_mut() {
-                                    let events = normalize_session_update(&parsed, state);
-                                    for ev in events {
-                                        let _ = event_sink.send(ev).await;
-                                    }
-                                } else {
-                                    // No per-turn state; optionally keep raw updates for debugging.
-                                    if emit_raw_notifications {
-                                        let _ = event_sink.send(NormalizedEvent {
-                                            event_type: SessionEventType::Init,
-                                            payload_json: json!({"provider": self.agent.provider_id, "acp_event": parsed}),
-                                        }).await;
-                                    }
-                                }
-                                continue;
-                            }
-
-                            // Unknown notification: keep for debugging.
-                            if emit_raw_notifications {
-                                let _ = event_sink.send(NormalizedEvent {
-                                    event_type: SessionEventType::Init,
-                                    payload_json: json!({"provider": self.agent.provider_id, "acp_event": parsed}),
-                                }).await;
-                            }
-                        }
-                        Ok(None) => {
-                            anyhow::bail!("agent stdout closed");
-                        }
-                        Err(e) => {
-                            let _ = event_sink.send(NormalizedEvent {
-                                event_type: SessionEventType::Error,
-                                payload_json: json!({"provider": self.agent.provider_id, "stream":"stdout", "message": e.to_string()}),
-                            }).await;
-                            anyhow::bail!("agent stdout read error: {e}");
-                        }
-                    }
-                }
-                line = self.stderr_reader.next_line() => {
-                    match line {
-                        Ok(Some(l)) => self.stderr_lines.push(l),
-                        Ok(None) => {},
-                        Err(e) => self.stderr_lines.push(e.to_string()),
-                    }
-                    // Cap stderr accumulation.
-                    if self.stderr_lines.len() > 500 {
-                        let start = self.stderr_lines.len().saturating_sub(250);
-                        self.stderr_lines = self.stderr_lines[start..].to_vec();
-                    }
-                }
-                resp = &mut target_rx => {
-                    let resp = resp.context("awaiting ACP response")?;
-                    return Ok(resp);
-                }
-            }
+    async fn send_request_raw(
+        &self,
+        method: &str,
+        params: serde_json::Value,
+    ) -> Result<oneshot::Receiver<serde_json::Value>> {
+        let id = self.next_id.fetch_add(1, Ordering::SeqCst);
+        let (tx, rx) = oneshot::channel();
+        {
+            let mut pending = self.pending.lock().await;
+            pending.insert(id, tx);
         }
+        let msg = json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": method,
+            "params": params,
+        });
+        let line = serde_json::to_string(&msg).context("serializing ACP request")?;
+        if self.write_tx.send(line).is_err() {
+            let mut pending = self.pending.lock().await;
+            pending.remove(&id);
+            anyhow::bail!("ACP writer task unavailable");
+        }
+        Ok(rx)
     }
 
     fn send_cancel_notification(&self, acp_session_id: &str) -> Result<()> {
@@ -1060,14 +1102,194 @@ impl AcpProcess {
         Ok(())
     }
 
-    async fn is_alive(&mut self) -> Result<bool> {
-        Ok(self.child.try_wait()?.is_none())
+    async fn is_alive(&self) -> Result<bool> {
+        let mut child = self.child.lock().await;
+        Ok(child.try_wait()?.is_none())
     }
 }
 
 impl Drop for AcpProcess {
     fn drop(&mut self) {
-        let _ = self.child.start_kill();
+        if let Ok(mut child) = self.child.try_lock() {
+            let _ = child.start_kill();
+        }
+    }
+}
+
+async fn stdout_pump(
+    process: Arc<AcpProcess>,
+    mut stdout_reader: tokio::io::Lines<BufReader<tokio::process::ChildStdout>>,
+) {
+    loop {
+        match stdout_reader.next_line().await {
+            Ok(Some(line)) => {
+                let parsed = match serde_json::from_str::<serde_json::Value>(&line) {
+                    Ok(v) => v,
+                    Err(_) => {
+                        push_capped(&process.stdout_non_json, line, 500).await;
+                        continue;
+                    }
+                };
+
+                if parsed.get("method").is_none() {
+                    if let Some(id) = parsed.get("id").and_then(jsonrpc_id_u64) {
+                        let tx = {
+                            let mut pending = process.pending.lock().await;
+                            pending.remove(&id)
+                        };
+                        if let Some(tx) = tx {
+                            let _ = tx.send(parsed);
+                        }
+                        continue;
+                    }
+                }
+
+                if parsed.get("method").and_then(|v| v.as_str())
+                    == Some("session/request_permission")
+                {
+                    if let Ok(Some(line)) =
+                        build_request_permission_response(&process.agent.provider_id, &parsed)
+                    {
+                        let _ = process.write_tx.send(line);
+                    }
+                    continue;
+                }
+
+                let is_ask_user_question = matches!(
+                    parsed.get("method").and_then(|v| v.as_str()),
+                    Some("_claude_code_acp/ask_user_question")
+                        | Some("__claude_code_acp/ask_user_question")
+                );
+                if is_ask_user_question {
+                    let req_id = match parsed.get("id").and_then(jsonrpc_id_u64) {
+                        Some(id) => id,
+                        None => continue,
+                    };
+                    let params = parsed.get("params").cloned().unwrap_or(json!({}));
+                    let session_id = params
+                        .get("sessionId")
+                        .or_else(|| params.get("session_id"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .trim()
+                        .to_string();
+                    let tool_call_id = params
+                        .get("toolCallId")
+                        .or_else(|| params.get("tool_call_id"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .trim()
+                        .to_string();
+                    let input = params.get("input").cloned().unwrap_or(json!({}));
+
+                    if session_id.is_empty() || tool_call_id.is_empty() {
+                        let resp = json!({"jsonrpc":"2.0","id": req_id, "error": {"code": -32602, "message": "missing sessionId or toolCallId"}} );
+                        if let Ok(line) = serde_json::to_string(&resp) {
+                            let _ = process.write_tx.send(line);
+                        }
+                        continue;
+                    }
+
+                    let routed = process
+                        .router
+                        .send(
+                            &session_id,
+                            AcpSessionNotification::AskUserQuestion {
+                                req_id,
+                                tool_call_id,
+                                input,
+                            },
+                        )
+                        .await;
+                    if !routed {
+                        let resp = json!({"jsonrpc":"2.0","id": req_id, "error": {"code": -32603, "message": "AskUserQuestion received outside of an active session prompt"}} );
+                        if let Ok(line) = serde_json::to_string(&resp) {
+                            let _ = process.write_tx.send(line);
+                        }
+                    }
+                    continue;
+                }
+
+                if parsed.get("method").and_then(|v| v.as_str()) == Some("session/update") {
+                    let session_id = parsed
+                        .get("params")
+                        .and_then(|v| v.get("sessionId").or_else(|| v.get("session_id")))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .trim()
+                        .to_string();
+                    if !session_id.is_empty() {
+                        let _ = process
+                            .router
+                            .send(&session_id, AcpSessionNotification::Update(parsed))
+                            .await;
+                    }
+                    continue;
+                }
+
+                let session_id = parsed
+                    .get("params")
+                    .and_then(|v| v.get("sessionId").or_else(|| v.get("session_id")))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
+                if !session_id.is_empty() {
+                    let _ = process
+                        .router
+                        .send(&session_id, AcpSessionNotification::Raw(parsed))
+                        .await;
+                }
+            }
+            Ok(None) => {
+                fail_pending(&process, "agent stdout closed").await;
+                process
+                    .router
+                    .broadcast_shutdown("agent stdout closed".to_string())
+                    .await;
+                break;
+            }
+            Err(e) => {
+                let message = format!("agent stdout read error: {e}");
+                fail_pending(&process, &message).await;
+                process.router.broadcast_shutdown(message).await;
+                break;
+            }
+        }
+    }
+}
+
+async fn stderr_pump(
+    process: Arc<AcpProcess>,
+    mut stderr_reader: tokio::io::Lines<BufReader<tokio::process::ChildStderr>>,
+) {
+    loop {
+        match stderr_reader.next_line().await {
+            Ok(Some(line)) => {
+                push_capped(&process.stderr_lines, line, 500).await;
+            }
+            Ok(None) => break,
+            Err(e) => {
+                push_capped(&process.stderr_lines, e.to_string(), 500).await;
+                break;
+            }
+        }
+    }
+}
+
+async fn push_capped(store: &Mutex<Vec<String>>, line: String, cap: usize) {
+    let mut guard = store.lock().await;
+    guard.push(line);
+    if guard.len() > cap {
+        let start = guard.len().saturating_sub(cap / 2);
+        *guard = guard[start..].to_vec();
+    }
+}
+
+async fn fail_pending(process: &AcpProcess, message: &str) {
+    let mut pending = process.pending.lock().await;
+    for (_, tx) in pending.drain() {
+        let _ = tx.send(json!({"error": {"message": message}}));
     }
 }
 
@@ -1884,26 +2106,6 @@ fn is_auth_required_error(err: &serde_json::Value) -> bool {
     let data_matches = data_str.contains("authrequired") || data_str.contains("auth_required");
 
     code_matches || msg_matches || data_matches
-}
-
-fn make_request(
-    next_id: &mut u64,
-    pending: &mut HashMap<u64, oneshot::Sender<serde_json::Value>>,
-    method: &str,
-    params: serde_json::Value,
-) -> Result<(oneshot::Receiver<serde_json::Value>, String, u64)> {
-    let id = *next_id;
-    *next_id += 1;
-    let msg = json!({
-        "jsonrpc": "2.0",
-        "id": id,
-        "method": method,
-        "params": params,
-    });
-    let line = serde_json::to_string(&msg).context("serializing ACP request")?;
-    let (tx, rx) = oneshot::channel();
-    pending.insert(id, tx);
-    Ok((rx, line, id))
 }
 
 #[cfg(test)]
