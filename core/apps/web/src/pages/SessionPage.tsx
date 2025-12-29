@@ -42,6 +42,7 @@ import { useOpenSession, useSessionCacheSnapshot, useSessionEntry, useSessionSup
 import { WorkspaceCatchupProvider, useWorkspaceCatchupStore } from "../state/workspaceCatchupStore";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
+import { Copy } from "lucide-react";
 import { DiffReviewPane } from "../components/DiffReviewPane";
 import { AskUserQuestionModal } from "../components/AskUserQuestionModal";
 import { ComposerAutocompleteMenu } from "../components/ComposerAutocompleteMenu";
@@ -3614,41 +3615,51 @@ function Markdown({
           const match = /language-([A-Za-z0-9_-]+)/.exec(className || "");
           const rawLang = match?.[1];
           const lang = rawLang && rawLang !== "code" ? rawLang : undefined;
+          const showLangLabel = false;
           const codeString = String(children ?? "").replace(/[\r\n]+$/, "");
           if (inline) {
             return <code className={className}>{children}</code>;
           }
 
-          if (!lang && !codeString.includes("\n") && codeString.length <= 120) {
+          if (!lang && !codeString.includes("\n")) {
             return <code className={className}>{codeString}</code>;
           }
 
           return (
             <div className="codeblock">
-              <button
-                type="button"
-                className="codeblock-copy"
-                aria-label="Copy code"
-                title="Copy"
-                onClick={() => navigator.clipboard.writeText(codeString)}
-              >
-                ⧉
-              </button>
-              <SyntaxHighlighter
-                style={oneDark}
-                language={lang}
-                PreTag="div"
-                customStyle={{
-                  margin: 0,
-                  background: "transparent",
-                  padding: "12px",
-                  fontSize: "12px",
-                  lineHeight: 1.45,
-                }}
-                codeTagProps={{ style: { fontFamily: "var(--mono)" } }}
-              >
-                {codeString}
-              </SyntaxHighlighter>
+              <div className="codeblock-toolbar">
+                {showLangLabel && <span className="codeblock-lang">{lang}</span>}
+                <button
+                  type="button"
+                  className="wb-icon codeblock-copy"
+                  aria-label="Copy code"
+                  title="Copy"
+                  onClick={() => navigator.clipboard.writeText(codeString)}
+                >
+                  <Copy size={14} aria-hidden="true" />
+                </button>
+              </div>
+              <div className="codeblock-body">
+                <SyntaxHighlighter
+                  style={oneDark}
+                  language={lang}
+                  PreTag="div"
+                  customStyle={{
+                    margin: 0,
+                    background: "transparent",
+                    padding: "28px 12px 12px",
+                    fontSize: "12px",
+                    lineHeight: 1.45,
+                    width: "100%",
+                    maxWidth: "100%",
+                    boxSizing: "border-box",
+                    overflowX: "auto",
+                  }}
+                  codeTagProps={{ style: { fontFamily: "var(--mono)" } }}
+                >
+                  {codeString}
+                </SyntaxHighlighter>
+              </div>
             </div>
           );
         },

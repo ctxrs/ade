@@ -399,34 +399,51 @@ button.linklike:hover {
   border: 1px solid rgba(255, 255, 255, 0.08);
   position: relative;
   overflow: hidden;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.codeblock-toolbar {
+  position: absolute;
+  top: 8px;
+  left: 12px;
+  right: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.codeblock-lang {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--muted);
+  text-transform: lowercase;
+  pointer-events: none;
 }
 
 .codeblock-copy {
-  position: absolute;
-  top: 6px;
-  right: 6px;
-  width: 22px;
-  height: 22px;
-  padding: 0;
-  border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(0, 0, 0, 0.45);
-  color: var(--muted);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  opacity: 0;
-  transition: opacity 120ms ease, background 120ms ease, color 120ms ease;
+  margin-left: auto;
+  pointer-events: auto;
 }
 
-.codeblock:hover .codeblock-copy,
-.codeblock-copy:focus-visible {
-  opacity: 1;
+.codeblock-body {
+  max-width: 100%;
+  min-width: 0;
+  position: relative;
+  z-index: 1;
 }
 
-.codeblock-copy:hover {
-  color: var(--text);
-  background: rgba(0, 0, 0, 0.62);
+.codeblock-body > div {
+  max-width: 100%;
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 
 .sr-only {
@@ -3307,10 +3324,14 @@ button.linklike:hover {
   display: grid;
   gap: 6px;
   padding: 0 2px 4px 2px;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .wb-assistant-body {
   overflow-wrap: anywhere;
+  min-width: 0;
+  max-width: 100%;
 }
 
 /* Workbench markdown typography (Cursor-like). */
@@ -3386,13 +3407,18 @@ button.linklike:hover {
 .wb-turn-header-content :where(p, li, td, th, h1, h2, h3, h4, h5, h6) > code,
 .wb-tool-markdown :where(p, li, td, th, h1, h2, h3, h4, h5, h6) > code,
 .wb-assistant-body :where(p, li, td, th, h1, h2, h3, h4, h5, h6) > code {
-  display: inline-block;
+  display: inline;
   padding: 1px 6px;
   border-radius: 6px;
   border: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(255, 255, 255, 0.04);
   color: rgba(255, 255, 255, 0.9);
   vertical-align: baseline;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
 }
 
 .wb-turn-header-content :where(hr),
