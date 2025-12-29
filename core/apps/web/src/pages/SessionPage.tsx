@@ -3450,7 +3450,7 @@ function FencedCodeBlock({
 
     setCopied(true);
     if (resetTimerRef.current) window.clearTimeout(resetTimerRef.current);
-    resetTimerRef.current = window.setTimeout(() => setCopied(false), 3000);
+    resetTimerRef.current = window.setTimeout(() => setCopied(false), 1000);
   }, [codeString]);
 
   return (
