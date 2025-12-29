@@ -488,7 +488,7 @@ fn desktop_connect_local(
 #[tauri::command]
 async fn desktop_connect_ssh(
     _app: tauri::AppHandle,
-    state: tauri::State<ConnectionManager>,
+    state: tauri::State<'_, ConnectionManager>,
     req: SshConnectReq,
 ) -> Result<DesktopConnectionInfo, String> {
     state.disconnect();
