@@ -486,7 +486,7 @@ fn desktop_connect_local(
 }
 
 #[tauri::command]
-fn desktop_connect_ssh(
+async fn desktop_connect_ssh(
     _app: tauri::AppHandle,
     state: tauri::State<ConnectionManager>,
     req: SshConnectReq,
@@ -512,20 +512,42 @@ fn desktop_connect_ssh(
             .filter(|t| !t.trim().is_empty())
     };
 
-    if req.start_remote {
-        start_remote_daemon_over_ssh(&host, req.user.as_deref(), remote_port, token.as_deref(), req.remote_data_dir.as_deref())
-            .map_err(to_err)?;
-    }
+    let user = req.user.clone();
+    let remote_data_dir = req.remote_data_dir.clone();
+    let start_remote = req.start_remote;
+    let token_for_connect = token.clone();
+    let (base_url, tunnel) = tauri::async_runtime::spawn_blocking(move || -> Result<(String, Child)> {
+        if start_remote {
+            start_remote_daemon_over_ssh(
+                &host,
+                user.as_deref(),
+                remote_port,
+                token_for_connect.as_deref(),
+                remote_data_dir.as_deref(),
+            )?;
+        }
 
-    let local_port = pick_unused_local_port().map_err(to_err)?;
-    let tunnel = start_ssh_tunnel(&host, req.user.as_deref(), local_port, remote_port).map_err(to_err)?;
-    let base_url = format!("http://127.0.0.1:{local_port}");
+        let local_port = pick_unused_local_port()?;
+        let (mut tunnel, tunnel_stderr) =
+            start_ssh_tunnel(&host, user.as_deref(), local_port, remote_port)?;
+        let base_url = format!("http://127.0.0.1:{local_port}");
 
-    // Health check before returning.
-    if let Err(e) = probe_daemon_health(&base_url, token.as_deref()) {
-        let _ = try_kill_child(tunnel);
-        return Err(format!("failed to reach remote daemon: {e:#}"));
-    }
+        probe_daemon_health_with_retry(
+            &base_url,
+            token_for_connect.as_deref(),
+            local_port,
+            &mut tunnel,
+            &tunnel_stderr,
+        )
+        .map_err(|e| {
+            let _ = try_kill_child(tunnel);
+            e
+        })?;
+        Ok((base_url, tunnel))
+    })
+    .await
+    .map_err(|e| format!("failed to reach remote daemon: {e}"))?
+    .map_err(|e| format!("failed to reach remote daemon: {e:#}"))?;
 
     state.set_ssh(base_url, token, tunnel);
     Ok(state.info())
@@ -1695,12 +1717,16 @@ fn pick_unused_local_port() -> Result<u16> {
     Ok(port)
 }
 
+const SSH_TUNNEL_LOG_BYTES: usize = 4096;
+const SSH_TUNNEL_HEALTH_RETRIES: usize = 12;
+const SSH_TUNNEL_HEALTH_BASE_DELAY_MS: u64 = 150;
+
 fn start_ssh_tunnel(
     host: &str,
     user: Option<&str>,
     local_port: u16,
     remote_port: u16,
-) -> Result<Child> {
+) -> Result<(Child, std::sync::Arc<std::sync::Mutex<String>>)> {
     let target = match user {
         Some(u) if !u.trim().is_empty() => format!("{}@{}", u.trim(), host),
         _ => host.to_string(),
@@ -1708,6 +1734,8 @@ fn start_ssh_tunnel(
 
     let mut cmd = Command::new("ssh");
     cmd.arg("-N")
+        .arg("-o")
+        .arg("BatchMode=yes")
         .arg("-o")
         .arg("ExitOnForwardFailure=yes")
         .arg("-o")
@@ -1721,7 +1749,36 @@ fn start_ssh_tunnel(
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
 
-    cmd.spawn().context("spawning ssh tunnel")
+    let mut child = cmd.spawn().context("spawning ssh tunnel")?;
+    let stderr_log = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+    if let Some(stderr) = child.stderr.take() {
+        let stderr_log = std::sync::Arc::clone(&stderr_log);
+        std::thread::spawn(move || {
+            let mut reader = BufReader::new(stderr);
+            let mut buf = String::new();
+            loop {
+                buf.clear();
+                let read = match reader.read_line(&mut buf) {
+                    Ok(0) => break,
+                    Ok(n) => n,
+                    Err(_) => break,
+                };
+                if read == 0 {
+                    break;
+                }
+                let mut log = match stderr_log.lock() {
+                    Ok(guard) => guard,
+                    Err(_) => return,
+                };
+                if log.len() + buf.len() > SSH_TUNNEL_LOG_BYTES {
+                    let excess = (log.len() + buf.len()) - SSH_TUNNEL_LOG_BYTES;
+                    log.drain(..excess);
+                }
+                log.push_str(&buf);
+            }
+        });
+    }
+    Ok((child, stderr_log))
 }
 
 fn start_remote_daemon_over_ssh(
@@ -1788,6 +1845,58 @@ fn probe_daemon_health(base_url: &str, token: Option<&str>) -> Result<()> {
     let res = req.send().context("requesting /api/health")?;
     res.error_for_status().context("health status")?;
     Ok(())
+}
+
+fn probe_daemon_health_with_retry(
+    base_url: &str,
+    token: Option<&str>,
+    local_port: u16,
+    tunnel: &mut Child,
+    stderr_log: &std::sync::Arc<std::sync::Mutex<String>>,
+) -> Result<()> {
+    let mut last_err: Option<anyhow::Error> = None;
+    for attempt in 0..SSH_TUNNEL_HEALTH_RETRIES {
+        match probe_daemon_health(base_url, token) {
+            Ok(()) => return Ok(()),
+            Err(err) => {
+                last_err = Some(err);
+                if let Ok(Some(status)) = tunnel.try_wait() {
+                    let stderr = ssh_log_snippet(stderr_log);
+                    if stderr.is_empty() {
+                        return Err(anyhow!("ssh tunnel exited ({status})"));
+                    }
+                    return Err(anyhow!("ssh tunnel exited ({status}): {stderr}"));
+                }
+            }
+        }
+        let delay = SSH_TUNNEL_HEALTH_BASE_DELAY_MS.saturating_mul((attempt + 1) as u64);
+        std::thread::sleep(Duration::from_millis(delay));
+    }
+    let err = last_err.unwrap_or_else(|| anyhow!("requesting /api/health failed"));
+    let stderr = ssh_log_snippet(stderr_log);
+    let tunnel_state = match tunnel.try_wait() {
+        Ok(Some(status)) => format!("ssh tunnel exited ({status})"),
+        Ok(None) => "ssh tunnel still running".to_string(),
+        Err(e) => format!("ssh tunnel state unknown ({e})"),
+    };
+    let mut details = format!("{tunnel_state}; local port {local_port}");
+    if !stderr.is_empty() {
+        details.push_str(&format!("; ssh stderr: {stderr}"));
+    }
+    Err(anyhow!("{err:#}; {details}"))
+}
+
+fn ssh_log_snippet(stderr_log: &std::sync::Arc<std::sync::Mutex<String>>) -> String {
+    let log = stderr_log.lock().ok();
+    let Some(log) = log.as_ref() else {
+        return String::new();
+    };
+    let snippet = log.trim();
+    if snippet.is_empty() {
+        String::new()
+    } else {
+        snippet.to_string()
+    }
 }
 
 fn daemon_data_dir(app: &tauri::AppHandle) -> Result<PathBuf> {
