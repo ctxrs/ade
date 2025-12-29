@@ -417,14 +417,6 @@ button.linklike:hover {
   z-index: 2;
 }
 
-.codeblock-lang {
-  font-family: var(--mono);
-  font-size: 12px;
-  color: var(--muted);
-  text-transform: lowercase;
-  pointer-events: none;
-}
-
 .codeblock-copy {
   margin-left: auto;
   pointer-events: auto;

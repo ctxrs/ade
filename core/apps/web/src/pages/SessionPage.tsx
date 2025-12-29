@@ -42,7 +42,7 @@ import { useOpenSession, useSessionCacheSnapshot, useSessionEntry, useSessionSup
 import { WorkspaceCatchupProvider, useWorkspaceCatchupStore } from "../state/workspaceCatchupStore";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
-import { Copy } from "lucide-react";
+import { Check, Copy } from "lucide-react";
 import { DiffReviewPane } from "../components/DiffReviewPane";
 import { AskUserQuestionModal } from "../components/AskUserQuestionModal";
 import { ComposerAutocompleteMenu } from "../components/ComposerAutocompleteMenu";
@@ -3425,6 +3425,72 @@ function splitFileRefs(text: string, worktreeId: string, linkToken?: string | nu
   return nodes;
 }
 
+function FencedCodeBlock({
+  codeString,
+  lang,
+}: {
+  codeString: string;
+  lang?: string;
+}) {
+  const [copied, setCopied] = useState(false);
+  const resetTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (resetTimerRef.current) window.clearTimeout(resetTimerRef.current);
+    };
+  }, []);
+
+  const handleCopy = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(codeString);
+    } catch {
+      return;
+    }
+
+    setCopied(true);
+    if (resetTimerRef.current) window.clearTimeout(resetTimerRef.current);
+    resetTimerRef.current = window.setTimeout(() => setCopied(false), 3000);
+  }, [codeString]);
+
+  return (
+    <div className="codeblock">
+      <div className="codeblock-toolbar">
+        <button
+          type="button"
+          className="wb-icon codeblock-copy"
+          aria-label={copied ? "Copied" : "Copy code"}
+          title={copied ? "Copied" : "Copy"}
+          onClick={() => void handleCopy()}
+        >
+          {copied ? <Check size={14} aria-hidden="true" /> : <Copy size={14} aria-hidden="true" />}
+        </button>
+      </div>
+      <div className="codeblock-body">
+        <SyntaxHighlighter
+          style={oneDark}
+          language={lang}
+          PreTag="div"
+          customStyle={{
+            margin: 0,
+            background: "transparent",
+            padding: "28px 12px 12px",
+            fontSize: "12px",
+            lineHeight: 1.45,
+            width: "100%",
+            maxWidth: "100%",
+            boxSizing: "border-box",
+            overflowX: "auto",
+          }}
+          codeTagProps={{ style: { fontFamily: "var(--mono)" } }}
+        >
+          {codeString}
+        </SyntaxHighlighter>
+      </div>
+    </div>
+  );
+}
+
 function remarkLinkifyFileRefs(opts: { worktreeId: string; token?: string | null }) {
   return (tree: MdastNode) => {
     const walk = (node: MdastNode) => {
@@ -3615,7 +3681,6 @@ function Markdown({
           const match = /language-([A-Za-z0-9_-]+)/.exec(className || "");
           const rawLang = match?.[1];
           const lang = rawLang && rawLang !== "code" ? rawLang : undefined;
-          const showLangLabel = false;
           const codeString = String(children ?? "").replace(/[\r\n]+$/, "");
           if (inline) {
             return <code className={className}>{children}</code>;
@@ -3625,43 +3690,7 @@ function Markdown({
             return <code className={className}>{codeString}</code>;
           }
 
-          return (
-            <div className="codeblock">
-              <div className="codeblock-toolbar">
-                {showLangLabel && <span className="codeblock-lang">{lang}</span>}
-                <button
-                  type="button"
-                  className="wb-icon codeblock-copy"
-                  aria-label="Copy code"
-                  title="Copy"
-                  onClick={() => navigator.clipboard.writeText(codeString)}
-                >
-                  <Copy size={14} aria-hidden="true" />
-                </button>
-              </div>
-              <div className="codeblock-body">
-                <SyntaxHighlighter
-                  style={oneDark}
-                  language={lang}
-                  PreTag="div"
-                  customStyle={{
-                    margin: 0,
-                    background: "transparent",
-                    padding: "28px 12px 12px",
-                    fontSize: "12px",
-                    lineHeight: 1.45,
-                    width: "100%",
-                    maxWidth: "100%",
-                    boxSizing: "border-box",
-                    overflowX: "auto",
-                  }}
-                  codeTagProps={{ style: { fontFamily: "var(--mono)" } }}
-                >
-                  {codeString}
-                </SyntaxHighlighter>
-              </div>
-            </div>
-          );
+          return <FencedCodeBlock codeString={codeString} lang={lang} />;
         },
       }}
     >

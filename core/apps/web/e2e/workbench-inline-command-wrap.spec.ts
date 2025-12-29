@@ -71,6 +71,7 @@ test("workbench: inline code wraps without horizontal scroll", async ({ page, re
 });
 
 test("workbench: fenced code blocks stay within thread width", async ({ page, request }) => {
+  await page.context().grantPermissions(["clipboard-write"]);
   const seed = await seedDummyWorkspace(request, {
     tasks: 1,
     sessionsPerTask: 1,
@@ -98,6 +99,11 @@ test("workbench: fenced code blocks stay within thread width", async ({ page, re
 
   const codeblock = assistantEntry.locator(".codeblock");
   await expect(codeblock).toBeVisible();
+
+  const copyButton = assistantEntry.locator(".codeblock-copy");
+  await expect(copyButton).toBeVisible();
+  await copyButton.click();
+  await expect(copyButton).toHaveAttribute("title", "Copied");
 
   const widths = await page.evaluate(() => {
     const sessionView = document.querySelector(".wb-session-view") as HTMLElement | null;
