@@ -143,6 +143,18 @@ function lastRoleMessageMs(messages: { role: string; created_at: string }[], rol
   return null;
 }
 
+function RelativeAgeLabel({
+  iso,
+  fallback = "Now",
+}: {
+  iso: string | null | undefined;
+  fallback?: string;
+}) {
+  const nowMs = useRelativeNowMs();
+  const age = formatRelativeAgeShort(iso, nowMs);
+  return <>{age || fallback}</>;
+}
+
 type WorkbenchSessionSlotProps = {
   sessionId: string;
   active: boolean;
@@ -272,7 +284,6 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     [newTaskDraft.text, setNewTaskDraft],
   );
   const newComposerRef = useRef<HTMLDivElement | null>(null);
-  const relativeNowMs = useRelativeNowMs();
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(260);
@@ -1049,7 +1060,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
           : liveLastAssistantMs ?? serverLastAssistantMs;
       const seenMs = parseMs(t.assistant_seen_at ?? null);
       const unread = !working && lastAssistantMs !== null && (seenMs === null || lastAssistantMs > seenMs);
-      const age = formatRelativeAgeShort(t.last_activity_at ?? t.updated_at ?? t.created_at, relativeNowMs) || "Now";
+      const ageIso = t.last_activity_at ?? t.updated_at ?? t.created_at;
       const dotKind = hasError ? "error" : unread ? "unread" : null;
       const summaryProviders = summary.tracks.flatMap((tr) =>
         tr.sessions.map((s) => String(s.session.provider_id ?? "").trim()).filter(Boolean),
@@ -1128,7 +1139,9 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
             </div>
             <div className="wb-task-meta">
               <div className="wb-task-meta-status" aria-hidden="true">
-                <div className="wb-task-age">{age}</div>
+                <div className="wb-task-age">
+                  <RelativeAgeLabel iso={ageIso} />
+                </div>
                 {working && <span className="wb-task-spinner" />}
                 {dotKind === "unread" && <span className="wb-task-status-dot wb-task-status-dot-unread" />}
                 {dotKind === "error" && <span className="wb-task-status-dot wb-task-status-dot-error" />}
@@ -1172,7 +1185,6 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       onToggleArchive,
       openTaskMenu,
       providerIdsByTaskFromSessions,
-      relativeNowMs,
       renameDraft,
       renamingTaskId,
       taskLiveInfo.errorByTask,
@@ -1814,13 +1826,12 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       return bestIso;
     })();
 
-    const age = formatRelativeAgeShort(lastIso, relativeNowMs) || "Now";
     const worktreePath = sess?.env_target === "worktree" ? String(activeWorktree?.root_path ?? "") : "";
     const worktreeSlug = worktreePath ? lastPathSegment(worktreePath) : "";
 
     return {
       title: activeTask?.title ?? "Conversation",
-      age,
+      lastIso,
       harness,
       modelBase: parsedModel.base || String(sess?.model_id ?? ""),
       effort: parsedModel.effort,
@@ -1828,14 +1839,14 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       worktreePath,
       canCopyWorktree: Boolean(worktreePath),
     };
-  }, [activeEntry, activeTask?.title, activeWorktree?.root_path, relativeNowMs, tracks.length]);
+  }, [activeEntry, activeTask?.title, activeWorktree?.root_path, tracks.length]);
 
   const singleTrackHeaderForRender = useMemo(() => {
     if (singleTrackHeader) return singleTrackHeader;
     if (!activeTaskId) return null;
     return {
       title: activeTask?.title ?? "Conversation",
-      age: "Loading…",
+      lastIso: null,
       harness: "",
       modelBase: "",
       effort: "",
@@ -2318,7 +2329,12 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
                   <div className="wb-single-track-title">{singleTrackHeaderForRender?.title ?? "Conversation"}</div>
                   <div className="wb-single-track-meta">
                     <div className="wb-single-track-meta-left">
-                      <span>{singleTrackHeaderForRender?.age ?? "Now"}</span>
+                      <span>
+                        <RelativeAgeLabel
+                          iso={singleTrackHeaderForRender?.lastIso}
+                          fallback={singleTrackHeader ? "Now" : "Loading…"}
+                        />
+                      </span>
                       {singleTrackHeaderForRender?.harness ? (
                         <>
                           <span className="wb-single-track-dot" aria-hidden="true">
