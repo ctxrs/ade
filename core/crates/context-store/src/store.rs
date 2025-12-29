@@ -1035,7 +1035,7 @@ impl Store {
         const MAX_LIMIT: i64 = 200;
         let limit = limit.clamp(1, MAX_LIMIT);
 
-        const SORT_EXPR: &str = "
+        const ACTIVITY_EXPR: &str = "
             COALESCE(
                 (
                     SELECT MAX(m.created_at)
@@ -1046,6 +1046,7 @@ impl Store {
                 t.created_at
             )
         ";
+        const SORT_EXPR: &str = "COALESCE(t.archived_at, t.created_at)";
 
         let mut sql = format!(
             r#"
@@ -1070,10 +1071,12 @@ impl Store {
                 FROM sessions s
                 WHERE s.task_id = t.id AND s.status = 'active'
               ) AS has_active_session,
+              ({activity_expr}) AS activity_at,
               ({sort_expr}) AS sort_at
             FROM tasks t
             WHERE t.workspace_id = ?
             "#,
+            activity_expr = ACTIVITY_EXPR,
             sort_expr = SORT_EXPR,
         );
 
@@ -1115,6 +1118,8 @@ impl Store {
             let last_assistant_message_at: Option<String> =
                 r.try_get("last_assistant_message_at")?;
             let has_active_session: i64 = r.try_get("has_active_session")?;
+            let activity_at: String = r.try_get("activity_at")?;
+            let activity_at_dt = parse_dt(&activity_at)?;
             let sort_at: String = r.try_get("sort_at")?;
             let sort_at_dt = parse_dt(&sort_at)?;
 
@@ -1129,7 +1134,7 @@ impl Store {
                 exec_plan_id: r.try_get("exec_plan_id")?,
                 archived_at: archived_at.as_deref().map(parse_dt).transpose()?,
                 assistant_seen_at: assistant_seen_at.as_deref().map(parse_dt).transpose()?,
-                last_activity_at: Some(sort_at_dt),
+                last_activity_at: Some(activity_at_dt),
                 last_assistant_message_at: last_assistant_message_at
                     .as_deref()
                     .map(parse_dt)
@@ -1171,7 +1176,7 @@ impl Store {
         const MAX_LIMIT: i64 = 200;
         let limit = limit.clamp(1, MAX_LIMIT);
 
-        const SORT_EXPR: &str = "
+        const ACTIVITY_EXPR: &str = "
             COALESCE(
                 (
                     SELECT MAX(m.created_at)
@@ -1182,6 +1187,7 @@ impl Store {
                 t.created_at
             )
         ";
+        const SORT_EXPR: &str = "COALESCE(t.archived_at, t.created_at)";
 
         let mut sql = format!(
             r#"
@@ -1206,10 +1212,12 @@ impl Store {
                 FROM sessions s
                 WHERE s.task_id = t.id AND s.status = 'active'
               ) AS has_active_session,
+              ({activity_expr}) AS activity_at,
               ({sort_expr}) AS sort_at
             FROM tasks t
             WHERE t.workspace_id = ?
             "#,
+            activity_expr = ACTIVITY_EXPR,
             sort_expr = SORT_EXPR,
         );
 
@@ -1253,6 +1261,8 @@ impl Store {
             let last_assistant_message_at: Option<String> =
                 r.try_get("last_assistant_message_at")?;
             let has_active_session: i64 = r.try_get("has_active_session")?;
+            let activity_at: String = r.try_get("activity_at")?;
+            let activity_at_dt = parse_dt(&activity_at)?;
             let sort_at: String = r.try_get("sort_at")?;
             let sort_at_dt = parse_dt(&sort_at)?;
 
@@ -1267,7 +1277,7 @@ impl Store {
                 exec_plan_id: r.try_get("exec_plan_id")?,
                 archived_at: archived_at.as_deref().map(parse_dt).transpose()?,
                 assistant_seen_at: assistant_seen_at.as_deref().map(parse_dt).transpose()?,
-                last_activity_at: Some(sort_at_dt),
+                last_activity_at: Some(activity_at_dt),
                 last_assistant_message_at: last_assistant_message_at
                     .as_deref()
                     .map(parse_dt)
@@ -1297,7 +1307,7 @@ impl Store {
         &self,
         task_id: TaskId,
     ) -> Result<Option<WorkspaceTaskSummary>> {
-        const SORT_EXPR: &str = "
+        const ACTIVITY_EXPR: &str = "
             COALESCE(
                 (
                     SELECT MAX(m.created_at)
@@ -1308,6 +1318,7 @@ impl Store {
                 t.created_at
             )
         ";
+        const SORT_EXPR: &str = "COALESCE(t.archived_at, t.created_at)";
         let sql = format!(
             r#"
             SELECT
@@ -1331,11 +1342,13 @@ impl Store {
                 FROM sessions s
                 WHERE s.task_id = t.id AND s.status = 'active'
               ) AS has_active_session,
+              ({activity_expr}) AS activity_at,
               ({sort_expr}) AS sort_at
             FROM tasks t
             WHERE t.id = ?
             LIMIT 1
             "#,
+            activity_expr = ACTIVITY_EXPR,
             sort_expr = SORT_EXPR,
         );
 
@@ -1353,6 +1366,8 @@ impl Store {
             let last_assistant_message_at: Option<String> =
                 r.try_get("last_assistant_message_at")?;
             let has_active_session: i64 = r.try_get("has_active_session")?;
+            let activity_at: String = r.try_get("activity_at")?;
+            let activity_at_dt = parse_dt(&activity_at)?;
             let sort_at: String = r.try_get("sort_at")?;
             let sort_at_dt = parse_dt(&sort_at)?;
 
@@ -1367,7 +1382,7 @@ impl Store {
                 exec_plan_id: r.try_get("exec_plan_id")?,
                 archived_at: archived_at.as_deref().map(parse_dt).transpose()?,
                 assistant_seen_at: assistant_seen_at.as_deref().map(parse_dt).transpose()?,
-                last_activity_at: Some(sort_at_dt),
+                last_activity_at: Some(activity_at_dt),
                 last_assistant_message_at: last_assistant_message_at
                     .as_deref()
                     .map(parse_dt)
@@ -1671,7 +1686,8 @@ impl Store {
                         ),
                         t.updated_at,
                         t.created_at
-                      ) AS sort_at
+                      ) AS activity_at,
+                      COALESCE(t.archived_at, t.created_at) AS sort_at
                FROM tasks t WHERE id = ?"#,
         )
         .bind(task_id.0.to_string())
@@ -1688,6 +1704,8 @@ impl Store {
             let last_assistant_message_at: Option<String> =
                 r.try_get("last_assistant_message_at")?;
             let has_active_session: i64 = r.try_get("has_active_session")?;
+            let activity_at: String = r.try_get("activity_at")?;
+            let activity_at_dt = parse_dt(&activity_at)?;
             let sort_at: String = r.try_get("sort_at")?;
             let sort_at_dt = parse_dt(&sort_at)?;
 
@@ -1702,7 +1720,7 @@ impl Store {
                 exec_plan_id: r.try_get("exec_plan_id")?,
                 archived_at: archived_at.as_deref().map(parse_dt).transpose()?,
                 assistant_seen_at: assistant_seen_at.as_deref().map(parse_dt).transpose()?,
-                last_activity_at: Some(sort_at_dt),
+                last_activity_at: Some(activity_at_dt),
                 last_assistant_message_at: last_assistant_message_at
                     .as_deref()
                     .map(parse_dt)

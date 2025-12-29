@@ -200,13 +200,13 @@ class WorkspaceCatchupStoreImpl implements WorkspaceCatchupEventSource {
     if (!id) return;
     const existing = this.tasks.get(id);
     if (!existing) return;
+    const stableSortAt = task.archived_at ?? task.created_at ?? existing.sort_at;
+    const stableSortAtMs = Date.parse(stableSortAt ?? "") || existing.sortAtMs || Date.now();
     const updated: WorkspaceCatchupItem = {
       ...existing,
       task: { ...task },
-      sortAtMs:
-        Date.parse(task.archived_at ?? task.updated_at ?? "") ||
-        existing.sortAtMs ||
-        Date.now(),
+      sortAtMs: stableSortAtMs,
+      sort_at: stableSortAt ?? existing.sort_at,
     };
     this.tasks.set(id, updated);
     this.updateCountsForMove(existing, updated);
@@ -623,7 +623,7 @@ class WorkspaceCatchupStoreImpl implements WorkspaceCatchupEventSource {
 
   private normalizeSummary(summary: WorkspaceCatchupTaskSummary): WorkspaceCatchupItem {
     const id = idToString(summary.task.id);
-    const sortAtMs = Date.parse(summary.sort_at) || Date.now();
+    const sortAtMs = Date.parse(summary.task.archived_at ?? summary.task.created_at ?? "") || Date.now();
     return {
       ...summary,
       id,
