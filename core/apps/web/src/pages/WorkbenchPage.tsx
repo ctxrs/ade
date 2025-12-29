@@ -989,9 +989,11 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     async (taskId: string, nextArchived: boolean) => {
       const updated = nextArchived ? await archiveTask(taskId) : await unarchiveTask(taskId);
       workspaceCatchupStore.applyTaskUpdate(updated);
-      if (nextArchived && activeTaskId === taskId) setArchivedCollapsed(false);
+      if (nextArchived && activeTaskId === taskId) {
+        focusNewTask();
+      }
     },
-    [activeTaskId, workspaceCatchupStore],
+    [activeTaskId, focusNewTask, workspaceCatchupStore],
   );
 
   const openTaskMenu = useCallback((taskId: string, opts: { triggerEl: HTMLElement } | { x: number; y: number }) => {
