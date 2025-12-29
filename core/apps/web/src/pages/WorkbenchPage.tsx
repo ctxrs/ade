@@ -2191,7 +2191,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
                       <div className="wb-muted">Loading tasks…</div>
                     </div>
                   )}
-                  <div className="wb-section-header">
+                  <div className="wb-section-header wb-section-header-archived">
                     <button
                       type="button"
                       className="wb-section-toggle"

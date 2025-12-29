@@ -1398,6 +1398,10 @@ button.linklike:hover {
   gap: 8px;
 }
 
+.wb-section-header-archived {
+  margin-top: 12px;
+}
+
 .wb-section-toggle {
   width: 100%;
   display: flex;
