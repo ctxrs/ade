@@ -648,6 +648,7 @@ class WorkspaceCatchupStoreImpl implements WorkspaceCatchupEventSource {
       last_message_at: summary.last_message_at ?? null,
       last_message_preview: summary.last_message_preview ?? null,
       last_event_seq: summary.last_event_seq ?? null,
+      activity: summary.activity ?? { is_working: false, last_turn_status: null },
       unread: summary.unread,
     };
   }

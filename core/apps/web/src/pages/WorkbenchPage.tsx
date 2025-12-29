@@ -49,7 +49,13 @@ import {
   updateTaskTitle,
   verifyProviderForWorkspace,
 } from "../api/client";
-import { useOpenSession, useSessionCacheSnapshot, useSessionEntry, useSessionSupervisor } from "../state/sessionSupervisor";
+import {
+  useOpenSession,
+  useSessionCacheSnapshot,
+  useSessionEntry,
+  useSessionSupervisor,
+  type SessionCacheEntry,
+} from "../state/sessionSupervisor";
 import { DiffReviewPane } from "../components/DiffReviewPane";
 import { SessionView, buildWorkbenchThreadViewModel } from "./SessionPage";
 import { HARNESS_CATALOG } from "../utils/harnessCatalog";
@@ -154,7 +160,6 @@ function RelativeAgeLabel({
   const age = formatRelativeAgeShort(iso, nowMs);
   return <>{age || fallback}</>;
 }
-
 type WorkbenchSessionSlotProps = {
   sessionId: string;
   active: boolean;
@@ -839,63 +844,60 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     [filteredArchivedIds, tasksById],
   );
 
-  // Helper to check if agent is still working (hasn't finished responding)
-  const isAgentStillWorking = useCallback((entry: any): boolean => {
-    const doneLike = new Set(["done", "assistant_complete", "turn_interrupted"]);
-    const ignored = new Set(["input_queued", "notice", "interrupt_requested"]);
-
-    const events = Array.isArray(entry?.events) ? entry.events : [];
-    const messages = Array.isArray(entry?.messages) ? entry.messages : [];
-
-    const lastRelevantEventType = (() => {
-      for (let i = events.length - 1; i >= 0; i--) {
-        const t = String(events[i]?.event_type ?? "").trim();
-        if (!t) continue;
-        if (ignored.has(t)) continue;
-        return t;
-      }
-      return "";
-    })();
-
-    if (lastRelevantEventType) {
-      return !doneLike.has(lastRelevantEventType);
-    }
-
-    const lastUser = lastRoleMessageMs(messages, "user");
-    if (lastUser === null) return false;
-    const lastAssistant = lastRoleMessageMs(messages, "assistant");
-    return lastAssistant === null || lastUser > lastAssistant;
+  const isEntryWorking = useCallback((entry: SessionCacheEntry): boolean => {
+    const sess = entry.session;
+    if (!sess) return false;
+    if (sess.status === "failed" || sess.status === "cancelled" || sess.status === "completed") return false;
+    const lastTurn = entry.turns[entry.turns.length - 1];
+    const status = lastTurn?.status ?? null;
+    return status === "queued" || status === "running";
   }, []);
 
   const taskLiveInfo = useMemo(() => {
     const workingByTask = new Set<string>();
     const errorByTask = new Set<string>();
     const lastAssistantMsByTask: Record<string, number> = {};
+    const entryBySessionId = new Map<string, SessionCacheEntry>();
+    for (const entry of Object.values(sessionSnap.sessions)) {
+      const sessionId = entry.session ? idToString(entry.session.id) : "";
+      if (sessionId) entryBySessionId.set(sessionId, entry);
+    }
+
+    for (const summary of Object.values(tasksById)) {
+      if (!summary) continue;
+      const taskId = summary.id;
+      for (const track of summary.tracks) {
+        for (const sessionSummary of track.sessions) {
+          const sessionId = idToString(sessionSummary.session.id);
+          const entry = sessionId ? entryBySessionId.get(sessionId) : undefined;
+          const isWorking = entry ? isEntryWorking(entry) : sessionSummary.activity?.is_working === true;
+          if (isWorking) workingByTask.add(taskId);
+
+          const status = entry?.session?.status ?? sessionSummary.session.status;
+          if (status === "failed" || status === "cancelled") {
+            errorByTask.add(taskId);
+          }
+
+          const liveMs = entry ? lastAssistantMessageMs(entry.messages) : null;
+          const summaryMs = parseMs(sessionSummary.last_message_at ?? null);
+          const ms =
+            liveMs !== null && summaryMs !== null ? Math.max(liveMs, summaryMs) : liveMs ?? summaryMs;
+          if (ms !== null) lastAssistantMsByTask[taskId] = Math.max(lastAssistantMsByTask[taskId] ?? 0, ms);
+        }
+      }
+    }
+
     for (const entry of Object.values(sessionSnap.sessions)) {
       const taskId = entry.session ? idToString(entry.session.task_id) : "";
-      if (!taskId) continue;
-
-      // Check if agent is still working on this session
-      if (isAgentStillWorking(entry)) {
-        workingByTask.add(taskId);
-      }
-
-      // Error state - check multiple sources
-      const hasErrorStatus =
-        entry.session?.status === "failed" ||
-        entry.session?.status === "cancelled";
-      const hasErrorInSupervisor = !!entry.error;
-      const hasErrorEvent = entry.events.some(ev => ev.event_type === "error");
-
-      if (hasErrorStatus || hasErrorInSupervisor || hasErrorEvent) {
-        errorByTask.add(taskId);
-      }
-
+      if (!taskId || tasksById[taskId]) continue;
+      if (isEntryWorking(entry)) workingByTask.add(taskId);
+      const status = entry.session?.status;
+      if (status === "failed" || status === "cancelled") errorByTask.add(taskId);
       const ms = lastAssistantMessageMs(entry.messages);
       if (ms !== null) lastAssistantMsByTask[taskId] = Math.max(lastAssistantMsByTask[taskId] ?? 0, ms);
     }
     return { workingByTask, errorByTask, lastAssistantMsByTask };
-  }, [sessionSnap.sessions, isAgentStillWorking]);
+  }, [isEntryWorking, sessionSnap.sessions, tasksById]);
 
   const providerIdsByTaskFromSessions = useMemo(() => {
     const byTask: Record<string, Array<{ providerId: string; updatedAt: number }>> = {};

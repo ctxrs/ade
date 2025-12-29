@@ -180,19 +180,44 @@ function TaskListBody({
     const workingByTask = new Set<string>();
     const errorByTask = new Set<string>();
     const lastAssistantMsByTask: Record<string, number> = {};
+    const entryBySessionId = new Map<string, SessionCacheEntry>();
+    for (const entry of Object.values(sessionSnap.sessions)) {
+      const sessionId = entry.session ? idToString(entry.session.id) : "";
+      if (sessionId) entryBySessionId.set(sessionId, entry);
+    }
+
+    for (const summary of items) {
+      const taskId = summary.id;
+      for (const track of summary.tracks) {
+        for (const sessionSummary of track.sessions) {
+          const sessionId = idToString(sessionSummary.session.id);
+          const entry = sessionId ? entryBySessionId.get(sessionId) : undefined;
+          const isWorking = entry ? isEntryWorking(entry) : sessionSummary.activity?.is_working === true;
+          if (isWorking) workingByTask.add(taskId);
+
+          const status = entry?.session?.status ?? sessionSummary.session.status;
+          if (status === "failed" || status === "cancelled") errorByTask.add(taskId);
+
+          const liveMs = entry ? lastAssistantMessageMs(entry.messages) : null;
+          const summaryMs = parseMs(sessionSummary.last_message_at ?? null);
+          const ms =
+            liveMs !== null && summaryMs !== null ? Math.max(liveMs, summaryMs) : liveMs ?? summaryMs;
+          if (ms !== null) lastAssistantMsByTask[taskId] = Math.max(lastAssistantMsByTask[taskId] ?? 0, ms);
+        }
+      }
+    }
+
     for (const entry of Object.values(sessionSnap.sessions)) {
       const taskId = entry.session ? idToString(entry.session.task_id) : "";
-      if (!taskId) continue;
-      if (isAgentStillWorking(entry)) workingByTask.add(taskId);
-      const hasErrorStatus = entry.session?.status === "failed" || entry.session?.status === "cancelled";
-      const hasErrorInSupervisor = Boolean(entry.error);
-      const hasErrorEvent = entry.events.some((ev) => ev.event_type === "error");
-      if (hasErrorStatus || hasErrorInSupervisor || hasErrorEvent) errorByTask.add(taskId);
+      if (!taskId || items.some((item) => item.id === taskId)) continue;
+      if (isEntryWorking(entry)) workingByTask.add(taskId);
+      const status = entry.session?.status;
+      if (status === "failed" || status === "cancelled") errorByTask.add(taskId);
       const ms = lastAssistantMessageMs(entry.messages);
       if (ms !== null) lastAssistantMsByTask[taskId] = Math.max(lastAssistantMsByTask[taskId] ?? 0, ms);
     }
     return { workingByTask, errorByTask, lastAssistantMsByTask };
-  }, [sessionSnap.sessions]);
+  }, [items, sessionSnap.sessions]);
 
   const loading = showArchived ? snapshot.fetchState.archived === "loading" : snapshot.fetchState.active === "loading";
   const onRefresh = () => {
@@ -312,36 +337,13 @@ function lastAssistantMessageMs(messages: import("@context/types").Message[]): n
   return null;
 }
 
-function isAgentStillWorking(entry: SessionCacheEntry): boolean {
+function isEntryWorking(entry: SessionCacheEntry): boolean {
   const sess = entry.session;
   if (!sess) return false;
-  if (sess.status === "failed" || sess.status === "cancelled") return false;
-  if (sess.status === "completed") return false;
-  if (sess.status !== "active" && sess.status !== "running") return false;
-
-  const doneLike = new Set(["turn_completed", "turn_interrupted", "turn_failed", "run_done", "run_stopped", "session_done"]);
-  const ignored = new Set(["heartbeat", "presence", "ws_connected", "ws_disconnected"]);
-  for (let i = entry.events.length - 1; i >= 0; i--) {
-    const t = String(entry.events[i]?.event_type ?? "").trim();
-    if (!t || ignored.has(t)) continue;
-    return !doneLike.has(t);
-  }
-
-  // Fallback: if last user msg is newer than last assistant msg, assume it is still working.
-  const lastUser = lastRoleMessageMs(entry.messages, "user");
-  if (lastUser === null) return false;
-  const lastAssistant = lastRoleMessageMs(entry.messages, "assistant");
-  return lastAssistant === null || lastUser > lastAssistant;
-}
-
-function lastRoleMessageMs(messages: import("@context/types").Message[], role: "user" | "assistant"): number | null {
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const m = messages[i];
-    if (m.role !== role) continue;
-    const ms = Date.parse(m.created_at ?? "");
-    if (Number.isFinite(ms)) return ms;
-  }
-  return null;
+  if (sess.status === "failed" || sess.status === "cancelled" || sess.status === "completed") return false;
+  const lastTurn = entry.turns[entry.turns.length - 1];
+  const status = lastTurn?.status ?? null;
+  return status === "queued" || status === "running";
 }
 
 function WorkspacePickerModal({

@@ -1771,6 +1771,7 @@ impl Store {
                 last_message_at: row.last_message_at,
                 last_message_preview: row.last_message_preview.clone(),
                 last_event_seq: row.last_event_seq,
+                activity: row.activity.clone(),
                 unread: None,
             });
 
@@ -1877,6 +1878,7 @@ impl Store {
                     last_message_at: row.last_message_at,
                     last_message_preview: row.last_message_preview.clone(),
                     last_event_seq: row.last_event_seq,
+                    activity: row.activity.clone(),
                     unread: None,
                 };
 
@@ -1934,6 +1936,14 @@ impl Store {
                 SELECT session_id, MAX(seq) AS last_event_seq
                 FROM session_events
                 GROUP BY session_id
+            ),
+            last_turns AS (
+                SELECT session_id, turn_id, status, started_at, updated_at,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY session_id
+                           ORDER BY COALESCE(start_seq, -1) DESC, started_at DESC, turn_id DESC
+                       ) AS rn
+                FROM session_turns
             )
             SELECT
                 s.id,
@@ -1950,12 +1960,15 @@ impl Store {
                 s.updated_at,
                 lm.content AS last_message_content,
                 lm.created_at AS last_message_at,
-                le.last_event_seq AS last_event_seq
+                le.last_event_seq AS last_event_seq,
+                lt.status AS last_turn_status
             FROM sessions s
             LEFT JOIN last_assistant_messages lm
               ON lm.session_id = s.id AND lm.rn = 1
             LEFT JOIN last_events le
               ON le.session_id = s.id
+            LEFT JOIN last_turns lt
+              ON lt.session_id = s.id AND lt.rn = 1
             WHERE s.track_id IN ("#,
         );
 
@@ -1983,6 +1996,7 @@ impl Store {
             let last_message_at: Option<String> = r.try_get("last_message_at")?;
             let last_message_content: Option<String> = r.try_get("last_message_content")?;
             let last_event_seq: Option<i64> = r.try_get("last_event_seq")?;
+            let last_turn_status: Option<String> = r.try_get("last_turn_status")?;
 
             let session = Session {
                 id: SessionId(uuid::Uuid::parse_str(&id)?),
@@ -2008,11 +2022,16 @@ impl Store {
                 }
             });
 
+            let activity = derive_activity_from_turn_status(
+                last_turn_status.as_deref().map(parse_session_turn_status),
+            );
+
             let row = SessionCatchupRow {
                 session,
                 last_message_at: last_message_at.as_deref().map(parse_dt).transpose()?,
                 last_message_preview,
                 last_event_seq,
+                activity,
             };
             out.push(row);
         }
@@ -2434,6 +2453,7 @@ impl Store {
             tool_summaries.sort_by(|a, b| a.created_at.cmp(&b.created_at));
         }
         let last_event_seq = self.session_last_event_seq(session_id).await?;
+        let activity = derive_activity_from_turn_status(out.last().map(|t| t.status.clone()));
         let events = if include_events {
             let mut events = self
                 .list_session_events_tail_by_seq(session_id, EVENT_HEAD_LIMIT)
@@ -2451,6 +2471,7 @@ impl Store {
             events,
             messages,
             last_event_seq,
+            activity,
             has_more_turns,
         }))
     }
@@ -3198,6 +3219,7 @@ struct SessionCatchupRow {
     last_message_at: Option<DateTime<Utc>>,
     last_message_preview: Option<String>,
     last_event_seq: Option<i64>,
+    activity: SessionActivityState,
 }
 
 fn derive_message_preview(content: &str) -> String {
@@ -3212,6 +3234,17 @@ fn derive_message_preview(content: &str) -> String {
         out.push_str("...");
     }
     out
+}
+
+fn derive_activity_from_turn_status(status: Option<SessionTurnStatus>) -> SessionActivityState {
+    let is_working = matches!(
+        status,
+        Some(SessionTurnStatus::Queued | SessionTurnStatus::Running)
+    );
+    SessionActivityState {
+        is_working,
+        last_turn_status: status,
+    }
 }
 
 fn parse_dt(value: &str) -> Result<DateTime<Utc>> {

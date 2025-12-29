@@ -224,6 +224,13 @@ pub enum SessionTurnStatus {
     Failed,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SessionActivityState {
+    pub is_working: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_turn_status: Option<SessionTurnStatus>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionTurn {
     pub turn_id: TurnId,
@@ -351,6 +358,8 @@ pub struct SessionCatchupSummary {
     pub last_message_at: Option<DateTime<Utc>>,
     pub last_message_preview: Option<String>,
     pub last_event_seq: Option<i64>,
+    #[serde(default)]
+    pub activity: SessionActivityState,
     pub unread: Option<bool>,
 }
 
@@ -415,6 +424,8 @@ pub struct SessionHead {
     #[serde(default)]
     pub messages: Vec<Message>,
     pub last_event_seq: i64,
+    #[serde(default)]
+    pub activity: SessionActivityState,
     pub has_more_turns: bool,
 }
 

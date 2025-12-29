@@ -122,6 +122,7 @@ export type SessionCatchupSummary = {
   last_message_at?: string | null;
   last_message_preview?: string | null;
   last_event_seq?: number | null;
+  activity?: SessionActivityState;
   unread?: boolean;
 };
 
@@ -170,6 +171,7 @@ export type SessionHead = {
   events?: SessionEvent[];
   messages: Message[];
   last_event_seq: number;
+  activity?: SessionActivityState;
   has_more_turns: boolean;
 };
 
@@ -291,6 +293,11 @@ export type SessionEvent = {
 };
 
 export type SessionTurnStatus = "queued" | "running" | "completed" | "interrupted" | "failed";
+
+export type SessionActivityState = {
+  is_working: boolean;
+  last_turn_status?: SessionTurnStatus | null;
+};
 
 export type SessionTurn = {
   turn_id: { 0: string } | string;
