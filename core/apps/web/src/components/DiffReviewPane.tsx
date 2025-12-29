@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import Editor from "@monaco-editor/react";
 import { Check, ChevronDown, ChevronUp, MessageSquare, X } from "lucide-react";
 import { applyTrackDiffPatch } from "../api/client";
@@ -29,7 +29,7 @@ type DiffHunk = {
   lines: string[];
 };
 
-export function DiffReviewPane({
+const DiffReviewPane = memo(function DiffReviewPane({
   diff,
   trackId,
   sessionId,
@@ -270,7 +270,9 @@ export function DiffReviewPane({
       )}
     </div>
   );
-}
+});
+
+export { DiffReviewPane };
 
 function parseUnifiedDiff(diffText: string): DiffFile[] {
   const lines = String(diffText ?? "").split("\n");

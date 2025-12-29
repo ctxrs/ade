@@ -96,6 +96,14 @@ export type WorkbenchStoreSnapshot = {
   drafts: DraftSnapshot;
 };
 
+export type WorkbenchShellSnapshot = {
+  workspaceId: string;
+  windowId: string;
+  hydrated: boolean;
+  warnings: string[];
+  window: PersistedWorkbenchWindowV1;
+};
+
 type WorkbenchStoreListener = () => void;
 
 type DraftBroadcastMsg =
@@ -122,6 +130,12 @@ export class WorkbenchStore {
   private draftTimers = new Map<string, number>();
   private draftLoadsInFlight = new Map<string, Promise<void>>();
   private channel: BroadcastChannel | null = null;
+  private shellSnapshotCache: {
+    window: PersistedWorkbenchWindowV1;
+    warnings: string[];
+    hydrated: boolean;
+    value: WorkbenchShellSnapshot;
+  } | null = null;
 
   constructor(workspaceId: string) {
     const windowId = getOrCreateWindowId();
@@ -142,6 +156,17 @@ export class WorkbenchStore {
   };
 
   getSnapshot = (): WorkbenchStoreSnapshot => this.snapshot;
+
+  getShellSnapshot = (): WorkbenchShellSnapshot => {
+    const { workspaceId, windowId, hydrated, warnings, window } = this.snapshot;
+    const cache = this.shellSnapshotCache;
+    if (cache && cache.window === window && cache.warnings === warnings && cache.hydrated === hydrated) {
+      return cache.value;
+    }
+    const value: WorkbenchShellSnapshot = { workspaceId, windowId, hydrated, warnings, window };
+    this.shellSnapshotCache = { window, warnings, hydrated, value };
+    return value;
+  };
 
   init = () => {
     this.hydrate().catch(() => {});
@@ -481,6 +506,11 @@ export function useWorkbenchStore(): WorkbenchStore {
 export function useWorkbenchSnapshot(): WorkbenchStoreSnapshot {
   const store = useWorkbenchStore();
   return useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
+}
+
+export function useWorkbenchShellSnapshot(): WorkbenchShellSnapshot {
+  const store = useWorkbenchStore();
+  return useSyncExternalStore(store.subscribe, store.getShellSnapshot, store.getShellSnapshot);
 }
 
 export function useActiveWorkbenchTab(): WorkbenchTab | null {

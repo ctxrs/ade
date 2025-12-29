@@ -73,7 +73,7 @@ import {
   useActiveWorkbenchTab,
   useNewTaskDraft,
   useWorkbenchDraft,
-  useWorkbenchSnapshot,
+  useWorkbenchShellSnapshot,
   useWorkbenchStore,
 } from "../workbench/store";
 import { loadWorkbenchDiffPaneOpenV1, saveWorkbenchDiffPaneOpenV1 } from "../workbench/persistence";
@@ -264,7 +264,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const workspaceCatchupStore = useWorkspaceCatchupStore();
   const workspaceCatchup = useWorkspaceCatchupSnapshot();
   const tasksById = workspaceCatchup.tasksById;
-  const workbenchSnap = useWorkbenchSnapshot();
+  const workbenchSnap = useWorkbenchShellSnapshot();
   const activeTab = useActiveWorkbenchTab();
   const { taskId: activeTaskId, trackId: activeTrackId } = useActiveWorkbenchIds();
   const { value: newTaskDraft, setValue: setNewTaskDraft } = useNewTaskDraft();
@@ -1669,6 +1669,25 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     supervisor.setDiff(activeSessionId, d.diff ?? "");
   }, [activeTrackIdFromSession, activeSessionId, supervisor]);
 
+  const handleDiffUpdated = useCallback(
+    (next: string) => {
+      if (!activeSessionId) return;
+      supervisor.setDiff(activeSessionId, next);
+    },
+    [activeSessionId, supervisor],
+  );
+
+  const diffLabels = useMemo(
+    () => ({
+      title: "Pending Changes",
+      acceptAll: "Approve all",
+      rejectAll: "Reject all",
+      accept: "Approve",
+      reject: "Reject",
+    }),
+    [],
+  );
+
   const onSplitterMouseDown = (e: React.MouseEvent) => {
     e.preventDefault();
     const startX = e.clientX;
@@ -2505,15 +2524,9 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
                       diff={activeTrackDiff}
                       trackId={activeTrackIdFromSession}
                       sessionId={activeSessionId || undefined}
-                      onDiffUpdated={(d) => activeSessionId && supervisor.setDiff(activeSessionId, d)}
+                      onDiffUpdated={handleDiffUpdated}
                       onFileSaved={refreshActiveDiff}
-                      labels={{
-                        title: "Pending Changes",
-                        acceptAll: "Approve all",
-                        rejectAll: "Reject all",
-                        accept: "Approve",
-                        reject: "Reject",
-                      }}
+                      labels={diffLabels}
                     />
                   ) : (
                     <div className="wb-diff-empty">

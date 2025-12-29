@@ -1,11 +1,13 @@
 import {
   forwardRef,
+  memo,
   useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type MouseEvent,
   type ReactNode,
 } from "react";
@@ -735,8 +737,10 @@ export function SessionView({
   }, [turnsKey, messagesKey, toolSummariesReady ? turnToolsByTurnId : null, eventsKey, turns.length]);
 
   const debugEvents = variant === "workbench" ? workbenchThreadView.debugEvents : legacyThreadView.debugEvents;
-  const threadItems = variant === "workbench" ? [] : legacyThreadView.items;
-  const wbGroups = variant === "workbench" ? workbenchThreadView.groups : [];
+  const emptyThreadItems = useMemo(() => [] as ThreadItem[], []);
+  const emptyWorkbenchGroups = useMemo(() => [] as WorkbenchThreadView["groups"], []);
+  const threadItems = variant === "workbench" ? emptyThreadItems : legacyThreadView.items;
+  const wbGroups = variant === "workbench" ? workbenchThreadView.groups : emptyWorkbenchGroups;
   const wbListItems = useMemo<WorkbenchListItem[]>(() => {
     const out: WorkbenchListItem[] = [];
     for (const g of wbGroups) {
@@ -957,6 +961,70 @@ export function SessionView({
     if (threadActivityCount > prev) setHasNewActivity(true);
   }, [threadActivityCount, atBottom]);
 
+  const followOutput = restoreInProgress ? false : atBottom ? "auto" : false;
+  const restoreStateFrom = (scrollState?.virtuosoState ?? undefined) as StateSnapshot | undefined;
+
+  const handleAtBottomStateChange = useCallback(
+    (isAtBottom: boolean) => {
+      if (restoringScrollRef.current) return;
+      setAtBottom(isAtBottom);
+      if (isAtBottom) setHasNewActivity(false);
+    },
+    [setAtBottom, setHasNewActivity],
+  );
+
+  const handleWorkbenchRangeChanged = useCallback(
+    (range: { startIndex: number }) => {
+      if (restoringScrollRef.current) return;
+      if (atBottom) return;
+      const item = wbListItems[range.startIndex];
+      if (!item) return;
+      latestAnchorIdRef.current = item.id ?? null;
+    },
+    [atBottom, wbListItems],
+  );
+
+  const handleLegacyRangeChanged = useCallback(
+    (range: { startIndex: number }) => {
+      if (restoringScrollRef.current) return;
+      if (atBottom) return;
+      const item = threadItems[range.startIndex];
+      if (!item) return;
+      latestAnchorIdRef.current = item.id ?? null;
+    },
+    [atBottom, threadItems],
+  );
+
+  const handleStartReached = useCallback(() => {
+    if (!hasMoreTurns) return;
+    supervisor.loadMoreTurns(id);
+  }, [hasMoreTurns, id, supervisor]);
+
+  const jumpToLatestWorkbench = useCallback(() => {
+    if (wbListItems.length > 0) {
+      virtuosoRef.current?.scrollToIndex({ index: wbListItems.length - 1, align: "end" });
+    }
+  }, [virtuosoRef, wbListItems.length]);
+
+  const jumpToLatestLegacy = useCallback(() => {
+    if (threadItems.length > 0) {
+      virtuosoRef.current?.scrollToIndex({ index: threadItems.length - 1, align: "end" });
+    }
+  }, [virtuosoRef, threadItems.length]);
+
+  const handleDiffUpdated = useCallback(
+    (next: string) => {
+      if (!id) return;
+      supervisor.setDiff(id, next);
+    },
+    [id, supervisor],
+  );
+
+  const handleFileSaved = useCallback(() => {
+    if (!id) return;
+    supervisor.refreshSession(id, { watchDiff: true });
+  }, [id, supervisor]);
+
   const sendNow = async () => {
     if (!id) return;
     if (sendBusy) return;
@@ -1061,8 +1129,10 @@ export function SessionView({
     slashCommands,
   });
 
-  const virtuosoStyle =
-    variant === "workbench" ? ({ flex: 1, minHeight: 0 } as const) : ({ height: "70vh" } as const);
+  const workbenchVirtuosoStyle = useMemo(() => ({ flex: 1, minHeight: 0 } as const), []);
+  const legacyVirtuosoStyle = useMemo(() => ({ height: "70vh" } as const), []);
+  const virtuosoStyle = variant === "workbench" ? workbenchVirtuosoStyle : legacyVirtuosoStyle;
+  const workbenchViewportBy = useMemo(() => ({ top: 1000, bottom: 1000 }), []);
 
   const wrapperClass = variant === "workbench" ? "wb-session-view" : "page split";
   const leftClass = variant === "workbench" ? "wb-session-left" : "left";
@@ -1687,106 +1757,37 @@ export function SessionView({
           <DebugPanel events={debugEvents} />
         )}
 
-        {(() => {
-          const jumpToLatest = () => {
-            if (variant === "workbench") {
-              if (wbListItems.length > 0) {
-                virtuosoRef.current?.scrollToIndex({ index: wbListItems.length - 1, align: "end" });
-              }
-              return;
-            }
-            if (threadItems.length > 0) virtuosoRef.current?.scrollToIndex({ index: threadItems.length - 1, align: "end" });
-          };
-
-          if (variant === "workbench") {
-            return (
-              <div className="thread-stack">
-                <Virtuoso
-                  style={virtuosoStyle}
-                  data={wbListItems}
-                  ref={virtuosoRef}
-                  followOutput={restoreInProgress ? false : atBottom ? "auto" : false}
-                  defaultItemHeight={56}
-                  increaseViewportBy={{ top: 1000, bottom: 1000 }}
-                  computeItemKey={(index, item) => item?.id ?? `i:${index}`}
-                  restoreStateFrom={(scrollState?.virtuosoState ?? undefined) as StateSnapshot | undefined}
-                  startReached={() => {
-                    if (!hasMoreTurns) return;
-                    supervisor.loadMoreTurns(id);
-                  }}
-                  atBottomStateChange={(b) => {
-                    if (restoringScrollRef.current) return;
-                    setAtBottom(b);
-                    if (b) setHasNewActivity(false);
-                  }}
-                  rangeChanged={(range) => {
-                    if (restoringScrollRef.current) return;
-                    if (atBottom) return;
-                    const item = wbListItems[range.startIndex];
-                    if (!item) return;
-                    const anchorId = item.id ?? null;
-                    latestAnchorIdRef.current = anchorId;
-                  }}
-                  components={workbenchComponents}
-                  itemContent={workbenchItemContent}
-                />
-
-                {hasNewActivity && (
-                  <button
-                    type="button"
-                    className="new-activity-overlay"
-                    aria-label="Jump to latest"
-                    title="Jump to latest"
-                    onClick={jumpToLatest}
-                  >
-                    ↓
-                  </button>
-                )}
-              </div>
-            );
-          }
-
-          return (
-            <div className="thread-stack">
-              <Virtuoso
-                style={virtuosoStyle}
-                data={threadItems}
-                ref={virtuosoRef}
-                followOutput={restoreInProgress ? false : atBottom ? "auto" : false}
-                defaultItemHeight={56}
-                computeItemKey={(index, item) => item?.id ?? `i:${index}`}
-                restoreStateFrom={(scrollState?.virtuosoState ?? undefined) as StateSnapshot | undefined}
-                atBottomStateChange={(b) => {
-                  if (restoringScrollRef.current) return;
-                  setAtBottom(b);
-                  if (b) setHasNewActivity(false);
-                }}
-                rangeChanged={(range) => {
-                  if (restoringScrollRef.current) return;
-                  if (atBottom) return;
-                  const item = threadItems[range.startIndex];
-                  if (!item) return;
-                  const anchorId = item.id ?? null;
-                  latestAnchorIdRef.current = anchorId;
-                }}
-                components={threadComponents}
-                itemContent={threadItemContent}
-              />
-
-              {hasNewActivity && (
-                <button
-                  type="button"
-                  className="new-activity-overlay"
-                  aria-label="Jump to latest"
-                  title="Jump to latest"
-                  onClick={jumpToLatest}
-                >
-                  ↓
-                </button>
-              )}
-            </div>
-          );
-        })()}
+        {variant === "workbench" ? (
+          <WorkbenchThreadStack
+            virtuosoStyle={virtuosoStyle}
+            data={wbListItems}
+            virtuosoRef={virtuosoRef}
+            followOutput={followOutput}
+            restoreStateFrom={restoreStateFrom}
+            increaseViewportBy={workbenchViewportBy}
+            onStartReached={handleStartReached}
+            onAtBottomStateChange={handleAtBottomStateChange}
+            onRangeChanged={handleWorkbenchRangeChanged}
+            components={workbenchComponents}
+            itemContent={workbenchItemContent}
+            hasNewActivity={hasNewActivity}
+            onJumpToLatest={jumpToLatestWorkbench}
+          />
+        ) : (
+          <LegacyThreadStack
+            virtuosoStyle={virtuosoStyle}
+            data={threadItems}
+            virtuosoRef={virtuosoRef}
+            followOutput={followOutput}
+            restoreStateFrom={restoreStateFrom}
+            onAtBottomStateChange={handleAtBottomStateChange}
+            onRangeChanged={handleLegacyRangeChanged}
+            components={threadComponents}
+            itemContent={threadItemContent}
+            hasNewActivity={hasNewActivity}
+            onJumpToLatest={jumpToLatestLegacy}
+          />
+        )}
 
         {variant === "legacy" && <ActivityBar planEntries={planEntries} diffText={diff} />}
 
@@ -1958,14 +1959,136 @@ export function SessionView({
             diff={diff}
             trackId={session ? idToString(session.track_id) : ""}
             sessionId={id || undefined}
-            onDiffUpdated={(d) => id && supervisor.setDiff(id, d)}
-            onFileSaved={() => id && supervisor.refreshSession(id, { watchDiff: true })}
+            onDiffUpdated={handleDiffUpdated}
+            onFileSaved={handleFileSaved}
           />
         </div>
       )}
     </div>
   );
 }
+
+type WorkbenchThreadStackProps = {
+  virtuosoStyle: CSSProperties;
+  data: WorkbenchListItem[];
+  virtuosoRef: React.RefObject<VirtuosoHandle>;
+  followOutput: false | "auto";
+  restoreStateFrom?: StateSnapshot;
+  increaseViewportBy: { top: number; bottom: number };
+  onStartReached: () => void;
+  onAtBottomStateChange: (isAtBottom: boolean) => void;
+  onRangeChanged: (range: any) => void;
+  components: any;
+  itemContent: (index: number, item: WorkbenchListItem) => ReactNode;
+  hasNewActivity: boolean;
+  onJumpToLatest: () => void;
+};
+
+const WorkbenchThreadStack = memo(function WorkbenchThreadStack({
+  virtuosoStyle,
+  data,
+  virtuosoRef,
+  followOutput,
+  restoreStateFrom,
+  increaseViewportBy,
+  onStartReached,
+  onAtBottomStateChange,
+  onRangeChanged,
+  components,
+  itemContent,
+  hasNewActivity,
+  onJumpToLatest,
+}: WorkbenchThreadStackProps) {
+  return (
+    <div className="thread-stack">
+      <Virtuoso
+        style={virtuosoStyle}
+        data={data}
+        ref={virtuosoRef}
+        followOutput={followOutput}
+        defaultItemHeight={56}
+        increaseViewportBy={increaseViewportBy}
+        computeItemKey={(index, item) => item?.id ?? `i:${index}`}
+        restoreStateFrom={restoreStateFrom}
+        startReached={onStartReached}
+        atBottomStateChange={onAtBottomStateChange}
+        rangeChanged={onRangeChanged}
+        components={components}
+        itemContent={itemContent}
+      />
+
+      {hasNewActivity && (
+        <button
+          type="button"
+          className="new-activity-overlay"
+          aria-label="Jump to latest"
+          title="Jump to latest"
+          onClick={onJumpToLatest}
+        >
+          ↓
+        </button>
+      )}
+    </div>
+  );
+});
+
+type LegacyThreadStackProps = {
+  virtuosoStyle: CSSProperties;
+  data: ThreadItem[];
+  virtuosoRef: React.RefObject<VirtuosoHandle>;
+  followOutput: false | "auto";
+  restoreStateFrom?: StateSnapshot;
+  onAtBottomStateChange: (isAtBottom: boolean) => void;
+  onRangeChanged: (range: any) => void;
+  components: any;
+  itemContent: (index: number, item: ThreadItem) => ReactNode;
+  hasNewActivity: boolean;
+  onJumpToLatest: () => void;
+};
+
+const LegacyThreadStack = memo(function LegacyThreadStack({
+  virtuosoStyle,
+  data,
+  virtuosoRef,
+  followOutput,
+  restoreStateFrom,
+  onAtBottomStateChange,
+  onRangeChanged,
+  components,
+  itemContent,
+  hasNewActivity,
+  onJumpToLatest,
+}: LegacyThreadStackProps) {
+  return (
+    <div className="thread-stack">
+      <Virtuoso
+        style={virtuosoStyle}
+        data={data}
+        ref={virtuosoRef}
+        followOutput={followOutput}
+        defaultItemHeight={56}
+        computeItemKey={(index, item) => item?.id ?? `i:${index}`}
+        restoreStateFrom={restoreStateFrom}
+        atBottomStateChange={onAtBottomStateChange}
+        rangeChanged={onRangeChanged}
+        components={components}
+        itemContent={itemContent}
+      />
+
+      {hasNewActivity && (
+        <button
+          type="button"
+          className="new-activity-overlay"
+          aria-label="Jump to latest"
+          title="Jump to latest"
+          onClick={onJumpToLatest}
+        >
+          ↓
+        </button>
+      )}
+    </div>
+  );
+});
 
 function ThreadItemView({
   item,
