@@ -1462,7 +1462,8 @@ button.linklike:hover {
   min-width: 0;
 }
 
-.wb-task-row:hover {
+.wb-task-row:hover,
+.wb-task-row.wb-task-row-hovered {
   background: rgba(255, 255, 255, 0.04);
 }
 
@@ -1577,6 +1578,7 @@ button.linklike:hover {
   width: 6px;
   height: 6px;
   border-radius: 999px;
+  margin-left: 8px;
 }
 
 .wb-task-status-dot-unread {
@@ -1691,6 +1693,17 @@ button.linklike:hover {
   border: 2px solid rgba(255, 255, 255, 0.22);
   border-top-color: rgba(78, 163, 255, 0.90);
   animation: wb-spin 800ms linear infinite;
+  transition: opacity 120ms ease;
+  margin-left: 8px;
+}
+
+.wb-task-spinner[data-active="false"] {
+  opacity: 0;
+  animation-play-state: paused;
+  width: 0;
+  height: 0;
+  margin-left: 0;
+  border-width: 0;
 }
 
 @keyframes wb-spin {
@@ -1714,7 +1727,7 @@ button.linklike:hover {
   display: inline-flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 8px;
+  gap: 0;
   transition: opacity 120ms ease;
 }
 
@@ -1738,6 +1751,7 @@ button.linklike:hover {
 }
 
 .wb-task-row:hover .wb-task-actions,
+.wb-task-row.wb-task-row-hovered .wb-task-actions,
 .wb-task-row:focus-within .wb-task-actions,
 .wb-task-row:focus-visible .wb-task-actions {
   opacity: 1;
@@ -1745,6 +1759,7 @@ button.linklike:hover {
 }
 
 .wb-task-row:hover .wb-task-meta-status,
+.wb-task-row.wb-task-row-hovered .wb-task-meta-status,
 .wb-task-row:focus-within .wb-task-meta-status,
 .wb-task-row:focus-visible .wb-task-meta-status {
   opacity: 0;

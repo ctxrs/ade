@@ -149,6 +149,214 @@ function lastRoleMessageMs(messages: { role: string; created_at: string }[], rol
   return null;
 }
 
+const SPINNER_DURATION_MS = 800;
+const SPINNER_ANCHOR_MS = typeof performance !== "undefined" ? performance.now() : Date.now();
+
+function spinnerDelayForNow(): number {
+  const now = typeof performance !== "undefined" ? performance.now() : Date.now();
+  return -((now - SPINNER_ANCHOR_MS) % SPINNER_DURATION_MS);
+}
+
+type TaskRowProps = {
+  taskId: string;
+  title: string;
+  archived: boolean;
+  selected: boolean;
+  hovered: boolean;
+  isRenaming: boolean;
+  working: boolean;
+  dotKind: "error" | "unread" | null;
+  ageIso: string | null | undefined;
+  providerCount: number;
+  harnesses: Array<(typeof HARNESS_CATALOG)[number]>;
+  onFocusTask: (taskId: string) => void;
+  onOpenMenu: (taskId: string, opts: { triggerEl: HTMLElement } | { x: number; y: number }) => void;
+  onToggleArchive: (taskId: string, nextArchived: boolean) => Promise<void>;
+  onHoverEnter: (taskId: string) => void;
+  onHoverLeave: (taskId: string) => void;
+  onCancelRename: () => void;
+  onCommitRename: (taskId: string, nextValue: string) => void;
+};
+
+const TaskRow = React.memo(function TaskRow({
+  taskId,
+  title,
+  archived,
+  selected,
+  hovered,
+  isRenaming,
+  working,
+  dotKind,
+  ageIso,
+  providerCount,
+  harnesses,
+  onFocusTask,
+  onOpenMenu,
+  onToggleArchive,
+  onHoverEnter,
+  onHoverLeave,
+  onCancelRename,
+  onCommitRename,
+}: TaskRowProps) {
+  const [renameDraft, setRenameDraft] = useState(title);
+  const renameInputRef = useRef<HTMLInputElement | null>(null);
+  const spinnerDelayRef = useRef<number>(spinnerDelayForNow());
+  const wasRenamingRef = useRef(false);
+  const ignoreBlurRef = useRef(false);
+  const clickOutsideRef = useRef(false);
+
+  useEffect(() => {
+    if (isRenaming && !wasRenamingRef.current) {
+      setRenameDraft(title);
+      requestAnimationFrame(() => {
+        const el = renameInputRef.current;
+        if (!el) return;
+        el.focus();
+        el.select();
+      });
+    }
+    wasRenamingRef.current = isRenaming;
+    if (isRenaming) {
+      ignoreBlurRef.current = false;
+      clickOutsideRef.current = false;
+    }
+  }, [isRenaming, title]);
+
+  useEffect(() => {
+    if (!isRenaming) return;
+    const onPointerDown = (e: PointerEvent) => {
+      const input = renameInputRef.current;
+      const target = e.target as Node | null;
+      if (!input || !target) return;
+      clickOutsideRef.current = !input.contains(target);
+    };
+    window.addEventListener("pointerdown", onPointerDown);
+    return () => {
+      window.removeEventListener("pointerdown", onPointerDown);
+    };
+  }, [isRenaming]);
+
+  return (
+    <div
+      className={`wb-task-row ${archived ? "wb-task-row-archived" : ""} ${selected ? "wb-task-row-active" : ""} ${
+        hovered ? "wb-task-row-hovered" : ""
+      }`}
+      role="listitem"
+      onClick={() => onFocusTask(taskId)}
+      onPointerEnter={() => onHoverEnter(taskId)}
+      onPointerLeave={() => onHoverLeave(taskId)}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        onOpenMenu(taskId, { x: e.clientX, y: e.clientY });
+      }}
+      onKeyDown={(e) => {
+        const target = e.target as HTMLElement | null;
+        if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) {
+          return;
+        }
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onFocusTask(taskId);
+        }
+      }}
+      tabIndex={0}
+      title={title}
+    >
+      <div className="wb-task-leading" aria-hidden="true">
+        {providerCount > 1 ? (
+          <LayersPlus className="wb-task-harness-multi" size={16} />
+        ) : harnesses.length > 0 ? (
+          <img
+            className={`wb-task-harness-logo ${harnesses[0].invertInDark ? "wb-invert" : ""}`}
+            src={harnesses[0].logoSrc}
+            alt=""
+          />
+        ) : (
+          <span className="wb-task-harness-fallback" aria-hidden="true" />
+        )}
+      </div>
+      <div className="wb-task-body">
+        {isRenaming ? (
+          <input
+            ref={renameInputRef}
+            className="wb-task-rename"
+            value={renameDraft}
+            onChange={(e) => setRenameDraft(e.target.value)}
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") {
+                e.preventDefault();
+                e.stopPropagation();
+                ignoreBlurRef.current = true;
+                onCancelRename();
+              }
+              if (e.key === "Enter") {
+                e.preventDefault();
+                e.stopPropagation();
+                ignoreBlurRef.current = true;
+                onCommitRename(taskId, renameDraft);
+              }
+            }}
+            onBlur={(e) => {
+              if (ignoreBlurRef.current) {
+                ignoreBlurRef.current = false;
+                return;
+              }
+              if (!clickOutsideRef.current) return;
+              clickOutsideRef.current = false;
+              onCommitRename(taskId, e.currentTarget.value);
+            }}
+            aria-label="Rename task"
+          />
+        ) : (
+          <div className="wb-task-title">{title}</div>
+        )}
+      </div>
+      <div className="wb-task-meta">
+        <div className="wb-task-meta-status" aria-hidden="true">
+          <div className="wb-task-age">
+            <RelativeAgeLabel iso={ageIso} />
+          </div>
+          <span
+            className="wb-task-spinner"
+            data-active={working ? "true" : "false"}
+            style={{ animationDelay: `${spinnerDelayRef.current}ms` }}
+          />
+          {dotKind === "unread" && <span className="wb-task-status-dot wb-task-status-dot-unread" />}
+          {dotKind === "error" && <span className="wb-task-status-dot wb-task-status-dot-error" />}
+        </div>
+        <div className="wb-task-actions" aria-label="Task actions">
+          <button
+            type="button"
+            className="wb-icon wb-task-action wb-task-menu-trigger"
+            onClick={(e) => {
+              e.stopPropagation();
+              onOpenMenu(taskId, { triggerEl: e.currentTarget });
+            }}
+            aria-label="More actions"
+            title="More actions"
+          >
+            <Ellipsis size={14} />
+          </button>
+          <button
+            type="button"
+            className="wb-icon wb-task-action"
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleArchive(taskId, !archived).catch(() => {});
+            }}
+            aria-label={archived ? "Unarchive" : "Archive"}
+            title={archived ? "Unarchive" : "Archive"}
+          >
+            <Archive size={14} />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+});
+
 function RelativeAgeLabel({
   iso,
   fallback = "Now",
@@ -333,9 +541,8 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const [archivedCollapsed, setArchivedCollapsed] = useState(true);
   const [taskMenu, setTaskMenu] = useState<{ taskId: string; style: React.CSSProperties } | null>(null);
   const taskMenuRef = useRef<HTMLDivElement | null>(null);
+  const [hoveredTaskId, setHoveredTaskId] = useState<string | null>(null);
   const [renamingTaskId, setRenamingTaskId] = useState<string | null>(null);
-  const [renameDraft, setRenameDraft] = useState("");
-  const renameInputRef = useRef<HTMLInputElement | null>(null);
   const [convoMenu, setConvoMenu] = useState<{ style: React.CSSProperties } | null>(null);
   const convoMenuRef = useRef<HTMLDivElement | null>(null);
 
@@ -977,16 +1184,6 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     }
   }, [archivedCollapsed, workspaceCatchupStore]);
 
-  useEffect(() => {
-    if (!renamingTaskId) return;
-    requestAnimationFrame(() => {
-      const el = renameInputRef.current;
-      if (!el) return;
-      el.focus();
-      el.select();
-    });
-  }, [renamingTaskId]);
-
   const onToggleArchive = useCallback(
     async (taskId: string, nextArchived: boolean) => {
       const updated = nextArchived ? await archiveTask(taskId) : await unarchiveTask(taskId);
@@ -1012,21 +1209,18 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
 
   const beginRenameTask = useCallback(
     (taskId: string) => {
-      const summary = tasksById[taskId];
       setRenamingTaskId(taskId);
-      setRenameDraft(String(summary?.task.title ?? "").trim());
     },
-    [tasksById],
+    [],
   );
 
   const cancelRenameTask = useCallback(() => {
     setRenamingTaskId(null);
-    setRenameDraft("");
   }, []);
 
   const commitRenameTask = useCallback(
-    async (taskId: string) => {
-      const next = renameDraft.trim();
+    async (taskId: string, nextValue: string) => {
+      const next = nextValue.trim();
       if (!next) {
         window.alert("Task title is required.");
         return;
@@ -1044,7 +1238,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
         window.alert(e?.message ?? "Failed to rename.");
       }
     },
-    [cancelRenameTask, renameDraft, tasksById, workspaceCatchupStore],
+    [cancelRenameTask, tasksById, workspaceCatchupStore],
   );
 
   const renderTaskRow = useCallback(
@@ -1052,6 +1246,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       const tid = summary.id;
       const t = summary.task;
       const selected = tid === activeTaskId;
+      const hovered = tid === hoveredTaskId;
       const archived = !!opts?.archived;
       const title = t.title ?? "New conversation";
       const working = taskLiveInfo.workingByTask.has(tid);
@@ -1078,107 +1273,27 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
         .slice(0, 3) as Array<(typeof HARNESS_CATALOG)[number]>;
 
       return (
-        <React.Fragment key={tid}>
-          <div
-            className={`wb-task-row ${archived ? "wb-task-row-archived" : ""} ${selected ? "wb-task-row-active" : ""}`}
-            role="listitem"
-            onClick={() => focusTask(tid)}
-            onContextMenu={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              openTaskMenu(tid, { x: e.clientX, y: e.clientY });
-            }}
-            onKeyDown={(e) => {
-              const target = e.target as HTMLElement | null;
-              if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) {
-                return;
-              }
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                focusTask(tid);
-              }
-            }}
-            tabIndex={0}
-            title={title}
-          >
-            <div className="wb-task-leading" aria-hidden="true">
-              {providerCount > 1 ? (
-                <LayersPlus className="wb-task-harness-multi" size={16} />
-              ) : harnesses.length > 0 ? (
-                <img
-                  className={`wb-task-harness-logo ${harnesses[0].invertInDark ? "wb-invert" : ""}`}
-                  src={harnesses[0].logoSrc}
-                  alt=""
-                />
-              ) : (
-                <span className="wb-task-harness-fallback" aria-hidden="true" />
-              )}
-            </div>
-            <div className="wb-task-body">
-              {renamingTaskId === tid ? (
-                <input
-                  ref={renameInputRef}
-                  className="wb-task-rename"
-                  value={renameDraft}
-                  onChange={(e) => setRenameDraft(e.target.value)}
-                  onClick={(e) => e.stopPropagation()}
-                  onKeyDown={(e) => {
-                    if (e.key === "Escape") {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      cancelRenameTask();
-                    }
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      void commitRenameTask(tid);
-                    }
-                  }}
-                  onBlur={() => void commitRenameTask(tid)}
-                  aria-label="Rename task"
-                />
-              ) : (
-                <div className="wb-task-title">{title}</div>
-              )}
-            </div>
-            <div className="wb-task-meta">
-              <div className="wb-task-meta-status" aria-hidden="true">
-                <div className="wb-task-age">
-                  <RelativeAgeLabel iso={ageIso} />
-                </div>
-                {working && <span className="wb-task-spinner" />}
-                {dotKind === "unread" && <span className="wb-task-status-dot wb-task-status-dot-unread" />}
-                {dotKind === "error" && <span className="wb-task-status-dot wb-task-status-dot-error" />}
-              </div>
-              <div className="wb-task-actions" aria-label="Task actions">
-                <button
-                  type="button"
-                  className="wb-icon wb-task-action wb-task-menu-trigger"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    openTaskMenu(tid, { triggerEl: e.currentTarget });
-                  }}
-                  aria-label="More actions"
-                  title="More actions"
-                >
-                  <Ellipsis size={14} />
-                </button>
-                <button
-                  type="button"
-                  className="wb-icon wb-task-action"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onToggleArchive(tid, !archived).catch(() => {});
-                  }}
-                  aria-label={archived ? "Unarchive" : "Archive"}
-                  title={archived ? "Unarchive" : "Archive"}
-                >
-                  <Archive size={14} />
-                </button>
-              </div>
-            </div>
-          </div>
-        </React.Fragment>
+        <TaskRow
+          key={tid}
+          taskId={tid}
+          title={title}
+          archived={archived}
+          selected={selected}
+          hovered={hovered}
+          isRenaming={renamingTaskId === tid}
+          working={working}
+          dotKind={dotKind}
+          ageIso={ageIso}
+          providerCount={providerCount}
+          harnesses={harnesses}
+          onFocusTask={focusTask}
+          onOpenMenu={openTaskMenu}
+          onToggleArchive={onToggleArchive}
+          onHoverEnter={(id) => setHoveredTaskId(id)}
+          onHoverLeave={(id) => setHoveredTaskId((current) => (current === id ? null : current))}
+          onCancelRename={cancelRenameTask}
+          onCommitRename={commitRenameTask}
+        />
       );
     },
     [
@@ -1186,11 +1301,12 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       cancelRenameTask,
       commitRenameTask,
       focusTask,
+      hoveredTaskId,
       onToggleArchive,
       openTaskMenu,
       providerIdsByTaskFromSessions,
-      renameDraft,
       renamingTaskId,
+      setHoveredTaskId,
       taskLiveInfo.errorByTask,
       taskLiveInfo.lastAssistantMsByTask,
       taskLiveInfo.workingByTask,
