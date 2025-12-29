@@ -17,6 +17,7 @@ node_modules/
 dist/
 **/dist/
 .vite/
+vite.config.ts.timestamp-*.mjs
 .turbo/
 **/.turbo/
 .turbo-cache/

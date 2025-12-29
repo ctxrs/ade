@@ -63,6 +63,7 @@ import { pickPreferredSession, pickPreferredSessionId, pickPreferredTrackId } fr
 import { imageFilesToInlineAttachments } from "../utils/messageAttachments";
 import { parseModelId } from "../utils/modelEffort";
 import { formatRelativeAgeShort } from "../utils/relativeTime";
+import { useRelativeNowMs } from "../utils/useRelativeNowMs";
 import {
   NEW_TASK_DRAFT_KEY,
   WorkbenchStoreProvider,
@@ -271,6 +272,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     [newTaskDraft.text, setNewTaskDraft],
   );
   const newComposerRef = useRef<HTMLDivElement | null>(null);
+  const relativeNowMs = useRelativeNowMs();
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(260);
@@ -1047,7 +1049,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
           : liveLastAssistantMs ?? serverLastAssistantMs;
       const seenMs = parseMs(t.assistant_seen_at ?? null);
       const unread = !working && lastAssistantMs !== null && (seenMs === null || lastAssistantMs > seenMs);
-      const age = formatRelativeAgeShort(t.last_activity_at ?? t.updated_at ?? t.created_at) || "Now";
+      const age = formatRelativeAgeShort(t.last_activity_at ?? t.updated_at ?? t.created_at, relativeNowMs) || "Now";
       const dotKind = hasError ? "error" : unread ? "unread" : null;
       const summaryProviders = summary.tracks.flatMap((tr) =>
         tr.sessions.map((s) => String(s.session.provider_id ?? "").trim()).filter(Boolean),
@@ -1170,6 +1172,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       onToggleArchive,
       openTaskMenu,
       providerIdsByTaskFromSessions,
+      relativeNowMs,
       renameDraft,
       renamingTaskId,
       taskLiveInfo.errorByTask,
@@ -1811,7 +1814,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       return bestIso;
     })();
 
-    const age = formatRelativeAgeShort(lastIso) || "Now";
+    const age = formatRelativeAgeShort(lastIso, relativeNowMs) || "Now";
     const worktreePath = sess?.env_target === "worktree" ? String(activeWorktree?.root_path ?? "") : "";
     const worktreeSlug = worktreePath ? lastPathSegment(worktreePath) : "";
 
@@ -1825,7 +1828,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       worktreePath,
       canCopyWorktree: Boolean(worktreePath),
     };
-  }, [activeEntry, activeTask?.title, activeWorktree?.root_path, tracks.length]);
+  }, [activeEntry, activeTask?.title, activeWorktree?.root_path, relativeNowMs, tracks.length]);
 
   const singleTrackHeaderForRender = useMemo(() => {
     if (singleTrackHeader) return singleTrackHeader;
