@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { appendDesktopLog } from "./api/client";
+import DaemonAvailabilityOverlay from "./components/DaemonAvailabilityOverlay";
 import LauncherPage from "./pages/LauncherPage";
 import AppSettingsPage from "./pages/AppSettingsPage";
 import WorkspacesPage from "./pages/WorkspacesPage";
@@ -45,6 +46,7 @@ export default function App() {
           <Route path="/sessions/:id" element={<SessionPage />} />
           <Route path="/__cursor_diff_demo" element={<CursorDiffDemoPage />} />
         </Routes>
+        <DaemonAvailabilityOverlay />
       </BrowserRouter>
     </SessionSupervisorProvider>
   );

@@ -4948,3 +4948,89 @@ button.linklike:hover {
 .settings-harness-row-disabled .settings-row-desc {
   opacity: 0.7;
 }
+
+.daemon-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(6px);
+}
+
+.daemon-overlay-card {
+  width: min(560px, 92vw);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 28px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6);
+}
+
+.daemon-overlay-eyebrow {
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(212, 212, 212, 0.6);
+  margin-bottom: 8px;
+}
+
+.daemon-overlay-card h2 {
+  margin: 0 0 8px;
+  font-size: 18px;
+}
+
+.daemon-overlay-body {
+  margin: 0 0 12px;
+  color: var(--muted);
+}
+
+.daemon-overlay-target {
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 12px;
+}
+
+.daemon-overlay-mono {
+  font-family: var(--mono);
+}
+
+.daemon-overlay-error {
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  background: rgba(239, 68, 68, 0.08);
+  color: #fca5a5;
+  margin-bottom: 16px;
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+
+.daemon-overlay-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.daemon-overlay-button {
+  background: var(--panel-2);
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+.daemon-overlay-secondary {
+  display: inline-flex;
+  align-items: center;
+  padding: 8px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  color: var(--text);
+  text-decoration: none;
+  background: transparent;
+}
+
+.daemon-overlay-secondary:hover {
+  border-color: var(--border-strong);
+}
