@@ -16,6 +16,7 @@ import type {
   SessionHistoryPage,
   SessionEventsPage,
   SessionCatchupSummary,
+  TerminalSession,
   Task,
   Track,
   TrackDiffSummary,
@@ -51,6 +52,7 @@ export type {
   SessionHistoryPage,
   SessionEventsPage,
   SessionCatchupSummary,
+  TerminalSession,
   Task,
   Track,
   TrackDiffSummary,
@@ -493,6 +495,27 @@ export const createWorkspace = (root_path: string, name?: string) =>
 
 export const getWorkspace = (id: string) =>
   apiAny<Workspace>(`/api/workspaces/${id}`);
+
+export type CreateTerminalRequest = {
+  task_id?: string | null;
+  track_id?: string | null;
+  session_id?: string | null;
+  worktree_id?: string | null;
+  cwd?: string | null;
+  shell?: string | null;
+};
+
+export const listWorkspaceTerminals = (workspaceId: string) =>
+  apiAny<TerminalSession[]>(`/api/workspaces/${workspaceId}/terminals`);
+
+export const createWorkspaceTerminal = (workspaceId: string, req: CreateTerminalRequest) =>
+  apiAny<TerminalSession>(`/api/workspaces/${workspaceId}/terminals`, {
+    method: "POST",
+    body: JSON.stringify(req),
+  });
+
+export const deleteTerminal = (terminalId: string) =>
+  apiAny<void>(`/api/terminals/${terminalId}`, { method: "DELETE" });
 
 export type WorkspaceCatchupParams = {
   limit?: number;

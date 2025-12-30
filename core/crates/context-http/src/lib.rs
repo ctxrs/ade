@@ -15,6 +15,7 @@ pub mod scheduler;
 pub mod settings;
 pub mod telemetry;
 pub mod title_generation;
+pub mod terminals;
 pub mod updates;
 pub mod workspace_catchup;
 pub mod worktree_bootstrap;

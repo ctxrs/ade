@@ -68,6 +68,24 @@ export type Session = {
   updated_at?: string;
 };
 
+export type TerminalStatus = "running" | "exited";
+
+export type TerminalSession = {
+  id: { 0: string } | string;
+  workspace_id: { 0: string } | string;
+  task_id?: { 0: string } | string | null;
+  track_id?: { 0: string } | string | null;
+  session_id?: { 0: string } | string | null;
+  worktree_id?: { 0: string } | string | null;
+  cwd: string;
+  shell: string;
+  title: string;
+  status: TerminalStatus;
+  exit_code?: number | null;
+  created_at: string;
+  updated_at: string;
+};
+
 export type SessionSummary = {
   id: { 0: string } | string;
   track_id: { 0: string } | string;

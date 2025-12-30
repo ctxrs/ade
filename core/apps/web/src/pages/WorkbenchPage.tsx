@@ -16,6 +16,7 @@ import {
   MessageSquare,
   Mic,
   Settings,
+  Terminal,
 } from "lucide-react";
 import {
   DictationSettings,
@@ -57,6 +58,7 @@ import {
   type SessionCacheEntry,
 } from "../state/sessionSupervisor";
 import { DiffReviewPane } from "../components/DiffReviewPane";
+import { TerminalPanel, type TerminalPanelHandle } from "../components/TerminalPanel";
 import { WorktreeBootstrapSnackbar } from "../components/WorktreeBootstrapSnackbar";
 import { SessionView, buildWorkbenchThreadViewModel } from "./SessionPage";
 import { HARNESS_CATALOG } from "../utils/harnessCatalog";
@@ -83,7 +85,12 @@ import {
   useWorkbenchShellSnapshot,
   useWorkbenchStore,
 } from "../workbench/store";
-import { loadWorkbenchDiffPaneOpenV1, saveWorkbenchDiffPaneOpenV1 } from "../workbench/persistence";
+import {
+  loadWorkbenchDiffPaneOpenV1,
+  loadWorkbenchTerminalPanelOpenV1,
+  saveWorkbenchDiffPaneOpenV1,
+  saveWorkbenchTerminalPanelOpenV1,
+} from "../workbench/persistence";
 import type { WorkbenchScrollState } from "../workbench/types";
 import {
   WorkspaceCatchupProvider,
@@ -599,6 +606,21 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const [diffOpen, setDiffOpen] = useState(false);
   const [diffOpenHydrated, setDiffOpenHydrated] = useState(false);
   const reviewTab: "git" = "git";
+  const terminalPanelRef = useRef<TerminalPanelHandle | null>(null);
+  const [terminalOpen, setTerminalOpen] = useState(false);
+  const [terminalHeight, setTerminalHeight] = useState(260);
+  const [terminalResizing, setTerminalResizing] = useState(false);
+  const [terminalOpenHydrated, setTerminalOpenHydrated] = useState(false);
+
+  const toggleTerminalPanel = useCallback(() => {
+    setTerminalOpen((open) => {
+      const next = !open;
+      if (next) {
+        terminalPanelRef.current?.setScope("workspace");
+      }
+      return next;
+    });
+  }, []);
 
   useEffect(() => {
     document.documentElement.classList.add("wb-no-scroll");
@@ -609,14 +631,21 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     };
   }, []);
 
+  const clampTerminalHeight = useCallback((value: number) => {
+    const min = 160;
+    const max = Math.max(min, window.innerHeight - 160);
+    return Math.min(max, Math.max(min, Math.round(value)));
+  }, []);
+
   useEffect(() => {
     const onResize = () => {
       const max = Math.max(170, window.innerWidth - 240);
       setSidebarWidth((w) => Math.min(max, Math.max(170, Math.round(w))));
+      setTerminalHeight((h) => clampTerminalHeight(h));
     };
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
-  }, []);
+  }, [clampTerminalHeight]);
 
   useEffect(() => {
     if (!workspaceId) return;
@@ -691,6 +720,18 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       window.removeEventListener("keydown", onKeyDown);
     };
   }, [convoMenu]);
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const isToggleKey = e.code === "Backquote" || e.key === "`";
+      if (e.ctrlKey && !e.metaKey && !e.altKey && isToggleKey) {
+        e.preventDefault();
+        toggleTerminalPanel();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [toggleTerminalPanel]);
 
   useEffect(() => {
     if (useMultipleAgents) return;
@@ -1474,6 +1515,51 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     saveWorkbenchDiffPaneOpenV1(workspaceId, diffPaneScope, diffOpen).catch(() => {});
   }, [diffOpen, diffOpenHydrated, workspaceId, diffPaneScope]);
 
+  useEffect(() => {
+    setTerminalOpenHydrated(false);
+    if (!workspaceId) {
+      setTerminalOpen(false);
+      setTerminalOpenHydrated(true);
+      return;
+    }
+    let cancelled = false;
+    loadWorkbenchTerminalPanelOpenV1(workspaceId)
+      .then((state) => {
+        if (cancelled) return;
+        if (state) {
+          setTerminalOpen(state.open);
+          setTerminalHeight(clampTerminalHeight(state.height));
+        } else {
+          setTerminalOpen(false);
+        }
+        setTerminalOpenHydrated(true);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setTerminalOpen(false);
+        setTerminalOpenHydrated(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [clampTerminalHeight, workspaceId]);
+
+  useEffect(() => {
+    if (!terminalOpenHydrated) return;
+    if (!workspaceId) return;
+    saveWorkbenchTerminalPanelOpenV1(workspaceId, {
+      v: 1,
+      open: terminalOpen,
+      height: terminalHeight,
+    }).catch(() => {});
+  }, [terminalHeight, terminalOpen, terminalOpenHydrated, workspaceId]);
+
+  useEffect(() => {
+    if (!terminalOpen) return;
+    const id = window.requestAnimationFrame(() => terminalPanelRef.current?.focusActive());
+    return () => window.cancelAnimationFrame(id);
+  }, [terminalOpen]);
+
 
   const providerOptionsInFlightRef = useRef<Record<string, Promise<ProviderOptions | undefined>>>({});
 
@@ -1824,6 +1910,25 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     window.addEventListener("mouseup", onUp);
   };
 
+  const onTerminalResizerMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const startY = e.clientY;
+    const startH = terminalHeight;
+    setTerminalResizing(true);
+    const onMove = (ev: MouseEvent) => {
+      const dy = startY - ev.clientY;
+      const next = clampTerminalHeight(startH + dy);
+      setTerminalHeight(next);
+    };
+    const onUp = () => {
+      setTerminalResizing(false);
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
+
   const onSidebarResizerMouseDown = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -2045,6 +2150,23 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     }
   }, [formatWorktreePathForCopy, singleTrackHeader?.worktreePath]);
 
+  const openWorktreeTerminal = useCallback(async () => {
+    const path = String(singleTrackHeader?.worktreePath ?? "").trim();
+    if (!path) return;
+    if (!terminalPanelRef.current) return;
+    terminalPanelRef.current.setScope("task");
+    setTerminalOpen(true);
+    const createdId = await terminalPanelRef.current.createTerminal({
+      cwd: path,
+      taskId: activeTaskId ?? null,
+      trackId: activeTrackId ?? null,
+      sessionId: activeSessionId ?? null,
+      worktreeId: activeWorktreeId || null,
+      scope: "task",
+    });
+    if (createdId) terminalPanelRef.current.focusTerminal(createdId);
+  }, [activeSessionId, activeTaskId, activeTrackId, activeWorktreeId, singleTrackHeader?.worktreePath]);
+
   const exportConversation = useCallback(async () => {
     if (!activeEntry?.session) return;
     const sess = activeEntry.session;
@@ -2193,13 +2315,17 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const rootStyle = useMemo(() => {
     const max = Math.max(170, window.innerWidth - 240);
     const clamped = Math.min(max, Math.max(170, Math.round(sidebarWidth)));
-    return { ["--wb-sidebar-width" as any]: `${clamped}px` } as React.CSSProperties;
-  }, [sidebarWidth]);
+    const terminalOffset = terminalOpen ? terminalHeight + 6 : 0;
+    return {
+      ["--wb-sidebar-width" as any]: `${clamped}px`,
+      ["--wb-terminal-offset" as any]: `${terminalOffset}px`,
+    } as React.CSSProperties;
+  }, [sidebarWidth, terminalHeight, terminalOpen]);
 
   if (!workbenchSnap.hydrated) {
     return (
       <div
-        className={`wb-root ${sidebarCollapsed ? "wb-root-collapsed" : ""} ${sidebarResizing ? "wb-root-resizing" : ""} ${diffResizing ? "wb-root-diff-resizing" : ""}`}
+        className={`wb-root ${sidebarCollapsed ? "wb-root-collapsed" : ""} ${sidebarResizing ? "wb-root-resizing" : ""} ${diffResizing ? "wb-root-diff-resizing" : ""} ${terminalResizing ? "wb-root-terminal-resizing" : ""}`}
         style={rootStyle}
       >
         <WorktreeBootstrapSnackbar />
@@ -2219,7 +2345,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
 
   return (
     <div
-      className={`wb-root ${sidebarCollapsed ? "wb-root-collapsed" : ""} ${sidebarResizing ? "wb-root-resizing" : ""} ${diffResizing ? "wb-root-diff-resizing" : ""}`}
+      className={`wb-root ${sidebarCollapsed ? "wb-root-collapsed" : ""} ${sidebarResizing ? "wb-root-resizing" : ""} ${diffResizing ? "wb-root-diff-resizing" : ""} ${terminalResizing ? "wb-root-terminal-resizing" : ""}`}
       style={rootStyle}
     >
       <WorktreeBootstrapSnackbar />
@@ -2504,20 +2630,32 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
                           <span className="wb-single-track-dot" aria-hidden="true">
                             ·
                           </span>
-                          <button
-                            type="button"
-                            className={`wb-worktree-chip ${worktreeCopied ? "wb-worktree-chip-copied" : ""}`}
-                            disabled={!singleTrackHeaderForRender.canCopyWorktree}
-                            onClick={() => void copyWorktreeLocation()}
-                            title="Copy worktree location"
-                            aria-label="Copy worktree location"
-                          >
-                            <GitBranch size={13} />
-                            <span className="wb-worktree-chip-slug">{singleTrackHeaderForRender.worktreeSlug}</span>
-                            <span className="wb-worktree-chip-copy" aria-hidden="true">
-                              {worktreeCopied ? <Check size={13} /> : <Copy size={13} />}
-                            </span>
-                          </button>
+                          <span className="wb-worktree-actions">
+                            <button
+                              type="button"
+                              className={`wb-worktree-chip ${worktreeCopied ? "wb-worktree-chip-copied" : ""}`}
+                              disabled={!singleTrackHeaderForRender.canCopyWorktree}
+                              onClick={() => void copyWorktreeLocation()}
+                              title="Copy worktree location"
+                              aria-label="Copy worktree location"
+                            >
+                              <GitBranch size={13} />
+                              <span className="wb-worktree-chip-slug">{singleTrackHeaderForRender.worktreeSlug}</span>
+                              <span className="wb-worktree-chip-copy" aria-hidden="true">
+                                {worktreeCopied ? <Check size={13} /> : <Copy size={13} />}
+                              </span>
+                            </button>
+                            <button
+                              type="button"
+                              className="wb-worktree-action"
+                              disabled={!singleTrackHeaderForRender.canCopyWorktree}
+                              onClick={() => void openWorktreeTerminal()}
+                              title="Open worktree terminal"
+                              aria-label="Open worktree terminal"
+                            >
+                              <Terminal size={13} />
+                            </button>
+                          </span>
                           {worktreeCopied && (
                             <span className="sr-only" aria-live="polite">
                               Copied worktree location to clipboard.
@@ -2536,6 +2674,16 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
                         onClick={toggleDiffPane}
                       >
                         <GitBranch size={14} />
+                      </button>
+                      <button
+                        type="button"
+                        className={`wb-icon ${terminalOpen ? "wb-icon-active" : ""}`}
+                        aria-label="Toggle terminal panel"
+                        aria-pressed={terminalOpen}
+                        title={terminalOpen ? "Hide terminal" : "Show terminal"}
+                        onClick={toggleTerminalPanel}
+                      >
+                        <Terminal size={14} />
                       </button>
                       <button
                         type="button"
@@ -2657,6 +2805,31 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
             )}
           </div>
         )}
+      </div>
+
+      <div className="wb-terminal-shell" aria-hidden={!terminalOpen}>
+        {terminalOpen && (
+          <div className="wb-terminal-resizer" onMouseDown={onTerminalResizerMouseDown} />
+        )}
+        <div
+          className="wb-terminal-panel"
+          style={{
+            height: terminalOpen ? terminalHeight : 0,
+            pointerEvents: terminalOpen ? "auto" : "none",
+          }}
+          aria-hidden={!terminalOpen}
+        >
+          <TerminalPanel
+            ref={terminalPanelRef}
+            workspaceId={workspaceId}
+            activeTaskId={activeTaskId}
+            activeTrackId={activeTrackId}
+            activeSessionId={activeSessionId}
+            open={terminalOpen}
+            height={terminalHeight}
+            onRequestClose={() => setTerminalOpen(false)}
+          />
+        </div>
       </div>
 
       {taskMenu && (

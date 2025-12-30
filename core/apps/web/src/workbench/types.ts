@@ -51,6 +51,55 @@ export type WorkbenchDraft = {
   updatedAtMs: number;
 };
 
+export type TerminalScope = "task" | "workspace";
+
+export type TerminalLayoutNode =
+  | {
+      kind: "leaf";
+      id: string;
+      terminalId: string;
+    }
+  | {
+      kind: "split";
+      id: string;
+      direction: SplitDirection;
+      ratio: number;
+      first: TerminalLayoutNode;
+      second: TerminalLayoutNode;
+    };
+
+export type TerminalGroupState = {
+  id: string;
+  layout: TerminalLayoutNode;
+  activeLeafId: string | null;
+};
+
+export type TerminalPanelScopeState = {
+  groups: TerminalGroupState[];
+  activeGroupId: string | null;
+  tabOrder: string[];
+};
+
+export type PersistedWorkbenchTerminalLayoutV1 = {
+  v: 1;
+  scope: TerminalScope;
+  scopes: {
+    task: TerminalPanelScopeState;
+    workspace: TerminalPanelScopeState;
+  };
+};
+
+export type PersistedWorkbenchTerminalTitlesV1 = {
+  v: 1;
+  titles: Record<string, string>;
+};
+
+export type PersistedWorkbenchTerminalOpenV1 = {
+  v: 1;
+  open: boolean;
+  height: number;
+};
+
 export type PersistedWorkbenchWindowV1 = {
   v: 1;
   layout: LayoutNode;

@@ -34,6 +34,7 @@ use crate::installs::{InstallId, InstallProgressEvent, InstallState, InstallStat
 use crate::scheduler::{session_worker, SchedulerCommand};
 use crate::settings;
 use crate::telemetry::{Telemetry, TelemetryConfig};
+use crate::terminals::TerminalManager;
 use crate::workspace_catchup::WorkspaceCatchupHub;
 
 fn acquire_daemon_lock(data_root: &Path) -> Result<std::fs::File> {
@@ -79,6 +80,7 @@ pub struct AppState {
     pub shutdown_tx: broadcast::Sender<()>,
     pub telemetry: Telemetry,
     pub workspace_catchup: WorkspaceCatchupHub,
+    pub terminals: TerminalManager,
     schedulers: Mutex<HashMap<SessionId, mpsc::Sender<SchedulerCommand>>>,
     broadcasters: Mutex<HashMap<SessionId, broadcast::Sender<SessionEvent>>>,
     session_event_heads: Mutex<HashMap<SessionId, watch::Sender<i64>>>,
@@ -207,6 +209,7 @@ impl AppState {
             shutdown_tx,
             telemetry,
             workspace_catchup,
+            terminals: TerminalManager::default(),
             schedulers: Mutex::new(HashMap::new()),
             broadcasters: Mutex::new(HashMap::new()),
             session_event_heads: Mutex::new(HashMap::new()),

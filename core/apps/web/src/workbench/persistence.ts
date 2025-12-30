@@ -4,8 +4,15 @@ import { randomUuid } from "../utils/randomUuid";
 import type {
   LayoutNode,
   PersistedWorkbenchDraftV1,
+  PersistedWorkbenchTerminalLayoutV1,
+  PersistedWorkbenchTerminalTitlesV1,
+  PersistedWorkbenchTerminalOpenV1,
   PersistedWorkbenchWindowV1,
   SplitDirection,
+  TerminalGroupState,
+  TerminalLayoutNode,
+  TerminalPanelScopeState,
+  TerminalScope,
   WorkbenchDraft,
   WorkbenchScrollState,
   WorkbenchTab,
@@ -14,6 +21,9 @@ import type {
 const WINDOW_DB_VERSION = 1 as const;
 const DRAFT_DB_VERSION = 1 as const;
 const DIFF_PANE_DB_VERSION = 1 as const;
+const TERMINAL_PANEL_DB_VERSION = 1 as const;
+const TERMINAL_LAYOUT_DB_VERSION = 1 as const;
+const TERMINAL_TITLES_DB_VERSION = 1 as const;
 
 export function workbenchDaemonKey(): string {
   return String(getDaemonBaseUrl() || window.location.origin || "unknown").trim() || "unknown";
@@ -35,6 +45,18 @@ export function workbenchDiffPaneKeyV1(workspaceId: string, scopeId: string): st
   return `wb.diff_pane.v${DIFF_PANE_DB_VERSION}.${safeKeyPart(workbenchDaemonKey())}.${safeKeyPart(workspaceId)}.${safeKeyPart(scopeId)}`;
 }
 
+export function workbenchTerminalPanelKeyV1(workspaceId: string): string {
+  return `wb.terminal_panel.v${TERMINAL_PANEL_DB_VERSION}.${safeKeyPart(workbenchDaemonKey())}.${safeKeyPart(workspaceId)}`;
+}
+
+export function workbenchTerminalLayoutKeyV1(workspaceId: string): string {
+  return `wb.terminal_layout.v${TERMINAL_LAYOUT_DB_VERSION}.${safeKeyPart(workbenchDaemonKey())}.${safeKeyPart(workspaceId)}`;
+}
+
+export function workbenchTerminalTitlesKeyV1(workspaceId: string): string {
+  return `wb.terminal_titles.v${TERMINAL_TITLES_DB_VERSION}.${safeKeyPart(workbenchDaemonKey())}.${safeKeyPart(workspaceId)}`;
+}
+
 function isRecord(v: unknown): v is Record<string, unknown> {
   return !!v && typeof v === "object";
 }
@@ -54,6 +76,110 @@ function isBoolean(v: unknown): v is boolean {
 function decodeSplitDirection(v: unknown): SplitDirection | null {
   if (v === "horizontal" || v === "vertical") return v;
   return null;
+}
+
+function decodeTerminalScope(v: unknown): TerminalScope | null {
+  if (v === "task" || v === "workspace") return v;
+  return null;
+}
+
+function decodeTerminalLayoutNode(raw: unknown, depth: number): TerminalLayoutNode | null {
+  if (depth > 64) return null;
+  if (!isRecord(raw)) return null;
+  const kind = raw.kind;
+  if (kind === "leaf") {
+    if (!isString(raw.id) || !raw.id.trim()) return null;
+    if (!isString(raw.terminalId) || !raw.terminalId.trim()) return null;
+    return { kind: "leaf", id: raw.id, terminalId: raw.terminalId };
+  }
+  if (kind === "split") {
+    if (!isString(raw.id) || !raw.id.trim()) return null;
+    const direction = decodeSplitDirection(raw.direction);
+    if (!direction) return null;
+    const ratioRaw = raw.ratio;
+    const ratio = isNumber(ratioRaw) ? ratioRaw : 0.5;
+    const clampedRatio = Math.min(0.9, Math.max(0.1, ratio));
+    const first = decodeTerminalLayoutNode(raw.first, depth + 1);
+    const second = decodeTerminalLayoutNode(raw.second, depth + 1);
+    if (!first || !second) return null;
+    return { kind: "split", id: raw.id, direction, ratio: clampedRatio, first, second };
+  }
+  return null;
+}
+
+function terminalLayoutLeafIds(node: TerminalLayoutNode | null, out: string[] = []): string[] {
+  if (!node) return out;
+  if (node.kind === "leaf") {
+    out.push(node.id);
+    return out;
+  }
+  terminalLayoutLeafIds(node.first, out);
+  terminalLayoutLeafIds(node.second, out);
+  return out;
+}
+
+function decodeTerminalGroupState(raw: unknown): TerminalGroupState | null {
+  if (!isRecord(raw)) return null;
+  if (!isString(raw.id) || !raw.id.trim()) return null;
+  const layout = decodeTerminalLayoutNode(raw.layout, 0);
+  if (!layout) return null;
+  const activeLeafId = raw.activeLeafId === null ? null : isString(raw.activeLeafId) ? raw.activeLeafId : null;
+  const leafs = terminalLayoutLeafIds(layout);
+  if (leafs.length === 0) return null;
+  const resolvedActiveLeafId = activeLeafId && leafs.includes(activeLeafId) ? activeLeafId : leafs[0] ?? null;
+  return { id: raw.id, layout, activeLeafId: resolvedActiveLeafId };
+}
+
+function decodeTerminalPanelScopeState(raw: unknown): TerminalPanelScopeState | null {
+  if (!isRecord(raw)) return null;
+  const tabOrderRaw = raw.tabOrder;
+  if (!Array.isArray(tabOrderRaw)) return null;
+  const tabOrder = tabOrderRaw.filter((v) => isString(v)).map((v) => String(v));
+
+  const groupsRaw = raw.groups;
+  const groups: TerminalGroupState[] = [];
+  if (Array.isArray(groupsRaw)) {
+    for (const g of groupsRaw) {
+      const decoded = decodeTerminalGroupState(g);
+      if (decoded) groups.push(decoded);
+    }
+  }
+
+  let activeGroupId = raw.activeGroupId === null ? null : isString(raw.activeGroupId) ? raw.activeGroupId : null;
+
+  if (groups.length === 0) {
+    const layoutRaw = raw.layout;
+    const layout = layoutRaw == null ? null : decodeTerminalLayoutNode(layoutRaw, 0);
+    if (layoutRaw != null && !layout) return null;
+    if (layout) {
+      const leafs = terminalLayoutLeafIds(layout);
+      if (leafs.length === 0) return null;
+      const activeLeafId = raw.activeLeafId === null ? null : isString(raw.activeLeafId) ? raw.activeLeafId : null;
+      const resolvedActiveLeafId = activeLeafId && leafs.includes(activeLeafId) ? activeLeafId : leafs[0] ?? null;
+      groups.push({ id: "default", layout, activeLeafId: resolvedActiveLeafId });
+      activeGroupId = "default";
+    }
+  }
+
+  if (groups.length > 0 && (!activeGroupId || !groups.some((g) => g.id === activeGroupId))) {
+    activeGroupId = groups[0]?.id ?? null;
+  }
+
+  return { groups, activeGroupId, tabOrder };
+}
+
+function decodeTerminalTitles(raw: unknown): PersistedWorkbenchTerminalTitlesV1 | null {
+  if (!isRecord(raw)) return null;
+  if (raw.v !== 1) return null;
+  if (!isRecord(raw.titles)) return null;
+  const titles: Record<string, string> = {};
+  for (const [key, value] of Object.entries(raw.titles)) {
+    if (!key || !isString(value)) continue;
+    const trimmed = value.trim();
+    if (!trimmed) continue;
+    titles[key] = trimmed;
+  }
+  return { v: 1, titles };
 }
 
 function decodeTab(raw: unknown): WorkbenchTab | null {
@@ -149,6 +275,27 @@ export function decodePersistedWorkbenchWindowV1(raw: unknown): PersistedWorkben
   return { v: 1, layout, focusedLeafId: raw.focusedLeafId, scrollByKey };
 }
 
+export function decodePersistedWorkbenchTerminalLayoutV1(raw: unknown): PersistedWorkbenchTerminalLayoutV1 | null {
+  if (!isRecord(raw)) return null;
+  if (raw.v !== 1) return null;
+  const scope = decodeTerminalScope(raw.scope);
+  if (!scope) return null;
+  const scopesRaw = raw.scopes;
+  if (!isRecord(scopesRaw)) return null;
+  const task = decodeTerminalPanelScopeState(scopesRaw.task);
+  const workspace = decodeTerminalPanelScopeState(scopesRaw.workspace);
+  if (!task || !workspace) return null;
+  return { v: 1, scope, scopes: { task, workspace } };
+}
+
+export function decodePersistedWorkbenchTerminalOpenV1(raw: unknown): PersistedWorkbenchTerminalOpenV1 | null {
+  if (!isRecord(raw)) return null;
+  if (raw.v !== 1) return null;
+  if (!isBoolean(raw.open)) return null;
+  if (!isNumber(raw.height)) return null;
+  return { v: 1, open: raw.open, height: raw.height };
+}
+
 export async function loadWorkbenchWindowV1(workspaceId: string, windowId: string): Promise<PersistedWorkbenchWindowV1 | null> {
   const raw = await uiStateGet(workbenchWindowKeyV1(workspaceId, windowId));
   return decodePersistedWorkbenchWindowV1(raw);
@@ -204,6 +351,47 @@ export async function saveWorkbenchDiffPaneOpenV1(
   await uiStateSet(workbenchDiffPaneKeyV1(workspaceId, scopeId), open);
 }
 
+export async function loadWorkbenchTerminalPanelOpenV1(
+  workspaceId: string,
+): Promise<PersistedWorkbenchTerminalOpenV1 | null> {
+  const raw = await uiStateGet(workbenchTerminalPanelKeyV1(workspaceId));
+  return decodePersistedWorkbenchTerminalOpenV1(raw);
+}
+
+export async function saveWorkbenchTerminalPanelOpenV1(
+  workspaceId: string,
+  next: PersistedWorkbenchTerminalOpenV1,
+): Promise<void> {
+  await uiStateSet(workbenchTerminalPanelKeyV1(workspaceId), next);
+}
+
+export async function loadWorkbenchTerminalLayoutV1(
+  workspaceId: string,
+): Promise<PersistedWorkbenchTerminalLayoutV1 | null> {
+  const raw = await uiStateGet(workbenchTerminalLayoutKeyV1(workspaceId));
+  return decodePersistedWorkbenchTerminalLayoutV1(raw);
+}
+
+export async function loadWorkbenchTerminalTitlesV1(
+  workspaceId: string,
+): Promise<PersistedWorkbenchTerminalTitlesV1 | null> {
+  const raw = await uiStateGet(workbenchTerminalTitlesKeyV1(workspaceId));
+  return decodeTerminalTitles(raw);
+}
+
+export async function saveWorkbenchTerminalLayoutV1(
+  workspaceId: string,
+  next: PersistedWorkbenchTerminalLayoutV1,
+): Promise<void> {
+  await uiStateSet(workbenchTerminalLayoutKeyV1(workspaceId), next);
+}
+
+export async function saveWorkbenchTerminalTitlesV1(
+  workspaceId: string,
+  next: PersistedWorkbenchTerminalTitlesV1,
+): Promise<void> {
+  await uiStateSet(workbenchTerminalTitlesKeyV1(workspaceId), next);
+}
 export async function deleteWorkbenchDiffPaneOpenV1(workspaceId: string, scopeId: string): Promise<void> {
   await uiStateDelete(workbenchDiffPaneKeyV1(workspaceId, scopeId));
 }

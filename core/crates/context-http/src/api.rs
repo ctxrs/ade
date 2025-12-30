@@ -16,7 +16,7 @@ use axum::response::Response;
 use axum::routing::{delete, get, post};
 use axum::Json;
 use base64::Engine;
-use futures::{Stream, StreamExt};
+use futures::{SinkExt, Stream, StreamExt};
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
 use std::time::{Duration, Instant};
@@ -46,6 +46,7 @@ use crate::logs;
 use crate::scheduler::SchedulerCommand;
 use crate::settings as user_settings;
 use crate::telemetry::{TelemetryConfig, TelemetryEvent};
+use crate::terminals::TerminalCreateRequest;
 use crate::title_generation;
 use crate::updates;
 use crate::worktree_bootstrap;
@@ -228,6 +229,10 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
             "/api/workspaces/:id",
             delete(delete_workspace).get(get_workspace),
         )
+        .route(
+            "/api/workspaces/:id/terminals",
+            get(list_workspace_terminals).post(create_workspace_terminal),
+        )
         .route("/api/workspaces/:id/catchup", get(get_workspace_catchup))
         .route(
             "/api/workspaces/:id/stream",
@@ -277,6 +282,8 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
         .route("/api/tasks/:id/unarchive", post(unarchive_task))
         .route("/api/tasks/:id/mark_read", post(mark_task_read))
         .route("/api/tasks/:id/mark_unread", post(mark_task_unread))
+        .route("/api/terminals/:id", delete(delete_terminal))
+        .route("/api/terminals/:id/stream", get(terminal_stream_ws))
         .route("/api/tasks/:id/tracks", post(create_track))
         .route("/api/worktrees/:id", get(get_worktree))
         .route("/api/tracks/:id/sessions", post(create_session_for_track))
@@ -423,6 +430,22 @@ struct RegisterMobileDeviceReq {
 #[derive(Debug, Deserialize)]
 struct UpdateTaskTitleReq {
     title: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct CreateTerminalReq {
+    #[serde(default)]
+    task_id: Option<String>,
+    #[serde(default)]
+    track_id: Option<String>,
+    #[serde(default)]
+    session_id: Option<String>,
+    #[serde(default)]
+    worktree_id: Option<String>,
+    #[serde(default)]
+    cwd: Option<String>,
+    #[serde(default)]
+    shell: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -4316,6 +4339,377 @@ async fn get_workspace(
         }
         None => Err(StatusCode::NOT_FOUND),
     }
+}
+
+async fn list_workspace_terminals(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<Vec<TerminalSession>>, StatusCode> {
+    let workspace_id =
+        WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
+    let terminals = state.terminals.list(workspace_id).await;
+    Ok(Json(terminals))
+}
+
+fn default_shell() -> String {
+    #[cfg(windows)]
+    {
+        std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".to_string())
+    }
+    #[cfg(not(windows))]
+    {
+        std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string())
+    }
+}
+
+async fn create_workspace_terminal(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(req): Json<CreateTerminalReq>,
+) -> Result<Json<TerminalSession>, (StatusCode, Json<ApiErrorResp>)> {
+    let workspace_id = WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid workspace id".to_string(),
+            }),
+        )
+    })?);
+
+    let workspace = state
+        .store
+        .get_workspace(workspace_id)
+        .await
+        .map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: "failed to load workspace".to_string(),
+                }),
+            )
+        })?
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "workspace not found".to_string(),
+            }),
+        ))?;
+
+    let task_id = match req.task_id {
+        Some(raw) => Some(TaskId(uuid::Uuid::parse_str(raw.trim()).map_err(|_| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: "invalid task_id".to_string(),
+                }),
+            )
+        })?)),
+        None => None,
+    };
+    let track_id = match req.track_id {
+        Some(raw) => Some(TrackId(uuid::Uuid::parse_str(raw.trim()).map_err(
+            |_| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(ApiErrorResp {
+                        error: "invalid track_id".to_string(),
+                    }),
+                )
+            },
+        )?)),
+        None => None,
+    };
+    let session_id = match req.session_id {
+        Some(raw) => Some(SessionId(uuid::Uuid::parse_str(raw.trim()).map_err(
+            |_| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(ApiErrorResp {
+                        error: "invalid session_id".to_string(),
+                    }),
+                )
+            },
+        )?)),
+        None => None,
+    };
+    let worktree_id = match req.worktree_id {
+        Some(raw) => Some(WorktreeId(uuid::Uuid::parse_str(raw.trim()).map_err(
+            |_| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(ApiErrorResp {
+                        error: "invalid worktree_id".to_string(),
+                    }),
+                )
+            },
+        )?)),
+        None => None,
+    };
+
+    let workspace_root = PathBuf::from(&workspace.root_path);
+    let workspace_root = tokio::fs::canonicalize(&workspace_root)
+        .await
+        .map_err(|_| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: "workspace root is unavailable".to_string(),
+                }),
+            )
+        })?;
+
+    let worktree_root = if let Some(wt_id) = worktree_id {
+        let wt = state
+            .store
+            .get_worktree(wt_id)
+            .await
+            .map_err(|_| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiErrorResp {
+                        error: "failed to load worktree".to_string(),
+                    }),
+                )
+            })?
+            .ok_or((
+                StatusCode::NOT_FOUND,
+                Json(ApiErrorResp {
+                    error: "worktree not found".to_string(),
+                }),
+            ))?;
+        Some(tokio::fs::canonicalize(&wt.root_path).await.map_err(|_| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: "worktree root is unavailable".to_string(),
+                }),
+            )
+        })?)
+    } else {
+        None
+    };
+
+    let requested_cwd = req.cwd.as_ref().and_then(|v| {
+        let trimmed = v.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(PathBuf::from(trimmed))
+        }
+    });
+    let fallback_cwd = worktree_root
+        .clone()
+        .unwrap_or_else(|| workspace_root.clone());
+    let cwd = requested_cwd.unwrap_or(fallback_cwd);
+    let cwd = tokio::fs::canonicalize(&cwd).await.map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "cwd does not exist".to_string(),
+            }),
+        )
+    })?;
+
+    let allowed = worktree_root
+        .as_ref()
+        .map(|root| cwd.starts_with(root))
+        .unwrap_or(false)
+        || cwd.starts_with(&workspace_root);
+    if !allowed {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "cwd must be within the workspace or worktree".to_string(),
+            }),
+        ));
+    }
+
+    let shell = req
+        .shell
+        .and_then(|v| {
+            let trimmed = v.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        })
+        .unwrap_or_else(default_shell);
+
+    let session = state
+        .terminals
+        .create(TerminalCreateRequest {
+            workspace_id,
+            task_id,
+            track_id,
+            session_id,
+            worktree_id,
+            cwd,
+            shell,
+            cols: None,
+            rows: None,
+        })
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: format!("failed to create terminal: {e}"),
+                }),
+            )
+        })?;
+
+    Ok(Json(session.snapshot()))
+}
+
+async fn delete_terminal(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<StatusCode, StatusCode> {
+    let terminal_id = TerminalId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
+    let session = state.terminals.remove(terminal_id).await;
+    if let Some(session) = session {
+        let _ = session.kill();
+        session.mark_exited(None);
+        return Ok(StatusCode::NO_CONTENT);
+    }
+    Err(StatusCode::NOT_FOUND)
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum TerminalClientMessage {
+    Resize { cols: u16, rows: u16 },
+    Input { data: String },
+}
+
+#[derive(Debug, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum TerminalServerMessage {
+    Status {
+        status: TerminalStatus,
+        exit_code: Option<i32>,
+    },
+}
+
+async fn terminal_stream_ws(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    ws: WebSocketUpgrade,
+) -> Result<Response, StatusCode> {
+    let terminal_id = TerminalId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
+    let session = state
+        .terminals
+        .get(terminal_id)
+        .await
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    Ok(ws.on_upgrade(move |socket| async move {
+        handle_terminal_socket(socket, session).await;
+    }))
+}
+
+async fn handle_terminal_socket(
+    mut socket: WebSocket,
+    session: Arc<crate::terminals::TerminalSessionHandle>,
+) {
+    let snapshot = session.snapshot();
+    let status_payload = serde_json::to_string(&TerminalServerMessage::Status {
+        status: snapshot.status.clone(),
+        exit_code: snapshot.exit_code,
+    })
+    .unwrap_or_else(|_| "{\"type\":\"status\",\"status\":\"running\"}".to_string());
+    let _ = socket.send(WsMessage::Text(status_payload)).await;
+
+    let buffer = session.output_snapshot();
+    if !buffer.is_empty() {
+        let _ = socket.send(WsMessage::Binary(buffer)).await;
+    }
+
+    let mut output_rx = session.output_receiver();
+    let mut status_rx = session.status_receiver();
+
+    let (mut ws_tx, mut ws_rx) = socket.split();
+    let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel::<WsMessage>();
+    let event_tx_output = event_tx.clone();
+    let event_tx_status = event_tx.clone();
+
+    let mut send_task = tokio::spawn(async move {
+        while let Some(msg) = event_rx.recv().await {
+            if ws_tx.send(msg).await.is_err() {
+                break;
+            }
+        }
+    });
+
+    let mut output_task = tokio::spawn(async move {
+        loop {
+            match output_rx.recv().await {
+                Ok(bytes) => {
+                    let _ = event_tx_output.send(WsMessage::Binary(bytes));
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            }
+        }
+    });
+
+    let mut status_task = tokio::spawn(async move {
+        loop {
+            match status_rx.recv().await {
+                Ok(ev) => {
+                    let payload = serde_json::to_string(&TerminalServerMessage::Status {
+                        status: ev.status,
+                        exit_code: ev.exit_code,
+                    })
+                    .unwrap_or_else(|_| "{\"type\":\"status\",\"status\":\"exited\"}".to_string());
+                    let _ = event_tx_status.send(WsMessage::Text(payload));
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            }
+        }
+    });
+
+    let mut input_task = tokio::spawn(async move {
+        while let Some(Ok(msg)) = ws_rx.next().await {
+            match msg {
+                WsMessage::Binary(data) => {
+                    session.send_input(data);
+                }
+                WsMessage::Text(text) => {
+                    if let Ok(parsed) = serde_json::from_str::<TerminalClientMessage>(&text) {
+                        match parsed {
+                            TerminalClientMessage::Resize { cols, rows } => {
+                                let _ = session.resize(cols, rows);
+                            }
+                            TerminalClientMessage::Input { data } => {
+                                session.send_input(data.into_bytes());
+                            }
+                        }
+                    } else {
+                        session.send_input(text.into_bytes());
+                    }
+                }
+                WsMessage::Close(_) => break,
+                WsMessage::Ping(_) | WsMessage::Pong(_) => {}
+            }
+        }
+    });
+
+    tokio::select! {
+        _ = &mut output_task => {},
+        _ = &mut status_task => {},
+        _ = &mut input_task => {},
+        _ = &mut send_task => {},
+    };
+
+    output_task.abort();
+    status_task.abort();
+    input_task.abort();
+    send_task.abort();
+
+    let _ = tokio::join!(output_task, status_task, input_task, send_task);
 }
 
 async fn create_workspace(
