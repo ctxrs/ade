@@ -10,8 +10,8 @@ use tokio::sync::mpsc;
 
 use context_core::ids::{MessageId, RunId, TurnId};
 use context_core::models::{
-    Message, MessageDelivery, MessageRole, Session, SessionEventType, SessionTurnStatus,
-    SessionTurnTool,
+    Message, MessageDelivery, MessageRole, Session, SessionEvent, SessionEventType,
+    SessionTurnStatus, SessionTurnTool,
 };
 use context_providers::adapters::{ProviderAdapter, RunHandle, TurnInput};
 use context_providers::events::NormalizedEvent;
@@ -677,6 +677,116 @@ async fn start_turn(
     })
 }
 
+pub async fn reconcile_turn_terminal_state(
+    state: &Arc<AppState>,
+    session_id: context_core::ids::SessionId,
+    run_id: Option<RunId>,
+    turn_id: TurnId,
+    fallback_reason: &str,
+) -> Result<()> {
+    let turn = state.store.get_session_turn(session_id, turn_id).await?;
+    let Some(turn) = turn else {
+        return Ok(());
+    };
+    if matches!(
+        turn.status,
+        SessionTurnStatus::Completed | SessionTurnStatus::Failed | SessionTurnStatus::Interrupted
+    ) {
+        return Ok(());
+    }
+
+    let events = state.store.list_session_events_for_turn(session_id, turn_id).await?;
+    if let Some(event) = events.iter().rev().find(|ev| {
+        matches!(
+            ev.event_type,
+            SessionEventType::Done | SessionEventType::Error | SessionEventType::TurnInterrupted
+        )
+    }) {
+        match event.event_type {
+            SessionEventType::Done => {
+                let metrics = event.payload_json.get("context_window");
+                let _ = state
+                    .store
+                    .update_session_turn_status(
+                        session_id,
+                        turn_id,
+                        SessionTurnStatus::Completed,
+                        Some(event.seq),
+                        metrics,
+                        event.created_at,
+                    )
+                    .await;
+            }
+            SessionEventType::TurnInterrupted => {
+                let _ = state
+                    .store
+                    .update_session_turn_status(
+                        session_id,
+                        turn_id,
+                        SessionTurnStatus::Interrupted,
+                        Some(event.seq),
+                        None,
+                        event.created_at,
+                    )
+                    .await;
+                let _ = state
+                    .store
+                    .delete_session_events_for_turn_types(
+                        session_id,
+                        turn_id,
+                        &[SessionEventType::AssistantChunk],
+                    )
+                    .await;
+            }
+            SessionEventType::Error => {
+                let _ = state
+                    .store
+                    .update_session_turn_status(
+                        session_id,
+                        turn_id,
+                        SessionTurnStatus::Failed,
+                        None,
+                        None,
+                        event.created_at,
+                    )
+                    .await;
+            }
+            _ => {}
+        }
+        return Ok(());
+    }
+
+    let event = emit_event(
+        state,
+        session_id,
+        run_id,
+        Some(turn_id),
+        SessionEventType::TurnInterrupted,
+        json!({"reason": fallback_reason, "provider_cancelled": false}),
+    )
+    .await?;
+    let _ = state
+        .store
+        .update_session_turn_status(
+            session_id,
+            turn_id,
+            SessionTurnStatus::Interrupted,
+            Some(event.seq),
+            None,
+            event.created_at,
+        )
+        .await;
+    let _ = state
+        .store
+        .delete_session_events_for_turn_types(
+            session_id,
+            turn_id,
+            &[SessionEventType::AssistantChunk],
+        )
+        .await;
+    Ok(())
+}
+
 async fn build_rehydrate_transcript_block(
     store: &context_store::Store,
     session_id: context_core::ids::SessionId,
@@ -736,13 +846,13 @@ async fn emit_event(
     turn_id: Option<TurnId>,
     event_type: SessionEventType,
     payload_json: serde_json::Value,
-) -> Result<()> {
+) -> Result<SessionEvent> {
     let event = state
         .store
         .append_session_event(session_id, run_id, turn_id, event_type, payload_json)
         .await?;
-    state.publish_event(event).await;
-    Ok(())
+    state.publish_event(event.clone()).await;
+    Ok(event)
 }
 
 fn should_track_thought_chunk(payload: &serde_json::Value) -> bool {
