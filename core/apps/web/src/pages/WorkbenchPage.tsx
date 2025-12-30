@@ -98,6 +98,7 @@ import {
   useWorkspaceCatchupStore,
   type WorkspaceCatchupItem,
 } from "../state/workspaceCatchupStore";
+import { useEnsureArchivedLoaded } from "../state/useEnsureArchivedLoaded";
 
 function deriveTaskTitle(_prompt: string): string {
   return "New Task";
@@ -1251,11 +1252,12 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     void markTaskRead(tid);
   }, [activeTaskId, markTaskRead, taskLiveInfo.lastAssistantMsByTask, taskLiveInfo.workingByTask, tasksById]);
 
-  useEffect(() => {
-    if (!archivedCollapsed) {
-      workspaceCatchupStore.ensureArchivedLoaded();
-    }
-  }, [archivedCollapsed, workspaceCatchupStore]);
+  useEnsureArchivedLoaded({
+    archivedCollapsed,
+    archivedLoaded: workspaceCatchup.archivedLoaded,
+    fetchState: workspaceCatchup.fetchState.archived,
+    ensureArchivedLoaded: workspaceCatchupStore.ensureArchivedLoaded,
+  });
 
   const onToggleArchive = useCallback(
     async (taskId: string, nextArchived: boolean) => {
