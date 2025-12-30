@@ -429,7 +429,7 @@ button.linklike:hover {
   z-index: 1;
 }
 
-.codeblock-body > div {
+.codeblock-body>div {
   max-width: 100%;
   min-width: 0;
   width: 100%;
@@ -1139,7 +1139,7 @@ button.linklike:hover {
   margin: 10px 0;
 }
 
-.activity-section + .activity-section {
+.activity-section+.activity-section {
   border-top: 1px solid var(--border);
 }
 
@@ -1711,6 +1711,7 @@ button.linklike:hover {
   from {
     transform: rotate(0deg);
   }
+
   to {
     transform: rotate(360deg);
   }
@@ -1843,6 +1844,7 @@ button.linklike:hover {
   .wb-root {
     transition: none;
   }
+
   .wb-sidebar {
     transition: none;
   }
@@ -2304,12 +2306,12 @@ button.linklike:hover {
   transition: transform 120ms ease;
 }
 
-.wb-menu-toggle input:checked + .wb-toggle {
+.wb-menu-toggle input:checked+.wb-toggle {
   background: rgba(92, 207, 119, 0.30);
   border-color: rgba(92, 207, 119, 0.55);
 }
 
-.wb-menu-toggle input:checked + .wb-toggle::after {
+.wb-menu-toggle input:checked+.wb-toggle::after {
   transform: translateX(14px);
 }
 
@@ -2596,11 +2598,9 @@ button.linklike:hover {
   box-sizing: border-box;
   border-radius: 999px;
   border: 1px solid rgba(255, 255, 255, 0.12);
-  background: linear-gradient(
-    to right,
-    rgba(78, 163, 255, 0.22) var(--wb-install-pct, 0%),
-    rgba(255, 255, 255, 0.03) var(--wb-install-pct, 0%)
-  );
+  background: linear-gradient(to right,
+      rgba(78, 163, 255, 0.22) var(--wb-install-pct, 0%),
+      rgba(255, 255, 255, 0.03) var(--wb-install-pct, 0%));
   color: rgba(255, 255, 255, 0.92);
   font-size: 12px;
   cursor: pointer;
@@ -3475,6 +3475,7 @@ button.linklike:hover {
   from {
     transform: scale(0.85);
   }
+
   to {
     transform: scale(1);
   }
@@ -3904,9 +3905,9 @@ button.linklike:hover {
   margin: 0;
 }
 
-.wb-turn-header-content :where(p, li, td, th, h1, h2, h3, h4, h5, h6) > code,
-.wb-tool-markdown :where(p, li, td, th, h1, h2, h3, h4, h5, h6) > code,
-.wb-assistant-body :where(p, li, td, th, h1, h2, h3, h4, h5, h6) > code {
+.wb-turn-header-content :where(p, li, td, th, h1, h2, h3, h4, h5, h6)>code,
+.wb-tool-markdown :where(p, li, td, th, h1, h2, h3, h4, h5, h6)>code,
+.wb-assistant-body :where(p, li, td, th, h1, h2, h3, h4, h5, h6)>code {
   display: inline;
   padding: 1px 6px;
   border-radius: 6px;
@@ -4204,7 +4205,6 @@ button.linklike:hover {
   flex-direction: column;
   flex: 1;
   min-height: 0;
-  gap: 8px;
 }
 
 .ctx-drop-scope {
@@ -4684,9 +4684,9 @@ button.linklike:hover {
   box-shadow: none;
 }
 
-.settings-card + .settings-card,
-.settings-card + .settings-banner,
-.settings-banner + .settings-card {
+.settings-card+.settings-card,
+.settings-card+.settings-banner,
+.settings-banner+.settings-card {
   margin-top: 14px;
 }
 
@@ -4805,13 +4805,11 @@ button.linklike:hover {
   content: "";
   position: absolute;
   inset: 0;
-  background: linear-gradient(
-    90deg,
-    rgba(34, 197, 94, 0.35) 0%,
-    rgba(34, 197, 94, 0.35) var(--settings-install-pct, 0%),
-    transparent var(--settings-install-pct, 0%),
-    transparent 100%
-  );
+  background: linear-gradient(90deg,
+      rgba(34, 197, 94, 0.35) 0%,
+      rgba(34, 197, 94, 0.35) var(--settings-install-pct, 0%),
+      transparent var(--settings-install-pct, 0%),
+      transparent 100%);
   opacity: 0;
   pointer-events: none;
 }
