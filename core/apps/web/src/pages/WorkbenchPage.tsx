@@ -197,6 +197,115 @@ type TaskRowProps = {
   onCommitRename: (taskId: string, nextValue: string) => void;
 };
 
+type TaskListContext = {
+  activeCount: number;
+  activeInitialized: boolean;
+  activeFetchState: "idle" | "loading" | "error";
+  archivedCollapsed: boolean;
+  archivedFetchState: "idle" | "loading" | "error";
+  archivedLoaded: boolean;
+  archivedTaskSummaries: WorkspaceCatchupItem[];
+  hasMoreArchived: boolean;
+  onToggleArchivedCollapsed: () => void;
+  onLoadMoreArchived: () => void;
+  renderArchivedRow: (summary: WorkspaceCatchupItem) => React.ReactNode;
+};
+
+const TaskListScroller = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>((props, ref) => (
+  <div {...props} ref={ref} className="wb-task-scroll" />
+));
+
+const TaskListContainer = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>((props, ref) => (
+  <div {...props} ref={ref} className="wb-task-list" role="list" aria-label="Active tasks" />
+));
+
+const TaskListHeader = ({ context }: { context?: TaskListContext }) => (
+  <div className="wb-section-header">
+    <div className="wb-section-title">Active</div>
+  </div>
+);
+
+const TaskListFooter = ({ context }: { context?: TaskListContext }) => {
+  if (!context) return null;
+  const {
+    activeCount,
+    activeInitialized,
+    activeFetchState,
+    archivedCollapsed,
+    archivedFetchState,
+    archivedLoaded,
+    archivedTaskSummaries,
+    hasMoreArchived,
+    onToggleArchivedCollapsed,
+    onLoadMoreArchived,
+    renderArchivedRow,
+  } = context;
+
+  return (
+    <>
+      {activeCount === 0 && activeInitialized && activeFetchState !== "loading" && (
+        <div className="wb-task-list">
+          <div className="wb-muted">No active tasks.</div>
+        </div>
+      )}
+      {activeFetchState === "loading" && (
+        <div className="wb-task-list">
+          <div className="wb-muted">Loading tasks…</div>
+        </div>
+      )}
+      <div className="wb-section-header wb-section-header-archived">
+        <button
+          type="button"
+          className="wb-section-toggle"
+          onClick={onToggleArchivedCollapsed}
+          aria-expanded={!archivedCollapsed}
+          aria-controls="wb-archived-list"
+        >
+          <span className="wb-section-title">Archived</span>
+          <span className={`wb-section-chev ${archivedCollapsed ? "wb-section-chev-collapsed" : ""}`}>
+            <ChevronDown size={14} />
+          </span>
+        </button>
+      </div>
+      {!archivedCollapsed && (
+        <div
+          id="wb-archived-list"
+          className="wb-task-list wb-task-list-archived"
+          role="list"
+          aria-label="Archived tasks"
+        >
+          {archivedFetchState === "loading" && (
+            <div className="wb-muted">Loading archived tasks…</div>
+          )}
+          {archivedFetchState === "error" && (
+            <div className="wb-muted">Failed to load archived tasks. Retry.</div>
+          )}
+          {archivedTaskSummaries.map((summary) => renderArchivedRow(summary))}
+          {archivedTaskSummaries.length === 0 && archivedLoaded && archivedFetchState !== "loading" && (
+            <div className="wb-muted">No archived tasks.</div>
+          )}
+          {hasMoreArchived && (
+            <button
+              type="button"
+              className="wb-archived-more"
+              onClick={onLoadMoreArchived}
+            >
+              Load more
+            </button>
+          )}
+        </div>
+      )}
+    </>
+  );
+};
+
+const TASK_LIST_COMPONENTS = {
+  Scroller: TaskListScroller,
+  List: TaskListContainer,
+  Header: TaskListHeader,
+  Footer: TaskListFooter,
+};
+
 export const TaskRow = React.memo(function TaskRow({
   taskId,
   title,
@@ -1400,6 +1509,48 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     ],
   );
 
+  const renderArchivedRow = useCallback(
+    (summary: WorkspaceCatchupItem) => renderTaskRow(summary, { archived: true }),
+    [renderTaskRow],
+  );
+
+  const toggleArchivedCollapsed = useCallback(() => {
+    setArchivedCollapsed((v) => !v);
+  }, []);
+
+  const loadMoreArchived = useCallback(() => {
+    workspaceCatchupStore.loadMoreArchived();
+  }, [workspaceCatchupStore]);
+
+  const taskListContext = useMemo<TaskListContext>(
+    () => ({
+      activeCount: activeTaskSummaries.length,
+      activeInitialized: workspaceCatchup.initialized,
+      activeFetchState: workspaceCatchup.fetchState.active,
+      archivedCollapsed,
+      archivedFetchState: workspaceCatchup.fetchState.archived,
+      archivedLoaded: workspaceCatchup.archivedLoaded,
+      archivedTaskSummaries,
+      hasMoreArchived: workspaceCatchup.hasMoreArchived,
+      onToggleArchivedCollapsed: toggleArchivedCollapsed,
+      onLoadMoreArchived: loadMoreArchived,
+      renderArchivedRow,
+    }),
+    [
+      activeTaskSummaries.length,
+      archivedCollapsed,
+      archivedTaskSummaries,
+      loadMoreArchived,
+      renderArchivedRow,
+      toggleArchivedCollapsed,
+      workspaceCatchup.archivedLoaded,
+      workspaceCatchup.fetchState.active,
+      workspaceCatchup.fetchState.archived,
+      workspaceCatchup.hasMoreArchived,
+      workspaceCatchup.initialized,
+    ],
+  );
+
   const onDeleteTask = useCallback(
     async (taskId: string) => {
       const summary = tasksById[taskId];
@@ -2481,82 +2632,13 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
             overscan={8}
             computeItemKey={(_, summary) => summary.id}
             itemContent={(_, summary) => renderTaskRow(summary)}
+            context={taskListContext}
             endReached={() => {
               if (workspaceCatchup.hasMoreActive) {
                 workspaceCatchupStore.loadMoreActive();
               }
             }}
-            components={{
-              Scroller: React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>((props, ref) => (
-                <div {...props} ref={ref} className="wb-task-scroll" />
-              )),
-              List: React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>((props, ref) => (
-                <div {...props} ref={ref} className="wb-task-list" role="list" aria-label="Active tasks" />
-              )),
-              Header: () => (
-                <div className="wb-section-header">
-                  <div className="wb-section-title">Active</div>
-                </div>
-              ),
-              Footer: () => (
-                <>
-                  {activeTaskSummaries.length === 0 &&
-                    workspaceCatchup.initialized &&
-                    workspaceCatchup.fetchState.active !== "loading" && (
-                      <div className="wb-task-list">
-                        <div className="wb-muted">No active tasks.</div>
-                      </div>
-                    )}
-                  {workspaceCatchup.fetchState.active === "loading" && (
-                    <div className="wb-task-list">
-                      <div className="wb-muted">Loading tasks…</div>
-                    </div>
-                  )}
-                  <div className="wb-section-header wb-section-header-archived">
-                    <button
-                      type="button"
-                      className="wb-section-toggle"
-                      onClick={() => setArchivedCollapsed((v) => !v)}
-                      aria-expanded={!archivedCollapsed}
-                      aria-controls="wb-archived-list"
-                    >
-                      <span className="wb-section-title">Archived</span>
-                      <span className={`wb-section-chev ${archivedCollapsed ? "wb-section-chev-collapsed" : ""}`}>
-                        <ChevronDown size={14} />
-                      </span>
-                    </button>
-                  </div>
-                  {!archivedCollapsed && (
-                    <div
-                      id="wb-archived-list"
-                      className="wb-task-list wb-task-list-archived"
-                      role="list"
-                      aria-label="Archived tasks"
-                    >
-                      {workspaceCatchup.fetchState.archived === "loading" && (
-                        <div className="wb-muted">Loading archived tasks…</div>
-                      )}
-                      {workspaceCatchup.fetchState.archived === "error" && (
-                        <div className="wb-muted">Failed to load archived tasks. Retry.</div>
-                      )}
-                      {archivedTaskSummaries.map((summary) => renderTaskRow(summary, { archived: true }))}
-                      {archivedTaskSummaries.length === 0 &&
-                        workspaceCatchup.archivedLoaded &&
-                        workspaceCatchup.fetchState.archived !== "loading" && <div className="wb-muted">No archived tasks.</div>}
-                      {workspaceCatchup.hasMoreArchived && (
-                        <button
-                          type="button"
-                          className="wb-archived-more"
-                          onClick={() => workspaceCatchupStore.loadMoreArchived()}
-                        >
-                          Load more
-                        </button>
-                      )}
-                    </div>
-                  )}
-                </>
-              ),
-            }}
+            components={TASK_LIST_COMPONENTS}
           />
         </div>
 
