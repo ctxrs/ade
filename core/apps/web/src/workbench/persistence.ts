@@ -1,5 +1,6 @@
 import { getDaemonBaseUrl } from "../api/client";
 import { clearWorkbenchSelectionV1, loadWorkbenchSelectionV1, uiStateDelete, uiStateGet, uiStateSet } from "../state/uiStateStore";
+import { randomUuid } from "../utils/randomUuid";
 import type {
   LayoutNode,
   PersistedWorkbenchDraftV1,
@@ -227,7 +228,7 @@ export async function migrateLegacySelectionToWindowV1(opts: {
     layout: replaceLeaf(defaultWindow.layout, firstLeaf.id, (leaf) => {
       const existing = leaf.tabs[0];
       const tab: WorkbenchTab = {
-        id: existing?.id ?? crypto.randomUUID(),
+        id: existing?.id ?? randomUuid(),
         kind: "track",
         ref: { taskId: legacyTaskId, trackId: legacyTrackId, sessionId: legacySessionId },
       };

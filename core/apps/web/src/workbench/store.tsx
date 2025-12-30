@@ -1,4 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useSyncExternalStore } from "react";
+import { randomUuid } from "../utils/randomUuid";
 import type { WorkbenchModeId } from "../components/WorkbenchComposer";
 import type { LayoutNode, PersistedWorkbenchWindowV1, WorkbenchDraft, WorkbenchScrollState, WorkbenchTab } from "./types";
 import {
@@ -9,6 +10,7 @@ import {
   saveWorkbenchWindowV1,
   workbenchDaemonKey,
 } from "./persistence";
+
 
 const WINDOW_ID_STORAGE_KEY = "contextUiWindowId.v1";
 export const NEW_TASK_DRAFT_KEY = "new_task";
@@ -25,17 +27,17 @@ function getOrCreateWindowId(): string {
   try {
     const existing = sessionStorage.getItem(WINDOW_ID_STORAGE_KEY);
     if (existing && existing.trim()) return existing;
-    const created = crypto.randomUUID();
+    const created = randomUuid();
     sessionStorage.setItem(WINDOW_ID_STORAGE_KEY, created);
     return created;
   } catch {
-    return crypto.randomUUID();
+    return randomUuid();
   }
 }
 
 function defaultWindowState(): PersistedWorkbenchWindowV1 {
-  const leafId = crypto.randomUUID();
-  const tabId = crypto.randomUUID();
+  const leafId = randomUuid();
+  const tabId = randomUuid();
   return {
     v: 1,
     layout: {
@@ -108,19 +110,19 @@ type WorkbenchStoreListener = () => void;
 
 type DraftBroadcastMsg =
   | {
-      type: "draft";
-      workspaceId: string;
-      windowId: string;
-      draftKey: string;
-      draft: WorkbenchDraft;
-    }
+    type: "draft";
+    workspaceId: string;
+    windowId: string;
+    draftKey: string;
+    draft: WorkbenchDraft;
+  }
   | {
-      type: "draft_delete";
-      workspaceId: string;
-      windowId: string;
-      draftKey: string;
-      updatedAtMs: number;
-    };
+    type: "draft_delete";
+    workspaceId: string;
+    windowId: string;
+    draftKey: string;
+    updatedAtMs: number;
+  };
 
 export class WorkbenchStore {
   private listeners = new Set<WorkbenchStoreListener>();
@@ -169,9 +171,9 @@ export class WorkbenchStore {
   };
 
   init = () => {
-    this.hydrate().catch(() => {});
+    this.hydrate().catch(() => { });
     this.initBroadcast();
-    this.ensureDraftLoaded(NEW_TASK_DRAFT_KEY).catch(() => {});
+    this.ensureDraftLoaded(NEW_TASK_DRAFT_KEY).catch(() => { });
   };
 
   private publish() {
@@ -292,7 +294,7 @@ export class WorkbenchStore {
     const leaf = findLeaf(win.layout, leafId);
     if (!leaf) return;
     const existing = leaf.tabs.find((t) => t.kind === "new_task");
-    const tabId = existing?.id ?? crypto.randomUUID();
+    const tabId = existing?.id ?? randomUuid();
     const newTab: WorkbenchTab = { id: tabId, kind: "new_task" };
     const nextTabs = existing ? leaf.tabs : [newTab, ...leaf.tabs];
     const nextLeaf = ensureLeafActiveTab({ ...leaf, tabs: nextTabs, activeTabId: tabId });
@@ -308,7 +310,7 @@ export class WorkbenchStore {
     if (!leaf) return;
 
     const existing = leaf.tabs.find((t) => t.kind === "track" && t.ref.taskId === tid);
-    const tabId = existing?.id ?? crypto.randomUUID();
+    const tabId = existing?.id ?? randomUuid();
     const newTab: WorkbenchTab = {
       id: tabId,
       kind: "track",
@@ -316,14 +318,14 @@ export class WorkbenchStore {
     };
     const nextTabs = existing
       ? leaf.tabs.map((t) => {
-          if (t.id !== tabId) return t;
-          if (t.kind !== "track") return t;
-          const nextTrackId = trackId === undefined ? t.ref.trackId : trackId;
-          const trackChanged = trackId !== undefined && nextTrackId !== t.ref.trackId;
-          const nextSessionId =
-            sessionId !== undefined ? sessionId : trackChanged ? null : (t.ref.sessionId ?? null);
-          return { ...t, ref: { ...t.ref, trackId: nextTrackId, sessionId: nextSessionId } };
-        })
+        if (t.id !== tabId) return t;
+        if (t.kind !== "track") return t;
+        const nextTrackId = trackId === undefined ? t.ref.trackId : trackId;
+        const trackChanged = trackId !== undefined && nextTrackId !== t.ref.trackId;
+        const nextSessionId =
+          sessionId !== undefined ? sessionId : trackChanged ? null : (t.ref.sessionId ?? null);
+        return { ...t, ref: { ...t.ref, trackId: nextTrackId, sessionId: nextSessionId } };
+      })
       : [newTab, ...leaf.tabs];
 
     const nextLeaf = ensureLeafActiveTab({ ...leaf, tabs: nextTabs, activeTabId: tabId });
@@ -544,7 +546,7 @@ export function useWorkbenchDraft(
   useEffect(() => {
     if (!key) return;
     if (loaded) return;
-    store.ensureDraftLoaded(key).catch(() => {});
+    store.ensureDraftLoaded(key).catch(() => { });
   }, [store, key, loaded]);
 
   const value = useMemo<{ text: string; modeId: WorkbenchModeId }>(() => {
