@@ -5757,11 +5757,8 @@ async fn create_session_for_track(
         let tx = state.ensure_scheduler(session.clone()).await;
         let _ = tx.send(SchedulerCommand::Enqueue(saved)).await;
 
-        let state = state.clone();
-        let session = session.clone();
-        tokio::spawn(async move {
-            let _ = maybe_generate_session_title(state, session, prompt, false).await;
-        });
+        let _ =
+            schedule_session_title_generation(state.clone(), session.clone(), prompt, false).await;
     }
 
     let worktree = state
@@ -6641,17 +6638,26 @@ struct TitleGenerationOutcome {
     source: TitleGenerationSource,
 }
 
-async fn generate_title_for_prompt(
+async fn configured_title_generation_settings(
     state: &AppState,
+) -> Option<user_settings::TitleGenerationSettings> {
+    let settings = user_settings::load_settings(&state.data_root).await;
+    settings
+        .title_generation
+        .as_ref()
+        .filter(|cfg| title_generation::is_configured(cfg))
+        .cloned()
+}
+
+async fn generate_title_for_prompt(
+    cfg: Option<&user_settings::TitleGenerationSettings>,
     prompt: &str,
 ) -> anyhow::Result<TitleGenerationOutcome> {
-    let settings = user_settings::load_settings(&state.data_root).await;
     let fallback = title_generation::fallback_title_from_prompt(prompt);
     if fallback.trim().is_empty() {
         return Err(anyhow::anyhow!("prompt is empty"));
     }
 
-    let cfg = settings.title_generation.as_ref();
     if let Some(cfg) = cfg.filter(|c| title_generation::is_configured(c)) {
         match title_generation::generate_title(cfg, prompt).await {
             Ok(title) => {
@@ -6744,6 +6750,7 @@ async fn maybe_generate_session_title(
     session: Session,
     prompt: String,
     force: bool,
+    cfg: Option<user_settings::TitleGenerationSettings>,
 ) -> anyhow::Result<Option<TitleGenerationOutcome>> {
     let prompt = prompt.trim().to_string();
     if prompt.is_empty() {
@@ -6755,9 +6762,27 @@ async fn maybe_generate_session_title(
         return Ok(None);
     }
 
-    let outcome = generate_title_for_prompt(&state, &prompt).await?;
+    let outcome = generate_title_for_prompt(cfg.as_ref(), &prompt).await?;
     apply_session_title_update(&state, &session, outcome.clone()).await?;
     Ok(Some(outcome))
+}
+
+async fn schedule_session_title_generation(
+    state: Arc<AppState>,
+    session: Session,
+    prompt: String,
+    force: bool,
+) -> bool {
+    let cfg = configured_title_generation_settings(&state).await;
+    if cfg.is_some() {
+        tokio::spawn(async move {
+            let _ = maybe_generate_session_title(state, session, prompt, force, cfg).await;
+        });
+        true
+    } else {
+        let _ = maybe_generate_session_title(state, session, prompt, force, cfg).await;
+        false
+    }
 }
 
 async fn post_message(
@@ -6878,12 +6903,10 @@ async fn post_message(
         .await
     {
         if count == 1 {
-            let state = state.clone();
-            let session = session.clone();
             let prompt = saved.content.clone();
-            tokio::spawn(async move {
-                let _ = maybe_generate_session_title(state, session, prompt, false).await;
-            });
+            let _ =
+                schedule_session_title_generation(state.clone(), session.clone(), prompt, false)
+                    .await;
         }
     }
 
@@ -7092,7 +7115,8 @@ async fn generate_session_title(
     };
 
     let force = req.force.unwrap_or(true);
-    maybe_generate_session_title(state.clone(), session.clone(), prompt, force)
+    let cfg = configured_title_generation_settings(&state).await;
+    maybe_generate_session_title(state.clone(), session.clone(), prompt, force, cfg)
         .await
         .map_err(|e| {
             (
@@ -7874,4 +7898,93 @@ fn hash_api_token(token: &str) -> String {
 
 fn generate_mobile_api_token() -> String {
     format!("ctxm_{}", uuid::Uuid::new_v4().to_string().replace('-', ""))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    use context_providers::fake::FakeProviderAdapter;
+    use context_store::Store;
+
+    async fn setup_state() -> (tempfile::TempDir, Arc<AppState>, Session) {
+        let data_dir = tempfile::tempdir().unwrap();
+        let db_dir = data_dir.path().join("db");
+        tokio::fs::create_dir_all(&db_dir).await.unwrap();
+        let db_path = db_dir.join("db.sqlite");
+        let store = Store::open(&db_path).await.unwrap();
+
+        let workspace = store
+            .create_workspace(
+                "ws".to_string(),
+                data_dir.path().to_string_lossy().to_string(),
+            )
+            .await
+            .unwrap();
+        let worktree = store
+            .create_worktree(
+                workspace.id,
+                data_dir.path().to_string_lossy().to_string(),
+                "base".to_string(),
+                None,
+            )
+            .await
+            .unwrap();
+        let task = store
+            .create_task(
+                workspace.id,
+                title_generation::DEFAULT_SESSION_TITLE.to_string(),
+                None,
+            )
+            .await
+            .unwrap();
+        let track = store
+            .create_track(task.id, workspace.id, worktree.id, "track".to_string())
+            .await
+            .unwrap();
+        let session = store
+            .create_session(
+                &track,
+                "fake".to_string(),
+                "fake-model".to_string(),
+                "implementer".to_string(),
+                None,
+            )
+            .await
+            .unwrap();
+
+        let mut providers: HashMap<String, Arc<dyn context_providers::adapters::ProviderAdapter>> =
+            HashMap::new();
+        providers.insert("fake".into(), Arc::new(FakeProviderAdapter::new()));
+
+        let state = Arc::new(AppState::new(
+            data_dir.path().to_path_buf(),
+            store,
+            providers,
+            "http://127.0.0.1:0".to_string(),
+            None,
+        ));
+
+        (data_dir, state, session)
+    }
+
+    #[tokio::test]
+    async fn schedule_title_generation_falls_back_without_config() {
+        let (_data_dir, state, session) = setup_state().await;
+        let prompt = "make the title this: hello world";
+        let spawned = schedule_session_title_generation(
+            state.clone(),
+            session.clone(),
+            prompt.to_string(),
+            false,
+        )
+        .await;
+
+        assert!(!spawned);
+
+        let updated = state.store.get_session(session.id).await.unwrap().unwrap();
+        let expected = title_generation::fallback_title_from_prompt(prompt);
+        assert_eq!(updated.title, expected);
+    }
 }
