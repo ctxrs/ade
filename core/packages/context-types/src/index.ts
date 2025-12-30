@@ -437,6 +437,68 @@ export type Diagnostics = {
   managed_installs: any;
 };
 
+export type ResourceProcess = {
+  label: string;
+  pid: number;
+  cpu_pct: number;
+  memory_bytes: number;
+  virtual_memory_bytes: number;
+  child_count: number;
+  children: ResourceChildProcess[];
+  children_truncated: boolean;
+};
+
+export type ResourceChildProcess = {
+  pid: number;
+  parent_pid?: number | null;
+  name: string;
+  cmdline?: string | null;
+  cpu_pct: number;
+  memory_bytes: number;
+  virtual_memory_bytes: number;
+};
+
+export type ResourceDisk = {
+  name: string;
+  mount_point: string;
+  total_bytes: number;
+  available_bytes: number;
+  file_system: string;
+};
+
+export type ResourceWorktreeDisk = {
+  worktree_id: string;
+  root_path: string;
+  size_bytes: number;
+};
+
+export type ResourceWorkspaceDisk = {
+  workspace_id: string;
+  root_path: string;
+  size_bytes: number;
+  size_collected_at: string;
+  size_cache_age_ms: number;
+  disk?: ResourceDisk | null;
+  worktrees: ResourceWorktreeDisk[];
+};
+
+export type ResourceUtilization = {
+  collected_at: string;
+  cache_age_ms: number;
+  system: {
+    cpu_pct: number;
+    memory_total_bytes: number;
+    memory_used_bytes: number;
+    swap_total_bytes: number;
+    swap_used_bytes: number;
+  };
+  processes: {
+    daemon?: ResourceProcess | null;
+    providers: ResourceProcess[];
+  };
+  workspace: ResourceWorkspaceDisk;
+};
+
 export type MobileConnectionProfile = {
   id: string;
   label: string;

@@ -27,6 +27,7 @@ tracing-appender = "0.2"
 tracing-subscriber.workspace = true
 toml = "0.8"
 uuid.workspace = true
+sysinfo.workspace = true
 tower-http = { version = "0.6", features = ["fs"] }
 flate2 = "1"
 tar = "0.4"

@@ -31,6 +31,7 @@ use context_store::Store;
 use crate::api;
 use crate::installer;
 use crate::installs::{InstallId, InstallProgressEvent, InstallState, InstallStateKind};
+use crate::resource_utilization::ResourceSampler;
 use crate::scheduler::{session_worker, SchedulerCommand};
 use crate::settings;
 use crate::telemetry::{Telemetry, TelemetryConfig};
@@ -79,6 +80,7 @@ pub struct AppState {
     pub ask_user_question: Arc<AskUserQuestionBroker>,
     pub shutdown_tx: broadcast::Sender<()>,
     pub telemetry: Telemetry,
+    pub resource_sampler: Mutex<ResourceSampler>,
     pub workspace_catchup: WorkspaceCatchupHub,
     pub terminals: TerminalManager,
     schedulers: Mutex<HashMap<SessionId, mpsc::Sender<SchedulerCommand>>>,
@@ -208,6 +210,7 @@ impl AppState {
             ask_user_question,
             shutdown_tx,
             telemetry,
+            resource_sampler: Mutex::new(ResourceSampler::new()),
             workspace_catchup,
             terminals: TerminalManager::default(),
             schedulers: Mutex::new(HashMap::new()),

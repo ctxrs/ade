@@ -12,7 +12,8 @@ use context_core::models::SessionEventType;
 
 use crate::acp::{AcpAgentConfig, AcpClientConfig, AcpMcpServer, AcpPromptRequest, AcpSessionPool};
 use crate::adapters::{
-    ProviderAdapter, ProviderCapabilities, ProviderHealth, ProviderStatus, RunHandle, TurnInput,
+    ProviderAdapter, ProviderCapabilities, ProviderHealth, ProviderProcessInfo, ProviderStatus,
+    RunHandle, TurnInput,
 };
 use crate::ask_user_question::AskUserQuestionBroker;
 use crate::events::NormalizedEvent;
@@ -295,6 +296,18 @@ impl ProviderAdapter for Tier1AcpAdapter {
         let _ = tokio::time::timeout(std::time::Duration::from_secs(2), &mut handle.join).await;
         handle.join.abort(); // best-effort cleanup
         Ok(())
+    }
+
+    async fn list_processes(&self) -> Vec<ProviderProcessInfo> {
+        let pid = self.pool.process_pid().await;
+        pid.map(|pid| {
+            vec![ProviderProcessInfo {
+                provider_id: self.id.clone(),
+                pid,
+                label: Some(self.id.clone()),
+            }]
+        })
+        .unwrap_or_default()
     }
 
     async fn set_session_model(&self, session_key: String, model_id: String) -> Result<()> {

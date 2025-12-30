@@ -5,6 +5,7 @@ import type {
   MobileConnectionProfile,
   MobileDeviceRegistration,
   ProviderStatus,
+  ResourceUtilization,
   Session,
   SessionEvent,
   SessionTurn,
@@ -41,6 +42,7 @@ export type {
   MobileConnectionProfile,
   MobileDeviceRegistration,
   ProviderStatus,
+  ResourceUtilization,
   Session,
   SessionEvent,
   SessionTurn,
@@ -835,6 +837,9 @@ export const installStreamUrl = (installId: string): string => {
 };
 
 export const getDiagnostics = () => apiAny<Diagnostics>(`/api/diagnostics`);
+
+export const getResourceUtilization = (workspaceId: string) =>
+  apiAny<ResourceUtilization>(`/api/resource_utilization?workspace_id=${encodeURIComponent(workspaceId)}`);
 
 export const getHealth = () => apiAny<Health>(`/api/health`);
 

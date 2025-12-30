@@ -389,6 +389,15 @@ impl AcpSessionPool {
         );
         Ok(created.session_id)
     }
+
+    pub async fn process_pid(&self) -> Option<u32> {
+        let process = { self.process.lock().await.clone() };
+        if let Some(process) = process {
+            process.pid().await
+        } else {
+            None
+        }
+    }
 }
 
 struct AcpProcess {
@@ -466,6 +475,11 @@ impl SessionRouter {
 }
 
 impl AcpProcess {
+    async fn pid(&self) -> Option<u32> {
+        let child = self.child.lock().await;
+        child.id()
+    }
+
     async fn spawn(
         agent: AcpAgentConfig,
         client: AcpClientConfig,

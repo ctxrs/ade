@@ -1,4 +1,4 @@
-import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import type { User } from "@supabase/supabase-js";
 import {
@@ -6,6 +6,7 @@ import {
   InstallInfo,
   ProviderOptions,
   ProviderStatus,
+  ResourceUtilization,
   Settings,
   TelemetrySettings,
   TitleGenerationSettings,
@@ -13,6 +14,7 @@ import {
   authenticateProviderForWorkspace,
   getInstall,
   getProviderOptions,
+  getResourceUtilization,
   getSettings,
   idToString,
   installAllProviders,
@@ -76,6 +78,7 @@ type SectionId =
   | "sandboxing"
   | "worktree_bootstrap"
   | "context_pack"
+  | "resource_utilization"
   | "dictation"
   | "title_generation"
   | "billing"
@@ -101,6 +104,7 @@ const SECTIONS: Array<{
   { id: "sandboxing", label: "Sandboxing", group: "main" },
   { id: "worktree_bootstrap", label: "Worktree Bootstrap", group: "main" },
   { id: "context_pack", label: "Context Pack", group: "main" },
+  { id: "resource_utilization", label: "Resource Utilization", group: "main" },
   { id: "dictation", label: "Dictation", group: "advanced" },
   { id: "title_generation", label: "Title Generation", group: "advanced" },
   { id: "billing", label: "Billing", group: "advanced" },
@@ -117,6 +121,39 @@ function sectionFromHash(hash: string): SectionId | null {
 function clampPct(n: number): number {
   if (!Number.isFinite(n)) return 0;
   return Math.max(0, Math.min(100, n));
+}
+
+function formatPct(value?: number | null): string {
+  if (!Number.isFinite(value)) return "—";
+  return `${Math.round(value as number)}%`;
+}
+
+function formatBytes(value?: number | null): string {
+  if (!Number.isFinite(value)) return "—";
+  const units = ["B", "KB", "MB", "GB", "TB", "PB"];
+  let idx = 0;
+  let v = value as number;
+  while (v >= 1024 && idx < units.length - 1) {
+    v /= 1024;
+    idx += 1;
+  }
+  const precision = v >= 100 ? 0 : v >= 10 ? 1 : 2;
+  return `${v.toFixed(precision)} ${units[idx]}`;
+}
+
+function formatAge(ms?: number | null): string {
+  if (!Number.isFinite(ms)) return "—";
+  const totalSeconds = Math.max(0, Math.round((ms as number) / 1000));
+  if (totalSeconds < 60) return `${totalSeconds}s`;
+  const mins = Math.floor(totalSeconds / 60);
+  const secs = totalSeconds % 60;
+  return `${mins}m ${secs}s`;
+}
+
+function truncateText(value: string, maxLen: number): string {
+  const s = String(value ?? "");
+  if (s.length <= maxLen) return s;
+  return `${s.slice(0, Math.max(0, maxLen - 1))}…`;
 }
 
 function Toggle({
@@ -170,6 +207,32 @@ function Card({ children, title }: { title?: string; children: ReactNode }) {
     <div className="settings-card">
       {title ? <div className="settings-card-title">{title}</div> : null}
       <div className="settings-card-rows">{children}</div>
+    </div>
+  );
+}
+
+function Metric({
+  label,
+  value,
+  sublabel,
+  pct,
+}: {
+  label: string;
+  value: string;
+  sublabel?: string;
+  pct?: number | null;
+}) {
+  const safePct = pct === null || pct === undefined ? 0 : clampPct(pct);
+  return (
+    <div className="settings-metric">
+      <div className="settings-metric-header">
+        <div className="settings-metric-label">{label}</div>
+        <div className="settings-metric-value">{value}</div>
+      </div>
+      <div className="settings-meter-track" role="presentation">
+        <div className="settings-meter-fill" style={{ width: `${safePct}%` }} />
+      </div>
+      {sublabel ? <div className="settings-metric-sub">{sublabel}</div> : null}
     </div>
   );
 }
@@ -247,6 +310,12 @@ export default function SettingsPage() {
   const [providerError, setProviderError] = useState<string | null>(null);
   const [installBusy, setInstallBusy] = useState<string | null>(null);
   const [installs, setInstalls] = useState<Record<string, InstallSession>>({});
+
+  const [resourceSnapshot, setResourceSnapshot] = useState<ResourceUtilization | null>(null);
+  const [resourceLoading, setResourceLoading] = useState(false);
+  const [resourceError, setResourceError] = useState<string | null>(null);
+  const resourcePollRef = useRef<number | null>(null);
+  const [expandedProcessPids, setExpandedProcessPids] = useState<Record<number, boolean>>({});
 
   const eventSourcesRef = useRef<Record<string, EventSource>>({});
   const pollTimeoutsRef = useRef<Record<string, number>>({});
@@ -540,6 +609,38 @@ export default function SettingsPage() {
   }, [providers]);
 
   useEffect(() => {
+    if (active !== "resource_utilization") return;
+    if (!workspaceId) return;
+    let cancelled = false;
+
+    const poll = async () => {
+      if (cancelled) return;
+      setResourceLoading(true);
+      setResourceError(null);
+      try {
+        const snapshot = await getResourceUtilization(workspaceId);
+        if (!cancelled) setResourceSnapshot(snapshot);
+      } catch (e: any) {
+        if (!cancelled) setResourceError(e?.message ?? String(e));
+      } finally {
+        if (!cancelled) setResourceLoading(false);
+      }
+      if (!cancelled) {
+        resourcePollRef.current = window.setTimeout(poll, 3000);
+      }
+    };
+
+    poll();
+    return () => {
+      cancelled = true;
+      if (resourcePollRef.current) {
+        window.clearTimeout(resourcePollRef.current);
+        resourcePollRef.current = null;
+      }
+    };
+  }, [active, workspaceId]);
+
+  useEffect(() => {
     return () => {
       for (const key of Object.keys(eventSourcesRef.current)) eventSourcesRef.current[key].close();
       for (const key of Object.keys(pollTimeoutsRef.current)) window.clearTimeout(pollTimeoutsRef.current[key]);
@@ -745,6 +846,13 @@ export default function SettingsPage() {
     return all.filter((s) => s.label.toLowerCase().includes(q));
   }, [query]);
 
+  const workspaceFromQuery = useMemo(() => {
+    const ws = new URLSearchParams(location.search).get("ws");
+    if (!ws) return null;
+    const trimmed = ws.trim();
+    return trimmed ? trimmed : null;
+  }, [location.search]);
+
   const backLink = useMemo(() => {
     const ws = new URLSearchParams(location.search).get("ws");
     if (ws && ws.trim()) {
@@ -753,6 +861,13 @@ export default function SettingsPage() {
     }
     return { to: "/", label: "← Back to Home" };
   }, [location.search]);
+
+  useEffect(() => {
+    if (!workspaceFromQuery) return;
+    if (workspaceId !== workspaceFromQuery) {
+      setWorkspaceId(workspaceFromQuery);
+    }
+  }, [workspaceFromQuery, workspaceId]);
 
   const anySaving = saving || editorSaving;
 
@@ -856,6 +971,227 @@ export default function SettingsPage() {
               control={<pre className="settings-code-block">{example}</pre>}
             />
           </Card>
+        </>
+      );
+    }
+
+    if (active === "resource_utilization") {
+      if (!workspaceId) {
+        return <div className="settings-empty">No workspace selected.</div>;
+      }
+
+      const snapshot = resourceSnapshot;
+      const system = snapshot?.system;
+      const disk = snapshot?.workspace?.disk;
+      const workspaceName =
+        workspaces.find((ws) => idToString((ws as any).id) === workspaceId)?.name ?? "Workspace";
+
+      const memoryPct =
+        system && system.memory_total_bytes > 0
+          ? (system.memory_used_bytes / system.memory_total_bytes) * 100
+          : null;
+      const swapPct =
+        system && system.swap_total_bytes > 0
+          ? (system.swap_used_bytes / system.swap_total_bytes) * 100
+          : null;
+      const diskPct =
+        disk && disk.total_bytes > 0
+          ? ((disk.total_bytes - disk.available_bytes) / disk.total_bytes) * 100
+          : null;
+
+      const overviewUpdated =
+        snapshot && Number.isFinite(snapshot.cache_age_ms)
+          ? `Updated ${formatAge(snapshot.cache_age_ms)} ago`
+          : "Awaiting resource data…";
+      const diskUpdated =
+        snapshot && Number.isFinite(snapshot.workspace.size_cache_age_ms)
+          ? `Disk scan ${formatAge(snapshot.workspace.size_cache_age_ms)} ago`
+          : "Disk scan pending…";
+
+      const processRows = (() => {
+        if (!snapshot?.processes) return [];
+        const rows = [];
+        if (snapshot.processes.daemon) {
+          rows.push(snapshot.processes.daemon);
+        }
+        const providers = [...snapshot.processes.providers].sort((a, b) => a.label.localeCompare(b.label));
+        rows.push(...providers);
+        return rows;
+      })();
+
+      const worktreeRows = snapshot?.workspace.worktrees ?? [];
+
+      const toggleExpanded = (pid: number) => {
+        setExpandedProcessPids((prev) => ({ ...prev, [pid]: !prev[pid] }));
+      };
+
+      return (
+        <>
+          <Card title="Overview">
+            <div className="settings-card-block">
+              <div className="settings-metrics-grid">
+                <Metric
+                  label="CPU"
+                  value={formatPct(system?.cpu_pct)}
+                  sublabel="System CPU usage"
+                  pct={system?.cpu_pct ?? null}
+                />
+                <Metric
+                  label="Memory"
+                  value={
+                    system
+                      ? `${formatBytes(system.memory_used_bytes)} / ${formatBytes(system.memory_total_bytes)}`
+                      : "—"
+                  }
+                  sublabel="Physical memory"
+                  pct={memoryPct}
+                />
+                <Metric
+                  label="Swap"
+                  value={
+                    system
+                      ? `${formatBytes(system.swap_used_bytes)} / ${formatBytes(system.swap_total_bytes)}`
+                      : "—"
+                  }
+                  sublabel="Swap usage"
+                  pct={swapPct}
+                />
+                <Metric
+                  label="Disk"
+                  value={
+                    disk
+                      ? `${formatBytes(disk.available_bytes)} free / ${formatBytes(disk.total_bytes)}`
+                      : "—"
+                  }
+                  sublabel={disk ? `${disk.mount_point} · ${disk.file_system}` : "Workspace volume"}
+                  pct={diskPct}
+                />
+              </div>
+              <div className="settings-meta-line">{resourceLoading ? "Refreshing…" : overviewUpdated}</div>
+            </div>
+          </Card>
+
+          <Card title="Processes">
+            <div className="settings-card-block">
+              {processRows.length === 0 ? (
+                <div className="settings-empty">No process metrics yet.</div>
+              ) : (
+                <div className="settings-table settings-table-processes">
+                  <div className="settings-table-head">
+                    <div>Process</div>
+                    <div>CPU</div>
+                    <div>Memory</div>
+                    <div>PID</div>
+                  </div>
+                  {processRows.map((p) => {
+                    const expanded = !!expandedProcessPids[p.pid];
+                    const hasChildren = (p.children?.length ?? 0) > 0 || p.child_count > 0;
+                    const childCountLabel = `${p.child_count} child process${p.child_count === 1 ? "" : "es"}`;
+                    return (
+                      <Fragment key={`${p.label}-${p.pid}`}>
+                        <div className="settings-table-row">
+                          <div className="settings-process-cell">
+                            <button
+                              type="button"
+                              className="settings-process-expand"
+                              onClick={() => toggleExpanded(p.pid)}
+                              disabled={!hasChildren}
+                              aria-label={expanded ? "Collapse process children" : "Expand process children"}
+                              aria-expanded={expanded}
+                            >
+                              {hasChildren ? (expanded ? "▾" : "▸") : "·"}
+                            </button>
+                            <div>
+                              <div className="settings-table-title">{p.label}</div>
+                              <div className="settings-table-sub">
+                                {childCountLabel}
+                                {p.children_truncated ? " (truncated)" : ""}
+                              </div>
+                            </div>
+                          </div>
+                          <div>{formatPct(p.cpu_pct)}</div>
+                          <div>{formatBytes(p.memory_bytes)}</div>
+                          <div className="settings-table-mono">{p.pid}</div>
+                        </div>
+                        {expanded ? (
+                          <div className="settings-process-children">
+                            {p.child_count === 0 ? (
+                              <div className="settings-empty settings-empty-compact">No child processes.</div>
+                            ) : (
+                              <>
+                                <div className="settings-process-children-meta">
+                                  {p.children_truncated
+                                    ? `Showing ${p.children.length} of ${p.child_count} descendants (sorted by memory)`
+                                    : `${p.children.length} descendants`}
+                                </div>
+                                <div className="settings-table settings-table-process-children">
+                                  <div className="settings-table-head">
+                                    <div>Child process</div>
+                                    <div>CPU</div>
+                                    <div>Memory</div>
+                                    <div>PID</div>
+                                  </div>
+                                  {p.children.map((c) => (
+                                    <div key={`${p.pid}-${c.pid}`} className="settings-table-row">
+                                      <div>
+                                        <div className="settings-table-title">{c.name}</div>
+                                        <div className="settings-table-sub">
+                                          {c.cmdline
+                                            ? `ppid ${c.parent_pid ?? "—"} · ${truncateText(c.cmdline, 120)}`
+                                            : `ppid ${c.parent_pid ?? "—"}`}
+                                        </div>
+                                      </div>
+                                      <div>{formatPct(c.cpu_pct)}</div>
+                                      <div>{formatBytes(c.memory_bytes)}</div>
+                                      <div className="settings-table-mono">{c.pid}</div>
+                                    </div>
+                                  ))}
+                                </div>
+                              </>
+                            )}
+                          </div>
+                        ) : null}
+                      </Fragment>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </Card>
+
+          <Card title="Workspace Disk">
+            <div className="settings-card-block">
+              <div className="settings-workspace-header">
+                <div className="settings-workspace-title">{workspaceName}</div>
+                <div className="settings-workspace-path">{snapshot?.workspace.root_path ?? "—"}</div>
+                <div className="settings-workspace-meta">
+                  {snapshot ? `${formatBytes(snapshot.workspace.size_bytes)} total · ${diskUpdated}` : "Sizing…"}
+                </div>
+              </div>
+
+              {worktreeRows.length === 0 ? (
+                <div className="settings-empty">No worktrees found.</div>
+              ) : (
+                <div className="settings-table settings-table-worktrees">
+                  <div className="settings-table-head">
+                    <div>Worktree</div>
+                    <div>Size</div>
+                  </div>
+                  {worktreeRows.map((wt) => (
+                    <div key={wt.worktree_id} className="settings-table-row">
+                      <div>
+                        <div className="settings-table-title">{wt.worktree_id}</div>
+                        <div className="settings-table-sub">{wt.root_path}</div>
+                      </div>
+                      <div>{formatBytes(wt.size_bytes)}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </Card>
+
+          {resourceError ? <div className="settings-banner settings-banner-error">{resourceError}</div> : null}
         </>
       );
     }

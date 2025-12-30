@@ -62,6 +62,13 @@ pub struct ProviderStatus {
     pub details: HashMap<String, String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderProcessInfo {
+    pub provider_id: String,
+    pub pid: u32,
+    pub label: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct TurnInput {
     pub content: String,
@@ -88,6 +95,11 @@ pub trait ProviderAdapter: Send + Sync {
     ) -> Result<RunHandle>;
 
     async fn cancel(&self, handle: RunHandle) -> Result<()>;
+
+    /// Best-effort provider process discovery (used for resource utilization).
+    async fn list_processes(&self) -> Vec<ProviderProcessInfo> {
+        Vec::new()
+    }
 
     /// Whether this adapter has an in-memory live provider session for the given key.
     ///
