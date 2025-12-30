@@ -17,7 +17,7 @@ use crate::buffers::BufferStore;
 use crate::edit_plans::{EditPlan, EditPlanId};
 use context_core::ids::{MessageId, SessionId, TaskId, TrackId, WorkspaceId, WorktreeId};
 use context_core::models::{
-    Session, SessionEvent, SessionEventType, SessionHeadDelta, TrackDiffSummary,
+    Session, SessionEvent, SessionEventType, SessionHeadDelta, SessionTurnStatus, TrackDiffSummary,
 };
 use context_lsp::Language as LspLanguage;
 use context_lsp::{LspManager, LspManagerConfig};
@@ -32,7 +32,7 @@ use crate::api;
 use crate::installer;
 use crate::installs::{InstallId, InstallProgressEvent, InstallState, InstallStateKind};
 use crate::resource_utilization::ResourceSampler;
-use crate::scheduler::{session_worker, SchedulerCommand};
+use crate::scheduler::{reconcile_turn_terminal_state, session_worker, SchedulerCommand};
 use crate::settings;
 use crate::telemetry::{Telemetry, TelemetryConfig};
 use crate::terminals::TerminalManager;
@@ -395,6 +395,8 @@ impl AppState {
                         | SessionEventType::AssistantMessageInserted
                         | SessionEventType::AssistantComplete
                         | SessionEventType::Done
+                        | SessionEventType::TurnInterrupted
+                        | SessionEventType::Error
                 );
                 if update_task {
                     let _ = state.emit_workspace_task_upsert(session.task_id).await;
@@ -627,6 +629,34 @@ impl AppState {
         st.error = error;
         st.finished_at = Some(Utc::now());
     }
+}
+
+async fn reconcile_running_turns(state: &Arc<AppState>) -> Result<()> {
+    let running_turns = state
+        .store
+        .list_session_turns_by_statuses(&[SessionTurnStatus::Running])
+        .await?;
+
+    for turn in running_turns {
+        if let Err(err) = reconcile_turn_terminal_state(
+            state,
+            turn.session_id,
+            turn.run_id,
+            turn.turn_id,
+            "daemon_restart",
+        )
+        .await
+        {
+            tracing::warn!(
+                session_id = %turn.session_id.0,
+                turn_id = %turn.turn_id.0,
+                err = %err,
+                "failed to reconcile running turn after daemon restart"
+            );
+        }
+    }
+
+    Ok(())
 }
 
 fn edit_plans_dir(data_root: &Path) -> PathBuf {
@@ -905,6 +935,9 @@ pub async fn serve(
         lsp_cfg,
     ));
     state.start_workspace_catchup_listener();
+    if let Err(err) = reconcile_running_turns(&state).await {
+        tracing::warn!(err = %err, "failed to reconcile running turns on startup");
+    }
     let settings = settings::load_settings(&state.data_root).await;
     let mut telemetry_cfg = TelemetryConfig::default();
     if let Some(telemetry) = settings.telemetry.as_ref() {

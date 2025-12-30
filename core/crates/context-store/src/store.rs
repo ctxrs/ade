@@ -2193,6 +2193,12 @@ impl Store {
                            ORDER BY COALESCE(start_seq, -1) DESC, started_at DESC, turn_id DESC
                        ) AS rn
                 FROM session_turns
+            ),
+            running_turns AS (
+                SELECT session_id, COUNT(*) AS running_count
+                FROM session_turns
+                WHERE status = 'running'
+                GROUP BY session_id
             )
             SELECT
                 s.id,
@@ -2211,7 +2217,8 @@ impl Store {
                 lm.content AS last_message_content,
                 lm.created_at AS last_message_at,
                 le.last_event_seq AS last_event_seq,
-                lt.status AS last_turn_status
+                lt.status AS last_turn_status,
+                COALESCE(rt.running_count, 0) AS running_turn_count
             FROM sessions s
             LEFT JOIN last_assistant_messages lm
               ON lm.session_id = s.id AND lm.rn = 1
@@ -2219,6 +2226,8 @@ impl Store {
               ON le.session_id = s.id
             LEFT JOIN last_turns lt
               ON lt.session_id = s.id AND lt.rn = 1
+            LEFT JOIN running_turns rt
+              ON rt.session_id = s.id
             WHERE s.track_id IN ("#,
         );
 
@@ -2247,6 +2256,7 @@ impl Store {
             let last_message_content: Option<String> = r.try_get("last_message_content")?;
             let last_event_seq: Option<i64> = r.try_get("last_event_seq")?;
             let last_turn_status: Option<String> = r.try_get("last_turn_status")?;
+            let running_turn_count: i64 = r.try_get("running_turn_count")?;
 
             let session = Session {
                 id: SessionId(uuid::Uuid::parse_str(&id)?),
@@ -2273,8 +2283,9 @@ impl Store {
                 }
             });
 
-            let activity = derive_activity_from_turn_status(
+            let activity = derive_activity_from_status(
                 last_turn_status.as_deref().map(parse_session_turn_status),
+                running_turn_count > 0,
             );
 
             let row = SessionCatchupRow {
@@ -2633,6 +2644,36 @@ impl Store {
         Ok(out)
     }
 
+    pub async fn list_session_turns_by_statuses(
+        &self,
+        statuses: &[SessionTurnStatus],
+    ) -> Result<Vec<SessionTurn>> {
+        if statuses.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut qb = QueryBuilder::new(
+            r#"SELECT turn_id, session_id, run_id, user_message_id, status,
+                      start_seq, end_seq, started_at, updated_at, assistant_partial, thought_partial,
+                      metrics_json, tool_total, tool_pending, tool_running, tool_completed, tool_failed
+               FROM session_turns
+               WHERE status IN ("#,
+        );
+        let mut separated = qb.separated(", ");
+        for status in statuses {
+            separated.push_bind(session_turn_status_to_str(status));
+        }
+        qb.push(") ORDER BY updated_at ASC");
+        let rows = qb.build().fetch_all(&self.pool).await?;
+
+        let mut out = Vec::with_capacity(rows.len());
+        for r in rows {
+            if let Ok(turn) = build_session_turn_from_row(r) {
+                out.push(turn);
+            }
+        }
+        Ok(out)
+    }
+
     pub async fn get_session_head(
         &self,
         session_id: SessionId,
@@ -2704,7 +2745,11 @@ impl Store {
             tool_summaries.sort_by(|a, b| a.created_at.cmp(&b.created_at));
         }
         let last_event_seq = self.session_last_event_seq(session_id).await?;
-        let activity = derive_activity_from_turn_status(out.last().map(|t| t.status.clone()));
+        let last_status = out.last().map(|t| t.status.clone());
+        let has_running_turn = out
+            .iter()
+            .any(|turn| matches!(turn.status, SessionTurnStatus::Running));
+        let activity = derive_activity_from_status(last_status, has_running_turn);
         let events = if include_events {
             let mut events = self
                 .list_session_events_tail_by_seq(session_id, EVENT_HEAD_LIMIT)
@@ -3487,14 +3532,13 @@ fn derive_message_preview(content: &str) -> String {
     out
 }
 
-fn derive_activity_from_turn_status(status: Option<SessionTurnStatus>) -> SessionActivityState {
-    let is_working = matches!(
-        status,
-        Some(SessionTurnStatus::Queued | SessionTurnStatus::Running)
-    );
+fn derive_activity_from_status(
+    last_status: Option<SessionTurnStatus>,
+    has_running_turn: bool,
+) -> SessionActivityState {
     SessionActivityState {
-        is_working,
-        last_turn_status: status,
+        is_working: has_running_turn,
+        last_turn_status: last_status,
     }
 }
 

@@ -1238,9 +1238,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     const sess = entry.session;
     if (!sess) return false;
     if (sess.status === "failed" || sess.status === "cancelled" || sess.status === "completed") return false;
-    const lastTurn = entry.turns[entry.turns.length - 1];
-    const status = lastTurn?.status ?? null;
-    return status === "queued" || status === "running";
+    return entry.turns.some((turn) => turn.status === "running");
   }, []);
 
   const taskLiveInfo = useMemo(() => {
