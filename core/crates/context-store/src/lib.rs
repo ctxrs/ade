@@ -1,6 +1,6 @@
 pub mod store;
 
-pub use store::Store;
+pub use store::{Store, WorktreeBootstrapResultUpdate};
 
 #[cfg(test)]
 mod tests {
@@ -208,6 +208,18 @@ mod tests {
             base_commit_sha: "abc123".into(),
             git_branch: None,
             created_at: Utc::now(),
+            bootstrap_status: None,
+            bootstrap_started_at: None,
+            bootstrap_finished_at: None,
+            bootstrap_exit_code: None,
+            bootstrap_timeout_sec: None,
+            bootstrap_error: None,
+            bootstrap_log_path: None,
+            bootstrap_log_truncated: None,
+            bootstrap_config_path: None,
+            bootstrap_config_key: None,
+            bootstrap_command: None,
+            bootstrap_script_path: None,
         };
         store.insert_worktree(worktree.clone()).await.unwrap();
         let track = store

@@ -5,7 +5,7 @@ use tokio::sync::{broadcast, Mutex};
 use context_core::ids::{TaskId, WorkspaceId};
 use context_core::models::{
     SessionCatchupSummary, SessionHeadDelta, WorkspaceCatchupEvent, WorkspaceCatchupTaskSummary,
-    WorkspaceCatchupTrackSummary,
+    WorkspaceCatchupTrackSummary, WorktreeBootstrapNotice,
 };
 
 pub struct WorkspaceCatchupHub {
@@ -133,6 +133,23 @@ impl WorkspaceCatchupHub {
             workspace_id,
             snapshot_rev: entry.rev,
             delta: Box::new(delta),
+        });
+    }
+
+    pub async fn publish_worktree_bootstrap(
+        &self,
+        workspace_id: WorkspaceId,
+        notice: WorktreeBootstrapNotice,
+    ) {
+        let mut guard = self.inner.lock().await;
+        let entry = guard
+            .entry(workspace_id)
+            .or_insert_with(WorkspaceCatchupEntry::new);
+        entry.rev += 1;
+        let _ = entry.tx.send(WorkspaceCatchupEvent::WorktreeBootstrap {
+            workspace_id,
+            snapshot_rev: entry.rev,
+            notice,
         });
     }
 }

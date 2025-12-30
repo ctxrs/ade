@@ -38,6 +38,18 @@ export type Worktree = {
   base_commit_sha: string;
   git_branch?: string | null;
   created_at: string;
+  bootstrap_status?: "success" | "failed" | "timeout";
+  bootstrap_started_at?: string | null;
+  bootstrap_finished_at?: string | null;
+  bootstrap_exit_code?: number | null;
+  bootstrap_timeout_sec?: number | null;
+  bootstrap_error?: string | null;
+  bootstrap_log_path?: string | null;
+  bootstrap_log_truncated?: boolean | null;
+  bootstrap_config_path?: string | null;
+  bootstrap_config_key?: string | null;
+  bootstrap_command?: string | null;
+  bootstrap_script_path?: string | null;
 };
 
 export type Session = {
@@ -200,6 +212,23 @@ export type SessionEventsPage = {
   has_more: boolean;
 };
 
+export type WorktreeBootstrapNotice = {
+  worktree_id: { 0: string } | string;
+  worktree_root: string;
+  status: "success" | "failed" | "timeout";
+  started_at: string;
+  finished_at: string;
+  exit_code?: number | null;
+  timeout_sec?: number | null;
+  config_path?: string | null;
+  config_key?: string | null;
+  command?: string | null;
+  script_path?: string | null;
+  log_path?: string | null;
+  log_truncated?: boolean | null;
+  error?: string | null;
+};
+
 export type WorkspaceCatchupEvent =
   | {
       type: "ready";
@@ -243,6 +272,12 @@ export type WorkspaceCatchupEvent =
       session_id: { 0: string } | string;
       after_seq: number;
       reason?: string | null;
+    }
+  | {
+      type: "worktree_bootstrap";
+      workspace_id: { 0: string } | string;
+      snapshot_rev: number;
+      notice: WorktreeBootstrapNotice;
     };
 
 export type WorkspaceCatchupSessionSubscription = {

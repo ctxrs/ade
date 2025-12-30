@@ -69,6 +69,14 @@ pub struct Track {
     pub updated_at: DateTime<Utc>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorktreeBootstrapStatus {
+    Success,
+    Failed,
+    Timeout,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Worktree {
     pub id: WorktreeId,
@@ -77,6 +85,30 @@ pub struct Worktree {
     pub base_commit_sha: String,
     pub git_branch: Option<String>,
     pub created_at: DateTime<Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bootstrap_status: Option<WorktreeBootstrapStatus>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bootstrap_started_at: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bootstrap_finished_at: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bootstrap_exit_code: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bootstrap_timeout_sec: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bootstrap_error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bootstrap_log_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bootstrap_log_truncated: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bootstrap_config_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bootstrap_config_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bootstrap_command: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bootstrap_script_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -464,6 +496,33 @@ pub struct SessionEventsPage {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorktreeBootstrapNotice {
+    pub worktree_id: WorktreeId,
+    pub worktree_root: String,
+    pub status: WorktreeBootstrapStatus,
+    pub started_at: DateTime<Utc>,
+    pub finished_at: DateTime<Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_sec: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub script_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub log_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub log_truncated: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum WorkspaceCatchupEvent {
     Ready {
@@ -502,6 +561,11 @@ pub enum WorkspaceCatchupEvent {
         after_seq: i64,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         reason: Option<String>,
+    },
+    WorktreeBootstrap {
+        workspace_id: WorkspaceId,
+        snapshot_rev: i64,
+        notice: WorktreeBootstrapNotice,
     },
 }
 

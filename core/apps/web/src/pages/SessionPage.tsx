@@ -44,6 +44,7 @@ import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { Check, Copy } from "lucide-react";
 import { DiffReviewPane } from "../components/DiffReviewPane";
+import { WorktreeBootstrapSnackbar } from "../components/WorktreeBootstrapSnackbar";
 import { AskUserQuestionModal } from "../components/AskUserQuestionModal";
 import { ComposerAutocompleteMenu } from "../components/ComposerAutocompleteMenu";
 import { useComposerAutocomplete, type SlashCommandDescriptor } from "../state/useComposerAutocomplete";
@@ -214,7 +215,12 @@ function SessionPageCatchupBridge({ sessionId }: { sessionId: string }) {
     supervisor.bindWorkspaceCatchupStore(workspaceCatchupStore);
     return () => supervisor.bindWorkspaceCatchupStore(null);
   }, [supervisor, workspaceCatchupStore]);
-  return <SessionView sessionId={sessionId} variant="legacy" showDiffPane />;
+  return (
+    <>
+      <WorktreeBootstrapSnackbar />
+      <SessionView sessionId={sessionId} variant="legacy" showDiffPane />
+    </>
+  );
 }
 
 export type SessionViewVariant = "legacy" | "workbench";

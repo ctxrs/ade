@@ -74,6 +74,7 @@ type SectionId =
   | "agent_harnesses"
   | "models_routing"
   | "sandboxing"
+  | "worktree_bootstrap"
   | "context_pack"
   | "dictation"
   | "title_generation"
@@ -98,6 +99,7 @@ const SECTIONS: Array<{
   { id: "agent_harnesses", label: "Agent Harnesses", group: "main" },
   { id: "models_routing", label: "Models & Routing", group: "main" },
   { id: "sandboxing", label: "Sandboxing", group: "main" },
+  { id: "worktree_bootstrap", label: "Worktree Bootstrap", group: "main" },
   { id: "context_pack", label: "Context Pack", group: "main" },
   { id: "dictation", label: "Dictation", group: "advanced" },
   { id: "title_generation", label: "Title Generation", group: "advanced" },
@@ -809,6 +811,51 @@ export default function SettingsPage() {
             ) : null}
           </Card>
           {editorError ? <div className="settings-banner settings-banner-error">{editorError}</div> : null}
+        </>
+      );
+    }
+
+    if (active === "worktree_bootstrap") {
+      const anyWorkspace = workspaces.length > 0;
+      const selectedWorkspace = workspaces.find((ws) => idToString((ws as any).id) === workspaceId) ?? null;
+      const configPath = selectedWorkspace ? `${selectedWorkspace.root_path}/.context/config.toml` : ".context/config.toml";
+      const example = `[worktree.bootstrap]\nsetup_worktree = [\"pnpm install\", \"cargo fetch --locked\"]\nsetup_worktree_unix = \"scripts/worktree_bootstrap_unix.sh\"\nsetup_worktree_windows = \"scripts/worktree_bootstrap_windows.ps1\"\ntimeout_sec = 60\nwait_for_completion = false\n`;
+
+      return (
+        <>
+          <Card title="Worktree Bootstrap">
+            <Row
+              title="Workspace"
+              description="Choose the repo to edit."
+              control={
+                <select
+                  className="settings-control settings-select"
+                  value={workspaceId ?? ""}
+                  onChange={(e) => setWorkspaceId(e.target.value || null)}
+                  disabled={!anyWorkspace}
+                >
+                  {workspaces.map((ws) => {
+                    const id = idToString((ws as any).id);
+                    return (
+                      <option key={id} value={id}>
+                        {ws.name}
+                      </option>
+                    );
+                  })}
+                </select>
+              }
+            />
+            <Row
+              title="Config file"
+              description="Repo-scoped worktree bootstrap configuration."
+              control={<span className="settings-pill wb-mono">{configPath}</span>}
+            />
+            <Row
+              title="Example"
+              description="Add this section to enable bootstrap."
+              control={<pre className="settings-code-block">{example}</pre>}
+            />
+          </Card>
         </>
       );
     }

@@ -48,6 +48,7 @@ use crate::settings as user_settings;
 use crate::telemetry::{TelemetryConfig, TelemetryEvent};
 use crate::title_generation;
 use crate::updates;
+use crate::worktree_bootstrap;
 use context_providers::adapters::ProviderStatus;
 use context_providers::events::NormalizedEvent;
 use context_providers::{
@@ -119,6 +120,10 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
         )
         .route("/api/lsp/status", get(lsp_status))
         .route("/api/lsp/catalog", get(lsp_catalog_list))
+        .route(
+            "/api/worktrees/:id/bootstrap/logs",
+            get(get_worktree_bootstrap_logs),
+        )
         .route(
             "/api/lsp/catalog/:id/install",
             post(install_lsp_catalog_server),
@@ -330,6 +335,38 @@ async fn get_worktree(
         Some(wt) => Ok(Json(wt)),
         None => Err(StatusCode::NOT_FOUND),
     }
+}
+
+async fn get_worktree_bootstrap_logs(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Response, StatusCode> {
+    let worktree_id = WorktreeId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
+    let worktree = state
+        .store
+        .get_worktree(worktree_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    let Some(path) = worktree.bootstrap_log_path.as_deref() else {
+        return Err(StatusCode::NOT_FOUND);
+    };
+    let bytes = tokio::fs::read(path)
+        .await
+        .map_err(|_| StatusCode::NOT_FOUND)?;
+
+    let filename = format!("worktree-bootstrap-{}.log", worktree_id.0);
+    let mut resp = Response::new(Body::from(bytes));
+    resp.headers_mut().insert(
+        header::CONTENT_TYPE,
+        header::HeaderValue::from_static("text/plain; charset=utf-8"),
+    );
+    resp.headers_mut().insert(
+        header::CONTENT_DISPOSITION,
+        header::HeaderValue::from_str(&format!("attachment; filename=\"{filename}\""))
+            .unwrap_or_else(|_| header::HeaderValue::from_static("attachment")),
+    );
+    Ok(resp)
 }
 
 #[derive(Debug, Serialize)]
@@ -4892,6 +4929,18 @@ async fn create_task(
         base_commit_sha,
         git_branch: Some(branch_name),
         created_at: chrono::Utc::now(),
+        bootstrap_status: None,
+        bootstrap_started_at: None,
+        bootstrap_finished_at: None,
+        bootstrap_exit_code: None,
+        bootstrap_timeout_sec: None,
+        bootstrap_error: None,
+        bootstrap_log_path: None,
+        bootstrap_log_truncated: None,
+        bootstrap_config_path: None,
+        bootstrap_config_key: None,
+        bootstrap_command: None,
+        bootstrap_script_path: None,
     };
     state
         .store
@@ -4905,6 +4954,16 @@ async fn create_task(
                 }),
             )
         })?;
+
+    if let Err(e) = worktree_bootstrap::spawn_worktree_bootstrap(
+        Arc::clone(&state),
+        ws.clone(),
+        worktree.clone(),
+    )
+    .await
+    {
+        tracing::warn!(task_id = %task.id.0, "worktree bootstrap failed: {e:?}");
+    }
 
     let label = req
         .default_track_label
@@ -5061,15 +5120,40 @@ async fn create_track(
                 base_commit_sha,
                 git_branch: Some(branch_name),
                 created_at: chrono::Utc::now(),
+                bootstrap_status: None,
+                bootstrap_started_at: None,
+                bootstrap_finished_at: None,
+                bootstrap_exit_code: None,
+                bootstrap_timeout_sec: None,
+                bootstrap_error: None,
+                bootstrap_log_path: None,
+                bootstrap_log_truncated: None,
+                bootstrap_config_path: None,
+                bootstrap_config_key: None,
+                bootstrap_command: None,
+                bootstrap_script_path: None,
             };
-            state.store.insert_worktree(worktree).await.map_err(|e| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ApiErrorResp {
-                        error: logs::redact_sensitive(&e.to_string()),
-                    }),
-                )
-            })?;
+            state
+                .store
+                .insert_worktree(worktree.clone())
+                .await
+                .map_err(|e| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(ApiErrorResp {
+                            error: logs::redact_sensitive(&e.to_string()),
+                        }),
+                    )
+                })?;
+            if let Err(e) = worktree_bootstrap::spawn_worktree_bootstrap(
+                Arc::clone(&state),
+                ws.clone(),
+                worktree.clone(),
+            )
+            .await
+            {
+                tracing::warn!(task_id = %task.id.0, "worktree bootstrap failed: {e:?}");
+            }
             worktree_id
         }
         "local" => {
@@ -5096,6 +5180,18 @@ async fn create_track(
                     base_commit_sha,
                     git_branch: None,
                     created_at: chrono::Utc::now(),
+                    bootstrap_status: None,
+                    bootstrap_started_at: None,
+                    bootstrap_finished_at: None,
+                    bootstrap_exit_code: None,
+                    bootstrap_timeout_sec: None,
+                    bootstrap_error: None,
+                    bootstrap_log_path: None,
+                    bootstrap_log_truncated: None,
+                    bootstrap_config_path: None,
+                    bootstrap_config_key: None,
+                    bootstrap_command: None,
+                    bootstrap_script_path: None,
                 };
                 state.store.insert_worktree(worktree).await.map_err(|e| {
                     (

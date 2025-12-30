@@ -155,6 +155,8 @@ async fn start_turn(
     env_target: &str,
     message: Message,
 ) -> Result<RunningTurn> {
+    state.wait_for_worktree_bootstrap(session.worktree_id).await;
+
     let adapter = {
         let map = state.providers.lock().await;
         map.get(&session.provider_id)

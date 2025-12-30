@@ -14,6 +14,39 @@ pub struct Store {
     pool: Pool<Sqlite>,
 }
 
+fn serialize_bootstrap_status(status: &WorktreeBootstrapStatus) -> &'static str {
+    match status {
+        WorktreeBootstrapStatus::Success => "success",
+        WorktreeBootstrapStatus::Failed => "failed",
+        WorktreeBootstrapStatus::Timeout => "timeout",
+    }
+}
+
+fn parse_bootstrap_status(raw: Option<String>) -> Option<WorktreeBootstrapStatus> {
+    match raw.as_deref() {
+        Some("success") => Some(WorktreeBootstrapStatus::Success),
+        Some("failed") => Some(WorktreeBootstrapStatus::Failed),
+        Some("timeout") => Some(WorktreeBootstrapStatus::Timeout),
+        _ => None,
+    }
+}
+
+pub struct WorktreeBootstrapResultUpdate {
+    pub worktree_id: WorktreeId,
+    pub status: WorktreeBootstrapStatus,
+    pub started_at: DateTime<Utc>,
+    pub finished_at: DateTime<Utc>,
+    pub exit_code: Option<i64>,
+    pub timeout_sec: Option<i64>,
+    pub error: Option<String>,
+    pub log_path: Option<String>,
+    pub log_truncated: Option<bool>,
+    pub config_path: Option<String>,
+    pub config_key: Option<String>,
+    pub command: Option<String>,
+    pub script_path: Option<String>,
+}
+
 pub struct SessionTurnToolCountDeltas {
     pub total: i64,
     pub pending: i64,
@@ -438,6 +471,18 @@ impl Store {
             base_commit_sha,
             git_branch,
             created_at: Utc::now(),
+            bootstrap_status: None,
+            bootstrap_started_at: None,
+            bootstrap_finished_at: None,
+            bootstrap_exit_code: None,
+            bootstrap_timeout_sec: None,
+            bootstrap_error: None,
+            bootstrap_log_path: None,
+            bootstrap_log_truncated: None,
+            bootstrap_config_path: None,
+            bootstrap_config_key: None,
+            bootstrap_command: None,
+            bootstrap_script_path: None,
         };
         sqlx::query(
             r#"INSERT INTO worktrees (id, workspace_id, root_path, base_commit_sha, git_branch, created_at)
@@ -456,7 +501,10 @@ impl Store {
 
     pub async fn get_worktree(&self, id: WorktreeId) -> Result<Option<Worktree>> {
         let row = sqlx::query(
-            r#"SELECT id, workspace_id, root_path, base_commit_sha, git_branch, created_at
+            r#"SELECT id, workspace_id, root_path, base_commit_sha, git_branch, created_at,
+                      bootstrap_status, bootstrap_started_at, bootstrap_finished_at, bootstrap_exit_code,
+                      bootstrap_timeout_sec, bootstrap_error, bootstrap_log_path, bootstrap_log_truncated,
+                      bootstrap_config_path, bootstrap_config_key, bootstrap_command, bootstrap_script_path
                FROM worktrees WHERE id = ?"#,
         )
         .bind(id.0.to_string())
@@ -467,6 +515,18 @@ impl Store {
             let id: String = r.try_get("id").ok()?;
             let ws_id: String = r.try_get("workspace_id").ok()?;
             let created_at: String = r.try_get("created_at").ok()?;
+            let bootstrap_status: Option<String> = r.try_get("bootstrap_status").ok()?;
+            let bootstrap_started_at: Option<String> = r.try_get("bootstrap_started_at").ok()?;
+            let bootstrap_finished_at: Option<String> = r.try_get("bootstrap_finished_at").ok()?;
+            let bootstrap_exit_code: Option<i64> = r.try_get("bootstrap_exit_code").ok()?;
+            let bootstrap_timeout_sec: Option<i64> = r.try_get("bootstrap_timeout_sec").ok()?;
+            let bootstrap_error: Option<String> = r.try_get("bootstrap_error").ok()?;
+            let bootstrap_log_path: Option<String> = r.try_get("bootstrap_log_path").ok()?;
+            let bootstrap_log_truncated: Option<i64> = r.try_get("bootstrap_log_truncated").ok()?;
+            let bootstrap_config_path: Option<String> = r.try_get("bootstrap_config_path").ok()?;
+            let bootstrap_config_key: Option<String> = r.try_get("bootstrap_config_key").ok()?;
+            let bootstrap_command: Option<String> = r.try_get("bootstrap_command").ok()?;
+            let bootstrap_script_path: Option<String> = r.try_get("bootstrap_script_path").ok()?;
             Some(Worktree {
                 id: WorktreeId(uuid::Uuid::parse_str(&id).ok()?),
                 workspace_id: WorkspaceId(uuid::Uuid::parse_str(&ws_id).ok()?),
@@ -474,6 +534,26 @@ impl Store {
                 base_commit_sha: r.try_get("base_commit_sha").ok()?,
                 git_branch: r.try_get("git_branch").ok()?,
                 created_at: parse_dt(&created_at).ok()?,
+                bootstrap_status: parse_bootstrap_status(bootstrap_status),
+                bootstrap_started_at: bootstrap_started_at
+                    .as_deref()
+                    .map(parse_dt)
+                    .transpose()
+                    .ok()?,
+                bootstrap_finished_at: bootstrap_finished_at
+                    .as_deref()
+                    .map(parse_dt)
+                    .transpose()
+                    .ok()?,
+                bootstrap_exit_code,
+                bootstrap_timeout_sec,
+                bootstrap_error,
+                bootstrap_log_path,
+                bootstrap_log_truncated: bootstrap_log_truncated.map(|v| v != 0),
+                bootstrap_config_path,
+                bootstrap_config_key,
+                bootstrap_command,
+                bootstrap_script_path,
             })
         }))
     }
@@ -484,7 +564,10 @@ impl Store {
         root_path: &str,
     ) -> Result<Option<Worktree>> {
         let row = sqlx::query(
-            r#"SELECT id, workspace_id, root_path, base_commit_sha, git_branch, created_at
+            r#"SELECT id, workspace_id, root_path, base_commit_sha, git_branch, created_at,
+                      bootstrap_status, bootstrap_started_at, bootstrap_finished_at, bootstrap_exit_code,
+                      bootstrap_timeout_sec, bootstrap_error, bootstrap_log_path, bootstrap_log_truncated,
+                      bootstrap_config_path, bootstrap_config_key, bootstrap_command, bootstrap_script_path
                FROM worktrees
                WHERE workspace_id = ? AND root_path = ? AND git_branch IS NULL
                ORDER BY created_at DESC
@@ -499,6 +582,18 @@ impl Store {
             let id: String = r.try_get("id").ok()?;
             let ws_id: String = r.try_get("workspace_id").ok()?;
             let created_at: String = r.try_get("created_at").ok()?;
+            let bootstrap_status: Option<String> = r.try_get("bootstrap_status").ok()?;
+            let bootstrap_started_at: Option<String> = r.try_get("bootstrap_started_at").ok()?;
+            let bootstrap_finished_at: Option<String> = r.try_get("bootstrap_finished_at").ok()?;
+            let bootstrap_exit_code: Option<i64> = r.try_get("bootstrap_exit_code").ok()?;
+            let bootstrap_timeout_sec: Option<i64> = r.try_get("bootstrap_timeout_sec").ok()?;
+            let bootstrap_error: Option<String> = r.try_get("bootstrap_error").ok()?;
+            let bootstrap_log_path: Option<String> = r.try_get("bootstrap_log_path").ok()?;
+            let bootstrap_log_truncated: Option<i64> = r.try_get("bootstrap_log_truncated").ok()?;
+            let bootstrap_config_path: Option<String> = r.try_get("bootstrap_config_path").ok()?;
+            let bootstrap_config_key: Option<String> = r.try_get("bootstrap_config_key").ok()?;
+            let bootstrap_command: Option<String> = r.try_get("bootstrap_command").ok()?;
+            let bootstrap_script_path: Option<String> = r.try_get("bootstrap_script_path").ok()?;
             Some(Worktree {
                 id: WorktreeId(uuid::Uuid::parse_str(&id).ok()?),
                 workspace_id: WorkspaceId(uuid::Uuid::parse_str(&ws_id).ok()?),
@@ -506,13 +601,36 @@ impl Store {
                 base_commit_sha: r.try_get("base_commit_sha").ok()?,
                 git_branch: r.try_get("git_branch").ok()?,
                 created_at: parse_dt(&created_at).ok()?,
+                bootstrap_status: parse_bootstrap_status(bootstrap_status),
+                bootstrap_started_at: bootstrap_started_at
+                    .as_deref()
+                    .map(parse_dt)
+                    .transpose()
+                    .ok()?,
+                bootstrap_finished_at: bootstrap_finished_at
+                    .as_deref()
+                    .map(parse_dt)
+                    .transpose()
+                    .ok()?,
+                bootstrap_exit_code,
+                bootstrap_timeout_sec,
+                bootstrap_error,
+                bootstrap_log_path,
+                bootstrap_log_truncated: bootstrap_log_truncated.map(|v| v != 0),
+                bootstrap_config_path,
+                bootstrap_config_key,
+                bootstrap_command,
+                bootstrap_script_path,
             })
         }))
     }
 
     pub async fn list_worktrees(&self, workspace_id: WorkspaceId) -> Result<Vec<Worktree>> {
         let rows = sqlx::query(
-            r#"SELECT id, workspace_id, root_path, base_commit_sha, git_branch, created_at
+            r#"SELECT id, workspace_id, root_path, base_commit_sha, git_branch, created_at,
+                      bootstrap_status, bootstrap_started_at, bootstrap_finished_at, bootstrap_exit_code,
+                      bootstrap_timeout_sec, bootstrap_error, bootstrap_log_path, bootstrap_log_truncated,
+                      bootstrap_config_path, bootstrap_config_key, bootstrap_command, bootstrap_script_path
                FROM worktrees WHERE workspace_id = ? ORDER BY created_at ASC"#,
         )
         .bind(workspace_id.0.to_string())
@@ -524,6 +642,18 @@ impl Store {
             let id: String = r.try_get("id")?;
             let ws_id: String = r.try_get("workspace_id")?;
             let created_at: String = r.try_get("created_at")?;
+            let bootstrap_status: Option<String> = r.try_get("bootstrap_status")?;
+            let bootstrap_started_at: Option<String> = r.try_get("bootstrap_started_at")?;
+            let bootstrap_finished_at: Option<String> = r.try_get("bootstrap_finished_at")?;
+            let bootstrap_exit_code: Option<i64> = r.try_get("bootstrap_exit_code")?;
+            let bootstrap_timeout_sec: Option<i64> = r.try_get("bootstrap_timeout_sec")?;
+            let bootstrap_error: Option<String> = r.try_get("bootstrap_error")?;
+            let bootstrap_log_path: Option<String> = r.try_get("bootstrap_log_path")?;
+            let bootstrap_log_truncated: Option<i64> = r.try_get("bootstrap_log_truncated")?;
+            let bootstrap_config_path: Option<String> = r.try_get("bootstrap_config_path")?;
+            let bootstrap_config_key: Option<String> = r.try_get("bootstrap_config_key")?;
+            let bootstrap_command: Option<String> = r.try_get("bootstrap_command")?;
+            let bootstrap_script_path: Option<String> = r.try_get("bootstrap_script_path")?;
             out.push(Worktree {
                 id: WorktreeId(uuid::Uuid::parse_str(&id)?),
                 workspace_id: WorkspaceId(uuid::Uuid::parse_str(&ws_id)?),
@@ -531,9 +661,62 @@ impl Store {
                 base_commit_sha: r.try_get("base_commit_sha")?,
                 git_branch: r.try_get("git_branch")?,
                 created_at: parse_dt(&created_at)?,
+                bootstrap_status: parse_bootstrap_status(bootstrap_status),
+                bootstrap_started_at: bootstrap_started_at.as_deref().map(parse_dt).transpose()?,
+                bootstrap_finished_at: bootstrap_finished_at
+                    .as_deref()
+                    .map(parse_dt)
+                    .transpose()?,
+                bootstrap_exit_code,
+                bootstrap_timeout_sec,
+                bootstrap_error,
+                bootstrap_log_path,
+                bootstrap_log_truncated: bootstrap_log_truncated.map(|v| v != 0),
+                bootstrap_config_path,
+                bootstrap_config_key,
+                bootstrap_command,
+                bootstrap_script_path,
             });
         }
         Ok(out)
+    }
+
+    pub async fn update_worktree_bootstrap_result(
+        &self,
+        update: WorktreeBootstrapResultUpdate,
+    ) -> Result<()> {
+        sqlx::query(
+            r#"UPDATE worktrees
+               SET bootstrap_status = ?,
+                   bootstrap_started_at = ?,
+                   bootstrap_finished_at = ?,
+                   bootstrap_exit_code = ?,
+                   bootstrap_timeout_sec = ?,
+                   bootstrap_error = ?,
+                   bootstrap_log_path = ?,
+                   bootstrap_log_truncated = ?,
+                   bootstrap_config_path = ?,
+                   bootstrap_config_key = ?,
+                   bootstrap_command = ?,
+                   bootstrap_script_path = ?
+               WHERE id = ?"#,
+        )
+        .bind(serialize_bootstrap_status(&update.status))
+        .bind(update.started_at.to_rfc3339())
+        .bind(update.finished_at.to_rfc3339())
+        .bind(update.exit_code)
+        .bind(update.timeout_sec)
+        .bind(update.error)
+        .bind(update.log_path)
+        .bind(update.log_truncated.map(|v| if v { 1 } else { 0 }))
+        .bind(update.config_path)
+        .bind(update.config_key)
+        .bind(update.command)
+        .bind(update.script_path)
+        .bind(update.worktree_id.0.to_string())
+        .execute(&self.pool)
+        .await?;
+        Ok(())
     }
 
     // Attachment APIs

@@ -574,6 +574,15 @@ export const createSession = (trackId: string, provider_id: string, model_id: st
 export const getWorktree = (worktreeId: string) =>
   apiAny<Worktree>(`/api/worktrees/${worktreeId}`);
 
+export const getWorktreeBootstrapLogs = async (worktreeId: string): Promise<string> => {
+  const resp = await daemonFetchRaw(`/api/worktrees/${worktreeId}/bootstrap/logs`);
+  if (resp.status >= 400) {
+    const msg = String(resp.body || "").trim();
+    throw new Error(msg || `Failed to download logs (${resp.status}).`);
+  }
+  return resp.body ?? "";
+};
+
 export const getSessionHead = (sessionId: string, limit?: number, includeEvents?: boolean) => {
   const qs = new URLSearchParams();
   if (limit) qs.set("limit", String(limit));

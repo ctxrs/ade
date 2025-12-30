@@ -57,6 +57,7 @@ import {
   type SessionCacheEntry,
 } from "../state/sessionSupervisor";
 import { DiffReviewPane } from "../components/DiffReviewPane";
+import { WorktreeBootstrapSnackbar } from "../components/WorktreeBootstrapSnackbar";
 import { SessionView, buildWorkbenchThreadViewModel } from "./SessionPage";
 import { HARNESS_CATALOG } from "../utils/harnessCatalog";
 import { WorkbenchComposer, type DraftTrack, type WorkbenchEnvTarget, type WorkbenchModeId } from "../components/WorkbenchComposer";
@@ -2201,6 +2202,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
         className={`wb-root ${sidebarCollapsed ? "wb-root-collapsed" : ""} ${sidebarResizing ? "wb-root-resizing" : ""} ${diffResizing ? "wb-root-diff-resizing" : ""}`}
         style={rootStyle}
       >
+        <WorktreeBootstrapSnackbar />
         <div className="wb-topbar">
           <div className="wb-topbar-title">{workspace?.name ?? "Workspace"}</div>
         </div>
@@ -2220,6 +2222,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       className={`wb-root ${sidebarCollapsed ? "wb-root-collapsed" : ""} ${sidebarResizing ? "wb-root-resizing" : ""} ${diffResizing ? "wb-root-diff-resizing" : ""}`}
       style={rootStyle}
     >
+      <WorktreeBootstrapSnackbar />
       <div className="wb-topbar">
         {sidebarCollapsed && (
           <button

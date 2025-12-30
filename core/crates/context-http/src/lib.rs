@@ -17,6 +17,7 @@ pub mod telemetry;
 pub mod title_generation;
 pub mod updates;
 pub mod workspace_catchup;
+pub mod worktree_bootstrap;
 
 #[cfg(test)]
 mod tests {

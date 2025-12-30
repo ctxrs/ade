@@ -83,6 +83,18 @@ async fn attachments_demo_react_smoketest() {
         base_commit_sha,
         git_branch: None,
         created_at: chrono::Utc::now(),
+        bootstrap_status: None,
+        bootstrap_started_at: None,
+        bootstrap_finished_at: None,
+        bootstrap_exit_code: None,
+        bootstrap_timeout_sec: None,
+        bootstrap_error: None,
+        bootstrap_log_path: None,
+        bootstrap_log_truncated: None,
+        bootstrap_config_path: None,
+        bootstrap_config_key: None,
+        bootstrap_command: None,
+        bootstrap_script_path: None,
     };
     store.insert_worktree(worktree.clone()).await.unwrap();
     let task = store
