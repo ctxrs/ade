@@ -11,6 +11,7 @@ type SeedOptions = {
   workspaceName?: string;
   repoRoot?: string;
   throttleMs?: number;
+  createDefaultTrack?: boolean;
   includeToolSummaries?: boolean;
   toolSummariesPerTurn?: number;
   toolSummaryFixtures?: Array<{
@@ -108,6 +109,7 @@ export async function seedDummyWorkspace(
   const taskIds: string[] = [];
   const sessionIdsByTask: Record<string, string[]> = {};
   const throttle = opts.throttleMs ?? 15;
+  const createDefaultTrack = opts.createDefaultTrack ?? true;
   const includeToolSummaries = Boolean(opts.includeToolSummaries);
   const toolSummariesPerTurn = opts.toolSummariesPerTurn ?? 6;
   const toolSummaryFixtures = opts.toolSummaryFixtures ?? DEFAULT_TOOL_FIXTURES;
@@ -117,6 +119,7 @@ export async function seedDummyWorkspace(
   for (let i = 0; i < opts.tasks; i++) {
     const task = await apiPost<{ id: string }>(request, `/api/workspaces/${workspace.id}/tasks`, {
       title: `fixture task ${i + 1}`,
+      create_default_track: createDefaultTrack,
     });
     taskIds.push(task.id);
     sessionIdsByTask[task.id] = [];

@@ -3364,6 +3364,12 @@ button.linklike:hover {
   color: var(--text);
 }
 
+.wb-single-track-path {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
 .wb-single-track-meta {
   margin-top: 8px;
   display: flex;
@@ -3388,15 +3394,19 @@ button.linklike:hover {
 
 .wb-worktree-chip {
   border: none;
-  border-radius: 0;
-  padding: 0;
+  border-radius: 999px;
+  padding: 2px 8px 2px 4px;
+  margin-left: -4px;
   background: transparent;
   color: inherit;
+  font: inherit;
+  line-height: inherit;
   display: inline-flex;
   align-items: center;
   gap: 6px;
   cursor: pointer;
-  max-width: 320px;
+  max-width: 100%;
+  transition: background 120ms ease, color 120ms ease;
 }
 
 .wb-worktree-actions {
@@ -3429,8 +3439,8 @@ button.linklike:hover {
 }
 
 .wb-worktree-chip:hover:not(:disabled) {
-  color: var(--text);
-  text-decoration: underline;
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.92);
 }
 
 .wb-worktree-chip:disabled {
@@ -3441,30 +3451,28 @@ button.linklike:hover {
 .wb-worktree-chip:focus-visible:not(:disabled) {
   outline: 2px solid rgba(78, 163, 255, 0.38);
   outline-offset: 2px;
-  color: var(--text);
-  text-decoration: underline;
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.92);
 }
 
 .wb-worktree-chip-slug {
-  font-family: var(--mono);
-  font-size: 12px;
+  font: inherit;
+  line-height: inherit;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .wb-worktree-chip-copy {
-  opacity: 0;
-}
-
-.wb-worktree-chip:hover:not(:disabled) .wb-worktree-chip-copy,
-.wb-worktree-chip:focus-visible:not(:disabled) .wb-worktree-chip-copy {
-  opacity: 1;
+  display: inline-flex;
+  align-items: center;
+  line-height: 0;
+  opacity: 0.78;
 }
 
 .wb-worktree-chip-copied .wb-worktree-chip-copy {
-  opacity: 1;
   color: var(--text);
+  opacity: 1;
 }
 
 .wb-worktree-chip-copied .wb-worktree-chip-copy svg {
@@ -3488,6 +3496,7 @@ button.linklike:hover {
   overflow: auto;
   border-bottom: 1px solid var(--border);
 }
+
 
 .wb-trackcard {
   min-width: 220px;

@@ -132,11 +132,21 @@ function parseMs(value: string | null | undefined): number | null {
   return Number.isFinite(ms) ? ms : null;
 }
 
-function lastPathSegment(path: string | null | undefined): string {
-  const raw = String(path ?? "").trim();
-  if (!raw) return "";
-  const parts = raw.split(/[\\/]/).filter(Boolean);
-  return parts[parts.length - 1] ?? "";
+function formatWorktreePath(raw: string): string {
+  const path = String(raw ?? "").trim();
+  return path;
+}
+
+function formatWorktreeLabel(raw: string): string {
+  const path = String(raw ?? "").trim().replace(/[\\/]+$/, "");
+  if (!path) return "";
+  const parts = path.split(/[\\/]/).filter(Boolean);
+  const base = parts[parts.length - 1] ?? "";
+  if (!base) return "";
+  const uuidMatch = base.match(/^([0-9a-f]{8})-[0-9a-f-]{27,}$/i);
+  if (uuidMatch) return uuidMatch[1];
+  if (base.length <= 16) return base;
+  return `${base.slice(0, 16)}...`;
 }
 
 function lastAssistantMessageMs(messages: { role: string; created_at: string }[]): number | null {
@@ -2074,6 +2084,24 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
 
   const activeTask = activeTaskSummary?.task ?? null;
   const expectedActiveTrackCount = activeTaskSummary ? activeTaskSummary.tracks.length : null;
+  const worktreeChip = useMemo(() => {
+    const sess = activeEntry?.session ?? null;
+    const worktreeRoot = String(activeWorktree?.root_path ?? "");
+    const workspaceRoot = String(workspace?.root_path ?? "");
+    const envTarget = String(sess?.env_target ?? "").trim().toLowerCase();
+    const inferredWorktree =
+      Boolean(worktreeRoot) &&
+      (Boolean(activeWorktree?.git_branch) || (Boolean(workspaceRoot) && worktreeRoot !== workspaceRoot));
+    const isWorktree = envTarget === "worktree" || (envTarget !== "local" && inferredWorktree);
+    const worktreePath = isWorktree ? worktreeRoot : "";
+    const worktreeLabel = worktreePath ? formatWorktreeLabel(worktreePath) : "";
+
+    return {
+      worktreeLabel,
+      worktreePath,
+      canCopyWorktree: Boolean(worktreePath),
+    };
+  }, [activeEntry, activeWorktree?.git_branch, activeWorktree?.root_path, workspace?.root_path]);
   const singleTrackHeader = useMemo(() => {
     if (tracks.length !== 1) return null;
     const sess = activeEntry?.session ?? null;
@@ -2104,20 +2132,14 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       return bestIso;
     })();
 
-    const worktreePath = sess?.env_target === "worktree" ? String(activeWorktree?.root_path ?? "") : "";
-    const worktreeSlug = worktreePath ? lastPathSegment(worktreePath) : "";
-
     return {
       title: activeTask?.title ?? "Conversation",
       lastIso,
       harness,
       modelBase: parsedModel.base || String(sess?.model_id ?? ""),
       effort: parsedModel.effort,
-      worktreeSlug,
-      worktreePath,
-      canCopyWorktree: Boolean(worktreePath),
     };
-  }, [activeEntry, activeTask?.title, activeWorktree?.root_path, tracks.length]);
+  }, [activeEntry, activeTask?.title, tracks.length]);
 
   const singleTrackHeaderForRender = useMemo(() => {
     if (singleTrackHeader) return singleTrackHeader;
@@ -2128,9 +2150,6 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       harness: "",
       modelBase: "",
       effort: "",
-      worktreeSlug: "",
-      worktreePath: "",
-      canCopyWorktree: false,
     };
   }, [activeTask?.title, activeTaskId, singleTrackHeader]);
 
@@ -2139,21 +2158,6 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       singleTrackHeaderForRender &&
       (tracks.length === 1 || (tracks.length === 0 && (expectedActiveTrackCount === 1 || expectedActiveTrackCount === null))),
   );
-
-  const formatWorktreePathForCopy = useCallback((raw: string): string => {
-    const path = String(raw ?? "").trim();
-    if (!path) return "";
-
-    // Prefer "~" for user home directories.
-    // This is a UI convenience for paths that typically get pasted into shells.
-    const posixMatch = path.match(/^\/(?:home|Users)\/[^/]+(\/.*)?$/);
-    if (posixMatch) return `~${posixMatch[1] ?? ""}`;
-
-    const windowsMatch = path.match(/^[A-Za-z]:\\Users\\[^\\]+(\\.*)?$/);
-    if (windowsMatch) return `~${windowsMatch[1] ?? ""}`;
-
-    return path;
-  }, []);
 
   const [worktreeCopied, setWorktreeCopied] = useState(false);
   const worktreeCopiedTimerRef = useRef<number | null>(null);
@@ -2168,10 +2172,10 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   }, []);
 
   const copyWorktreeLocation = useCallback(async () => {
-    const path = String(singleTrackHeader?.worktreePath ?? "").trim();
+    const path = String(worktreeChip.worktreePath ?? "").trim();
     if (!path) return;
     try {
-      await navigator.clipboard.writeText(formatWorktreePathForCopy(path));
+      await navigator.clipboard.writeText(path);
       setWorktreeCopied(true);
       if (worktreeCopiedTimerRef.current) {
         window.clearTimeout(worktreeCopiedTimerRef.current);
@@ -2183,10 +2187,10 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     } catch (e: any) {
       window.alert(e?.message ?? "Failed to copy worktree location.");
     }
-  }, [formatWorktreePathForCopy, singleTrackHeader?.worktreePath]);
+  }, [worktreeChip.worktreePath]);
 
   const openWorktreeTerminal = useCallback(async () => {
-    const path = String(singleTrackHeader?.worktreePath ?? "").trim();
+    const path = String(worktreeChip.worktreePath ?? "").trim();
     if (!path) return;
     if (!terminalPanelRef.current) return;
     terminalPanelRef.current.setScope("task");
@@ -2200,7 +2204,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       scope: "task",
     });
     if (createdId) terminalPanelRef.current.focusTerminal(createdId);
-  }, [activeSessionId, activeTaskId, activeTrackId, activeWorktreeId, singleTrackHeader?.worktreePath]);
+  }, [activeSessionId, activeTaskId, activeTrackId, activeWorktreeId, worktreeChip.worktreePath]);
 
   const exportConversation = useCallback(async () => {
     if (!activeEntry?.session) return;
@@ -2227,7 +2231,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     lines.push(`- Harness: ${harness}`);
     lines.push(`- Model: ${parsedModel.base || String(sess.model_id ?? "")}`);
     if (parsedModel.effort) lines.push(`- Effort: ${parsedModel.effort}`);
-    if (singleTrackHeader?.worktreePath) lines.push(`- Worktree: ${formatWorktreePathForCopy(singleTrackHeader.worktreePath)}`);
+    if (worktreeChip.worktreePath) lines.push(`- Worktree: ${formatWorktreePath(worktreeChip.worktreePath)}`);
     lines.push(`- Session ID: ${idToString(sess.id)}`);
     lines.push("");
     lines.push("---");
@@ -2313,7 +2317,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     } catch (e: any) {
       window.alert(e?.message ?? "Failed to export conversation.");
     }
-  }, [activeEntry, singleTrackHeader?.title, singleTrackHeader?.worktreePath]);
+  }, [activeEntry, singleTrackHeader?.title, worktreeChip.worktreePath]);
 
   useEffect(() => {
     const el = newComposerRef.current;
@@ -2660,7 +2664,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
                           <span>{singleTrackHeaderForRender.effort}</span>
                         </>
                       )}
-                      {singleTrackHeaderForRender?.worktreeSlug && (
+                      {worktreeChip.worktreeLabel && (
                         <>
                           <span className="wb-single-track-dot" aria-hidden="true">
                             ·
@@ -2669,21 +2673,20 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
                             <button
                               type="button"
                               className={`wb-worktree-chip ${worktreeCopied ? "wb-worktree-chip-copied" : ""}`}
-                              disabled={!singleTrackHeaderForRender.canCopyWorktree}
+                              disabled={!worktreeChip.canCopyWorktree}
                               onClick={() => void copyWorktreeLocation()}
                               title="Copy worktree location"
                               aria-label="Copy worktree location"
                             >
-                              <GitBranch size={13} />
-                              <span className="wb-worktree-chip-slug">{singleTrackHeaderForRender.worktreeSlug}</span>
+                              <span className="wb-worktree-chip-slug">{worktreeChip.worktreeLabel}</span>
                               <span className="wb-worktree-chip-copy" aria-hidden="true">
-                                {worktreeCopied ? <Check size={13} /> : <Copy size={13} />}
+                                {worktreeCopied ? <Check size={12} /> : <Copy size={12} />}
                               </span>
                             </button>
                             <button
                               type="button"
                               className="wb-worktree-action"
-                              disabled={!singleTrackHeaderForRender.canCopyWorktree}
+                              disabled={!worktreeChip.canCopyWorktree}
                               onClick={() => void openWorktreeTerminal()}
                               title="Open worktree terminal"
                               aria-label="Open worktree terminal"
@@ -2973,7 +2976,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
           <button
             type="button"
             className="wb-menu-item"
-            disabled={!singleTrackHeader?.canCopyWorktree}
+            disabled={!worktreeChip.canCopyWorktree}
             onClick={() => {
               setConvoMenu(null);
               void copyWorktreeLocation();
