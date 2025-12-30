@@ -175,6 +175,8 @@ type TaskRowProps = {
   ageIso: string | null | undefined;
   providerCount: number;
   harnesses: Array<(typeof HARNESS_CATALOG)[number]>;
+  getRenameDraft: (taskId: string, fallback: string) => string;
+  setRenameDraft: (taskId: string, nextValue: string) => void;
   onFocusTask: (taskId: string) => void;
   onOpenMenu: (taskId: string, opts: { triggerEl: HTMLElement } | { x: number; y: number }) => void;
   onToggleArchive: (taskId: string, nextArchived: boolean) => Promise<void>;
@@ -184,7 +186,7 @@ type TaskRowProps = {
   onCommitRename: (taskId: string, nextValue: string) => void;
 };
 
-const TaskRow = React.memo(function TaskRow({
+export const TaskRow = React.memo(function TaskRow({
   taskId,
   title,
   archived,
@@ -196,6 +198,8 @@ const TaskRow = React.memo(function TaskRow({
   ageIso,
   providerCount,
   harnesses,
+  getRenameDraft,
+  setRenameDraft,
   onFocusTask,
   onOpenMenu,
   onToggleArchive,
@@ -204,7 +208,7 @@ const TaskRow = React.memo(function TaskRow({
   onCancelRename,
   onCommitRename,
 }: TaskRowProps) {
-  const [renameDraft, setRenameDraft] = useState(title);
+  const [renameDraft, setRenameDraftState] = useState(() => getRenameDraft(taskId, title));
   const renameInputRef = useRef<HTMLInputElement | null>(null);
   const spinnerDelayRef = useRef<number>(spinnerDelayForNow());
   const wasRenamingRef = useRef(false);
@@ -213,7 +217,9 @@ const TaskRow = React.memo(function TaskRow({
 
   useEffect(() => {
     if (isRenaming && !wasRenamingRef.current) {
-      setRenameDraft(title);
+      const initialDraft = getRenameDraft(taskId, title);
+      setRenameDraftState(initialDraft);
+      setRenameDraft(taskId, initialDraft);
       requestAnimationFrame(() => {
         const el = renameInputRef.current;
         if (!el) return;
@@ -226,7 +232,7 @@ const TaskRow = React.memo(function TaskRow({
       ignoreBlurRef.current = false;
       clickOutsideRef.current = false;
     }
-  }, [isRenaming, title]);
+  }, [getRenameDraft, isRenaming, setRenameDraft, taskId, title]);
 
   useEffect(() => {
     if (!isRenaming) return;
@@ -288,7 +294,11 @@ const TaskRow = React.memo(function TaskRow({
             ref={renameInputRef}
             className="wb-task-rename"
             value={renameDraft}
-            onChange={(e) => setRenameDraft(e.target.value)}
+            onChange={(e) => {
+              const nextValue = e.target.value;
+              setRenameDraftState(nextValue);
+              setRenameDraft(taskId, nextValue);
+            }}
             onClick={(e) => e.stopPropagation()}
             onKeyDown={(e) => {
               if (e.key === "Escape") {
@@ -549,8 +559,21 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const taskMenuRef = useRef<HTMLDivElement | null>(null);
   const [hoveredTaskId, setHoveredTaskId] = useState<string | null>(null);
   const [renamingTaskId, setRenamingTaskId] = useState<string | null>(null);
+  const renameDraftsRef = useRef<Map<string, string>>(new Map());
   const [convoMenu, setConvoMenu] = useState<{ style: React.CSSProperties } | null>(null);
   const convoMenuRef = useRef<HTMLDivElement | null>(null);
+
+  const getRenameDraft = useCallback((taskId: string, fallback: string) => {
+    return renameDraftsRef.current.get(taskId) ?? fallback;
+  }, []);
+
+  const setRenameDraft = useCallback((taskId: string, nextValue: string) => {
+    renameDraftsRef.current.set(taskId, nextValue);
+  }, []);
+
+  const clearRenameDraft = useCallback((taskId: string) => {
+    renameDraftsRef.current.delete(taskId);
+  }, []);
 
   const [activeWorktree, setActiveWorktree] = useState<Worktree | null>(null);
   const worktreeCacheRef = useRef<Map<string, Worktree>>(new Map());
@@ -1249,14 +1272,20 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
 
   const beginRenameTask = useCallback(
     (taskId: string) => {
+      if (renamingTaskId && renamingTaskId !== taskId) {
+        clearRenameDraft(renamingTaskId);
+      }
       setRenamingTaskId(taskId);
     },
-    [],
+    [clearRenameDraft, renamingTaskId],
   );
 
   const cancelRenameTask = useCallback(() => {
+    if (renamingTaskId) {
+      clearRenameDraft(renamingTaskId);
+    }
     setRenamingTaskId(null);
-  }, []);
+  }, [clearRenameDraft, renamingTaskId]);
 
   const commitRenameTask = useCallback(
     async (taskId: string, nextValue: string) => {
@@ -1267,18 +1296,20 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       }
       const current = String(tasksById[taskId]?.task.title ?? "").trim();
       if (current && current === next) {
+        clearRenameDraft(taskId);
         cancelRenameTask();
         return;
       }
       try {
         const updated = await updateTaskTitle(taskId, next);
         workspaceCatchupStore.applyTaskUpdate(updated);
+        clearRenameDraft(taskId);
         cancelRenameTask();
       } catch (e: any) {
         window.alert(e?.message ?? "Failed to rename.");
       }
     },
-    [cancelRenameTask, tasksById, workspaceCatchupStore],
+    [cancelRenameTask, clearRenameDraft, tasksById, workspaceCatchupStore],
   );
 
   const renderTaskRow = useCallback(
@@ -1326,6 +1357,8 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
           ageIso={ageIso}
           providerCount={providerCount}
           harnesses={harnesses}
+          getRenameDraft={getRenameDraft}
+          setRenameDraft={setRenameDraft}
           onFocusTask={focusTask}
           onOpenMenu={openTaskMenu}
           onToggleArchive={onToggleArchive}
@@ -1341,11 +1374,13 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       cancelRenameTask,
       commitRenameTask,
       focusTask,
+      getRenameDraft,
       hoveredTaskId,
       onToggleArchive,
       openTaskMenu,
       providerIdsByTaskFromSessions,
       renamingTaskId,
+      setRenameDraft,
       setHoveredTaskId,
       taskLiveInfo.errorByTask,
       taskLiveInfo.lastAssistantMsByTask,
