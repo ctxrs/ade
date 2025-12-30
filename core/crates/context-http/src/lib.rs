@@ -7,12 +7,14 @@ pub mod dictation_livekit;
 pub mod edit_plans;
 pub mod installer;
 pub mod installs;
+pub mod llm;
 pub mod logs;
 pub mod lsp_catalog;
 pub mod provider_matrix;
 pub mod scheduler;
 pub mod settings;
 pub mod telemetry;
+pub mod title_generation;
 pub mod updates;
 pub mod workspace_catchup;
 

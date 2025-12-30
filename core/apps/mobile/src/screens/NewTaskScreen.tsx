@@ -205,10 +205,8 @@ function ProviderPickerModal({
   );
 }
 
-function deriveTaskTitle(prompt: string): string {
-  const line = prompt.trim().split("\n")[0] ?? "";
-  const title = line.trim().slice(0, 80);
-  return title || "New conversation";
+function deriveTaskTitle(_prompt: string): string {
+  return "New Task";
 }
 
 function extractModelIds(models: any): string[] {

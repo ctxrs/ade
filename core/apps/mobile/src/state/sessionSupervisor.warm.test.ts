@@ -31,6 +31,7 @@ const mkHead = (sessionId: string) => ({
     worktree_id: "wt-1",
     provider_id: "codex",
     model_id: "gpt-4",
+    title: "New Task",
     agent_role: "assistant",
     status: "active",
   },
@@ -90,4 +91,3 @@ describe("SessionSupervisor warm heads", () => {
     expect(getSessionHead).not.toHaveBeenCalled();
   });
 });
-

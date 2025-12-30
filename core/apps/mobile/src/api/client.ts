@@ -53,6 +53,7 @@ export type SessionSummary = {
   worktree_id?: string;
   provider_id: string;
   model_id: string;
+  title: string;
   status: string;
   agent_role: string;
 };
@@ -118,6 +119,7 @@ const mapSession = (item: Session): SessionSummary => ({
   worktree_id: idToString(item.worktree_id),
   provider_id: item.provider_id,
   model_id: item.model_id,
+  title: item.title,
   status: item.status,
   agent_role: item.agent_role,
 });

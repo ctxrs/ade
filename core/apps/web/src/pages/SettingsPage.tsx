@@ -8,6 +8,7 @@ import {
   ProviderStatus,
   Settings,
   TelemetrySettings,
+  TitleGenerationSettings,
   Workspace,
   authenticateProviderForWorkspace,
   getInstall,
@@ -75,6 +76,7 @@ type SectionId =
   | "sandboxing"
   | "context_pack"
   | "dictation"
+  | "title_generation"
   | "billing"
   | "team_enterprise"
   | "usage_analytics";
@@ -98,6 +100,7 @@ const SECTIONS: Array<{
   { id: "sandboxing", label: "Sandboxing", group: "main" },
   { id: "context_pack", label: "Context Pack", group: "main" },
   { id: "dictation", label: "Dictation", group: "advanced" },
+  { id: "title_generation", label: "Title Generation", group: "advanced" },
   { id: "billing", label: "Billing", group: "advanced" },
   { id: "team_enterprise", label: "Team & Enterprise", group: "advanced" },
   { id: "usage_analytics", label: "Usage Analytics", group: "advanced" },
@@ -205,6 +208,7 @@ export default function SettingsPage() {
   const saveSeq = useRef(0);
   const telemetryHydrated = useRef(false);
   const dictationHydrated = useRef(false);
+  const titleGenerationHydrated = useRef(false);
 
   const [telemetryEnabled, setTelemetryEnabled] = useState(true);
   const [telemetryEndpoint, setTelemetryEndpoint] = useState("");
@@ -216,6 +220,11 @@ export default function SettingsPage() {
   const [apiKey, setApiKey] = useState("");
   const [apiSecret, setApiSecret] = useState("");
   const [apiSecretSet, setApiSecretSet] = useState(false);
+
+  const [titleGenBaseUrl, setTitleGenBaseUrl] = useState("https://openrouter.ai/api/v1");
+  const [titleGenApiKey, setTitleGenApiKey] = useState("");
+  const [titleGenModel, setTitleGenModel] = useState("google/gemini-3-flash-preview");
+  const [titleGenUseJson, setTitleGenUseJson] = useState(true);
 
   const [editorSettings, setEditorSettings] = useState<DesktopEditorSettings>({
     target: "system",
@@ -330,6 +339,14 @@ export default function SettingsPage() {
           setApiSecretSet(Boolean(d.livekit?.api_secret_set));
         }
 
+        const tg = s.title_generation ?? null;
+        if (tg) {
+          setTitleGenBaseUrl(tg.base_url ?? "https://openrouter.ai/api/v1");
+          setTitleGenApiKey(tg.api_key ?? "");
+          setTitleGenModel(tg.model ?? "google/gemini-3-flash-preview");
+          setTitleGenUseJson(Boolean(tg.use_json));
+        }
+
         setLoaded(true);
       } catch (e: any) {
         if (cancelled) return;
@@ -394,6 +411,15 @@ export default function SettingsPage() {
     };
   }, [apiKey, apiSecret, baseUrl, dictationEnabled, language, model]);
 
+  const titleGenerationPayload = useMemo((): TitleGenerationSettings => {
+    return {
+      base_url: titleGenBaseUrl.trim(),
+      api_key: titleGenApiKey.trim(),
+      model: titleGenModel.trim(),
+      use_json: titleGenUseJson,
+    };
+  }, [titleGenApiKey, titleGenBaseUrl, titleGenModel, titleGenUseJson]);
+
   const dictationCanSave = useMemo(() => {
     if (!dictationEnabled) return true;
     if (!apiKey.trim()) return false;
@@ -431,6 +457,19 @@ export default function SettingsPage() {
     return () => window.clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dictationPayload, loaded, dictationCanSave]);
+
+  useEffect(() => {
+    if (!loaded) return;
+    if (!titleGenerationHydrated.current) {
+      titleGenerationHydrated.current = true;
+      return;
+    }
+    const t = window.setTimeout(() => {
+      savePatch({ title_generation: titleGenerationPayload });
+    }, 450);
+    return () => window.clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loaded, titleGenerationPayload]);
 
   useEffect(() => {
     if (!isDesktopApp()) return;
@@ -865,6 +904,64 @@ export default function SettingsPage() {
           {!dictationCanSave && dictationEnabled ? (
             <div className="settings-banner settings-banner-error">Enter an API key and secret to enable dictation.</div>
           ) : null}
+        </>
+      );
+    }
+
+    if (active === "title_generation") {
+      return (
+        <>
+          <Card>
+            <Row
+              title="Base URL"
+              description="OpenAI-compatible endpoint for title generation (best-effort; falls back to truncating the prompt)."
+              control={
+                <input
+                  className="settings-control settings-control-wide"
+                  value={titleGenBaseUrl}
+                  onChange={(e) => setTitleGenBaseUrl(e.target.value)}
+                  placeholder="https://openrouter.ai/api/v1"
+                />
+              }
+            />
+            <Row
+              title="API key"
+              description="Stored locally in your Context data dir."
+              control={
+                <input
+                  className="settings-control settings-control-wide"
+                  value={titleGenApiKey}
+                  onChange={(e) => setTitleGenApiKey(e.target.value)}
+                  placeholder="sk-..."
+                  type="password"
+                />
+              }
+            />
+            <Row
+              title="Model"
+              description="Model used for generating session titles."
+              control={
+                <input
+                  className="settings-control settings-control-wide"
+                  value={titleGenModel}
+                  onChange={(e) => setTitleGenModel(e.target.value)}
+                  placeholder="google/gemini-3-flash-preview"
+                />
+              }
+            />
+            <Row
+              title="Structured output (JSON)"
+              description="Enable when the model supports JSON schema output."
+              control={
+                <Toggle
+                  checked={titleGenUseJson}
+                  disabled={!loaded}
+                  onChange={setTitleGenUseJson}
+                  ariaLabel="Structured output"
+                />
+              }
+            />
+          </Card>
         </>
       );
     }

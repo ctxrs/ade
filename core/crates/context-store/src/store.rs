@@ -837,6 +837,7 @@ impl Store {
             worktree_id: track.worktree_id,
             provider_id,
             model_id,
+            title: "New Task".to_string(),
             agent_role,
             status: SessionStatus::Active,
             provider_session_ref,
@@ -844,9 +845,9 @@ impl Store {
             updated_at: now,
         };
         sqlx::query(
-            r#"INSERT INTO sessions (id, track_id, task_id, workspace_id, worktree_id, provider_id, model_id,
+            r#"INSERT INTO sessions (id, track_id, task_id, workspace_id, worktree_id, provider_id, model_id, title,
                agent_role, status, provider_session_ref, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
         )
         .bind(session.id.0.to_string())
         .bind(session.track_id.0.to_string())
@@ -855,6 +856,7 @@ impl Store {
         .bind(session.worktree_id.0.to_string())
         .bind(&session.provider_id)
         .bind(&session.model_id)
+        .bind(&session.title)
         .bind(&session.agent_role)
         .bind(session_status_to_str(&session.status))
         .bind(&session.provider_session_ref)
@@ -868,7 +870,7 @@ impl Store {
     pub async fn get_session(&self, id: SessionId) -> Result<Option<Session>> {
         let row = sqlx::query(
             r#"SELECT id, track_id, task_id, workspace_id, worktree_id, provider_id, model_id, agent_role,
-               status, provider_session_ref, created_at, updated_at
+               title, status, provider_session_ref, created_at, updated_at
                FROM sessions WHERE id = ?"#,
         )
         .bind(id.0.to_string())
@@ -891,6 +893,7 @@ impl Store {
                 worktree_id: WorktreeId(uuid::Uuid::parse_str(&wt_id).ok()?),
                 provider_id: r.try_get("provider_id").ok()?,
                 model_id: r.try_get("model_id").ok()?,
+                title: r.try_get("title").ok()?,
                 agent_role: r.try_get("agent_role").ok()?,
                 status: parse_session_status(r.try_get::<String, _>("status").ok()?.as_str()),
                 provider_session_ref: r.try_get("provider_session_ref").ok()?,
@@ -915,6 +918,21 @@ impl Store {
         Ok(())
     }
 
+    pub async fn update_session_title(&self, id: SessionId, title: String) -> Result<bool> {
+        let now = Utc::now().to_rfc3339();
+        let res = sqlx::query(
+            r#"UPDATE sessions
+               SET title = ?, updated_at = ?
+               WHERE id = ?"#,
+        )
+        .bind(title)
+        .bind(now)
+        .bind(id.0.to_string())
+        .execute(&self.pool)
+        .await?;
+        Ok(res.rows_affected() > 0)
+    }
+
     pub async fn update_session_provider_session_ref(
         &self,
         id: SessionId,
@@ -937,7 +955,7 @@ impl Store {
     pub async fn list_sessions_for_track(&self, track_id: TrackId) -> Result<Vec<Session>> {
         let rows = sqlx::query(
             r#"SELECT id, track_id, task_id, workspace_id, worktree_id, provider_id, model_id, agent_role,
-               status, provider_session_ref, created_at, updated_at
+               title, status, provider_session_ref, created_at, updated_at
                FROM sessions WHERE track_id = ? ORDER BY created_at ASC"#,
         )
         .bind(track_id.0.to_string())
@@ -961,6 +979,7 @@ impl Store {
                 worktree_id: WorktreeId(uuid::Uuid::parse_str(&wt_id)?),
                 provider_id: r.try_get("provider_id")?,
                 model_id: r.try_get("model_id")?,
+                title: r.try_get("title")?,
                 agent_role: r.try_get("agent_role")?,
                 status: parse_session_status(r.try_get::<String, _>("status")?.as_str()),
                 provider_session_ref: r.try_get("provider_session_ref")?,
@@ -1451,6 +1470,34 @@ impl Store {
         Ok(out)
     }
 
+    pub async fn count_user_messages_for_session(&self, session_id: SessionId) -> Result<i64> {
+        let count = sqlx::query_scalar::<_, i64>(
+            r#"SELECT COUNT(*) FROM messages WHERE session_id = ? AND role = 'user'"#,
+        )
+        .bind(session_id.0.to_string())
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(count)
+    }
+
+    pub async fn get_first_user_message_content(
+        &self,
+        session_id: SessionId,
+    ) -> Result<Option<String>> {
+        let row = sqlx::query(
+            r#"SELECT content
+               FROM messages
+               WHERE session_id = ? AND role = 'user'
+               ORDER BY created_at ASC, id ASC
+               LIMIT 1"#,
+        )
+        .bind(session_id.0.to_string())
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.and_then(|r| r.try_get("content").ok()))
+    }
+
     async fn list_messages_for_turns(
         &self,
         session_id: SessionId,
@@ -1590,7 +1637,7 @@ impl Store {
             let mut session_query = QueryBuilder::new(
                 "
                 SELECT id, track_id, task_id, workspace_id, worktree_id,
-                       provider_id, model_id, status, created_at, updated_at
+                       provider_id, model_id, title, status, created_at, updated_at
                 FROM (
                     SELECT
                         s.*,
@@ -1634,6 +1681,7 @@ impl Store {
                     workspace_id: WorkspaceId(uuid::Uuid::parse_str(&ws_id)?),
                     provider_id: r.try_get("provider_id")?,
                     model_id: r.try_get("model_id")?,
+                    title: r.try_get("title")?,
                     status: parse_session_status(r.try_get::<String, _>("status")?.as_str()),
                     created_at: parse_dt(&created_at)?,
                     updated_at: parse_dt(&updated_at)?,
@@ -1971,6 +2019,7 @@ impl Store {
                 s.worktree_id,
                 s.provider_id,
                 s.model_id,
+                s.title,
                 s.agent_role,
                 s.status,
                 s.provider_session_ref,
@@ -2024,6 +2073,7 @@ impl Store {
                 worktree_id: WorktreeId(uuid::Uuid::parse_str(&wt_id)?),
                 provider_id: r.try_get("provider_id")?,
                 model_id: r.try_get("model_id")?,
+                title: r.try_get("title")?,
                 agent_role: r.try_get("agent_role")?,
                 status: parse_session_status(r.try_get::<String, _>("status")?.as_str()),
                 provider_session_ref: r.try_get("provider_session_ref")?,

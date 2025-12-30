@@ -48,6 +48,7 @@ export type Session = {
   worktree_id: { 0: string } | string;
   provider_id: string;
   model_id: string;
+  title: string;
   agent_role: string;
   status: string;
   env_target?: "worktree" | "local" | string;
@@ -62,6 +63,7 @@ export type SessionSummary = {
   workspace_id: { 0: string } | string;
   provider_id: string;
   model_id: string;
+  title: string;
   status: string;
   created_at: string;
   updated_at: string;

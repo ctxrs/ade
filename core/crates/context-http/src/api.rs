@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::path::{Path as StdPath, PathBuf};
 use std::sync::Arc;
 
+use anyhow::Context;
 use axum::body::{Body, Bytes};
 use axum::extract::ws::{Message as WsMessage, WebSocket, WebSocketUpgrade};
 use axum::extract::{Extension, Multipart, Path, Query, State};
@@ -45,6 +46,7 @@ use crate::logs;
 use crate::scheduler::SchedulerCommand;
 use crate::settings as user_settings;
 use crate::telemetry::{TelemetryConfig, TelemetryEvent};
+use crate::title_generation;
 use crate::updates;
 use context_providers::adapters::ProviderStatus;
 use context_providers::events::NormalizedEvent;
@@ -276,6 +278,10 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
         .route("/api/sessions/:id/messages", post(post_message))
         .route("/api/sessions/:id/model", post(set_session_model))
         .route("/api/sessions/:id/mode", post(set_session_mode))
+        .route(
+            "/api/sessions/:id/title/generate",
+            post(generate_session_title),
+        )
         .route("/api/sessions/:id/head", get(get_session_head))
         .route("/api/sessions/:id/events", get(get_session_events))
         .route("/api/sessions/:id/history", get(get_session_history))
@@ -5257,8 +5263,15 @@ async fn create_session_for_track(
         let _ = state.store.insert_session_turn(turn).await;
         state.publish_event(event).await;
 
+        let prompt = saved.content.clone();
         let tx = state.ensure_scheduler(session.clone()).await;
         let _ = tx.send(SchedulerCommand::Enqueue(saved)).await;
+
+        let state = state.clone();
+        let session = session.clone();
+        tokio::spawn(async move {
+            let _ = maybe_generate_session_title(state, session, prompt, false).await;
+        });
     }
 
     let worktree = state
@@ -6117,6 +6130,146 @@ async fn normalize_message_attachments(
     Ok(out)
 }
 
+#[derive(Debug, Clone, Copy)]
+enum TitleGenerationSource {
+    Llm,
+    Fallback,
+}
+
+impl TitleGenerationSource {
+    fn as_str(self) -> &'static str {
+        match self {
+            TitleGenerationSource::Llm => "llm",
+            TitleGenerationSource::Fallback => "fallback",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct TitleGenerationOutcome {
+    title: String,
+    source: TitleGenerationSource,
+}
+
+async fn generate_title_for_prompt(
+    state: &AppState,
+    prompt: &str,
+) -> anyhow::Result<TitleGenerationOutcome> {
+    let settings = user_settings::load_settings(&state.data_root).await;
+    let fallback = title_generation::fallback_title_from_prompt(prompt);
+    if fallback.trim().is_empty() {
+        return Err(anyhow::anyhow!("prompt is empty"));
+    }
+
+    let cfg = settings.title_generation.as_ref();
+    if let Some(cfg) = cfg.filter(|c| title_generation::is_configured(c)) {
+        match title_generation::generate_title(cfg, prompt).await {
+            Ok(title) => {
+                return Ok(TitleGenerationOutcome {
+                    title,
+                    source: TitleGenerationSource::Llm,
+                })
+            }
+            Err(err) => {
+                tracing::warn!(
+                    "title generation failed: {}",
+                    logs::redact_sensitive(&err.to_string())
+                );
+                // TODO: surface a snackbar/toast when title generation fails.
+            }
+        }
+    }
+
+    Ok(TitleGenerationOutcome {
+        title: fallback,
+        source: TitleGenerationSource::Fallback,
+    })
+}
+
+async fn apply_session_title_update(
+    state: &Arc<AppState>,
+    session: &Session,
+    outcome: TitleGenerationOutcome,
+) -> anyhow::Result<()> {
+    let updated = state
+        .store
+        .update_session_title(session.id, outcome.title.clone())
+        .await
+        .context("updating session title")?;
+    if !updated {
+        return Ok(());
+    }
+
+    if let Ok(Some(updated_session)) = state.store.get_session(session.id).await {
+        state.remember_session_meta(&updated_session).await;
+    }
+
+    if let Err(e) = state.emit_workspace_track_upsert(session.track_id).await {
+        tracing::warn!(track_id = %session.track_id.0, "workspace catchup refresh failed: {e:?}");
+    }
+
+    let mut task_updated = false;
+    if let Ok(Some(task)) = state.store.get_task(session.task_id).await {
+        let title = task.title.trim();
+        if (title.is_empty() || title == title_generation::DEFAULT_SESSION_TITLE)
+            && state
+                .store
+                .update_task_title(session.task_id, outcome.title.clone())
+                .await
+                .unwrap_or(false)
+        {
+            task_updated = true;
+        }
+    }
+
+    if task_updated {
+        if let Err(e) = state.emit_workspace_task_upsert(session.task_id).await {
+            tracing::warn!(task_id = %session.task_id.0, "workspace catchup refresh failed: {e:?}");
+        }
+    }
+
+    let notice = state
+        .store
+        .append_session_event(
+            session.id,
+            None,
+            None,
+            SessionEventType::Notice,
+            serde_json::json!({
+                "kind": "title_generated",
+                "title": outcome.title,
+                "source": outcome.source.as_str(),
+            }),
+        )
+        .await;
+    if let Ok(event) = notice {
+        state.publish_event(event).await;
+    }
+
+    Ok(())
+}
+
+async fn maybe_generate_session_title(
+    state: Arc<AppState>,
+    session: Session,
+    prompt: String,
+    force: bool,
+) -> anyhow::Result<Option<TitleGenerationOutcome>> {
+    let prompt = prompt.trim().to_string();
+    if prompt.is_empty() {
+        return Ok(None);
+    }
+
+    let current = session.title.trim();
+    if !force && !current.is_empty() && current != title_generation::DEFAULT_SESSION_TITLE {
+        return Ok(None);
+    }
+
+    let outcome = generate_title_for_prompt(&state, &prompt).await?;
+    apply_session_title_update(&state, &session, outcome.clone()).await?;
+    Ok(Some(outcome))
+}
+
 async fn post_message(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
@@ -6226,8 +6379,23 @@ async fn post_message(
         state.publish_event(queued).await;
     }
 
-    let tx = state.ensure_scheduler(session).await;
+    let tx = state.ensure_scheduler(session.clone()).await;
     let _ = tx.send(SchedulerCommand::Enqueue(saved.clone())).await;
+
+    if let Ok(count) = state
+        .store
+        .count_user_messages_for_session(session_id)
+        .await
+    {
+        if count == 1 {
+            let state = state.clone();
+            let session = session.clone();
+            let prompt = saved.content.clone();
+            tokio::spawn(async move {
+                let _ = maybe_generate_session_title(state, session, prompt, false).await;
+            });
+        }
+    }
 
     Ok(Json(saved))
 }
@@ -6361,6 +6529,116 @@ async fn set_session_mode(
     state.publish_event(event).await;
 
     Ok(StatusCode::OK)
+}
+
+#[derive(Debug, Deserialize)]
+struct GenerateSessionTitleReq {
+    #[serde(default)]
+    prompt: Option<String>,
+    #[serde(default)]
+    force: Option<bool>,
+}
+
+async fn generate_session_title(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(req): Json<GenerateSessionTitleReq>,
+) -> Result<Json<Session>, (StatusCode, Json<ApiErrorResp>)> {
+    let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid session id".to_string(),
+            }),
+        )
+    })?);
+
+    let session = state
+        .store
+        .get_session(session_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "session not found".to_string(),
+            }),
+        ))?;
+
+    let prompt = if let Some(prompt) = req
+        .prompt
+        .as_ref()
+        .map(|p| p.trim().to_string())
+        .filter(|p| !p.is_empty())
+    {
+        prompt
+    } else {
+        state
+            .store
+            .get_first_user_message_content(session_id)
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiErrorResp {
+                        error: logs::redact_sensitive(&e.to_string()),
+                    }),
+                )
+            })?
+            .filter(|p| !p.trim().is_empty())
+            .ok_or((
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: "prompt required".to_string(),
+                }),
+            ))?
+    };
+
+    let force = req.force.unwrap_or(true);
+    maybe_generate_session_title(state.clone(), session.clone(), prompt, force)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?
+        .ok_or((
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "title generation skipped".to_string(),
+            }),
+        ))?;
+
+    let updated = state
+        .store
+        .get_session(session_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "session not found".to_string(),
+            }),
+        ))?;
+
+    Ok(Json(updated))
 }
 
 #[derive(Debug, Deserialize)]

@@ -91,10 +91,8 @@ import {
   type WorkspaceCatchupItem,
 } from "../state/workspaceCatchupStore";
 
-function deriveTaskTitle(prompt: string): string {
-  const line = prompt.trim().split("\n")[0] ?? "";
-  const short = line.trim().slice(0, 60);
-  return short.length > 0 ? short : "New conversation";
+function deriveTaskTitle(_prompt: string): string {
+  return "New Task";
 }
 
 function modelIdsFromOptions(opts?: ProviderOptions): string[] {
@@ -1248,7 +1246,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       const selected = tid === activeTaskId;
       const hovered = tid === hoveredTaskId;
       const archived = !!opts?.archived;
-      const title = t.title ?? "New conversation";
+      const title = t.title ?? "New Task";
       const working = taskLiveInfo.workingByTask.has(tid);
       const hasError = taskLiveInfo.errorByTask.has(tid);
       const serverLastAssistantMs = parseMs(t.last_assistant_message_at ?? null);

@@ -47,6 +47,7 @@ export const buildDummyWorkspaceSnapshot = (opts: DummyWorkspaceOptions = {}): W
           worktree_id: `wt-${t + 1}`,
           provider_id: "codex",
           model_id: "gpt-4",
+          title: "New Task",
           agent_role: "assistant",
           status: s === 0 ? "running" : "completed",
         };
@@ -122,6 +123,7 @@ export const buildDummySessionHead = (opts: DummySessionHeadOptions): SessionHea
     worktree_id: `wt-${opts.taskId}`,
     provider_id: "codex",
     model_id: "gpt-4",
+    title: "New Task",
     agent_role: "assistant",
     status: "active",
   };

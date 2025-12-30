@@ -11,7 +11,9 @@ import { ErrorView } from "../components/ErrorView";
 import { createContextStyles, useContextTokens } from "../theme";
 import { idToString } from "../api/client";
 
-const formatSessionLabel = (provider?: string, model?: string) => {
+const formatSessionLabel = (title?: string, provider?: string, model?: string) => {
+  const trimmed = String(title ?? "").trim();
+  if (trimmed) return trimmed;
   if (!provider && !model) return "Session";
   if (provider && model) return `${provider} · ${model}`;
   return provider ?? model ?? "Session";
@@ -66,11 +68,13 @@ export function SessionListScreen({ route, navigation }: Props): React.JSX.Eleme
             onPress={() =>
               navigation.navigate("SessionDetail", {
                 sessionId: idToString(item.session.id),
-                sessionTitle: formatSessionLabel(item.session.provider_id, item.session.model_id),
+                sessionTitle: formatSessionLabel(item.session.title, item.session.provider_id, item.session.model_id),
               })
             }
           >
-            <Text style={styles.title}>{formatSessionLabel(item.session.provider_id, item.session.model_id)}</Text>
+            <Text style={styles.title}>
+              {formatSessionLabel(item.session.title, item.session.provider_id, item.session.model_id)}
+            </Text>
             <Text style={styles.meta}>Status: {item.session.status}</Text>
             {item.last_message_preview ? <Text style={styles.preview}>{item.last_message_preview}</Text> : null}
           </Pressable>

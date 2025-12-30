@@ -234,7 +234,7 @@ function TaskListBody({
       contentContainerStyle={{ padding: theme.spacing.lg, gap: theme.spacing.sm }}
       renderItem={({ item }) => {
         const selected = item.id === activeTaskId;
-        const title = item.task.title ?? "New conversation";
+        const title = item.task.title ?? "New Task";
         const indicators = computeTaskIndicators(item, taskLiveInfo);
         return (
           <Pressable

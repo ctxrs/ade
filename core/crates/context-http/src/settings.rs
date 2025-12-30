@@ -10,6 +10,8 @@ pub struct Settings {
     pub dictation: Option<DictationSettings>,
     #[serde(default)]
     pub telemetry: Option<TelemetrySettings>,
+    #[serde(default)]
+    pub title_generation: Option<TitleGenerationSettings>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -49,6 +51,15 @@ pub struct LiveKitDictationSettings {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TitleGenerationSettings {
+    pub base_url: String,
+    pub api_key: String,
+    pub model: String,
+    #[serde(default)]
+    pub use_json: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TelemetrySettings {
     pub enabled: bool,
     #[serde(default = "crate::telemetry::default_telemetry_endpoint")]
@@ -82,6 +93,8 @@ pub struct PublicSettings {
     pub dictation: Option<PublicDictationSettings>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub telemetry: Option<PublicTelemetrySettings>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title_generation: Option<PublicTitleGenerationSettings>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -107,12 +120,22 @@ pub struct PublicTelemetrySettings {
     pub endpoint: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct PublicTitleGenerationSettings {
+    pub base_url: String,
+    pub api_key: String,
+    pub model: String,
+    pub use_json: bool,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct UpdateSettingsReq {
     #[serde(default)]
     pub dictation: Option<UpdateDictationSettingsReq>,
     #[serde(default)]
     pub telemetry: Option<UpdateTelemetrySettingsReq>,
+    #[serde(default)]
+    pub title_generation: Option<UpdateTitleGenerationSettingsReq>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -136,6 +159,15 @@ pub struct UpdateLiveKitDictationSettingsReq {
 pub struct UpdateTelemetrySettingsReq {
     pub enabled: bool,
     pub endpoint: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct UpdateTitleGenerationSettingsReq {
+    pub base_url: String,
+    pub api_key: String,
+    pub model: String,
+    #[serde(default)]
+    pub use_json: bool,
 }
 
 fn settings_path(data_root: &Path) -> PathBuf {
@@ -243,9 +275,20 @@ pub fn to_public(settings: &Settings) -> PublicSettings {
             endpoint: crate::telemetry::default_telemetry_endpoint(),
         },
     });
+    let title_generation =
+        settings
+            .title_generation
+            .as_ref()
+            .map(|t| PublicTitleGenerationSettings {
+                base_url: t.base_url.clone(),
+                api_key: t.api_key.clone(),
+                model: t.model.clone(),
+                use_json: t.use_json,
+            });
     PublicSettings {
         dictation,
         telemetry,
+        title_generation,
     }
 }
 
@@ -276,6 +319,19 @@ pub fn apply_update(mut current: Settings, req: UpdateSettingsReq) -> Settings {
             next.endpoint = t.endpoint;
         }
         current.telemetry = Some(next);
+    }
+    if let Some(t) = req.title_generation {
+        let mut next = current.title_generation.unwrap_or(TitleGenerationSettings {
+            base_url: String::new(),
+            api_key: String::new(),
+            model: String::new(),
+            use_json: false,
+        });
+        next.base_url = t.base_url;
+        next.api_key = t.api_key;
+        next.model = t.model;
+        next.use_json = t.use_json;
+        current.title_generation = Some(next);
     }
     current
 }

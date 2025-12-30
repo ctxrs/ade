@@ -169,9 +169,17 @@ export type TelemetrySettings = {
   endpoint: string;
 };
 
+export type TitleGenerationSettings = {
+  base_url: string;
+  api_key: string;
+  model: string;
+  use_json: boolean;
+};
+
 export type Settings = {
   dictation?: DictationSettings | null;
   telemetry?: TelemetrySettings | null;
+  title_generation?: TitleGenerationSettings | null;
 };
 
 export type EditPlanSummary = {

@@ -29,6 +29,7 @@ const mkSession = (sessionId: string, trackId: string): Session => ({
   worktree_id: { 0: "wt-1" },
   provider_id: "fake",
   model_id: "fake-model",
+  title: "New Task",
   agent_role: "assistant",
   status: "active",
 });
