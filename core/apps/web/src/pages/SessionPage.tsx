@@ -235,6 +235,7 @@ export function SessionView({
   onDraftChange,
   onDraftPersistNow,
   onModeChange,
+  preserveScrollOnFocus = false,
   scrollState,
   onScrollStateChange,
 }: {
@@ -247,6 +248,7 @@ export function SessionView({
   onDraftChange?: ((text: string) => void) | null;
   onDraftPersistNow?: (() => void | Promise<void>) | null;
   onModeChange?: ((modeId: WorkbenchModeId) => void) | null;
+  preserveScrollOnFocus?: boolean;
   scrollState?: {
     stickToBottom: boolean;
     anchorItemId: string | null;
@@ -989,6 +991,7 @@ export function SessionView({
   const isActiveRef = useRef(isActive);
   isActiveRef.current = isActive;
   const wasActiveRef = useRef(isActive);
+  const prevActiveRef = useRef(isActive);
   const virtuosoPersistTimerRef = useRef<number | null>(null);
   const [restoreInProgress, setRestoreInProgress] = useState(false);
   useLayoutEffect(() => {
@@ -1011,6 +1014,39 @@ export function SessionView({
     }
     wasActiveRef.current = isActive;
   }, [isActive, scrollState?.virtuosoState]);
+
+  const persistCurrentScroll = useCallback(() => {
+    if (!onScrollStateChange) return;
+    const el = scrollerRef.current;
+    if (!el) return;
+    const scrollTop = el.scrollTop;
+    const remaining = el.scrollHeight - (scrollTop + el.clientHeight);
+    const nearBottom = remaining <= 16;
+    const next = {
+      stickToBottom: nearBottom,
+      anchorItemId: nearBottom ? null : latestAnchorIdRef.current,
+      scrollTop: nearBottom ? null : scrollTop,
+    };
+    const handle = virtuosoRef.current;
+    if (handle) {
+      handle.getState((state) => {
+        persistScroll({ ...next, virtuosoState: state });
+      });
+      return;
+    }
+    persistScroll(next);
+  }, [onScrollStateChange, persistScroll]);
+
+  useEffect(() => {
+    if (!preserveScrollOnFocus) {
+      prevActiveRef.current = isActive;
+      return;
+    }
+    if (prevActiveRef.current && !isActive) {
+      persistCurrentScroll();
+    }
+    prevActiveRef.current = isActive;
+  }, [isActive, persistCurrentScroll, preserveScrollOnFocus]);
 
   useEffect(() => {
     if (!isActive) setRestoreInProgress(false);
@@ -1196,7 +1232,8 @@ export function SessionView({
     if (threadActivityCount > prev) setHasNewActivity(true);
   }, [threadActivityCount, atBottom]);
 
-  const followOutput = restoreInProgress ? false : atBottom ? "auto" : false;
+  const followOutput =
+    preserveScrollOnFocus && !isActive ? false : restoreInProgress ? false : atBottom ? "auto" : false;
   const restoreStateFrom = (scrollState?.virtuosoState ?? undefined) as StateSnapshot | undefined;
 
   const handleAtBottomStateChange = useCallback(

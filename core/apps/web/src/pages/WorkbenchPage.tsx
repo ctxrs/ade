@@ -508,9 +508,10 @@ type WorkbenchSessionSlotProps = {
   sessionId: string;
   active: boolean;
   scrollState: WorkbenchScrollState | null;
+  preserveScrollOnFocus?: boolean;
 };
 
-function WorkbenchSessionSlot({ sessionId, active, scrollState }: WorkbenchSessionSlotProps) {
+function WorkbenchSessionSlot({ sessionId, active, scrollState, preserveScrollOnFocus }: WorkbenchSessionSlotProps) {
   const workbenchStore = useWorkbenchStore();
   const draft = useWorkbenchDraft(sessionDraftKey(sessionId), { text: "", modeId: "default" });
   const handleScrollStateChange = useCallback(
@@ -520,7 +521,7 @@ function WorkbenchSessionSlot({ sessionId, active, scrollState }: WorkbenchSessi
     [sessionId, workbenchStore],
   );
 
-  const onScrollStateChange = active ? handleScrollStateChange : null;
+  const onScrollStateChange = active || preserveScrollOnFocus ? handleScrollStateChange : null;
 
   return (
     <div
@@ -534,6 +535,7 @@ function WorkbenchSessionSlot({ sessionId, active, scrollState }: WorkbenchSessi
         isActive={active}
         variant="workbench"
         showDiffPane={false}
+        preserveScrollOnFocus={preserveScrollOnFocus}
         draft={draft.value}
         draftUpdatedAtMs={draft.updatedAtMs}
         onDraftChange={(text) => draft.setValue({ text, modeId: draft.value.modeId })}
@@ -1594,7 +1596,33 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     [],
   );
 
-  const sessionIdsToRender = useMemo(() => (activeSessionId ? [activeSessionId] : []), [activeSessionId]);
+  const renderSessionBudget = 10;
+  const [recentSessionIds, setRecentSessionIds] = useState<string[]>([]);
+  useEffect(() => {
+    if (!activeSessionId) return;
+    setRecentSessionIds((prev) => {
+      const next = [activeSessionId, ...prev.filter((id) => id !== activeSessionId)];
+      return next.slice(0, Math.max(1, renderSessionBudget));
+    });
+  }, [activeSessionId, renderSessionBudget]);
+
+  const sessionIdsToRender = useMemo(() => {
+    if (!activeSessionId) return [];
+    const ids: string[] = [];
+    const seen = new Set<string>();
+    const push = (value: string | null | undefined) => {
+      const id = String(value ?? "");
+      if (!id || seen.has(id)) return;
+      seen.add(id);
+      ids.push(id);
+    };
+    push(activeSessionId);
+    activeTaskSessionIds.forEach((id) => push(id));
+    recentSessionIds.forEach((id) => push(id));
+    warmSessionIds.forEach((id) => push(id));
+    return ids.slice(0, Math.max(1, renderSessionBudget));
+  }, [activeSessionId, activeTaskSessionIds, recentSessionIds, warmSessionIds, renderSessionBudget]);
+  const preserveScrollOnFocus = true;
   useOpenSession(activeSessionId ?? "", { watchDiff: diffOpen });
 
   const showDebugIds = useMemo(() => {
@@ -2900,6 +2928,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
                         sessionId={sessionId}
                         active={sessionId === activeSessionId}
                         scrollState={scrollState}
+                        preserveScrollOnFocus={preserveScrollOnFocus}
                       />
                     );
                   })
