@@ -43,6 +43,7 @@ use crate::dictation_livekit;
 use crate::installer;
 use crate::installs::{InstallId, InstallInfo, InstallProgressEvent};
 use crate::logs;
+use crate::resource_governance;
 use crate::resource_utilization;
 use crate::scheduler::SchedulerCommand;
 use crate::settings as user_settings;
@@ -597,7 +598,10 @@ async fn get_settings(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<user_settings::PublicSettings>, StatusCode> {
     let settings = user_settings::load_settings(&state.data_root).await;
-    Ok(Json(user_settings::to_public(&settings)))
+    let mut public = user_settings::to_public(&settings);
+    public.resource_governance =
+        resource_governance::build_public_settings(&state, &settings).await;
+    Ok(Json(public))
 }
 
 async fn update_settings(
@@ -617,7 +621,12 @@ async fn update_settings(
         }
     }
     state.telemetry.update_config(telemetry_cfg).await;
-    Ok(Json(user_settings::to_public(&next)))
+    if let Err(err) = resource_governance::apply_settings(&state, &next).await {
+        tracing::warn!("failed to apply resource governance settings: {err:#}");
+    }
+    let mut public = user_settings::to_public(&next);
+    public.resource_governance = resource_governance::build_public_settings(&state, &next).await;
+    Ok(Json(public))
 }
 
 #[derive(Debug, Serialize)]

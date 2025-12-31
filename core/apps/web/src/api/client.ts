@@ -173,6 +173,31 @@ export type TelemetrySettings = {
   endpoint: string;
 };
 
+export type ResourceGovernanceStatusState = "disabled" | "applied" | "pending" | "unsupported" | "error";
+
+export type ResourceGovernanceStatus = {
+  state: ResourceGovernanceStatusState;
+  can_apply_now: boolean;
+  requires_restart: boolean;
+  message?: string | null;
+};
+
+export type ResourceGovernanceLimits = {
+  cpu_quota_pct: number;
+  memory_high_mb: number;
+  memory_max_mb: number;
+};
+
+export type ResourceGovernanceSettings = {
+  enabled: boolean;
+  mode: "auto" | "custom";
+  cpu_quota_pct?: number | null;
+  memory_high_mb?: number | null;
+  memory_max_mb?: number | null;
+  effective?: ResourceGovernanceLimits | null;
+  status?: ResourceGovernanceStatus | null;
+};
+
 export type TitleGenerationSettings = {
   base_url: string;
   api_key: string;
@@ -184,6 +209,7 @@ export type Settings = {
   dictation?: DictationSettings | null;
   telemetry?: TelemetrySettings | null;
   title_generation?: TitleGenerationSettings | null;
+  resource_governance?: ResourceGovernanceSettings | null;
 };
 
 export type EditPlanSummary = {

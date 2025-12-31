@@ -31,6 +31,7 @@ use context_store::Store;
 use crate::api;
 use crate::installer;
 use crate::installs::{InstallId, InstallProgressEvent, InstallState, InstallStateKind};
+use crate::resource_governance::{self, ResourceGovernanceRuntime};
 use crate::resource_utilization::ResourceSampler;
 use crate::scheduler::{reconcile_turn_terminal_state, session_worker, SchedulerCommand};
 use crate::settings;
@@ -80,6 +81,7 @@ pub struct AppState {
     pub ask_user_question: Arc<AskUserQuestionBroker>,
     pub shutdown_tx: broadcast::Sender<()>,
     pub telemetry: Telemetry,
+    pub resource_governance: Mutex<ResourceGovernanceRuntime>,
     pub resource_sampler: Mutex<ResourceSampler>,
     pub workspace_catchup: WorkspaceCatchupHub,
     pub terminals: TerminalManager,
@@ -210,6 +212,7 @@ impl AppState {
             ask_user_question,
             shutdown_tx,
             telemetry,
+            resource_governance: Mutex::new(ResourceGovernanceRuntime::default()),
             resource_sampler: Mutex::new(ResourceSampler::new()),
             workspace_catchup,
             terminals: TerminalManager::default(),
@@ -947,6 +950,9 @@ pub async fn serve(
         }
     }
     state.telemetry.update_config(telemetry_cfg).await;
+    if let Err(err) = resource_governance::apply_settings(&state, &settings).await {
+        tracing::warn!("failed to apply resource governance settings: {err:#}");
+    }
 
     // Claude-only extension plumbing: AskUserQuestion is implemented via a Claude-specific ACP
     // extension method and should not be threaded into other providers.

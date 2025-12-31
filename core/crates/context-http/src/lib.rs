@@ -11,6 +11,7 @@ pub mod llm;
 pub mod logs;
 pub mod lsp_catalog;
 pub mod provider_matrix;
+pub mod resource_governance;
 pub mod resource_utilization;
 pub mod scheduler;
 pub mod settings;

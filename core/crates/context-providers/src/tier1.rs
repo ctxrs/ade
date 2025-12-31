@@ -285,7 +285,7 @@ impl ProviderAdapter for Tier1AcpAdapter {
         });
         let abort = join.abort_handle();
 
-        let _done_handle = tokio::spawn(async move {
+        let _task = tokio::spawn(async move {
             let _ = join.await;
             let _ = done_tx.send(());
         });

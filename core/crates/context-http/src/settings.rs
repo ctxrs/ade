@@ -12,6 +12,8 @@ pub struct Settings {
     pub telemetry: Option<TelemetrySettings>,
     #[serde(default)]
     pub title_generation: Option<TitleGenerationSettings>,
+    #[serde(default)]
+    pub resource_governance: Option<ResourceGovernanceSettings>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -66,6 +68,37 @@ pub struct TelemetrySettings {
     pub endpoint: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResourceGovernanceMode {
+    Auto,
+    Custom,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResourceGovernanceSettings {
+    pub enabled: bool,
+    pub mode: ResourceGovernanceMode,
+    #[serde(default)]
+    pub cpu_quota_pct: Option<u32>,
+    #[serde(default)]
+    pub memory_high_mb: Option<u32>,
+    #[serde(default)]
+    pub memory_max_mb: Option<u32>,
+}
+
+impl Default for ResourceGovernanceSettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            mode: ResourceGovernanceMode::Auto,
+            cpu_quota_pct: None,
+            memory_high_mb: None,
+            memory_max_mb: None,
+        }
+    }
+}
+
 impl Default for TelemetrySettings {
     fn default() -> Self {
         Self {
@@ -95,6 +128,8 @@ pub struct PublicSettings {
     pub telemetry: Option<PublicTelemetrySettings>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title_generation: Option<PublicTitleGenerationSettings>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resource_governance: Option<PublicResourceGovernanceSettings>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -128,6 +163,48 @@ pub struct PublicTitleGenerationSettings {
     pub use_json: bool,
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ResourceGovernanceStatusState {
+    Disabled,
+    Applied,
+    Pending,
+    Unsupported,
+    Error,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PublicResourceGovernanceStatus {
+    pub state: ResourceGovernanceStatusState,
+    pub can_apply_now: bool,
+    pub requires_restart: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PublicResourceGovernanceLimits {
+    pub cpu_quota_pct: u32,
+    pub memory_high_mb: u32,
+    pub memory_max_mb: u32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PublicResourceGovernanceSettings {
+    pub enabled: bool,
+    pub mode: ResourceGovernanceMode,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cpu_quota_pct: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory_high_mb: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory_max_mb: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub effective: Option<PublicResourceGovernanceLimits>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<PublicResourceGovernanceStatus>,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct UpdateSettingsReq {
     #[serde(default)]
@@ -136,6 +213,8 @@ pub struct UpdateSettingsReq {
     pub telemetry: Option<UpdateTelemetrySettingsReq>,
     #[serde(default)]
     pub title_generation: Option<UpdateTitleGenerationSettingsReq>,
+    #[serde(default)]
+    pub resource_governance: Option<UpdateResourceGovernanceSettingsReq>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -170,6 +249,18 @@ pub struct UpdateTitleGenerationSettingsReq {
     pub use_json: bool,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct UpdateResourceGovernanceSettingsReq {
+    pub enabled: bool,
+    pub mode: ResourceGovernanceMode,
+    #[serde(default)]
+    pub cpu_quota_pct: Option<u32>,
+    #[serde(default)]
+    pub memory_high_mb: Option<u32>,
+    #[serde(default)]
+    pub memory_max_mb: Option<u32>,
+}
+
 fn settings_path(data_root: &Path) -> PathBuf {
     data_root.join(SETTINGS_FILE_NAME)
 }
@@ -180,6 +271,9 @@ pub async fn load_settings(data_root: &Path) -> Settings {
         Ok(s) => serde_json::from_str::<Settings>(&s).unwrap_or_default(),
         Err(_) => Settings::default(),
     };
+    if settings.resource_governance.is_none() {
+        settings.resource_governance = Some(ResourceGovernanceSettings::default());
+    }
 
     // Environment overrides (optional) for easy local bring-up.
     // These are intentionally "best-effort" and do not persist.
@@ -285,10 +379,24 @@ pub fn to_public(settings: &Settings) -> PublicSettings {
                 model: t.model.clone(),
                 use_json: t.use_json,
             });
+    let resource_governance =
+        settings
+            .resource_governance
+            .as_ref()
+            .map(|r| PublicResourceGovernanceSettings {
+                enabled: r.enabled,
+                mode: r.mode.clone(),
+                cpu_quota_pct: r.cpu_quota_pct,
+                memory_high_mb: r.memory_high_mb,
+                memory_max_mb: r.memory_max_mb,
+                effective: None,
+                status: None,
+            });
     PublicSettings {
         dictation,
         telemetry,
         title_generation,
+        resource_governance,
     }
 }
 
@@ -332,6 +440,15 @@ pub fn apply_update(mut current: Settings, req: UpdateSettingsReq) -> Settings {
         next.model = t.model;
         next.use_json = t.use_json;
         current.title_generation = Some(next);
+    }
+    if let Some(r) = req.resource_governance {
+        let mut next = current.resource_governance.unwrap_or_default();
+        next.enabled = r.enabled;
+        next.mode = r.mode;
+        next.cpu_quota_pct = r.cpu_quota_pct;
+        next.memory_high_mb = r.memory_high_mb;
+        next.memory_max_mb = r.memory_max_mb;
+        current.resource_governance = Some(next);
     }
     current
 }

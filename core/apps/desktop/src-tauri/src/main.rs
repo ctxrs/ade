@@ -480,8 +480,8 @@ fn desktop_connect_local(
     state.disconnect();
     let token = uuid::Uuid::new_v4().to_string();
     let data_dir = daemon_data_dir(&app).map_err(to_err)?;
-    let (url, child) = spawn_daemon(&app, &token, &data_dir).map_err(to_err)?;
-    state.set_local(url.clone(), token.clone(), child);
+    let (url, child, systemd_scope) = spawn_daemon(&app, &token, &data_dir).map_err(to_err)?;
+    state.set_local(url.clone(), token.clone(), child, systemd_scope);
     Ok(state.info())
 }
 
@@ -559,8 +559,8 @@ fn ensure_local_connection(app: &tauri::AppHandle, state: &ConnectionManager) ->
     }
     let token = uuid::Uuid::new_v4().to_string();
     let data_dir = daemon_data_dir(app)?;
-    let (url, child) = spawn_daemon(app, &token, &data_dir)?;
-    state.set_local(url, token, child);
+    let (url, child, systemd_scope) = spawn_daemon(app, &token, &data_dir)?;
+    state.set_local(url, token, child, systemd_scope);
     Ok(())
 }
 
@@ -1286,6 +1286,7 @@ struct LocalConnection {
     base_url: String,
     token: String,
     child: Child,
+    systemd_scope: bool,
 }
 
 struct SshConnection {
@@ -1328,6 +1329,9 @@ impl ConnectionManager {
         if let Some(active) = guard.active.take() {
             match active {
                 ActiveConnection::Local(c) => {
+                    if c.systemd_scope {
+                        stop_systemd_scope();
+                    }
                     let _ = try_kill_child(c.child);
                 }
                 ActiveConnection::Ssh(c) => {
@@ -1337,9 +1341,14 @@ impl ConnectionManager {
         }
     }
 
-    fn set_local(&self, base_url: String, token: String, child: Child) {
+    fn set_local(&self, base_url: String, token: String, child: Child, systemd_scope: bool) {
         let mut guard = self.0.lock().expect("connection manager lock");
-        guard.active = Some(ActiveConnection::Local(LocalConnection { base_url, token, child }));
+        guard.active = Some(ActiveConnection::Local(LocalConnection {
+            base_url,
+            token,
+            child,
+            systemd_scope,
+        }));
     }
 
     fn set_ssh(&self, base_url: String, token: Option<String>, tunnel: Child) {
@@ -1794,7 +1803,7 @@ fn start_remote_daemon_over_ssh(
 
     let data_dir = remote_data_dir.unwrap_or("~/.context");
     let mut serve_cmd = format!(
-        "nohup context serve --bind 127.0.0.1:{remote_port} --data-dir {}",
+        "context serve --bind 127.0.0.1:{remote_port} --data-dir {}",
         shell_escape(data_dir)
     );
     if let Some(t) = token {
@@ -1802,13 +1811,22 @@ fn start_remote_daemon_over_ssh(
             serve_cmd.push_str(&format!(" --auth-token {}", shell_escape(t)));
         }
     }
-    serve_cmd.push_str(" > ~/.context/logs/daemon.log 2>&1 &");
+    let log_cmd = format!("{serve_cmd} > ~/.context/logs/daemon.log 2>&1");
+    let systemd_cmd = format!(
+        "systemd-run --user --scope --unit context-daemon --no-block /bin/sh -lc {}",
+        shell_escape(&log_cmd)
+    );
+    let nohup_cmd = format!("nohup {log_cmd} &");
+    let remote_cmd = format!(
+        "if command -v systemd-run >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then {}; else {}; fi",
+        systemd_cmd, nohup_cmd
+    );
 
     let output = Command::new("ssh")
         .arg(target)
         .arg("sh")
         .arg("-lc")
-        .arg(serve_cmd)
+        .arg(remote_cmd)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
@@ -1983,7 +2001,52 @@ fn dev_web_dist() -> Option<PathBuf> {
     }
 }
 
-fn spawn_daemon(app: &tauri::AppHandle, token: &str, data_dir: &Path) -> Result<(String, Child)> {
+#[cfg(target_os = "linux")]
+fn systemd_run_available() -> bool {
+    match Command::new("systemd-run").arg("--version").status() {
+        Ok(status) => status.success(),
+        Err(_) => false,
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn systemd_user_available() -> bool {
+    match Command::new("systemctl")
+        .arg("--user")
+        .arg("show-environment")
+        .status()
+    {
+        Ok(status) => status.success(),
+        Err(_) => false,
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn should_use_systemd_scope() -> bool {
+    systemd_run_available() && systemd_user_available()
+}
+
+#[cfg(not(target_os = "linux"))]
+fn should_use_systemd_scope() -> bool {
+    false
+}
+
+fn stop_systemd_scope() {
+    #[cfg(target_os = "linux")]
+    {
+        let _ = Command::new("systemctl")
+            .arg("--user")
+            .arg("stop")
+            .arg("context-daemon.scope")
+            .status();
+    }
+}
+
+fn spawn_daemon(
+    app: &tauri::AppHandle,
+    token: &str,
+    data_dir: &Path,
+) -> Result<(String, Child, bool)> {
     let context_bin = resource_bin(app, "context")
         .or_else(|| dev_bin("context"))
         .unwrap_or_else(|| PathBuf::from("context"));
@@ -2001,7 +2064,44 @@ fn spawn_daemon(app: &tauri::AppHandle, token: &str, data_dir: &Path) -> Result<
         })
         .or_else(dev_web_dist);
 
-    let mut cmd = Command::new(&context_bin);
+    let use_systemd_scope = should_use_systemd_scope();
+    if use_systemd_scope {
+        stop_systemd_scope();
+    }
+    let mut cmd = if use_systemd_scope {
+        let mut cmd = Command::new("systemd-run");
+        cmd.arg("--user")
+            .arg("--scope")
+            .arg("--unit")
+            .arg("context-daemon")
+            .arg("--same-dir");
+        if let Some(dist) = web_dist.as_ref() {
+            cmd.arg("--setenv")
+                .arg(format!("CONTEXT_WEB_DIST={}", dist.to_string_lossy()));
+        }
+        if let Some(mcp) = mcp_bin.as_ref() {
+            cmd.arg("--setenv")
+                .arg(format!("CONTEXT_MCP_COMMAND={}", mcp.to_string_lossy()));
+        }
+        if let Ok(appimage) = std::env::var("APPIMAGE") {
+            cmd.arg("--setenv").arg(format!("CONTEXT_APPIMAGE_PATH={appimage}"));
+        }
+        cmd.arg(&context_bin);
+        cmd
+    } else {
+        let mut cmd = Command::new(&context_bin);
+        if let Some(dist) = web_dist.as_ref() {
+            cmd.env("CONTEXT_WEB_DIST", dist.to_string_lossy().to_string());
+        }
+        if let Some(mcp) = mcp_bin.as_ref() {
+            cmd.env("CONTEXT_MCP_COMMAND", mcp.to_string_lossy().to_string());
+        }
+        if let Ok(appimage) = std::env::var("APPIMAGE") {
+            cmd.env("CONTEXT_APPIMAGE_PATH", appimage);
+        }
+        cmd
+    };
+
     cmd.arg("serve")
         .arg("--bind")
         .arg("127.0.0.1:0")
@@ -2012,16 +2112,6 @@ fn spawn_daemon(app: &tauri::AppHandle, token: &str, data_dir: &Path) -> Result<
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit());
-
-    if let Some(dist) = web_dist.as_ref() {
-        cmd.env("CONTEXT_WEB_DIST", dist.to_string_lossy().to_string());
-    }
-    if let Some(mcp) = mcp_bin.as_ref() {
-        cmd.env("CONTEXT_MCP_COMMAND", mcp.to_string_lossy().to_string());
-    }
-    if let Ok(appimage) = std::env::var("APPIMAGE") {
-        cmd.env("CONTEXT_APPIMAGE_PATH", appimage);
-    }
 
     let mut child = cmd.spawn().context("spawning context daemon")?;
     let stdout = child.stdout.take().context("capturing daemon stdout")?;
@@ -2046,7 +2136,7 @@ fn spawn_daemon(app: &tauri::AppHandle, token: &str, data_dir: &Path) -> Result<
     }
 
     let url = url.context("daemon did not emit listening URL")?;
-    Ok((url, child))
+    Ok((url, child, use_systemd_scope))
 }
 
 #[allow(dead_code)]

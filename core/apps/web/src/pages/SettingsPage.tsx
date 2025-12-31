@@ -6,6 +6,9 @@ import {
   InstallInfo,
   ProviderOptions,
   ProviderStatus,
+  ResourceGovernanceLimits,
+  ResourceGovernanceSettings,
+  ResourceGovernanceStatus,
   ResourceUtilization,
   Settings,
   TelemetrySettings,
@@ -78,6 +81,7 @@ type SectionId =
   | "sandboxing"
   | "worktree_bootstrap"
   | "context_pack"
+  | "resource_governance"
   | "resource_utilization"
   | "dictation"
   | "title_generation"
@@ -104,6 +108,7 @@ const SECTIONS: Array<{
   { id: "sandboxing", label: "Sandboxing", group: "main" },
   { id: "worktree_bootstrap", label: "Worktree Bootstrap", group: "main" },
   { id: "context_pack", label: "Context Pack", group: "main" },
+  { id: "resource_governance", label: "Resource Limits", group: "main" },
   { id: "resource_utilization", label: "Resource Utilization", group: "main" },
   { id: "dictation", label: "Dictation", group: "advanced" },
   { id: "title_generation", label: "Title Generation", group: "advanced" },
@@ -148,6 +153,19 @@ function formatAge(ms?: number | null): string {
   const mins = Math.floor(totalSeconds / 60);
   const secs = totalSeconds % 60;
   return `${mins}m ${secs}s`;
+}
+
+function formatGiB(mb?: number | null): string {
+  if (!Number.isFinite(mb) || !mb) return "";
+  const gb = (mb as number) / 1024;
+  const precision = gb >= 10 ? 0 : 1;
+  return gb.toFixed(precision);
+}
+
+function parseGiB(value: string): number | null {
+  const v = Number(value);
+  if (!Number.isFinite(v) || v <= 0) return null;
+  return Math.round(v * 1024);
 }
 
 function truncateText(value: string, maxLen: number): string {
@@ -290,6 +308,15 @@ export default function SettingsPage() {
   const [titleGenApiKey, setTitleGenApiKey] = useState("");
   const [titleGenModel, setTitleGenModel] = useState("google/gemini-3-flash-preview");
   const [titleGenUseJson, setTitleGenUseJson] = useState(true);
+  const resourceGovernanceHydrated = useRef(false);
+  const [resourceGovernanceEnabled, setResourceGovernanceEnabled] = useState(true);
+  const [resourceGovernanceMode, setResourceGovernanceMode] =
+    useState<ResourceGovernanceSettings["mode"]>("auto");
+  const [resourceCpuQuotaPct, setResourceCpuQuotaPct] = useState("");
+  const [resourceMemoryHighGb, setResourceMemoryHighGb] = useState("");
+  const [resourceMemoryMaxGb, setResourceMemoryMaxGb] = useState("");
+  const [resourceEffective, setResourceEffective] = useState<ResourceGovernanceLimits | null>(null);
+  const [resourceStatus, setResourceStatus] = useState<ResourceGovernanceStatus | null>(null);
 
   const [editorSettings, setEditorSettings] = useState<DesktopEditorSettings>({
     target: "system",
@@ -418,6 +445,17 @@ export default function SettingsPage() {
           setTitleGenUseJson(Boolean(tg.use_json));
         }
 
+        const rg = s.resource_governance ?? null;
+        if (rg) {
+          setResourceGovernanceEnabled(rg.enabled);
+          setResourceGovernanceMode(rg.mode ?? "auto");
+          setResourceCpuQuotaPct(rg.cpu_quota_pct ? String(rg.cpu_quota_pct) : "");
+          setResourceMemoryHighGb(formatGiB(rg.memory_high_mb));
+          setResourceMemoryMaxGb(formatGiB(rg.memory_max_mb));
+          setResourceEffective(rg.effective ?? null);
+          setResourceStatus(rg.status ?? null);
+        }
+
         setLoaded(true);
       } catch (e: any) {
         if (cancelled) return;
@@ -460,6 +498,17 @@ export default function SettingsPage() {
         setApiSecret("");
         setApiSecretSet(true);
       }
+      if (next.resource_governance) {
+        setResourceGovernanceEnabled(next.resource_governance.enabled);
+        setResourceGovernanceMode(next.resource_governance.mode ?? "auto");
+        setResourceCpuQuotaPct(
+          next.resource_governance.cpu_quota_pct ? String(next.resource_governance.cpu_quota_pct) : "",
+        );
+        setResourceMemoryHighGb(formatGiB(next.resource_governance.memory_high_mb));
+        setResourceMemoryMaxGb(formatGiB(next.resource_governance.memory_max_mb));
+        setResourceEffective(next.resource_governance.effective ?? null);
+        setResourceStatus(next.resource_governance.status ?? null);
+      }
     } catch (e: any) {
       if (seq !== saveSeq.current) return;
       setSaveError(e?.message ?? String(e));
@@ -490,6 +539,35 @@ export default function SettingsPage() {
       use_json: titleGenUseJson,
     };
   }, [titleGenApiKey, titleGenBaseUrl, titleGenModel, titleGenUseJson]);
+
+  const resourceGovernancePayload = useMemo((): ResourceGovernanceSettings => {
+    const cpuQuota = Number(resourceCpuQuotaPct);
+    const cpuQuotaPct = Number.isFinite(cpuQuota) && cpuQuota > 0 ? Math.round(cpuQuota) : null;
+    const memoryHighMb = parseGiB(resourceMemoryHighGb);
+    const memoryMaxMb = parseGiB(resourceMemoryMaxGb);
+    return {
+      enabled: resourceGovernanceEnabled,
+      mode: resourceGovernanceMode,
+      cpu_quota_pct: resourceGovernanceMode === "custom" ? cpuQuotaPct : null,
+      memory_high_mb: resourceGovernanceMode === "custom" ? memoryHighMb : null,
+      memory_max_mb: resourceGovernanceMode === "custom" ? memoryMaxMb : null,
+    };
+  }, [
+    resourceCpuQuotaPct,
+    resourceGovernanceEnabled,
+    resourceGovernanceMode,
+    resourceMemoryHighGb,
+    resourceMemoryMaxGb,
+  ]);
+
+  const resourceGovernanceCanSave = useMemo(() => {
+    if (!resourceGovernanceEnabled) return true;
+    if (resourceGovernanceMode !== "custom") return true;
+    const high = parseGiB(resourceMemoryHighGb);
+    const max = parseGiB(resourceMemoryMaxGb);
+    if (high && max && high > max) return false;
+    return true;
+  }, [resourceGovernanceEnabled, resourceGovernanceMode, resourceMemoryHighGb, resourceMemoryMaxGb]);
 
   const dictationCanSave = useMemo(() => {
     if (!dictationEnabled) return true;
@@ -541,6 +619,20 @@ export default function SettingsPage() {
     return () => window.clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loaded, titleGenerationPayload]);
+
+  useEffect(() => {
+    if (!loaded) return;
+    if (!resourceGovernanceHydrated.current) {
+      resourceGovernanceHydrated.current = true;
+      return;
+    }
+    if (!resourceGovernanceCanSave) return;
+    const t = window.setTimeout(() => {
+      savePatch({ resource_governance: resourceGovernancePayload });
+    }, 450);
+    return () => window.clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loaded, resourceGovernancePayload, resourceGovernanceCanSave]);
 
   useEffect(() => {
     if (!isDesktopApp()) return;
@@ -971,6 +1063,158 @@ export default function SettingsPage() {
               control={<pre className="settings-code-block">{example}</pre>}
             />
           </Card>
+        </>
+      );
+    }
+
+    if (active === "resource_governance") {
+      const effectiveCpu = resourceEffective?.cpu_quota_pct ?? null;
+      const effectiveHigh = resourceEffective?.memory_high_mb ?? null;
+      const effectiveMax = resourceEffective?.memory_max_mb ?? null;
+      const statusState = resourceStatus?.state ?? (resourceGovernanceEnabled ? "pending" : "disabled");
+      const statusLabel =
+        statusState === "disabled"
+          ? "Disabled"
+          : statusState === "applied"
+            ? "Applied"
+            : statusState === "unsupported"
+              ? "Unsupported"
+              : statusState === "error"
+                ? "Error"
+                : "Pending";
+      const statusMessage = resourceStatus?.message ?? null;
+      const showApplyNow = statusState === "pending" && Boolean(resourceStatus?.can_apply_now);
+      const showRestart = Boolean(resourceStatus?.requires_restart);
+
+      return (
+        <>
+          <Card title="Resource Governance">
+            <Row
+              title="Enable resource limits"
+              description="Keep the host responsive by throttling agent workloads."
+              control={
+                <Toggle
+                  checked={resourceGovernanceEnabled}
+                  disabled={!loaded}
+                  onChange={setResourceGovernanceEnabled}
+                  ariaLabel="Enable resource limits"
+                />
+              }
+            />
+            <Row
+              title="Mode"
+              description="Auto picks safe limits for this machine."
+              control={
+                <select
+                  className="settings-control settings-select"
+                  value={resourceGovernanceMode}
+                  onChange={(e) => setResourceGovernanceMode(e.target.value as ResourceGovernanceSettings["mode"])}
+                  disabled={!resourceGovernanceEnabled}
+                >
+                  <option value="auto">Auto (recommended)</option>
+                  <option value="custom">Custom</option>
+                </select>
+              }
+            />
+            {resourceGovernanceMode === "custom" ? (
+              <>
+                <Row
+                  title="CPU quota (%)"
+                  description="100% = 1 core. Leave empty to use auto."
+                  control={
+                    <input
+                      className="settings-control"
+                      type="number"
+                      min={50}
+                      step={10}
+                      value={resourceCpuQuotaPct}
+                      onChange={(e) => setResourceCpuQuotaPct(e.target.value)}
+                      disabled={!resourceGovernanceEnabled}
+                      placeholder="300"
+                    />
+                  }
+                />
+                <Row
+                  title="Memory high (GiB)"
+                  description="Soft limit for reclaim pressure."
+                  control={
+                    <input
+                      className="settings-control"
+                      type="number"
+                      min={0}
+                      step={0.5}
+                      value={resourceMemoryHighGb}
+                      onChange={(e) => setResourceMemoryHighGb(e.target.value)}
+                      disabled={!resourceGovernanceEnabled}
+                      placeholder="48"
+                    />
+                  }
+                />
+                <Row
+                  title="Memory max (GiB)"
+                  description="Hard limit; processes are killed when exceeded."
+                  control={
+                    <input
+                      className="settings-control"
+                      type="number"
+                      min={0}
+                      step={0.5}
+                      value={resourceMemoryMaxGb}
+                      onChange={(e) => setResourceMemoryMaxGb(e.target.value)}
+                      disabled={!resourceGovernanceEnabled}
+                      placeholder="54"
+                    />
+                  }
+                />
+              </>
+            ) : null}
+          </Card>
+
+          <Card title="Effective limits">
+            <Row
+              title="CPU quota"
+              description="Applied to the daemon and its child processes."
+              control={
+                <span className="settings-pill wb-mono">
+                  {effectiveCpu ? `${effectiveCpu}%` : "—"}
+                </span>
+              }
+            />
+            <Row
+              title="Memory high / max"
+              description="High is the soft threshold; max is the hard cap."
+              control={
+                <span className="settings-pill wb-mono">
+                  {effectiveHigh ? `${formatGiB(effectiveHigh)} GiB` : "—"} /{" "}
+                  {effectiveMax ? `${formatGiB(effectiveMax)} GiB` : "—"}
+                </span>
+              }
+            />
+            <Row
+              title="Apply status"
+              description={statusMessage ?? "Apply changes to update live limits."}
+              control={
+                <div className="row" style={{ gap: 8 }}>
+                  <span className="settings-pill">{statusLabel}</span>
+                  {showRestart ? <span className="settings-pill settings-pill-warn">Restart required</span> : null}
+                  {showApplyNow ? (
+                    <button
+                      type="button"
+                      className="settings-btn settings-btn-secondary"
+                      onClick={() => savePatch({ resource_governance: resourceGovernancePayload })}
+                      disabled={saving || !resourceGovernanceCanSave}
+                    >
+                      Apply now
+                    </button>
+                  ) : null}
+                </div>
+              }
+            />
+          </Card>
+
+          {!resourceGovernanceCanSave && resourceGovernanceMode === "custom" ? (
+            <div className="settings-banner settings-banner-error">Memory high must be less than or equal to memory max.</div>
+          ) : null}
         </>
       );
     }

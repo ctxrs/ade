@@ -127,6 +127,13 @@ impl TerminalManager {
             .collect()
     }
 
+    pub async fn has_running(&self) -> bool {
+        let sessions = self.sessions.lock().await;
+        sessions
+            .values()
+            .any(|sess| matches!(sess.snapshot().status, TerminalStatus::Running))
+    }
+
     pub async fn get(&self, id: TerminalId) -> Option<Arc<TerminalSessionHandle>> {
         let sessions = self.sessions.lock().await;
         sessions.get(&id).cloned()
