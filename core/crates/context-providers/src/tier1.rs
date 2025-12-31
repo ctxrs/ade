@@ -175,6 +175,7 @@ impl ProviderAdapter for Tier1AcpAdapter {
         event_sink: mpsc::Sender<NormalizedEvent>,
     ) -> Result<RunHandle> {
         let (cancel_tx, cancel_rx) = oneshot::channel::<()>();
+        let (done_tx, done_rx) = oneshot::channel::<()>();
 
         let client = build_acp_client_config(&env);
 
@@ -282,10 +283,17 @@ impl ProviderAdapter for Tier1AcpAdapter {
                     .await;
             }
         });
+        let abort = join.abort_handle();
+
+        let _ = tokio::spawn(async move {
+            let _ = join.await;
+            let _ = done_tx.send(());
+        });
 
         Ok(RunHandle {
-            join,
+            done: done_rx,
             cancel: Some(cancel_tx),
+            abort: Some(abort),
         })
     }
 
@@ -293,8 +301,12 @@ impl ProviderAdapter for Tier1AcpAdapter {
         if let Some(cancel) = handle.cancel.take() {
             let _ = cancel.send(());
         }
-        let _ = tokio::time::timeout(std::time::Duration::from_secs(2), &mut handle.join).await;
-        handle.join.abort(); // best-effort cleanup
+        let done = tokio::time::timeout(std::time::Duration::from_secs(2), &mut handle.done).await;
+        if done.is_err() {
+            if let Some(abort) = handle.abort.take() {
+                abort.abort();
+            }
+        }
         Ok(())
     }
 

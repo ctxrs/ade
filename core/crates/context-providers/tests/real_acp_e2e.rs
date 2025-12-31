@@ -68,7 +68,7 @@ async fn run_and_collect(
     .await
     .expect("timed out waiting for provider events");
 
-    let _ = handle.join.await;
+    let _ = handle.done.await;
     events
 }
 

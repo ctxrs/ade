@@ -138,7 +138,7 @@ pub async fn session_worker(
             }
             _ = async {
                 if let Some(turn) = running.as_mut() {
-                    let _ = (&mut turn.handle.join).await;
+                    let _ = (&mut turn.handle.done).await;
                 }
             }, if running.is_some() => {
                 running = None;
@@ -695,7 +695,10 @@ pub async fn reconcile_turn_terminal_state(
         return Ok(());
     }
 
-    let events = state.store.list_session_events_for_turn(session_id, turn_id).await?;
+    let events = state
+        .store
+        .list_session_events_for_turn(session_id, turn_id)
+        .await?;
     if let Some(event) = events.iter().rev().find(|ev| {
         matches!(
             ev.event_type,

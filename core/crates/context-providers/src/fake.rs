@@ -118,6 +118,7 @@ impl ProviderAdapter for FakeProviderAdapter {
         event_sink: mpsc::Sender<NormalizedEvent>,
     ) -> Result<RunHandle> {
         let (cancel_tx, mut cancel_rx) = oneshot::channel::<()>();
+        let (done_tx, done_rx) = oneshot::channel::<()>();
         let join = tokio::spawn(async move {
             let sink = event_sink;
             let fixture_tools = parse_fixture_tools(&input.content);
@@ -176,10 +177,16 @@ impl ProviderAdapter for FakeProviderAdapter {
                 }
             }
         });
+        let abort = join.abort_handle();
+        let _ = tokio::spawn(async move {
+            let _ = join.await;
+            let _ = done_tx.send(());
+        });
 
         Ok(RunHandle {
-            join,
+            done: done_rx,
             cancel: Some(cancel_tx),
+            abort: Some(abort),
         })
     }
 
@@ -187,7 +194,12 @@ impl ProviderAdapter for FakeProviderAdapter {
         if let Some(cancel) = handle.cancel.take() {
             let _ = cancel.send(());
         }
-        handle.join.abort();
+        let done = tokio::time::timeout(std::time::Duration::from_secs(2), &mut handle.done).await;
+        if done.is_err() {
+            if let Some(abort) = handle.abort.take() {
+                abort.abort();
+            }
+        }
         Ok(())
     }
 }

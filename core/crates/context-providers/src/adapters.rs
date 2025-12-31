@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::oneshot;
-use tokio::task::JoinHandle;
+use tokio::task::AbortHandle;
 
 use context_core::models::MessageAttachment;
 
@@ -78,8 +78,9 @@ pub struct TurnInput {
 
 #[derive(Debug)]
 pub struct RunHandle {
-    pub join: JoinHandle<()>,
+    pub done: oneshot::Receiver<()>,
     pub cancel: Option<oneshot::Sender<()>>,
+    pub abort: Option<AbortHandle>,
 }
 
 #[async_trait]
