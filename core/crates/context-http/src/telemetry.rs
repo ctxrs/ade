@@ -5,12 +5,15 @@ use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot};
+use tokio::time::timeout;
 
 use crate::logs;
 
 const TELEMETRY_STATE_FILE: &str = "telemetry.json";
 const TELEMETRY_LOG_FILE: &str = "telemetry.jsonl";
 const DEFAULT_TELEMETRY_BASE_URL: &str = "https://api.context.rs/functions/v1";
+const TELEMETRY_CHANNEL_SEND_TIMEOUT: Duration = Duration::from_millis(500);
+const TELEMETRY_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone)]
 pub struct TelemetryConfig {
@@ -153,17 +156,50 @@ impl Telemetry {
     }
 
     pub async fn emit(&self, event: TelemetryEvent) {
-        let _ = self.tx.send(TelemetryCommand::Event(event)).await;
+        match timeout(
+            TELEMETRY_CHANNEL_SEND_TIMEOUT,
+            self.tx.send(TelemetryCommand::Event(event)),
+        )
+        .await
+        {
+            Ok(Ok(())) => {}
+            Ok(Err(_)) => tracing::warn!("telemetry channel closed; dropping event"),
+            Err(_) => tracing::warn!("telemetry channel blocked; dropping event"),
+        }
     }
 
     pub async fn update_config(&self, cfg: TelemetryConfig) {
-        let _ = self.tx.send(TelemetryCommand::UpdateConfig(cfg)).await;
+        match timeout(
+            TELEMETRY_CHANNEL_SEND_TIMEOUT,
+            self.tx.send(TelemetryCommand::UpdateConfig(cfg)),
+        )
+        .await
+        {
+            Ok(Ok(())) => {}
+            Ok(Err(_)) => tracing::warn!("telemetry channel closed; dropping config update"),
+            Err(_) => tracing::warn!("telemetry channel blocked; dropping config update"),
+        }
     }
 
     pub async fn flush(&self) {
         let (tx, rx) = oneshot::channel();
-        let _ = self.tx.send(TelemetryCommand::Flush(tx)).await;
-        let _ = rx.await;
+        match timeout(
+            TELEMETRY_CHANNEL_SEND_TIMEOUT,
+            self.tx.send(TelemetryCommand::Flush(tx)),
+        )
+        .await
+        {
+            Ok(Ok(())) => {}
+            Ok(Err(_)) => {
+                tracing::warn!("telemetry channel closed; flush skipped");
+                return;
+            }
+            Err(_) => {
+                tracing::warn!("telemetry channel blocked; flush skipped");
+                return;
+            }
+        }
+        let _ = timeout(TELEMETRY_REQUEST_TIMEOUT, rx).await;
     }
 }
 
@@ -221,6 +257,13 @@ fn telemetry_state_path(data_root: &Path) -> PathBuf {
 
 fn telemetry_log_path(data_root: &Path) -> PathBuf {
     logs::logs_dir(data_root).join(TELEMETRY_LOG_FILE)
+}
+
+async fn send_batch_with_timeout(runtime: &TelemetryRuntime, batch: &[TelemetryEvent]) -> bool {
+    matches!(
+        timeout(TELEMETRY_REQUEST_TIMEOUT, send_batch(runtime, batch)).await,
+        Ok(Ok(()))
+    )
 }
 
 async fn load_or_create_install_id(data_root: &Path) -> Option<String> {
@@ -304,7 +347,10 @@ async fn telemetry_worker(data_root: PathBuf, mut rx: mpsc::Receiver<TelemetryCo
         app_version: env!("CARGO_PKG_VERSION").to_string(),
         os: std::env::consts::OS.to_string(),
         arch: std::env::consts::ARCH.to_string(),
-        client: reqwest::Client::new(),
+        client: reqwest::Client::builder()
+            .timeout(TELEMETRY_REQUEST_TIMEOUT)
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new()),
     };
 
     let mut flush_tick = tokio::time::interval(Duration::from_secs(10));
@@ -316,7 +362,7 @@ async fn telemetry_worker(data_root: PathBuf, mut rx: mpsc::Receiver<TelemetryCo
             _ = flush_tick.tick() => {
                 if runtime.cfg.enabled && !runtime.buffer.is_empty() {
                     let batch = runtime.buffer.drain(..runtime.buffer.len().min(FLUSH_BATCH)).collect::<Vec<_>>();
-                    if send_batch(&runtime, &batch).await.is_err() {
+                    if !send_batch_with_timeout(&runtime, &batch).await {
                         runtime.buffer.splice(0..0, batch);
                         if runtime.buffer.len() > MAX_BUFFER {
                             runtime.buffer.truncate(MAX_BUFFER);
@@ -336,7 +382,7 @@ async fn telemetry_worker(data_root: PathBuf, mut rx: mpsc::Receiver<TelemetryCo
                             runtime.buffer.push(event);
                             if runtime.buffer.len() >= FLUSH_BATCH {
                                 let batch = runtime.buffer.drain(..).collect::<Vec<_>>();
-                                if send_batch(&runtime, &batch).await.is_err() {
+                                if !send_batch_with_timeout(&runtime, &batch).await {
                                     runtime.buffer = batch;
                                     if runtime.buffer.len() > MAX_BUFFER {
                                         runtime.buffer.truncate(MAX_BUFFER);
@@ -357,7 +403,7 @@ async fn telemetry_worker(data_root: PathBuf, mut rx: mpsc::Receiver<TelemetryCo
                     TelemetryCommand::Flush(done) => {
                         if runtime.cfg.enabled && !runtime.buffer.is_empty() {
                             let batch = runtime.buffer.drain(..).collect::<Vec<_>>();
-                            let _ = send_batch(&runtime, &batch).await;
+                            let _ = send_batch_with_timeout(&runtime, &batch).await;
                         }
                         let _ = done.send(());
                     }
