@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -44,13 +44,7 @@ async fn setup_git_repo() -> tempfile::TempDir {
     dir
 }
 
-async fn setup_state_with_real_providers() -> (tempfile::TempDir, Store, Arc<AppState>) {
-    let data_dir = tempfile::tempdir().unwrap();
-    let db_dir = data_dir.path().join("db");
-    tokio::fs::create_dir_all(&db_dir).await.unwrap();
-    let db_path = db_dir.join("db.sqlite");
-    let store = Store::open(&db_path).await.unwrap();
-
+async fn build_state_with_real_providers(data_root: PathBuf, store: Store) -> Arc<AppState> {
     let mut providers: HashMap<String, Arc<dyn context_providers::adapters::ProviderAdapter>> =
         HashMap::new();
     providers.insert("codex".into(), Arc::new(Tier1AcpAdapter::codex()));
@@ -58,14 +52,24 @@ async fn setup_state_with_real_providers() -> (tempfile::TempDir, Store, Arc<App
     providers.insert("gemini".into(), Arc::new(Tier1AcpAdapter::gemini()));
 
     let state = Arc::new(AppState::new(
-        data_dir.path().to_path_buf(),
-        store.clone(),
+        data_root,
+        store,
         providers,
         "http://127.0.0.1:4399".to_string(),
         None,
     ));
     state.start_workspace_catchup_listener();
+    state
+}
 
+async fn setup_state_with_real_providers() -> (tempfile::TempDir, Store, Arc<AppState>) {
+    let data_dir = tempfile::tempdir().unwrap();
+    let db_dir = data_dir.path().join("db");
+    tokio::fs::create_dir_all(&db_dir).await.unwrap();
+    let db_path = db_dir.join("db.sqlite");
+    let store = Store::open(&db_path).await.unwrap();
+
+    let state = build_state_with_real_providers(data_dir.path().to_path_buf(), store.clone()).await;
     (data_dir, store, state)
 }
 
@@ -178,8 +182,48 @@ async fn wait_for_tool_events(store: &Store, session_id: context_core::ids::Sess
     }
 }
 
+async fn wait_for_new_tool_events(
+    store: &Store,
+    session_id: context_core::ids::SessionId,
+    prev_len: usize,
+) -> Vec<context_core::models::SessionEvent> {
+    let mut attempts = 0;
+    loop {
+        let events = store.list_session_events(session_id).await.unwrap();
+        if events.len() > prev_len {
+            let new_events = &events[prev_len..];
+            if new_events
+                .iter()
+                .any(|e| matches!(e.event_type, SessionEventType::ToolCall))
+                && new_events
+                    .iter()
+                    .any(|e| matches!(e.event_type, SessionEventType::ToolResult))
+            {
+                if new_events
+                    .iter()
+                    .any(|e| matches!(e.event_type, SessionEventType::Error))
+                {
+                    panic!("saw Error event(s): {new_events:#?}");
+                }
+                return new_events.to_vec();
+            }
+        }
+        attempts += 1;
+        if attempts > 600 {
+            panic!("timed out waiting for new tool events");
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+}
+
 const PROMPT: &str = r#"
 Use your shell tool to run: ls -1
+Do not guess the output; you MUST run the command.
+Reply with just: done
+"#;
+
+const RESUME_PROMPT: &str = r#"
+Use your shell tool to run: pwd
 Do not guess the output; you MUST run the command.
 Reply with just: done
 "#;
@@ -221,4 +265,67 @@ async fn runner_gemini_real_acp_produces_tool_events() {
     let session = create_session_with_provider(&mut app, git_repo.path(), "gemini").await;
     post_message(&mut app, &session.id.0.to_string(), PROMPT).await;
     wait_for_tool_events(&store, session.id).await;
+}
+
+#[tokio::test]
+#[ignore]
+async fn runner_codex_real_acp_resumes_without_rehydrate() {
+    which::which("codex-acp").expect("codex-acp binary not found on PATH");
+    let git_repo = setup_git_repo().await;
+    let (data_dir, store, state) = setup_state_with_real_providers().await;
+    let mut app = api::router(state);
+
+    let session = create_session_with_provider(&mut app, git_repo.path(), "codex").await;
+    post_message(&mut app, &session.id.0.to_string(), PROMPT).await;
+    wait_for_tool_events(&store, session.id).await;
+
+    let session_row = store
+        .get_session(session.id)
+        .await
+        .unwrap()
+        .expect("missing session");
+    let provider_ref = session_row
+        .provider_session_ref
+        .clone()
+        .expect("provider_session_ref missing after first run");
+
+    let events_before = store.list_session_events(session.id).await.unwrap();
+    let prev_len = events_before.len();
+
+    drop(app);
+
+    let state = build_state_with_real_providers(data_dir.path().to_path_buf(), store.clone()).await;
+    let mut app = api::router(state);
+
+    post_message(&mut app, &session.id.0.to_string(), RESUME_PROMPT).await;
+    let new_events = wait_for_new_tool_events(&store, session.id, prev_len).await;
+
+    if new_events.iter().any(|ev| {
+        matches!(ev.event_type, SessionEventType::Notice)
+            && ev.payload_json.get("kind").and_then(|v| v.as_str()) == Some("rehydrate")
+    }) {
+        panic!("unexpected rehydrate notice on resume: {new_events:#?}");
+    }
+
+    let init_event = new_events
+        .iter()
+        .rev()
+        .find(|ev| matches!(ev.event_type, SessionEventType::Init))
+        .expect("missing Init event after resume");
+    assert_eq!(
+        init_event
+            .payload_json
+            .get("acp_session_id")
+            .and_then(|v| v.as_str()),
+        Some(provider_ref.as_str()),
+        "resume should keep the same provider session id"
+    );
+    assert_eq!(
+        init_event
+            .payload_json
+            .get("resumed")
+            .and_then(|v| v.as_bool()),
+        Some(true),
+        "resume should be reported as resumed"
+    );
 }

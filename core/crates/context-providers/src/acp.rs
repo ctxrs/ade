@@ -407,6 +407,7 @@ struct AcpProcess {
     next_id: AtomicU64,
     pending: Mutex<HashMap<u64, oneshot::Sender<serde_json::Value>>>,
     supports_load: AtomicBool,
+    supports_resume: AtomicBool,
     auth_methods: Mutex<Option<serde_json::Value>>,
     stderr_lines: Mutex<Vec<String>>,
     stdout_non_json: Mutex<Vec<String>>,
@@ -533,6 +534,7 @@ impl AcpProcess {
             next_id: AtomicU64::new(1),
             pending: Mutex::new(HashMap::new()),
             supports_load: AtomicBool::new(false),
+            supports_resume: AtomicBool::new(false),
             auth_methods: Mutex::new(None),
             stderr_lines: Mutex::new(Vec::new()),
             stdout_non_json: Mutex::new(Vec::new()),
@@ -582,11 +584,24 @@ impl AcpProcess {
             .get("result")
             .and_then(|v| v.get("authMethods").or_else(|| v.get("auth_methods")))
             .cloned();
-        let supports_load = init_resp
+        let capabilities = init_resp
             .get("result")
-            .and_then(|v| v.get("capabilities").or_else(|| v.get("agentCapabilities")))
+            .and_then(|v| v.get("capabilities").or_else(|| v.get("agentCapabilities")));
+        let supports_load = capabilities
             .and_then(|v| v.get("loadSession"))
             .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let supports_resume = capabilities
+            .and_then(|v| {
+                v.get("sessionCapabilities")
+                    .or_else(|| v.get("session_capabilities"))
+            })
+            .and_then(|v| v.get("resume"))
+            .map(|v| match v {
+                serde_json::Value::Bool(value) => *value,
+                serde_json::Value::Null => false,
+                _ => true,
+            })
             .unwrap_or(false);
 
         {
@@ -594,6 +609,8 @@ impl AcpProcess {
             *guard = auth_methods.clone();
         }
         self.supports_load.store(supports_load, Ordering::SeqCst);
+        self.supports_resume
+            .store(supports_resume, Ordering::SeqCst);
 
         let _ = event_sink
             .send(NormalizedEvent {
@@ -603,6 +620,7 @@ impl AcpProcess {
                     "auth_methods": auth_methods.clone(),
                     "authMethods": auth_methods,
                     "supports_load": supports_load,
+                    "supports_resume": supports_resume,
                 }),
             })
             .await;
@@ -672,26 +690,26 @@ impl AcpProcess {
         let mut models: Option<serde_json::Value> = None;
 
         if let Some(resume_id) = resume_session_id.clone() {
-            if self.supports_load.load(Ordering::SeqCst) {
-                let load_resp = self
+            if self.supports_resume.load(Ordering::SeqCst) {
+                let resume_resp = self
                     .send_request(
-                        "session/load",
+                        "session/resume",
                         json!({"sessionId": resume_id, "cwd": cwd, "mcpServers": mcp_servers}),
                     )
                     .await
-                    .context("waiting for session/load response")?;
-                if load_resp.get("error").is_none() {
+                    .context("waiting for session/resume response")?;
+                if resume_resp.get("error").is_none() {
                     resumed = true;
                     session_id = Some(resume_id);
-                    modes = load_resp
+                    modes = resume_resp
                         .get("result")
                         .and_then(|v| v.get("modes"))
                         .cloned();
-                    models = load_resp
+                    models = resume_resp
                         .get("result")
                         .and_then(|v| v.get("models"))
                         .cloned();
-                } else if let Some(err) = load_resp.get("error") {
+                } else if let Some(err) = resume_resp.get("error") {
                     if is_auth_required_error(err) {
                         let auth_methods = self.auth_methods.lock().await.clone();
                         let _ = event_sink
@@ -700,7 +718,7 @@ impl AcpProcess {
                                 payload_json: json!({
                                     "kind": "auth_required",
                                     "provider": self.agent.provider_id,
-                                    "message": "Provider requires authentication before loading a session.",
+                                    "message": "Provider requires authentication before resuming a session.",
                                     "auth_methods": auth_methods.clone(),
                                     "authMethods": auth_methods,
                                     "acp_error": err,
@@ -714,8 +732,8 @@ impl AcpProcess {
                             event_type: SessionEventType::Error,
                             payload_json: json!({
                                 "provider": self.agent.provider_id,
-                                "message": "session/load failed; starting a new provider session",
-                                "acp_error": load_resp.get("error"),
+                                "message": "session/resume failed; starting a new provider session",
+                                "acp_error": resume_resp.get("error"),
                             }),
                         })
                         .await;
@@ -775,6 +793,7 @@ impl AcpProcess {
                     "acp_session_id": session_id,
                     "resumed": resumed,
                     "supports_load": self.supports_load.load(Ordering::SeqCst),
+                    "supports_resume": self.supports_resume.load(Ordering::SeqCst),
                     "modes": modes,
                     "models": models,
                     "auth_methods": auth_methods.clone(),
@@ -1495,6 +1514,7 @@ fn jsonrpc_id_u64(v: &serde_json::Value) -> Option<u64> {
 #[derive(Debug, Clone)]
 pub struct AcpProviderOptionsProbe {
     pub supports_load: bool,
+    pub supports_resume: bool,
     pub auth_methods: Option<serde_json::Value>,
     pub modes: Option<serde_json::Value>,
     pub models: Option<serde_json::Value>,
@@ -1597,11 +1617,24 @@ pub async fn probe_provider_options(
             anyhow::bail!("ACP initialize error: {err}");
         }
 
-        let supports_load = init_resp
+        let capabilities = init_resp
             .get("result")
-            .and_then(|v| v.get("capabilities").or_else(|| v.get("agentCapabilities")))
+            .and_then(|v| v.get("capabilities").or_else(|| v.get("agentCapabilities")));
+        let supports_load = capabilities
             .and_then(|v| v.get("loadSession"))
             .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let supports_resume = capabilities
+            .and_then(|v| {
+                v.get("sessionCapabilities")
+                    .or_else(|| v.get("session_capabilities"))
+            })
+            .and_then(|v| v.get("resume"))
+            .map(|v| match v {
+                serde_json::Value::Bool(value) => *value,
+                serde_json::Value::Null => false,
+                _ => true,
+            })
             .unwrap_or(false);
 
         let auth_methods = init_resp
@@ -1641,6 +1674,7 @@ pub async fn probe_provider_options(
             let _ = child.kill().await;
             return Ok(AcpProviderOptionsProbe {
                 supports_load,
+                supports_resume,
                 auth_methods,
                 modes: None,
                 models: None,
@@ -1656,6 +1690,7 @@ pub async fn probe_provider_options(
 
         Ok(AcpProviderOptionsProbe {
             supports_load,
+            supports_resume,
             auth_methods,
             modes,
             models,

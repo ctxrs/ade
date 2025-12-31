@@ -103,9 +103,12 @@ pub trait ProviderAdapter: Send + Sync {
     }
 
     /// Whether this adapter has an in-memory live provider session for the given key.
-    ///
-    /// Used to decide whether to apply one-time rehydrate strategies after daemon restart.
     async fn has_live_session(&self, _session_key: &str) -> bool {
+        false
+    }
+
+    /// Whether the provider supports native session resume (without replay).
+    fn supports_resume(&self) -> bool {
         false
     }
 

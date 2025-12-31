@@ -178,10 +178,10 @@ impl ProviderAdapter for FakeProviderAdapter {
             }
         });
         let abort = join.abort_handle();
-        let _task = tokio::spawn(async move {
+        drop(tokio::spawn(async move {
             let _ = join.await;
             let _ = done_tx.send(());
-        });
+        }));
 
         Ok(RunHandle {
             done: done_rx,

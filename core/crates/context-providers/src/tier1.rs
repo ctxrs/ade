@@ -285,10 +285,10 @@ impl ProviderAdapter for Tier1AcpAdapter {
         });
         let abort = join.abort_handle();
 
-        let _task = tokio::spawn(async move {
+        drop(tokio::spawn(async move {
             let _ = join.await;
             let _ = done_tx.send(());
-        });
+        }));
 
         Ok(RunHandle {
             done: done_rx,
@@ -346,6 +346,10 @@ impl ProviderAdapter for Tier1AcpAdapter {
 
     async fn has_live_session(&self, session_key: &str) -> bool {
         self.pool.has_session(session_key).await
+    }
+
+    fn supports_resume(&self) -> bool {
+        matches!(self.id.as_str(), "codex" | "claude")
     }
 }
 
@@ -462,7 +466,26 @@ async fn embed_at_file_refs(workdir: &Path, input: &str) -> Result<Vec<serde_jso
 
 fn default_caps(id: &str) -> ProviderCapabilities {
     match id {
-        "codex" | "claude" | "gemini" => ProviderCapabilities {
+        "codex" | "claude" => ProviderCapabilities {
+            stream_events: true,
+            stream_format: "acp-jsonrpc".into(),
+            has_turn_boundaries: true,
+            has_tool_call_ids: true,
+            has_file_change_events: false,
+            has_command_events: false,
+            supports_resume: true,
+            supports_stable_session_id: false,
+            supports_fork_or_rewind: false,
+            supports_headless: true,
+            supports_server_mode: false,
+            supports_acp: true,
+            supports_interactive_tui: false,
+            supports_private_state_dir: false,
+            supports_sandbox_flags: false,
+            supports_approval_flags: false,
+            notes: vec![],
+        },
+        "gemini" => ProviderCapabilities {
             stream_events: true,
             stream_format: "acp-jsonrpc".into(),
             has_turn_boundaries: true,

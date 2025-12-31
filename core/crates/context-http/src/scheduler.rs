@@ -237,35 +237,13 @@ async fn start_turn(
         }
     }
 
-    let session_key = session.id.0.to_string();
-    let needs_rehydrate =
-        session.provider_session_ref.is_some() && !adapter.has_live_session(&session_key).await;
-    let mut context_blocks: Vec<serde_json::Value> = Vec::new();
-    if needs_rehydrate {
-        if let Ok(block) = build_rehydrate_transcript_block(&state.store, session.id).await {
-            context_blocks.push(block);
-            let _ = emit_event(
-                state,
-                session.id,
-                Some(run_id),
-                Some(turn_id),
-                SessionEventType::Notice,
-                json!({
-                    "kind": "rehydrate",
-                    "message": "Daemon restarted; providing transcript to rehydrate provider context.",
-                }),
-            )
-            .await;
-        }
-    }
-
     let run_started_at = Instant::now();
     let handle = match adapter
         .run(
             TurnInput {
                 content: prompt,
                 attachments: message.attachments.clone(),
-                context_blocks,
+                context_blocks: Vec::new(),
             },
             workdir.to_path_buf(),
             provider_env,
@@ -788,58 +766,6 @@ pub async fn reconcile_turn_terminal_state(
         )
         .await;
     Ok(())
-}
-
-async fn build_rehydrate_transcript_block(
-    store: &context_store::Store,
-    session_id: context_core::ids::SessionId,
-) -> Result<serde_json::Value> {
-    let msgs = store.list_messages_for_session(session_id).await?;
-    if msgs.is_empty() {
-        anyhow::bail!("no messages to rehydrate");
-    }
-
-    const MAX_MESSAGES: usize = 24;
-    const MAX_CHARS_PER_MESSAGE: usize = 4000;
-    let tail: Vec<_> = msgs
-        .into_iter()
-        .rev()
-        .take(MAX_MESSAGES)
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .collect();
-
-    let mut text = String::new();
-    text.push_str("Session transcript (for continuity after Context daemon restart):\n\n");
-    for m in tail {
-        let role = match m.role {
-            MessageRole::User => "user",
-            MessageRole::Assistant => "assistant",
-            MessageRole::System => "system",
-        };
-        let mut content = m.content;
-        if content.chars().count() > MAX_CHARS_PER_MESSAGE {
-            content = content
-                .chars()
-                .take(MAX_CHARS_PER_MESSAGE)
-                .collect::<String>();
-            content.push_str("\n…(truncated)");
-        }
-        text.push_str(&format!(
-            "[{}] {role}:\n{content}\n\n",
-            m.created_at.to_rfc3339()
-        ));
-    }
-
-    Ok(json!({
-        "type": "resource",
-        "resource": {
-            "uri": format!("context://session/{}/transcript", session_id.0),
-            "mimeType": "text/plain",
-            "text": text
-        }
-    }))
 }
 
 async fn emit_event(
