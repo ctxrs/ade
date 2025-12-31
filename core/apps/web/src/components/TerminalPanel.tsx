@@ -34,6 +34,7 @@ import {
   saveWorkbenchTerminalLayoutV1,
   saveWorkbenchTerminalTitlesV1,
 } from "../workbench/persistence";
+import { randomUuid } from "../utils/randomUuid";
 
 export type TerminalPanelHandle = {
   createTerminal: (opts: CreateTerminalOptions) => Promise<string | null>;
@@ -144,9 +145,9 @@ function resolveActiveLeafId(node: TerminalLayoutNode | null, activeLeafId: stri
 }
 
 function createSingleTerminalGroup(terminalId: string): TerminalGroupState {
-  const leafId = crypto.randomUUID();
+  const leafId = randomUuid();
   return {
-    id: crypto.randomUUID(),
+    id: randomUuid(),
     layout: { kind: "leaf", id: leafId, terminalId },
     activeLeafId: leafId,
   };
@@ -197,11 +198,11 @@ function splitLeaf(
     const existing = node.terminalId;
     return {
       kind: "split",
-      id: crypto.randomUUID(),
+      id: randomUuid(),
       direction,
       ratio: 0.5,
-      first: { kind: "leaf", id: crypto.randomUUID(), terminalId: existing },
-      second: { kind: "leaf", id: crypto.randomUUID(), terminalId: newTerminalId },
+      first: { kind: "leaf", id: randomUuid(), terminalId: existing },
+      second: { kind: "leaf", id: randomUuid(), terminalId: newTerminalId },
     };
   }
   return {

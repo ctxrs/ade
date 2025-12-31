@@ -324,6 +324,7 @@ export function SessionView({
   const scrollbarTrackRef = useRef<HTMLDivElement | null>(null);
   const scrollbarThumbRef = useRef<HTMLDivElement | null>(null);
   const scrollbarThumbHeightRef = useRef(0);
+  const scrollbarLastScrollTopRef = useRef<number | null>(null);
   const scrollbarDragRef = useRef<ScrollbarDragState | null>(null);
   const latestAnchorIdRef = useRef<string | null>(null);
   const restoringScrollRef = useRef(false);
@@ -1542,7 +1543,8 @@ export function SessionView({
           />
         );
       }
-      return renderThreadItem(item as ThreadItem);
+      const content = renderThreadItem(item as ThreadItem);
+      return <div className="wb-thread-indent">{content}</div>;
     },
     [expandedTurnHeaders, renderThreadItem],
   );
@@ -1558,9 +1560,13 @@ export function SessionView({
         <div
           {...props}
           ref={(node) => {
-            const prev = scrollerRef.current;
             scrollerRef.current = node;
-            if (node) scheduleScrollbarUpdate();
+            if (node) {
+              scrollbarLastScrollTopRef.current = node.scrollTop;
+              scheduleScrollbarUpdate();
+            } else {
+              scrollbarLastScrollTopRef.current = null;
+            }
             if (typeof ref === "function") ref(node);
             else if (ref) (ref as React.MutableRefObject<HTMLDivElement | null>).current = node;
           }}
@@ -1574,7 +1580,12 @@ export function SessionView({
                 : typeof (event as any).nativeEvent?.isTrusted === "boolean"
                   ? (event as any).nativeEvent.isTrusted
                   : true;
-            if (trusted) showScrollbarTemporarily();
+            const scroller = scrollerRef.current;
+            const nextScrollTop = scroller?.scrollTop ?? 0;
+            const prevScrollTop = scrollbarLastScrollTopRef.current ?? nextScrollTop;
+            const didScroll = Math.abs(nextScrollTop - prevScrollTop) > 0.5;
+            scrollbarLastScrollTopRef.current = nextScrollTop;
+            if (trusted && didScroll) showScrollbarTemporarily();
             scheduleScrollbarUpdate();
             if (restoringScrollRef.current && !trusted) return;
             if (restoringScrollRef.current && trusted) {
