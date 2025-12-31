@@ -743,6 +743,8 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const dictationReadyRef = useRef(false);
   const dictationAudioStartedRef = useRef(false);
   const dictationTranscriptMsgsRef = useRef(0);
+  const dictationFinalizeWaiterRef = useRef<{ promise: Promise<void>; resolve: () => void } | null>(null);
+  const dictationSuppressUpdatesRef = useRef(false);
 
   const [diffWidth, setDiffWidth] = useState(480);
   const [diffResizing, setDiffResizing] = useState(false);
@@ -1815,7 +1817,8 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     return null;
   }, [draftPrompt, startBusy, draftTracks, providersById]);
 
-  const stopDictation = useCallback(async (): Promise<string> => {
+  const stopDictation = useCallback(async (opts?: { awaitFinal?: boolean }): Promise<string> => {
+    const awaitFinal = opts?.awaitFinal === true;
     setDictationRecording(false);
 
     const ws = dictationWsRef.current;
@@ -1827,15 +1830,40 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       await mic?.stop();
     } catch { }
 
+    let finalizeWaiter = dictationFinalizeWaiterRef.current;
+    if (ws && ws.readyState !== WebSocket.CLOSED) {
+      if (!finalizeWaiter) {
+        let resolve: () => void = () => { };
+        const promise = new Promise<void>((res) => {
+          resolve = res;
+        });
+        finalizeWaiter = { promise, resolve };
+        dictationFinalizeWaiterRef.current = finalizeWaiter;
+      }
+    }
+
     try {
       ws?.send(JSON.stringify({ type: "stop" }));
     } catch { }
 
-    const base = dictationBaseRef.current;
-    const committed = dictationCommittedRef.current;
-    const interim = dictationInterimRef.current;
-    const next = appendSegment(appendSegment(base, committed), interim);
+    if (awaitFinal && finalizeWaiter) {
+      await Promise.race([
+        finalizeWaiter.promise,
+        new Promise<void>((resolve) => window.setTimeout(resolve, 8000)),
+      ]);
+    }
+
+    const next = appendSegment(
+      appendSegment(dictationBaseRef.current, dictationCommittedRef.current),
+      dictationInterimRef.current,
+    );
     setDraftPrompt(next);
+    if (awaitFinal) {
+      dictationSuppressUpdatesRef.current = true;
+      dictationBaseRef.current = "";
+      dictationCommittedRef.current = "";
+      dictationInterimRef.current = "";
+    }
     dictationInterimRef.current = "";
     dictationReadyRef.current = false;
     dictationAudioStartedRef.current = false;
@@ -1887,6 +1915,8 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     const ws = new WebSocket(url);
     ws.binaryType = "arraybuffer";
     dictationWsRef.current = ws;
+    dictationFinalizeWaiterRef.current = null;
+    dictationSuppressUpdatesRef.current = false;
 
     dictationBaseRef.current = draftPrompt;
     dictationCommittedRef.current = "";
@@ -1920,18 +1950,23 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
           dictationCommittedRef.current = appendSegment(dictationCommittedRef.current, String(data.text ?? ""));
           dictationInterimRef.current = "";
         } else if (t === "done") {
+          dictationFinalizeWaiterRef.current?.resolve();
+          dictationFinalizeWaiterRef.current = null;
           try {
             ws.close();
           } catch { }
           return;
         } else if (t === "error") {
           setDictationError(String(data.message ?? "Dictation error"));
+          dictationFinalizeWaiterRef.current?.resolve();
+          dictationFinalizeWaiterRef.current = null;
           stopDictation().catch(() => { });
           return;
         } else {
           return;
         }
 
+        if (dictationSuppressUpdatesRef.current) return;
         const base = dictationBaseRef.current;
         const committed = dictationCommittedRef.current;
         const interim = dictationInterimRef.current;
@@ -1942,6 +1977,8 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     ws.addEventListener("close", () => {
       dictationWsRef.current = null;
       setDictationRecording(false);
+      dictationFinalizeWaiterRef.current?.resolve();
+      dictationFinalizeWaiterRef.current = null;
     });
 
     try {
@@ -1992,7 +2029,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
 
   const startNewTask = async () => {
     if (!workspaceId) return;
-    const prompt = (dictationRecording ? await stopDictation() : draftPrompt).trim();
+    const prompt = (dictationRecording ? await stopDictation({ awaitFinal: true }) : draftPrompt).trim();
     if (!prompt) return;
     if (startBusy) return;
     if (startBlockedReason && !startBlockedReason.startsWith("Starting")) {

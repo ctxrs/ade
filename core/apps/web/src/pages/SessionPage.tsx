@@ -660,6 +660,8 @@ export function SessionView({
   const dictationReadyRef = useRef(false);
   const dictationAudioStartedRef = useRef(false);
   const dictationTranscriptMsgsRef = useRef(0);
+  const dictationFinalizeWaiterRef = useRef<{ promise: Promise<void>; resolve: () => void } | null>(null);
+  const dictationSuppressUpdatesRef = useRef(false);
 
   const entry = useSessionEntry(id ?? "");
   const session: Session | null = entry?.session ?? null;
@@ -707,7 +709,8 @@ export function SessionView({
     return null;
   }, [eventsKey, optimisticAskAnswered]);
 
-  const stopDictation = useCallback(async (): Promise<string> => {
+  const stopDictation = useCallback(async (opts?: { awaitFinal?: boolean }): Promise<string> => {
+    const awaitFinal = opts?.awaitFinal === true;
     const ws = dictationWsRef.current;
     const mic = dictationMicRef.current;
     const base = dictationBaseRef.current;
@@ -726,12 +729,40 @@ export function SessionView({
       await mic?.stop();
     } catch { }
 
+    let finalizeWaiter = dictationFinalizeWaiterRef.current;
+    if (ws && ws.readyState !== WebSocket.CLOSED) {
+      if (!finalizeWaiter) {
+        let resolve: () => void = () => { };
+        const promise = new Promise<void>((res) => {
+          resolve = res;
+        });
+        finalizeWaiter = { promise, resolve };
+        dictationFinalizeWaiterRef.current = finalizeWaiter;
+      }
+    }
+
     try {
       ws?.send(JSON.stringify({ type: "stop" }));
     } catch { }
 
-    const next = appendSegment(appendSegment(base, committed), interim);
+    if (awaitFinal && finalizeWaiter) {
+      await Promise.race([
+        finalizeWaiter.promise,
+        new Promise<void>((resolve) => window.setTimeout(resolve, 8000)),
+      ]);
+    }
+
+    const next = appendSegment(
+      appendSegment(dictationBaseRef.current, dictationCommittedRef.current),
+      dictationInterimRef.current,
+    );
     if (next !== input) setInput(next);
+    if (awaitFinal) {
+      dictationSuppressUpdatesRef.current = true;
+      dictationBaseRef.current = "";
+      dictationCommittedRef.current = "";
+      dictationInterimRef.current = "";
+    }
     dictationInterimRef.current = "";
     dictationReadyRef.current = false;
     dictationAudioStartedRef.current = false;
@@ -780,6 +811,8 @@ export function SessionView({
     const ws = new WebSocket(`${wsBase}/api/dictation/livekit/stream${qs}`);
     ws.binaryType = "arraybuffer";
     dictationWsRef.current = ws;
+    dictationFinalizeWaiterRef.current = null;
+    dictationSuppressUpdatesRef.current = false;
 
     dictationBaseRef.current = input;
     dictationCommittedRef.current = "";
@@ -813,18 +846,23 @@ export function SessionView({
           dictationCommittedRef.current = appendSegment(dictationCommittedRef.current, String(data.text ?? ""));
           dictationInterimRef.current = "";
         } else if (t === "done") {
+          dictationFinalizeWaiterRef.current?.resolve();
+          dictationFinalizeWaiterRef.current = null;
           try {
             ws.close();
           } catch { }
           return;
         } else if (t === "error") {
           setDictationError(String(data.message ?? "Dictation error"));
+          dictationFinalizeWaiterRef.current?.resolve();
+          dictationFinalizeWaiterRef.current = null;
           stopDictation().catch(() => { });
           return;
         } else {
           return;
         }
 
+        if (dictationSuppressUpdatesRef.current) return;
         const base = dictationBaseRef.current;
         const committed = dictationCommittedRef.current;
         const interim = dictationInterimRef.current;
@@ -835,6 +873,8 @@ export function SessionView({
     ws.addEventListener("close", () => {
       dictationWsRef.current = null;
       setDictationRecording(false);
+      dictationFinalizeWaiterRef.current?.resolve();
+      dictationFinalizeWaiterRef.current = null;
     });
 
     try {
@@ -1223,7 +1263,7 @@ export function SessionView({
   const sendNow = async () => {
     if (!id) return;
     if (sendBusy) return;
-    const text = (dictationRecording ? await stopDictation() : input).trim();
+    const text = (dictationRecording ? await stopDictation({ awaitFinal: true }) : input).trim();
     if (!text) return;
     setSendBusy(true);
     setSendError(null);

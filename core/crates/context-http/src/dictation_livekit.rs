@@ -255,15 +255,23 @@ pub async fn dictation_livekit_stream(mut socket: WebSocket, state: std::sync::A
 
     let (client_tx, mut client_rx) = socket.split();
     let client_tx = Arc::new(Mutex::new(client_tx));
-    let (mut lk_tx, mut lk_rx) = lk_ws.split();
+    let (lk_tx, mut lk_rx) = lk_ws.split();
+    let lk_tx = Arc::new(Mutex::new(lk_tx));
 
     let finalize_requested = Arc::new(AtomicBool::new(false));
     let finalize_requested_tx = finalize_requested.clone();
     let finalize_requested_rx = finalize_requested.clone();
+    let session_closed = Arc::new(AtomicBool::new(false));
+    let session_closed_send = session_closed.clone();
+    let session_closed_recv = session_closed.clone();
     let client_tx_send = client_tx.clone();
     let client_tx_recv = client_tx.clone();
     let audio_started = Arc::new(AtomicBool::new(false));
     let audio_started_send = audio_started.clone();
+    let close_scheduled = Arc::new(AtomicBool::new(false));
+    let close_scheduled_tx = close_scheduled.clone();
+    let lk_tx_send = lk_tx.clone();
+    let lk_tx_close = lk_tx.clone();
 
     let send_task = tokio::spawn(async move {
         let mut finalized = false;
@@ -283,7 +291,13 @@ pub async fn dictation_livekit_stream(mut socket: WebSocket, state: std::sync::A
                     }
                     let audio = BASE64.encode(bytes);
                     let payload = json!({ "type": "input_audio", "audio": audio }).to_string();
-                    if lk_tx.send(TMessage::Text(payload.into())).await.is_err() {
+                    if lk_tx_send
+                        .lock()
+                        .await
+                        .send(TMessage::Text(payload.into()))
+                        .await
+                        .is_err()
+                    {
                         break;
                     }
                 }
@@ -292,11 +306,24 @@ pub async fn dictation_livekit_stream(mut socket: WebSocket, state: std::sync::A
                     let parsed = serde_json::from_str::<ClientControl>(&text);
                     if matches!(parsed, Ok(ClientControl::Stop)) && !finalized {
                         finalize_requested_tx.store(true, Ordering::Relaxed);
-                        let _ = lk_tx
+                        let _ = lk_tx_send
+                            .lock()
+                            .await
                             .send(TMessage::Text(
                                 json!({ "type": "session.finalize" }).to_string().into(),
                             ))
                             .await;
+                        if !close_scheduled_tx.swap(true, Ordering::Relaxed) {
+                            let lk_tx_close = lk_tx_close.clone();
+                            let session_closed_tx = session_closed_send.clone();
+                            tokio::spawn(async move {
+                                tokio::time::sleep(Duration::from_millis(150)).await;
+                                if session_closed_tx.load(Ordering::Relaxed) {
+                                    return;
+                                }
+                                let _ = lk_tx_close.lock().await.send(TMessage::Close(None)).await;
+                            });
+                        }
                         finalized = true;
                     }
                 }
@@ -310,11 +337,24 @@ pub async fn dictation_livekit_stream(mut socket: WebSocket, state: std::sync::A
                 WsMessage::Close(_) => {
                     if !finalized {
                         finalize_requested_tx.store(true, Ordering::Relaxed);
-                        let _ = lk_tx
+                        let _ = lk_tx_send
+                            .lock()
+                            .await
                             .send(TMessage::Text(
                                 json!({ "type": "session.finalize" }).to_string().into(),
                             ))
                             .await;
+                        if !close_scheduled_tx.swap(true, Ordering::Relaxed) {
+                            let lk_tx_close = lk_tx_close.clone();
+                            let session_closed_tx = session_closed_send.clone();
+                            tokio::spawn(async move {
+                                tokio::time::sleep(Duration::from_millis(150)).await;
+                                if session_closed_tx.load(Ordering::Relaxed) {
+                                    return;
+                                }
+                                let _ = lk_tx_close.lock().await.send(TMessage::Close(None)).await;
+                            });
+                        }
                     }
                     break;
                 }
@@ -376,7 +416,10 @@ pub async fn dictation_livekit_stream(mut socket: WebSocket, state: std::sync::A
                                 break;
                             }
                         }
-                        "session.finalized" => break,
+                        "session.finalized" => {
+                            session_closed_recv.store(true, Ordering::Relaxed);
+                            break;
+                        }
                         "error" => {
                             let out = json!({
                                 "type": "error",
@@ -389,11 +432,17 @@ pub async fn dictation_livekit_stream(mut socket: WebSocket, state: std::sync::A
                                 .await;
                             break;
                         }
-                        "session.closed" => break,
+                        "session.closed" => {
+                            session_closed_recv.store(true, Ordering::Relaxed);
+                            break;
+                        }
                         _ => {}
                     }
                 }
-                TMessage::Close(_) => break,
+                TMessage::Close(_) => {
+                    session_closed_recv.store(true, Ordering::Relaxed);
+                    break;
+                }
                 _ => {}
             }
 
