@@ -300,7 +300,7 @@ export function SessionView({
   const [expandedTurnDetailsById, setExpandedTurnDetailsById] = useState<Record<string, boolean>>({});
   const [expandedThoughtByAssistantId, setExpandedThoughtByAssistantId] = useState<Record<string, boolean>>({});
   const [expandedToolById, setExpandedToolById] = useState<Record<string, boolean>>({});
-  const virtuosoRef = useRef<VirtuosoHandle>(null);
+  const virtuosoRef = useRef<VirtuosoHandle | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const didInitialScrollRef = useRef(false);
   const lastScrollPersistedRef = useRef<{
@@ -2180,7 +2180,7 @@ export function SessionView({
 type WorkbenchThreadStackProps = {
   virtuosoStyle: CSSProperties;
   data: WorkbenchListItem[];
-  virtuosoRef: React.RefObject<VirtuosoHandle | null>;
+  virtuosoRef: React.MutableRefObject<VirtuosoHandle | null>;
   followOutput: false | "auto";
   restoreStateFrom?: StateSnapshot;
   increaseViewportBy: { top: number; bottom: number };
@@ -2194,8 +2194,8 @@ type WorkbenchThreadStackProps = {
   scrollbarActive: boolean;
   scrollbarDragging: boolean;
   scrollbarNeeded: boolean;
-  scrollbarTrackRef: React.RefObject<HTMLDivElement | null>;
-  scrollbarThumbRef: React.RefObject<HTMLDivElement | null>;
+  scrollbarTrackRef: React.MutableRefObject<HTMLDivElement | null>;
+  scrollbarThumbRef: React.MutableRefObject<HTMLDivElement | null>;
   onScrollbarMouseLeave: () => void;
   onScrollbarTrackPointerDown: (event: PointerEvent<HTMLDivElement>) => void;
   onScrollbarThumbPointerDown: (event: PointerEvent<HTMLDivElement>) => void;
@@ -2235,7 +2235,9 @@ const WorkbenchThreadStack = memo(function WorkbenchThreadStack({
       <Virtuoso
         style={virtuosoStyle}
         data={data}
-        ref={virtuosoRef}
+        ref={(node) => {
+          virtuosoRef.current = node;
+        }}
         followOutput={followOutput}
         defaultItemHeight={56}
         increaseViewportBy={increaseViewportBy}
@@ -2292,7 +2294,7 @@ const WorkbenchThreadStack = memo(function WorkbenchThreadStack({
 type LegacyThreadStackProps = {
   virtuosoStyle: CSSProperties;
   data: ThreadItem[];
-  virtuosoRef: React.RefObject<VirtuosoHandle | null>;
+  virtuosoRef: React.MutableRefObject<VirtuosoHandle | null>;
   followOutput: false | "auto";
   restoreStateFrom?: StateSnapshot;
   onAtBottomStateChange: (isAtBottom: boolean) => void;
@@ -2321,7 +2323,9 @@ const LegacyThreadStack = memo(function LegacyThreadStack({
       <Virtuoso
         style={virtuosoStyle}
         data={data}
-        ref={virtuosoRef}
+        ref={(node) => {
+          virtuosoRef.current = node;
+        }}
         followOutput={followOutput}
         defaultItemHeight={56}
         computeItemKey={(index, item) => item?.id ?? `i:${index}`}
