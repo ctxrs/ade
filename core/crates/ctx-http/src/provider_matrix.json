@@ -66,8 +66,9 @@
         },
         {
           "version": "0.7.4",
-          "status": "supported",
-          "context_min": "0.1.0"
+          "status": "blocked",
+          "context_min": "0.1.0",
+          "notes": "Prefer ctx-patched ACP builds"
         },
         {
           "version": "0.7.4-ctx.1",

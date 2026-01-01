@@ -49,7 +49,8 @@ serve(async (req) => {
 
   const urlPath = `/download/${channel}/${version}/${filename}`;
   const objectPath = `artifacts/${channel}/${version}/${filename}`;
-  const redirectTo = `${supabaseUrl.replace(/\\/$/, "")}/storage/v1/object/public/${bucket}/${objectPath}`;
+  const baseUrl = supabaseUrl.endsWith("/") ? supabaseUrl.slice(0, -1) : supabaseUrl;
+  const redirectTo = `${baseUrl}/storage/v1/object/public/${bucket}/${objectPath}`;
 
   // Best-effort analytics insert (never block the redirect on analytics failure).
   try {
@@ -88,4 +89,3 @@ serve(async (req) => {
     },
   });
 });
-
