@@ -14,7 +14,7 @@ struct Cli {
 }
 
 fn ctx_env(name: &str) -> std::result::Result<String, std::env::VarError> {
-    std::env::var(format!("CTX_{name}")).or_else(|_| std::env::var(format!("CONTEXT_{name}")))
+    std::env::var(format!("CTX_{name}"))
 }
 
 fn ctx_env_opt(name: &str) -> Option<String> {
@@ -837,11 +837,7 @@ async fn main() -> Result<()> {
             "tools/call" => {
                 let params = msg.get("params").cloned().unwrap_or(json!({}));
                 let name = params.get("name").and_then(|v| v.as_str()).unwrap_or("");
-                let name = if let Some(rest) = name.strip_prefix("context.") {
-                    format!("ctx.{rest}")
-                } else {
-                    name.to_string()
-                };
+                let name = name.to_string();
                 let arguments = params.get("arguments").cloned().unwrap_or(json!({}));
                 match name.as_str() {
                     "ctx.ping" => ok(

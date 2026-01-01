@@ -23,7 +23,7 @@ use tokio::process::{Child, Command};
 use tokio::sync::{broadcast, mpsc, oneshot, Mutex, Notify};
 
 fn ctx_env(name: &str) -> std::result::Result<String, std::env::VarError> {
-    std::env::var(format!("CTX_{name}")).or_else(|_| std::env::var(format!("CONTEXT_{name}")))
+    std::env::var(format!("CTX_{name}"))
 }
 
 #[derive(Debug, Clone)]

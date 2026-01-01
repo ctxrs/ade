@@ -149,7 +149,6 @@ impl AppState {
         lsp_cfg: LspManagerConfig,
     ) -> Self {
         let lsp_edit_plans_enabled = std::env::var("CTX_LSP_EDITPLANS_ENABLED")
-            .or_else(|_| std::env::var("CONTEXT_LSP_EDITPLANS_ENABLED"))
             .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
             .unwrap_or(false);
         Self::new_with_lsp_config_and_flags(
@@ -880,12 +879,7 @@ pub async fn serve(
     providers.insert("auggie".into(), auggie_adapter.clone());
     providers.insert("cagent".into(), cagent_adapter.clone());
 
-    if std::env::var("CTX_SHOW_FAKE_PROVIDER")
-        .or_else(|_| std::env::var("CONTEXT_SHOW_FAKE_PROVIDER"))
-        .ok()
-        .as_deref()
-        == Some("1")
-    {
+    if std::env::var("CTX_SHOW_FAKE_PROVIDER").ok().as_deref() == Some("1") {
         providers.insert("fake".into(), Arc::new(FakeProviderAdapter::new()));
     }
 
@@ -935,9 +929,7 @@ pub async fn serve(
     let auth_token = if auth_disabled {
         None
     } else {
-        auth_token
-            .or_else(|| std::env::var("CTX_DESKTOP_TOKEN").ok())
-            .or_else(|| std::env::var("CONTEXT_DESKTOP_TOKEN").ok())
+        auth_token.or_else(|| std::env::var("CTX_DESKTOP_TOKEN").ok())
     };
     let auth_token_for_env = auth_token.clone();
     let prewarm_workdir = data_root.clone();
@@ -992,7 +984,6 @@ pub async fn serve(
     // - Always keep these providers warm today: codex, gemini, claude
     // - For future providers, they start on first use and remain alive for daemon lifetime.
     let prewarm_ids: std::collections::HashSet<String> = std::env::var("CTX_ACP_PREWARM_PROVIDERS")
-        .or_else(|_| std::env::var("CONTEXT_ACP_PREWARM_PROVIDERS"))
         .unwrap_or_else(|_| "codex,gemini,claude".to_string())
         .split(',')
         .map(|s| s.trim().to_string())
@@ -1050,7 +1041,7 @@ pub async fn init_workspace(root: Option<String>) -> Result<()> {
     ctx_fs::git::assert_git_repo(&root_path).await?;
 
     let context_dir = root_path.join(".ctx");
-    let pack_dir = context_dir.join("context-pack");
+    let pack_dir = context_dir.join("ctx-pack");
     let tmp_dir = pack_dir.join("tmp");
 
     tokio::fs::create_dir_all(pack_dir.join("specs")).await?;
@@ -1061,7 +1052,7 @@ pub async fn init_workspace(root: Option<String>) -> Result<()> {
     tokio::fs::create_dir_all(context_dir.join("exec-plans")).await?;
 
     let gitignore_path = root_path.join(".gitignore");
-    let ignore_line = ".ctx/context-pack/tmp/";
+    let ignore_line = ".ctx/ctx-pack/tmp/";
     let mut gitignore = if gitignore_path.exists() {
         tokio::fs::read_to_string(&gitignore_path).await?
     } else {

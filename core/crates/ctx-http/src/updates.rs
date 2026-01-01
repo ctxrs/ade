@@ -32,7 +32,6 @@ pub struct ReleaseManifest {
 
 pub fn default_download_base_url() -> String {
     std::env::var("CTX_DOWNLOAD_BASE_URL")
-        .or_else(|_| std::env::var("CONTEXT_DOWNLOAD_BASE_URL"))
         .unwrap_or_else(|_| "https://api.ctx.rs/functions/v1".to_string())
 }
 
@@ -237,10 +236,7 @@ pub fn updates_dir(data_root: &Path) -> PathBuf {
 }
 
 pub fn appimage_path_env() -> Option<PathBuf> {
-    std::env::var("CTX_APPIMAGE_PATH")
-        .or_else(|_| std::env::var("CONTEXT_APPIMAGE_PATH"))
-        .ok()
-        .map(PathBuf::from)
+    std::env::var("CTX_APPIMAGE_PATH").ok().map(PathBuf::from)
 }
 
 pub fn join_url(base_url: &str, url_path: &str) -> String {

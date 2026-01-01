@@ -326,9 +326,7 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
         .layer(middleware::from_fn_with_state(auth_state, auth_middleware))
         .with_state(state);
 
-    let dist_dir = std::env::var("CTX_WEB_DIST")
-        .or_else(|_| std::env::var("CONTEXT_WEB_DIST"))
-        .unwrap_or_else(|_| "apps/web/dist".into());
+    let dist_dir = std::env::var("CTX_WEB_DIST").unwrap_or_else(|_| "apps/web/dist".into());
     let index_path = format!("{}/index.html", dist_dir);
     api.fallback_service(ServeDir::new(dist_dir).not_found_service(ServeFile::new(index_path)))
 }
@@ -3403,20 +3401,15 @@ async fn apply_appimage_update(
             }),
         ));
     };
-    let new_downloaded = updates::updates_dir(&state.data_root).join("ctx.AppImage.new");
-    let legacy_downloaded = updates::updates_dir(&state.data_root).join("context.AppImage.new");
-    let downloaded = if new_downloaded.exists() {
-        new_downloaded
-    } else if legacy_downloaded.exists() {
-        legacy_downloaded
-    } else {
+    let downloaded = updates::updates_dir(&state.data_root).join("ctx.AppImage.new");
+    if !downloaded.exists() {
         return Err((
             StatusCode::BAD_REQUEST,
             Json(ApiErrorResp {
                 error: "no downloaded update found; call download first".to_string(),
             }),
         ));
-    };
+    }
 
     updates::atomic_replace_file(&target, &downloaded)
         .await
@@ -3719,11 +3712,7 @@ async fn list_providers(
         crate::provider_matrix::load_matrix_cached(&state.data_root, &state.provider_matrix_cache)
             .await;
 
-    let show_fake = std::env::var("CTX_SHOW_FAKE_PROVIDER")
-        .or_else(|_| std::env::var("CONTEXT_SHOW_FAKE_PROVIDER"))
-        .ok()
-        .as_deref()
-        == Some("1");
+    let show_fake = std::env::var("CTX_SHOW_FAKE_PROVIDER").ok().as_deref() == Some("1");
     for status in out.iter_mut() {
         installer::apply_managed_install_details(status, &managed);
         if status.provider_id == "fake" {
@@ -7353,14 +7342,10 @@ async fn authenticate_session(
     provider_env.insert("CTX_SESSION_ID".to_string(), session.id.0.to_string());
     let mcp_token = uuid::Uuid::new_v4().to_string();
     provider_env.insert("CTX_MCP_TOKEN".to_string(), mcp_token);
-    if let Ok(v) =
-        std::env::var("CTX_MCP_COMMAND").or_else(|_| std::env::var("CONTEXT_MCP_COMMAND"))
-    {
+    if let Ok(v) = std::env::var("CTX_MCP_COMMAND") {
         provider_env.insert("CTX_MCP_COMMAND".to_string(), v);
     }
-    if let Ok(v) =
-        std::env::var("CTX_MCP_DISABLED").or_else(|_| std::env::var("CONTEXT_MCP_DISABLED"))
-    {
+    if let Ok(v) = std::env::var("CTX_MCP_DISABLED") {
         provider_env.insert("CTX_MCP_DISABLED".to_string(), v);
     }
 
@@ -7690,9 +7675,7 @@ async fn track_diff_summary(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<Json<TrackDiffSummaryResponse>, StatusCode> {
-    let perf = std::env::var_os("CTX_PERF")
-        .or_else(|| std::env::var_os("CONTEXT_PERF"))
-        .is_some();
+    let perf = std::env::var_os("CTX_PERF").is_some();
     let t0 = Instant::now();
     let track_id = TrackId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
     let track = state
@@ -7768,9 +7751,7 @@ async fn track_diff(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<Json<DiffResponse>, StatusCode> {
-    let perf = std::env::var_os("CTX_PERF")
-        .or_else(|| std::env::var_os("CONTEXT_PERF"))
-        .is_some();
+    let perf = std::env::var_os("CTX_PERF").is_some();
     let t0 = Instant::now();
     let track_id = TrackId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
     let track = state
@@ -7812,9 +7793,7 @@ async fn track_diff_apply(
     Path(id): Path<String>,
     Json(req): Json<TrackDiffApplyReq>,
 ) -> Result<Json<DiffResponse>, (StatusCode, Json<ApiErrorResp>)> {
-    let perf = std::env::var_os("CTX_PERF")
-        .or_else(|| std::env::var_os("CONTEXT_PERF"))
-        .is_some();
+    let perf = std::env::var_os("CTX_PERF").is_some();
     let t0 = Instant::now();
     let track_id = TrackId(uuid::Uuid::parse_str(&id).map_err(|_| {
         (

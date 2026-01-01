@@ -46,15 +46,15 @@ const DEFAULT_TOOL_FIXTURES = [
   {
     kind: "execute",
     title: "Explored specs",
-    input: { command: "ls .ctx/context-pack/specs" },
+    input: { command: "ls .ctx/ctx-pack/specs" },
   },
   {
     kind: "execute",
-    title: "Run ./scripts/supercat.sh .ctx/context-pack/specs",
-    input: { command: "./scripts/supercat.sh .ctx/context-pack/specs" },
+    title: "Run ./scripts/supercat.sh .ctx/ctx-pack/specs",
+    input: { command: "./scripts/supercat.sh .ctx/ctx-pack/specs" },
   },
   { kind: "search", title: "Searched workbench", input: { query: "workbench" } },
-  { kind: "read", title: "Read context-pack", input: { path: ".ctx/context-pack" } },
+  { kind: "read", title: "Read ctx-pack", input: { path: ".ctx/ctx-pack" } },
 ];
 
 const chunkFixtures = (fixtures: SeedOptions["toolSummaryFixtures"], count: number, offset: number) => {

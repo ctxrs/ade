@@ -120,8 +120,8 @@ export default function DaemonAvailabilityOverlay() {
     if (base) setDaemonBaseUrl(base, true);
     else setDaemonBaseUrl(null, false);
     try {
-      if (token) sessionStorage.setItem("contextAuthToken", token);
-      else sessionStorage.removeItem("contextAuthToken");
+      if (token) sessionStorage.setItem("ctxAuthToken", token);
+      else sessionStorage.removeItem("ctxAuthToken");
     } catch {
       // ignore
     }

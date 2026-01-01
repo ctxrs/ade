@@ -247,7 +247,6 @@ struct TelemetryRuntime {
 
 pub fn default_telemetry_endpoint() -> String {
     let base = std::env::var("CTX_TELEMETRY_BASE_URL")
-        .or_else(|_| std::env::var("CONTEXT_TELEMETRY_BASE_URL"))
         .unwrap_or_else(|_| DEFAULT_TELEMETRY_BASE_URL.to_string());
     format!("{}/telemetry", base.trim_end_matches('/'))
 }

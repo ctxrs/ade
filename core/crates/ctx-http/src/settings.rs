@@ -277,9 +277,7 @@ pub async fn load_settings(data_root: &Path) -> Settings {
 
     // Environment overrides (optional) for easy local bring-up.
     // These are intentionally "best-effort" and do not persist.
-    if let Ok(v) = std::env::var("CTX_DICTATION_PROVIDER")
-        .or_else(|_| std::env::var("CONTEXT_DICTATION_PROVIDER"))
-    {
+    if let Ok(v) = std::env::var("CTX_DICTATION_PROVIDER") {
         if v.trim().eq_ignore_ascii_case("disabled") {
             settings.dictation = Some(DictationSettings {
                 enabled: false,
@@ -320,9 +318,7 @@ pub async fn load_settings(data_root: &Path) -> Settings {
             }
         }
     }
-    if let Ok(base_url) = std::env::var("CTX_LIVEKIT_INFERENCE_BASE_URL")
-        .or_else(|_| std::env::var("CONTEXT_LIVEKIT_INFERENCE_BASE_URL"))
-    {
+    if let Ok(base_url) = std::env::var("CTX_LIVEKIT_INFERENCE_BASE_URL") {
         let d = settings
             .dictation
             .get_or_insert_with(DictationSettings::default);

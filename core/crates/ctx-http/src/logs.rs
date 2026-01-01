@@ -60,9 +60,8 @@ pub fn redact_sensitive(input: &str) -> String {
     out = redact_after_marker(out, "token=");
     out = redact_after_marker(out, "TOKEN=");
     out = redact_after_marker(out, "CTX_DESKTOP_TOKEN=");
-    out = redact_after_marker(out, "CONTEXT_DESKTOP_TOKEN=");
-    out = redact_after_marker(out, "contextAuthToken\":\"");
-    out = redact_after_marker(out, "context_auth_token\":\"");
+    out = redact_after_marker(out, "ctxAuthToken\":\"");
+    out = redact_after_marker(out, "ctx_auth_token\":\"");
     out
 }
 

@@ -12,36 +12,36 @@
       },
       "managed_install": {
         "kind": "archive",
-        "version": "0.7.4-context.3",
+        "version": "0.7.4-ctx.3",
         "args": [],
         "targets": {
           "darwin-aarch64": {
-            "url": "https://github.com/contextrs/codex-acp/releases/download/v0.7.4-context.3/codex-acp-0.7.4-context.3-aarch64-apple-darwin.tar.gz",
+            "url": "https://github.com/ctxrs/codex-acp/releases/download/v0.7.4-ctx.3/codex-acp-0.7.4-ctx.3-aarch64-apple-darwin.tar.gz",
             "archive": "tar_gz",
             "bin_path": "codex-acp"
           },
           "darwin-x86_64": {
-            "url": "https://github.com/contextrs/codex-acp/releases/download/v0.7.4-context.3/codex-acp-0.7.4-context.3-x86_64-apple-darwin.tar.gz",
+            "url": "https://github.com/ctxrs/codex-acp/releases/download/v0.7.4-ctx.3/codex-acp-0.7.4-ctx.3-x86_64-apple-darwin.tar.gz",
             "archive": "tar_gz",
             "bin_path": "codex-acp"
           },
           "linux-aarch64": {
-            "url": "https://github.com/contextrs/codex-acp/releases/download/v0.7.4-context.3/codex-acp-0.7.4-context.3-aarch64-unknown-linux-gnu.tar.gz",
+            "url": "https://github.com/ctxrs/codex-acp/releases/download/v0.7.4-ctx.3/codex-acp-0.7.4-ctx.3-aarch64-unknown-linux-gnu.tar.gz",
             "archive": "tar_gz",
             "bin_path": "codex-acp"
           },
           "linux-x86_64": {
-            "url": "https://github.com/contextrs/codex-acp/releases/download/v0.7.4-context.3/codex-acp-0.7.4-context.3-x86_64-unknown-linux-gnu.tar.gz",
+            "url": "https://github.com/ctxrs/codex-acp/releases/download/v0.7.4-ctx.3/codex-acp-0.7.4-ctx.3-x86_64-unknown-linux-gnu.tar.gz",
             "archive": "tar_gz",
             "bin_path": "codex-acp"
           },
           "windows-x86_64": {
-            "url": "https://github.com/contextrs/codex-acp/releases/download/v0.7.4-context.3/codex-acp-0.7.4-context.3-x86_64-pc-windows-msvc.zip",
+            "url": "https://github.com/ctxrs/codex-acp/releases/download/v0.7.4-ctx.3/codex-acp-0.7.4-ctx.3-x86_64-pc-windows-msvc.zip",
             "archive": "zip",
             "bin_path": "codex-acp.exe"
           },
           "windows-aarch64": {
-            "url": "https://github.com/contextrs/codex-acp/releases/download/v0.7.4-context.3/codex-acp-0.7.4-context.3-aarch64-pc-windows-msvc.zip",
+            "url": "https://github.com/ctxrs/codex-acp/releases/download/v0.7.4-ctx.3/codex-acp-0.7.4-ctx.3-aarch64-pc-windows-msvc.zip",
             "archive": "zip",
             "bin_path": "codex-acp.exe"
           }
@@ -70,17 +70,17 @@
           "context_min": "0.1.0"
         },
         {
-          "version": "0.7.4-context.1",
+          "version": "0.7.4-ctx.1",
           "status": "supported",
           "context_min": "0.1.0"
         },
         {
-          "version": "0.7.4-context.2",
+          "version": "0.7.4-ctx.2",
           "status": "supported",
           "context_min": "0.1.0"
         },
         {
-          "version": "0.7.4-context.3",
+          "version": "0.7.4-ctx.3",
           "status": "supported",
           "context_min": "0.1.0"
         }
@@ -726,32 +726,32 @@
         ],
         "targets": {
           "darwin-aarch64": {
-            "url": "https://github.com/contextrs/continue/releases/download/v0.0.0-dev/continue-acp-darwin-aarch64.tar.gz",
+            "url": "https://github.com/ctxrs/continue/releases/download/v0.0.0-dev/continue-acp-darwin-aarch64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "cn"
           },
           "darwin-x86_64": {
-            "url": "https://github.com/contextrs/continue/releases/download/v0.0.0-dev/continue-acp-darwin-x86_64.tar.gz",
+            "url": "https://github.com/ctxrs/continue/releases/download/v0.0.0-dev/continue-acp-darwin-x86_64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "cn"
           },
           "linux-aarch64": {
-            "url": "https://github.com/contextrs/continue/releases/download/v0.0.0-dev/continue-acp-linux-aarch64.tar.gz",
+            "url": "https://github.com/ctxrs/continue/releases/download/v0.0.0-dev/continue-acp-linux-aarch64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "cn"
           },
           "linux-x86_64": {
-            "url": "https://github.com/contextrs/continue/releases/download/v0.0.0-dev/continue-acp-linux-x86_64.tar.gz",
+            "url": "https://github.com/ctxrs/continue/releases/download/v0.0.0-dev/continue-acp-linux-x86_64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "cn"
           },
           "windows-x86_64": {
-            "url": "https://github.com/contextrs/continue/releases/download/v0.0.0-dev/continue-acp-windows-x86_64.zip",
+            "url": "https://github.com/ctxrs/continue/releases/download/v0.0.0-dev/continue-acp-windows-x86_64.zip",
             "archive": "zip",
             "bin_path": "cn.cmd"
           },
           "windows-aarch64": {
-            "url": "https://github.com/contextrs/continue/releases/download/v0.0.0-dev/continue-acp-windows-aarch64.zip",
+            "url": "https://github.com/ctxrs/continue/releases/download/v0.0.0-dev/continue-acp-windows-aarch64.zip",
             "archive": "zip",
             "bin_path": "cn.cmd"
           }
@@ -827,32 +827,32 @@
         "args": [],
         "targets": {
           "darwin-aarch64": {
-            "url": "https://github.com/contextrs/cline/releases/download/v3.41.0/cline-acp-darwin-aarch64.tar.gz",
+            "url": "https://github.com/ctxrs/cline/releases/download/v3.41.0/cline-acp-darwin-aarch64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "cline-acp"
           },
           "darwin-x86_64": {
-            "url": "https://github.com/contextrs/cline/releases/download/v3.41.0/cline-acp-darwin-x86_64.tar.gz",
+            "url": "https://github.com/ctxrs/cline/releases/download/v3.41.0/cline-acp-darwin-x86_64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "cline-acp"
           },
           "linux-aarch64": {
-            "url": "https://github.com/contextrs/cline/releases/download/v3.41.0/cline-acp-linux-aarch64.tar.gz",
+            "url": "https://github.com/ctxrs/cline/releases/download/v3.41.0/cline-acp-linux-aarch64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "cline-acp"
           },
           "linux-x86_64": {
-            "url": "https://github.com/contextrs/cline/releases/download/v3.41.0/cline-acp-linux-x86_64.tar.gz",
+            "url": "https://github.com/ctxrs/cline/releases/download/v3.41.0/cline-acp-linux-x86_64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "cline-acp"
           },
           "windows-x86_64": {
-            "url": "https://github.com/contextrs/cline/releases/download/v3.41.0/cline-acp-windows-x86_64.zip",
+            "url": "https://github.com/ctxrs/cline/releases/download/v3.41.0/cline-acp-windows-x86_64.zip",
             "archive": "zip",
             "bin_path": "cline-acp.cmd"
           },
           "windows-aarch64": {
-            "url": "https://github.com/contextrs/cline/releases/download/v3.41.0/cline-acp-windows-aarch64.zip",
+            "url": "https://github.com/ctxrs/cline/releases/download/v3.41.0/cline-acp-windows-aarch64.zip",
             "archive": "zip",
             "bin_path": "cline-acp.cmd"
           }
@@ -926,8 +926,8 @@
       },
       "managed_install": {
         "kind": "python",
-        "package": "https://github.com/contextrs/SWE-agent/releases/download/v1.1.0-contextrs.1/sweagent-1.1.0+contextrs.1-py3-none-any.whl",
-        "version": "1.1.0+contextrs.1",
+        "package": "https://github.com/ctxrs/SWE-agent/releases/download/v1.1.0-ctxrs.1/sweagent-1.1.0+ctxrs.1-py3-none-any.whl",
+        "version": "1.1.0+ctxrs.1",
         "entrypoint": "sweagent",
         "args": [
           "acp"
@@ -941,7 +941,7 @@
       },
       "releases": [
         {
-          "version": "1.1.0+contextrs.1",
+          "version": "1.1.0+ctxrs.1",
           "status": "supported",
           "context_min": "0.1.0",
           "notes": "ACP requires patched CLI"

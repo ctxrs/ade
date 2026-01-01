@@ -101,7 +101,6 @@ const main = () => {
   const copied = {
     ctx: copySidecar("ctx"),
     ctxMcp: copySidecar("ctx-mcp"),
-    context: copySidecar("context"),
     webDist: copyWebDist(),
   };
 

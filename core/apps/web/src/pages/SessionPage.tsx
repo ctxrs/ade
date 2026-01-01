@@ -796,7 +796,7 @@ export function SessionView({
 
     const token = (() => {
       try {
-        return sessionStorage.getItem("contextAuthToken");
+        return sessionStorage.getItem("ctxAuthToken");
       } catch {
         return null;
       }
@@ -3382,7 +3382,7 @@ function buildContextOpenUrl(worktreeId: string, ref: FileRef, token?: string | 
 function parseContextOpenUrl(href: string): ParsedContextOpen | null {
   try {
     const url = new URL(href);
-    if (url.protocol !== "ctx:" && url.protocol !== "context:") return null;
+    if (url.protocol !== "ctx:") return null;
     if (url.hostname !== "open") return null;
     const worktreeId = url.searchParams.get("worktreeId") ?? "";
     const file = url.searchParams.get("file") ?? "";
@@ -3676,15 +3676,14 @@ function Markdown({
     <ReactMarkdown
       remarkPlugins={remarkPlugins}
       urlTransform={(url) =>
-        url.startsWith("ctx://") || url.startsWith("context://")
+        url.startsWith("ctx://")
           ? url
           : defaultUrlTransform(url)
       }
       components={{
         a({ href, children, className, ...rest }) {
           const isContextOpen =
-            typeof href === "string" &&
-            (href.startsWith("ctx://open?") || href.startsWith("context://open?"));
+            typeof href === "string" && href.startsWith("ctx://open?");
           if (!isContextOpen) {
             return (
               <a href={href} className={className} {...rest}>

@@ -677,7 +677,7 @@ fn handle_deep_link_inner(app: &tauri::AppHandle, url: &Url) -> Result<()> {
 
 fn parse_deep_link(url: &Url) -> Result<DeepLinkAction> {
     let scheme = url.scheme();
-    if scheme != "ctx" && scheme != "context" {
+    if scheme != "ctx" {
         anyhow::bail!("unsupported scheme: {scheme}");
     }
     let action = url.host_str().unwrap_or_default();
@@ -756,7 +756,7 @@ fn parse_target(params: &HashMap<String, String>) -> Result<DeepLinkTarget> {
 fn parse_open_with(value: Option<&String>) -> Result<DeepLinkOpenWith> {
     match value.map(|v| v.trim().to_lowercase()) {
         None => Ok(DeepLinkOpenWith::Ctx),
-        Some(v) if v == "ctx" || v == "context" => Ok(DeepLinkOpenWith::Ctx),
+        Some(v) if v == "ctx" => Ok(DeepLinkOpenWith::Ctx),
         Some(v) if v == "editor" => Ok(DeepLinkOpenWith::Editor),
         Some(v) if v == "system" => Ok(DeepLinkOpenWith::System),
         Some(v) => anyhow::bail!("unsupported openWith: {v}"),

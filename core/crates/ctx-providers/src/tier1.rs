@@ -182,7 +182,6 @@ impl ProviderAdapter for Tier1AcpAdapter {
         let session_key = env
             .get("CTX_SESSION_ID")
             .cloned()
-            .or_else(|| env.get("CONTEXT_SESSION_ID").cloned())
             .unwrap_or_else(|| "unknown-session".to_string());
 
         let provider_id = self.id.clone();
@@ -194,10 +193,7 @@ impl ProviderAdapter for Tier1AcpAdapter {
                 prompt.extend(input.context_blocks);
             }
 
-            let data_root = env
-                .get("CTX_DATA_ROOT")
-                .cloned()
-                .or_else(|| env.get("CONTEXT_DATA_ROOT").cloned());
+            let data_root = env.get("CTX_DATA_ROOT").cloned();
             for att in input.attachments.iter() {
                 match att {
                     ctx_core::models::MessageAttachment::Image {
@@ -357,40 +353,26 @@ impl ProviderAdapter for Tier1AcpAdapter {
 
 fn build_acp_client_config(env: &HashMap<String, String>) -> AcpClientConfig {
     let mut mcp_env = HashMap::new();
-    if let Some(url) = env
-        .get("CTX_DAEMON_URL")
-        .or_else(|| env.get("CONTEXT_DAEMON_URL"))
-    {
+    if let Some(url) = env.get("CTX_DAEMON_URL") {
         mcp_env.insert("CTX_DAEMON_URL".to_string(), url.clone());
     }
-    if let Some(token) = env
-        .get("CTX_AUTH_TOKEN")
-        .or_else(|| env.get("CONTEXT_AUTH_TOKEN"))
-    {
+    if let Some(token) = env.get("CTX_AUTH_TOKEN") {
         mcp_env.insert("CTX_AUTH_TOKEN".to_string(), token.clone());
     }
-    if let Some(token) = env
-        .get("CTX_MCP_TOKEN")
-        .or_else(|| env.get("CONTEXT_MCP_TOKEN"))
-    {
+    if let Some(token) = env.get("CTX_MCP_TOKEN") {
         mcp_env.insert("CTX_MCP_TOKEN".to_string(), token.clone());
     }
-    if let Some(session_id) = env
-        .get("CTX_SESSION_ID")
-        .or_else(|| env.get("CONTEXT_SESSION_ID"))
-    {
+    if let Some(session_id) = env.get("CTX_SESSION_ID") {
         mcp_env.insert("CTX_SESSION_ID".to_string(), session_id.clone());
     }
 
     let mcp_command = env
         .get("CTX_MCP_COMMAND")
-        .or_else(|| env.get("CONTEXT_MCP_COMMAND"))
         .cloned()
         .unwrap_or_else(|| "ctx-mcp".to_string());
 
     let mcp_enabled = env
         .get("CTX_MCP_DISABLED")
-        .or_else(|| env.get("CONTEXT_MCP_DISABLED"))
         .map(|v| v != "1" && v.to_lowercase() != "true")
         .unwrap_or(true);
 

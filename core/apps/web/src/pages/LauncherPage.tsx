@@ -82,13 +82,13 @@ function applyConnection(info: DesktopConnectionInfo) {
   else setDaemonBaseUrl(null, false);
   if (token) {
     try {
-      sessionStorage.setItem("contextAuthToken", token);
+      sessionStorage.setItem("ctxAuthToken", token);
     } catch {
       // ignore
     }
   } else {
     try {
-      sessionStorage.removeItem("contextAuthToken");
+      sessionStorage.removeItem("ctxAuthToken");
     } catch {
       // ignore
     }

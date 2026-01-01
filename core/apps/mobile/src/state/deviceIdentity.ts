@@ -10,7 +10,6 @@ if (!globalWithBuffer.Buffer) {
 }
 
 const DEVICE_IDENTITY_KEY = "ctx.mobile.device_identity.v1";
-const LEGACY_DEVICE_IDENTITY_KEY = "context.mobile.device_identity.v1";
 
 export type DeviceIdentity = {
   deviceId: string;
@@ -32,19 +31,6 @@ export const loadOrCreateDeviceIdentity = async (): Promise<DeviceIdentity> => {
       // ignore and regenerate
     }
   }
-  const legacyStored = await SecureStore.getItemAsync(LEGACY_DEVICE_IDENTITY_KEY);
-  if (legacyStored) {
-    try {
-      const parsed = JSON.parse(legacyStored) as DeviceIdentity;
-      if (parsed?.deviceId && parsed?.publicKey && parsed?.secretKey) {
-        await SecureStore.setItemAsync(DEVICE_IDENTITY_KEY, JSON.stringify(parsed));
-        await SecureStore.deleteItemAsync(LEGACY_DEVICE_IDENTITY_KEY);
-        return parsed;
-      }
-    } catch {
-      // ignore and regenerate
-    }
-  }
   const pair = nacl.box.keyPair();
   const identity: DeviceIdentity = {
     deviceId: uuidv4(),
@@ -57,5 +43,4 @@ export const loadOrCreateDeviceIdentity = async (): Promise<DeviceIdentity> => {
 
 export const clearDeviceIdentity = async (): Promise<void> => {
   await SecureStore.deleteItemAsync(DEVICE_IDENTITY_KEY);
-  await SecureStore.deleteItemAsync(LEGACY_DEVICE_IDENTITY_KEY);
 };

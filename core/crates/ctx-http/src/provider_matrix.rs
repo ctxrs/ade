@@ -158,14 +158,11 @@ pub struct ProviderMatrixCache {
 
 pub fn default_matrix_base_url() -> String {
     std::env::var("CTX_PROVIDER_MATRIX_BASE_URL")
-        .or_else(|_| std::env::var("CONTEXT_PROVIDER_MATRIX_BASE_URL"))
         .unwrap_or_else(|_| updates::default_download_base_url())
 }
 
 pub fn default_matrix_channel() -> String {
-    std::env::var("CTX_PROVIDER_MATRIX_CHANNEL")
-        .or_else(|_| std::env::var("CONTEXT_PROVIDER_MATRIX_CHANNEL"))
-        .unwrap_or_else(|_| "stable".to_string())
+    std::env::var("CTX_PROVIDER_MATRIX_CHANNEL").unwrap_or_else(|_| "stable".to_string())
 }
 
 pub fn matrix_cache_path(data_root: &Path) -> PathBuf {

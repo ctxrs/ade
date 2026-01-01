@@ -34,6 +34,7 @@ struct RunningTurn {
     handle: RunHandle,
     run_id: RunId,
     turn_id: TurnId,
+    event_tx: mpsc::Sender<NormalizedEvent>,
 }
 
 pub async fn session_worker(
@@ -107,6 +108,22 @@ pub async fn session_worker(
                     Some(SchedulerCommand::Cancel) => {
                         if let Some(turn) = running.take() {
                             let _ = turn.adapter.cancel(turn.handle).await;
+                            if !send_turn_interrupted(
+                                &turn.event_tx,
+                                "user_cancel",
+                                true,
+                            )
+                            .await
+                            {
+                                let _ = reconcile_turn_terminal_state(
+                                    &state,
+                                    session.id,
+                                    Some(turn.run_id),
+                                    turn.turn_id,
+                                    "user_cancel",
+                                )
+                                .await;
+                            }
                             state.set_running(session.id, false).await;
                         }
                     }
@@ -121,14 +138,22 @@ pub async fn session_worker(
                                 json!({"by":"user"}),
                             ).await;
                             let _ = turn.adapter.cancel(turn.handle).await;
-                            let _ = emit_event(
-                                &state,
-                                session.id,
-                                Some(turn.run_id),
-                                Some(turn.turn_id),
-                                SessionEventType::TurnInterrupted,
-                                json!({"reason":"user_interrupt","provider_cancelled":true}),
-                            ).await;
+                            if !send_turn_interrupted(
+                                &turn.event_tx,
+                                "user_interrupt",
+                                true,
+                            )
+                            .await
+                            {
+                                let _ = reconcile_turn_terminal_state(
+                                    &state,
+                                    session.id,
+                                    Some(turn.run_id),
+                                    turn.turn_id,
+                                    "user_interrupt",
+                                )
+                                .await;
+                            }
                             state.set_running(session.id, false).await;
                             suspend_queue = true;
                         }
@@ -190,6 +215,7 @@ async fn start_turn(
         compute_context_window_metrics(&session.provider_id, &session.model_id, &prompt);
 
     let (ev_tx, mut ev_rx) = mpsc::channel::<NormalizedEvent>(128);
+    let event_tx = ev_tx.clone();
 
     let mut provider_env = std::collections::HashMap::new();
     provider_env.insert("CTX_DAEMON_URL".to_string(), state.daemon_url.clone());
@@ -206,14 +232,10 @@ async fn start_turn(
     provider_env.insert("CTX_SESSION_ID".to_string(), session.id.0.to_string());
     let mcp_token = uuid::Uuid::new_v4().to_string();
     provider_env.insert("CTX_MCP_TOKEN".to_string(), mcp_token);
-    if let Ok(v) =
-        std::env::var("CTX_MCP_COMMAND").or_else(|_| std::env::var("CONTEXT_MCP_COMMAND"))
-    {
+    if let Ok(v) = std::env::var("CTX_MCP_COMMAND") {
         provider_env.insert("CTX_MCP_COMMAND".to_string(), v);
     }
-    if let Ok(v) =
-        std::env::var("CTX_MCP_DISABLED").or_else(|_| std::env::var("CONTEXT_MCP_DISABLED"))
-    {
+    if let Ok(v) = std::env::var("CTX_MCP_DISABLED") {
         provider_env.insert("CTX_MCP_DISABLED".to_string(), v);
     }
 
@@ -654,7 +676,25 @@ async fn start_turn(
         handle,
         run_id,
         turn_id,
+        event_tx,
     })
+}
+
+async fn send_turn_interrupted(
+    event_tx: &mpsc::Sender<NormalizedEvent>,
+    reason: &str,
+    provider_cancelled: bool,
+) -> bool {
+    event_tx
+        .send(NormalizedEvent {
+            event_type: SessionEventType::TurnInterrupted,
+            payload_json: json!({
+                "reason": reason,
+                "provider_cancelled": provider_cancelled
+            }),
+        })
+        .await
+        .is_ok()
 }
 
 pub async fn reconcile_turn_terminal_state(

@@ -375,10 +375,7 @@ impl AcpSessionPool {
             }
         }
 
-        let resume_session_id = env
-            .get("CTX_PROVIDER_SESSION_REF")
-            .cloned()
-            .or_else(|| env.get("CONTEXT_PROVIDER_SESSION_REF").cloned());
+        let resume_session_id = env.get("CTX_PROVIDER_SESSION_REF").cloned();
         let created = process
             .create_or_load_session(workdir, client, resume_session_id, event_sink.clone())
             .await?;
@@ -1336,12 +1333,7 @@ fn filter_process_env(env: HashMap<String, String>) -> HashMap<String, String> {
         .filter(|(k, _)| {
             !matches!(
                 k.as_str(),
-                "CTX_SESSION_ID"
-                    | "CTX_MCP_TOKEN"
-                    | "CTX_PROVIDER_SESSION_REF"
-                    | "CONTEXT_SESSION_ID"
-                    | "CONTEXT_MCP_TOKEN"
-                    | "CONTEXT_PROVIDER_SESSION_REF"
+                "CTX_SESSION_ID" | "CTX_MCP_TOKEN" | "CTX_PROVIDER_SESSION_REF"
             )
         })
         .collect()
