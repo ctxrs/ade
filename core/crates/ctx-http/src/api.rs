@@ -3876,7 +3876,7 @@ async fn enable_mobile_access(
             }
         };
 
-    let config = context_store::store::MobileAccessConfig {
+    let config = ctx_store::store::MobileAccessConfig {
         id: "default".to_string(),
         profile_id,
         tunnel_id: payload.tunnel_id.clone(),
