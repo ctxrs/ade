@@ -1,12 +1,18 @@
+import Constants from "expo-constants";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import type { BarcodeScanningResult } from "expo-camera";
 import type { BarCodeEvent } from "expo-barcode-scanner";
 import React, { useEffect, useMemo, useState } from "react";
+import { Buffer } from "buffer";
 import { Alert, Platform, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
+import { pairMobileDevice, type ConnectionConfig } from "../api/client";
 import { useConnection } from "../state/ConnectionProvider";
+import { loadOrCreateDeviceIdentity } from "../state/deviceIdentity";
+import { decryptPayload } from "../utils/e2ee";
+import { getSecureConnectionContext } from "../utils/secureConnection";
 import type { RootStackParamList } from "../navigation/types";
 import { createContextStyles } from "../theme";
 
@@ -63,8 +69,36 @@ export function QrScannerScreen({ navigation }: Props): React.JSX.Element {
       const parsed = JSON.parse(data);
       const profile = extractProfile(parsed);
       if (!profile) throw new Error("QR code is missing connection info.");
-      await setConnection(profile);
-      Alert.alert("Connection updated", `Connected to ${profile.baseUrl}`);
+      let nextConfig: ConnectionConfig;
+      if (profile.mode === "e2ee") {
+        const identity = await loadOrCreateDeviceIdentity();
+        const envelope = await pairMobileDevice(profile.baseUrl, {
+          pairing_token: profile.pairingToken,
+          device_id: identity.deviceId,
+          device_label: Constants.deviceName ?? Platform.OS,
+          platform: Platform.OS,
+          public_key: identity.publicKey,
+          app_version: Constants.expoConfig?.version,
+        });
+        if (envelope.device_id !== identity.deviceId) {
+          throw new Error("Pairing response device mismatch.");
+        }
+        const { key } = await getSecureConnectionContext(identity.deviceId, profile.daemonPublicKey);
+        const plaintext = decryptPayload(key, identity.deviceId, envelope.seq, envelope);
+        const ack = JSON.parse(decodeText(plaintext)) as { paired?: boolean };
+        if (!ack?.paired) {
+          throw new Error("Pairing was not accepted.");
+        }
+        nextConfig = {
+          baseUrl: profile.baseUrl,
+          deviceId: identity.deviceId,
+          daemonPublicKey: profile.daemonPublicKey,
+        };
+      } else {
+        nextConfig = { baseUrl: profile.baseUrl, token: profile.token };
+      }
+      await setConnection(nextConfig);
+      Alert.alert("Connection updated", `Connected to ${nextConfig.baseUrl}`);
       if (wasConnected) {
         navigation.goBack();
       } else {
@@ -100,8 +134,8 @@ export function QrScannerScreen({ navigation }: Props): React.JSX.Element {
         {renderScanner()}
       </View>
       <Text style={styles.instructions}>
-        Scan the QR code from the desktop “Enable mobile connection” dialog. It should embed the daemon HTTPS
-        URL and API token.
+        Scan the QR code from the desktop “Mobile Access” settings. It should embed the tunnel URL and pairing
+        token.
       </Text>
     </SafeAreaView>
   );
@@ -148,8 +182,31 @@ export function QrScannerScreen({ navigation }: Props): React.JSX.Element {
   }
 }
 
-const extractProfile = (data: any) => {
+const decodeText = (bytes: Uint8Array): string => {
+  if (typeof TextDecoder !== "undefined") {
+    return new TextDecoder().decode(bytes);
+  }
+  return Buffer.from(bytes).toString("utf-8");
+};
+
+type ParsedQr =
+  | { mode: "e2ee"; baseUrl: string; pairingToken: string; daemonPublicKey: string }
+  | { mode: "legacy"; baseUrl: string; token: string };
+
+const extractProfile = (data: any): ParsedQr | null => {
   if (!data) return null;
+  if (data.type === "context_mobile_e2ee") {
+    const baseUrl = data.base_url || data.baseUrl;
+    const pairingToken = data.pairing_token || data.pairingToken;
+    const daemonPublicKey = data.daemon_public_key || data.daemonPublicKey;
+    if (!baseUrl || !pairingToken || !daemonPublicKey) return null;
+    return {
+      mode: "e2ee",
+      baseUrl: String(baseUrl),
+      pairingToken: String(pairingToken),
+      daemonPublicKey: String(daemonPublicKey),
+    };
+  }
   const profile = data.connection_profile ?? data;
   const connection = profile.connection ?? {};
   const auth = profile.auth ?? {};
@@ -157,7 +214,7 @@ const extractProfile = (data: any) => {
     connection.base_url || connection.baseUrl || connection.url || connection.baseURL || profile.baseUrl;
   const token = auth.api_token || auth.token || profile.api_token || profile.token;
   if (!baseUrl || !token) return null;
-  return { baseUrl: String(baseUrl), token: String(token) };
+  return { mode: "legacy", baseUrl: String(baseUrl), token: String(token) };
 };
 
 const styles: Record<string, any> = createContextStyles((t) => ({

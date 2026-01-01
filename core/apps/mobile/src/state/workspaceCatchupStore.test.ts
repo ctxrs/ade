@@ -3,13 +3,20 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { buildDummyWorkspaceSnapshot } from "../test/fixtures/dummyWorkspace";
 
-vi.mock("../api/client", async () => {
-  const actual = /** @type {Record<string, unknown>} */ (await vi.importActual("../api/client"));
-  return {
-    ...actual,
-    getWorkspaceCatchup: vi.fn(),
-  };
-});
+vi.mock("../utils/e2ee", () => ({
+  decryptPayload: vi.fn(),
+}));
+
+vi.mock("../api/client", () => ({
+  getWorkspaceCatchup: vi.fn(),
+  idToString: (value) => {
+    if (typeof value === "string") return value;
+    if (value && typeof value === "object" && "0" in value) {
+      return String(value["0"]);
+    }
+    return value ? String(value) : "";
+  },
+}));
 
 import { getWorkspaceCatchup, idToString } from "../api/client";
 import { WorkspaceCatchupStoreImpl } from "./workspaceCatchupStore";

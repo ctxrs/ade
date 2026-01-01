@@ -76,7 +76,12 @@ export const loadConnectionConfig = async (): Promise<ConnectionConfig | null> =
     const stored = await readValue(STORAGE_KEY);
     if (!stored) return null;
     const parsed = JSON.parse(stored) as ConnectionConfig;
-    if (!parsed?.baseUrl || !parsed?.token) return null;
+    if (!parsed?.baseUrl) return null;
+    if (parsed.daemonPublicKey) {
+      if (!parsed.deviceId) return null;
+      return parsed;
+    }
+    if (!parsed.token) return null;
     return parsed;
   } catch {
     return null;

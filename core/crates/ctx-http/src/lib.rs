@@ -10,6 +10,8 @@ pub mod installs;
 pub mod llm;
 pub mod logs;
 pub mod lsp_catalog;
+pub mod mobile_e2ee;
+pub mod mobile_tunnel;
 pub mod provider_matrix;
 pub mod resource_governance;
 pub mod resource_utilization;

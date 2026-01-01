@@ -136,6 +136,9 @@ vi.mock("../state/sessionSupervisor", () => ({
 
 vi.mock("../state/workspaceCatchupStore", () => ({
   WorkspaceCatchupProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  useWorkspaceCatchupEvents: () => ({
+    subscribeToWorkspaceCatchupEvents: vi.fn(() => () => {}),
+  }),
   useWorkspaceCatchupSnapshot: () => workspaceCatchupSnap,
   useWorkspaceCatchupStore: () => ({
     applyTaskUpdate: vi.fn(),

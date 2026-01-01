@@ -8,6 +8,9 @@ members = [
   "crates/ctx-lsp",
   "crates/ctx-mcp",
   "crates/ctx-http",
+  "crates/ctx-tunnel-relay",
+  "crates/ctx-tunnel-router",
+  "crates/ctx-tunnel-control-plane",
 ]
 exclude = ["apps/desktop/src-tauri"]
 resolver = "2"

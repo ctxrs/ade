@@ -40,9 +40,10 @@ test-results/
 
 # Supabase local state
 supabase/.branches/
+supabase/.temp/
 
 # ctx temp/scratch directories (repo-scoped)
-**/.ctx/context-pack/tmp/
+**/.ctx/ctx-pack/tmp/
 **/.ctx/tmp/
 
 # Local git worktrees (agent/dev tooling)

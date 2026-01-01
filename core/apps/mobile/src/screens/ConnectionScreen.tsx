@@ -58,8 +58,8 @@ export function ConnectionScreen({ navigation }: Props): React.JSX.Element {
       <ScrollView contentContainerStyle={styles.container}>
         <Text style={styles.title}>Connect to ctx daemon</Text>
         <Text style={styles.subtitle}>
-          Enter the HTTPS base URL (tunnel or direct) plus the API token generated from the desktop
-          app’s “Enable mobile connection” flow.
+          Enter the HTTPS base URL and API token for legacy direct connections. For managed mobile access,
+          use the QR flow instead.
         </Text>
         <View style={styles.field}>
           <Text style={styles.label}>Daemon Base URL</Text>

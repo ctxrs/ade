@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
+import { Buffer } from "buffer";
 import type {
   SessionCatchupSummary,
   Task,
@@ -15,6 +16,8 @@ import {
   type ConnectionConfig,
   type WorkspaceCatchupParams,
 } from "../api/client";
+import type { E2eeEnvelope } from "../utils/e2ee";
+import { decryptPayload } from "../utils/e2ee";
 import { parseWsJson } from "../utils/wsJson";
 import { loadWorkspaceCatchupV1, saveWorkspaceCatchupV1 } from "./uiStateStore";
 import { useConnection } from "./ConnectionProvider";
@@ -73,6 +76,20 @@ const toWsUrl = (conn: ConnectionConfig, path: string): string => {
     : base.replace(/^http:\/\//, "ws://");
 };
 
+const decodeText = (bytes: Uint8Array): string => {
+  if (typeof TextDecoder !== "undefined") {
+    return new TextDecoder().decode(bytes);
+  }
+  return Buffer.from(bytes).toString("utf-8");
+};
+
+const isSecureEnvelope = (value: any): value is E2eeEnvelope =>
+  value &&
+  typeof value.device_id === "string" &&
+  typeof value.seq === "number" &&
+  typeof value.nonce === "string" &&
+  typeof value.ciphertext === "string";
+
 export class WorkspaceCatchupStoreImpl implements WorkspaceCatchupEventSource {
   private listeners = new Set<() => void>();
   private eventListeners = new Set<(event: WorkspaceCatchupEvent) => void>();
@@ -88,6 +105,7 @@ export class WorkspaceCatchupStoreImpl implements WorkspaceCatchupEventSource {
   private hasMoreArchived = false;
   private archivedLoaded = false;
   private ws: WebSocket | null = null;
+  private secureContext: { key: Uint8Array; deviceId: string } | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectDelayMs = 1000;
   private snapshotRev = 0;
@@ -321,10 +339,30 @@ export class WorkspaceCatchupStoreImpl implements WorkspaceCatchupEventSource {
     this.setFetchState("archived", "idle");
   }
 
+  private async ensureSecureContext(): Promise<void> {
+    if (!this.conn.deviceId || !this.conn.daemonPublicKey) {
+      this.secureContext = null;
+      return;
+    }
+    const { getSecureConnectionContext } = await import("../utils/secureConnection");
+    this.secureContext = await getSecureConnectionContext(
+      this.conn.deviceId,
+      this.conn.daemonPublicKey,
+    );
+  }
+
   private async connectStream() {
     if (this.destroyed || this.ws) return;
     this.snapshot.connection = "connecting";
     this.publish();
+    try {
+      await this.ensureSecureContext();
+    } catch {
+      this.snapshot.connection = "disconnected";
+      this.publish();
+      this.scheduleReconnect();
+      return;
+    }
     const urls = await this.resolveWsUrls();
     for (const url of urls) {
       try {
@@ -340,6 +378,11 @@ export class WorkspaceCatchupStoreImpl implements WorkspaceCatchupEventSource {
   }
 
   private async resolveWsUrls(): Promise<string[]> {
+    if (this.secureContext) {
+      const qs = `?device_id=${encodeURIComponent(this.secureContext.deviceId)}`;
+      const url = `${toWsUrl(this.conn, `/api/mobile/secure/workspaces/${this.workspaceId}/stream`)}${qs}`;
+      return dedupeUrls([url]);
+    }
     const qs = this.conn.token ? `?token=${encodeURIComponent(this.conn.token)}` : "";
     const url = `${toWsUrl(this.conn, `/api/workspaces/${this.workspaceId}/stream`)}${qs}`;
     return dedupeUrls([url]);
@@ -401,7 +444,25 @@ export class WorkspaceCatchupStoreImpl implements WorkspaceCatchupEventSource {
   private async handleStreamMessage(data: unknown) {
     const parsed = await parseWsJson(data);
     if (!parsed || typeof parsed !== "object") return;
-    const evt = parsed as WorkspaceCatchupEvent;
+    let evt: WorkspaceCatchupEvent | null = null;
+    if (this.secureContext) {
+      if (!isSecureEnvelope(parsed)) return;
+      if (parsed.device_id !== this.secureContext.deviceId) return;
+      try {
+        const plaintext = decryptPayload(
+          this.secureContext.key,
+          this.secureContext.deviceId,
+          parsed.seq,
+          parsed,
+        );
+        evt = JSON.parse(decodeText(plaintext)) as WorkspaceCatchupEvent;
+      } catch {
+        return;
+      }
+    } else {
+      evt = parsed as WorkspaceCatchupEvent;
+    }
+    if (!evt) return;
     if (evt.snapshot_rev && evt.snapshot_rev > this.snapshotRev + 1) {
       this.ensureActivePage(true).catch(() => {});
     }
