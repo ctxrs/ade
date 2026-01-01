@@ -9,7 +9,7 @@ if (!globalWithBuffer.Buffer) {
   globalWithBuffer.Buffer = Buffer;
 }
 
-const DEVICE_IDENTITY_KEY = "context.mobile.device_identity.v1";
+const DEVICE_IDENTITY_KEY = "ctx.mobile.device_identity.v1";
 
 export type DeviceIdentity = {
   deviceId: string;

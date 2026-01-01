@@ -1,0 +1,392 @@
+pub mod api;
+pub mod attachments;
+pub mod buffers;
+pub mod completions;
+pub mod daemon;
+pub mod dictation_livekit;
+pub mod edit_plans;
+pub mod installer;
+pub mod installs;
+pub mod llm;
+pub mod logs;
+pub mod lsp_catalog;
+pub mod provider_matrix;
+pub mod resource_governance;
+pub mod resource_utilization;
+pub mod scheduler;
+pub mod settings;
+pub mod telemetry;
+pub mod terminals;
+pub mod title_generation;
+pub mod updates;
+pub mod workspace_catchup;
+pub mod worktree_bootstrap;
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+    use std::path::Path;
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    use axum::body::{to_bytes, Body};
+    use axum::http::{Request, StatusCode};
+    use futures::{SinkExt, StreamExt};
+    use serde_json::json;
+    use tokio::process::Command;
+    use tower::ServiceExt;
+
+    use ctx_providers::adapters::ProviderStatus;
+    use ctx_providers::fake::FakeProviderAdapter;
+    use ctx_store::Store;
+
+    use crate::api;
+    use crate::daemon::AppState;
+
+    async fn run_git(root: &Path, args: &[&str]) {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .args(args)
+            .output()
+            .await
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    async fn setup_git_repo() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        run_git(root, &["init"]).await;
+        run_git(root, &["config", "user.email", "test@example.com"]).await;
+        run_git(root, &["config", "user.name", "Test"]).await;
+        std::fs::write(root.join("file.txt"), "hello\n").unwrap();
+        run_git(root, &["add", "."]).await;
+        run_git(root, &["commit", "-m", "init"]).await;
+        dir
+    }
+
+    #[tokio::test]
+    async fn daemon_golden_path_with_fake_provider() {
+        let git_repo = setup_git_repo().await;
+        let home = tempfile::tempdir().unwrap();
+        std::env::set_var("HOME", home.path());
+
+        let data_dir = tempfile::tempdir().unwrap();
+        let db_dir = data_dir.path().join("db");
+        tokio::fs::create_dir_all(&db_dir).await.unwrap();
+        let db_path = db_dir.join("db.sqlite");
+        let store = Store::open(&db_path).await.unwrap();
+
+        let mut providers: HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> =
+            HashMap::new();
+        providers.insert("fake".into(), Arc::new(FakeProviderAdapter::new()));
+
+        let state = Arc::new(AppState::new(
+            data_dir.path().to_path_buf(),
+            store.clone(),
+            providers,
+            "http://127.0.0.1:4399".to_string(),
+            None,
+        ));
+        state.start_workspace_catchup_listener();
+        let app = api::router(state.clone());
+
+        // create workspace
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/workspaces")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "root_path": git_repo.path().to_string_lossy(),
+                    "name": "ws"
+                })
+                .to_string(),
+            ))
+            .unwrap();
+        let res = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        let ws: ctx_core::models::Workspace = serde_json::from_slice(&body).unwrap();
+
+        // create task (auto track + worktree)
+        let req = Request::builder()
+            .method("POST")
+            .uri(format!("/api/workspaces/{}/tasks", ws.id.0))
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({"title":"t1","description":null}).to_string(),
+            ))
+            .unwrap();
+        let res = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        let task: ctx_core::models::Task = serde_json::from_slice(&body).unwrap();
+
+        // fetch workspace catchup to locate the default track
+        let req = Request::builder()
+            .method("GET")
+            .uri(format!("/api/workspaces/{}/catchup", ws.id.0))
+            .body(Body::empty())
+            .unwrap();
+        let res = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        let snapshot: ctx_core::models::WorkspaceCatchupSnapshot =
+            serde_json::from_slice(&body).unwrap();
+        let track = snapshot
+            .active
+            .tasks
+            .iter()
+            .find(|summary| summary.task.id == task.id)
+            .and_then(|summary| summary.tracks.first())
+            .expect("default track missing");
+
+        // create session
+        let req = Request::builder()
+            .method("POST")
+            .uri(format!("/api/tracks/{}/sessions", track.track.id.0))
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({"provider_id":"fake","model_id":"fake-model"}).to_string(),
+            ))
+            .unwrap();
+        let res = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        let session: ctx_core::models::Session = serde_json::from_slice(&body).unwrap();
+
+        // post message
+        let req = Request::builder()
+            .method("POST")
+            .uri(format!("/api/sessions/{}/messages", session.id.0))
+            .header("content-type", "application/json")
+            .body(Body::from(json!({"content":"hello"}).to_string()))
+            .unwrap();
+        let res = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+
+        // wait for assistant message to be inserted
+        let mut attempts = 0;
+        loop {
+            let msgs = store.list_messages_for_session(session.id).await.unwrap();
+            if msgs
+                .iter()
+                .any(|m| matches!(m.role, ctx_core::models::MessageRole::Assistant))
+            {
+                break;
+            }
+            attempts += 1;
+            if attempts > 50 {
+                panic!("assistant message not produced");
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn daemon_http_and_ws_streaming() {
+        let git_repo = setup_git_repo().await;
+        let home = tempfile::tempdir().unwrap();
+        std::env::set_var("HOME", home.path());
+
+        let data_dir = tempfile::tempdir().unwrap();
+        let db_dir = data_dir.path().join("db");
+        tokio::fs::create_dir_all(&db_dir).await.unwrap();
+        let db_path = db_dir.join("db.sqlite");
+        let store = Store::open(&db_path).await.unwrap();
+
+        let mut providers: HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> =
+            HashMap::new();
+        providers.insert("fake".into(), Arc::new(FakeProviderAdapter::new()));
+
+        let state = Arc::new(AppState::new(
+            data_dir.path().to_path_buf(),
+            store.clone(),
+            providers,
+            "http://127.0.0.1:4399".to_string(),
+            None,
+        ));
+        state.start_workspace_catchup_listener();
+        {
+            let mut statuses = HashMap::new();
+            statuses.insert(
+                "fake".into(),
+                ProviderStatus {
+                    provider_id: "fake".into(),
+                    installed: true,
+                    detected_path: None,
+                    version: Some("0.1.0".into()),
+                    capabilities: None,
+                    health: ctx_providers::adapters::ProviderHealth::Ok,
+                    diagnostics: vec![],
+                    details: HashMap::new(),
+                },
+            );
+            *state.provider_statuses.lock().await = statuses;
+        }
+
+        let app = api::router(state.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let base = format!("http://{}", addr);
+        let client = reqwest::Client::new();
+
+        // providers endpoint
+        let providers_res: Vec<ProviderStatus> = client
+            .get(format!("{base}/api/providers"))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(providers_res.len(), 1);
+
+        // create workspace
+        let ws: ctx_core::models::Workspace = client
+            .post(format!("{base}/api/workspaces"))
+            .json(&json!({
+                "root_path": git_repo.path().to_string_lossy(),
+                "name": "ws"
+            }))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+
+        // create task
+        let task: ctx_core::models::Task = client
+            .post(format!("{base}/api/workspaces/{}/tasks", ws.id.0))
+            .json(&json!({"title":"t1"}))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+
+        // fetch workspace catchup to locate the default track
+        let snapshot: ctx_core::models::WorkspaceCatchupSnapshot = client
+            .get(format!("{base}/api/workspaces/{}/catchup", ws.id.0))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let track = snapshot
+            .active
+            .tasks
+            .iter()
+            .find(|summary| summary.task.id == task.id)
+            .and_then(|summary| summary.tracks.first())
+            .expect("default track missing");
+
+        // create session
+        let session: ctx_core::models::Session = client
+            .post(format!("{base}/api/tracks/{}/sessions", track.track.id.0))
+            .json(&json!({"provider_id":"fake","model_id":"fake-model"}))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+
+        // open workspace stream before sending message
+        let ws_url = format!("ws://{}/api/workspaces/{}/stream", addr, ws.id.0);
+        let (mut ws_stream, _) = tokio_tungstenite::connect_async(ws_url).await.unwrap();
+        let subscribe = serde_json::json!({
+            "type": "subscribe",
+            "sessions": [{
+                "session_id": session.id.0,
+                "after_seq": 0,
+            }],
+        })
+        .to_string();
+        ws_stream
+            .send(tokio_tungstenite::tungstenite::Message::Text(
+                subscribe.into(),
+            ))
+            .await
+            .unwrap();
+
+        // post message
+        let _msg: ctx_core::models::Message = client
+            .post(format!("{base}/api/sessions/{}/messages", session.id.0))
+            .json(&json!({"content":"hello"}))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+
+        // consume workspace stream until we see a Done event for the session
+        let mut seen_done = false;
+        while let Some(Ok(frame)) = ws_stream.next().await {
+            if let tokio_tungstenite::tungstenite::Message::Text(txt) = frame {
+                let ev: ctx_core::models::WorkspaceCatchupEvent =
+                    serde_json::from_str(&txt).unwrap();
+                if let ctx_core::models::WorkspaceCatchupEvent::SessionHeadDelta { delta, .. } = ev
+                {
+                    if delta.session_id == session.id
+                        && delta
+                            .event
+                            .as_ref()
+                            .map(|event| {
+                                matches!(event.event_type, ctx_core::models::SessionEventType::Done)
+                            })
+                            .unwrap_or(false)
+                    {
+                        seen_done = true;
+                        break;
+                    }
+                }
+            }
+        }
+        assert!(seen_done);
+
+        let events = store.list_session_events(session.id).await.unwrap();
+        assert!(events.iter().any(|e| matches!(
+            e.event_type,
+            ctx_core::models::SessionEventType::UserMessage
+        )));
+
+        // mark task read/unread endpoints
+        let task_after_read: ctx_core::models::Task = client
+            .post(format!("{base}/api/tasks/{}/mark_read", task.id.0))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert!(task_after_read.assistant_seen_at.is_some());
+
+        let task_after_unread: ctx_core::models::Task = client
+            .post(format!("{base}/api/tasks/{}/mark_unread", task.id.0))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert!(task_after_unread.assistant_seen_at.is_none());
+
+        server.abort();
+    }
+}

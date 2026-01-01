@@ -11,7 +11,7 @@ import React, {
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { ChevronDown, Plus, SplitSquareVertical, Terminal as TerminalIcon, X } from "lucide-react";
-import type { TerminalSession } from "@context/types";
+import type { TerminalSession } from "@ctx/types";
 import {
   createWorkspaceTerminal,
   deleteTerminal,

@@ -85,8 +85,8 @@ const main = () => {
 
   const copied = {
     sidecars: {
-      context: Object.fromEntries(targets.map((t) => [t, copyTargetSidecar("context", t)])),
-      contextMcp: Object.fromEntries(targets.map((t) => [t, copyTargetSidecar("context-mcp", t)])),
+      ctx: Object.fromEntries(targets.map((t) => [t, copyTargetSidecar("ctx", t)])),
+      ctxMcp: Object.fromEntries(targets.map((t) => [t, copyTargetSidecar("ctx-mcp", t)])),
     },
     webDist: copyWebDist(),
   };

@@ -1926,7 +1926,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
 
     const token = (() => {
       try {
-        return sessionStorage.getItem("contextAuthToken");
+        return sessionStorage.getItem("ctxAuthToken");
       } catch {
         return null;
       }

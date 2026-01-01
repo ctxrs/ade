@@ -19,7 +19,7 @@ use kiro_acp::{format_prompt_blocks, strip_ansi};
 struct Args {
     #[arg(long, env = "KIRO_BIN", default_value = "kiro-cli")]
     kiro_bin: String,
-    #[arg(long, default_value = "context-acp")]
+    #[arg(long, default_value = "ctx-acp")]
     agent_prefix: String,
 }
 
@@ -578,7 +578,7 @@ async fn write_agent_config(session: &Arc<Mutex<SessionState>>) -> Result<()> {
     let session_guard = session.lock().await;
     let config = AgentConfig {
         name: session_guard.agent_name.clone(),
-        description: "Context ACP session".to_string(),
+        description: "ctx ACP session".to_string(),
         model: session_guard.model.clone(),
         mcp_servers: session_guard.mcp_servers.clone(),
         include_mcp_json: false,

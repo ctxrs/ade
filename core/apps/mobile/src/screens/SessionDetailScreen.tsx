@@ -20,7 +20,7 @@ import { useOpenSession, useSessionEntry, useSessionSupervisor } from "../state/
 import { LoadingView } from "../components/LoadingView";
 import { ErrorView } from "../components/ErrorView";
 import { createContextStyles, useContextTokens } from "../theme";
-import type { Message } from "@context/types";
+import type { Message } from "@ctx/types";
 
 type Props = NativeStackScreenProps<RootStackParamList, "SessionDetail">;
 

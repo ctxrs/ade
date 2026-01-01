@@ -79,7 +79,7 @@ export default function DaemonAvailabilityOverlay() {
       if (requestId !== requestIdRef.current) return;
       const message = err instanceof Error ? err.message : String(err);
       setStatus("down");
-      setError(trimError(message || "Unable to reach the Context daemon."));
+      setError(trimError(message || "Unable to reach the ctx daemon."));
     } finally {
       if (requestId === requestIdRef.current) {
         checkingRef.current = false;
@@ -120,8 +120,8 @@ export default function DaemonAvailabilityOverlay() {
     if (base) setDaemonBaseUrl(base, true);
     else setDaemonBaseUrl(null, false);
     try {
-      if (token) sessionStorage.setItem("contextAuthToken", token);
-      else sessionStorage.removeItem("contextAuthToken");
+      if (token) sessionStorage.setItem("ctxAuthToken", token);
+      else sessionStorage.removeItem("ctxAuthToken");
     } catch {
       // ignore
     }
@@ -174,7 +174,7 @@ export default function DaemonAvailabilityOverlay() {
     <div className="daemon-overlay" role="dialog" aria-modal="true">
       <div className="daemon-overlay-card">
         <div className="daemon-overlay-eyebrow">Connection lost</div>
-        <h2>Context daemon unavailable</h2>
+        <h2>ctx daemon unavailable</h2>
         <p className="daemon-overlay-body">{bodyCopy}</p>
         {target && (
           <div className="daemon-overlay-target">

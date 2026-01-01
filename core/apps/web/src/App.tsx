@@ -18,7 +18,7 @@ export default function App() {
     const params = new URLSearchParams(window.location.search);
     const token = params.get("token");
     if (token) {
-      sessionStorage.setItem("contextAuthToken", token);
+      sessionStorage.setItem("ctxAuthToken", token);
       params.delete("token");
       const next =
         window.location.pathname +

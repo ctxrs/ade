@@ -7,7 +7,7 @@ const TARGET_URL = process.env.MEANINGFUL_REPAINT_URL;
 const PRIMARY_TASK_TITLE =
   process.env.MEANINGFUL_REPAINT_PRIMARY_TITLE ?? "lets design our own task titling service. a task title shoul";
 const SECONDARY_TASK_TITLE =
-  process.env.MEANINGFUL_REPAINT_SECONDARY_TITLE ?? "please check out ~/code/context-family. the thing i would li";
+  process.env.MEANINGFUL_REPAINT_SECONDARY_TITLE ?? "please check out ~/code/ctx-family. the thing i would li";
 
 test("records meaningful repaint shifts for the provided workspace view", async ({ page }, testInfo) => {
   test.skip(

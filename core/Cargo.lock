@@ -417,159 +417,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7c74b8349d32d297c9134b8c88677813a227df8f779daa29bfc29c183fe3dca6"
 
 [[package]]
-name = "context-core"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "serde",
- "serde_json",
- "uuid",
-]
-
-[[package]]
-name = "context-events"
-version = "0.1.0"
-dependencies = [
- "context-core",
- "serde",
- "serde_json",
- "tokio",
- "tokio-stream",
- "tracing",
-]
-
-[[package]]
-name = "context-fs"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "context-core",
- "directories",
- "tempfile",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "context-http"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "atty",
- "axum",
- "base64",
- "bzip2",
- "chrono",
- "clap",
- "context-core",
- "context-events",
- "context-fs",
- "context-lsp",
- "context-providers",
- "context-store",
- "directories",
- "flate2",
- "fs2",
- "futures",
- "hex",
- "hyper",
- "jsonwebtoken",
- "lsp-types",
- "portable-pty",
- "reqwest",
- "semver",
- "serde",
- "serde_json",
- "sha2",
- "similar",
- "sysinfo",
- "tar",
- "tempfile",
- "tokio",
- "tokio-stream",
- "tokio-tungstenite 0.26.2",
- "tokio-util",
- "toml",
- "tower",
- "tower-http",
- "tracing",
- "tracing-appender",
- "tracing-subscriber",
- "url",
- "urlencoding",
- "uuid",
- "which",
- "zip",
-]
-
-[[package]]
-name = "context-lsp"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "lsp-types",
- "serde",
- "serde_json",
- "tempfile",
- "tokio",
- "tracing",
- "url",
-]
-
-[[package]]
-name = "context-mcp"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "axum",
- "clap",
- "reqwest",
- "serde",
- "serde_json",
- "tokio",
- "tower",
- "tracing",
- "tracing-subscriber",
- "urlencoding",
-]
-
-[[package]]
-name = "context-providers"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "base64",
- "chrono",
- "context-core",
- "context-events",
- "serde",
- "serde_json",
- "tempfile",
- "tokio",
- "tracing",
- "uuid",
- "which",
-]
-
-[[package]]
-name = "context-store"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "chrono",
- "context-core",
- "serde",
- "serde_json",
- "sqlx",
- "tempfile",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
 name = "core-foundation"
 version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -669,6 +516,159 @@ checksum = "78c8292055d1c1df0cce5d180393dc8cce0abec0a7102adb6c7b1eef6016d60a"
 dependencies = [
  "generic-array",
  "typenum",
+]
+
+[[package]]
+name = "ctx-core"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
+ "uuid",
+]
+
+[[package]]
+name = "ctx-events"
+version = "0.1.0"
+dependencies = [
+ "ctx-core",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-stream",
+ "tracing",
+]
+
+[[package]]
+name = "ctx-fs"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "ctx-core",
+ "directories",
+ "tempfile",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "ctx-http"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "atty",
+ "axum",
+ "base64",
+ "bzip2",
+ "chrono",
+ "clap",
+ "ctx-core",
+ "ctx-events",
+ "ctx-fs",
+ "ctx-lsp",
+ "ctx-providers",
+ "ctx-store",
+ "directories",
+ "flate2",
+ "fs2",
+ "futures",
+ "hex",
+ "hyper",
+ "jsonwebtoken",
+ "lsp-types",
+ "portable-pty",
+ "reqwest",
+ "semver",
+ "serde",
+ "serde_json",
+ "sha2",
+ "similar",
+ "sysinfo",
+ "tar",
+ "tempfile",
+ "tokio",
+ "tokio-stream",
+ "tokio-tungstenite 0.26.2",
+ "tokio-util",
+ "toml",
+ "tower",
+ "tower-http",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
+ "url",
+ "urlencoding",
+ "uuid",
+ "which",
+ "zip",
+]
+
+[[package]]
+name = "ctx-lsp"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "lsp-types",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "url",
+]
+
+[[package]]
+name = "ctx-mcp"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "clap",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tower",
+ "tracing",
+ "tracing-subscriber",
+ "urlencoding",
+]
+
+[[package]]
+name = "ctx-providers"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64",
+ "chrono",
+ "ctx-core",
+ "ctx-events",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "uuid",
+ "which",
+]
+
+[[package]]
+name = "ctx-store"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "ctx-core",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]

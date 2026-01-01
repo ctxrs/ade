@@ -7,13 +7,13 @@ test:
 dev:
 ifeq ($(shell uname -s),Linux)
 	@if command -v systemd-run >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then \
-		systemd-run --user --scope --unit context-daemon --same-dir \
-			cargo run -p context-http --bin context -- serve; \
+		systemd-run --user --scope --unit ctx-daemon --same-dir \
+			cargo run -p ctx-http --bin ctx -- serve; \
 	else \
-		cargo run -p context-http --bin context -- serve; \
+		cargo run -p ctx-http --bin ctx -- serve; \
 	fi
 else
-	cargo run -p context-http --bin context -- serve
+	cargo run -p ctx-http --bin ctx -- serve
 endif
 
 web:

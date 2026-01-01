@@ -107,7 +107,7 @@ const SECTIONS: Array<{
   { id: "models_routing", label: "Models & Routing", group: "main" },
   { id: "sandboxing", label: "Sandboxing", group: "main" },
   { id: "worktree_bootstrap", label: "Worktree Bootstrap", group: "main" },
-  { id: "context_pack", label: "Context Pack", group: "main" },
+  { id: "context_pack", label: "ctx pack", group: "main" },
   { id: "resource_governance", label: "Resource Limits", group: "main" },
   { id: "resource_utilization", label: "Resource Utilization", group: "main" },
   { id: "dictation", label: "Dictation", group: "advanced" },
@@ -1025,7 +1025,7 @@ export default function SettingsPage() {
     if (active === "worktree_bootstrap") {
       const anyWorkspace = workspaces.length > 0;
       const selectedWorkspace = workspaces.find((ws) => idToString((ws as any).id) === workspaceId) ?? null;
-      const configPath = selectedWorkspace ? `${selectedWorkspace.root_path}/.context/config.toml` : ".context/config.toml";
+      const configPath = selectedWorkspace ? `${selectedWorkspace.root_path}/.ctx/config.toml` : ".ctx/config.toml";
       const example = `[worktree.bootstrap]\nsetup_worktree = [\"pnpm install\", \"cargo fetch --locked\"]\nsetup_worktree_unix = \"scripts/worktree_bootstrap_unix.sh\"\nsetup_worktree_windows = \"scripts/worktree_bootstrap_windows.ps1\"\ntimeout_sec = 60\nwait_for_completion = false\n`;
 
       return (
@@ -1502,7 +1502,7 @@ export default function SettingsPage() {
             />
             <Row
               title="LiveKit API key"
-              description="Stored locally in your Context data dir."
+              description="Stored locally in your ctx data dir."
               control={
                 <input
                   className="settings-control settings-control-wide"
@@ -1553,7 +1553,7 @@ export default function SettingsPage() {
             />
             <Row
               title="API key"
-              description="Stored locally in your Context data dir."
+              description="Stored locally in your ctx data dir."
               control={
                 <input
                   className="settings-control settings-control-wide"
@@ -1799,7 +1799,7 @@ export default function SettingsPage() {
           <Card>
             <Row
               title="Install all"
-              description="Installs supported harnesses to ~/.context/providers/agent-servers."
+              description="Installs supported harnesses to ~/.ctx/providers/agent-servers."
               control={
                 <button type="button" className="settings-btn" onClick={onInstallAll} disabled={installBusy !== null}>
                   {installBusy === "all" ? "Installing…" : "Install all"}

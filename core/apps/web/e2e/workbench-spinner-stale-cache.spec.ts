@@ -13,7 +13,7 @@ test("workbench: stale cached events do not re-show running", async ({ page }) =
   test.setTimeout(120000);
   await page.setViewportSize({ width: 1400, height: 900 });
 
-  const repo = mkdtempSync(path.join(tmpdir(), "context-e2e-"));
+  const repo = mkdtempSync(path.join(tmpdir(), "ctx-e2e-"));
   execSync("git init", { cwd: repo });
   execSync("git config user.email test@example.com", { cwd: repo });
   execSync("git config user.name Test", { cwd: repo });
@@ -107,7 +107,7 @@ test("workbench: stale cached events do not re-show running", async ({ page }) =
   await page.evaluate(
     async ({ sid, stale }) => {
       await new Promise<void>((resolve, reject) => {
-        const req = indexedDB.open("context-ui", 1);
+        const req = indexedDB.open("ctx-ui", 1);
         req.onupgradeneeded = () => {
           const db = req.result;
           if (!db.objectStoreNames.contains("kv")) {

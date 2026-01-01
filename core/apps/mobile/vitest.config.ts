@@ -7,7 +7,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export default defineConfig({
   resolve: {
     alias: {
-      "@context/types": path.resolve(__dirname, "../../packages/context-types/src/index.ts"),
+      "@ctx/types": path.resolve(__dirname, "../../packages/ctx-types/src/index.ts"),
     },
   },
   test: {
@@ -17,7 +17,7 @@ export default defineConfig({
     setupFiles: ["./vitest.setup.ts"],
     server: {
       deps: {
-        inline: [/^@context\//],
+        inline: [/^@ctx\//],
       },
     },
   },

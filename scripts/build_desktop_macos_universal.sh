@@ -33,8 +33,8 @@ pnpm -C core/apps/web build >/dev/null
 
 echo "Building sidecars (both arch)..."
 # The Rust workspace lives under `core/` (this script runs from the repo root).
-cargo build --manifest-path core/Cargo.toml -p context-http -p context-mcp --release --target "$ARM_TARGET"
-cargo build --manifest-path core/Cargo.toml -p context-http -p context-mcp --release --target "$INTEL_TARGET"
+cargo build --manifest-path core/Cargo.toml -p ctx-http -p ctx-mcp --release --target "$ARM_TARGET"
+cargo build --manifest-path core/Cargo.toml -p ctx-http -p ctx-mcp --release --target "$INTEL_TARGET"
 
 echo "Syncing universal sidecars + web dist into desktop resources..."
 node core/scripts/desktop_sync_resources_universal_macos.cjs --profile release
@@ -136,7 +136,7 @@ merge_machos_in_dir() {
     else
       local tmp
       for arch in "${missing[@]}"; do
-        tmp="$(mktemp "/tmp/context-lipo.${arch}.XXXXXX")"
+        tmp="$(mktemp "/tmp/ctx-lipo.${arch}.XXXXXX")"
         tmp_files+=("$tmp")
         inputs+=("$tmp")
         lipo -extract "$arch" "$intel_file" -output "$tmp"
@@ -179,17 +179,17 @@ copy_missing_files_in_dir "Contents/Resources/bin"
 copy_missing_files_in_dir "Contents/Resources"
 
 echo "Building a simple universal DMG..."
-STAGE="$(mktemp -d /tmp/context-universal-dmg-stage.XXXXXX)"
+STAGE="$(mktemp -d /tmp/ctx-universal-dmg-stage.XXXXXX)"
 trap 'rm -rf "$STAGE"' EXIT
 cp -R "$OUT_APP" "$STAGE/"
 ln -s /Applications "$STAGE/Applications"
 
-DMG_OUT="$OUT_DMG_DIR/context_${VERSION}_macos_universal.dmg"
+DMG_OUT="$OUT_DMG_DIR/ctx_${VERSION}_macos_universal.dmg"
 rm -f "$DMG_OUT"
 hdiutil create -volname "$PRODUCT_NAME" -srcfolder "$STAGE" -ov -format UDZO "$DMG_OUT" >/dev/null
 
 echo "Building a notarization-friendly zip of the .app..."
-ZIP_OUT="$OUT_ZIP_DIR/context_${VERSION}_macos_universal.zip"
+ZIP_OUT="$OUT_ZIP_DIR/ctx_${VERSION}_macos_universal.zip"
 rm -f "$ZIP_OUT"
 ditto -c -k --sequesterRsrc --keepParent "$OUT_APP" "$ZIP_OUT"
 

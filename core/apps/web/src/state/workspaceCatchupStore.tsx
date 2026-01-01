@@ -9,7 +9,7 @@ import type {
   WorkspaceCatchupSnapshot,
   WorkspaceCatchupTaskSummary,
   WorkspaceCatchupTrackSummary,
-} from "@context/types";
+} from "@ctx/types";
 import {
   getDaemonBaseUrl,
   getHealth,
@@ -52,7 +52,7 @@ export type WorkspaceCatchupEventSource = {
 
 const authToken = (): string | null => {
   try {
-    return sessionStorage.getItem("contextAuthToken");
+    return sessionStorage.getItem("ctxAuthToken");
   } catch {
     return null;
   }

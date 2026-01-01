@@ -27,7 +27,7 @@ export default function AppSettingsPage() {
         await desktopDisconnect();
       }
       try {
-        sessionStorage.removeItem("contextAuthToken");
+        sessionStorage.removeItem("ctxAuthToken");
       } catch {
         // ignore
       }

@@ -41,7 +41,7 @@ TaskManager.defineTask(TASK_NAME, async () => {
       });
       await Notifications.scheduleNotificationAsync({
         content: {
-          title: "Context needs your input",
+          title: "ctx needs your input",
           body: `${needsAttention} task${needsAttention === 1 ? "" : "s"} awaiting approval/input.`,
           sound: soundSetting,
         },
@@ -65,8 +65,8 @@ export const registerQueueWatcher = async (): Promise<void> => {
   const alreadyRegistered = await TaskManager.isTaskRegisteredAsync(TASK_NAME);
   if (alreadyRegistered) return;
   if (Platform.OS === "android") {
-    await Notifications.setNotificationChannelAsync("context-alerts", {
-      name: "Context Alerts",
+    await Notifications.setNotificationChannelAsync("ctx-alerts", {
+      name: "ctx alerts",
       importance: Notifications.AndroidImportance.HIGH,
     });
   }

@@ -4,7 +4,7 @@ import { FlatList, Image, KeyboardAvoidingView, Platform, Pressable, Text, TextI
 import { Calculator, Mic, Plus, SendHorizontal } from "lucide-react-native";
 import * as ImagePicker from "expo-image-picker";
 
-import type { Message, MessageAttachment } from "@context/types";
+import type { Message, MessageAttachment } from "@ctx/types";
 import { idToString, postMessage } from "../api/client";
 import { useConnection } from "../state/ConnectionProvider";
 import { useOpenSession, useSessionEntry, useSessionSupervisor } from "../state/sessionSupervisor";

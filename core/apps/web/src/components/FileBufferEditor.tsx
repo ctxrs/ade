@@ -101,7 +101,7 @@ export function FileBufferEditor({
           };
         })
       : [];
-    monaco.editor.setModelMarkers(model, "context-lsp", markers);
+    monaco.editor.setModelMarkers(model, "ctx-lsp", markers);
   };
 
   useEffect(() => {

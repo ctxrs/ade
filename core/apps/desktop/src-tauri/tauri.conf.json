@@ -2,7 +2,7 @@
   "$schema": "https://schema.tauri.app/config/2.0.0",
   "productName": "ctx",
   "version": "0.1.0",
-  "identifier": "rs.context.desktop",
+  "identifier": "rs.ctx.desktop",
   "build": {
     "beforeBuildCommand": "",
     "beforeDevCommand": "",
@@ -18,7 +18,7 @@
   "plugins": {
     "deep-link": {
       "desktop": {
-        "schemes": ["context"]
+        "schemes": ["ctx"]
       }
     }
   },
@@ -26,7 +26,7 @@
     "active": true,
     "targets": "all",
     "resources": ["bin/*", "web/dist/**/*"],
-    "externalBin": ["bin/context", "bin/context-mcp"],
+    "externalBin": ["bin/ctx", "bin/ctx-mcp"],
     "macOS": {
       "infoPlist": "Info.plist"
     }

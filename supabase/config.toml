@@ -1,4 +1,4 @@
-project_id = "context-local"
+project_id = "ctx-local"
 
 [api]
 enabled = true
@@ -20,4 +20,3 @@ enabled = true
 
 [auth]
 enabled = true
-

@@ -65,7 +65,7 @@ test("workbench: spinner clears after replayed completion", async ({ page }) => 
     window.WebSocket = DropAfterToolResultWebSocket;
   });
 
-  const repo = mkdtempSync(path.join(tmpdir(), "context-e2e-"));
+  const repo = mkdtempSync(path.join(tmpdir(), "ctx-e2e-"));
   execSync("git init", { cwd: repo });
   execSync("git config user.email test@example.com", { cwd: repo });
   execSync("git config user.name Test", { cwd: repo });

@@ -1,5 +1,5 @@
 {
-  "name": "context-web",
+  "name": "ctx-web",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -14,8 +14,8 @@
     "typecheck": "tsc --noEmit --incremental --tsBuildInfoFile .turbo/tsbuildinfo/apps-web.tsbuildinfo"
   },
   "dependencies": {
-    "@context/design": "workspace:*",
-    "@context/types": "workspace:*",
+    "@ctx/design": "workspace:*",
+    "@ctx/types": "workspace:*",
     "@monaco-editor/react": "^4.6.0",
     "@supabase/supabase-js": "^2.49.1",
     "@tauri-apps/api": "^2.9.1",

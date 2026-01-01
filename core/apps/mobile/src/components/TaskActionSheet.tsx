@@ -2,7 +2,7 @@ import React, { useMemo, useState } from "react";
 import { Alert, Modal, Pressable, Text, TextInput, View } from "react-native";
 import { useMutation } from "@tanstack/react-query";
 
-import type { Task } from "@context/types";
+import type { Task } from "@ctx/types";
 import {
   archiveTask,
   deleteTask,

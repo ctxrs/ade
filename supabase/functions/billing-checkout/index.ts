@@ -22,8 +22,8 @@ function optionalEnv(name: string): string {
 }
 
 function buildReturnUrl(kind: "checkout_success" | "checkout_cancel" | "portal_return"): string {
-  // Preferred: a stable hosted redirect page (e.g. https://context.rs/redirect)
-  // that will attempt to deep-link back into the desktop app via context://focus.
+  // Preferred: a stable hosted redirect page (e.g. https://ctx.rs/redirect)
+  // that will attempt to deep-link back into the desktop app via ctx://focus.
   const redirectBase = optionalEnv("CTX_BILLING_REDIRECT_URL");
   if (redirectBase) {
     const url = new URL(redirectBase);
