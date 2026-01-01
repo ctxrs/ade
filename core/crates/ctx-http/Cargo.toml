@@ -29,6 +29,7 @@ toml = "0.8"
 uuid.workspace = true
 sysinfo.workspace = true
 tower-http = { version = "0.6", features = ["fs"] }
+tower = { version = "0.5", features = ["util"] }
 flate2 = "1"
 tar = "0.4"
 bzip2 = "0.5"
@@ -36,6 +37,9 @@ zip = "2"
 sha2 = "0.10"
 hex = "0.4"
 base64 = "0.22"
+chacha20poly1305 = { version = "0.10", features = ["std"] }
+hkdf = "0.12"
+rand_core = "0.6"
 semver = "1"
 atty = "0.2"
 urlencoding = "2"
@@ -47,10 +51,10 @@ tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
 fs2 = "0.4"
 which = "7"
 portable-pty = "0.9"
+x25519-dalek = { version = "2", features = ["static_secrets"] }
 
 [dev-dependencies]
 tempfile = "3"
-tower = "0.5"
 hyper = { version = "1", features = ["full"] }
 reqwest.workspace = true
 

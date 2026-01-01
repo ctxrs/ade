@@ -3,16 +3,19 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { buildDummySessionHead } from "../test/fixtures/dummyWorkspace";
 
-vi.mock("../api/client", async () => {
-  const actual = /** @type {Record<string, unknown>} */ (await vi.importActual("../api/client"));
-  return {
-    ...actual,
-    getSessionHead: vi.fn(),
-    getSessionHistory: vi.fn(),
-    listTurnTools: vi.fn(async () => []),
-    fetchTrackDiff: vi.fn(async () => ({ diff: "" })),
-  };
-});
+vi.mock("../api/client", () => ({
+  getSessionHead: vi.fn(),
+  getSessionHistory: vi.fn(),
+  listTurnTools: vi.fn(async () => []),
+  fetchTrackDiff: vi.fn(async () => ({ diff: "" })),
+  idToString: (value) => {
+    if (typeof value === "string") return value;
+    if (value && typeof value === "object" && "0" in value) {
+      return String(value["0"]);
+    }
+    return value ? String(value) : "";
+  },
+}));
 
 vi.mock("./uiStateStore", () => ({
   loadSessionHeadV1: vi.fn(async () => null),

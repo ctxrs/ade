@@ -64,6 +64,20 @@ pub struct MobileDeviceUpsert {
     pub app_version: Option<String>,
 }
 
+pub struct MobileAccessConfig {
+    pub id: String,
+    pub profile_id: ConnectionProfileId,
+    pub tunnel_id: String,
+    pub public_base_url: String,
+    pub relay_base_url: String,
+    pub tunnel_secret: String,
+    pub daemon_public_key: String,
+    pub daemon_private_key: String,
+    pub enabled: bool,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
 impl Store {
     pub async fn open(path: impl AsRef<Path>) -> Result<Self> {
         let options = sqlx::sqlite::SqliteConnectOptions::new()
@@ -3391,6 +3405,158 @@ impl Store {
             .execute(&self.pool)
             .await?;
         Ok(())
+    }
+
+    pub async fn get_mobile_access_config(&self) -> Result<Option<MobileAccessConfig>> {
+        let row = sqlx::query(
+            r#"SELECT id, profile_id, tunnel_id, public_base_url, relay_base_url, tunnel_secret,
+                      daemon_public_key, daemon_private_key, enabled, created_at, updated_at
+               FROM mobile_access_config
+               WHERE id = ?"#,
+        )
+        .bind("default")
+        .fetch_optional(&self.pool)
+        .await?;
+
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        Ok(Some(MobileAccessConfig {
+            id: row.try_get("id")?,
+            profile_id: ConnectionProfileId(uuid::Uuid::parse_str(
+                &row.try_get::<String, _>("profile_id")?,
+            )?),
+            tunnel_id: row.try_get("tunnel_id")?,
+            public_base_url: row.try_get("public_base_url")?,
+            relay_base_url: row.try_get("relay_base_url")?,
+            tunnel_secret: row.try_get("tunnel_secret")?,
+            daemon_public_key: row.try_get("daemon_public_key")?,
+            daemon_private_key: row.try_get("daemon_private_key")?,
+            enabled: row.try_get::<i64, _>("enabled")? != 0,
+            created_at: parse_dt(&row.try_get::<String, _>("created_at")?)?,
+            updated_at: parse_dt(&row.try_get::<String, _>("updated_at")?)?,
+        }))
+    }
+
+    pub async fn upsert_mobile_access_config(
+        &self,
+        config: MobileAccessConfig,
+    ) -> Result<MobileAccessConfig> {
+        let created_at = config.created_at.to_rfc3339();
+        let updated_at = Utc::now().to_rfc3339();
+        sqlx::query(
+            r#"INSERT INTO mobile_access_config
+                (id, profile_id, tunnel_id, public_base_url, relay_base_url, tunnel_secret, daemon_public_key, daemon_private_key, enabled, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(id) DO UPDATE SET
+                    profile_id=excluded.profile_id,
+                    tunnel_id=excluded.tunnel_id,
+                    public_base_url=excluded.public_base_url,
+                    relay_base_url=excluded.relay_base_url,
+                    tunnel_secret=excluded.tunnel_secret,
+                    daemon_public_key=excluded.daemon_public_key,
+                    daemon_private_key=excluded.daemon_private_key,
+                    enabled=excluded.enabled,
+                    updated_at=excluded.updated_at"#,
+        )
+        .bind(config.id)
+        .bind(config.profile_id.0.to_string())
+        .bind(config.tunnel_id)
+        .bind(config.public_base_url)
+        .bind(config.relay_base_url)
+        .bind(config.tunnel_secret)
+        .bind(config.daemon_public_key)
+        .bind(config.daemon_private_key)
+        .bind(if config.enabled { 1 } else { 0 })
+        .bind(created_at)
+        .bind(updated_at)
+        .execute(&self.pool)
+        .await?;
+
+        self.get_mobile_access_config()
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("failed to read back mobile access config"))
+    }
+
+    pub async fn set_mobile_access_enabled(&self, enabled: bool) -> Result<()> {
+        sqlx::query(r#"UPDATE mobile_access_config SET enabled = ?, updated_at = ? WHERE id = ?"#)
+            .bind(if enabled { 1 } else { 0 })
+            .bind(Utc::now().to_rfc3339())
+            .bind("default")
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn insert_mobile_pairing_token(
+        &self,
+        token_id: &str,
+        token_hash: &str,
+        expires_at: DateTime<Utc>,
+    ) -> Result<()> {
+        sqlx::query(
+            r#"INSERT INTO mobile_pairing_tokens
+                (id, token_hash, created_at, expires_at)
+               VALUES (?, ?, ?, ?)"#,
+        )
+        .bind(token_id)
+        .bind(token_hash)
+        .bind(Utc::now().to_rfc3339())
+        .bind(expires_at.to_rfc3339())
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn consume_mobile_pairing_token(&self, token_hash: &str) -> Result<bool> {
+        let row =
+            sqlx::query(r#"SELECT id, expires_at FROM mobile_pairing_tokens WHERE token_hash = ?"#)
+                .bind(token_hash)
+                .fetch_optional(&self.pool)
+                .await?;
+
+        let Some(row) = row else {
+            return Ok(false);
+        };
+        let expires_at: String = row.try_get("expires_at")?;
+        let expires_at = parse_dt(&expires_at)?;
+        if expires_at < Utc::now() {
+            let _ = sqlx::query(r#"DELETE FROM mobile_pairing_tokens WHERE token_hash = ?"#)
+                .bind(token_hash)
+                .execute(&self.pool)
+                .await;
+            return Ok(false);
+        }
+
+        sqlx::query(r#"DELETE FROM mobile_pairing_tokens WHERE token_hash = ?"#)
+            .bind(token_hash)
+            .execute(&self.pool)
+            .await?;
+        Ok(true)
+    }
+
+    pub async fn update_mobile_device_seq(
+        &self,
+        id: MobileDeviceId,
+        seq: i64,
+    ) -> Result<Option<i64>> {
+        let row = sqlx::query(r#"SELECT last_seen_seq FROM mobile_devices WHERE id = ?"#)
+            .bind(id.0.to_string())
+            .fetch_optional(&self.pool)
+            .await?;
+
+        let last_seen: Option<i64> = row.and_then(|r| r.try_get("last_seen_seq").ok());
+        sqlx::query(
+            r#"UPDATE mobile_devices
+               SET last_seen_seq = ?, last_seen_at = ?
+               WHERE id = ?"#,
+        )
+        .bind(seq)
+        .bind(Utc::now().to_rfc3339())
+        .bind(id.0.to_string())
+        .execute(&self.pool)
+        .await?;
+        Ok(last_seen)
     }
 
     pub async fn upsert_mobile_device(

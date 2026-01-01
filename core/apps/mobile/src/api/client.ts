@@ -1,3 +1,5 @@
+import { Buffer } from "buffer";
+
 import type {
   Diagnostics,
   Message,
@@ -15,9 +17,16 @@ import type {
   WorkspaceCatchupSnapshot,
 } from "@ctx/types";
 
+import type { E2eeEnvelope } from "../utils/e2ee";
+import { decodeBase64, decryptPayload, encryptPayload } from "../utils/e2ee";
+import { nextSecureSeq } from "../state/secureSeq";
+import { getSecureConnectionContext } from "../utils/secureConnection";
+
 export type ConnectionConfig = {
   baseUrl: string;
-  token: string;
+  token?: string;
+  deviceId?: string;
+  daemonPublicKey?: string;
 };
 
 export type WorkspaceSummary = {
@@ -72,11 +81,13 @@ const ensureSlash = (input: string): string => {
   return input.endsWith("/") ? input : `${input}/`;
 };
 
-const buildUrl = (conn: ConnectionConfig, path: string): string => {
-  const normalized = ensureSlash(conn.baseUrl);
+const buildUrlFromBase = (baseUrl: string, path: string): string => {
+  const normalized = ensureSlash(baseUrl);
   const absolute = path.startsWith("/") ? path.slice(1) : path;
   return `${normalized}${absolute}`;
 };
+
+const buildUrl = (conn: ConnectionConfig, path: string): string => buildUrlFromBase(conn.baseUrl, path);
 
 export const idToString = (value: unknown): string => {
   if (typeof value === "string") return value;
@@ -133,7 +144,62 @@ const mapMessage = (item: Message): MessageSummary => ({
   created_at: item.created_at,
 });
 
+type SecureRequestPayload = {
+  method: string;
+  path: string;
+  query?: string;
+  headers: Array<[string, string]>;
+  body_b64: string;
+};
+
+type SecureResponsePayload = {
+  status: number;
+  headers: Array<[string, string]>;
+  body_b64: string;
+};
+
+const isSecureConnection = (conn: ConnectionConfig): boolean =>
+  Boolean(conn.daemonPublicKey && conn.deviceId);
+
+const decodeText = (bytes: Uint8Array): string => {
+  if (typeof TextDecoder !== "undefined") {
+    return new TextDecoder().decode(bytes);
+  }
+  return Buffer.from(bytes).toString("utf-8");
+};
+
+const encodeBody = async (body?: BodyInit | null): Promise<Uint8Array> => {
+  if (body == null) return new Uint8Array();
+  if (typeof body === "string") {
+    return new Uint8Array(Buffer.from(body, "utf-8"));
+  }
+  if (body instanceof Uint8Array) {
+    return body;
+  }
+  if (body instanceof ArrayBuffer) {
+    return new Uint8Array(body);
+  }
+  if (ArrayBuffer.isView(body)) {
+    return new Uint8Array(body.buffer, body.byteOffset, body.byteLength);
+  }
+  if (typeof (body as Blob)?.arrayBuffer === "function") {
+    const ab = await (body as Blob).arrayBuffer();
+    return new Uint8Array(ab);
+  }
+  throw new Error("Unsupported request body type");
+};
+
 async function fetchJson<T>(conn: ConnectionConfig, path: string, init?: RequestInit): Promise<T> {
+  if (isSecureConnection(conn)) {
+    return secureFetchJson(conn, path, init);
+  }
+  return legacyFetchJson(conn, path, init);
+}
+
+async function legacyFetchJson<T>(conn: ConnectionConfig, path: string, init?: RequestInit): Promise<T> {
+  if (!conn.token) {
+    throw new Error("Missing API token.");
+  }
   const url = buildUrl(conn, path);
   const res = await fetch(url, {
     headers: {
@@ -158,6 +224,78 @@ async function fetchJson<T>(conn: ConnectionConfig, path: string, init?: Request
     return JSON.parse(text) as T;
   } catch {
     throw new Error(`Unexpected response from daemon: ${text.slice(0, 200)}`);
+  }
+}
+
+async function secureFetchJson<T>(conn: ConnectionConfig, path: string, init?: RequestInit): Promise<T> {
+  if (!conn.deviceId || !conn.daemonPublicKey) {
+    throw new Error("Secure connection not configured.");
+  }
+
+  const { key, deviceId } = await getSecureConnectionContext(conn.deviceId, conn.daemonPublicKey);
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  const [pathOnly, query] = normalizedPath.split("?");
+  const method = (init?.method || "GET").toUpperCase();
+  const headers = new Headers(init?.headers);
+  if (init?.body && !headers.has("content-type")) {
+    headers.set("content-type", "application/json");
+  }
+  const bodyBytes = await encodeBody(init?.body);
+  const payload: SecureRequestPayload = {
+    method,
+    path: pathOnly,
+    query: query || undefined,
+    headers: Array.from(headers.entries()),
+    body_b64: bodyBytes.length ? Buffer.from(bodyBytes).toString("base64") : "",
+  };
+
+  const seq = await nextSecureSeq(deviceId);
+  const plaintext = new Uint8Array(Buffer.from(JSON.stringify(payload), "utf-8"));
+  const envelope = encryptPayload(key, deviceId, seq, plaintext);
+
+  const secureRes = await fetch(buildUrl(conn, "/api/mobile/secure"), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(envelope),
+  });
+  const secureText = await secureRes.text();
+  if (!secureRes.ok) {
+    const message = secureText || `${secureRes.status} ${secureRes.statusText}`;
+    throw new Error(message.trim());
+  }
+
+  if (!secureText) {
+    return undefined as T;
+  }
+
+  let responseEnvelope: E2eeEnvelope;
+  try {
+    responseEnvelope = JSON.parse(secureText) as E2eeEnvelope;
+  } catch {
+    throw new Error("Invalid secure response.");
+  }
+  if (responseEnvelope.device_id !== deviceId) {
+    throw new Error("Secure response device mismatch.");
+  }
+
+  const decrypted = decryptPayload(key, deviceId, seq, responseEnvelope);
+  const responsePayload = JSON.parse(decodeText(decrypted)) as SecureResponsePayload;
+  if (responsePayload.status < 200 || responsePayload.status >= 300) {
+    const errorBody = responsePayload.body_b64 ? decodeText(decodeBase64(responsePayload.body_b64)) : "";
+    throw new Error(errorBody || `Request failed (${responsePayload.status})`);
+  }
+
+  if (!responsePayload.body_b64) {
+    return undefined as T;
+  }
+  const responseText = decodeText(decodeBase64(responsePayload.body_b64));
+  if (!responseText) {
+    return undefined as T;
+  }
+  try {
+    return JSON.parse(responseText) as T;
+  } catch {
+    throw new Error(`Unexpected response from daemon: ${responseText.slice(0, 200)}`);
   }
 }
 
@@ -216,11 +354,38 @@ export type RegisterMobileDeviceRequest = {
   app_version?: string;
 };
 
+export type PairMobileDeviceRequest = {
+  pairing_token: string;
+  device_id: string;
+  device_label?: string;
+  platform?: string;
+  public_key: string;
+  app_version?: string;
+};
+
 export const registerMobileDevice = (conn: ConnectionConfig, payload: RegisterMobileDeviceRequest) =>
   fetchJson<MobileDeviceRegistration>(conn, `/api/mobile/register`, {
     method: "POST",
     body: JSON.stringify(payload),
   });
+
+export const pairMobileDevice = async (baseUrl: string, payload: PairMobileDeviceRequest): Promise<E2eeEnvelope> => {
+  const url = buildUrlFromBase(baseUrl, "/api/mobile/pair");
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    const message = text || `${res.status} ${res.statusText}`;
+    throw new Error(message.trim());
+  }
+  if (!text) {
+    throw new Error("Pairing response missing");
+  }
+  return JSON.parse(text) as E2eeEnvelope;
+};
 
 export type WorkspaceCatchupParams = {
   limit?: number;

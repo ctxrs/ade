@@ -31,6 +31,7 @@ use ctx_store::Store;
 use crate::api;
 use crate::installer;
 use crate::installs::{InstallId, InstallProgressEvent, InstallState, InstallStateKind};
+use crate::mobile_tunnel::MobileTunnelManager;
 use crate::resource_governance::{self, ResourceGovernanceRuntime};
 use crate::resource_utilization::ResourceSampler;
 use crate::scheduler::{reconcile_turn_terminal_state, session_worker, SchedulerCommand};
@@ -82,6 +83,7 @@ pub struct AppState {
     pub resource_sampler: Mutex<ResourceSampler>,
     pub workspace_catchup: WorkspaceCatchupHub,
     pub terminals: TerminalManager,
+    pub mobile_tunnel: MobileTunnelManager,
     schedulers: Mutex<HashMap<SessionId, mpsc::Sender<SchedulerCommand>>>,
     broadcasters: Mutex<HashMap<SessionId, broadcast::Sender<SessionEvent>>>,
     session_event_heads: Mutex<HashMap<SessionId, watch::Sender<i64>>>,
@@ -213,6 +215,7 @@ impl AppState {
             resource_sampler: Mutex::new(ResourceSampler::new()),
             workspace_catchup,
             terminals: TerminalManager::default(),
+            mobile_tunnel: MobileTunnelManager::default(),
             schedulers: Mutex::new(HashMap::new()),
             broadcasters: Mutex::new(HashMap::new()),
             session_event_heads: Mutex::new(HashMap::new()),
@@ -960,6 +963,40 @@ pub async fn serve(
     state.telemetry.update_config(telemetry_cfg).await;
     if let Err(err) = resource_governance::apply_settings(&state, &settings).await {
         tracing::warn!("failed to apply resource governance settings: {err:#}");
+    }
+
+    // Reconnect managed mobile access tunnel on daemon start when enabled.
+    {
+        let state = Arc::clone(&state);
+        tokio::spawn(async move {
+            if state.auth_token.is_none() {
+                return;
+            }
+            let cfg = match state.store.get_mobile_access_config().await {
+                Ok(v) => v,
+                Err(e) => {
+                    tracing::warn!("failed to read saved mobile access config: {e:#}");
+                    return;
+                }
+            };
+            let Some(cfg) = cfg else {
+                return;
+            };
+            if !cfg.enabled {
+                return;
+            }
+
+            let start_cfg = crate::mobile_tunnel::StartMobileTunnelConfig {
+                relay_base_url: cfg.relay_base_url,
+                tunnel_id: cfg.tunnel_id,
+                tunnel_secret: cfg.tunnel_secret,
+                public_base_url: cfg.public_base_url.trim_end_matches('/').to_string(),
+                local_daemon_url: state.daemon_url.trim_end_matches('/').to_string(),
+            };
+            if let Err(e) = state.mobile_tunnel.start(start_cfg).await {
+                tracing::warn!("failed to start saved mobile tunnel: {e:#}");
+            }
+        });
     }
 
     // Claude-only extension plumbing: AskUserQuestion is implemented via a Claude-specific ACP

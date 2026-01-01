@@ -748,7 +748,7 @@ export function SessionSupervisorProvider({ children }: { children: React.ReactN
   const { config } = useConnection();
   const supRef = useRef<SessionSupervisor | null>(null);
   const lastKeyRef = useRef<string | null>(null);
-  const key = config ? `${config.baseUrl}::${config.token}` : null;
+  const key = config ? `${config.baseUrl}::${config.token ?? config.deviceId ?? ""}` : null;
 
   if (!config) {
     supRef.current = null;
