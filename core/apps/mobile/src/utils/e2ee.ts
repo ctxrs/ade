@@ -5,7 +5,7 @@ import { HKDF } from "@stablelib/hkdf";
 import { SHA256 } from "@stablelib/sha256";
 import { XChaCha20Poly1305 } from "@stablelib/xchacha20poly1305";
 
-const HKDF_INFO = new TextEncoder().encode("context-mobile-e2ee-v1");
+const HKDF_INFO = new TextEncoder().encode("ctx-mobile-e2ee-v1");
 
 export type E2eeEnvelope = {
   device_id: string;
