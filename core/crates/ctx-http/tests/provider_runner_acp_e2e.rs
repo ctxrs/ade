@@ -184,9 +184,9 @@ async fn wait_for_tool_events(store: &Store, session_id: ctx_core::ids::SessionI
 
 async fn wait_for_new_tool_events(
     store: &Store,
-    session_id: context_core::ids::SessionId,
+    session_id: ctx_core::ids::SessionId,
     prev_len: usize,
-) -> Vec<context_core::models::SessionEvent> {
+) -> Vec<ctx_core::models::SessionEvent> {
     let mut attempts = 0;
     loop {
         let events = store.list_session_events(session_id).await.unwrap();

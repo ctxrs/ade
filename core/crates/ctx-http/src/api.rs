@@ -3342,7 +3342,7 @@ async fn download_appimage_update(
     })?;
 
     let url = updates::join_url(&base_url, &appimage.url_path);
-    let dest = updates::updates_dir(&state.data_root).join("context.AppImage.new");
+    let dest = updates::updates_dir(&state.data_root).join("ctx.AppImage.new");
     updates::download_and_verify(&url, &appimage.sha256, &dest)
         .await
         .map_err(|e| {
@@ -3403,15 +3403,20 @@ async fn apply_appimage_update(
             }),
         ));
     };
-    let downloaded = updates::updates_dir(&state.data_root).join("context.AppImage.new");
-    if !downloaded.exists() {
+    let new_downloaded = updates::updates_dir(&state.data_root).join("ctx.AppImage.new");
+    let legacy_downloaded = updates::updates_dir(&state.data_root).join("context.AppImage.new");
+    let downloaded = if new_downloaded.exists() {
+        new_downloaded
+    } else if legacy_downloaded.exists() {
+        legacy_downloaded
+    } else {
         return Err((
             StatusCode::BAD_REQUEST,
             Json(ApiErrorResp {
                 error: "no downloaded update found; call download first".to_string(),
             }),
         ));
-    }
+    };
 
     updates::atomic_replace_file(&target, &downloaded)
         .await
@@ -3948,10 +3953,8 @@ async fn get_provider_options(
 
     let mut env = std::collections::HashMap::new();
     env.insert("CTX_DAEMON_URL".to_string(), state.daemon_url.clone());
-    env.insert("CONTEXT_DAEMON_URL".to_string(), state.daemon_url.clone());
     if let Some(token) = state.auth_token.as_ref() {
         env.insert("CTX_AUTH_TOKEN".to_string(), token.clone());
-        env.insert("CONTEXT_AUTH_TOKEN".to_string(), token.clone());
     }
 
     let probe = probe_provider_options(agent, client, PathBuf::from(&ws.root_path), env).await;
@@ -4086,13 +4089,10 @@ async fn authenticate_provider_for_workspace(
 
     let mut env = std::collections::HashMap::new();
     env.insert("CTX_DAEMON_URL".to_string(), state.daemon_url.clone());
-    env.insert("CONTEXT_DAEMON_URL".to_string(), state.daemon_url.clone());
     if let Some(token) = state.auth_token.as_ref() {
         env.insert("CTX_AUTH_TOKEN".to_string(), token.clone());
-        env.insert("CONTEXT_AUTH_TOKEN".to_string(), token.clone());
     }
     env.insert("CTX_MCP_DISABLED".to_string(), "1".to_string());
-    env.insert("CONTEXT_MCP_DISABLED".to_string(), "1".to_string());
 
     let probe = authenticate_provider(
         agent,
@@ -4189,13 +4189,10 @@ async fn verify_provider_for_workspace(
 
     let mut env = std::collections::HashMap::new();
     env.insert("CTX_DAEMON_URL".to_string(), state.daemon_url.clone());
-    env.insert("CONTEXT_DAEMON_URL".to_string(), state.daemon_url.clone());
     if let Some(token) = state.auth_token.as_ref() {
         env.insert("CTX_AUTH_TOKEN".to_string(), token.clone());
-        env.insert("CONTEXT_AUTH_TOKEN".to_string(), token.clone());
     }
     env.insert("CTX_MCP_DISABLED".to_string(), "1".to_string());
-    env.insert("CONTEXT_MCP_DISABLED".to_string(), "1".to_string());
 
     let probe = verify_provider_connection(agent, client, PathBuf::from(&ws.root_path), env).await;
     let (status, auth_required, auth_methods, acp_error) = match probe {
@@ -5418,7 +5415,7 @@ async fn create_task(
             )
         })?;
     }
-    let branch_name = format!("context/{}/{}", task.id.0, worktree_id.0);
+    let branch_name = format!("ctx/{}/{}", task.id.0, worktree_id.0);
     create_worktree(&ws.root_path, &wt_path, &base_commit_sha, &branch_name)
         .await
         .map_err(|e| {
@@ -5609,7 +5606,7 @@ async fn create_track(
                     )
                 })?;
             }
-            let branch_name = format!("context/{}/{}", task.id.0, worktree_id.0);
+            let branch_name = format!("ctx/{}/{}", task.id.0, worktree_id.0);
             create_worktree(&ws.root_path, &wt_path, &base_commit_sha, &branch_name)
                 .await
                 .map_err(|e| {
@@ -7347,31 +7344,24 @@ async fn authenticate_session(
 
     let mut provider_env = std::collections::HashMap::new();
     provider_env.insert("CTX_DAEMON_URL".to_string(), state.daemon_url.clone());
-    provider_env.insert("CONTEXT_DAEMON_URL".to_string(), state.daemon_url.clone());
     if let Some(token) = state.auth_token.clone() {
-        provider_env.insert("CTX_AUTH_TOKEN".to_string(), token.clone());
-        provider_env.insert("CONTEXT_AUTH_TOKEN".to_string(), token);
+        provider_env.insert("CTX_AUTH_TOKEN".to_string(), token);
     }
     if let Some(provider_ref) = session.provider_session_ref.clone() {
-        provider_env.insert("CTX_PROVIDER_SESSION_REF".to_string(), provider_ref.clone());
-        provider_env.insert("CONTEXT_PROVIDER_SESSION_REF".to_string(), provider_ref);
+        provider_env.insert("CTX_PROVIDER_SESSION_REF".to_string(), provider_ref);
     }
     provider_env.insert("CTX_SESSION_ID".to_string(), session.id.0.to_string());
-    provider_env.insert("CONTEXT_SESSION_ID".to_string(), session.id.0.to_string());
     let mcp_token = uuid::Uuid::new_v4().to_string();
-    provider_env.insert("CTX_MCP_TOKEN".to_string(), mcp_token.clone());
-    provider_env.insert("CONTEXT_MCP_TOKEN".to_string(), mcp_token);
+    provider_env.insert("CTX_MCP_TOKEN".to_string(), mcp_token);
     if let Ok(v) =
         std::env::var("CTX_MCP_COMMAND").or_else(|_| std::env::var("CONTEXT_MCP_COMMAND"))
     {
-        provider_env.insert("CTX_MCP_COMMAND".to_string(), v.clone());
-        provider_env.insert("CONTEXT_MCP_COMMAND".to_string(), v);
+        provider_env.insert("CTX_MCP_COMMAND".to_string(), v);
     }
     if let Ok(v) =
         std::env::var("CTX_MCP_DISABLED").or_else(|_| std::env::var("CONTEXT_MCP_DISABLED"))
     {
-        provider_env.insert("CTX_MCP_DISABLED".to_string(), v.clone());
-        provider_env.insert("CONTEXT_MCP_DISABLED".to_string(), v);
+        provider_env.insert("CTX_MCP_DISABLED".to_string(), v);
     }
 
     let (ev_tx, mut ev_rx) = mpsc::channel::<NormalizedEvent>(128);

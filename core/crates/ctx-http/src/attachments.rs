@@ -499,7 +499,7 @@ async fn run_doc_mirror_script(
     cmd.arg(dest)
         .current_dir(&workspace.root_path)
         .env("CTX_DOCS_OUTPUT_DIR", dest)
-        .env("CONTEXT_DOCS_OUTPUT_DIR", dest);
+        .env("CTX_DOCS_OUTPUT_DIR", dest);
     let output = cmd.output().await.context("running doc mirror script")?;
     if !output.status.success() {
         anyhow::bail!(

@@ -155,8 +155,7 @@ export default function DiagnosticsPage() {
               <b>Enabled:</b> {lspStatus.enabled ? "Yes" : "No"}{" "}
               {!lspStatus.enabled && (
                 <span className="muted">
-                  (set <code>CTX_LSP_ENABLED=1</code> or{" "}
-                  <code>CONTEXT_LSP_ENABLED=1</code>)
+                  (set <code>CTX_LSP_ENABLED=1</code>)
                 </span>
               )}
             </div>
@@ -219,8 +218,7 @@ export default function DiagnosticsPage() {
       <div className="card">
         <h2 style={{ marginTop: 0 }}>Updates</h2>
         <div className="muted">
-          Uses <code>CTX_DOWNLOAD_BASE_URL</code> (or{" "}
-          <code>CONTEXT_DOWNLOAD_BASE_URL</code>) to fetch{" "}
+          Uses <code>CTX_DOWNLOAD_BASE_URL</code> to fetch{" "}
           <code>/releases/&lt;channel&gt;/latest.json</code>.
         </div>
         <div className="row" style={{ gap: 8, flexWrap: "wrap", marginTop: 8 }}>
@@ -264,8 +262,7 @@ export default function DiagnosticsPage() {
           {!downloadResp?.can_apply_in_place && downloadResp && (
             <div className="muted">
               Cannot apply in place (not running as AppImage / missing{" "}
-              <code>CTX_APPIMAGE_PATH</code> (or{" "}
-              <code>CONTEXT_APPIMAGE_PATH</code>). Downloaded file can be applied manually.
+              <code>CTX_APPIMAGE_PATH</code>). Downloaded file can be applied manually.
             </div>
           )}
         </div>

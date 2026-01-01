@@ -44,7 +44,7 @@ mod tests {
         let base = rev_parse_head(root).await.unwrap();
 
         let wt_path = root.join("wt1");
-        create_worktree(root, &wt_path, &base, "context/test")
+        create_worktree(root, &wt_path, &base, "ctx/test")
             .await
             .unwrap();
 

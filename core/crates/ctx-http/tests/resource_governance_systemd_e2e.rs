@@ -6,11 +6,11 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result};
 use tokio::process::Command;
 
-use context_http::resource_governance::{apply_limits, EffectiveResourceLimits};
-use context_http::settings::ResourceGovernanceStatusState;
+use ctx_http::resource_governance::{apply_limits, EffectiveResourceLimits};
+use ctx_http::settings::ResourceGovernanceStatusState;
 
-const SCOPE_UNIT: &str = "context-daemon.scope";
-const REEXEC_ENV: &str = "CONTEXT_SYSTEMD_E2E_REEXEC";
+const SCOPE_UNIT: &str = "ctx-daemon.scope";
+const REEXEC_ENV: &str = "CTX_SYSTEMD_E2E_REEXEC";
 
 async fn systemd_user_available() -> bool {
     if which::which("systemctl").is_err() || which::which("systemd-run").is_err() {
@@ -180,7 +180,7 @@ async fn resource_governance_systemd_limits_apply_and_throttle() -> Result<()> {
             .arg("--user")
             .arg("--scope")
             .arg("--unit")
-            .arg("context-daemon")
+            .arg("ctx-daemon")
             .arg("--same-dir")
             .arg(exe)
             .arg("--exact")

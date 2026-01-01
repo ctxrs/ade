@@ -1002,10 +1002,8 @@ pub async fn serve(
     if !prewarm_ids.is_empty() {
         let mut base_env = HashMap::<String, String>::new();
         base_env.insert("CTX_DAEMON_URL".to_string(), daemon_url.clone());
-        base_env.insert("CONTEXT_DAEMON_URL".to_string(), daemon_url.clone());
         if let Some(token) = auth_token_for_env.clone() {
-            base_env.insert("CTX_AUTH_TOKEN".to_string(), token.clone());
-            base_env.insert("CONTEXT_AUTH_TOKEN".to_string(), token);
+            base_env.insert("CTX_AUTH_TOKEN".to_string(), token);
         }
 
         for (id, adapter) in [

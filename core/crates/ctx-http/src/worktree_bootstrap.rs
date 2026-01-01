@@ -470,21 +470,13 @@ async fn run_bootstrap_step(
     cmd.current_dir(&worktree.root_path)
         .stdin(Stdio::null())
         .env("CTX_WORKSPACE_ROOT", &workspace.root_path)
-        .env("CONTEXT_WORKSPACE_ROOT", &workspace.root_path)
         .env("CTX_WORKTREE_ROOT", &worktree.root_path)
-        .env("CONTEXT_WORKTREE_ROOT", &worktree.root_path)
         .env("CTX_WORKTREE_ID", worktree.id.0.to_string())
-        .env("CONTEXT_WORKTREE_ID", worktree.id.0.to_string())
         .env(
             "CTX_BRANCH_NAME",
             worktree.git_branch.clone().unwrap_or_default(),
         )
-        .env(
-            "CONTEXT_BRANCH_NAME",
-            worktree.git_branch.clone().unwrap_or_default(),
-        )
-        .env("CTX_BASE_COMMIT_SHA", &worktree.base_commit_sha)
-        .env("CONTEXT_BASE_COMMIT_SHA", &worktree.base_commit_sha);
+        .env("CTX_BASE_COMMIT_SHA", &worktree.base_commit_sha);
 
     let mut child = cmd
         .stdout(Stdio::piped())

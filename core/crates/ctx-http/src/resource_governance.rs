@@ -15,8 +15,8 @@ use crate::settings::{
 
 #[cfg(target_os = "linux")]
 const SYSTEMD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
-const SCOPE_UNIT_BASE: &str = "context-daemon";
-const SCOPE_UNIT: &str = "context-daemon.scope";
+const SCOPE_UNIT_BASE: &str = "ctx-daemon";
+const SCOPE_UNIT: &str = "ctx-daemon.scope";
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct EffectiveResourceLimits {

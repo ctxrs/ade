@@ -822,7 +822,7 @@ fn main() {
                         "kind": "source.organizeImports",
                     "command": {
                         "title": "Organize imports",
-                        "command": "context.test.organizeImports",
+                        "command": "ctx.test.organizeImports",
                         "arguments": [{
                             "edit": {
                                     "changes": {

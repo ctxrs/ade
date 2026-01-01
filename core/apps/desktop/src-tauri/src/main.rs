@@ -1808,7 +1808,7 @@ fn start_remote_daemon_over_ssh(
         .map(|t| format!(" --auth-token {}", shell_escape(t)))
         .unwrap_or_default();
     let exec_cmd = format!(
-        "if command -v ctx >/dev/null 2>&1; then ctx serve --bind 127.0.0.1:{remote_port} --data-dir {dir}{auth}; else context serve --bind 127.0.0.1:{remote_port} --data-dir {dir}{auth}; fi",
+        "if command -v ctx >/dev/null 2>&1; then ctx serve --bind 127.0.0.1:{remote_port} --data-dir {dir}{auth}; else echo 'ctx not found on PATH' >&2; exit 127; fi",
         dir = shell_escape(data_dir),
         auth = auth_flag
     );
@@ -2050,8 +2050,6 @@ fn spawn_daemon(
 ) -> Result<(String, Child, bool)> {
     let ctx_bin = resource_bin(app, "ctx")
         .or_else(|| dev_bin("ctx"))
-        .or_else(|| resource_bin(app, "context"))
-        .or_else(|| dev_bin("context"))
         .unwrap_or_else(|| PathBuf::from("ctx"));
 
     let mcp_bin = resource_bin(app, "ctx-mcp")
@@ -2081,20 +2079,14 @@ fn spawn_daemon(
         if let Some(dist) = web_dist.as_ref() {
             cmd.arg("--setenv")
                 .arg(format!("CTX_WEB_DIST={}", dist.to_string_lossy()));
-            cmd.arg("--setenv")
-                .arg(format!("CONTEXT_WEB_DIST={}", dist.to_string_lossy()));
         }
         if let Some(mcp) = mcp_bin.as_ref() {
             cmd.arg("--setenv")
                 .arg(format!("CTX_MCP_COMMAND={}", mcp.to_string_lossy()));
-            cmd.arg("--setenv")
-                .arg(format!("CONTEXT_MCP_COMMAND={}", mcp.to_string_lossy()));
         }
         if let Ok(appimage) = std::env::var("APPIMAGE") {
             cmd.arg("--setenv")
                 .arg(format!("CTX_APPIMAGE_PATH={appimage}"));
-            cmd.arg("--setenv")
-                .arg(format!("CONTEXT_APPIMAGE_PATH={appimage}"));
         }
         cmd.arg(&ctx_bin);
         cmd
@@ -2102,15 +2094,12 @@ fn spawn_daemon(
         let mut cmd = Command::new(&ctx_bin);
         if let Some(dist) = web_dist.as_ref() {
             cmd.env("CTX_WEB_DIST", dist.to_string_lossy().to_string());
-            cmd.env("CONTEXT_WEB_DIST", dist.to_string_lossy().to_string());
         }
         if let Some(mcp) = mcp_bin.as_ref() {
             cmd.env("CTX_MCP_COMMAND", mcp.to_string_lossy().to_string());
-            cmd.env("CONTEXT_MCP_COMMAND", mcp.to_string_lossy().to_string());
         }
         if let Ok(appimage) = std::env::var("APPIMAGE") {
             cmd.env("CTX_APPIMAGE_PATH", appimage.clone());
-            cmd.env("CONTEXT_APPIMAGE_PATH", appimage);
         }
         cmd
     };

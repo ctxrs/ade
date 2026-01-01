@@ -362,28 +362,24 @@ fn build_acp_client_config(env: &HashMap<String, String>) -> AcpClientConfig {
         .or_else(|| env.get("CONTEXT_DAEMON_URL"))
     {
         mcp_env.insert("CTX_DAEMON_URL".to_string(), url.clone());
-        mcp_env.insert("CONTEXT_DAEMON_URL".to_string(), url.clone());
     }
     if let Some(token) = env
         .get("CTX_AUTH_TOKEN")
         .or_else(|| env.get("CONTEXT_AUTH_TOKEN"))
     {
         mcp_env.insert("CTX_AUTH_TOKEN".to_string(), token.clone());
-        mcp_env.insert("CONTEXT_AUTH_TOKEN".to_string(), token.clone());
     }
     if let Some(token) = env
         .get("CTX_MCP_TOKEN")
         .or_else(|| env.get("CONTEXT_MCP_TOKEN"))
     {
         mcp_env.insert("CTX_MCP_TOKEN".to_string(), token.clone());
-        mcp_env.insert("CONTEXT_MCP_TOKEN".to_string(), token.clone());
     }
     if let Some(session_id) = env
         .get("CTX_SESSION_ID")
         .or_else(|| env.get("CONTEXT_SESSION_ID"))
     {
         mcp_env.insert("CTX_SESSION_ID".to_string(), session_id.clone());
-        mcp_env.insert("CONTEXT_SESSION_ID".to_string(), session_id.clone());
     }
 
     let mcp_command = env

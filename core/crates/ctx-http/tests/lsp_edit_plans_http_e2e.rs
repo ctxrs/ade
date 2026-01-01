@@ -498,7 +498,7 @@ async fn lsp_code_action_plan_supports_command_only_embedded_edit() {
         "kind": "quickfix",
         "command": {
             "title": "Insert CMD",
-            "command": "context.test.insertCmd",
+            "command": "ctx.test.insertCmd",
             "arguments": [{
                 "edit": {
                     "changes": {

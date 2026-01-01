@@ -26,7 +26,7 @@
     "active": true,
     "targets": "all",
     "resources": ["bin/*", "web/dist/**/*"],
-    "externalBin": ["bin/ctx", "bin/ctx-mcp", "bin/context"],
+    "externalBin": ["bin/ctx", "bin/ctx-mcp"],
     "macOS": {
       "infoPlist": "Info.plist"
     }

@@ -208,7 +208,7 @@ pub async fn self_update_daemon(
     let download_url = format!("{}{}", base_url.trim_end_matches('/'), artifact.url_path);
     let tmp_dir = std::env::temp_dir().join("ctx-self-update");
     tokio::fs::create_dir_all(&tmp_dir).await.ok();
-    let tmp_path = tmp_dir.join("context.new");
+    let tmp_path = tmp_dir.join("ctx.new");
 
     println!("Downloading: {download_url}");
     download_to_path(&download_url, &tmp_path).await?;

@@ -57,7 +57,3 @@ reqwest.workspace = true
 [[bin]]
 name = "ctx"
 path = "src/main.rs"
-
-[[bin]]
-name = "context"
-path = "src/main.rs"

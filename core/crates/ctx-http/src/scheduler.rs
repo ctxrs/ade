@@ -193,39 +193,28 @@ async fn start_turn(
 
     let mut provider_env = std::collections::HashMap::new();
     provider_env.insert("CTX_DAEMON_URL".to_string(), state.daemon_url.clone());
-    provider_env.insert("CONTEXT_DAEMON_URL".to_string(), state.daemon_url.clone());
     provider_env.insert(
         "CTX_DATA_ROOT".to_string(),
         state.data_root.to_string_lossy().to_string(),
     );
-    provider_env.insert(
-        "CONTEXT_DATA_ROOT".to_string(),
-        state.data_root.to_string_lossy().to_string(),
-    );
     if let Some(token) = state.auth_token.clone() {
-        provider_env.insert("CTX_AUTH_TOKEN".to_string(), token.clone());
-        provider_env.insert("CONTEXT_AUTH_TOKEN".to_string(), token);
+        provider_env.insert("CTX_AUTH_TOKEN".to_string(), token);
     }
     if let Some(provider_ref) = session.provider_session_ref.clone() {
-        provider_env.insert("CTX_PROVIDER_SESSION_REF".to_string(), provider_ref.clone());
-        provider_env.insert("CONTEXT_PROVIDER_SESSION_REF".to_string(), provider_ref);
+        provider_env.insert("CTX_PROVIDER_SESSION_REF".to_string(), provider_ref);
     }
     provider_env.insert("CTX_SESSION_ID".to_string(), session.id.0.to_string());
-    provider_env.insert("CONTEXT_SESSION_ID".to_string(), session.id.0.to_string());
     let mcp_token = uuid::Uuid::new_v4().to_string();
-    provider_env.insert("CTX_MCP_TOKEN".to_string(), mcp_token.clone());
-    provider_env.insert("CONTEXT_MCP_TOKEN".to_string(), mcp_token);
+    provider_env.insert("CTX_MCP_TOKEN".to_string(), mcp_token);
     if let Ok(v) =
         std::env::var("CTX_MCP_COMMAND").or_else(|_| std::env::var("CONTEXT_MCP_COMMAND"))
     {
-        provider_env.insert("CTX_MCP_COMMAND".to_string(), v.clone());
-        provider_env.insert("CONTEXT_MCP_COMMAND".to_string(), v);
+        provider_env.insert("CTX_MCP_COMMAND".to_string(), v);
     }
     if let Ok(v) =
         std::env::var("CTX_MCP_DISABLED").or_else(|_| std::env::var("CONTEXT_MCP_DISABLED"))
     {
-        provider_env.insert("CTX_MCP_DISABLED".to_string(), v.clone());
-        provider_env.insert("CONTEXT_MCP_DISABLED".to_string(), v);
+        provider_env.insert("CTX_MCP_DISABLED".to_string(), v);
     }
 
     if let Ok(cfg) = installer::load_agent_server_config(&state.data_root).await {
@@ -781,6 +770,7 @@ pub async fn reconcile_turn_terminal_state(
     Ok(())
 }
 
+#[allow(dead_code)]
 async fn build_rehydrate_transcript_block(
     store: &ctx_store::Store,
     session_id: ctx_core::ids::SessionId,

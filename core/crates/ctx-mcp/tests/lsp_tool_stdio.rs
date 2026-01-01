@@ -7,8 +7,7 @@ use tokio::process::Command;
 use tower::ServiceBuilder;
 
 fn mcp_bin() -> &'static str {
-    option_env!("CARGO_BIN_EXE_ctx-mcp")
-        .expect("missing ctx-mcp binary (set CARGO_BIN_EXE_ctx-mcp)")
+    env!("CARGO_BIN_EXE_ctx-mcp")
 }
 
 #[tokio::test]

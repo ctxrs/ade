@@ -333,7 +333,7 @@ impl LspManager {
 
     pub async fn diagnostics_for_file(&self, root: &Path, file: &Path) -> Result<Vec<Diagnostic>> {
         if !self.cfg.enabled {
-            anyhow::bail!("LSP disabled (set CTX_LSP_ENABLED=1 (or CONTEXT_LSP_ENABLED=1))");
+            anyhow::bail!("LSP disabled (set CTX_LSP_ENABLED=1)");
         }
         let lang =
             Language::detect(file, &self.cfg).ok_or_else(|| anyhow!("no LSP language for file"))?;
@@ -784,12 +784,10 @@ impl LspManager {
         arguments: Vec<Value>,
     ) -> Result<(Value, Option<WorkspaceEdit>)> {
         if !self.cfg.enabled {
-            anyhow::bail!("LSP disabled (set CTX_LSP_ENABLED=1 (or CONTEXT_LSP_ENABLED=1))");
+            anyhow::bail!("LSP disabled (set CTX_LSP_ENABLED=1)");
         }
         if !self.cfg.execute_commands_enabled {
-            anyhow::bail!(
-                "LSP executeCommand disabled (set CTX_LSP_EXECUTE_COMMANDS_ENABLED=1 (or CONTEXT_LSP_EXECUTE_COMMANDS_ENABLED=1))"
-            );
+            anyhow::bail!("LSP executeCommand disabled (set CTX_LSP_EXECUTE_COMMANDS_ENABLED=1)");
         }
         if self.cfg.execute_command_allowlist.is_empty()
             || !self
@@ -814,7 +812,7 @@ impl LspManager {
 
     pub async fn sync_document_text(&self, root: &Path, file: &Path, text: String) -> Result<()> {
         if !self.cfg.enabled {
-            anyhow::bail!("LSP disabled (set CTX_LSP_ENABLED=1 (or CONTEXT_LSP_ENABLED=1))");
+            anyhow::bail!("LSP disabled (set CTX_LSP_ENABLED=1)");
         }
         let lang =
             Language::detect(file, &self.cfg).ok_or_else(|| anyhow!("no LSP language for file"))?;
@@ -829,7 +827,7 @@ impl LspManager {
         file: &Path,
     ) -> Result<broadcast::Receiver<DiagnosticsUpdate>> {
         if !self.cfg.enabled {
-            anyhow::bail!("LSP disabled (set CTX_LSP_ENABLED=1 (or CONTEXT_LSP_ENABLED=1))");
+            anyhow::bail!("LSP disabled (set CTX_LSP_ENABLED=1)");
         }
         let lang =
             Language::detect(file, &self.cfg).ok_or_else(|| anyhow!("no LSP language for file"))?;
@@ -843,7 +841,7 @@ impl LspManager {
         lang: Language,
     ) -> Result<broadcast::Receiver<DiagnosticsUpdate>> {
         if !self.cfg.enabled {
-            anyhow::bail!("LSP disabled (set CTX_LSP_ENABLED=1 (or CONTEXT_LSP_ENABLED=1))");
+            anyhow::bail!("LSP disabled (set CTX_LSP_ENABLED=1)");
         }
         let session = self.get_or_spawn(root, lang).await?;
         Ok(session.subscribe_diagnostics())
@@ -869,7 +867,7 @@ impl LspManager {
         query: String,
     ) -> Result<Vec<SymbolInformation>> {
         if !self.cfg.enabled {
-            anyhow::bail!("LSP disabled (set CTX_LSP_ENABLED=1 (or CONTEXT_LSP_ENABLED=1))");
+            anyhow::bail!("LSP disabled (set CTX_LSP_ENABLED=1)");
         }
         let candidates = detect_workspace_languages(root, &self.cfg);
         let params = WorkspaceSymbolParams {
@@ -893,7 +891,7 @@ impl LspManager {
 
     pub async fn workspace_symbol_resolve(&self, root: &Path, item: Value) -> Result<Value> {
         if !self.cfg.enabled {
-            anyhow::bail!("LSP disabled (set CTX_LSP_ENABLED=1 (or CONTEXT_LSP_ENABLED=1))");
+            anyhow::bail!("LSP disabled (set CTX_LSP_ENABLED=1)");
         }
         let candidates = detect_workspace_languages(root, &self.cfg);
 
@@ -1017,7 +1015,7 @@ impl LspManager {
         Fut: std::future::Future<Output = Result<T>>,
     {
         if !self.cfg.enabled {
-            anyhow::bail!("LSP disabled (set CTX_LSP_ENABLED=1 (or CONTEXT_LSP_ENABLED=1))");
+            anyhow::bail!("LSP disabled (set CTX_LSP_ENABLED=1)");
         }
         let lang =
             Language::detect(file, &self.cfg).ok_or_else(|| anyhow!("no LSP language for file"))?;

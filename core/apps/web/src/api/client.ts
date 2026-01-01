@@ -308,7 +308,7 @@ const api = async <T>(path: string, init?: RequestInit): Promise<T> => {
         lowered.includes("socket hang up"))
     ) {
       throw new Error(
-        "Cannot reach the ctx daemon via /api. If you're running the web dev server, start the daemon (default http://127.0.0.1:4399) or set CTX_DAEMON_URL (or CONTEXT_DAEMON_URL) before `pnpm dev`.",
+        "Cannot reach the ctx daemon via /api. If you're running the web dev server, start the daemon (default http://127.0.0.1:4399) or set CTX_DAEMON_URL before `pnpm dev`.",
       );
     }
     try {

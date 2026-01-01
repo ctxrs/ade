@@ -143,7 +143,7 @@ async fn main() -> Result<()> {
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {
-                                    "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID or $CONTEXT_SESSION_ID)." },
+                                    "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
                                     "path": { "type": "string", "description": "File path (relative to session worktree, or absolute)." },
                                     "root_path": { "type": "string", "description": "Optional explicit root path when no session_id is available." }
                                 },
@@ -158,7 +158,7 @@ async fn main() -> Result<()> {
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {
-                                    "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID or $CONTEXT_SESSION_ID)." },
+                                    "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
                                     "path": { "type": "string" },
                                     "root_path": { "type": "string" },
                                     "line": { "type": "integer", "minimum": 0 },
@@ -175,7 +175,7 @@ async fn main() -> Result<()> {
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {
-                                    "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID or $CONTEXT_SESSION_ID)." },
+                                    "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
                                     "path": { "type": "string" },
                                     "root_path": { "type": "string" },
                                     "line": { "type": "integer", "minimum": 0 },
@@ -192,7 +192,7 @@ async fn main() -> Result<()> {
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {
-                                    "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID or $CONTEXT_SESSION_ID)." },
+                                    "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
                                     "path": { "type": "string" },
                                     "root_path": { "type": "string" },
                                     "line": { "type": "integer", "minimum": 0 },
@@ -209,7 +209,7 @@ async fn main() -> Result<()> {
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {
-                                    "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID or $CONTEXT_SESSION_ID)." },
+                                    "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
                                     "path": { "type": "string" },
                                     "root_path": { "type": "string" },
                                     "line": { "type": "integer", "minimum": 0 },
@@ -227,7 +227,7 @@ async fn main() -> Result<()> {
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {
-                                    "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID or $CONTEXT_SESSION_ID)." },
+                                    "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
                                     "path": { "type": "string" },
                                     "root_path": { "type": "string" },
                                     "line": { "type": "integer", "minimum": 0 },
@@ -244,7 +244,7 @@ async fn main() -> Result<()> {
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {
-                                    "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID or $CONTEXT_SESSION_ID)." },
+                                    "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
                                     "path": { "type": "string" },
                                     "root_path": { "type": "string" },
                                     "line": { "type": "integer", "minimum": 0 },
@@ -261,7 +261,7 @@ async fn main() -> Result<()> {
                                 "inputSchema": {
                                     "type": "object",
                                     "properties": {
-                                        "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID or $CONTEXT_SESSION_ID)." },
+                                        "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
                                         "path": { "type": "string" },
                                         "root_path": { "type": "string" },
                                         "line": { "type": "integer", "minimum": 0 },
@@ -278,7 +278,7 @@ async fn main() -> Result<()> {
                                 "inputSchema": {
                                     "type": "object",
                                     "properties": {
-                                        "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID or $CONTEXT_SESSION_ID)." },
+                                        "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
                                         "path": { "type": "string" },
                                         "root_path": { "type": "string" },
                                         "item": { "type": "object" }
@@ -294,7 +294,7 @@ async fn main() -> Result<()> {
                                 "inputSchema": {
                                     "type": "object",
                                     "properties": {
-                                        "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID or $CONTEXT_SESSION_ID)." },
+                                        "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
                                         "path": { "type": "string" },
                                         "root_path": { "type": "string" },
                                         "item": { "type": "object" }
@@ -310,7 +310,7 @@ async fn main() -> Result<()> {
                                 "inputSchema": {
                                     "type": "object",
                                     "properties": {
-                                        "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID or $CONTEXT_SESSION_ID)." },
+                                        "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
                                         "path": { "type": "string" },
                                         "root_path": { "type": "string" },
                                         "start_line": { "type": "integer", "minimum": 0 },
@@ -329,7 +329,7 @@ async fn main() -> Result<()> {
                                 "inputSchema": {
                                     "type": "object",
                                     "properties": {
-                                        "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID or $CONTEXT_SESSION_ID)." },
+                                        "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
                                         "path": { "type": "string" },
                                         "root_path": { "type": "string" },
                                         "line": { "type": "integer", "minimum": 0 },
@@ -346,7 +346,7 @@ async fn main() -> Result<()> {
                                 "inputSchema": {
                                     "type": "object",
                                     "properties": {
-                                        "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID or $CONTEXT_SESSION_ID)." },
+                                        "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
                                         "path": { "type": "string" },
                                         "root_path": { "type": "string" },
                                         "positions": {
@@ -373,7 +373,7 @@ async fn main() -> Result<()> {
                                 "inputSchema": {
                                     "type": "object",
                                     "properties": {
-                                        "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID or $CONTEXT_SESSION_ID)." },
+                                        "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
                                         "path": { "type": "string" },
                                         "root_path": { "type": "string" },
                                         "line": { "type": "integer", "minimum": 0 },
@@ -390,7 +390,7 @@ async fn main() -> Result<()> {
                                 "inputSchema": {
                                     "type": "object",
                                     "properties": {
-                                        "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID or $CONTEXT_SESSION_ID)." },
+                                        "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
                                         "path": { "type": "string" },
                                         "root_path": { "type": "string" },
                                         "item": { "type": "object" }
@@ -406,7 +406,7 @@ async fn main() -> Result<()> {
                                 "inputSchema": {
                                     "type": "object",
                                     "properties": {
-                                        "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID or $CONTEXT_SESSION_ID)." },
+                                        "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
                                         "path": { "type": "string" },
                                         "root_path": { "type": "string" },
                                         "item": { "type": "object" }
@@ -422,7 +422,7 @@ async fn main() -> Result<()> {
                                 "inputSchema": {
                                     "type": "object",
                                     "properties": {
-                                        "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID or $CONTEXT_SESSION_ID)." },
+                                        "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
                                         "path": { "type": "string" },
                                         "root_path": { "type": "string" }
                                     },
@@ -437,7 +437,7 @@ async fn main() -> Result<()> {
                                 "inputSchema": {
                                     "type": "object",
                                     "properties": {
-                                        "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID or $CONTEXT_SESSION_ID)." },
+                                        "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
                                         "path": { "type": "string" },
                                         "root_path": { "type": "string" },
                                         "item": { "type": "object" }
@@ -453,7 +453,7 @@ async fn main() -> Result<()> {
                                 "inputSchema": {
                                     "type": "object",
                                     "properties": {
-                                        "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID or $CONTEXT_SESSION_ID)." },
+                                        "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
                                         "path": { "type": "string" },
                                         "root_path": { "type": "string" },
                                         "line": { "type": "integer", "minimum": 0 },
@@ -470,7 +470,7 @@ async fn main() -> Result<()> {
                                 "inputSchema": {
                                     "type": "object",
                                     "properties": {
-                                        "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID or $CONTEXT_SESSION_ID)." },
+                                        "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
                                         "path": { "type": "string" },
                                         "root_path": { "type": "string" }
                                     },
@@ -485,7 +485,7 @@ async fn main() -> Result<()> {
                                 "inputSchema": {
                                     "type": "object",
                                     "properties": {
-                                        "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID or $CONTEXT_SESSION_ID)." },
+                                        "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
                                         "path": { "type": "string" },
                                         "root_path": { "type": "string" },
                                         "item": { "type": "object" }
@@ -501,7 +501,7 @@ async fn main() -> Result<()> {
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {
-                                    "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID or $CONTEXT_SESSION_ID)." },
+                                    "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
                                     "path": { "type": "string" },
                                     "root_path": { "type": "string" }
                                 },
@@ -516,7 +516,7 @@ async fn main() -> Result<()> {
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {
-                                    "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID or $CONTEXT_SESSION_ID)." },
+                                    "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
                                     "path": { "type": "string" },
                                     "root_path": { "type": "string" },
                                     "previous_result_id": { "type": "string" }
@@ -532,7 +532,7 @@ async fn main() -> Result<()> {
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {
-                                    "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID or $CONTEXT_SESSION_ID)." },
+                                    "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
                                     "path": { "type": "string" },
                                     "root_path": { "type": "string" }
                                 },
@@ -547,7 +547,7 @@ async fn main() -> Result<()> {
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {
-                                    "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID or $CONTEXT_SESSION_ID)." },
+                                    "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
                                     "path": { "type": "string" },
                                     "root_path": { "type": "string" },
                                     "line": { "type": "integer", "minimum": 0 },
@@ -564,7 +564,7 @@ async fn main() -> Result<()> {
                                 "inputSchema": {
                                     "type": "object",
                                     "properties": {
-                                        "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID or $CONTEXT_SESSION_ID)." },
+                                        "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
                                         "path": { "type": "string" },
                                         "root_path": { "type": "string" },
                                         "line": { "type": "integer", "minimum": 0 },
@@ -581,7 +581,7 @@ async fn main() -> Result<()> {
                                 "inputSchema": {
                                     "type": "object",
                                     "properties": {
-                                        "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID or $CONTEXT_SESSION_ID)." },
+                                        "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
                                         "path": { "type": "string" },
                                         "root_path": { "type": "string" },
                                         "item": { "type": "object" }
@@ -597,7 +597,7 @@ async fn main() -> Result<()> {
                                 "inputSchema": {
                                     "type": "object",
                                     "properties": {
-                                        "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID or $CONTEXT_SESSION_ID)." },
+                                        "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
                                         "path": { "type": "string" },
                                         "root_path": { "type": "string" },
                                         "item": { "type": "object" }
@@ -613,7 +613,7 @@ async fn main() -> Result<()> {
                                 "inputSchema": {
                                     "type": "object",
                                     "properties": {
-                                        "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID or $CONTEXT_SESSION_ID)." },
+                                        "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
                                         "path": { "type": "string" },
                                         "diagnostic": { "type": "object" }
                                     },
@@ -628,7 +628,7 @@ async fn main() -> Result<()> {
                                 "inputSchema": {
                                     "type": "object",
                                     "properties": {
-                                        "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID or $CONTEXT_SESSION_ID)." },
+                                        "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
                                         "path": { "type": "string" },
                                         "root_path": { "type": "string" },
                                         "command": { "type": "string" },
@@ -645,7 +645,7 @@ async fn main() -> Result<()> {
                                 "inputSchema": {
                                     "type": "object",
                                     "properties": {
-                                        "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID or $CONTEXT_SESSION_ID)." },
+                                        "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
                                         "path": { "type": "string" },
                                         "command": { "type": "string" },
                                         "arguments": { "type": "array" }
@@ -661,7 +661,7 @@ async fn main() -> Result<()> {
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {
-                                    "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID or $CONTEXT_SESSION_ID)." },
+                                    "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
                                     "path": { "type": "string" },
                                     "root_path": { "type": "string" }
                                 },
@@ -676,7 +676,7 @@ async fn main() -> Result<()> {
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {
-                                    "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID or $CONTEXT_SESSION_ID)." },
+                                    "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
                                     "root_path": { "type": "string" },
                                     "query": { "type": "string" }
                                 },
@@ -691,7 +691,7 @@ async fn main() -> Result<()> {
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {
-                                    "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID or $CONTEXT_SESSION_ID)." },
+                                    "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
                                     "root_path": { "type": "string" },
                                     "item": { "type": "object" }
                                 },
@@ -706,7 +706,7 @@ async fn main() -> Result<()> {
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {
-                                    "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID or $CONTEXT_SESSION_ID)." },
+                                    "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
                                     "path": { "type": "string" },
                                     "root_path": { "type": "string" },
                                     "start_line": { "type": "integer", "minimum": 0 },
@@ -725,7 +725,7 @@ async fn main() -> Result<()> {
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {
-                                    "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID or $CONTEXT_SESSION_ID)." },
+                                    "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
                                     "path": { "type": "string" },
                                     "line": { "type": "integer", "minimum": 0 },
                                     "character": { "type": "integer", "minimum": 0 },
@@ -742,7 +742,7 @@ async fn main() -> Result<()> {
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {
-                                    "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID or $CONTEXT_SESSION_ID)." },
+                                    "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
                                     "path": { "type": "string" }
                                 },
                                 "required": ["path"],
@@ -756,7 +756,7 @@ async fn main() -> Result<()> {
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {
-                                    "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID or $CONTEXT_SESSION_ID)." },
+                                    "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
                                     "path": { "type": "string" }
                                 },
                                 "required": ["path"],
@@ -770,7 +770,7 @@ async fn main() -> Result<()> {
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {
-                                    "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID or $CONTEXT_SESSION_ID)." },
+                                    "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
                                     "action": { "type": "object" }
                                 },
                                 "required": ["action"],
@@ -785,7 +785,7 @@ async fn main() -> Result<()> {
                                 "type": "object",
                                 "properties": {
                                     "track_id": { "type": "string" },
-                                    "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID or $CONTEXT_SESSION_ID)." }
+                                    "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." }
                                 },
                                 "additionalProperties": false
                             }
@@ -837,21 +837,21 @@ async fn main() -> Result<()> {
             "tools/call" => {
                 let params = msg.get("params").cloned().unwrap_or(json!({}));
                 let name = params.get("name").and_then(|v| v.as_str()).unwrap_or("");
-                let name = if let Some(rest) = name.strip_prefix("ctx.") {
-                    format!("context.{rest}")
+                let name = if let Some(rest) = name.strip_prefix("context.") {
+                    format!("ctx.{rest}")
                 } else {
                     name.to_string()
                 };
                 let arguments = params.get("arguments").cloned().unwrap_or(json!({}));
                 match name.as_str() {
-                    "context.ping" => ok(
+                    "ctx.ping" => ok(
                         id.unwrap(),
                         json!({
                             "content": [{"type":"text","text": "{\"ok\":true}"}],
                             "isError": false
                         }),
                     ),
-                    "context.list_workspaces" => {
+                    "ctx.list_workspaces" => {
                         let _ = arguments; // currently unused
                         match list_workspaces(&client, &daemon_url).await {
                             Ok(val) => ok(
@@ -870,14 +870,14 @@ async fn main() -> Result<()> {
                             ),
                         }
                     }
-                    "context.lsp_status" => {
+                    "ctx.lsp_status" => {
                         let _ = arguments;
                         match lsp_status(&client, &daemon_url).await {
                             Ok(val) => ok(id.unwrap(), tool_ok(val)),
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "context.lsp_install_server" => {
+                    "ctx.lsp_install_server" => {
                         let server_id = arguments
                             .get("server_id")
                             .and_then(|v| v.as_str())
@@ -897,14 +897,14 @@ async fn main() -> Result<()> {
                             }
                         }
                     }
-                    "context.lsp_catalog_list" => {
+                    "ctx.lsp_catalog_list" => {
                         let _ = arguments;
                         match lsp_catalog_list(&client, &daemon_url).await {
                             Ok(val) => ok(id.unwrap(), tool_ok(val)),
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "context.lsp_catalog_install" => {
+                    "ctx.lsp_catalog_install" => {
                         let catalog_id = arguments
                             .get("catalog_id")
                             .and_then(|v| v.as_str())
@@ -924,7 +924,7 @@ async fn main() -> Result<()> {
                             }
                         }
                     }
-                    "context.lsp_diagnostics" => {
+                    "ctx.lsp_diagnostics" => {
                         let path = arguments
                             .get("path")
                             .and_then(|v| v.as_str())
@@ -968,7 +968,7 @@ async fn main() -> Result<()> {
                             }
                         }
                     }
-                    "context.lsp_definition" => {
+                    "ctx.lsp_definition" => {
                         match lsp_pos_call(&client, &daemon_url, "/api/lsp/definition", &arguments)
                             .await
                         {
@@ -976,7 +976,7 @@ async fn main() -> Result<()> {
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "context.lsp_type_definition" => {
+                    "ctx.lsp_type_definition" => {
                         match lsp_pos_call(
                             &client,
                             &daemon_url,
@@ -989,7 +989,7 @@ async fn main() -> Result<()> {
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "context.lsp_implementation" => {
+                    "ctx.lsp_implementation" => {
                         match lsp_pos_call(
                             &client,
                             &daemon_url,
@@ -1002,7 +1002,7 @@ async fn main() -> Result<()> {
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "context.lsp_references" => {
+                    "ctx.lsp_references" => {
                         match lsp_pos_call(&client, &daemon_url, "/api/lsp/references", &arguments)
                             .await
                         {
@@ -1010,14 +1010,14 @@ async fn main() -> Result<()> {
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "context.lsp_hover" => {
+                    "ctx.lsp_hover" => {
                         match lsp_pos_call(&client, &daemon_url, "/api/lsp/hover", &arguments).await
                         {
                             Ok(val) => ok(id.unwrap(), tool_ok(val)),
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "context.lsp_signature_help" => {
+                    "ctx.lsp_signature_help" => {
                         match lsp_pos_call(
                             &client,
                             &daemon_url,
@@ -1030,7 +1030,7 @@ async fn main() -> Result<()> {
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "context.lsp_completion" => {
+                    "ctx.lsp_completion" => {
                         match lsp_pos_call(&client, &daemon_url, "/api/lsp/completion", &arguments)
                             .await
                         {
@@ -1038,7 +1038,7 @@ async fn main() -> Result<()> {
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "context.lsp_completion_resolve" => {
+                    "ctx.lsp_completion_resolve" => {
                         match lsp_item_call(
                             &client,
                             &daemon_url,
@@ -1051,7 +1051,7 @@ async fn main() -> Result<()> {
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "context.lsp_code_action_resolve" => {
+                    "ctx.lsp_code_action_resolve" => {
                         match lsp_item_call(
                             &client,
                             &daemon_url,
@@ -1064,7 +1064,7 @@ async fn main() -> Result<()> {
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "context.lsp_inlay_hints" => {
+                    "ctx.lsp_inlay_hints" => {
                         match lsp_range_call(
                             &client,
                             &daemon_url,
@@ -1077,7 +1077,7 @@ async fn main() -> Result<()> {
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "context.lsp_document_highlight" => {
+                    "ctx.lsp_document_highlight" => {
                         match lsp_pos_call(
                             &client,
                             &daemon_url,
@@ -1090,7 +1090,7 @@ async fn main() -> Result<()> {
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "context.lsp_selection_ranges" => {
+                    "ctx.lsp_selection_ranges" => {
                         match lsp_selection_ranges_call(
                             &client,
                             &daemon_url,
@@ -1103,7 +1103,7 @@ async fn main() -> Result<()> {
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "context.lsp_call_hierarchy_prepare" => {
+                    "ctx.lsp_call_hierarchy_prepare" => {
                         match lsp_pos_call(
                             &client,
                             &daemon_url,
@@ -1116,7 +1116,7 @@ async fn main() -> Result<()> {
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "context.lsp_call_hierarchy_incoming" => {
+                    "ctx.lsp_call_hierarchy_incoming" => {
                         match lsp_item_call(
                             &client,
                             &daemon_url,
@@ -1129,7 +1129,7 @@ async fn main() -> Result<()> {
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "context.lsp_call_hierarchy_outgoing" => {
+                    "ctx.lsp_call_hierarchy_outgoing" => {
                         match lsp_item_call(
                             &client,
                             &daemon_url,
@@ -1142,7 +1142,7 @@ async fn main() -> Result<()> {
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "context.lsp_code_lens" => {
+                    "ctx.lsp_code_lens" => {
                         match lsp_file_call(&client, &daemon_url, "/api/lsp/code_lens", &arguments)
                             .await
                         {
@@ -1150,7 +1150,7 @@ async fn main() -> Result<()> {
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "context.lsp_code_lens_resolve" => {
+                    "ctx.lsp_code_lens_resolve" => {
                         match lsp_item_call(
                             &client,
                             &daemon_url,
@@ -1163,7 +1163,7 @@ async fn main() -> Result<()> {
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "context.lsp_prepare_rename" => {
+                    "ctx.lsp_prepare_rename" => {
                         match lsp_pos_call(
                             &client,
                             &daemon_url,
@@ -1176,7 +1176,7 @@ async fn main() -> Result<()> {
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "context.lsp_document_links" => {
+                    "ctx.lsp_document_links" => {
                         match lsp_file_call(
                             &client,
                             &daemon_url,
@@ -1189,7 +1189,7 @@ async fn main() -> Result<()> {
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "context.lsp_document_link_resolve" => {
+                    "ctx.lsp_document_link_resolve" => {
                         match lsp_item_call(
                             &client,
                             &daemon_url,
@@ -1202,7 +1202,7 @@ async fn main() -> Result<()> {
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "context.lsp_semantic_tokens_full" => {
+                    "ctx.lsp_semantic_tokens_full" => {
                         match lsp_file_call(
                             &client,
                             &daemon_url,
@@ -1215,14 +1215,14 @@ async fn main() -> Result<()> {
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "context.lsp_semantic_tokens_delta" => {
+                    "ctx.lsp_semantic_tokens_delta" => {
                         match lsp_semantic_tokens_delta_call(&client, &daemon_url, &arguments).await
                         {
                             Ok(val) => ok(id.unwrap(), tool_ok(val)),
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "context.lsp_folding_ranges" => {
+                    "ctx.lsp_folding_ranges" => {
                         match lsp_file_call(
                             &client,
                             &daemon_url,
@@ -1235,7 +1235,7 @@ async fn main() -> Result<()> {
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "context.lsp_linked_editing_range" => {
+                    "ctx.lsp_linked_editing_range" => {
                         match lsp_pos_call(
                             &client,
                             &daemon_url,
@@ -1248,7 +1248,7 @@ async fn main() -> Result<()> {
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "context.lsp_type_hierarchy_prepare" => {
+                    "ctx.lsp_type_hierarchy_prepare" => {
                         match lsp_pos_call(
                             &client,
                             &daemon_url,
@@ -1261,7 +1261,7 @@ async fn main() -> Result<()> {
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "context.lsp_type_hierarchy_supertypes" => {
+                    "ctx.lsp_type_hierarchy_supertypes" => {
                         match lsp_item_call(
                             &client,
                             &daemon_url,
@@ -1274,7 +1274,7 @@ async fn main() -> Result<()> {
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "context.lsp_type_hierarchy_subtypes" => {
+                    "ctx.lsp_type_hierarchy_subtypes" => {
                         match lsp_item_call(
                             &client,
                             &daemon_url,
@@ -1287,7 +1287,7 @@ async fn main() -> Result<()> {
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "context.lsp_code_actions_by_diagnostic_plan" => {
+                    "ctx.lsp_code_actions_by_diagnostic_plan" => {
                         match lsp_code_actions_by_diagnostic_plan_call(
                             &client,
                             &daemon_url,
@@ -1299,7 +1299,7 @@ async fn main() -> Result<()> {
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "context.lsp_execute_command" => {
+                    "ctx.lsp_execute_command" => {
                         match lsp_execute_command_call(
                             &client,
                             &daemon_url,
@@ -1312,7 +1312,7 @@ async fn main() -> Result<()> {
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "context.lsp_execute_command_plan" => {
+                    "ctx.lsp_execute_command_plan" => {
                         match lsp_execute_command_call(
                             &client,
                             &daemon_url,
@@ -1325,7 +1325,7 @@ async fn main() -> Result<()> {
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "context.lsp_document_symbols" => {
+                    "ctx.lsp_document_symbols" => {
                         match lsp_file_call(
                             &client,
                             &daemon_url,
@@ -1338,13 +1338,13 @@ async fn main() -> Result<()> {
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "context.lsp_workspace_symbols" => {
+                    "ctx.lsp_workspace_symbols" => {
                         match lsp_workspace_symbols_call(&client, &daemon_url, &arguments).await {
                             Ok(val) => ok(id.unwrap(), tool_ok(val)),
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "context.lsp_workspace_symbol_resolve" => {
+                    "ctx.lsp_workspace_symbol_resolve" => {
                         match lsp_workspace_symbol_resolve_call(&client, &daemon_url, &arguments)
                             .await
                         {
@@ -1352,56 +1352,56 @@ async fn main() -> Result<()> {
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "context.lsp_code_actions" => {
+                    "ctx.lsp_code_actions" => {
                         match lsp_code_actions_call(&client, &daemon_url, &arguments).await {
                             Ok(val) => ok(id.unwrap(), tool_ok(val)),
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "context.lsp_rename_plan" => {
+                    "ctx.lsp_rename_plan" => {
                         match lsp_rename_plan_call(&client, &daemon_url, &arguments).await {
                             Ok(val) => ok(id.unwrap(), tool_ok(val)),
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "context.lsp_format_plan" => {
+                    "ctx.lsp_format_plan" => {
                         match lsp_format_plan_call(&client, &daemon_url, &arguments).await {
                             Ok(val) => ok(id.unwrap(), tool_ok(val)),
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "context.lsp_organize_imports_plan" => {
+                    "ctx.lsp_organize_imports_plan" => {
                         match lsp_organize_imports_plan_call(&client, &daemon_url, &arguments).await
                         {
                             Ok(val) => ok(id.unwrap(), tool_ok(val)),
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "context.lsp_code_action_plan" => {
+                    "ctx.lsp_code_action_plan" => {
                         match lsp_code_action_plan_call(&client, &daemon_url, &arguments).await {
                             Ok(val) => ok(id.unwrap(), tool_ok(val)),
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "context.list_edit_plans" => {
+                    "ctx.list_edit_plans" => {
                         match list_edit_plans_call(&client, &daemon_url, &arguments).await {
                             Ok(val) => ok(id.unwrap(), tool_ok(val)),
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "context.get_edit_plan" => {
+                    "ctx.get_edit_plan" => {
                         match get_edit_plan_call(&client, &daemon_url, &arguments).await {
                             Ok(val) => ok(id.unwrap(), tool_ok(val)),
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "context.apply_edit_plan" => {
+                    "ctx.apply_edit_plan" => {
                         match apply_edit_plan_call(&client, &daemon_url, &arguments).await {
                             Ok(val) => ok(id.unwrap(), tool_ok(val)),
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "context.discard_edit_plan" => {
+                    "ctx.discard_edit_plan" => {
                         match discard_edit_plan_call(&client, &daemon_url, &arguments).await {
                             Ok(val) => ok(id.unwrap(), tool_ok(val)),
                             Err(e) => ok(id.unwrap(), tool_err(e)),
@@ -1819,9 +1819,7 @@ async fn lsp_rename_plan_call(
         .and_then(|v| v.as_str())
         .map(|s| s.to_string())
         .or_else(|| ctx_env_opt("SESSION_ID"))
-        .context(
-            "missing session_id (set CTX_SESSION_ID or CONTEXT_SESSION_ID, or pass session_id)",
-        )?;
+        .context("missing session_id (set CTX_SESSION_ID, or pass session_id)")?;
     let path = arguments
         .get("path")
         .and_then(|v| v.as_str())
@@ -1860,9 +1858,7 @@ async fn lsp_format_plan_call(
         .and_then(|v| v.as_str())
         .map(|s| s.to_string())
         .or_else(|| ctx_env_opt("SESSION_ID"))
-        .context(
-            "missing session_id (set CTX_SESSION_ID or CONTEXT_SESSION_ID, or pass session_id)",
-        )?;
+        .context("missing session_id (set CTX_SESSION_ID, or pass session_id)")?;
     let path = arguments
         .get("path")
         .and_then(|v| v.as_str())
@@ -1885,9 +1881,7 @@ async fn lsp_organize_imports_plan_call(
         .and_then(|v| v.as_str())
         .map(|s| s.to_string())
         .or_else(|| ctx_env_opt("SESSION_ID"))
-        .context(
-            "missing session_id (set CTX_SESSION_ID or CONTEXT_SESSION_ID, or pass session_id)",
-        )?;
+        .context("missing session_id (set CTX_SESSION_ID, or pass session_id)")?;
     let path = arguments
         .get("path")
         .and_then(|v| v.as_str())
@@ -1910,9 +1904,7 @@ async fn lsp_code_action_plan_call(
         .and_then(|v| v.as_str())
         .map(|s| s.to_string())
         .or_else(|| ctx_env_opt("SESSION_ID"))
-        .context(
-            "missing session_id (set CTX_SESSION_ID or CONTEXT_SESSION_ID, or pass session_id)",
-        )?;
+        .context("missing session_id (set CTX_SESSION_ID, or pass session_id)")?;
     let action = arguments.get("action").cloned().context("missing action")?;
     let body = json!({
         "session_id": session_id,
