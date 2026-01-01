@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Virtuoso } from "react-virtuoso";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   Archive,
   ArrowUp,
@@ -32,12 +32,12 @@ import {
   createTask,
   createTrack,
   deleteTask,
+  daemonFetchRaw,
   getDaemonBaseUrl,
   getInstall,
   getProviderOptions,
   getSettings,
   getWorktree,
-  getWorkspace,
   idToString,
   installAllProviders,
   installProvider,
@@ -609,6 +609,7 @@ export default function WorkbenchPage() {
 }
 
 function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
+  const navigate = useNavigate();
   const supervisor = useSessionSupervisor();
   const sessionSnap = useSessionCacheSnapshot();
   const workbenchStore = useWorkbenchStore();
@@ -902,9 +903,30 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
 
   useEffect(() => {
     if (!workspaceId) return;
-    getWorkspace(workspaceId).then(setWorkspace).catch(() => setWorkspace(null));
+    let cancelled = false;
+    const loadWorkspace = async () => {
+      const resp = await daemonFetchRaw(`/api/workspaces/${workspaceId}`);
+      if (cancelled) return;
+      if (resp.status === 404 || resp.status === 400) {
+        navigate("/workspaces", { replace: true });
+        return;
+      }
+      if (resp.status >= 200 && resp.status < 300 && resp.body) {
+        try {
+          setWorkspace(JSON.parse(resp.body) as Workspace);
+          return;
+        } catch {
+          // ignore parse errors and fall through to null
+        }
+      }
+      setWorkspace(null);
+    };
+    loadWorkspace().catch(() => setWorkspace(null));
     listProviders().then(setProviders).catch(() => setProviders([]));
-  }, [workspaceId]);
+    return () => {
+      cancelled = true;
+    };
+  }, [navigate, workspaceId]);
 
   const attachProviderInstall = useCallback((providerId: string, installId: string) => {
     setProviderInstallsById((prev) => {
