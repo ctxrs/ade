@@ -315,7 +315,7 @@ export default function ProvidersPage() {
           </button>
         </div>
         <div className="muted">
-          Installs ACP agent servers under <code>~/.context/providers/agent-servers</code>.
+          Installs ACP agent servers under <code>~/.ctx/providers/agent-servers</code>.
         </div>
         {error && <div className="error">{error}</div>}
       </div>
@@ -437,7 +437,7 @@ export default function ProvidersPage() {
                   ? ` · Recommended: ${p.details.matrix_recommended_version}`
                   : ""}
                 {p.details?.matrix_update_available === "true" ? " · Update available" : ""}
-                {p.details?.matrix_update_requires_context === "true" ? " · Requires Context update" : ""}
+                {p.details?.matrix_update_requires_context === "true" ? " · Requires ctx update" : ""}
               </div>
             )}
 

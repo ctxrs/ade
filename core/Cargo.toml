@@ -1,13 +1,13 @@
 [workspace]
 members = [
-  "crates/context-core",
-  "crates/context-store",
-  "crates/context-fs",
-  "crates/context-events",
-  "crates/context-providers",
-  "crates/context-lsp",
-  "crates/context-mcp",
-  "crates/context-http",
+  "crates/ctx-core",
+  "crates/ctx-store",
+  "crates/ctx-fs",
+  "crates/ctx-events",
+  "crates/ctx-providers",
+  "crates/ctx-lsp",
+  "crates/ctx-mcp",
+  "crates/ctx-http",
 ]
 exclude = ["apps/desktop/src-tauri"]
 resolver = "2"

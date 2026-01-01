@@ -584,7 +584,7 @@ fn desktop_upload_blob(
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DeepLinkOpenWith {
-    Context,
+    Ctx,
     Editor,
     System,
 }
@@ -676,8 +676,9 @@ fn handle_deep_link_inner(app: &tauri::AppHandle, url: &Url) -> Result<()> {
 }
 
 fn parse_deep_link(url: &Url) -> Result<DeepLinkAction> {
-    if url.scheme() != "context" {
-        anyhow::bail!("unsupported scheme: {}", url.scheme());
+    let scheme = url.scheme();
+    if scheme != "ctx" && scheme != "context" {
+        anyhow::bail!("unsupported scheme: {scheme}");
     }
     let action = url.host_str().unwrap_or_default();
     let params: HashMap<String, String> =
@@ -754,8 +755,8 @@ fn parse_target(params: &HashMap<String, String>) -> Result<DeepLinkTarget> {
 
 fn parse_open_with(value: Option<&String>) -> Result<DeepLinkOpenWith> {
     match value.map(|v| v.trim().to_lowercase()) {
-        None => Ok(DeepLinkOpenWith::Context),
-        Some(v) if v == "context" => Ok(DeepLinkOpenWith::Context),
+        None => Ok(DeepLinkOpenWith::Ctx),
+        Some(v) if v == "ctx" || v == "context" => Ok(DeepLinkOpenWith::Ctx),
         Some(v) if v == "editor" => Ok(DeepLinkOpenWith::Editor),
         Some(v) if v == "system" => Ok(DeepLinkOpenWith::System),
         Some(v) => anyhow::bail!("unsupported openWith: {v}"),
@@ -828,7 +829,7 @@ fn handle_open(
 
     if matches!(req.target, DeepLinkTarget::WorktreeFile { .. })
         && state.is_remote()
-        && req.open_with != DeepLinkOpenWith::Context
+        && req.open_with != DeepLinkOpenWith::Ctx
     {
         anyhow::bail!("cannot open remote worktree paths in local editors");
     }
@@ -851,7 +852,7 @@ fn handle_open(
     }
 
     match req.open_with {
-        DeepLinkOpenWith::Context => open_in_context(app, &req.target, req.line, req.col),
+        DeepLinkOpenWith::Ctx => open_in_ctx(app, &req.target, req.line, req.col),
         DeepLinkOpenWith::Editor => {
             let settings = load_desktop_settings(app).editor;
             let target = resolve_editor_target(&settings, req.editor_override.as_ref())?;
@@ -926,7 +927,7 @@ fn handle_workspace(
     open_workspace_window(app, registry, &workspace_id)
 }
 
-fn open_in_context(app: &tauri::AppHandle, target: &DeepLinkTarget, line: Option<u32>, col: Option<u32>) -> Result<()> {
+fn open_in_ctx(app: &tauri::AppHandle, target: &DeepLinkTarget, line: Option<u32>, col: Option<u32>) -> Result<()> {
     let url = build_file_preview_url(target, line, col);
     let label = format!("file:{}", uuid::Uuid::new_v4());
     tauri::WebviewWindowBuilder::new(app, label, tauri::WebviewUrl::App(url.into()))
@@ -999,7 +1000,7 @@ fn open_settings_window(app: &tauri::AppHandle) -> Result<()> {
         return Ok(());
     }
     tauri::WebviewWindowBuilder::new(app, label, tauri::WebviewUrl::App("/settings".into()))
-        .title("Context Settings")
+        .title("ctx settings")
         .inner_size(1000.0, 780.0)
         .build()
         .context("creating settings window")?;
@@ -1187,7 +1188,7 @@ fn open_workspace_window(
 
     let url = format!("/workspaces/{workspace_id}");
     tauri::WebviewWindowBuilder::new(app, &label, tauri::WebviewUrl::App(url.into()))
-        .title("Context")
+        .title("ctx")
         .inner_size(1200.0, 900.0)
         .build()
         .context("creating workspace window")?;
@@ -1262,7 +1263,7 @@ fn open_main_window(app: &tauri::AppHandle) -> Result<()> {
         return Ok(());
     }
     tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App("index.html".into()))
-        .title("Context")
+        .title("ctx")
         .inner_size(1200.0, 900.0)
         .build()
         .context("creating window")?;
@@ -1801,19 +1802,19 @@ fn start_remote_daemon_over_ssh(
         _ => host.to_string(),
     };
 
-    let data_dir = remote_data_dir.unwrap_or("~/.context");
-    let mut serve_cmd = format!(
-        "context serve --bind 127.0.0.1:{remote_port} --data-dir {}",
-        shell_escape(data_dir)
+    let data_dir = remote_data_dir.unwrap_or("~/.ctx");
+    let auth_flag = token
+        .filter(|t| !t.trim().is_empty())
+        .map(|t| format!(" --auth-token {}", shell_escape(t)))
+        .unwrap_or_default();
+    let exec_cmd = format!(
+        "if command -v ctx >/dev/null 2>&1; then ctx serve --bind 127.0.0.1:{remote_port} --data-dir {dir}{auth}; else context serve --bind 127.0.0.1:{remote_port} --data-dir {dir}{auth}; fi",
+        dir = shell_escape(data_dir),
+        auth = auth_flag
     );
-    if let Some(t) = token {
-        if !t.trim().is_empty() {
-            serve_cmd.push_str(&format!(" --auth-token {}", shell_escape(t)));
-        }
-    }
-    let log_cmd = format!("{serve_cmd} > ~/.context/logs/daemon.log 2>&1");
+    let log_cmd = format!("{exec_cmd} > ~/.ctx/logs/daemon.log 2>&1");
     let systemd_cmd = format!(
-        "systemd-run --user --scope --unit context-daemon --no-block /bin/sh -lc {}",
+        "systemd-run --user --scope --unit ctx-daemon --no-block /bin/sh -lc {}",
         shell_escape(&log_cmd)
     );
     let nohup_cmd = format!("nohup {log_cmd} &");
@@ -2037,7 +2038,7 @@ fn stop_systemd_scope() {
         let _ = Command::new("systemctl")
             .arg("--user")
             .arg("stop")
-            .arg("context-daemon.scope")
+            .arg("ctx-daemon.scope")
             .status();
     }
 }
@@ -2047,12 +2048,14 @@ fn spawn_daemon(
     token: &str,
     data_dir: &Path,
 ) -> Result<(String, Child, bool)> {
-    let context_bin = resource_bin(app, "context")
+    let ctx_bin = resource_bin(app, "ctx")
+        .or_else(|| dev_bin("ctx"))
+        .or_else(|| resource_bin(app, "context"))
         .or_else(|| dev_bin("context"))
-        .unwrap_or_else(|| PathBuf::from("context"));
+        .unwrap_or_else(|| PathBuf::from("ctx"));
 
-    let mcp_bin = resource_bin(app, "context-mcp")
-        .or_else(|| dev_bin("context-mcp"));
+    let mcp_bin = resource_bin(app, "ctx-mcp")
+        .or_else(|| dev_bin("ctx-mcp"));
 
     let web_dist = app
         .path()
@@ -2073,30 +2076,40 @@ fn spawn_daemon(
         cmd.arg("--user")
             .arg("--scope")
             .arg("--unit")
-            .arg("context-daemon")
+            .arg("ctx-daemon")
             .arg("--same-dir");
         if let Some(dist) = web_dist.as_ref() {
+            cmd.arg("--setenv")
+                .arg(format!("CTX_WEB_DIST={}", dist.to_string_lossy()));
             cmd.arg("--setenv")
                 .arg(format!("CONTEXT_WEB_DIST={}", dist.to_string_lossy()));
         }
         if let Some(mcp) = mcp_bin.as_ref() {
             cmd.arg("--setenv")
+                .arg(format!("CTX_MCP_COMMAND={}", mcp.to_string_lossy()));
+            cmd.arg("--setenv")
                 .arg(format!("CONTEXT_MCP_COMMAND={}", mcp.to_string_lossy()));
         }
         if let Ok(appimage) = std::env::var("APPIMAGE") {
-            cmd.arg("--setenv").arg(format!("CONTEXT_APPIMAGE_PATH={appimage}"));
+            cmd.arg("--setenv")
+                .arg(format!("CTX_APPIMAGE_PATH={appimage}"));
+            cmd.arg("--setenv")
+                .arg(format!("CONTEXT_APPIMAGE_PATH={appimage}"));
         }
-        cmd.arg(&context_bin);
+        cmd.arg(&ctx_bin);
         cmd
     } else {
-        let mut cmd = Command::new(&context_bin);
+        let mut cmd = Command::new(&ctx_bin);
         if let Some(dist) = web_dist.as_ref() {
+            cmd.env("CTX_WEB_DIST", dist.to_string_lossy().to_string());
             cmd.env("CONTEXT_WEB_DIST", dist.to_string_lossy().to_string());
         }
         if let Some(mcp) = mcp_bin.as_ref() {
+            cmd.env("CTX_MCP_COMMAND", mcp.to_string_lossy().to_string());
             cmd.env("CONTEXT_MCP_COMMAND", mcp.to_string_lossy().to_string());
         }
         if let Ok(appimage) = std::env::var("APPIMAGE") {
+            cmd.env("CTX_APPIMAGE_PATH", appimage.clone());
             cmd.env("CONTEXT_APPIMAGE_PATH", appimage);
         }
         cmd
@@ -2113,7 +2126,7 @@ fn spawn_daemon(
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit());
 
-    let mut child = cmd.spawn().context("spawning context daemon")?;
+    let mut child = cmd.spawn().context("spawning ctx daemon")?;
     let stdout = child.stdout.take().context("capturing daemon stdout")?;
     let mut reader = BufReader::new(stdout).lines();
 

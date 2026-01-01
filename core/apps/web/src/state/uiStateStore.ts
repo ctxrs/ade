@@ -4,7 +4,7 @@ export type UiKvRecord = {
   updatedAtMs: number;
 };
 
-const DB_NAME = "context-ui";
+const DB_NAME = "ctx-ui";
 const DB_VERSION = 1;
 const STORE_NAME = "kv";
 
@@ -115,7 +115,7 @@ export async function clearWorkbenchSelectionV1(workspaceId: string): Promise<vo
 
 export type PersistedWorkspaceCatchupV1 = {
   v: 1;
-  snapshot: import("@context/types").WorkspaceCatchupSnapshot;
+  snapshot: import("@ctx/types").WorkspaceCatchupSnapshot;
   updatedAtMs: number;
 };
 
@@ -147,7 +147,7 @@ export async function saveWorkspaceCatchupV1(
 export type PersistedSessionHeadV1 = {
   v: 1;
   sessionId: string;
-  head: import("@context/types").SessionHead;
+  head: import("@ctx/types").SessionHead;
   updatedAtMs: number;
 };
 

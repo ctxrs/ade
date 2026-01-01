@@ -327,7 +327,7 @@ function formatRelativeAgeShort(ts: string | null | undefined): string {
   return `${days}d`;
 }
 
-function lastAssistantMessageMs(messages: import("@context/types").Message[]): number | null {
+function lastAssistantMessageMs(messages: import("@ctx/types").Message[]): number | null {
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i];
     if (m.role !== "assistant") continue;

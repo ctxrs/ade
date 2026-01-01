@@ -32,7 +32,7 @@ import type {
   WorkspaceCatchupTaskSummary,
   WorkspaceCatchupTrackSummary,
   Worktree,
-} from "@context/types";
+} from "@ctx/types";
 import { desktopDaemonRequest, desktopUploadBlob, isDesktopApp } from "../utils/desktop";
 
 export type {
@@ -69,7 +69,7 @@ export type {
   WorkspaceCatchupTaskSummary,
   WorkspaceCatchupTrackSummary,
   Worktree,
-} from "@context/types";
+} from "@ctx/types";
 
 export type BlobUploadResp = {
   blob_id: string;
@@ -308,7 +308,7 @@ const api = async <T>(path: string, init?: RequestInit): Promise<T> => {
         lowered.includes("socket hang up"))
     ) {
       throw new Error(
-        "Cannot reach the Context daemon via /api. If you're running the web dev server, start the daemon (default http://127.0.0.1:4399) or set CONTEXT_DAEMON_URL before `pnpm dev`.",
+        "Cannot reach the ctx daemon via /api. If you're running the web dev server, start the daemon (default http://127.0.0.1:4399) or set CTX_DAEMON_URL (or CONTEXT_DAEMON_URL) before `pnpm dev`.",
       );
     }
     try {
@@ -403,7 +403,7 @@ const desktopApi = async <T>(path: string, init?: RequestInit): Promise<T> => {
         lowered.includes("connect econnrefused") ||
         lowered.includes("socket hang up"))
     ) {
-      throw new Error("Cannot reach the Context daemon. Connect to a host from the launcher first.");
+      throw new Error("Cannot reach the ctx daemon. Connect to a host from the launcher first.");
     }
     try {
       const parsed = text ? JSON.parse(text) : null;

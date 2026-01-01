@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useRef, useState } from "react";
-import type { WorktreeBootstrapNotice, WorkspaceCatchupEvent } from "@context/types";
+import type { WorktreeBootstrapNotice, WorkspaceCatchupEvent } from "@ctx/types";
 import { getWorktreeBootstrapLogs, idToString } from "../api/client";
 import { useWorkspaceCatchupEvents } from "../state/workspaceCatchupStore";
 import { desktopSaveTextFile, isDesktopApp } from "../utils/desktop";

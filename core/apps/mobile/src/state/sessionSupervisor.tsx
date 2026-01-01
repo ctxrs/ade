@@ -7,7 +7,7 @@ import type {
   SessionTurn,
   SessionTurnTool,
   WorkspaceCatchupEvent,
-} from "@context/types";
+} from "@ctx/types";
 
 import {
   fetchTrackDiff,

@@ -13,7 +13,7 @@ import type {
   Workspace,
   WorkspaceCatchupCursor,
   WorkspaceCatchupSnapshot,
-} from "@context/types";
+} from "@ctx/types";
 
 export type ConnectionConfig = {
   baseUrl: string;

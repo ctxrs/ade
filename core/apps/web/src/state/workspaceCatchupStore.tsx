@@ -9,7 +9,7 @@ import type {
   WorkspaceCatchupSnapshot,
   WorkspaceCatchupTaskSummary,
   WorkspaceCatchupTrackSummary,
-} from "@context/types";
+} from "@ctx/types";
 import {
   getDaemonBaseUrl,
   getHealth,

@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Return to Context</title>
+    <title>Return to ctx</title>
     <style>
       :root {
         color-scheme: dark;
@@ -114,18 +114,18 @@
   <body>
     <div class="wrap">
       <div class="card">
-        <h1>Return to Context</h1>
+        <h1>Return to ctx</h1>
         <p>
-          Your subscription flow is complete in the browser. Open Context to continue.
+          Your subscription flow is complete in the browser. Open ctx to continue.
         </p>
 
         <div class="row">
-          <a id="open" class="btn primary" href="context://focus?v=1">Open Context</a>
+          <a id="open" class="btn primary" href="ctx://focus?v=1">Open ctx</a>
           <a id="retry" class="btn secondary" href="#">Try again</a>
         </div>
 
         <p class="meta">
-          If your browser asks for permission, choose “Open Context”. If Context isn’t installed, this link won’t work.
+          If your browser asks for permission, choose “Open ctx”. If ctx isn’t installed, this link won’t work.
         </p>
         <p class="meta"><code id="details"></code></p>
       </div>
@@ -143,7 +143,7 @@
         }
 
         const attempt = () => {
-          window.location.href = "context://focus?v=1";
+          window.location.href = "ctx://focus?v=1";
         };
 
         const retry = document.getElementById("retry");
@@ -160,4 +160,3 @@
     </script>
   </body>
 </html>
-

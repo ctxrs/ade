@@ -97,7 +97,7 @@ async function createWorkspaceAndStartRun(opts: {
 }
 
 test("workbench: diff updates mid-turn", async ({ page, request }) => {
-  const repo = mkdtempSync(path.join(tmpdir(), "context-e2e-"));
+  const repo = mkdtempSync(path.join(tmpdir(), "ctx-e2e-"));
   execSync("git init", { cwd: repo });
   execSync("git config user.email test@example.com", { cwd: repo });
   execSync("git config user.name Test", { cwd: repo });
@@ -126,7 +126,7 @@ test("workbench: diff updates mid-turn", async ({ page, request }) => {
 });
 
 test("workbench: diff updates for manual edits while idle", async ({ page, request }) => {
-  const repo = mkdtempSync(path.join(tmpdir(), "context-e2e-"));
+  const repo = mkdtempSync(path.join(tmpdir(), "ctx-e2e-"));
   execSync("git init", { cwd: repo });
   execSync("git config user.email test@example.com", { cwd: repo });
   execSync("git config user.name Test", { cwd: repo });

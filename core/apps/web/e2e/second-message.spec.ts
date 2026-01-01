@@ -6,7 +6,7 @@ import { execSync } from "child_process";
 import { createWorkspaceAndOpenWorkbench } from "./utils/workbench";
 
 test("workbench: second message gets a response", async ({ page }) => {
-  const repo = mkdtempSync(path.join(tmpdir(), "context-e2e-"));
+  const repo = mkdtempSync(path.join(tmpdir(), "ctx-e2e-"));
   execSync("git init", { cwd: repo });
   execSync("git config user.email test@example.com", { cwd: repo });
   execSync("git config user.name Test", { cwd: repo });

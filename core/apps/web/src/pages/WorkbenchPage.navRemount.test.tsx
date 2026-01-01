@@ -144,6 +144,7 @@ vi.mock("../state/workspaceCatchupStore", () => ({
     loadMoreActive: vi.fn(),
     loadMoreArchived: vi.fn(),
   }),
+  useWorkspaceCatchupEvents: vi.fn(),
 }));
 
 vi.mock("../workbench/store", () => ({

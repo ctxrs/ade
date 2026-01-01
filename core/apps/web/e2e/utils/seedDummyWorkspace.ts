@@ -41,16 +41,20 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const DEFAULT_TOOL_FIXTURES = [
   { kind: "execute", title: "Run pwd", input: { command: "pwd" } },
   { kind: "search", title: "Searched context", input: { query: "context" } },
-  { kind: "execute", title: "Explored .context", input: { command: "ls .context" } },
-  { kind: "read", title: "Read .context", input: { path: ".context" } },
-  { kind: "execute", title: "Explored specs", input: { command: "ls specs" } },
+  { kind: "execute", title: "Explored .ctx", input: { command: "ls .ctx" } },
+  { kind: "read", title: "Read .ctx", input: { path: ".ctx" } },
   {
     kind: "execute",
-    title: "Run ./scripts/supercat.sh context-pack/specs",
-    input: { command: "./scripts/supercat.sh context-pack/specs" },
+    title: "Explored specs",
+    input: { command: "ls .ctx/context-pack/specs" },
+  },
+  {
+    kind: "execute",
+    title: "Run ./scripts/supercat.sh .ctx/context-pack/specs",
+    input: { command: "./scripts/supercat.sh .ctx/context-pack/specs" },
   },
   { kind: "search", title: "Searched workbench", input: { query: "workbench" } },
-  { kind: "read", title: "Read context-pack", input: { path: "context-pack" } },
+  { kind: "read", title: "Read context-pack", input: { path: ".ctx/context-pack" } },
 ];
 
 const chunkFixtures = (fixtures: SeedOptions["toolSummaryFixtures"], count: number, offset: number) => {
@@ -69,7 +73,7 @@ const buildToolMarker = (fixtures: SeedOptions["toolSummaryFixtures"]) => {
 };
 
 function initRepo(): string {
-  const repo = mkdtempSync(path.join(tmpdir(), "context-e2e-fixture-"));
+  const repo = mkdtempSync(path.join(tmpdir(), "ctx-e2e-fixture-"));
   execSync("git init", { cwd: repo });
   execSync("git config user.email test@example.com", { cwd: repo });
   execSync("git config user.name Test", { cwd: repo });

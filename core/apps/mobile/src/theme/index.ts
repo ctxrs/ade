@@ -1,2 +1,2 @@
-export { tokens } from "@context/design/native";
-export { createContextStyles, useContextTokens } from "@context/design/native";
+export { tokens } from "@ctx/design/native";
+export { createContextStyles, useContextTokens } from "@ctx/design/native";

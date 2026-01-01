@@ -5,7 +5,7 @@ import path from "path";
 import { execSync } from "child_process";
 
 test("workbench catchup snapshot+stream keeps network lean", async ({ page }) => {
-  const repo = mkdtempSync(path.join(tmpdir(), "context-e2e-"));
+  const repo = mkdtempSync(path.join(tmpdir(), "ctx-e2e-"));
   execSync("git init", { cwd: repo });
   execSync("git config user.email test@example.com", { cwd: repo });
   execSync("git config user.name Test", { cwd: repo });

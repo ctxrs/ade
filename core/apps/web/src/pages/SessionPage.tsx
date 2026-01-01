@@ -2853,9 +2853,9 @@ function WorkbenchToolRow({
   const normalizeWorktreePath = (p?: string) => {
     const s = String(p ?? "").trim();
     if (!s) return "";
-    // Strip the Context worktree prefix.
+    // Strip the ctx worktree prefix.
     return s.replace(
-      /\/home\/[^/]+\/\.context\/worktrees\/[0-9a-f-]+\/[0-9a-f-]+\//g,
+      /\/home\/[^/]+\/\.ctx\/worktrees\/[0-9a-f-]+\/[0-9a-f-]+\//g,
       "",
     );
   };
@@ -2878,7 +2878,7 @@ function WorkbenchToolRow({
     cmd = cmd.replace(/^\s*&&\s*/, "");
     cmd = cmd.replace(/^"(.+)"$/, "$1");
     cmd = cmd.replace(
-      /\/home\/[^/]+\/\.context\/worktrees\/[0-9a-f-]+\/[0-9a-f-]+\//g,
+      /\/home\/[^/]+\/\.ctx\/worktrees\/[0-9a-f-]+\/[0-9a-f-]+\//g,
       "",
     );
     const mSupercat = cmd.match(/(?:^|\s)(\.?\/?scripts\/supercat\.sh)\s+([^\s&;]+)/);
@@ -3376,13 +3376,13 @@ function buildContextOpenUrl(worktreeId: string, ref: FileRef, token?: string | 
   if (typeof ref.line === "number") params.set("line", String(ref.line));
   if (typeof ref.col === "number") params.set("col", String(ref.col));
   if (token) params.set("token", token);
-  return `context://open?${params.toString()}`;
+  return `ctx://open?${params.toString()}`;
 }
 
 function parseContextOpenUrl(href: string): ParsedContextOpen | null {
   try {
     const url = new URL(href);
-    if (url.protocol !== "context:") return null;
+    if (url.protocol !== "ctx:" && url.protocol !== "context:") return null;
     if (url.hostname !== "open") return null;
     const worktreeId = url.searchParams.get("worktreeId") ?? "";
     const file = url.searchParams.get("file") ?? "";
@@ -3675,10 +3675,16 @@ function Markdown({
   return (
     <ReactMarkdown
       remarkPlugins={remarkPlugins}
-      urlTransform={(url) => (url.startsWith("context://") ? url : defaultUrlTransform(url))}
+      urlTransform={(url) =>
+        url.startsWith("ctx://") || url.startsWith("context://")
+          ? url
+          : defaultUrlTransform(url)
+      }
       components={{
         a({ href, children, className, ...rest }) {
-          const isContextOpen = typeof href === "string" && href.startsWith("context://open?");
+          const isContextOpen =
+            typeof href === "string" &&
+            (href.startsWith("ctx://open?") || href.startsWith("context://open?"));
           if (!isContextOpen) {
             return (
               <a href={href} className={className} {...rest}>

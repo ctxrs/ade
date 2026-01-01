@@ -7,7 +7,7 @@ import type {
   WorkspaceCatchupSnapshot,
   WorkspaceCatchupTaskSummary,
   WorkspaceCatchupTrackSummary,
-} from "@context/types";
+} from "@ctx/types";
 
 const isoAt = (offsetSeconds: number) =>
   new Date(Date.UTC(2025, 0, 1, 0, 0, offsetSeconds)).toISOString();

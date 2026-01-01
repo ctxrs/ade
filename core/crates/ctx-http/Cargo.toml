@@ -1,0 +1,63 @@
+[package]
+name = "ctx-http"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+axum.workspace = true
+chrono.workspace = true
+clap.workspace = true
+ctx-core = { path = "../ctx-core" }
+ctx-events = { path = "../ctx-events" }
+ctx-fs = { path = "../ctx-fs" }
+ctx-providers = { path = "../ctx-providers" }
+ctx-lsp = { path = "../ctx-lsp" }
+ctx-store = { path = "../ctx-store" }
+directories.workspace = true
+futures.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tokio-stream.workspace = true
+tokio-util.workspace = true
+tracing.workspace = true
+tracing-appender = "0.2"
+tracing-subscriber.workspace = true
+toml = "0.8"
+uuid.workspace = true
+sysinfo.workspace = true
+tower-http = { version = "0.6", features = ["fs"] }
+flate2 = "1"
+tar = "0.4"
+bzip2 = "0.5"
+zip = "2"
+sha2 = "0.10"
+hex = "0.4"
+base64 = "0.22"
+semver = "1"
+atty = "0.2"
+urlencoding = "2"
+url = "2"
+lsp-types = { version = "0.97", features = ["proposed"] }
+similar = "2"
+jsonwebtoken = "9"
+tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
+fs2 = "0.4"
+which = "7"
+portable-pty = "0.9"
+
+[dev-dependencies]
+tempfile = "3"
+tower = "0.5"
+hyper = { version = "1", features = ["full"] }
+reqwest.workspace = true
+
+[[bin]]
+name = "ctx"
+path = "src/main.rs"
+
+[[bin]]
+name = "context"
+path = "src/main.rs"

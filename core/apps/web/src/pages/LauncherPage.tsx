@@ -215,7 +215,7 @@ export default function LauncherPage() {
   const [sshRemotePort, setSshRemotePort] = useState(4399);
   const [sshStartRemote, setSshStartRemote] = useState(true);
   const [sshToken, setSshToken] = useState("");
-  const [sshDataDir, setSshDataDir] = useState("~/.context");
+  const [sshDataDir, setSshDataDir] = useState("~/.ctx");
 
   const onConnectSsh = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -332,7 +332,7 @@ export default function LauncherPage() {
     <>
     <div className="page">
       <div className="row" style={{ alignItems: "baseline" }}>
-        <h1 style={{ marginRight: "auto" }}>Context</h1>
+        <h1 style={{ marginRight: "auto" }}>ctx</h1>
         <Link to="/app-settings">Settings</Link>
       </div>
 
@@ -496,7 +496,7 @@ export default function LauncherPage() {
     {qrModal && (
       <div className="modal-overlay">
         <div className="modal">
-          <h3>Scan with Context mobile</h3>
+          <h3>Scan with ctx mobile</h3>
           <p className="muted">
             Scan this QR in the Expo app or copy the token below. Store it securely—it's only shown once.
           </p>

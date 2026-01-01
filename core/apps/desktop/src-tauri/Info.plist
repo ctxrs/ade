@@ -10,14 +10,15 @@
     <array>
       <dict>
         <key>CFBundleURLName</key>
-        <string>context</string>
+        <string>ctx</string>
         <key>CFBundleURLSchemes</key>
         <array>
+          <string>ctx</string>
           <string>context</string>
         </array>
       </dict>
     </array>
     <key>NSMicrophoneUsageDescription</key>
-    <string>Context needs microphone access for dictation.</string>
+    <string>ctx needs microphone access for dictation.</string>
   </dict>
 </plist>

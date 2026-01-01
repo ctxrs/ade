@@ -7,7 +7,7 @@ if ! command -v pnpm >/dev/null; then
 fi
 
 URL=${1:-http://localhost:19006}
-OUT=${2:-/tmp/context-mobile-$(date +%Y%m%d-%H%M%S).png}
+OUT=${2:-/tmp/ctx-mobile-$(date +%Y%m%d-%H%M%S).png}
 
 echo "Capturing mobile screenshot from $URL -> $OUT"
 pnpm -C core/apps/web exec playwright screenshot --device="iPhone 13 Pro" "$URL" "$OUT"

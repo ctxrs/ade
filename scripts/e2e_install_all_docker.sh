@@ -2,11 +2,11 @@
 set -euo pipefail
 
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-BIN_PATH="$ROOT_DIR/core/target/debug/context"
+BIN_PATH="$ROOT_DIR/core/target/debug/ctx"
 
 if [[ ! -x "$BIN_PATH" ]]; then
-  echo "[e2e] building context daemon (debug)"
-  (cd "$ROOT_DIR/core" && cargo build -p context-http --bin context)
+  echo "[e2e] building ctx daemon (debug)"
+  (cd "$ROOT_DIR/core" && cargo build -p ctx-http --bin ctx)
 fi
 
 if ! command -v docker >/dev/null 2>&1; then
@@ -15,7 +15,7 @@ if ! command -v docker >/dev/null 2>&1; then
 fi
 
 docker run --rm \
-  -v "$BIN_PATH:/usr/local/bin/context:ro" \
+  -v "$BIN_PATH:/usr/local/bin/ctx:ro" \
   ubuntu:24.04 \
   bash -lc '
 set -euo pipefail
@@ -24,19 +24,19 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update -y >/dev/null
 apt-get install -y curl jq git ca-certificates >/dev/null
 
-DATA_DIR=/tmp/context-data
-WORKSPACE=/tmp/context-workspace
+DATA_DIR=/tmp/ctx-data
+WORKSPACE=/tmp/ctx-workspace
 
 mkdir -p "$WORKSPACE"
 cd "$WORKSPACE"
 git init -q
 git config user.email "e2e@example.com"
 git config user.name "E2E"
-echo "context" > README.md
+echo "ctx" > README.md
 git add README.md
 git commit -q -m "init"
 
-context serve --bind 127.0.0.1:4399 --data-dir "$DATA_DIR" &
+ctx serve --bind 127.0.0.1:4399 --data-dir "$DATA_DIR" &
 DAEMON_PID=$!
 trap "kill $DAEMON_PID" EXIT
 

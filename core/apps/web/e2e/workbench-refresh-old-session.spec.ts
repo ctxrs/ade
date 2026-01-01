@@ -12,7 +12,7 @@ const readId = (v: any): string => {
 };
 
 test("workbench: refresh keeps selection, even for older sessions", async ({ page }) => {
-  const repo = mkdtempSync(path.join(tmpdir(), "context-e2e-"));
+  const repo = mkdtempSync(path.join(tmpdir(), "ctx-e2e-"));
   execSync("git init", { cwd: repo });
   execSync("git config user.email test@example.com", { cwd: repo });
   execSync("git config user.name Test", { cwd: repo });
@@ -55,7 +55,7 @@ test("workbench: refresh keeps selection, even for older sessions", async ({ pag
   try {
     await expect(sessionComposer).toBeVisible({ timeout: 20000 });
   } catch (err) {
-    await page.screenshot({ path: path.join(tmpdir(), "context-e2e-session-missing.png"), fullPage: true });
+    await page.screenshot({ path: path.join(tmpdir(), "ctx-e2e-session-missing.png"), fullPage: true });
     throw err;
   }
   await expect(
@@ -134,7 +134,7 @@ test("workbench: refresh keeps selection, even for older sessions", async ({ pag
   try {
     await expect(page.locator(".wb-session textarea.wb-active-textarea")).toBeVisible({ timeout: 20000 });
   } catch (err) {
-    await page.screenshot({ path: path.join(tmpdir(), "context-e2e-after-reload-session-missing.png"), fullPage: true });
+    await page.screenshot({ path: path.join(tmpdir(), "ctx-e2e-after-reload-session-missing.png"), fullPage: true });
     throw err;
   }
   await expect(page.locator(".wb-session .wb-assistant-entry").filter({ hasText: "done: hello refresh" })).toBeVisible({
