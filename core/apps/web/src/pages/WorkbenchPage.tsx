@@ -2444,7 +2444,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     if (createdId) terminalPanelRef.current.focusTerminal(createdId);
   }, [activeSessionId, activeTaskId, activeTrackId, activeWorktreeId, worktreeChip.worktreePath]);
 
-  const exportConversation = useCallback(async () => {
+  const buildConversationExport = useCallback(() => {
     if (!activeEntry?.session) return;
     const sess = activeEntry.session;
 
@@ -2461,8 +2461,8 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     );
     const exportedAt = new Date().toISOString();
 
-    const lines: string[] = [];
     const title = singleTrackHeader?.title ?? "Conversation";
+    const lines: string[] = [];
     lines.push(`# ${title}`);
     lines.push("");
     lines.push(`- Exported: ${exportedAt}`);
@@ -2549,13 +2549,29 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       lines.push("");
     }
 
+    return { title, markdown: lines.join("\n") };
+  }, [activeEntry, singleTrackHeader?.title, worktreeChip.worktreePath]);
+
+  const exportConversation = useCallback(async () => {
+    const payload = buildConversationExport();
+    if (!payload) return;
     try {
-      const fileBase = sanitizeFileName(title);
-      await saveMarkdownExport(fileBase, lines.join("\n"));
+      const fileBase = sanitizeFileName(payload.title);
+      await saveMarkdownExport(fileBase, payload.markdown);
     } catch (e: any) {
       window.alert(e?.message ?? "Failed to export conversation.");
     }
-  }, [activeEntry, singleTrackHeader?.title, worktreeChip.worktreePath]);
+  }, [buildConversationExport]);
+
+  const copyConversation = useCallback(async () => {
+    const payload = buildConversationExport();
+    if (!payload) return;
+    try {
+      await navigator.clipboard.writeText(payload.markdown);
+    } catch (e: any) {
+      window.alert(e?.message ?? "Failed to copy conversation.");
+    }
+  }, [buildConversationExport]);
 
   useEffect(() => {
     const el = newComposerRef.current;
@@ -3142,6 +3158,18 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
             role="menuitem"
           >
             Export Conversation
+          </button>
+          <button
+            type="button"
+            className="wb-menu-item"
+            disabled={!activeSessionId}
+            onClick={() => {
+              setConvoMenu(null);
+              void copyConversation();
+            }}
+            role="menuitem"
+          >
+            Copy Conversation
           </button>
           <button
             type="button"
