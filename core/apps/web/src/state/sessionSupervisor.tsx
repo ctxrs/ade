@@ -706,6 +706,11 @@ export class SessionSupervisor {
         break;
     }
 
+    if (event.payload_json?.context_window) {
+      turn.metrics_json = event.payload_json.context_window;
+      changed = true;
+    }
+
     if (!changed) return false;
     turn.updated_at = event.created_at ?? turn.updated_at;
     entry.turns[idx] = { ...turn };

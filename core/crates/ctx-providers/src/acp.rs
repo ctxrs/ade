@@ -7,7 +7,7 @@ use std::sync::{
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use serde_json::json;
+use serde_json::{json, Map, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::{mpsc, oneshot, Mutex, RwLock};
@@ -1388,6 +1388,26 @@ fn build_request_permission_response(
     Ok(Some(line))
 }
 
+fn extract_update_field(update: &Value, key: &str) -> Option<Value> {
+    update
+        .get(key)
+        .cloned()
+        .or_else(|| update.get("_meta").and_then(|meta| meta.get(key)).cloned())
+}
+
+fn add_update_meta_fields(
+    payload: &mut Map<String, Value>,
+    context_window: &Option<Value>,
+    usage: &Option<Value>,
+) {
+    if let Some(context_window) = context_window.clone() {
+        payload.insert("context_window".to_string(), context_window);
+    }
+    if let Some(usage) = usage.clone() {
+        payload.insert("usage".to_string(), usage);
+    }
+}
+
 fn normalize_session_update(
     msg: &serde_json::Value,
     state: &mut StreamState,
@@ -1396,6 +1416,8 @@ fn normalize_session_update(
         return vec![];
     };
     let update = params.get("update").cloned().unwrap_or(json!({}));
+    let context_window = extract_update_field(&update, "context_window");
+    let usage = extract_update_field(&update, "usage");
     let kind = update
         .get("sessionUpdate")
         .and_then(|v| v.as_str())
@@ -1407,12 +1429,13 @@ fn normalize_session_update(
             if let Some(content) = update.get("content") {
                 if let Some(text) = content_text(content) {
                     state.assistant_buf.push_str(&text);
+                    let mut payload = Map::new();
+                    payload.insert("content_fragment".to_string(), json!(text));
+                    payload.insert("acp_update".to_string(), update.clone());
+                    add_update_meta_fields(&mut payload, &context_window, &usage);
                     out.push(NormalizedEvent {
                         event_type: SessionEventType::AssistantChunk,
-                        payload_json: json!({
-                            "content_fragment": text,
-                            "acp_update": update,
-                        }),
+                        payload_json: Value::Object(payload),
                     });
                 }
             }
@@ -1421,12 +1444,13 @@ fn normalize_session_update(
         "agent_thought_chunk" => {
             if let Some(content) = update.get("content") {
                 if let Some(text) = content_text(content) {
+                    let mut payload = Map::new();
+                    payload.insert("content_fragment".to_string(), json!(text));
+                    payload.insert("acp_update".to_string(), update.clone());
+                    add_update_meta_fields(&mut payload, &context_window, &usage);
                     return vec![NormalizedEvent {
                         event_type: SessionEventType::ThoughtChunk,
-                        payload_json: json!({
-                            "content_fragment": text,
-                            "acp_update": update,
-                        }),
+                        payload_json: Value::Object(payload),
                     }];
                 }
             }
@@ -1438,12 +1462,13 @@ fn normalize_session_update(
                 for block in chunks {
                     if let Some(text) = content_text(block) {
                         state.assistant_buf.push_str(&text);
+                        let mut payload = Map::new();
+                        payload.insert("content_fragment".to_string(), json!(text));
+                        payload.insert("acp_update".to_string(), update.clone());
+                        add_update_meta_fields(&mut payload, &context_window, &usage);
                         out.push(NormalizedEvent {
                             event_type: SessionEventType::AssistantChunk,
-                            payload_json: json!({
-                                "content_fragment": text,
-                                "acp_update": update,
-                            }),
+                            payload_json: Value::Object(payload),
                         });
                     }
                 }
@@ -1456,12 +1481,13 @@ fn normalize_session_update(
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string();
+            let mut payload = Map::new();
+            payload.insert("tool_call_id".to_string(), json!(tool_call_id));
+            payload.insert("acp_update".to_string(), update.clone());
+            add_update_meta_fields(&mut payload, &context_window, &usage);
             vec![NormalizedEvent {
                 event_type: SessionEventType::ToolCall,
-                payload_json: json!({
-                    "tool_call_id": tool_call_id,
-                    "acp_update": update,
-                }),
+                payload_json: Value::Object(payload),
             }]
         }
         "tool_call_update" => {
@@ -1471,36 +1497,53 @@ fn normalize_session_update(
                 .unwrap_or("")
                 .to_string();
             let status = update.get("status").and_then(|v| v.as_str()).unwrap_or("");
+            let mut payload = Map::new();
+            payload.insert("tool_call_id".to_string(), json!(tool_call_id));
+            payload.insert("acp_update".to_string(), update.clone());
+            add_update_meta_fields(&mut payload, &context_window, &usage);
             let mut out = vec![NormalizedEvent {
                 event_type: SessionEventType::ToolCallUpdate,
-                payload_json: json!({
-                    "tool_call_id": tool_call_id,
-                    "acp_update": update,
-                }),
+                payload_json: Value::Object(payload),
             }];
             if matches!(status, "completed" | "failed") {
+                let mut payload = Map::new();
+                payload.insert("tool_call_id".to_string(), json!(tool_call_id));
+                payload.insert("acp_update".to_string(), update.clone());
+                add_update_meta_fields(&mut payload, &context_window, &usage);
                 out.push(NormalizedEvent {
                     event_type: SessionEventType::ToolResult,
-                    payload_json: json!({
-                        "tool_call_id": tool_call_id,
-                        "acp_update": update,
-                    }),
+                    payload_json: Value::Object(payload),
                 });
             }
             out
         }
-        "plan" => vec![NormalizedEvent {
-            event_type: SessionEventType::Plan,
-            payload_json: json!({"acp_update": update}),
-        }],
-        "available_commands_update" => vec![NormalizedEvent {
-            event_type: SessionEventType::Notice,
-            payload_json: json!({"acp_update": update}),
-        }],
-        "error" => vec![NormalizedEvent {
-            event_type: SessionEventType::Error,
-            payload_json: json!({"acp_update": update}),
-        }],
+        "plan" => {
+            let mut payload = Map::new();
+            payload.insert("acp_update".to_string(), update.clone());
+            add_update_meta_fields(&mut payload, &context_window, &usage);
+            vec![NormalizedEvent {
+                event_type: SessionEventType::Plan,
+                payload_json: Value::Object(payload),
+            }]
+        }
+        "available_commands_update" => {
+            let mut payload = Map::new();
+            payload.insert("acp_update".to_string(), update.clone());
+            add_update_meta_fields(&mut payload, &context_window, &usage);
+            vec![NormalizedEvent {
+                event_type: SessionEventType::Notice,
+                payload_json: Value::Object(payload),
+            }]
+        }
+        "error" => {
+            let mut payload = Map::new();
+            payload.insert("acp_update".to_string(), update.clone());
+            add_update_meta_fields(&mut payload, &context_window, &usage);
+            vec![NormalizedEvent {
+                event_type: SessionEventType::Error,
+                payload_json: Value::Object(payload),
+            }]
+        }
         _ => vec![],
     }
 }
@@ -2258,6 +2301,40 @@ mod tests {
             Some("available_commands_update")
         );
         assert_eq!(state.assistant_buf, "");
+    }
+
+    #[test]
+    fn surfaces_context_window_from_meta() {
+        let mut state = StreamState::default();
+        let msg = json!({
+            "jsonrpc": "2.0",
+            "method": "session/update",
+            "params": {
+                "sessionId": "sess_1",
+                "update": {
+                    "sessionUpdate": "available_commands_update",
+                    "availableCommands": [],
+                    "_meta": {
+                        "context_window": {
+                            "context_window_tokens": 1000,
+                            "context_tokens_estimate": 200,
+                            "remaining_fraction": 0.8
+                        }
+                    }
+                }
+            }
+        });
+
+        let events = normalize_session_update(&msg, &mut state);
+        assert_eq!(events.len(), 1);
+        assert_eq!(
+            events[0]
+                .payload_json
+                .get("context_window")
+                .and_then(|v| v.get("context_window_tokens"))
+                .and_then(Value::as_i64),
+            Some(1000)
+        );
     }
 
     #[test]
