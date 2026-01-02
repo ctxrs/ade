@@ -5,6 +5,27 @@ export type Workspace = {
   created_at: string;
 };
 
+export type WorkspaceAttachmentKind = "reference_repo" | "doc_mirror";
+
+export type AttachmentMode = "ro" | "rw";
+
+export type AttachmentUpdatePolicy = "manual" | "on_open" | "scheduled";
+
+export type WorkspaceAttachment = {
+  id: { 0: string } | string;
+  workspace_id: { 0: string } | string;
+  kind: WorkspaceAttachmentKind;
+  name: string;
+  source: string;
+  revision?: string | null;
+  subpath?: string | null;
+  mount_relpath: string;
+  mode: AttachmentMode;
+  update_policy: AttachmentUpdatePolicy;
+  created_at: string;
+  updated_at: string;
+};
+
 export type Task = {
   id: { 0: string } | string;
   workspace_id: { 0: string } | string;

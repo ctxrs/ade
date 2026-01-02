@@ -16,6 +16,9 @@ import {
   Settings,
   TelemetrySettings,
   TitleGenerationSettings,
+  WorkspaceAttachment,
+  createWorkspaceAttachment,
+  deleteWorkspaceAttachment,
   disableMobileAccess,
   enableMobileAccess,
   getMobileAccessStatus,
@@ -29,9 +32,11 @@ import {
   installAllProviders,
   installProvider,
   installStreamUrl,
+  listWorkspaceAttachments,
   listInstallEvents,
   listProviders,
   listWorkspaces,
+  syncWorkspaceAttachments,
   updateSettings,
   verifyProviderForWorkspace,
 } from "../api/client";
@@ -86,6 +91,7 @@ type SectionId =
   | "models_routing"
   | "sandboxing"
   | "worktree_bootstrap"
+  | "workspace_attachments"
   | "context_pack"
   | "resource_governance"
   | "mobile_access"
@@ -114,6 +120,7 @@ const SECTIONS: Array<{
   { id: "models_routing", label: "Models & Routing", group: "main" },
   { id: "sandboxing", label: "Sandboxing", group: "main" },
   { id: "worktree_bootstrap", label: "Worktree Bootstrap", group: "main" },
+  { id: "workspace_attachments", label: "Workspace Attachments", group: "main" },
   { id: "context_pack", label: "ctx pack", group: "main" },
   { id: "resource_governance", label: "Resource Limits", group: "main" },
   { id: "mobile_access", label: "Mobile Access", group: "main" },
@@ -180,6 +187,16 @@ function truncateText(value: string, maxLen: number): string {
   const s = String(value ?? "");
   if (s.length <= maxLen) return s;
   return `${s.slice(0, Math.max(0, maxLen - 1))}…`;
+}
+
+function guessAttachmentName(source: string): string {
+  let cleaned = String(source ?? "").trim();
+  if (!cleaned) return "";
+  cleaned = cleaned.replace(/[\\/]+$/, "");
+  const slashIdx = Math.max(cleaned.lastIndexOf("/"), cleaned.lastIndexOf(":"));
+  let name = slashIdx >= 0 ? cleaned.slice(slashIdx + 1) : cleaned;
+  if (name.endsWith(".git")) name = name.slice(0, -4);
+  return name;
 }
 
 function Toggle({
@@ -352,6 +369,15 @@ export default function SettingsPage() {
   const [providerError, setProviderError] = useState<string | null>(null);
   const [installBusy, setInstallBusy] = useState<string | null>(null);
   const [installs, setInstalls] = useState<Record<string, InstallSession>>({});
+  const [attachments, setAttachments] = useState<WorkspaceAttachment[]>([]);
+  const [attachmentsLoading, setAttachmentsLoading] = useState(false);
+  const [attachmentsError, setAttachmentsError] = useState<string | null>(null);
+  const [attachmentName, setAttachmentName] = useState("");
+  const [attachmentSource, setAttachmentSource] = useState("");
+  const [attachmentRevision, setAttachmentRevision] = useState("");
+  const [attachmentBusy, setAttachmentBusy] = useState(false);
+  const [attachmentSyncBusy, setAttachmentSyncBusy] = useState(false);
+  const [attachmentDeleteBusy, setAttachmentDeleteBusy] = useState<Record<string, boolean>>({});
 
   const [resourceSnapshot, setResourceSnapshot] = useState<ResourceUtilization | null>(null);
   const [resourceLoading, setResourceLoading] = useState(false);
@@ -740,6 +766,32 @@ export default function SettingsPage() {
       .then(setProviders)
       .catch((e: any) => setProviderError(e?.message ?? String(e)));
 
+  const refreshWorkspaceAttachments = useCallback(
+    async (opts?: { refresh?: boolean }) => {
+      if (!workspaceId) return;
+      setAttachmentsLoading(true);
+      setAttachmentsError(null);
+      try {
+        const next = opts?.refresh
+          ? await syncWorkspaceAttachments(workspaceId, true)
+          : await listWorkspaceAttachments(workspaceId);
+        setAttachments(next);
+      } catch (e: any) {
+        setAttachmentsError(e?.message ?? String(e));
+      } finally {
+        setAttachmentsLoading(false);
+      }
+    },
+    [workspaceId],
+  );
+
+  const syncWorkspaceAttachmentsNow = useCallback(async () => {
+    if (!workspaceId) return;
+    setAttachmentSyncBusy(true);
+    await refreshWorkspaceAttachments({ refresh: true });
+    setAttachmentSyncBusy(false);
+  }, [workspaceId, refreshWorkspaceAttachments]);
+
   useEffect(() => {
     refreshProviders();
     listWorkspaces()
@@ -753,6 +805,11 @@ export default function SettingsPage() {
 
   useEffect(() => {
     setProviderOptions({});
+  }, [workspaceId]);
+
+  useEffect(() => {
+    setAttachments([]);
+    setAttachmentsError(null);
   }, [workspaceId]);
 
   useEffect(() => {
@@ -807,6 +864,12 @@ export default function SettingsPage() {
       }
     };
   }, [active, workspaceId]);
+
+  useEffect(() => {
+    if (active !== "workspace_attachments") return;
+    if (!workspaceId) return;
+    refreshWorkspaceAttachments().catch(() => {});
+  }, [active, workspaceId, refreshWorkspaceAttachments]);
 
   useEffect(() => {
     return () => {
@@ -1007,6 +1070,66 @@ export default function SettingsPage() {
     }
   };
 
+  const handleAddAttachment = useCallback(async () => {
+    if (!workspaceId) return;
+    const source = attachmentSource.trim();
+    const revision = attachmentRevision.trim();
+    const name = attachmentName.trim() || guessAttachmentName(source);
+    if (!source) {
+      setAttachmentsError("Repository URL is required.");
+      return;
+    }
+    if (!name) {
+      setAttachmentsError("Attachment name is required.");
+      return;
+    }
+    setAttachmentBusy(true);
+    setAttachmentsError(null);
+    try {
+      const next = await createWorkspaceAttachment(workspaceId, {
+        kind: "reference_repo",
+        name,
+        source,
+        revision: revision || null,
+      });
+      setAttachments(next);
+      setAttachmentName("");
+      setAttachmentSource("");
+      setAttachmentRevision("");
+    } catch (e: any) {
+      setAttachmentsError(e?.message ?? String(e));
+    } finally {
+      setAttachmentBusy(false);
+    }
+  }, [workspaceId, attachmentSource, attachmentRevision, attachmentName, createWorkspaceAttachment]);
+
+  const handleRemoveAttachment = useCallback(
+    async (attachment: WorkspaceAttachment) => {
+      if (!workspaceId) return;
+      const confirmed = window.confirm(`Remove "${attachment.name}" from workspace attachments?`);
+      if (!confirmed) return;
+      const id = idToString(attachment.id);
+      setAttachmentDeleteBusy((prev) => ({ ...prev, [id]: true }));
+      setAttachmentsError(null);
+      try {
+        const next = await deleteWorkspaceAttachment(workspaceId, {
+          kind: attachment.kind,
+          name: attachment.name,
+        });
+        setAttachments(next);
+      } catch (e: any) {
+        setAttachmentsError(e?.message ?? String(e));
+      } finally {
+        setAttachmentDeleteBusy((prev) => {
+          const copy = { ...prev };
+          delete copy[id];
+          return copy;
+        });
+      }
+    },
+    [workspaceId, deleteWorkspaceAttachment, idToString],
+  );
+
   const sidebarSections = useMemo(() => {
     const q = query.trim().toLowerCase();
     const all = [...SECTIONS];
@@ -1139,6 +1262,167 @@ export default function SettingsPage() {
               control={<pre className="settings-code-block">{example}</pre>}
             />
           </Card>
+        </>
+      );
+    }
+
+    if (active === "workspace_attachments") {
+      const anyWorkspace = workspaces.length > 0;
+      const selectedWorkspace = workspaces.find((ws) => idToString((ws as any).id) === workspaceId) ?? null;
+      const configPath = selectedWorkspace ? `${selectedWorkspace.root_path}/.ctx/attachments.toml` : ".ctx/attachments.toml";
+      const canAdd = Boolean(workspaceId && attachmentSource.trim());
+
+      return (
+        <>
+          <Card title="Workspace Attachments">
+            <Row
+              title="Workspace"
+              description="Choose the repo to configure."
+              control={
+                <select
+                  className="settings-control settings-select"
+                  value={workspaceId ?? ""}
+                  onChange={(e) => setWorkspaceId(e.target.value || null)}
+                  disabled={!anyWorkspace}
+                >
+                  {workspaces.map((ws) => {
+                    const id = idToString((ws as any).id);
+                    return (
+                      <option key={id} value={id}>
+                        {ws.name}
+                      </option>
+                    );
+                  })}
+                </select>
+              }
+            />
+            <Row
+              title="Config file"
+              description="Repo-scoped attachments configuration."
+              control={<span className="settings-pill wb-mono">{configPath}</span>}
+            />
+            <Row
+              title="Mount paths"
+              description="Reference repos are mounted inside each track."
+              control={<span className="settings-pill wb-mono">.ctx/.refs/&lt;name&gt;</span>}
+            />
+          </Card>
+
+          <Card title="Reference Repos">
+            <div className="settings-card-block">
+              <div className="settings-attachments-form">
+                <div className="settings-attachments-field">
+                  <label className="settings-attachments-label" htmlFor="attachments-source">
+                    Repository URL
+                  </label>
+                  <input
+                    id="attachments-source"
+                    className="settings-control settings-control-wide"
+                    value={attachmentSource}
+                    onChange={(e) => setAttachmentSource(e.target.value)}
+                    placeholder="git@github.com:org/repo.git"
+                  />
+                </div>
+                <div className="settings-attachments-field">
+                  <label className="settings-attachments-label" htmlFor="attachments-name">
+                    Display name
+                  </label>
+                  <input
+                    id="attachments-name"
+                    className="settings-control"
+                    value={attachmentName}
+                    onChange={(e) => setAttachmentName(e.target.value)}
+                    placeholder={guessAttachmentName(attachmentSource) || "reference"}
+                  />
+                </div>
+                <div className="settings-attachments-field">
+                  <label className="settings-attachments-label" htmlFor="attachments-revision">
+                    Revision (optional)
+                  </label>
+                  <input
+                    id="attachments-revision"
+                    className="settings-control"
+                    value={attachmentRevision}
+                    onChange={(e) => setAttachmentRevision(e.target.value)}
+                    placeholder="main or tag"
+                  />
+                </div>
+              </div>
+              <div className="settings-attachments-actions">
+                <button
+                  type="button"
+                  className="settings-btn"
+                  onClick={() => handleAddAttachment().catch(() => {})}
+                  disabled={!canAdd || attachmentBusy || !workspaceId}
+                >
+                  {attachmentBusy ? "Adding…" : "Add repo"}
+                </button>
+                <button
+                  type="button"
+                  className="settings-btn settings-btn-secondary"
+                  onClick={() => syncWorkspaceAttachmentsNow().catch(() => {})}
+                  disabled={!workspaceId || attachmentSyncBusy}
+                >
+                  {attachmentSyncBusy ? "Syncing…" : "Sync now"}
+                </button>
+              </div>
+              <div className="settings-attachments-hint">
+                Use SSH URLs for private repos. The daemon must have access to your SSH keys.
+              </div>
+            </div>
+            <div className="settings-card-block">
+              {attachmentsLoading ? <div className="settings-empty-compact">Loading attachments…</div> : null}
+              {!attachmentsLoading && attachments.length === 0 ? (
+                <div className="settings-empty-compact">No workspace attachments yet.</div>
+              ) : null}
+              {!attachmentsLoading && attachments.length > 0 ? (
+                <div className="settings-table settings-table-attachments">
+                  <div className="settings-table-head">
+                    <div>Attachment</div>
+                    <div>Source</div>
+                    <div>Mount</div>
+                    <div>Updated</div>
+                    <div />
+                  </div>
+                  {attachments.map((attachment) => {
+                    const updatedMs = Date.parse(attachment.updated_at);
+                    const updatedLabel = Number.isFinite(updatedMs)
+                      ? `${formatAge(Date.now() - updatedMs)} ago`
+                      : "—";
+                    const deleteBusy = attachmentDeleteBusy[idToString(attachment.id)] ?? false;
+                    return (
+                      <div key={idToString(attachment.id)} className="settings-table-row">
+                        <div>
+                          <div className="settings-table-title">{attachment.name}</div>
+                          <div className="settings-table-sub">
+                            {attachment.kind === "reference_repo" ? "Reference repo" : "Docs mirror"}
+                          </div>
+                        </div>
+                        <div className="settings-table-mono" title={attachment.source}>
+                          {truncateText(attachment.source, 64)}
+                        </div>
+                        <div className="settings-table-mono" title={attachment.mount_relpath}>
+                          {truncateText(attachment.mount_relpath, 32)}
+                        </div>
+                        <div className="settings-table-sub">{updatedLabel}</div>
+                        <div className="settings-row-right">
+                          <button
+                            type="button"
+                            className="settings-btn settings-btn-secondary settings-btn-compact"
+                            onClick={() => handleRemoveAttachment(attachment).catch(() => {})}
+                            disabled={deleteBusy}
+                          >
+                            {deleteBusy ? "Removing…" : "Remove"}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : null}
+            </div>
+          </Card>
+          {attachmentsError ? <div className="settings-banner settings-banner-error">{attachmentsError}</div> : null}
         </>
       );
     }

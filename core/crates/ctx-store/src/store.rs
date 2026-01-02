@@ -859,6 +859,45 @@ impl Store {
         Ok(out)
     }
 
+    pub async fn list_track_attachment_mounts_for_attachment(
+        &self,
+        attachment_id: WorkspaceAttachmentId,
+    ) -> Result<Vec<TrackAttachmentMount>> {
+        let rows = sqlx::query(
+            r#"SELECT track_id, attachment_id, mount_abs_path, materialized_id, status,
+                      last_sync_at, error_message, created_at, updated_at
+               FROM track_attachment_mounts
+               WHERE attachment_id = ?
+               ORDER BY created_at ASC"#,
+        )
+        .bind(attachment_id.0.to_string())
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut out = Vec::with_capacity(rows.len());
+        for r in rows {
+            let track_id: String = r.try_get("track_id")?;
+            let attachment_id: String = r.try_get("attachment_id")?;
+            let status: String = r.try_get("status")?;
+            let created_at: String = r.try_get("created_at")?;
+            let updated_at: String = r.try_get("updated_at")?;
+            out.push(TrackAttachmentMount {
+                track_id: TrackId(uuid::Uuid::parse_str(&track_id)?),
+                attachment_id: WorkspaceAttachmentId(uuid::Uuid::parse_str(&attachment_id)?),
+                mount_abs_path: r.try_get("mount_abs_path")?,
+                materialized_id: r.try_get("materialized_id")?,
+                status: parse_track_attachment_status(&status),
+                last_sync_at: r
+                    .try_get::<Option<String>, _>("last_sync_at")?
+                    .and_then(|v| parse_dt(&v).ok()),
+                error_message: r.try_get("error_message")?,
+                created_at: parse_dt(&created_at)?,
+                updated_at: parse_dt(&updated_at)?,
+            });
+        }
+        Ok(out)
+    }
+
     pub async fn upsert_track_attachment_mount(&self, mount: &TrackAttachmentMount) -> Result<()> {
         sqlx::query(
             r#"INSERT INTO track_attachment_mounts
@@ -883,6 +922,17 @@ impl Store {
         .bind(mount.updated_at.to_rfc3339())
         .execute(&self.pool)
         .await?;
+        Ok(())
+    }
+
+    pub async fn delete_track_attachment_mounts_for_attachment(
+        &self,
+        attachment_id: WorkspaceAttachmentId,
+    ) -> Result<()> {
+        sqlx::query(r#"DELETE FROM track_attachment_mounts WHERE attachment_id = ?"#)
+            .bind(attachment_id.0.to_string())
+            .execute(&self.pool)
+            .await?;
         Ok(())
     }
 

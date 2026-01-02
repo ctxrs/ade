@@ -50,11 +50,20 @@ pub async fn sync_workspace_attachments(
     workspace: &Workspace,
     refresh: bool,
 ) -> Result<Vec<WorkspaceAttachment>> {
-    let Some(cfg) = load_attachments_config(Path::new(&workspace.root_path)).await? else {
-        return Ok(vec![]);
-    };
-
+    let cfg = load_attachments_config(Path::new(&workspace.root_path)).await?;
     let existing = state.store.list_workspace_attachments(workspace.id).await?;
+    if cfg.is_none() {
+        for attachment in existing {
+            cleanup_removed_attachment(state, &attachment).await?;
+            state
+                .store
+                .delete_workspace_attachment(attachment.id)
+                .await?;
+        }
+        return Ok(vec![]);
+    }
+    let cfg = cfg.expect("attachments config missing");
+
     let mut existing_map: HashMap<(WorkspaceAttachmentKind, String), WorkspaceAttachment> =
         HashMap::new();
     for attachment in existing {
@@ -75,13 +84,19 @@ pub async fn sync_workspace_attachments(
         out.push(attachment);
     }
 
+    let mut removed = Vec::new();
     for (_, attachment) in existing_map {
         if !keep_ids.contains(&attachment.id) {
-            state
-                .store
-                .delete_workspace_attachment(attachment.id)
-                .await?;
+            removed.push(attachment);
         }
+    }
+
+    for attachment in removed {
+        cleanup_removed_attachment(state, &attachment).await?;
+        state
+            .store
+            .delete_workspace_attachment(attachment.id)
+            .await?;
     }
 
     Ok(out)
@@ -240,6 +255,32 @@ pub async fn upsert_attachment_config(
     Ok(())
 }
 
+pub async fn remove_attachment_config(
+    workspace_root: &Path,
+    kind: WorkspaceAttachmentKind,
+    name: &str,
+) -> Result<bool> {
+    let Some(mut cfg) = load_attachments_config(workspace_root).await? else {
+        return Ok(false);
+    };
+    let trimmed = name.trim();
+    let before = cfg.attachments.len();
+    cfg.attachments
+        .retain(|entry| !(entry.kind == kind && entry.name.trim() == trimmed));
+    if cfg.attachments.len() == before {
+        return Ok(false);
+    }
+    if cfg.attachments.is_empty() {
+        let path = workspace_root.join(ATTACHMENTS_CONFIG_PATH);
+        if path.exists() {
+            tokio::fs::remove_file(&path).await?;
+        }
+        return Ok(true);
+    }
+    write_attachments_config(workspace_root, &cfg).await?;
+    Ok(true)
+}
+
 async fn write_attachments_config(
     workspace_root: &Path,
     cfg: &AttachmentsConfigFile,
@@ -356,6 +397,26 @@ async fn ensure_attachment_mount(
     };
     state.store.upsert_track_attachment_mount(&mount).await?;
     Ok(mount)
+}
+
+async fn cleanup_removed_attachment(state: &AppState, attachment: &WorkspaceAttachment) -> Result<()> {
+    let mounts = state
+        .store
+        .list_track_attachment_mounts_for_attachment(attachment.id)
+        .await?;
+    for mount in mounts {
+        let path = PathBuf::from(&mount.mount_abs_path);
+        remove_mount_path(&path).await?;
+    }
+    state
+        .store
+        .delete_track_attachment_mounts_for_attachment(attachment.id)
+        .await?;
+    let root = materialized_root_for_attachment(state, attachment);
+    if root.exists() {
+        tokio::fs::remove_dir_all(root).await?;
+    }
+    Ok(())
 }
 
 async fn materialize_attachment(
@@ -559,6 +620,17 @@ async fn resolve_git_dir(worktree_root: &Path) -> Result<PathBuf> {
     }
 }
 
+async fn remove_mount_path(target: &Path) -> Result<()> {
+    if let Ok(meta) = tokio::fs::symlink_metadata(target).await {
+        if meta.file_type().is_symlink() || meta.is_file() {
+            tokio::fs::remove_file(target).await?;
+        } else if meta.is_dir() {
+            tokio::fs::remove_dir_all(target).await?;
+        }
+    }
+    Ok(())
+}
+
 async fn ensure_mount(target: &Path, source: &Path) -> Result<()> {
     if let Ok(meta) = tokio::fs::symlink_metadata(target).await {
         if meta.file_type().is_symlink() {
@@ -626,6 +698,18 @@ fn copy_dir_recursive(source: &Path, target: &Path) -> Result<()> {
 
 fn attachment_store_root(data_root: &Path) -> PathBuf {
     data_root.join("attachments")
+}
+
+fn materialized_root_for_attachment(state: &AppState, attachment: &WorkspaceAttachment) -> PathBuf {
+    match attachment.kind {
+        WorkspaceAttachmentKind::ReferenceRepo => attachment_store_root(&state.data_root)
+            .join("reference-repos")
+            .join("checkouts")
+            .join(attachment.id.0.to_string()),
+        WorkspaceAttachmentKind::DocMirror => attachment_store_root(&state.data_root)
+            .join("doc-mirrors")
+            .join(attachment.id.0.to_string()),
+    }
 }
 
 fn materialized_path_for_attachment(state: &AppState, attachment: &WorkspaceAttachment) -> PathBuf {

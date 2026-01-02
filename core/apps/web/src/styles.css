@@ -5075,6 +5075,51 @@ button.linklike:hover {
   gap: 12px;
 }
 
+.settings-btn-compact {
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+.settings-attachments-form {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr) minmax(0, 1fr);
+}
+
+.settings-attachments-field {
+  display: grid;
+  gap: 6px;
+}
+
+.settings-attachments-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.settings-attachments-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.settings-attachments-hint {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.settings-table-attachments .settings-table-head,
+.settings-table-attachments .settings-table-row {
+  grid-template-columns: 1.1fr 1.6fr 0.9fr 0.7fr auto;
+}
+
+@media (max-width: 900px) {
+  .settings-attachments-form {
+    grid-template-columns: 1fr;
+  }
+}
+
 .settings-metrics-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));

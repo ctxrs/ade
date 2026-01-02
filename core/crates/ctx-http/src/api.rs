@@ -282,7 +282,9 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
         )
         .route(
             "/api/workspaces/:id/attachments",
-            get(list_workspace_attachments).post(create_workspace_attachment),
+            get(list_workspace_attachments)
+                .post(create_workspace_attachment)
+                .delete(delete_workspace_attachment),
         )
         .route(
             "/api/workspaces/:id/attachments/sync",
@@ -6065,6 +6067,85 @@ async fn create_workspace_attachment(
         false,
     )
     .await;
+    Ok(Json(attachments))
+}
+
+#[derive(Debug, Deserialize)]
+struct DeleteWorkspaceAttachmentReq {
+    kind: WorkspaceAttachmentKind,
+    name: String,
+}
+
+async fn delete_workspace_attachment(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(req): Json<DeleteWorkspaceAttachmentReq>,
+) -> Result<Json<Vec<WorkspaceAttachment>>, (StatusCode, Json<ApiErrorResp>)> {
+    if req.name.trim().is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "name is required".to_string(),
+            }),
+        ));
+    }
+    let ws_id = WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid workspace id".to_string(),
+            }),
+        )
+    })?);
+    let workspace = state
+        .store
+        .get_workspace(ws_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "workspace not found".to_string(),
+            }),
+        ))?;
+
+    let removed =
+        attachments::remove_attachment_config(StdPath::new(&workspace.root_path), req.kind, &req.name)
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(ApiErrorResp {
+                        error: logs::redact_sensitive(&e.to_string()),
+                    }),
+                )
+            })?;
+    if !removed {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "attachment not found".to_string(),
+            }),
+        ));
+    }
+
+    let attachments = attachments::sync_workspace_attachments(&state, &workspace, false)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
     Ok(Json(attachments))
 }
 
