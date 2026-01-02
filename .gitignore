@@ -19,7 +19,9 @@ dist/
 .vite/
 vite.config.ts.timestamp-*.mjs
 .turbo/
+.turbo
 **/.turbo/
+**/.turbo
 .turbo-cache/
 **/.turbo-cache/
 coverage/
