@@ -15,9 +15,7 @@ import {
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Virtuoso, VirtuosoHandle, type StateSnapshot } from "react-virtuoso";
-import { Link, useParams } from "react-router-dom";
 import {
-  cancelSession,
   deleteMessage,
   DictationSettings,
   getDaemonBaseUrl,
@@ -29,7 +27,6 @@ import {
   SessionEvent,
   SessionTurn,
   SessionTurnTool,
-  setSessionMode,
   setSessionModel,
   authenticateSession,
   getSettings,
@@ -38,24 +35,18 @@ import {
   submitAskUserQuestion,
   uploadBlob,
 } from "../api/client";
-import { useOpenSession, useSessionCacheSnapshot, useSessionEntry, useSessionSupervisor } from "../state/sessionSupervisor";
-import { WorkspaceCatchupProvider, useWorkspaceCatchupStore } from "../state/workspaceCatchupStore";
+import { useOpenSession, useSessionEntry, useSessionSupervisor } from "../state/sessionSupervisor";
 import { loadSessionViewPrefsV1, saveSessionViewPrefsV1, type SessionViewVerbosity } from "../state/uiStateStore";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { Check, Copy } from "lucide-react";
-import { DiffReviewPane } from "../components/DiffReviewPane";
-import { WorktreeBootstrapSnackbar } from "../components/WorktreeBootstrapSnackbar";
 import { AskUserQuestionModal } from "../components/AskUserQuestionModal";
-import { ComposerAutocompleteMenu } from "../components/ComposerAutocompleteMenu";
-import { useComposerAutocomplete, type SlashCommandDescriptor } from "../state/useComposerAutocomplete";
-import { shouldSendOnEnter } from "../utils/keyboard";
+import { type SlashCommandDescriptor } from "../state/useComposerAutocomplete";
 import { HARNESS_CATALOG } from "../utils/harnessCatalog";
 import { WorkbenchComposer as UnifiedWorkbenchComposer, type WorkbenchModeId } from "../components/WorkbenchComposer";
 import { startMicPcmStream } from "../utils/micPcmStream";
 import { parseWsJson } from "../utils/wsJson";
-import { buildModelCatalog, composeModelId, formatEffortLabel, parseModelId } from "../utils/modelEffort";
-import { imageFilesToBlobRefAttachments, imageFilesToInlineAttachments } from "../utils/messageAttachments";
+import { imageFilesToInlineAttachments } from "../utils/messageAttachments";
 import { registerDropScope } from "../utils/dragDropScopes";
 import { desktopGetDeepLinkToken, desktopOpenFile, desktopOpenPath, isDesktopApp } from "../utils/desktop";
 
@@ -200,49 +191,10 @@ type WorkbenchThreadView = {
   debugEvents: SessionEvent[];
 };
 
-export default function SessionPage() {
-  const { id } = useParams<{ id: string }>();
-  if (!id) return null;
-  return <SessionPageWithCatchup sessionId={id} />;
-}
-
-function SessionPageWithCatchup({ sessionId }: { sessionId: string }) {
-  const entry = useSessionEntry(sessionId);
-  const workspaceId = entry?.session ? idToString(entry.session.workspace_id) : null;
-  if (!workspaceId) {
-    return <SessionView sessionId={sessionId} variant="legacy" showDiffPane />;
-  }
-  return (
-    <WorkspaceCatchupProvider workspaceId={workspaceId}>
-      <SessionPageCatchupBridge sessionId={sessionId} />
-    </WorkspaceCatchupProvider>
-  );
-}
-
-function SessionPageCatchupBridge({ sessionId }: { sessionId: string }) {
-  const supervisor = useSessionSupervisor();
-  const workspaceCatchupStore = useWorkspaceCatchupStore();
-  useEffect(() => {
-    supervisor.bindWorkspaceCatchupStore(workspaceCatchupStore);
-    return () => supervisor.bindWorkspaceCatchupStore(null);
-  }, [supervisor, workspaceCatchupStore]);
-  return (
-    <>
-      <WorktreeBootstrapSnackbar />
-      <SessionView sessionId={sessionId} variant="legacy" showDiffPane />
-    </>
-  );
-}
-
-export type SessionViewVariant = "legacy" | "workbench";
-
 export function SessionView({
   sessionId,
   isActive = true,
-  variant,
-  showDiffPane,
   draft,
-  draftUpdatedAtMs,
   onDraftChange,
   onDraftPersistNow,
   onModeChange,
@@ -252,10 +204,7 @@ export function SessionView({
 }: {
   sessionId: string;
   isActive?: boolean;
-  variant: SessionViewVariant;
-  showDiffPane: boolean;
   draft?: { text: string; modeId: WorkbenchModeId } | null;
-  draftUpdatedAtMs?: number | null;
   onDraftChange?: ((text: string) => void) | null;
   onDraftPersistNow?: (() => void | Promise<void>) | null;
   onModeChange?: ((modeId: WorkbenchModeId) => void) | null;
@@ -277,7 +226,6 @@ export function SessionView({
 }) {
   const id = sessionId;
   const supervisor = useSessionSupervisor();
-  const supervisorSnap = useSessionCacheSnapshot();
   const showDebug = useMemo(() => {
     try {
       return new URLSearchParams(window.location.search).get("debug") === "1";
@@ -293,6 +241,7 @@ export function SessionView({
     }
   }, [id]);
   const perfStartRef = useRef<number>(0);
+  const bottomThresholdPx = 16;
   const [verbosity, setVerbosity] = useState<SessionViewVerbosity>("default");
   const [inputInternal, setInputInternal] = useState("");
   const [draftAttachments, setDraftAttachments] = useState<MessageAttachment[]>([]);
@@ -312,10 +261,8 @@ export function SessionView({
   const [optimisticAskAnswered, setOptimisticAskAnswered] = useState<Record<string, boolean>>({});
   const [expandedTurnHeaders, setExpandedTurnHeaders] = useState<Record<string, boolean>>({});
   const [expandedTurnDetailsById, setExpandedTurnDetailsById] = useState<Record<string, boolean>>({});
-  const [expandedThoughtByAssistantId, setExpandedThoughtByAssistantId] = useState<Record<string, boolean>>({});
   const [expandedToolById, setExpandedToolById] = useState<Record<string, boolean>>({});
   const virtuosoRef = useRef<VirtuosoHandle | null>(null);
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const didInitialScrollRef = useRef(false);
   const lastScrollPersistedRef = useRef<{
     stickToBottom: boolean;
@@ -365,27 +312,27 @@ export function SessionView({
     saveSessionViewPrefsV1(next).catch(() => {});
   }, []);
 
-  const input = variant === "workbench" ? (draft?.text ?? "") : inputInternal;
+  const input = draft?.text ?? inputInternal;
   const setInput = useCallback(
     (next: string) => {
-      if (variant === "workbench") {
+      if (draft) {
         onDraftChange?.(next);
         return;
       }
       setInputInternal(next);
     },
-    [onDraftChange, variant],
+    [draft, onDraftChange],
   );
-  const workbenchMode = variant === "workbench" ? (draft?.modeId ?? "default") : workbenchModeInternal;
+  const workbenchMode = draft?.modeId ?? workbenchModeInternal;
   const setWorkbenchMode = useCallback(
     (next: WorkbenchModeId) => {
-      if (variant === "workbench") {
+      if (draft) {
         onModeChange?.(next);
         return;
       }
       setWorkbenchModeInternal(next);
     },
-    [onModeChange, variant],
+    [draft, onModeChange],
   );
 
   const persistScroll = useCallback(
@@ -550,13 +497,12 @@ export function SessionView({
   }, [setScrollbarActiveState]);
 
   useEffect(() => {
-    if (variant !== "workbench") return;
     const scroller = scrollerRef.current;
     if (!scroller) return;
     const observer = new ResizeObserver(() => scheduleScrollbarUpdate());
     observer.observe(scroller);
     return () => observer.disconnect();
-  }, [variant, scheduleScrollbarUpdate]);
+  }, [scheduleScrollbarUpdate]);
 
   useEffect(() => {
     return () => {
@@ -631,15 +577,12 @@ export function SessionView({
     setHasNewActivity(false);
     lastActivityCountRef.current = 0;
     setExpandedTurnHeaders({});
-    setExpandedThoughtByAssistantId({});
     setExpandedToolById({});
     setSendError(null);
     setFileOpenError(null);
     setAuthMethodId("");
     setAuthError(null);
     setOptimisticAskAnswered({});
-    if (variant === "workbench") {
-    }
   }, [id]);
 
   useEffect(() => {
@@ -652,6 +595,10 @@ export function SessionView({
         window.clearTimeout(restoreCooldownRef.current);
         restoreCooldownRef.current = null;
       }
+      if (followOutputRafRef.current != null) {
+        window.cancelAnimationFrame(followOutputRafRef.current);
+        followOutputRafRef.current = null;
+      }
     };
   }, []);
 
@@ -663,7 +610,7 @@ export function SessionView({
       if (!el) return;
       const scrollTop = el.scrollTop;
       const remaining = el.scrollHeight - (scrollTop + el.clientHeight);
-      const nearBottom = remaining <= 16;
+      const nearBottom = remaining <= bottomThresholdPx;
       persistScroll({
         stickToBottom: nearBottom,
         anchorItemId: nearBottom ? null : latestAnchorIdRef.current,
@@ -671,7 +618,7 @@ export function SessionView({
         virtuosoState: lastScrollPersistedRef.current?.virtuosoState ?? undefined,
       });
     };
-  }, [id, onScrollStateChange, persistScroll]);
+  }, [id, onScrollStateChange, persistScroll, bottomThresholdPx]);
 
   const [dictationSettings, setDictationSettings] = useState<DictationSettings | null>(null);
   const [dictationRecording, setDictationRecording] = useState(false);
@@ -708,11 +655,9 @@ export function SessionView({
   const events: SessionEvent[] = entry?.events ?? [];
   const messages: Message[] = entry?.messages ?? [];
   const queue: Message[] = entry?.queue ?? [];
-  const diff = entry?.diff ?? "";
   const eventsKey = `${entry?.lastEventSeq ?? 0}:${events.length}`;
   const turnsKey = deriveTurnsKey(turns);
   const messagesKey = deriveMessagesKey(messages);
-  const streamConnected = supervisorSnap.connection === "connected";
   const hasActiveTurn = useMemo(
     () => turns.some((turn) => turn.status === "running" || turn.status === "queued"),
     [turnsKey],
@@ -986,7 +931,6 @@ export function SessionView({
     perfStartRef.current = 0;
   }, [perfEnabled, entry?.loading, entry?.events.length, entry?.diff]);
 
-  const legacyThreadView = useMemo(() => buildThreadViewModel(events), [eventsKey]);
   const workbenchThreadView = useMemo(() => {
     if (turns.length === 0) {
       return { groups: [], debugEvents: [] };
@@ -1001,17 +945,15 @@ export function SessionView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [turnsKey, messagesKey, toolSummariesReady ? turnToolsByTurnId : null, eventsKey, turns.length]);
 
-  const debugEvents = variant === "workbench" ? workbenchThreadView.debugEvents : legacyThreadView.debugEvents;
-  const emptyThreadItems = useMemo(() => [] as ThreadItem[], []);
-  const emptyWorkbenchGroups = useMemo(() => [] as WorkbenchThreadView["groups"], []);
-  const threadItems = variant === "workbench" ? emptyThreadItems : legacyThreadView.items;
-  const wbGroups = useMemo(() => {
-    if (variant !== "workbench") return emptyWorkbenchGroups;
-    return workbenchThreadView.groups.map((group) => ({
-      ...group,
-      items: filterThreadItemsForVerbosity(group.items, verbosity),
-    }));
-  }, [variant, emptyWorkbenchGroups, workbenchThreadView.groups, verbosity]);
+  const debugEvents = workbenchThreadView.debugEvents;
+  const wbGroups = useMemo(
+    () =>
+      workbenchThreadView.groups.map((group) => ({
+        ...group,
+        items: filterThreadItemsForVerbosity(group.items, verbosity),
+      })),
+    [workbenchThreadView.groups, verbosity],
+  );
   const wbListItems = useMemo<WorkbenchListItem[]>(() => {
     const out: WorkbenchListItem[] = [];
     for (const g of wbGroups) {
@@ -1024,20 +966,19 @@ export function SessionView({
   }, [wbGroups]);
 
   useEffect(() => {
-    if (variant !== "workbench") return;
     scheduleScrollbarUpdate();
-  }, [variant, scheduleScrollbarUpdate, wbListItems.length]);
+  }, [scheduleScrollbarUpdate, wbListItems.length]);
 
   useLayoutEffect(() => {
-    if (variant !== "workbench") return;
     updateScrollbar();
-  }, [variant, updateScrollbar, wbListItems.length]);
+  }, [updateScrollbar, wbListItems.length]);
 
   const isActiveRef = useRef(isActive);
   isActiveRef.current = isActive;
   const wasActiveRef = useRef(isActive);
   const prevActiveRef = useRef(isActive);
   const virtuosoPersistTimerRef = useRef<number | null>(null);
+  const followOutputRafRef = useRef<number | null>(null);
   const [restoreInProgress, setRestoreInProgress] = useState(false);
   useLayoutEffect(() => {
     if (isActive && !wasActiveRef.current) {
@@ -1073,7 +1014,7 @@ export function SessionView({
     const maxScrollTop = Math.max(0, el.scrollHeight - el.clientHeight);
     const scrollTop = Math.min(Math.max(rawTop, 0), maxScrollTop);
     const remaining = el.scrollHeight - (scrollTop + el.clientHeight);
-    const nearBottom = remaining <= 16;
+    const nearBottom = remaining <= bottomThresholdPx;
     const next = {
       stickToBottom: nearBottom,
       anchorItemId: nearBottom ? null : latestAnchorIdRef.current,
@@ -1087,7 +1028,7 @@ export function SessionView({
       return;
     }
     persistScroll(next);
-  }, [onScrollStateChange, persistScroll]);
+  }, [onScrollStateChange, persistScroll, bottomThresholdPx]);
 
   useEffect(() => {
     if (!preserveScrollOnFocus) {
@@ -1106,7 +1047,7 @@ export function SessionView({
 
   useLayoutEffect(() => {
     if (!isActive) return;
-    const items = variant === "workbench" ? wbListItems : threadItems;
+    const items = wbListItems;
     if (items.length === 0) return;
     if (scrollState?.virtuosoState && !preserveScrollOnFocus) {
       restorePendingRef.current = false;
@@ -1179,35 +1120,8 @@ export function SessionView({
     scrollState?.stickToBottom,
     scrollState?.scrollTop,
     scrollState?.virtuosoState,
-    threadItems.length,
-    variant,
     wbListItems.length,
   ]);
-
-  const contextIndicator = useMemo(() => {
-    const fromTurns = [...turns].reverse().find((t) => t.metrics_json);
-    if (fromTurns?.metrics_json) {
-      return fromTurns.metrics_json as {
-        context_tokens_estimate: number;
-        remaining_fraction: number;
-      };
-    }
-    const done = [...events]
-      .reverse()
-      .find((e) => e.event_type === "done" && e.payload_json?.context_window);
-    if (!done) return null;
-    return done.payload_json.context_window as {
-      context_tokens_estimate: number;
-      remaining_fraction: number;
-    };
-  }, [eventsKey, turnsKey]);
-
-  const planEntries = useMemo(() => {
-    const last = [...events].reverse().find((e) => e.event_type === "plan");
-    const update = last?.payload_json?.acp_update ?? last?.payload_json;
-    const entries = update?.entries ?? [];
-    return Array.isArray(entries) ? (entries as any[]) : [];
-  }, [eventsKey]);
 
   const authUi = useMemo(() => deriveAuthUi(events), [eventsKey]);
 
@@ -1225,8 +1139,6 @@ export function SessionView({
   }, [eventsKey]);
 
   const acpModels = acpSessionInfo?.payload_json?.models;
-  const acpModes = acpSessionInfo?.payload_json?.modes;
-
   const modelOptions = useMemo(() => {
     const list =
       acpModels?.availableModels ??
@@ -1242,54 +1154,13 @@ export function SessionView({
       .filter((m: any) => typeof m.id === "string" && m.id.length > 0);
   }, [acpModels]);
 
-  const modeOptions = useMemo(() => {
-    const list =
-      acpModes?.availableModes ??
-      acpModes?.available_modes ??
-      acpModes?.available_modes ??
-      [];
-    if (!Array.isArray(list)) return [];
-    return list
-      .map((m: any) => ({
-        id: m.id,
-        name: m.name ?? m.id,
-      }))
-      .filter((m: any) => typeof m.id === "string" && m.id.length > 0);
-  }, [acpModes]);
-
   const currentModelId =
     session?.model_id ??
     acpModels?.currentModelId ??
     acpModels?.current_model_id ??
     "";
-  const currentModeId =
-    acpModes?.currentModeId ??
-    acpModes?.current_mode_id ??
-    "";
 
-  const modelCatalog = useMemo(() => buildModelCatalog(modelOptions), [modelOptions]);
-  const parsedModel = useMemo(() => parseModelId(currentModelId, modelCatalog), [currentModelId, modelCatalog]);
-  const currentBase = parsedModel.base || modelCatalog.baseIds[0] || "";
-  const currentEffort = parsedModel.effort;
-  const effortOptions = modelCatalog.effortsByBase[currentBase] ?? [];
-
-  const pickDefaultEffort = useCallback((efforts: string[]) => {
-    if (efforts.includes("medium")) return "medium";
-    return efforts[0] ?? null;
-  }, []);
-
-  const deriveFullModelIdForBase = useCallback(
-    (base: string, preferredEffort: string | null) => {
-      const efforts = modelCatalog.effortsByBase[base] ?? [];
-      if (efforts.length === 0) return base;
-      const eff = preferredEffort && efforts.includes(preferredEffort) ? preferredEffort : pickDefaultEffort(efforts);
-      if (!eff) return base;
-      return modelCatalog.fullIdByBaseEffort[base]?.[eff] ?? composeModelId(base, eff);
-    },
-    [modelCatalog, pickDefaultEffort],
-  );
-
-  const threadActivityCount = variant === "workbench" ? wbListItems.length : threadItems.length;
+  const threadActivityCount = wbListItems.length;
 
   useEffect(() => {
     if (!didInitialScrollRef.current) return;
@@ -1305,6 +1176,24 @@ export function SessionView({
   const restoreStateFrom = preserveScrollOnFocus
     ? undefined
     : (scrollState?.virtuosoState ?? undefined) as StateSnapshot | undefined;
+
+  useEffect(() => {
+    if (!atBottom) return;
+    if (restoreInProgress) return;
+    if (preserveScrollOnFocus && !isActive) return;
+    if (wbListItems.length === 0) return;
+    if (followOutputRafRef.current != null) return;
+    followOutputRafRef.current = window.requestAnimationFrame(() => {
+      followOutputRafRef.current = null;
+      const handle = virtuosoRef.current;
+      if (handle) {
+        handle.scrollToIndex({ index: wbListItems.length - 1, align: "end" });
+        return;
+      }
+      const el = scrollerRef.current;
+      if (el) el.scrollTop = el.scrollHeight;
+    });
+  }, [atBottom, eventsKey, isActive, preserveScrollOnFocus, restoreInProgress, wbListItems.length]);
 
   const handleAtBottomStateChange = useCallback(
     (isAtBottom: boolean) => {
@@ -1326,17 +1215,6 @@ export function SessionView({
     [atBottom, wbListItems],
   );
 
-  const handleLegacyRangeChanged = useCallback(
-    (range: { startIndex: number }) => {
-      if (restoringScrollRef.current) return;
-      if (atBottom) return;
-      const item = threadItems[range.startIndex];
-      if (!item) return;
-      latestAnchorIdRef.current = item.id ?? null;
-    },
-    [atBottom, threadItems],
-  );
-
   const handleStartReached = useCallback(() => {
     if (!hasMoreTurns) return;
     supervisor.loadMoreTurns(id);
@@ -1348,24 +1226,6 @@ export function SessionView({
     }
   }, [virtuosoRef, wbListItems.length]);
 
-  const jumpToLatestLegacy = useCallback(() => {
-    if (threadItems.length > 0) {
-      virtuosoRef.current?.scrollToIndex({ index: threadItems.length - 1, align: "end" });
-    }
-  }, [virtuosoRef, threadItems.length]);
-
-  const handleDiffUpdated = useCallback(
-    (next: string) => {
-      if (!id) return;
-      supervisor.setDiff(id, next);
-    },
-    [id, supervisor],
-  );
-
-  const handleFileSaved = useCallback(() => {
-    if (!id) return;
-    supervisor.refreshSession(id, { watchDiff: true });
-  }, [id, supervisor]);
 
   const sendNow = async () => {
     if (!id) return;
@@ -1393,32 +1253,9 @@ export function SessionView({
     }
   };
 
-  const onSend = async (e: React.FormEvent) => {
-    e.preventDefault();
-    await sendNow();
-  };
-
   const onRemoveQueued = async (messageId: string) => {
     await deleteMessage(messageId);
     supervisor.refreshQueue(id ?? "");
-  };
-
-  const insertIntoComposer = (text: string) => {
-    const el = textareaRef.current;
-    if (!el) {
-      setInput(`${input}${text}`);
-      return;
-    }
-    const start = el.selectionStart ?? input.length;
-    const end = el.selectionEnd ?? input.length;
-    const next = input.slice(0, start) + text + input.slice(end);
-    setInput(next);
-    requestAnimationFrame(() => {
-      el.focus();
-      const cursor = start + text.length;
-      el.setSelectionRange(cursor, cursor);
-      requestAnimationFrame(() => composerAutocomplete.syncFromDom());
-    });
   };
 
   const acpAvailableCommands = useMemo<SlashCommandDescriptor[]>(() => {
@@ -1462,36 +1299,22 @@ export function SessionView({
 
   const slashCommands = acpAvailableCommands.length > 0 ? acpAvailableCommands : fallbackSlashCommands;
 
-  const composerAutocomplete = useComposerAutocomplete({
-    sessionId: id ?? null,
-    workspaceId: null,
-    value: input,
-    setValue: setInput,
-    textareaRef,
-    slashCommands,
-  });
-
-  const workbenchVirtuosoStyle = useMemo(() => ({ flex: 1, minHeight: 0 } as const), []);
-  const legacyVirtuosoStyle = useMemo(() => ({ height: "70vh" } as const), []);
-  const virtuosoStyle = variant === "workbench" ? workbenchVirtuosoStyle : legacyVirtuosoStyle;
+  const virtuosoStyle = useMemo(() => ({ flex: 1, minHeight: 0 } as const), []);
   const workbenchViewportBy = useMemo(() => ({ top: 1000, bottom: 1000 }), []);
 
-  const wrapperClass = variant === "workbench" ? "wb-session-view" : "page split";
-  const leftClass = variant === "workbench" ? "wb-session-left" : "left";
+  const wrapperClass = "wb-session-view";
+  const leftClass = "wb-session-left";
 
   const dropScopeRef = useRef<HTMLDivElement | null>(null);
 
   const onDropFiles = useCallback(
     async (files: File[]) => {
       if (files.length === 0) return;
-      const next =
-        variant === "workbench"
-          ? await imageFilesToInlineAttachments(files)
-          : await imageFilesToBlobRefAttachments(files);
+      const next = await imageFilesToInlineAttachments(files);
       if (next.length === 0) return;
       setDraftAttachments((prev) => [...prev, ...next]);
     },
-    [variant],
+    [],
   );
 
   const showDropOverlay = useCallback(() => {
@@ -1605,20 +1428,9 @@ export function SessionView({
       return <WorkbenchTurnStatusRow item={item} nowMs={nowMs} />;
     }
     if (item.kind === "assistant") {
-      const thoughtExpanded =
-        variant === "workbench" ? false : expandedThoughtByAssistantId[item.id] ?? false;
       return (
         <AssistantEntry
-          id={item.id}
           content={item.content}
-          thought={item.thought}
-          thoughtSeconds={item.thought_seconds}
-          isComplete={item.is_complete}
-          variant={variant}
-          thoughtExpanded={thoughtExpanded}
-          onToggleThought={() =>
-            setExpandedThoughtByAssistantId((prev) => ({ ...prev, [item.id]: !thoughtExpanded }))
-          }
           worktreeId={worktreeId}
           onFileOpenError={handleFileOpenError}
           linkToken={deepLinkToken}
@@ -1631,7 +1443,6 @@ export function SessionView({
       return (
         <WorkbenchToolGroupRow
           item={item}
-          variant={variant}
           expanded={expanded}
           toolsLoading={toolsLoading}
           onToggle={() =>
@@ -1650,7 +1461,6 @@ export function SessionView({
       return (
         <WorkbenchToolRow
           item={item}
-          variant={variant}
           expanded={toolExpanded}
           onToggle={() => setExpandedToolById((prev) => ({ ...prev, [item.id]: !toolExpanded }))}
         />
@@ -1659,7 +1469,6 @@ export function SessionView({
     return (
       <ThreadItemView
         item={item}
-        variant={variant}
         worktreeId={worktreeId}
         onFileOpenError={handleFileOpenError}
         linkToken={deepLinkToken}
@@ -1667,7 +1476,6 @@ export function SessionView({
     );
   }, [
     deepLinkToken,
-    expandedThoughtByAssistantId,
     expandedToolById,
     expandedTurnDetailsById,
     handleFileOpenError,
@@ -1675,7 +1483,6 @@ export function SessionView({
     supervisor,
     nowMs,
     turnToolsLoading,
-    variant,
     worktreeId,
   ]);
 
@@ -1698,11 +1505,6 @@ export function SessionView({
       return <div className="wb-thread-indent">{content}</div>;
     },
     [expandedTurnHeaders, renderThreadItem],
-  );
-
-  const threadItemContent = useCallback(
-    (_: number, item: ThreadItem) => renderThreadItem(item),
-    [renderThreadItem],
   );
 
   const workbenchComponents = useMemo(
@@ -1759,7 +1561,7 @@ export function SessionView({
               if (!el) return;
               const scrollTop = el.scrollTop;
               const remaining = el.scrollHeight - (scrollTop + el.clientHeight);
-              const nearBottom = remaining <= 16;
+              const nearBottom = remaining <= bottomThresholdPx;
               setAtBottom(nearBottom);
               if (nearBottom) setHasNewActivity(false);
               const next = {
@@ -1793,85 +1595,7 @@ export function SessionView({
         <div {...props} ref={ref} role="listitem" />
       )),
     }),
-    [persistScroll, scheduleScrollbarUpdate, showScrollbarTemporarily],
-  );
-
-  const threadComponents = useMemo(
-    () => ({
-      Scroller: forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>((props, ref) => (
-        <div
-          {...props}
-          ref={(node) => {
-            const prev = scrollerRef.current;
-            scrollerRef.current = node;
-            if (typeof ref === "function") ref(node);
-            else if (ref) (ref as React.MutableRefObject<HTMLDivElement | null>).current = node;
-          }}
-          onScroll={(event) => {
-            props.onScroll?.(event);
-            if (!isActiveRef.current) return;
-            const trusted =
-              typeof (event as any).isTrusted === "boolean"
-                ? (event as any).isTrusted
-                : typeof (event as any).nativeEvent?.isTrusted === "boolean"
-                  ? (event as any).nativeEvent.isTrusted
-                  : true;
-            if (restoringScrollRef.current && !trusted) return;
-            if (restoringScrollRef.current && trusted) {
-              restoringScrollRef.current = false;
-              if (restoreCooldownRef.current) {
-                window.clearTimeout(restoreCooldownRef.current);
-                restoreCooldownRef.current = null;
-              }
-            }
-            if (!trusted && !userScrolledRef.current) return;
-            if (trusted) userScrolledRef.current = true;
-            if (scrollerRef.current) {
-              liveScrollTopRef.current = scrollerRef.current.scrollTop;
-            }
-            if (!didInitialScrollRef.current) didInitialScrollRef.current = true;
-            if (scrollSyncRafRef.current != null) return;
-            scrollSyncRafRef.current = window.requestAnimationFrame(() => {
-              scrollSyncRafRef.current = null;
-              const el = scrollerRef.current;
-              if (!el) return;
-              const scrollTop = el.scrollTop;
-              const remaining = el.scrollHeight - (scrollTop + el.clientHeight);
-              const nearBottom = remaining <= 16;
-              setAtBottom(nearBottom);
-              if (nearBottom) setHasNewActivity(false);
-              const next = {
-                stickToBottom: nearBottom,
-                anchorItemId: nearBottom ? null : latestAnchorIdRef.current,
-                scrollTop: nearBottom ? null : scrollTop,
-              };
-              if (virtuosoPersistTimerRef.current) {
-                window.clearTimeout(virtuosoPersistTimerRef.current);
-                virtuosoPersistTimerRef.current = null;
-              }
-              const handle = virtuosoRef.current;
-              if (handle) {
-                virtuosoPersistTimerRef.current = window.setTimeout(() => {
-                  virtuosoPersistTimerRef.current = null;
-                  handle.getState((state) => {
-                    persistScroll({ ...next, virtuosoState: state });
-                  });
-                }, 120);
-              } else {
-                persistScroll(next);
-              }
-            });
-          }}
-        />
-      )),
-      List: forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>((props, ref) => (
-        <div {...props} ref={ref} role="list" />
-      )),
-      Item: forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>((props, ref) => (
-        <div {...props} ref={ref} role="listitem" />
-      )),
-    }),
-    [persistScroll],
+    [persistScroll, scheduleScrollbarUpdate, showScrollbarTemporarily, bottomThresholdPx],
   );
 
   return (
@@ -1904,126 +1628,9 @@ export function SessionView({
             <span className="error">{entry.error}</span>
           </div>
         )}
-        {showDebug && variant === "workbench" && (
+        {showDebug && (
           <div className="wb-muted" style={{ fontFamily: "var(--mono)" }}>
             debug: events={events.length} messages={messages.length} userMessages={messages.filter((m) => m.role === "user").length} items={wbListItems.length}
-          </div>
-        )}
-        {session && variant === "legacy" && (
-          <div className="header">
-            <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
-              <Link to={`/tasks/${idToString(session.task_id)}`}>← Task</Link>
-              <div className="row" style={{ alignItems: "center" }}>
-                {showDebug ? (
-                  <a className="muted" href={window.location.pathname}>
-                    Hide debug
-                  </a>
-                ) : (
-                  <a className="muted" href={`${window.location.pathname}?debug=1`}>
-                    Debug
-                  </a>
-                )}
-                {perfEnabled ? (
-                  <a className="muted" href={window.location.pathname}>
-                    Perf off
-                  </a>
-                ) : (
-                  <a className="muted" href={`${window.location.pathname}?perf=1`}>
-                    Perf
-                  </a>
-                )}
-                {threadItems.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={() =>
-                      virtuosoRef.current?.scrollToIndex({
-                        index: threadItems.length - 1,
-                        align: "end",
-                      })
-                    }
-                  >
-                    Jump to latest
-                  </button>
-                )}
-              </div>
-            </div>
-            <div className="muted">
-              {session.provider_id} / {session.model_id} ·{" "}
-              {contextIndicator ? (
-                <>
-                  {contextIndicator.context_tokens_estimate} tokens ·{" "}
-                  {Math.round(contextIndicator.remaining_fraction * 100)}% remaining
-                </>
-              ) : (
-                <span title="Tokenizer/model window unknown">Unknown</span>
-              )}
-              {!streamConnected && <span title="Live stream disconnected; polling for updates."> · Polling</span>}
-            </div>
-          </div>
-        )}
-
-        {(modelOptions.length > 0 || modeOptions.length > 0) && id && variant === "legacy" && (
-          <div className="card">
-            {modelCatalog.baseIds.length > 0 && (
-              <label>
-                Model
-                <select
-                  value={currentBase}
-                  onChange={async (e) => {
-                    const nextBase = e.target.value;
-                    const next = deriveFullModelIdForBase(nextBase, currentEffort);
-                    const updated = await setSessionModel(id, next);
-                    supervisor.setSession(updated);
-                  }}
-                >
-                  {modelCatalog.baseIds.map((b) => (
-                    <option key={b} value={b}>
-                      {modelCatalog.displayNameByBase[b] ?? b}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            )}
-
-            {effortOptions.length > 0 && (
-              <label>
-                Effort
-                <select
-                  value={currentEffort ?? pickDefaultEffort(effortOptions) ?? ""}
-                  onChange={async (e) => {
-                    const nextEff = e.target.value || "";
-                    const next = deriveFullModelIdForBase(currentBase, nextEff || null);
-                    const updated = await setSessionModel(id, next);
-                    supervisor.setSession(updated);
-                  }}
-                >
-                  {effortOptions.map((eff) => (
-                    <option key={eff} value={eff}>
-                      {formatEffortLabel(eff)}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            )}
-
-            {modeOptions.length > 0 && (
-              <label>
-                Mode
-                <select
-                  value={currentModeId}
-                  onChange={async (e) => {
-                    await setSessionMode(id, e.target.value);
-                    supervisor.refreshSession(id, { watchDiff: true });
-                  }}
-                >
-                  {modeOptions.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            )}
           </div>
         )}
 
@@ -2088,9 +1695,6 @@ export function SessionView({
             )}
           </div>
         )}
-
-        {/* Zed-style: plan moves into the bottom activity bar; keep hidden above thread. */}
-
         {queue.length > 0 && (
           <div className="queue-panel card">
             <div className="row">
@@ -2116,226 +1720,82 @@ export function SessionView({
           <DebugPanel events={debugEvents} />
         )}
 
-        {variant === "workbench" ? (
-          <WorkbenchThreadStack
-            virtuosoStyle={virtuosoStyle}
-            data={wbListItems}
-            virtuosoRef={virtuosoRef}
-            followOutput={followOutput}
-            restoreStateFrom={restoreStateFrom}
-            increaseViewportBy={workbenchViewportBy}
-            onStartReached={handleStartReached}
-            onAtBottomStateChange={handleAtBottomStateChange}
-            onRangeChanged={handleWorkbenchRangeChanged}
-            components={workbenchComponents}
-            itemContent={workbenchItemContent}
-            hasNewActivity={hasNewActivity}
-            onJumpToLatest={jumpToLatestWorkbench}
-            scrollbarActive={scrollbarActive}
-            scrollbarDragging={scrollbarDragging}
-            scrollbarNeeded={scrollbarNeeded}
-            scrollbarTrackRef={scrollbarTrackRef}
-            scrollbarThumbRef={scrollbarThumbRef}
-            onScrollbarMouseLeave={handleScrollbarMouseLeave}
-            onScrollbarTrackPointerDown={handleScrollbarTrackPointerDown}
-            onScrollbarThumbPointerDown={handleScrollbarThumbPointerDown}
-            onScrollbarThumbPointerMove={handleScrollbarThumbPointerMove}
-            onScrollbarThumbPointerUp={handleScrollbarThumbPointerUp}
-            scheduleScrollbarUpdate={scheduleScrollbarUpdate}
-          />
-        ) : (
-          <LegacyThreadStack
-            virtuosoStyle={virtuosoStyle}
-            data={threadItems}
-            virtuosoRef={virtuosoRef}
-            followOutput={followOutput}
-            restoreStateFrom={restoreStateFrom}
-            onAtBottomStateChange={handleAtBottomStateChange}
-            onRangeChanged={handleLegacyRangeChanged}
-            components={threadComponents}
-            itemContent={threadItemContent}
-            hasNewActivity={hasNewActivity}
-            onJumpToLatest={jumpToLatestLegacy}
-          />
-        )}
+        <WorkbenchThreadStack
+          virtuosoStyle={virtuosoStyle}
+          data={wbListItems}
+          virtuosoRef={virtuosoRef}
+          followOutput={followOutput}
+          restoreStateFrom={restoreStateFrom}
+          atBottomThreshold={bottomThresholdPx}
+          increaseViewportBy={workbenchViewportBy}
+          onStartReached={handleStartReached}
+          onAtBottomStateChange={handleAtBottomStateChange}
+          onRangeChanged={handleWorkbenchRangeChanged}
+          components={workbenchComponents}
+          itemContent={workbenchItemContent}
+          hasNewActivity={hasNewActivity}
+          onJumpToLatest={jumpToLatestWorkbench}
+          scrollbarActive={scrollbarActive}
+          scrollbarDragging={scrollbarDragging}
+          scrollbarNeeded={scrollbarNeeded}
+          scrollbarTrackRef={scrollbarTrackRef}
+          scrollbarThumbRef={scrollbarThumbRef}
+          onScrollbarMouseLeave={handleScrollbarMouseLeave}
+          onScrollbarTrackPointerDown={handleScrollbarTrackPointerDown}
+          onScrollbarThumbPointerDown={handleScrollbarThumbPointerDown}
+          onScrollbarThumbPointerMove={handleScrollbarThumbPointerMove}
+          onScrollbarThumbPointerUp={handleScrollbarThumbPointerUp}
+          scheduleScrollbarUpdate={scheduleScrollbarUpdate}
+        />
 
-        {variant === "legacy" && <ActivityBar planEntries={planEntries} diffText={diff} />}
-
-        {variant === "workbench" ? (
-          <>
-            <UnifiedWorkbenchComposer
-              variant="activeSession"
-              value={input}
-              setValue={setInput}
-              placeholder="@ for context, / for commands"
-              inputDisabled={dictationRecording}
-              sessionIdForAutocomplete={id ?? null}
-              slashCommands={slashCommands}
-              attachments={draftAttachments}
-              setAttachments={setDraftAttachments}
-              onSend={sendNow}
-              sendDisabled={sendBusy || !input.trim()}
-              sendDisabledReason={sendBusy ? "Sending…" : !input.trim() ? "Enter a message." : null}
-              onInterrupt={id ? () => interruptSession(id) : null}
-              verbosity={verbosity}
-              onSetVerbosity={setVerbosityPref}
-              modeId={workbenchMode}
-              setModeId={setWorkbenchMode}
-              recording={dictationRecording}
-              onToggleRecording={() => {
-                if (dictationRecording) stopDictation().catch(() => { });
-                else startDictation().catch(() => { });
-              }}
-              harnessLabel={
-                HARNESS_CATALOG.find((h) => h.id === (session?.provider_id ?? ""))?.label ??
-                (session?.provider_id ?? "Provider")
-              }
-              harnessLogoSrc={HARNESS_CATALOG.find((h) => h.id === (session?.provider_id ?? ""))?.logoSrc}
-              harnessLogoInvert={HARNESS_CATALOG.find((h) => h.id === (session?.provider_id ?? ""))?.invertInDark}
-              envLabel={session?.env_target === "local" ? "Local" : "Worktree"}
-              availableModels={modelOptions}
-              currentModelId={currentModelId}
-              onSetModelId={async (next) => {
-                if (!id) return;
-                const updated = await setSessionModel(id, next);
-                supervisor.setSession(updated);
-              }}
-            />
-            {sendError && <div className="wb-banner">{sendError}</div>}
-            {fileOpenError && <div className="wb-banner">{fileOpenError}</div>}
-            {dictationDebugText && <div className="wb-banner">{dictationDebugText}</div>}
-            {dictationError && <div className="wb-banner">{dictationError}</div>}
-          </>
-        ) : (
-          <form onSubmit={onSend} className="composer">
-            {sendError && <div className="banner">{sendError}</div>}
-            {fileOpenError && <div className="banner">{fileOpenError}</div>}
-            <div className="row">
-              <button
-                type="button"
-                onClick={() => {
-                  insertIntoComposer("@");
-                }}
-              >
-                @ File
-              </button>
-              <button type="button" onClick={() => insertIntoComposer("/")} title="Slash commands">
-                /
-              </button>
-              <label className="file-btn">
-                Image
-                <input
-                  type="file"
-                  accept="image/*"
-                  multiple
-                  onChange={async (e) => {
-                    const files = Array.from(e.target.files ?? []);
-                    const next = await imageFilesToBlobRefAttachments(files);
-                    setDraftAttachments((prev) => [...prev, ...next]);
-                    e.target.value = "";
-                  }}
-                />
-              </label>
-            </div>
-            {draftAttachments.length > 0 && (
-              <div className="card">
-                <div className="muted">Attachments</div>
-                <div className="row" style={{ flexWrap: "wrap" }}>
-                  {draftAttachments.map((a, idx) => {
-                    if (a.kind !== "image" && a.kind !== "image_ref") return null;
-                    const src =
-                      a.kind === "image_ref"
-                        ? blobUrl(a.blob_id)
-                        : `data:${a.mime_type};base64,${a.data_base64}`;
-                    return (
-                      <div key={idx} className="thumb">
-                        <img src={src} alt={a.name ?? `image-${idx}`} />
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setDraftAttachments((prev) => prev.filter((_, i) => i !== idx))
-                          }
-                        >
-                          Remove
-                        </button>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-            <textarea
-              ref={textareaRef}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder="Send a message… (/ commands, @ file refs)"
-              onKeyDown={(e) => {
-                if (composerAutocomplete.onKeyDown(e)) return;
-                if (shouldSendOnEnter(e)) {
-                  e.preventDefault();
-                  sendNow();
-                }
-              }}
-              onKeyUp={() => composerAutocomplete.syncFromDom()}
-              onClick={() => composerAutocomplete.syncFromDom()}
-              onSelect={() => composerAutocomplete.syncFromDom()}
-              onPaste={async (e) => {
-                const files = Array.from(e.clipboardData?.files ?? []);
-                const images = files.filter((f) => (f.type || "").startsWith("image/"));
-                if (images.length === 0) return;
-                e.preventDefault();
-                const next: MessageAttachment[] = [];
-                for (const f of images) {
-                  const uploaded = await uploadBlob(f);
-                  next.push({
-                    kind: "image_ref",
-                    blob_id: uploaded.blob_id,
-                    mime_type: uploaded.mime_type,
-                    name: uploaded.name ?? f.name,
-                  });
-                }
-                setDraftAttachments((prev) => [...prev, ...next]);
-              }}
-            />
-            <ComposerAutocompleteMenu
-              open={composerAutocomplete.open}
-              loading={composerAutocomplete.loading}
-              items={composerAutocomplete.items}
-              activeIndex={composerAutocomplete.activeIndex}
-              onPick={composerAutocomplete.pick}
-              onHoverIndex={(i) => composerAutocomplete.setActiveIndex(i)}
-              anchorRect={composerAutocomplete.anchorRect}
-              anchorInputRect={composerAutocomplete.anchorInputRect}
-              inlineFallback={composerAutocomplete.inlineFallback}
-            />
-            <div className="row">
-              <button type="submit">Send</button>
-              <button type="button" onClick={() => id && cancelSession(id)}>
-                Cancel
-              </button>
-              <button type="button" onClick={() => id && interruptSession(id)}>
-                Interrupt
-              </button>
-            </div>
-          </form>
-        )}
+        <UnifiedWorkbenchComposer
+          variant="activeSession"
+          value={input}
+          setValue={setInput}
+          placeholder="@ for context, / for commands"
+          inputDisabled={dictationRecording}
+          sessionIdForAutocomplete={id ?? null}
+          slashCommands={slashCommands}
+          attachments={draftAttachments}
+          setAttachments={setDraftAttachments}
+          onSend={sendNow}
+          sendDisabled={sendBusy || !input.trim()}
+          sendDisabledReason={sendBusy ? "Sending…" : !input.trim() ? "Enter a message." : null}
+          onInterrupt={id ? () => interruptSession(id) : null}
+          verbosity={verbosity}
+          onSetVerbosity={setVerbosityPref}
+          modeId={workbenchMode}
+          setModeId={setWorkbenchMode}
+          recording={dictationRecording}
+          onToggleRecording={() => {
+            if (dictationRecording) stopDictation().catch(() => { });
+            else startDictation().catch(() => { });
+          }}
+          harnessLabel={
+            HARNESS_CATALOG.find((h) => h.id === (session?.provider_id ?? ""))?.label ??
+            (session?.provider_id ?? "Provider")
+          }
+          harnessLogoSrc={HARNESS_CATALOG.find((h) => h.id === (session?.provider_id ?? ""))?.logoSrc}
+          harnessLogoInvert={HARNESS_CATALOG.find((h) => h.id === (session?.provider_id ?? ""))?.invertInDark}
+          envLabel={session?.env_target === "local" ? "Local" : "Worktree"}
+          availableModels={modelOptions}
+          currentModelId={currentModelId}
+          onSetModelId={async (next) => {
+            if (!id) return;
+            const updated = await setSessionModel(id, next);
+            supervisor.setSession(updated);
+          }}
+        />
+        {sendError && <div className="wb-banner">{sendError}</div>}
+        {fileOpenError && <div className="wb-banner">{fileOpenError}</div>}
+        {dictationDebugText && <div className="wb-banner">{dictationDebugText}</div>}
+        {dictationError && <div className="wb-banner">{dictationError}</div>}
 
         <div className="sr-only" aria-live="polite">
           {session && (atBottom ? "Agent output updating." : "New agent activity.")}
         </div>
       </div>
 
-      {showDiffPane && (
-        <div className="right">
-          <DiffReviewPane
-            diff={diff}
-            trackId={session ? idToString(session.track_id) : ""}
-            sessionId={id || undefined}
-            onDiffUpdated={handleDiffUpdated}
-            onFileSaved={handleFileSaved}
-          />
-        </div>
-      )}
     </div>
   );
 }
@@ -2346,6 +1806,7 @@ type WorkbenchThreadStackProps = {
   virtuosoRef: React.MutableRefObject<VirtuosoHandle | null>;
   followOutput: false | "auto";
   restoreStateFrom?: StateSnapshot;
+  atBottomThreshold: number;
   increaseViewportBy: { top: number; bottom: number };
   onStartReached: () => void;
   onAtBottomStateChange: (isAtBottom: boolean) => void;
@@ -2373,6 +1834,7 @@ const WorkbenchThreadStack = memo(function WorkbenchThreadStack({
   virtuosoRef,
   followOutput,
   restoreStateFrom,
+  atBottomThreshold,
   increaseViewportBy,
   onStartReached,
   onAtBottomStateChange,
@@ -2402,6 +1864,7 @@ const WorkbenchThreadStack = memo(function WorkbenchThreadStack({
           virtuosoRef.current = node;
         }}
         followOutput={followOutput}
+        atBottomThreshold={atBottomThreshold}
         defaultItemHeight={56}
         increaseViewportBy={increaseViewportBy}
         computeItemKey={(index, item) => item?.id ?? `i:${index}`}
@@ -2454,75 +1917,13 @@ const WorkbenchThreadStack = memo(function WorkbenchThreadStack({
   );
 });
 
-type LegacyThreadStackProps = {
-  virtuosoStyle: CSSProperties;
-  data: ThreadItem[];
-  virtuosoRef: React.MutableRefObject<VirtuosoHandle | null>;
-  followOutput: false | "auto";
-  restoreStateFrom?: StateSnapshot;
-  onAtBottomStateChange: (isAtBottom: boolean) => void;
-  onRangeChanged: (range: any) => void;
-  components: any;
-  itemContent: (index: number, item: ThreadItem) => ReactNode;
-  hasNewActivity: boolean;
-  onJumpToLatest: () => void;
-};
-
-const LegacyThreadStack = memo(function LegacyThreadStack({
-  virtuosoStyle,
-  data,
-  virtuosoRef,
-  followOutput,
-  restoreStateFrom,
-  onAtBottomStateChange,
-  onRangeChanged,
-  components,
-  itemContent,
-  hasNewActivity,
-  onJumpToLatest,
-}: LegacyThreadStackProps) {
-  return (
-    <div className="thread-stack">
-      <Virtuoso
-        style={virtuosoStyle}
-        data={data}
-        ref={(node) => {
-          virtuosoRef.current = node;
-        }}
-        followOutput={followOutput}
-        defaultItemHeight={56}
-        computeItemKey={(index, item) => item?.id ?? `i:${index}`}
-        restoreStateFrom={restoreStateFrom}
-        atBottomStateChange={onAtBottomStateChange}
-        rangeChanged={onRangeChanged}
-        components={components}
-        itemContent={itemContent}
-      />
-
-      {hasNewActivity && (
-        <button
-          type="button"
-          className="new-activity-overlay"
-          aria-label="Jump to latest"
-          title="Jump to latest"
-          onClick={onJumpToLatest}
-        >
-          ↓
-        </button>
-      )}
-    </div>
-  );
-});
-
 function ThreadItemView({
   item,
-  variant,
   worktreeId,
   onFileOpenError,
   linkToken,
 }: {
   item: ThreadItem;
-  variant: SessionViewVariant;
   worktreeId: string | null;
   onFileOpenError: (message: string | null) => void;
   linkToken: string | null;
@@ -2543,8 +1944,7 @@ function ThreadItemView({
       );
     case "assistant":
     case "tool":
-      // Workbench uses specialized renderers; legacy never reaches here.
-      return variant === "workbench" ? null : null;
+      return null;
     case "tool_group":
     case "turn_status":
       return null;
@@ -2590,202 +1990,6 @@ function WorkbenchTurnHeaderView({
         )}
       </div>
     </button>
-  );
-}
-
-function WorkbenchComposer({
-  session,
-  modelOptions,
-  effortOptions,
-  currentModelId,
-  autocomplete,
-  onSetModel,
-  onSetEffort,
-  textareaRef,
-  input,
-  setInput,
-  onSend,
-  onInterrupt,
-  onInsertAtFile,
-  onInsertSlash,
-  attachments,
-  setAttachments,
-}: {
-  session: Session | null;
-  modelOptions: Array<{ id: string; name: string }>;
-  effortOptions: string[];
-  currentModelId: string;
-  autocomplete: ReturnType<typeof useComposerAutocomplete>;
-  onSetModel: (modelId: string) => Promise<void>;
-  onSetEffort: (effort: string) => Promise<void>;
-  textareaRef: { current: HTMLTextAreaElement | null };
-  input: string;
-  setInput: (next: string) => void;
-  onSend: () => Promise<void>;
-  onInterrupt: () => void;
-  onInsertAtFile: () => void;
-  onInsertSlash: () => void;
-  attachments: MessageAttachment[];
-  setAttachments: React.Dispatch<React.SetStateAction<MessageAttachment[]>>;
-}) {
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
-
-  useEffect(() => {
-    const el = textareaRef.current;
-    if (!el) return;
-    el.style.height = "0px";
-    const next = Math.min(220, Math.max(28, el.scrollHeight));
-    el.style.height = `${next}px`;
-  }, [input, textareaRef]);
-
-  const providerLabel = useMemo(() => {
-    const p = String(session?.provider_id ?? "agent");
-    if (p === "codex") return "Codex";
-    if (p === "claude") return "Claude";
-    if (p === "gemini") return "Gemini";
-    return p.slice(0, 1).toUpperCase() + p.slice(1);
-  }, [session?.provider_id]);
-
-  const currentEffort = String(currentModelId).split("/")[1] ?? "";
-
-  return (
-    <div className="wb-composer">
-      {attachments.length > 0 && (
-        <div className="wb-composer-attachments">
-          {attachments.map((a, idx) => (
-            <button
-              key={idx}
-              type="button"
-              className="wb-attach-chip"
-              onClick={() => setAttachments((prev) => prev.filter((_, i) => i !== idx))}
-              title="Remove attachment"
-            >
-              {a.kind === "image" || a.kind === "image_ref" ? (a.name ?? "image") : "attachment"} ×
-            </button>
-          ))}
-        </div>
-      )}
-
-      <textarea
-        ref={textareaRef}
-        className="wb-composer-input"
-        value={input}
-        onChange={(e) => setInput(e.target.value)}
-        placeholder="Ask follow-ups in the worktree"
-        onKeyDown={(e) => {
-          if (autocomplete.onKeyDown(e)) return;
-          if (shouldSendOnEnter(e)) {
-            e.preventDefault();
-            onSend();
-          }
-        }}
-        onKeyUp={() => autocomplete.syncFromDom()}
-        onClick={() => autocomplete.syncFromDom()}
-        onSelect={() => autocomplete.syncFromDom()}
-        onPaste={async (e) => {
-          const files = Array.from(e.clipboardData?.files ?? []);
-          const images = files.filter((f) => (f.type || "").startsWith("image/"));
-          if (images.length === 0) return;
-          e.preventDefault();
-          const next: MessageAttachment[] = [];
-          for (const f of images) {
-            const uploaded = await uploadBlob(f);
-            next.push({
-              kind: "image_ref",
-              blob_id: uploaded.blob_id,
-              mime_type: uploaded.mime_type,
-              name: uploaded.name ?? f.name,
-            });
-          }
-          setAttachments((prev) => [...prev, ...next]);
-        }}
-      />
-
-      <ComposerAutocompleteMenu
-        open={autocomplete.open}
-        loading={autocomplete.loading}
-        items={autocomplete.items}
-        activeIndex={autocomplete.activeIndex}
-        onPick={autocomplete.pick}
-        onHoverIndex={(i) => autocomplete.setActiveIndex(i)}
-        anchorRect={autocomplete.anchorRect}
-        anchorInputRect={autocomplete.anchorInputRect}
-        inlineFallback={autocomplete.inlineFallback}
-      />
-
-      <div className="wb-composer-footer">
-        <div className="wb-composer-left">
-          <div className="wb-composer-pill" title="Harness">
-            ∞ {providerLabel}
-          </div>
-
-          {modelOptions.length > 0 && (
-            <div className="wb-composer-pill" title="Model">
-              <select
-                className="wb-composer-select"
-                value={currentModelId}
-                onChange={(e) => onSetModel(e.target.value)}
-              >
-                {modelOptions.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
-
-          {effortOptions.length > 0 && (
-            <div className="wb-composer-pill" title="Effort">
-              <select
-                className="wb-composer-select"
-                value={currentEffort}
-                onChange={(e) => onSetEffort(e.target.value)}
-              >
-                {effortOptions.map((eff) => (
-                  <option key={eff} value={eff}>
-                    {formatEffortLabel(eff)}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
-        </div>
-
-        <div className="wb-composer-right">
-          <button type="button" className="wb-composer-icon" onClick={onInterrupt} title="Interrupt">
-            ■
-          </button>
-          <button type="button" className="wb-composer-icon" onClick={onInsertAtFile} title="Insert @file">
-            @
-          </button>
-          <button type="button" className="wb-composer-icon" onClick={onInsertSlash} title="Slash commands">
-            /
-          </button>
-          <button
-            type="button"
-            className="wb-composer-icon"
-            onClick={() => fileInputRef.current?.click()}
-            title="Attach image"
-          >
-            ☐
-          </button>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/*"
-            multiple
-            style={{ display: "none" }}
-            onChange={async (e) => {
-              const files = Array.from(e.target.files ?? []);
-              const next = await imageFilesToBlobRefAttachments(files);
-              setAttachments((prev) => [...prev, ...next]);
-              e.target.value = "";
-            }}
-          />
-        </div>
-      </div>
-    </div>
   );
 }
 
@@ -2861,59 +2065,19 @@ function CollapsibleMessage({
 }
 
 function AssistantEntry({
-  id,
   content,
-  thought,
-  thoughtSeconds,
-  isComplete,
-  variant,
-  thoughtExpanded,
-  onToggleThought,
   worktreeId,
   onFileOpenError,
   linkToken,
 }: {
-  id: string;
   content: string;
-  thought: string;
-  thoughtSeconds?: number;
-  isComplete: boolean;
-  variant: SessionViewVariant;
-  thoughtExpanded: boolean;
-  onToggleThought: () => void;
   worktreeId: string | null;
   onFileOpenError: (message: string | null) => void;
   linkToken: string | null;
 }) {
-  const [showThought, setShowThought] = useState(false);
-  const show = variant === "workbench" ? false : showThought;
-  const toggle = variant === "workbench" ? onToggleThought : () => setShowThought((s) => !s);
-
-  if (variant === "workbench") {
-    return (
-      <div className="wb-assistant-entry">
-        <div className="wb-assistant-body">
-          <Markdown
-            content={content}
-            linkifyFiles
-            worktreeId={worktreeId}
-            onFileOpenError={onFileOpenError}
-            linkToken={linkToken}
-          />
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <div className="msg assistant">
-      <div className="row">
-        <div className="role">assistant</div>
-        <span className={`pill ${isComplete ? "ok" : "run"}`}>
-          {isComplete ? "complete" : "streaming"}
-        </span>
-      </div>
-      <div id={`msg-${id}`}>
+    <div className="wb-assistant-entry">
+      <div className="wb-assistant-body">
         <Markdown
           content={content}
           linkifyFiles
@@ -2922,42 +2086,19 @@ function AssistantEntry({
           linkToken={linkToken}
         />
       </div>
-      {thought.trim() && (
-        <div className="thinking">
-          <button
-            type="button"
-            className="thinking-header"
-            aria-expanded={show}
-            aria-controls={`thought-${id}`}
-            onClick={toggle}
-          >
-            <span className="thinking-title">Thinking</span>
-            <span className="thinking-chev">{show ? "▴" : "▾"}</span>
-          </button>
-          {show && (
-            <pre id={`thought-${id}`} className="thought">
-              {thought}
-            </pre>
-          )}
-        </div>
-      )}
     </div>
   );
 }
 
 function WorkbenchToolRow({
   item,
-  variant,
   expanded,
   onToggle,
 }: {
   item: Extract<ThreadItem, { kind: "tool" }>;
-  variant: SessionViewVariant;
   expanded: boolean;
   onToggle: () => void;
 }) {
-  if (variant !== "workbench") return <ToolCard item={item} />;
-
   const kind = String(item.tool_kind ?? "").toLowerCase();
   const pathFromLoc = item.locations?.[0]?.path;
   const title = String(item.title ?? "").trim();
@@ -3153,7 +2294,6 @@ function WorkbenchTurnStatusRow({
 
 function WorkbenchToolGroupRow({
   item,
-  variant,
   expanded,
   onToggle,
   toolsLoading,
@@ -3162,7 +2302,6 @@ function WorkbenchToolGroupRow({
   expandedToolById,
 }: {
   item: Extract<ThreadItem, { kind: "tool_group" }>;
-  variant: SessionViewVariant;
   expanded: boolean;
   onToggle: () => void;
   toolsLoading: boolean;
@@ -3170,8 +2309,6 @@ function WorkbenchToolGroupRow({
   onToggleTool: (id: string) => void;
   expandedToolById: Record<string, boolean>;
 }) {
-  if (variant !== "workbench") return null;
-
   const total = Math.max(item.tool_total ?? 0, item.tools.length);
   const parts: string[] = [];
   if (total > 0) {
@@ -3217,7 +2354,6 @@ function WorkbenchToolGroupRow({
             <WorkbenchToolRow
               key={tool.id}
               item={tool}
-              variant={variant}
               expanded={expandedToolById[tool.id] ?? false}
               onToggle={() => onToggleTool(tool.id)}
             />
@@ -3228,77 +2364,6 @@ function WorkbenchToolGroupRow({
               <pre className="wb-tool-pre">{item.thought}</pre>
             </div>
           )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function ToolCard({ item }: { item: Extract<ThreadItem, { kind: "tool" }> }) {
-  const [expanded, setExpanded] = useState(false);
-  const isRunning = item.status === "in_progress" || item.status === "pending";
-  const isFailed = item.status === "failed";
-  const hasOutput = item.output_text.trim().length > 0;
-  const shouldDefaultOpen = item.tool_kind === "execute" && isRunning;
-  const isOpen = expanded || shouldDefaultOpen;
-  const summary = useMemo(() => toolSummaryLine(item.tool_kind, item.input), [item.tool_kind, item.input]);
-
-  return (
-    <div className={`tool-card ${isOpen ? "expanded" : ""}`}>
-      <button
-        type="button"
-        className="tool-header"
-        onClick={() => setExpanded((e) => !e)}
-        aria-expanded={isOpen}
-        aria-controls={`tool-${item.id}`}
-      >
-        <div className="tool-header-left">
-          <span className={`tool-icon kind-${item.tool_kind}`}>{toolKindIcon(item.tool_kind)}</span>
-          <div className="tool-title-wrap">
-            <div className="tool-title">{item.title}</div>
-            <div className="tool-subtitle">
-              <span className={`pill ${isFailed ? "err" : isRunning ? "run" : "ok"}`}>
-                {humanToolStatus(item.status)}
-              </span>
-              {item.locations?.length === 1 && item.locations[0]?.path && (
-                <span className="muted tool-path">{item.locations[0].path}</span>
-              )}
-              {summary && <span className="muted tool-summary">{summary}</span>}
-            </div>
-          </div>
-        </div>
-        <div className="tool-header-right">
-          <span className="muted">{new Date(item.updated_at).toLocaleTimeString()}</span>
-          <span className="thinking-chev">{isOpen ? "▴" : "▾"}</span>
-        </div>
-      </button>
-
-      {isOpen && (
-        <div id={`tool-${item.id}`} className="tool-body">
-          {item.input && (
-            <div className="tool-section">
-              <div className="tool-section-title">Input</div>
-              <pre className="tool-pre">{formatToolInput(item.tool_kind, item.input)}</pre>
-            </div>
-          )}
-          {hasOutput && (
-            <div className="tool-section">
-              <div className="tool-section-title">Output</div>
-              {looksLikeMarkdown(item.output_text) ? (
-                <div className="tool-markdown">
-                  <Markdown content={item.output_text} />
-                </div>
-              ) : (
-                <pre className="tool-pre tool-output">{item.output_text}</pre>
-              )}
-            </div>
-          )}
-          <details className="tool-raw">
-            <summary className="link">
-              Raw event {item.updates_seen > 1 ? `(updated ${item.updates_seen}×)` : ""}
-            </summary>
-            <pre className="json">{JSON.stringify(item.raw, null, 2)}</pre>
-          </details>
         </div>
       )}
     </div>
@@ -3344,138 +2409,6 @@ function DebugPanel({ events }: { events: SessionEvent[] }) {
       )}
     </div>
   );
-}
-
-function PlanPanel({ entries }: { entries: any[] }) {
-  const [expanded, setExpanded] = useState(false);
-  const counts = entries.reduce(
-    (acc, e) => {
-      const status = e?.status ?? "pending";
-      if (status === "completed") acc.completed += 1;
-      else if (status === "in_progress") acc.in_progress += 1;
-      else acc.pending += 1;
-      return acc;
-    },
-    { pending: 0, in_progress: 0, completed: 0 },
-  );
-
-  return (
-    <div className="plan-bar card">
-      <div className="row">
-        <strong>Plan</strong>
-        <span className="muted">
-          {counts.in_progress} in progress · {counts.pending} pending ·{" "}
-          {counts.completed} done
-        </span>
-      </div>
-      <button type="button" onClick={() => setExpanded((e) => !e)}>
-        {expanded ? "Hide plan" : "Show plan"}
-      </button>
-      {expanded && (
-        <ul className="sublist">
-          {entries.map((e, idx) => (
-            <li key={idx} className={`plan-item ${e.status ?? ""}`}>
-              <span className="muted">{e.status ?? "pending"}</span> {e.content}
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
-  );
-}
-
-function ActivityBar({ planEntries, diffText }: { planEntries: any[]; diffText: string }) {
-  const [planOpen, setPlanOpen] = useState(false);
-  const [editsOpen, setEditsOpen] = useState(false);
-
-  const planStats = useMemo(() => {
-    const counts = planEntries.reduce(
-      (acc, e) => {
-        const status = e?.status ?? "pending";
-        if (status === "completed") acc.completed += 1;
-        else if (status === "in_progress") acc.in_progress += 1;
-        else acc.pending += 1;
-        return acc;
-      },
-      { pending: 0, in_progress: 0, completed: 0 },
-    );
-    const current = planEntries.find((e) => e?.status === "in_progress") ?? null;
-    return { ...counts, current };
-  }, [planEntries]);
-
-  const editedFiles = useMemo(() => extractEditedFiles(diffText), [diffText]);
-
-  if (planEntries.length === 0 && editedFiles.length === 0) return null;
-
-  return (
-    <div className="activity-bar">
-      {planEntries.length > 0 && (
-        <div className="activity-section">
-          <button type="button" className="activity-summary" onClick={() => setPlanOpen((v) => !v)}>
-            <span className="activity-title">Plan</span>
-            {planStats.current && !planOpen ? (
-              <span className="muted activity-current">
-                Current: {String(planStats.current.content ?? "").trim() || "in progress"}
-              </span>
-            ) : (
-              <span className="muted">
-                {planStats.in_progress} in progress · {planStats.pending} pending · {planStats.completed} done
-              </span>
-            )}
-            {planStats.pending > 0 && !planOpen && (
-              <span className="muted activity-right">{planStats.pending} left</span>
-            )}
-            <span className="thinking-chev">{planOpen ? "▴" : "▾"}</span>
-          </button>
-          {planOpen && (
-            <ul className="activity-list">
-              {planEntries.map((e, idx) => (
-                <li key={idx} className={`plan-item ${e.status ?? ""}`}>
-                  <span className={`plan-dot ${e.status ?? ""}`} />
-                  <span className="muted">{e.status ?? "pending"}</span>{" "}
-                  <span className="activity-item-text">{e.content}</span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      )}
-
-      {editedFiles.length > 0 && (
-        <div className="activity-section">
-          <button type="button" className="activity-summary" onClick={() => setEditsOpen((v) => !v)}>
-            <span className="activity-title">Edits</span>
-            <span className="muted">{editedFiles.length} file{editedFiles.length === 1 ? "" : "s"}</span>
-            <span className="thinking-chev">{editsOpen ? "▴" : "▾"}</span>
-          </button>
-          {editsOpen && (
-            <ul className="activity-list">
-              {editedFiles.map((f) => (
-                <li key={f} className="activity-item-text">
-                  {f}
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function extractEditedFiles(diffText: string): string[] {
-  const text = String(diffText ?? "");
-  const files = new Set<string>();
-  for (const line of text.split("\n")) {
-    const m = /^diff --git a\/(.+?) b\/(.+)$/.exec(line);
-    if (m) {
-      files.add(m[2]);
-      continue;
-    }
-    const m2 = /^\+\+\+ b\/(.+)$/.exec(line);
-    if (m2) files.add(m2[1]);
-  }
-  return [...files].slice(0, 200);
 }
 
 type MdastNode = {
@@ -4913,195 +3846,6 @@ function buildWorkbenchThreadViewModelFromEvents(events: SessionEvent[], message
   return { groups, debugEvents };
 }
 
-function buildThreadViewModel(events: SessionEvent[]): {
-  items: ThreadItem[];
-  debugEvents: SessionEvent[];
-} {
-  const items: ThreadItem[] = [];
-  const debugEvents: SessionEvent[] = [];
-
-  const assistantByTurn = new Map<string, Extract<ThreadItem, { kind: "assistant" }>>();
-  const toolById = new Map<string, Extract<ThreadItem, { kind: "tool" }>>();
-
-  const upsertAssistant = (turnId: string, createdAt: string) => {
-    const existing = assistantByTurn.get(turnId);
-    if (existing) return existing;
-    const item: Extract<ThreadItem, { kind: "assistant" }> = {
-      kind: "assistant",
-      id: `assistant-${turnId}`,
-      turn_id: turnId,
-      created_at: createdAt,
-      content: "",
-      thought: "",
-      is_complete: false,
-    };
-    assistantByTurn.set(turnId, item);
-    items.push(item);
-    return item;
-  };
-
-  const upsertTool = (toolCallId: string, createdAt: string) => {
-    const existing = toolById.get(toolCallId);
-    if (existing) return existing;
-    const item: Extract<ThreadItem, { kind: "tool" }> = {
-      kind: "tool",
-      id: `tool-${toolCallId}`,
-      tool_call_id: toolCallId,
-      created_at: createdAt,
-      updated_at: createdAt,
-      tool_kind: "tool",
-      title: "Tool",
-      status: "pending",
-      locations: [],
-      input: null,
-      output_text: "",
-      raw: null,
-      updates_seen: 0,
-      has_details: true,
-    };
-    toolById.set(toolCallId, item);
-    items.push(item);
-    return item;
-  };
-
-  for (const ev of events) {
-    const id = idToString(ev.id) || `${ev.created_at}`;
-    const turnId = idToString((ev as any).turn_id) || "no-turn";
-
-    switch (ev.event_type) {
-      case "user_message": {
-        items.push({
-          kind: "message",
-          id,
-          role: "user",
-          content: ev.payload_json?.content ?? "",
-          attachments: Array.isArray(ev.payload_json?.attachments)
-            ? (ev.payload_json.attachments as MessageAttachment[])
-            : [],
-          created_at: ev.created_at,
-        });
-        break;
-      }
-      case "error": {
-        const message = String(ev.payload_json?.message ?? "Error");
-        const provider = String(ev.payload_json?.provider ?? "").trim();
-        const output = provider ? `${message}\nprovider: ${provider}` : message;
-        items.push({
-          kind: "tool",
-          id: `error-${id}`,
-          tool_call_id: `error-${id}`,
-          created_at: ev.created_at,
-          updated_at: ev.created_at,
-          tool_kind: "error",
-          title: "Error",
-          status: "failed",
-          locations: [],
-          input: ev.payload_json ?? null,
-          output_text: output,
-          raw: ev,
-          updates_seen: 1,
-          has_details: true,
-        });
-        break;
-      }
-      case "assistant_chunk": {
-        const fragment = String(ev.payload_json?.content_fragment ?? "");
-        if (!fragment) break;
-        const item = upsertAssistant(turnId, ev.created_at);
-        item.content += fragment;
-        break;
-      }
-      case "assistant_complete": {
-        const full = String(ev.payload_json?.full_content ?? ev.payload_json?.content ?? "");
-        const item = upsertAssistant(turnId, ev.created_at);
-        // Place completed assistant responses after any preceding tool activity.
-        item.created_at = ev.created_at;
-        if (full) item.content = full;
-        item.is_complete = true;
-        break;
-      }
-      case "thought_chunk": {
-        if (!shouldRenderThoughtChunk(ev)) break;
-        const fragment = String(ev.payload_json?.content_fragment ?? "");
-        if (!fragment) break;
-        const item = upsertAssistant(turnId, ev.created_at);
-        item.thought += fragment;
-        break;
-      }
-      case "tool_call":
-      case "tool_call_update":
-      case "tool_result": {
-        const update = ev.payload_json?.acp_update ?? ev.payload_json ?? {};
-        const toolCallId =
-          String(ev.payload_json?.tool_call_id ?? update?.toolCallId ?? update?.rawInput?.call_id ?? "").trim();
-        if (!toolCallId) {
-          debugEvents.push(ev);
-          break;
-        }
-        const tool = upsertTool(toolCallId, ev.created_at);
-        tool.updated_at = ev.created_at;
-        tool.updates_seen += 1;
-        tool.raw = ev.payload_json;
-
-        const nextKind = String(update?.kind ?? update?.toolCall?.kind ?? "").trim();
-        if (nextKind) tool.tool_kind = nextKind;
-
-        const nextTitle =
-          String(update?.title ?? update?.toolCall?.title ?? update?.toolCall?.name ?? "").trim();
-        if (nextTitle) tool.title = nextTitle;
-        else if (tool.tool_kind && tool.title === "Tool") tool.title = humanToolKind(tool.tool_kind);
-
-        const nextStatus = String(update?.status ?? update?.toolCall?.status ?? "").trim();
-        if (nextStatus) tool.status = normalizeToolStatus(nextStatus, ev.event_type);
-        else if (ev.event_type === "tool_result") tool.status = "completed";
-
-        const locs = Array.isArray(update?.locations) ? update.locations : [];
-        tool.locations = locs.map((l: any) => ({ path: l?.path, range: l?.range }));
-
-        const input = update?.rawInput ?? update?.toolCall?.input ?? update?.args ?? null;
-        if (input) tool.input = input;
-
-        const nextOutput = extractToolOutputText(update);
-        if (nextOutput) {
-          tool.output_text = mergeStreamingText(tool.output_text, nextOutput);
-        }
-        break;
-      }
-      case "plan":
-        break;
-      case "init":
-      case "notice":
-      case "auth_required":
-      case "done":
-      case "interrupt_requested":
-      case "turn_interrupted":
-      case "input_queued":
-        debugEvents.push(ev);
-        break;
-      default:
-        break;
-    }
-  }
-
-  const itemRank = (it: ThreadItem): number => {
-    if (it.kind === "message") return 0;
-    if (it.kind === "tool") return 1;
-    return 2; // assistant
-  };
-
-  items.sort((a, b) => {
-    const ta = a.created_at;
-    const tb = b.created_at;
-    const tcmp = String(ta).localeCompare(String(tb));
-    if (tcmp !== 0) return tcmp;
-    const rcmp = itemRank(a) - itemRank(b);
-    if (rcmp !== 0) return rcmp;
-    return String(a.id).localeCompare(String(b.id));
-  });
-
-  return { items, debugEvents };
-}
-
 function extractToolOutputText(update: any): string {
   const raw = update?.rawOutput?.aggregated_output ?? update?.rawOutput?.output ?? null;
   if (typeof raw === "string" && raw.trim()) return raw;
@@ -5298,21 +4042,6 @@ function normalizeToolStatus(status: string, eventType: string): string {
   return s || "pending";
 }
 
-function humanToolStatus(status: string): string {
-  switch (status) {
-    case "pending":
-      return "Pending";
-    case "in_progress":
-      return "Running";
-    case "completed":
-      return "Done";
-    case "failed":
-      return "Failed";
-    default:
-      return status || "Unknown";
-  }
-}
-
 function humanToolKind(kind: string): string {
   const k = (kind || "").toLowerCase();
   if (k === "execute") return "Run Command";
@@ -5323,18 +4052,6 @@ function humanToolKind(kind: string): string {
   if (k === "think") return "Think";
   if (k === "error") return "Error";
   return kind || "Tool";
-}
-
-function toolKindIcon(kind: string): string {
-  const k = (kind || "").toLowerCase();
-  if (k === "execute") return "⌘";
-  if (k === "search") return "⌕";
-  if (k === "read") return "⟲";
-  if (k === "edit" || k === "write") return "✎";
-  if (k === "fetch") return "⇣";
-  if (k === "think") return "…";
-  if (k === "error") return "!";
-  return "▦";
 }
 
 function formatToolInput(toolKind: string, input: any): string {

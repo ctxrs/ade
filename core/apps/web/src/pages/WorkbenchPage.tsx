@@ -533,11 +533,8 @@ function WorkbenchSessionSlot({ sessionId, active, scrollState, preserveScrollOn
         key={sessionId}
         sessionId={sessionId}
         isActive={active}
-        variant="workbench"
-        showDiffPane={false}
         preserveScrollOnFocus={preserveScrollOnFocus}
         draft={draft.value}
-        draftUpdatedAtMs={draft.updatedAtMs}
         onDraftChange={(text) => draft.setValue({ text, modeId: draft.value.modeId })}
         onDraftPersistNow={() => workbenchStore.flushDraft(sessionDraftKey(sessionId))}
         onModeChange={(modeId) => draft.setValue({ text: draft.value.text, modeId })}
