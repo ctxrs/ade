@@ -40,6 +40,7 @@ import {
 } from "../api/client";
 import { useOpenSession, useSessionCacheSnapshot, useSessionEntry, useSessionSupervisor } from "../state/sessionSupervisor";
 import { WorkspaceCatchupProvider, useWorkspaceCatchupStore } from "../state/workspaceCatchupStore";
+import { loadSessionViewPrefsV1, saveSessionViewPrefsV1, type SessionViewVerbosity } from "../state/uiStateStore";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { Check, Copy } from "lucide-react";
@@ -89,6 +90,16 @@ type ThreadItem =
     turn_id: string;
     created_at: string;
     content: string;
+  }
+  | {
+    kind: "turn_status";
+    id: string;
+    turn_id: string;
+    created_at: string;
+    started_at: string;
+    updated_at: string;
+    turn_status: SessionTurn["status"];
+    status_text?: string | null;
   }
   | {
     kind: "tool_group";
@@ -282,6 +293,7 @@ export function SessionView({
     }
   }, [id]);
   const perfStartRef = useRef<number>(0);
+  const [verbosity, setVerbosity] = useState<SessionViewVerbosity>("default");
   const [inputInternal, setInputInternal] = useState("");
   const [draftAttachments, setDraftAttachments] = useState<MessageAttachment[]>([]);
   const [dropActive, setDropActive] = useState(false);
@@ -333,6 +345,24 @@ export function SessionView({
   const dropHideTimerRef = useRef<number | null>(null);
   const restoreCooldownRef = useRef<number | null>(null);
   const restorePendingRef = useRef(true);
+  const [nowMs, setNowMs] = useState(() => Date.now());
+
+  useEffect(() => {
+    let cancelled = false;
+    loadSessionViewPrefsV1()
+      .then((prefs) => {
+        if (!cancelled && prefs?.verbosity) setVerbosity(prefs.verbosity);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const setVerbosityPref = useCallback((next: SessionViewVerbosity) => {
+    setVerbosity(next);
+    saveSessionViewPrefsV1(next).catch(() => {});
+  }, []);
 
   const input = variant === "workbench" ? (draft?.text ?? "") : inputInternal;
   const setInput = useCallback(
@@ -681,12 +711,19 @@ export function SessionView({
   const turnsKey = deriveTurnsKey(turns);
   const messagesKey = deriveMessagesKey(messages);
   const streamConnected = supervisorSnap.connection === "connected";
+  const hasActiveTurn = useMemo(
+    () => turns.some((turn) => turn.status === "running" || turn.status === "queued"),
+    [turnsKey],
+  );
 
-  const interruptBanner = useMemo(() => {
-    const last = [...events].reverse().find((e) => e.event_type === "turn_interrupted");
-    if (!last) return null;
-    return `Interrupted at ${new Date(last.created_at).toLocaleTimeString()}.`;
-  }, [eventsKey]);
+  useEffect(() => {
+    if (!hasActiveTurn) return;
+    setNowMs(Date.now());
+    const timer = window.setInterval(() => {
+      setNowMs(Date.now());
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [hasActiveTurn]);
 
   const askUserQuestion = useMemo(() => {
     const answered = new Set<string>();
@@ -966,7 +1003,13 @@ export function SessionView({
   const emptyThreadItems = useMemo(() => [] as ThreadItem[], []);
   const emptyWorkbenchGroups = useMemo(() => [] as WorkbenchThreadView["groups"], []);
   const threadItems = variant === "workbench" ? emptyThreadItems : legacyThreadView.items;
-  const wbGroups = variant === "workbench" ? workbenchThreadView.groups : emptyWorkbenchGroups;
+  const wbGroups = useMemo(() => {
+    if (variant !== "workbench") return emptyWorkbenchGroups;
+    return workbenchThreadView.groups.map((group) => ({
+      ...group,
+      items: filterThreadItemsForVerbosity(group.items, verbosity),
+    }));
+  }, [variant, emptyWorkbenchGroups, workbenchThreadView.groups, verbosity]);
   const wbListItems = useMemo<WorkbenchListItem[]>(() => {
     const out: WorkbenchListItem[] = [];
     for (const g of wbGroups) {
@@ -1531,6 +1574,9 @@ export function SessionView({
     if (item.kind === "thought") {
       return <WorkbenchThoughtRow item={item} />;
     }
+    if (item.kind === "turn_status") {
+      return <WorkbenchTurnStatusRow item={item} nowMs={nowMs} />;
+    }
     if (item.kind === "assistant") {
       const thoughtExpanded =
         variant === "workbench" ? false : expandedThoughtByAssistantId[item.id] ?? false;
@@ -1600,6 +1646,7 @@ export function SessionView({
     handleFileOpenError,
     id,
     supervisor,
+    nowMs,
     turnToolsLoading,
     variant,
     worktreeId,
@@ -1953,7 +2000,6 @@ export function SessionView({
           </div>
         )}
 
-        {interruptBanner && <div className="banner">{interruptBanner}</div>}
 
         {(authUi.status === "required" || authUi.status === "failed") && (
           <div className="banner">
@@ -2104,6 +2150,8 @@ export function SessionView({
               sendDisabled={sendBusy || !input.trim()}
               sendDisabledReason={sendBusy ? "Sending…" : !input.trim() ? "Enter a message." : null}
               onInterrupt={id ? () => interruptSession(id) : null}
+              verbosity={verbosity}
+              onSetVerbosity={setVerbosityPref}
               modeId={workbenchMode}
               setModeId={setWorkbenchMode}
               recording={dictationRecording}
@@ -2471,6 +2519,7 @@ function ThreadItemView({
       // Workbench uses specialized renderers; legacy never reaches here.
       return variant === "workbench" ? null : null;
     case "tool_group":
+    case "turn_status":
       return null;
     default:
       return null;
@@ -3045,6 +3094,34 @@ function WorkbenchToolRow({
 
 function WorkbenchThoughtRow({ item }: { item: Extract<ThreadItem, { kind: "thought" }> }) {
   return <div className="wb-thought-row">{item.content}</div>;
+}
+
+function WorkbenchTurnStatusRow({
+  item,
+  nowMs,
+}: {
+  item: Extract<ThreadItem, { kind: "turn_status" }>;
+  nowMs: number;
+}) {
+  const startedAt = Date.parse(item.started_at);
+  const updatedAt = Date.parse(item.updated_at);
+  const isActive = item.turn_status === "running" || item.turn_status === "queued";
+  const endMs = isActive ? nowMs : Number.isFinite(updatedAt) ? updatedAt : nowMs;
+  const elapsed = Number.isFinite(startedAt) ? (endMs - startedAt) / 1000 : 0;
+
+  let statusText = String(item.status_text ?? "").trim();
+  if (!statusText) statusText = "Working";
+  if (item.turn_status === "interrupted") statusText = "Interrupted";
+  else if (item.turn_status === "failed") statusText = "Failed";
+  else if (item.turn_status === "completed") statusText = "Completed";
+
+  return (
+    <div className="wb-turn-status">
+      <span className="wb-turn-status-text">{statusText}</span>
+      <span className="wb-turn-status-sep"> - </span>
+      <span className="wb-turn-status-time">{formatElapsedSeconds(elapsed)}</span>
+    </div>
+  );
 }
 
 function WorkbenchToolGroupRow({
@@ -3826,6 +3903,13 @@ function deriveTurnsKey(turns: SessionTurn[]): string {
   return `${turns.length}:${first.start_seq ?? ""}:${last.start_seq ?? ""}:${last.updated_at ?? ""}`;
 }
 
+function filterThreadItemsForVerbosity(items: ThreadItem[], verbosity: SessionViewVerbosity): ThreadItem[] {
+  if (verbosity === "terse") {
+    return items.filter((item) => item.kind !== "tool" && item.kind !== "tool_group" && item.kind !== "thought");
+  }
+  return items;
+}
+
 export function buildWorkbenchThreadViewModel(
   turns: SessionTurn[],
   messages: Message[],
@@ -3847,9 +3931,180 @@ function shouldRenderThoughtChunk(ev: SessionEvent): boolean {
     payload?.meta ??
     {};
   if (meta?.heartbeat === true) return false;
+  if (isStatusUpdateMeta(meta)) return false;
   const reasoningKind = meta?.codex?.reasoning_kind ?? meta?.codex?.reasoningKind;
   if (reasoningKind === "summary") return false;
   return true;
+}
+
+type ActivityEntry = {
+  item: ThreadItem;
+  created_at: string;
+  kind: "tool" | "thought";
+  order_seq?: number;
+};
+
+function ensureToolItem(
+  toolById: Map<string, Extract<ThreadItem, { kind: "tool" }>>,
+  turnId: string,
+  toolCallId: string,
+  createdAt: string,
+) {
+  const existing = toolById.get(toolCallId);
+  if (existing) return existing;
+  const tool: Extract<ThreadItem, { kind: "tool" }> = {
+    kind: "tool",
+    id: `tool-${turnId}-${toolCallId}`,
+    tool_call_id: toolCallId,
+    created_at: createdAt,
+    updated_at: createdAt,
+    tool_kind: "tool",
+    title: "Tool",
+    status: "pending",
+    locations: [],
+    input: null,
+    output_text: "",
+    raw: null,
+    updates_seen: 0,
+    has_details: true,
+  };
+  toolById.set(toolCallId, tool);
+  return tool;
+}
+
+function applyToolUpdateFromEvent(
+  tool: Extract<ThreadItem, { kind: "tool" }>,
+  ev: SessionEvent,
+  update: any,
+) {
+  tool.updated_at = ev.created_at;
+  tool.updates_seen += 1;
+  tool.raw = ev.payload_json ?? tool.raw;
+
+  const nextKind = String(update?.kind ?? update?.toolCall?.kind ?? "").trim();
+  if (nextKind) tool.tool_kind = nextKind;
+
+  const nextTitle = String(update?.title ?? update?.toolCall?.title ?? update?.toolCall?.name ?? "").trim();
+  if (nextTitle) tool.title = nextTitle;
+  else if (tool.tool_kind && tool.title === "Tool") tool.title = humanToolKind(tool.tool_kind);
+
+  const nextStatus = String(update?.status ?? update?.toolCall?.status ?? "").trim();
+  if (nextStatus) tool.status = normalizeToolStatus(nextStatus, ev.event_type);
+  else if (ev.event_type === "tool_result") tool.status = "completed";
+
+  const locs = Array.isArray(update?.locations) ? update.locations : [];
+  tool.locations = locs.map((l: any) => ({ path: l?.path, range: l?.range }));
+
+  const input = update?.rawInput ?? update?.toolCall?.rawInput ?? update?.toolCall?.input ?? update?.input ?? null;
+  if (input != null) tool.input = input;
+
+  const nextOutput = extractToolOutputText(update);
+  if (nextOutput) tool.output_text = mergeStreamingText(tool.output_text, nextOutput);
+  if (tool.input != null || tool.output_text.trim().length > 0) {
+    tool.has_details = true;
+  }
+}
+
+function buildTurnActivityTimeline(opts: {
+  turnId: string;
+  turn: SessionTurn;
+  tools: Array<Extract<ThreadItem, { kind: "tool" }>>;
+  events: SessionEvent[];
+}): { activity: ActivityEntry[]; tools: Array<Extract<ThreadItem, { kind: "tool" }>> } {
+  const toolById = new Map<string, Extract<ThreadItem, { kind: "tool" }>>();
+  for (const tool of opts.tools) {
+    toolById.set(tool.tool_call_id, tool);
+  }
+
+  const activity: ActivityEntry[] = [];
+  const toolInserted = new Set<string>();
+
+  for (const ev of opts.events) {
+    if (ev.event_type === "thought_chunk") {
+      if (!shouldRenderThoughtChunk(ev)) {
+        continue;
+      }
+      const fragment = String(ev.payload_json?.content_fragment ?? "");
+      if (!fragment) {
+        continue;
+      }
+      const last = activity[activity.length - 1];
+      if (last && last.item.kind === "thought") {
+        (last.item as Extract<ThreadItem, { kind: "thought" }>).content = mergeStreamingText(
+          (last.item as Extract<ThreadItem, { kind: "thought" }>).content,
+          fragment,
+        );
+        continue;
+      }
+      const thoughtItem: Extract<ThreadItem, { kind: "thought" }> = {
+        kind: "thought",
+        id: `thought-${opts.turnId}-${ev.seq ?? ev.created_at}`,
+        turn_id: opts.turnId,
+        created_at: ev.created_at,
+        content: fragment,
+      };
+      activity.push({
+        item: thoughtItem,
+        created_at: ev.created_at,
+        kind: "thought",
+        order_seq: typeof ev.seq === "number" ? ev.seq : undefined,
+      });
+      continue;
+    }
+
+    if (ev.event_type === "tool_call" || ev.event_type === "tool_call_update" || ev.event_type === "tool_result") {
+      const update = ev.payload_json?.acp_update ?? ev.payload_json ?? {};
+      const toolCallId =
+        String(
+          ev.payload_json?.tool_call_id ??
+            update?.toolCallId ??
+            update?.tool_call_id ??
+            update?.rawInput?.call_id ??
+            update?.raw_input?.call_id ??
+            update?.toolCall?.rawInput?.call_id ??
+            "",
+        ).trim();
+      if (!toolCallId) {
+        continue;
+      }
+      const tool = ensureToolItem(toolById, opts.turnId, toolCallId, ev.created_at);
+      applyToolUpdateFromEvent(tool, ev, update);
+      if (!toolInserted.has(toolCallId)) {
+        activity.push({
+          item: tool,
+          created_at: tool.created_at,
+          kind: "tool",
+          order_seq: typeof ev.seq === "number" ? ev.seq : undefined,
+        });
+        toolInserted.add(toolCallId);
+      }
+      continue;
+    }
+  }
+
+  const fallbackThought = String(opts.turn.thought_partial ?? "").trim();
+  if (fallbackThought && !activity.some((entry) => entry.item.kind === "thought")) {
+    const fallbackItem: Extract<ThreadItem, { kind: "thought" }> = {
+      kind: "thought",
+      id: `thought-${opts.turnId}-fallback`,
+      turn_id: opts.turnId,
+      created_at: opts.turn.updated_at ?? opts.turn.started_at,
+      content: fallbackThought,
+    };
+    activity.push({
+      item: fallbackItem,
+      created_at: fallbackItem.created_at,
+      kind: "thought",
+    });
+  }
+
+  const remainingTools = Array.from(toolById.values()).filter((tool) => !toolInserted.has(tool.tool_call_id));
+  remainingTools.sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
+  for (const tool of remainingTools) {
+    activity.push({ item: tool, created_at: tool.created_at, kind: "tool" });
+  }
+
+  return { activity, tools: Array.from(toolById.values()) };
 }
 
 function buildWorkbenchThreadViewModelFromTurns(
@@ -3871,6 +4126,26 @@ function buildWorkbenchThreadViewModelFromTurns(
       const list = messagesByTurnId.get(turnId) ?? [];
       list.push(m);
       messagesByTurnId.set(turnId, list);
+    }
+  }
+
+  const eventsByTurnId = new Map<string, SessionEvent[]>();
+  const statusByTurnId = new Map<string, { text: string; at: string; source: "tool" | "meta" }>();
+  for (const ev of events) {
+    const turnId = idToString(ev.turn_id);
+    if (!turnId) continue;
+    const list = eventsByTurnId.get(turnId) ?? [];
+    list.push(ev);
+    eventsByTurnId.set(turnId, list);
+
+    const statusUpdate = extractStatusUpdate(ev);
+    if (statusUpdate) {
+      const prev = statusByTurnId.get(turnId);
+      if (prev?.source === "tool" && statusUpdate.source === "meta") {
+        continue;
+      }
+      const merged = prev ? mergeStatusText(prev.text, statusUpdate.text) : statusUpdate.text;
+      statusByTurnId.set(turnId, { text: merged, at: statusUpdate.at, source: statusUpdate.source });
     }
   }
 
@@ -3916,12 +4191,13 @@ function buildWorkbenchThreadViewModelFromTurns(
       } satisfies Extract<ThreadItem, { kind: "tool" }>;
     });
 
-    // Tool summaries are supplied by the session head (toolsByTurnId).
-    // Avoid rebuilding tool rows from events here to keep workbench switching fast.
-
-    const thought = String(turn.thought_partial ?? "");
-    const hasThought = thought.trim().length > 0;
-    const hasToolDetails = tools.length > 0;
+    const { activity, tools: activityTools } = buildTurnActivityTimeline({
+      turnId,
+      turn,
+      tools,
+      events: eventsByTurnId.get(turnId) ?? [],
+    });
+    const hasToolDetails = activityTools.length > 0;
 
     const assistantMessages = (messagesByTurnId.get(turnId) ?? [])
       .filter((m) => m.role === "assistant")
@@ -3938,7 +4214,8 @@ function buildWorkbenchThreadViewModelFromTurns(
     type TimelineEntry = {
       item: ThreadItem;
       created_at: string;
-      kind: "assistant" | "tool";
+      kind: "assistant" | "tool" | "thought";
+      order_seq?: number;
       turn_sequence?: number;
     };
 
@@ -3978,15 +4255,22 @@ function buildWorkbenchThreadViewModelFromTurns(
       });
     }
 
-    for (const tool of tools) {
+    for (const entry of activity) {
       timeline.push({
-        item: tool,
-        created_at: tool.created_at,
-        kind: "tool",
+        item: entry.item,
+        created_at: entry.created_at,
+        kind: entry.kind,
+        order_seq: entry.order_seq,
       });
     }
 
     timeline.sort((a, b) => {
+      const aSeq = a.order_seq;
+      const bSeq = b.order_seq;
+      if (Number.isFinite(aSeq) && Number.isFinite(bSeq) && aSeq !== bSeq) {
+        return (aSeq ?? 0) - (bSeq ?? 0);
+      }
+
       const tcmp = String(a.created_at).localeCompare(String(b.created_at));
       if (tcmp !== 0) return tcmp;
       if (a.kind === "assistant" && b.kind === "assistant") {
@@ -3994,8 +4278,9 @@ function buildWorkbenchThreadViewModelFromTurns(
         const sb = Number(b.turn_sequence ?? Number.NaN);
         if (Number.isFinite(sa) && Number.isFinite(sb) && sa !== sb) return sa - sb;
       }
-      if (a.kind === "assistant" && b.kind === "tool") return -1;
-      if (a.kind === "tool" && b.kind === "assistant") return 1;
+      const aRank = a.kind === "assistant" ? 2 : 1;
+      const bRank = b.kind === "assistant" ? 2 : 1;
+      if (aRank !== bRank) return aRank - bRank;
       return String(a.item.id).localeCompare(String(b.item.id));
     });
 
@@ -4018,117 +4303,26 @@ function buildWorkbenchThreadViewModelFromTurns(
       });
     }
 
-    if (hasThought) {
-      const thoughtItem: ThreadItem = {
-        kind: "thought",
-        id: `thought-${turnId}`,
-        turn_id: turnId,
-        created_at: turn.updated_at ?? turn.started_at,
-        content: thought,
-      };
-      let insertAt = -1;
-      for (let i = items.length - 1; i >= 0; i--) {
-        if (items[i]?.kind === "assistant") {
-          insertAt = i;
-          break;
-        }
-      }
-      if (insertAt >= 0) {
-        items.splice(insertAt, 0, thoughtItem);
-      } else {
-        items.push(thoughtItem);
-      }
-    }
-
     if (items.length === 0) {
       items.push({ kind: "spacer", id: `spacer-${turnId}`, created_at: turn.started_at });
     }
+
+    const statusText = statusByTurnId.get(turnId)?.text ?? null;
+    items.push({
+      kind: "turn_status",
+      id: `turn-status-${turnId}`,
+      turn_id: turnId,
+      created_at: turn.updated_at ?? turn.started_at,
+      started_at: turn.started_at,
+      updated_at: turn.updated_at ?? turn.started_at,
+      turn_status: turn.status,
+      status_text: statusText,
+    });
 
     groups.push({ key: `turn-${turnId}`, header, items });
   }
 
   return { groups, debugEvents };
-}
-
-function buildToolItemsFromEventsForTurn(
-  events: SessionEvent[],
-  turnId: string,
-): Array<Extract<ThreadItem, { kind: "tool" }>> {
-  const toolById = new Map<string, Extract<ThreadItem, { kind: "tool" }>>();
-
-  for (const ev of events) {
-    const evTurnId = idToString((ev as any).turn_id);
-    if (evTurnId !== turnId) continue;
-    if (!["tool_call", "tool_call_update", "tool_result"].includes(String(ev.event_type))) continue;
-
-    const update = ev.payload_json?.acp_update ?? ev.payload_json ?? {};
-    const toolCallId =
-      String(
-        ev.payload_json?.tool_call_id ??
-          update?.toolCallId ??
-          update?.tool_call_id ??
-          update?.rawInput?.call_id ??
-          update?.raw_input?.call_id ??
-          update?.toolCall?.rawInput?.call_id ??
-          "",
-      ).trim();
-    if (!toolCallId) continue;
-
-    let tool = toolById.get(toolCallId);
-    if (!tool) {
-      tool = {
-        kind: "tool",
-        id: `tool-${turnId}-${toolCallId}`,
-        tool_call_id: toolCallId,
-        created_at: ev.created_at,
-        updated_at: ev.created_at,
-        tool_kind: "tool",
-        title: "Tool",
-        status: "pending",
-        locations: [],
-        input: null,
-        output_text: "",
-        raw: null,
-        updates_seen: 0,
-        has_details: true,
-      };
-      toolById.set(toolCallId, tool);
-    }
-
-    tool.updated_at = ev.created_at;
-    tool.updates_seen += 1;
-    tool.raw = ev.payload_json ?? tool.raw;
-
-    const nextKind = String(update?.kind ?? update?.toolCall?.kind ?? "").trim();
-    if (nextKind) tool.tool_kind = nextKind;
-
-    const nextTitle = String(update?.title ?? update?.toolCall?.title ?? update?.toolCall?.name ?? "").trim();
-    if (nextTitle) tool.title = nextTitle;
-    else if (tool.tool_kind && tool.title === "Tool") tool.title = humanToolKind(tool.tool_kind);
-
-    const nextStatus = String(update?.status ?? update?.toolCall?.status ?? "").trim();
-    if (nextStatus) tool.status = normalizeToolStatus(nextStatus, ev.event_type);
-    else if (ev.event_type === "tool_result") tool.status = "completed";
-
-    const locs = Array.isArray(update?.locations) ? update.locations : [];
-    tool.locations = locs.map((l: any) => ({ path: l?.path, range: l?.range }));
-
-    const input = update?.rawInput ?? update?.toolCall?.rawInput ?? update?.toolCall?.input ?? update?.input ?? null;
-    if (input != null) tool.input = input;
-
-    const nextOutput =
-      update?.outputText ??
-      update?.output_text ??
-      update?.toolCall?.outputText ??
-      update?.toolCall?.output_text ??
-      update?.result ??
-      null;
-    if (typeof nextOutput === "string" && nextOutput.trim()) {
-      tool.output_text = mergeStreamingText(tool.output_text, nextOutput);
-    }
-  }
-
-  return Array.from(toolById.values()).sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
 }
 
 function buildWorkbenchThreadViewModelFromEvents(events: SessionEvent[], messages: Message[]): WorkbenchThreadView {
@@ -4544,13 +4738,13 @@ function buildWorkbenchThreadViewModelFromEvents(events: SessionEvent[], message
           g.assistant.is_complete = true;
           break;
         }
-          case "thought_chunk": {
-            if (!shouldRenderThoughtChunk(ev)) break;
-            const fragment = String(ev.payload_json?.content_fragment ?? "");
-            if (!fragment) break;
-            if (!g.assistant) {
-              g.assistant = {
-                kind: "assistant",
+        case "thought_chunk": {
+          if (!shouldRenderThoughtChunk(ev)) break;
+          const fragment = String(ev.payload_json?.content_fragment ?? "");
+          if (!fragment) break;
+          if (!g.assistant) {
+            g.assistant = {
+              kind: "assistant",
               id: `assistant-${g.key}`,
               turn_id: g.key,
               created_at: ev.created_at,
@@ -4903,6 +5097,166 @@ function mergeStreamingText(prev: string, next: string): string {
   if (n.startsWith(p)) return n;
   if (p.startsWith(n)) return p;
   return n.length >= p.length ? n : p;
+}
+
+function mergeStatusText(prev: string, next: string): string {
+  const p = prev ?? "";
+  const n = next ?? "";
+  if (!p) return n;
+  if (!n) return p;
+  if (n.startsWith(p) || p.startsWith(n)) return mergeStreamingText(p, n);
+  return n;
+}
+
+function pickFirstString(...values: any[]): string | null {
+  for (const v of values) {
+    if (typeof v === "string" && v.trim()) return v.trim();
+  }
+  return null;
+}
+
+function isNonToolStatus(value: string): boolean {
+  const s = value.trim().toLowerCase();
+  return ![
+    "pending",
+    "queued",
+    "running",
+    "in_progress",
+    "completed",
+    "failed",
+    "error",
+    "ok",
+    "success",
+    "succeeded",
+  ].includes(s);
+}
+
+type StatusUpdate = { text: string; at: string; source: "tool" | "meta" };
+
+function toolStatusLine(opts: {
+  kind: string;
+  status: string;
+  input: any;
+  title: string;
+  eventType: string;
+}): string | null {
+  const normalized = normalizeToolStatus(opts.status || "", opts.eventType);
+  const inProgress = normalized === "pending" || normalized === "in_progress";
+  const completed = normalized === "completed";
+  const failed = normalized === "failed";
+  const summary = toolSummaryLine(opts.kind, opts.input);
+  const detail = summary ? summary : "";
+  const make = (verb: string) => (detail ? `${verb} ${detail}` : verb);
+  const kind = (opts.kind || "").toLowerCase();
+
+  if (kind === "search") return make(inProgress ? "Searching" : completed ? "Searched" : failed ? "Search failed" : "Search");
+  if (kind === "read" || kind === "read_file") {
+    return make(inProgress ? "Reading" : completed ? "Read" : failed ? "Read failed" : "Read");
+  }
+  if (kind === "execute") return make(inProgress ? "Running" : completed ? "Ran" : failed ? "Run failed" : "Run");
+  if (kind === "write") return make(inProgress ? "Writing" : completed ? "Wrote" : failed ? "Write failed" : "Write");
+  if (kind === "edit") return make(inProgress ? "Editing" : completed ? "Edited" : failed ? "Edit failed" : "Edit");
+  if (kind === "fetch") return make(inProgress ? "Fetching" : completed ? "Fetched" : failed ? "Fetch failed" : "Fetch");
+  if (kind === "think") return make(inProgress ? "Thinking" : completed ? "Thought" : failed ? "Thinking failed" : "Thinking");
+  if (kind === "error") return "Error";
+
+  const fallback = opts.title || humanToolKind(opts.kind);
+  if (!fallback) return null;
+  return detail ? `${fallback} ${detail}` : fallback;
+}
+
+function extractToolStatusUpdate(ev: SessionEvent): StatusUpdate | null {
+  if (ev.event_type !== "tool_call" && ev.event_type !== "tool_call_update" && ev.event_type !== "tool_result") {
+    return null;
+  }
+  const update = ev.payload_json?.acp_update ?? ev.payload_json ?? {};
+  const kind = String(update?.kind ?? update?.toolCall?.kind ?? "").trim();
+  const title = String(update?.title ?? update?.toolCall?.title ?? update?.toolCall?.name ?? "").trim();
+  const status = String(update?.status ?? update?.toolCall?.status ?? "").trim();
+  const input = update?.rawInput ?? update?.toolCall?.rawInput ?? update?.toolCall?.input ?? update?.input ?? null;
+
+  const text = toolStatusLine({ kind, status, input, title, eventType: ev.event_type });
+  if (!text) return null;
+  return { text, at: ev.created_at, source: "tool" };
+}
+
+function extractStatusUpdate(ev: SessionEvent): StatusUpdate | null {
+  const toolUpdate = extractToolStatusUpdate(ev);
+  if (toolUpdate) return toolUpdate;
+
+  const payload = ev.payload_json ?? {};
+  const meta =
+    payload?.acp_update?._meta ??
+    payload?.acp_update?.meta ??
+    payload?._meta ??
+    payload?.meta ??
+    null;
+  if (!meta || typeof meta !== "object") return null;
+  const codexMeta = (meta as any)?.codex ?? null;
+
+  const statusText = pickFirstString(
+    (meta as any)?.status_text,
+    (meta as any)?.statusText,
+    (meta as any)?.status_string,
+    (meta as any)?.statusString,
+    codexMeta?.status_text,
+    codexMeta?.statusText,
+    codexMeta?.status_string,
+    codexMeta?.statusString,
+  );
+  if (statusText) return { text: statusText, at: ev.created_at, source: "meta" };
+
+  const statusValue = pickFirstString((meta as any)?.status, codexMeta?.status);
+  if (statusValue && isNonToolStatus(statusValue)) {
+    return { text: statusValue, at: ev.created_at, source: "meta" };
+  }
+
+  const reasoningKind = pickFirstString(codexMeta?.reasoning_kind, codexMeta?.reasoningKind);
+  if (reasoningKind === "status") {
+    const fragment = pickFirstString(payload?.content_fragment, payload?.content?.text);
+    if (fragment) return { text: fragment, at: ev.created_at, source: "meta" };
+  }
+
+  return null;
+}
+
+function formatElapsedSeconds(totalSeconds: number): string {
+  const clamped = Math.max(0, Math.floor(totalSeconds));
+  const hours = Math.floor(clamped / 3600);
+  const minutes = Math.floor((clamped % 3600) / 60);
+  const seconds = clamped % 60;
+  if (hours > 0) return `${hours}h ${minutes}m ${seconds}s`;
+  if (minutes > 0) return `${minutes}m ${seconds}s`;
+  return `${seconds}s`;
+}
+
+function isStatusUpdateMeta(meta: any): boolean {
+  if (!meta || typeof meta !== "object") return false;
+  const codexMeta = meta?.codex ?? {};
+  const reasoningKind = codexMeta?.reasoning_kind ?? codexMeta?.reasoningKind;
+  if (reasoningKind === "status") return true;
+
+  const statusText = pickFirstString(
+    meta?.status_text,
+    meta?.statusText,
+    meta?.status_string,
+    meta?.statusString,
+    codexMeta?.status_text,
+    codexMeta?.statusText,
+    codexMeta?.status_string,
+    codexMeta?.statusString,
+  );
+  if (statusText) return true;
+
+  const statusValue =
+    typeof meta?.status === "string"
+      ? meta.status
+      : typeof codexMeta?.status === "string"
+        ? codexMeta.status
+        : null;
+  if (statusValue && isNonToolStatus(statusValue)) return true;
+
+  return false;
 }
 
 function normalizeToolStatus(status: string, eventType: string): string {

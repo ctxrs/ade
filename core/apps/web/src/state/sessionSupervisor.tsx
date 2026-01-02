@@ -924,6 +924,58 @@ const appendFragment = (p: string | null | undefined, f: string | null | undefin
   return `${p}${f}`;
 };
 
+const pickFirstString = (...values: any[]): string | null => {
+  for (const v of values) {
+    if (typeof v === "string" && v.trim()) return v.trim();
+  }
+  return null;
+};
+
+const isNonToolStatus = (value: string): boolean => {
+  const s = value.trim().toLowerCase();
+  return ![
+    "pending",
+    "queued",
+    "running",
+    "in_progress",
+    "completed",
+    "failed",
+    "error",
+    "ok",
+    "success",
+    "succeeded",
+  ].includes(s);
+};
+
+function isStatusUpdateMeta(meta: any): boolean {
+  if (!meta || typeof meta !== "object") return false;
+  const codexMeta = meta?.codex ?? {};
+  const reasoningKind = codexMeta?.reasoning_kind ?? codexMeta?.reasoningKind;
+  if (reasoningKind === "status") return true;
+
+  const statusText = pickFirstString(
+    meta?.status_text,
+    meta?.statusText,
+    meta?.status_string,
+    meta?.statusString,
+    codexMeta?.status_text,
+    codexMeta?.statusText,
+    codexMeta?.status_string,
+    codexMeta?.statusString,
+  );
+  if (statusText) return true;
+
+  const statusValue =
+    typeof meta?.status === "string"
+      ? meta.status
+      : typeof codexMeta?.status === "string"
+        ? codexMeta.status
+        : null;
+  if (statusValue && isNonToolStatus(statusValue)) return true;
+
+  return false;
+}
+
 function shouldRenderThoughtChunk(ev: SessionEvent): boolean {
   const payload = ev.payload_json ?? {};
   const meta =
@@ -933,6 +985,7 @@ function shouldRenderThoughtChunk(ev: SessionEvent): boolean {
     payload?.meta ??
     {};
   if (meta?.heartbeat === true) return false;
+  if (isStatusUpdateMeta(meta)) return false;
   const reasoningKind = meta?.codex?.reasoning_kind ?? meta?.codex?.reasoningKind;
   if (reasoningKind === "summary") return false;
   return true;

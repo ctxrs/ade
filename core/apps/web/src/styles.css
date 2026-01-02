@@ -3820,6 +3820,24 @@ button.linklike:hover {
   white-space: pre-wrap;
 }
 
+.wb-turn-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px 6px 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.wb-turn-status-text {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.wb-turn-status-time {
+  font-family: var(--mono);
+}
+
 .wb-thought {
   display: grid;
   gap: 6px;

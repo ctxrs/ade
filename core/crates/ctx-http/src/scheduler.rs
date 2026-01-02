@@ -892,11 +892,52 @@ fn should_track_thought_chunk(payload: &serde_json::Value) -> bool {
     {
         return false;
     }
+    let has_status_text = |meta: &Value| {
+        for key in ["status_text", "statusText", "status_string", "statusString"] {
+            if meta.get(key).and_then(Value::as_str).is_some() {
+                return true;
+            }
+        }
+        if let Some(status) = meta.get("status").and_then(Value::as_str) {
+            let s = status.trim().to_lowercase();
+            let is_tool_status = matches!(
+                s.as_str(),
+                "pending"
+                    | "queued"
+                    | "running"
+                    | "in_progress"
+                    | "completed"
+                    | "failed"
+                    | "error"
+                    | "ok"
+                    | "success"
+                    | "succeeded"
+            );
+            if !is_tool_status {
+                return true;
+            }
+        }
+        false
+    };
+
     let reasoning_kind = meta
         .and_then(|v| v.get("codex"))
-        .and_then(|v| v.get("reasoning_kind"))
+        .and_then(|v| v.get("reasoning_kind").or_else(|| v.get("reasoningKind")))
         .and_then(Value::as_str);
-    reasoning_kind != Some("summary")
+    if matches!(reasoning_kind, Some("summary" | "status")) {
+        return false;
+    }
+    if let Some(meta) = meta {
+        if has_status_text(meta) {
+            return false;
+        }
+        if let Some(codex_meta) = meta.get("codex") {
+            if has_status_text(codex_meta) {
+                return false;
+            }
+        }
+    }
+    true
 }
 
 #[allow(clippy::too_many_arguments)]

@@ -200,3 +200,32 @@ export async function saveSettingsV1(settings: PersistedSettingsV1["settings"]):
     updatedAtMs: Date.now(),
   } satisfies PersistedSettingsV1);
 }
+
+export type SessionViewVerbosity = "terse" | "default" | "verbose";
+
+export type PersistedSessionViewPrefsV1 = {
+  v: 1;
+  verbosity: SessionViewVerbosity;
+  updatedAtMs: number;
+};
+
+export function sessionViewPrefsKeyV1() {
+  return "wb.session_view_prefs.v1";
+}
+
+export async function loadSessionViewPrefsV1(): Promise<PersistedSessionViewPrefsV1 | null> {
+  const raw = await uiStateGet(sessionViewPrefsKeyV1());
+  if (!raw || typeof raw !== "object") return null;
+  const rec = raw as PersistedSessionViewPrefsV1;
+  if (rec.v !== 1) return null;
+  if (!["terse", "default", "verbose"].includes(String(rec.verbosity))) return null;
+  return rec;
+}
+
+export async function saveSessionViewPrefsV1(verbosity: SessionViewVerbosity): Promise<void> {
+  await uiStateSet(sessionViewPrefsKeyV1(), {
+    v: 1,
+    verbosity,
+    updatedAtMs: Date.now(),
+  } satisfies PersistedSessionViewPrefsV1);
+}

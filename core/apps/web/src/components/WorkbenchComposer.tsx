@@ -6,6 +6,7 @@ import {
   AtSign,
   ChevronDown,
   Container,
+  Ellipsis,
   GitBranch,
   Image,
   Info,
@@ -28,6 +29,7 @@ import { ComposerAutocompleteMenu } from "./ComposerAutocompleteMenu";
 import { useComposerAutocomplete, type SlashCommandDescriptor } from "../state/useComposerAutocomplete";
 import type { HarnessCatalogEntry } from "../utils/harnessCatalog";
 import { imageFilesToInlineAttachments } from "../utils/messageAttachments";
+import type { SessionViewVerbosity } from "../state/uiStateStore";
 
 export type WorkbenchModeId = "default" | "research" | "plan" | "review";
 export type WorkbenchEnvTarget = "local" | "worktree" | "container";
@@ -38,6 +40,7 @@ const MENU_DESCRIPTIONS = {
   effort: `Some models have a "thinking effort" or "reasoning effort" setting, while others do not. The effort level simply corresponds to how many tokens a model spends on thinking while solving a problem. Models that offer high or extra high can sometimes be very powerful, at the expense of latency and cost. However, you can also experience an unintended negative consequence from extra high thinking: if the model is emitting lots of thinking tokens that don't add much value, this will cause the context window to fill up faster (not just from thinking tokens alone, but also from more excessive tool calls like reading files). Performance on coding tasks declines as context increases beyond the minimum context needed to solve the problem, so effort level is a key lever in tuning your agent for optimal performance.`,
   mode: `Modes are basically just prompts, sometimes combined with access limitations. For example, the review mode is nothing more than prompting the agent to tell it to review the code and putting it in a read-only access level. That sounds fairly simple, but there is a hidden benefit: developers who build agent harnesses and models in conjunction will often train their custom model to use their bespoke harness, including its different modes. So in a way, this prompt can be more than just a regular prompt. It is a special prompt than has been trained on via reinforcement learning to achieve certain outcomes. For example, OpenAI trained their codex model to use their codex harness in review mode, so as to output only high value review comments with priority details. If you give the exact same prompt to a model that has not undergone the same RL, it will emit much less useful review comments. We recommend using RPIR (Research, Plan, Implement, Review) pattern for most changes except for small and easy ones.`,
   isolation: `If you are new to using an ADE, you likely have your agents running in Local isolation mode, which basically means no isolation. In local mode, your agents work on the locally checked-out branch and could collide with other agents or your own changes. This results in dirty working branches, possible collisions, and risks of lost changes. An improvement is using git worktrees. They create a totally separate workspace that is disk-efficient. You can spin up many agents to all work in different worktrees and they won't collide with eachother. When they are done, you can approve and merge their changes back into the local working branch. This is a very powerful and resource-efficient isolation pattern. Finally there is container-level isolation. This is the most isolated environment, but it consumes many more resources: you have to run all of your processes again inside the container, and you have to copy all of the disk space. Despite the additional overhead, container-based isolation is most powerful when your agents need to test your application on the same ports. A simple example: if you have a key part of your application that always runs on port 3000 and you want your agent to be able to test it, worktrees won't save you: only one process can serve requests on that port. Containers solve that problem because you could have many agents working in different containers, and they can all claim their own port 3000 as theirs without worrying about collisions. Depending on your application, you may or may not need this. Containers of course also improved security isolation properties which worktrees cannot.`,
+  verbosity: `Verbosity controls how much activity is shown during a turn. Terse hides tools and thoughts, default shows summaries and thoughts, and verbose will eventually expand full tool details.`,
 } as const;
 
 function clamp(n: number, min: number, max: number) {
@@ -224,7 +227,7 @@ export type DraftTrack = {
   modelId: string;
 };
 
-type OpenMenuId = "harness" | "model" | "effort" | "mode" | "env";
+type OpenMenuId = "harness" | "model" | "effort" | "mode" | "env" | "verbosity";
 
 type SharedProps = {
   variant: "newSession" | "activeSession";
@@ -246,6 +249,8 @@ type SharedProps = {
   sendDisabled?: boolean;
 
   onInterrupt?: (() => void) | null;
+  verbosity?: SessionViewVerbosity;
+  onSetVerbosity?: (next: SessionViewVerbosity) => void;
 
   modeId: WorkbenchModeId;
   setModeId: (next: WorkbenchModeId) => void;
@@ -305,6 +310,12 @@ function labelForMode(mode: WorkbenchModeId): string {
   if (mode === "research") return "Research";
   if (mode === "plan") return "Plan";
   return "Review";
+}
+
+function labelForVerbosity(level: SessionViewVerbosity): string {
+  if (level === "terse") return "Terse";
+  if (level === "verbose") return "Verbose";
+  return "Default";
 }
 
 function buildModelsFromProviderOptions(opts?: ProviderOptions): Array<{ id: string; name?: string }> {
@@ -393,6 +404,8 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
 
   const newSession = variant === "newSession" ? (props as NewSessionProps) : null;
   const multiTrackMode = (newSession?.draftTracks.length ?? 0) > 1;
+  const verbosity = props.verbosity ?? "default";
+  const canAdjustVerbosity = typeof props.onSetVerbosity === "function";
 
   useEffect(() => {
     if (!newSession) return;
@@ -412,6 +425,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
   const effortTriggerRef = useRef<HTMLButtonElement | null>(null);
   const modeTriggerRef = useRef<HTMLButtonElement | null>(null);
   const envTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const verbosityTriggerRef = useRef<HTMLButtonElement | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -466,6 +480,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
       if (id === "model") return modelTriggerRef.current;
       if (id === "effort") return effortTriggerRef.current;
       if (id === "mode") return modeTriggerRef.current;
+      if (id === "verbosity") return verbosityTriggerRef.current;
       return envTriggerRef.current;
     },
     [],
@@ -609,6 +624,32 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
       ))}
     </div>
   );
+
+  const verbosityMenu = canAdjustVerbosity ? (
+    <div className="wb-menu" role="menu" ref={menuRef} style={menuStyle ?? undefined}>
+      <div className="wb-menu-top">
+        <MenuTitleRow
+          title="Verbosity"
+          description={MENU_DESCRIPTIONS.verbosity}
+          tooltipId="wb-menu-tooltip-verbosity"
+        />
+      </div>
+      {(["terse", "default", "verbose"] as SessionViewVerbosity[]).map((level) => (
+        <button
+          key={level}
+          type="button"
+          className={`wb-menu-item ${verbosity === level ? "wb-menu-item-active" : ""}`}
+          onClick={() => {
+            props.onSetVerbosity?.(level);
+            setOpenMenu(null);
+          }}
+          role="menuitem"
+        >
+          {labelForVerbosity(level)}
+        </button>
+      ))}
+    </div>
+  ) : null;
 
   const activeModelData = useMemo(() => {
     if (variant === "activeSession") {
@@ -1602,6 +1643,24 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
             <button type="button" className="wb-icon wb-menu-trigger" onClick={onInterrupt} aria-label="Interrupt" title="Interrupt">
               <Square size={14} />
             </button>
+          ) : null}
+
+          {canAdjustVerbosity ? (
+            <>
+              <button
+                type="button"
+                className="wb-icon wb-menu-trigger"
+                ref={verbosityTriggerRef}
+                onClick={() => setOpenMenu((v) => (v === "verbosity" ? null : "verbosity"))}
+                aria-haspopup="menu"
+                aria-expanded={openMenu === "verbosity"}
+                aria-label="Verbosity"
+                title="Verbosity"
+              >
+                <Ellipsis size={14} />
+              </button>
+              {openMenu === "verbosity" && verbosityMenu}
+            </>
           ) : null}
 
           <button
