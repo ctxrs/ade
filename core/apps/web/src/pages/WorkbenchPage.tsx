@@ -1160,6 +1160,10 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const activeTaskSummary = activeTaskId ? tasksById[activeTaskId] : null;
   const trackSummaries = useMemo(() => activeTaskSummary?.tracks ?? [], [activeTaskSummary]);
   const tracks = useMemo(() => trackSummaries.map((t) => t.track), [trackSummaries]);
+  const trackIds = useMemo(
+    () => tracks.map((tr) => idToString(tr.id)).filter(Boolean),
+    [tracks],
+  );
   const primarySessionByTrackId = useMemo(() => {
     const out: Record<string, string> = {};
     for (const summary of trackSummaries) {
@@ -1216,13 +1220,12 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     if (!activeTaskId) {
       return;
     }
-    const trackIds = tracks.map((tr) => idToString(tr.id)).filter(Boolean);
     if (trackIds.length === 0) {
       workbenchStore.setActiveTrackForActiveTask(null);
       return;
     }
     ensureActiveTrackSelection(activeTaskId, trackIds, sessionsByTrack);
-  }, [activeTaskId, ensureActiveTrackSelection, sessionsByTrack, tracks, workbenchStore]);
+  }, [activeTaskId, ensureActiveTrackSelection, sessionsByTrack, trackIds, workbenchStore]);
 
   useEffect(() => {
     supervisor.setActiveTaskSessionIds(activeTaskSessionIds);
@@ -1600,13 +1603,16 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   }, []);
 
   const activeSessionId = useMemo(() => {
-    if (!activeTrackId) return null;
+    const resolvedTrackId = activeTrackId ?? pickPreferredTrackId(trackIds, sessionsByTrack, null);
+    if (!resolvedTrackId) return null;
     const override =
-      activeTab?.kind === "track" && activeTab.ref.trackId === activeTrackId ? (activeTab.ref.sessionId ?? null) : null;
+      activeTab?.kind === "track" && activeTab.ref.trackId === resolvedTrackId
+        ? (activeTab.ref.sessionId ?? null)
+        : null;
     if (override) return override;
-    const sessions = sessionsByTrack[activeTrackId] ?? [];
-    return pickPreferredSessionId(sessions, primarySessionByTrackId[activeTrackId]);
-  }, [activeTab, activeTrackId, sessionsByTrack, primarySessionByTrackId]);
+    const sessions = sessionsByTrack[resolvedTrackId] ?? [];
+    return pickPreferredSessionId(sessions, primarySessionByTrackId[resolvedTrackId]);
+  }, [activeTab, activeTrackId, trackIds, sessionsByTrack, primarySessionByTrackId]);
 
   const defaultScrollState = useMemo<WorkbenchScrollState>(
     () => ({

@@ -345,6 +345,7 @@ export function SessionView({
   const dropHideTimerRef = useRef<number | null>(null);
   const restoreCooldownRef = useRef<number | null>(null);
   const restorePendingRef = useRef(true);
+  const restoreRetryRef = useRef(0);
   const [nowMs, setNowMs] = useState(() => Date.now());
 
   useEffect(() => {
@@ -615,6 +616,7 @@ export function SessionView({
 
   useLayoutEffect(() => {
     restorePendingRef.current = true;
+    restoreRetryRef.current = 0;
     didInitialScrollRef.current = false;
     lastScrollPersistedRef.current = null;
     latestAnchorIdRef.current = null;
@@ -1040,12 +1042,14 @@ export function SessionView({
   useLayoutEffect(() => {
     if (isActive && !wasActiveRef.current) {
       const hasVirtuosoState = Boolean(scrollState?.virtuosoState);
-      restorePendingRef.current = !hasVirtuosoState;
+      const shouldUseVirtuosoRestore = hasVirtuosoState && !preserveScrollOnFocus;
+      restorePendingRef.current = !shouldUseVirtuosoRestore;
       didInitialScrollRef.current = false;
       restoringScrollRef.current = false;
       userScrolledRef.current = false;
       liveScrollTopRef.current = null;
-      if (hasVirtuosoState) {
+      restoreRetryRef.current = 0;
+      if (shouldUseVirtuosoRestore) {
         restoringScrollRef.current = true;
         setRestoreInProgress(true);
         const timer = window.setTimeout(() => {
@@ -1056,13 +1060,18 @@ export function SessionView({
       }
     }
     wasActiveRef.current = isActive;
-  }, [isActive, scrollState?.virtuosoState]);
+  }, [isActive, preserveScrollOnFocus, scrollState?.virtuosoState]);
 
   const persistCurrentScroll = useCallback(() => {
     if (!onScrollStateChange) return;
     const el = scrollerRef.current;
     if (!el) return;
-    const scrollTop = el.scrollTop;
+    const observedTop = el.scrollTop;
+    const recordedTop = liveScrollTopRef.current;
+    const rawTop =
+      recordedTop != null && Math.abs(observedTop - recordedTop) > 4 ? recordedTop : observedTop;
+    const maxScrollTop = Math.max(0, el.scrollHeight - el.clientHeight);
+    const scrollTop = Math.min(Math.max(rawTop, 0), maxScrollTop);
     const remaining = el.scrollHeight - (scrollTop + el.clientHeight);
     const nearBottom = remaining <= 16;
     const next = {
@@ -1099,7 +1108,7 @@ export function SessionView({
     if (!isActive) return;
     const items = variant === "workbench" ? wbListItems : threadItems;
     if (items.length === 0) return;
-    if (scrollState?.virtuosoState) {
+    if (scrollState?.virtuosoState && !preserveScrollOnFocus) {
       restorePendingRef.current = false;
       return;
     }
@@ -1117,27 +1126,7 @@ export function SessionView({
 
     restoringScrollRef.current = true;
     setRestoreInProgress(true);
-    requestAnimationFrame(() => {
-      const el = scrollerRef.current;
-      if (!el) {
-        restoringScrollRef.current = false;
-        setRestoreInProgress(false);
-        return;
-      }
-      if (restoreScrollTop !== null) {
-        const target = Math.max(0, restoreScrollTop);
-        virtuosoRef.current?.scrollTo({ top: target });
-        el.scrollTop = target;
-      } else if (restoreAnchorId) {
-        const idx = items.findIndex((it) => it?.id === restoreAnchorId);
-        if (idx >= 0) {
-          virtuosoRef.current?.scrollToIndex({ index: idx, align: "start" });
-        } else {
-          virtuosoRef.current?.scrollToIndex({ index: items.length - 1, align: "end" });
-        }
-      } else {
-        virtuosoRef.current?.scrollToIndex({ index: items.length - 1, align: "end" });
-      }
+    const finalizeRestore = () => {
       restorePendingRef.current = false;
       didInitialScrollRef.current = true;
       if (restoreCooldownRef.current) window.clearTimeout(restoreCooldownRef.current);
@@ -1146,10 +1135,46 @@ export function SessionView({
         restoringScrollRef.current = false;
         setRestoreInProgress(false);
       }, 200);
+    };
+
+    const attemptRestore = () => {
+      const el = scrollerRef.current;
+      const handle = virtuosoRef.current;
+      if (!el && !handle) {
+        restoringScrollRef.current = false;
+        setRestoreInProgress(false);
+        return;
+      }
+      if (restoreScrollTop !== null) {
+        const target = Math.max(0, restoreScrollTop);
+        handle?.scrollTo({ top: target });
+        if (el) el.scrollTop = target;
+        if (el && Math.abs(el.scrollTop - target) > 2 && restoreRetryRef.current < 3) {
+          restoreRetryRef.current += 1;
+          requestAnimationFrame(attemptRestore);
+          return;
+        }
+      } else if (restoreAnchorId) {
+        const idx = items.findIndex((it) => it?.id === restoreAnchorId);
+        if (idx >= 0) {
+          handle?.scrollToIndex({ index: idx, align: "start" });
+        } else {
+          handle?.scrollToIndex({ index: items.length - 1, align: "end" });
+        }
+      } else {
+        handle?.scrollToIndex({ index: items.length - 1, align: "end" });
+      }
+      finalizeRestore();
+    };
+
+    requestAnimationFrame(() => {
+      restoreRetryRef.current = 0;
+      attemptRestore();
     });
   }, [
     id,
     isActive,
+    preserveScrollOnFocus,
     scrollState?.anchorItemId,
     scrollState?.stickToBottom,
     scrollState?.scrollTop,
@@ -1277,7 +1302,9 @@ export function SessionView({
 
   const followOutput =
     preserveScrollOnFocus && !isActive ? false : restoreInProgress ? false : atBottom ? "auto" : false;
-  const restoreStateFrom = (scrollState?.virtuosoState ?? undefined) as StateSnapshot | undefined;
+  const restoreStateFrom = preserveScrollOnFocus
+    ? undefined
+    : (scrollState?.virtuosoState ?? undefined) as StateSnapshot | undefined;
 
   const handleAtBottomStateChange = useCallback(
     (isAtBottom: boolean) => {
