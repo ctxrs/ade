@@ -1,8 +1,7 @@
 import Constants from "expo-constants";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import type { BarcodeScanningResult } from "expo-camera";
-import type { BarCodeEvent } from "expo-barcode-scanner";
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Buffer } from "buffer";
 import { Alert, Platform, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -20,44 +19,18 @@ type Props = NativeStackScreenProps<RootStackParamList, "QrScanner">;
 
 export function QrScannerScreen({ navigation }: Props): React.JSX.Element {
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
-  const [webPermission, setWebPermission] = useState<"granted" | "denied" | "prompt">("prompt");
   const [scanned, setScanned] = useState(false);
   const { setConnection, config } = useConnection();
   const isWeb = Platform.OS === "web";
-  const webScannerModule = useMemo(() => {
-    if (!isWeb) return null;
-    try {
-      return require("expo-barcode-scanner");
-    } catch (err) {
-      console.warn("[QrScanner] Failed to load web barcode scanner", err);
-      return null;
-    }
-  }, [isWeb]);
 
   useEffect(() => {
-    let cancelled = false;
-    if (isWeb) {
-      (async () => {
-        try {
-          const { status } = await webScannerModule?.BarCodeScanner.requestPermissionsAsync();
-          if (!cancelled) {
-            setWebPermission(status === "granted" ? "granted" : "denied");
-          }
-        } catch (err) {
-          console.warn("[QrScanner] Failed to request web permissions", err);
-          if (!cancelled) setWebPermission("denied");
-        }
-      })();
-      return () => {
-        cancelled = true;
-      };
-    }
+    if (isWeb) return;
     if (!cameraPermission?.granted) {
       requestCameraPermission().catch((err) =>
         console.warn("[QrScanner] Failed to request camera permissions", err),
       );
     }
-  }, [cameraPermission?.granted, isWeb, requestCameraPermission, webScannerModule]);
+  }, [cameraPermission?.granted, isWeb, requestCameraPermission]);
 
   const wasConnected = Boolean(config);
 
@@ -114,7 +87,7 @@ export function QrScannerScreen({ navigation }: Props): React.JSX.Element {
     }
   };
 
-  const permissionDenied = isWeb ? webPermission === "denied" : cameraPermission?.granted === false;
+  const permissionDenied = !isWeb && cameraPermission?.granted === false;
   if (permissionDenied) {
     return (
       <SafeAreaView style={styles.safe}>
@@ -142,26 +115,10 @@ export function QrScannerScreen({ navigation }: Props): React.JSX.Element {
 
   function renderScanner(): React.JSX.Element {
     if (isWeb) {
-      const WebScanner = webScannerModule?.BarCodeScanner;
-      if (!WebScanner) {
-        return (
-          <View style={styles.center}>
-            <Text style={styles.text}>QR scanning is not available in the web preview.</Text>
-          </View>
-        );
-      }
-      if (webPermission !== "granted") {
-        return (
-          <View style={styles.center}>
-            <Text style={styles.text}>Requesting camera access…</Text>
-          </View>
-        );
-      }
       return (
-        <WebScanner
-          onBarCodeScanned={(result: BarCodeEvent) => handleScan(result.data)}
-          style={StyleSheet.absoluteFillObject}
-        />
+        <View style={styles.center}>
+          <Text style={styles.text}>QR scanning is not available in the web preview.</Text>
+        </View>
       );
     }
     if (!cameraPermission?.granted) {

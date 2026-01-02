@@ -47,6 +47,25 @@ pub fn derive_key(
     Ok(E2eeKey(out))
 }
 
+pub fn derive_client_key(
+    device_id: &str,
+    device_secret_b64: &str,
+    daemon_public_b64: &str,
+) -> Result<E2eeKey> {
+    let device_secret = decode_key(device_secret_b64)?;
+    let daemon_public = decode_key(daemon_public_b64)?;
+    let device_secret = StaticSecret::from(device_secret);
+    let daemon_public = PublicKey::from(daemon_public);
+    let shared = device_secret.diffie_hellman(&daemon_public);
+
+    let salt = Sha256::digest(device_id.as_bytes());
+    let hk = Hkdf::<Sha256>::new(Some(&salt), shared.as_bytes());
+    let mut out = [0u8; 32];
+    hk.expand(HKDF_INFO, &mut out)
+        .map_err(|_| anyhow!("hkdf expand failed"))?;
+    Ok(E2eeKey(out))
+}
+
 pub fn encrypt(key: &E2eeKey, device_id: &str, seq: i64, plaintext: &[u8]) -> Result<Envelope> {
     let mut nonce = [0u8; 24];
     rand_core::OsRng.fill_bytes(&mut nonce);

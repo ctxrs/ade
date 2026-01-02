@@ -52,6 +52,7 @@ fs2 = "0.4"
 which = "7"
 portable-pty = "0.9"
 x25519-dalek = { version = "2", features = ["static_secrets"] }
+tempfile = "3"
 
 [dev-dependencies]
 tempfile = "3"

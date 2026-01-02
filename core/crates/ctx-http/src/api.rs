@@ -3761,12 +3761,12 @@ async fn enable_mobile_access(
         ));
     }
 
-    let control_plane_url = std::env::var("CONTEXT_TUNNEL_CONTROL_PLANE_URL").unwrap_or_default();
+    let control_plane_url = std::env::var("CTX_TUNNEL_CONTROL_PLANE_URL").unwrap_or_default();
     if control_plane_url.trim().is_empty() {
         return Err((
             StatusCode::BAD_REQUEST,
             Json(ApiErrorResp {
-                error: "CONTEXT_TUNNEL_CONTROL_PLANE_URL is not set".into(),
+                error: "CTX_TUNNEL_CONTROL_PLANE_URL is not set".into(),
             }),
         ));
     }
@@ -3972,7 +3972,7 @@ async fn disable_mobile_access(
         ));
     }
 
-    let control_plane_url = std::env::var("CONTEXT_TUNNEL_CONTROL_PLANE_URL").unwrap_or_default();
+    let control_plane_url = std::env::var("CTX_TUNNEL_CONTROL_PLANE_URL").unwrap_or_default();
     if !control_plane_url.trim().is_empty() {
         let _ = reqwest::Client::new()
             .post(format!(
@@ -3991,8 +3991,9 @@ async fn disable_mobile_access(
 
 async fn pair_mobile_device(
     State(state): State<Arc<AppState>>,
-    Json(req): Json<PairMobileDeviceReq>,
+    body: Bytes,
 ) -> Result<Json<SecureEnvelope>, (StatusCode, Json<ApiErrorResp>)> {
+    let req: PairMobileDeviceReq = parse_json_body(body)?;
     let token_hash = hash_pairing_token(req.pairing_token.trim());
     let allowed = state
         .store
@@ -4125,8 +4126,9 @@ async fn pair_mobile_device(
 
 async fn handle_mobile_secure(
     State(state): State<Arc<AppState>>,
-    Json(req): Json<MobileSecureEnvelope>,
+    body: Bytes,
 ) -> Result<Json<SecureEnvelope>, (StatusCode, Json<ApiErrorResp>)> {
+    let req: MobileSecureEnvelope = parse_json_body(body)?;
     let device_uuid = uuid::Uuid::parse_str(req.device_id.trim()).map_err(|_| {
         (
             StatusCode::BAD_REQUEST,
@@ -4557,6 +4559,27 @@ async fn proxy_secure_request(
         status,
         headers,
         body_b64,
+    })
+}
+
+fn parse_json_body<T: serde::de::DeserializeOwned>(
+    body: Bytes,
+) -> Result<T, (StatusCode, Json<ApiErrorResp>)> {
+    if body.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "missing request body".into(),
+            }),
+        ));
+    }
+    serde_json::from_slice(&body).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid json body".into(),
+            }),
+        )
     })
 }
 

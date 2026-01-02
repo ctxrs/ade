@@ -174,11 +174,7 @@ async fn enable_mobile_access_inner(
 
     let tunnel_id = Uuid::new_v4().to_string();
     let relay_base_url = assign_relay(&state.config.relay_base_urls, &user_id);
-    let public_base_url = state
-        .config
-        .public_base_url
-        .trim_end_matches('/')
-        .to_string();
+    let public_base_url = normalize_public_base_url(&state.config.public_base_url, &tunnel_id);
 
     sqlx::query(
         r#"INSERT INTO mobile_tunnels
@@ -301,6 +297,7 @@ async fn load_existing_tunnel(
             "invalid tunnel record".to_string(),
         )
     })?;
+    let public_base_url = normalize_public_base_url(&public_base_url, &tunnel_id);
     let tunnel_secret = derive_tunnel_secret(&state.config.master_secret, &tunnel_id)?;
     Ok(Some(EnableMobileAccessResp {
         tunnel_id,
@@ -409,6 +406,15 @@ fn assign_relay(relays: &[String], user_id: &str) -> String {
     user_id.hash(&mut hasher);
     let idx = (hasher.finish() as usize) % relays.len();
     relays[idx].clone()
+}
+
+fn normalize_public_base_url(base: &str, tunnel_id: &str) -> String {
+    let trimmed = base.trim_end_matches('/');
+    if trimmed.contains("/t/") {
+        trimmed.to_string()
+    } else {
+        format!("{trimmed}/t/{tunnel_id}")
+    }
 }
 
 fn derive_tunnel_secret(master: &[u8], tunnel_id: &str) -> Result<String, (StatusCode, String)> {

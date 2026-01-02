@@ -35,7 +35,8 @@
         "POST_NOTIFICATIONS",
         "RECEIVE_BOOT_COMPLETED",
         "WAKE_LOCK"
-      ]
+      ],
+      "package": "com.anonymous.mobile"
     },
     "notification": {
       "icon": "./assets/notification-icon.png",

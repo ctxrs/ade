@@ -132,7 +132,7 @@ async fn main() -> Result<()> {
         .init();
 
     let args = Args::parse();
-    let master_secret = std::env::var("CONTEXT_TUNNEL_MASTER_SECRET")
+    let master_secret = std::env::var("CTX_TUNNEL_MASTER_SECRET")
         .ok()
         .map(|s| s.into_bytes());
     let state = RelayState {
