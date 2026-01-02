@@ -14,6 +14,7 @@ import {
   downloadAppImageUpdate,
   openLogsFolder,
 } from "../api/client";
+import { copyTextToClipboard } from "../utils/clipboard";
 
 export default function DiagnosticsPage() {
   const [diagnostics, setDiagnostics] = useState<Diagnostics | null>(null);
@@ -56,11 +57,11 @@ export default function DiagnosticsPage() {
 
   const onCopy = async () => {
     if (!diagnostics) return;
-    try {
-      await navigator.clipboard.writeText(pretty);
+    const ok = await copyTextToClipboard(pretty);
+    if (ok) {
       setNotice("Copied diagnostics JSON to clipboard.");
-    } catch {
-      setNotice("Copy failed. Select the text and copy manually.");
+    } else {
+      setNotice("Copy failed. Clipboard access may be blocked; copy manually or use HTTPS.");
     }
   };
 

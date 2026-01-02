@@ -68,6 +68,7 @@ import { startMicPcmStream } from "../utils/micPcmStream";
 import { desktopSaveTextFile, isDesktopApp } from "../utils/desktop";
 import { parseWsJson } from "../utils/wsJson";
 import { registerDropScope } from "../utils/dragDropScopes";
+import { copyTextToClipboard } from "../utils/clipboard";
 import { pickPreferredSession, pickPreferredSessionId, pickPreferredTrackId } from "../utils/workbenchSelection";
 import { imageFilesToInlineAttachments } from "../utils/messageAttachments";
 import { parseModelId } from "../utils/modelEffort";
@@ -2415,19 +2416,19 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const copyWorktreeLocation = useCallback(async () => {
     const path = String(worktreeChip.worktreePath ?? "").trim();
     if (!path) return;
-    try {
-      await navigator.clipboard.writeText(path);
-      setWorktreeCopied(true);
-      if (worktreeCopiedTimerRef.current) {
-        window.clearTimeout(worktreeCopiedTimerRef.current);
-      }
-      worktreeCopiedTimerRef.current = window.setTimeout(() => {
-        setWorktreeCopied(false);
-        worktreeCopiedTimerRef.current = null;
-      }, 1100);
-    } catch (e: any) {
-      window.alert(e?.message ?? "Failed to copy worktree location.");
+    const ok = await copyTextToClipboard(path);
+    if (!ok) {
+      window.alert("Clipboard access is blocked; use HTTPS/desktop app or copy manually.");
+      return;
     }
+    setWorktreeCopied(true);
+    if (worktreeCopiedTimerRef.current) {
+      window.clearTimeout(worktreeCopiedTimerRef.current);
+    }
+    worktreeCopiedTimerRef.current = window.setTimeout(() => {
+      setWorktreeCopied(false);
+      worktreeCopiedTimerRef.current = null;
+    }, 1100);
   }, [worktreeChip.worktreePath]);
 
   const openWorktreeTerminal = useCallback(async () => {
@@ -2569,10 +2570,9 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const copyConversation = useCallback(async () => {
     const payload = buildConversationExport();
     if (!payload) return;
-    try {
-      await navigator.clipboard.writeText(payload.markdown);
-    } catch (e: any) {
-      window.alert(e?.message ?? "Failed to copy conversation.");
+    const ok = await copyTextToClipboard(payload.markdown);
+    if (!ok) {
+      window.alert("Clipboard access is blocked; use HTTPS/desktop app or copy manually.");
     }
   }, [buildConversationExport]);
 
@@ -2666,7 +2666,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
               className="wb-topbar-ids"
               title="Click to copy workspace/task/track/session IDs"
               onClick={() =>
-                navigator.clipboard.writeText(
+                void copyTextToClipboard(
                   JSON.stringify(
                     {
                       workspaceId,

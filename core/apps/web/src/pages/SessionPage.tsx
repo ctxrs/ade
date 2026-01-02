@@ -48,6 +48,7 @@ import { startMicPcmStream } from "../utils/micPcmStream";
 import { parseWsJson } from "../utils/wsJson";
 import { imageFilesToInlineAttachments } from "../utils/messageAttachments";
 import { registerDropScope } from "../utils/dragDropScopes";
+import { copyTextToClipboard } from "../utils/clipboard";
 import { desktopGetDeepLinkToken, desktopOpenFile, desktopOpenPath, isDesktopApp } from "../utils/desktop";
 
 type ThreadItem =
@@ -2578,11 +2579,8 @@ function FencedCodeBlock({
   }, []);
 
   const handleCopy = useCallback(async () => {
-    try {
-      await navigator.clipboard.writeText(codeString);
-    } catch {
-      return;
-    }
+    const ok = await copyTextToClipboard(codeString);
+    if (!ok) return;
 
     setCopied(true);
     if (resetTimerRef.current) window.clearTimeout(resetTimerRef.current);

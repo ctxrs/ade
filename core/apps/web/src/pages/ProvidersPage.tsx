@@ -18,6 +18,7 @@ import {
   listWorkspaces,
   verifyProviderForWorkspace,
 } from "../api/client";
+import { copyTextToClipboard } from "../utils/clipboard";
 import { isDesktopApp } from "../utils/desktop";
 
 type InstallSession = {
@@ -38,14 +39,6 @@ const fmtBytes = (n: number): string => {
     u += 1;
   }
   return `${v.toFixed(u === 0 ? 0 : 1)} ${units[u]}`;
-};
-
-const safeCopy = async (text: string) => {
-  try {
-    await navigator.clipboard.writeText(text);
-  } catch {
-    // ignore
-  }
 };
 
 export default function ProvidersPage() {
@@ -477,7 +470,7 @@ export default function ProvidersPage() {
                       <strong>Install error</strong>
                       <button
                         type="button"
-                        onClick={() => safeCopy(installs[p.provider_id].error ?? "")}
+                        onClick={() => void copyTextToClipboard(installs[p.provider_id].error ?? "")}
                       >
                         Copy
                       </button>
@@ -503,7 +496,7 @@ export default function ProvidersPage() {
                   const text = `[${lastErr.at}] ${p.provider_id} ${lastErr.stage}: ${lastErr.message}`;
                   return (
                     <div className="row">
-                      <button type="button" onClick={() => safeCopy(text)}>
+                      <button type="button" onClick={() => void copyTextToClipboard(text)}>
                         Copy error
                       </button>
                     </div>
