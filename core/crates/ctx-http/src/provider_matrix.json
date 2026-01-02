@@ -15,6 +15,11 @@
         "version": "0.7.4-ctx.4",
         "args": [],
         "targets": {
+          "linux-aarch64": {
+            "url": "https://github.com/ctxrs/codex-acp/releases/download/v0.7.4-ctx.4/codex-acp-0.7.4-ctx.4-aarch64-unknown-linux-gnu.tar.gz",
+            "archive": "tar_gz",
+            "bin_path": "codex-acp"
+          },
           "linux-x86_64": {
             "url": "https://github.com/ctxrs/codex-acp/releases/download/v0.7.4-ctx.4/codex-acp-0.7.4-ctx.4-x86_64-unknown-linux-gnu.tar.gz",
             "archive": "tar_gz",
@@ -64,7 +69,7 @@
           "version": "0.7.4-ctx.4",
           "status": "supported",
           "context_min": "0.1.0",
-          "notes": "Linux x86_64 build only"
+          "notes": "Linux x86_64 and aarch64 only"
         }
       ]
     },
