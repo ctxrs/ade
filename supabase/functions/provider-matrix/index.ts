@@ -46,7 +46,8 @@ serve(async (req) => {
   }
 
   const objectPath = `providers/${channel}/${tail}`;
-  const storageUrl = `${supabaseUrl.replace(/\/$/, "")}/storage/v1/object/public/${bucket}/${objectPath}`;
+  const baseUrl = supabaseUrl.endsWith("/") ? supabaseUrl.slice(0, -1) : supabaseUrl;
+  const storageUrl = `${baseUrl}/storage/v1/object/public/${bucket}/${objectPath}`;
 
   let result = "served";
   let body: string | null = null;

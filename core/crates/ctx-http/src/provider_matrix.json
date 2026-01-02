@@ -927,8 +927,8 @@
       },
       "managed_install": {
         "kind": "python",
-        "package": "https://github.com/ctxrs/SWE-agent/releases/download/v1.1.0-ctxrs.1/sweagent-1.1.0+ctxrs.1-py3-none-any.whl",
-        "version": "1.1.0+ctxrs.1",
+        "package": "https://github.com/ctxrs/SWE-agent/releases/download/v1.1.0-ctxrs.2/sweagent-1.1.0+ctxrs.2-py3-none-any.whl",
+        "version": "1.1.0+ctxrs.2",
         "entrypoint": "sweagent",
         "args": [
           "acp"
@@ -942,7 +942,7 @@
       },
       "releases": [
         {
-          "version": "1.1.0+ctxrs.1",
+          "version": "1.1.0+ctxrs.2",
           "status": "supported",
           "context_min": "0.1.0",
           "notes": "ACP requires patched CLI"

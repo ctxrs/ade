@@ -654,18 +654,7 @@ pub fn normalize_version(raw: &str) -> String {
 }
 
 fn version_matches(release: &str, detected: &str) -> bool {
-    let rel = normalize_version(release);
-    let det = normalize_version(detected);
-    if rel == det {
-        return true;
-    }
-    if rel.starts_with(&format!("{det}-")) {
-        return true;
-    }
-    if det.starts_with(&format!("{rel}-")) {
-        return true;
-    }
-    false
+    normalize_version(release) == normalize_version(detected)
 }
 
 fn extract_version(text: &str) -> Option<String> {

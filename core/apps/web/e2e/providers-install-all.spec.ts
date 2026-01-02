@@ -6,6 +6,7 @@ import { execSync } from "child_process";
 import { createWorkspaceAndOpenWorkbench } from "./utils/workbench";
 
 test("providers: install all completes for supported providers", async ({ page, request }) => {
+  test.setTimeout(15 * 60 * 1000);
   const repo = mkdtempSync(path.join(tmpdir(), "ctx-e2e-"));
   execSync("git init", { cwd: repo });
   execSync("git config user.email test@example.com", { cwd: repo });
@@ -26,49 +27,40 @@ test("providers: install all completes for supported providers", async ({ page, 
   const installable = providers.filter((p) => p.details?.install_supported === "true");
   expect(installable.length).toBeGreaterThan(0);
 
-  const installIds = new Map<string, string>();
-  const now = new Date().toISOString();
-
-  await page.route("**/api/providers/install/*/stream", (route) =>
-    route.fulfill({ status: 204, body: "" }),
+  const installAllResp = page.waitForResponse(
+    (resp) => resp.url().includes("/api/providers/install_all") && resp.request().method() === "POST",
   );
-  await page.route("**/api/providers/install/*/events", (route) =>
-    route.fulfill({ status: 200, contentType: "application/json", body: "[]" }),
-  );
-  await page.route("**/api/providers/install/*", (route) => {
-    const url = new URL(route.request().url());
-    const installId = url.pathname.split("/").pop() ?? "";
-    const providerId = installIds.get(installId) ?? "unknown";
-    return route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({
-        install_id: installId,
-        provider_id: providerId,
-        state: "succeeded",
-        started_at: now,
-        finished_at: now,
-        last_event: null,
-      }),
-    });
-  });
-  await page.route("**/api/providers/install_all", (route) => {
-    const payload = installable.map((p) => {
-      const installId = `install-${p.provider_id}`;
-      installIds.set(installId, p.provider_id);
-      return { provider_id: p.provider_id, install_id: installId };
-    });
-    return route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify(payload),
-    });
-  });
-
   await page.getByRole("button", { name: "Install all" }).click();
+  const installAll = await installAllResp;
+  expect(installAll.ok()).toBeTruthy();
+  const installs = (await installAll.json()) as Array<{ provider_id: string; install_id: string }>;
+  expect(installs.length).toBeGreaterThan(0);
 
-  for (const provider of installable) {
-    const card = page.locator("ul.list > li.card").filter({ hasText: provider.provider_id });
-    await expect(card.getByText("Install: succeeded")).toBeVisible({ timeout: 20_000 });
+  await expect
+    .poll(
+      async () => {
+        const infos = await Promise.all(
+          installs.map(async (item) => {
+            const resp = await request.get(`/api/providers/install/${item.install_id}`);
+            if (!resp.ok()) {
+              throw new Error(`install status ${item.provider_id}: ${resp.status()}`);
+            }
+            return (await resp.json()) as { provider_id: string; state: string; error?: string };
+          }),
+        );
+        const failed = infos.find((info) => info.state === "failed");
+        if (failed) {
+          return `failed:${failed.provider_id}:${failed.error ?? "unknown"}`;
+        }
+        const running = infos.some((info) => info.state === "running");
+        return running ? "running" : "succeeded";
+      },
+      { timeout: 14 * 60 * 1000, intervals: [2000, 5000, 8000, 12000] },
+    )
+    .toBe("succeeded");
+
+  for (const install of installs) {
+    const card = page.locator("ul.list > li.card").filter({ hasText: install.provider_id });
+    await expect(card.getByText("Install: succeeded")).toBeVisible({ timeout: 60_000 });
   }
 });

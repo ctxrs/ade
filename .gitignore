@@ -41,6 +41,7 @@ test-results/
 # Supabase local state
 supabase/.branches/
 supabase/.temp/
+supabase/supabase/
 
 # ctx temp/scratch directories (repo-scoped)
 **/.ctx/ctx-pack/tmp/
