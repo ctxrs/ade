@@ -17,9 +17,9 @@
     "mobile:ios": "pnpm -C apps/mobile ios",
     "mobile:web": "pnpm -C apps/mobile web",
     "rust:fmt": "cargo fmt --all -- --check",
-    "rust:clippy": "CARGO_TARGET_DIR=.turbo/cargo-target cargo clippy --workspace --all-targets --all-features -- -D warnings",
-    "rust:test": "CARGO_TARGET_DIR=.turbo/cargo-target cargo test -q",
-    "verify:quick": "turbo run typecheck --filter=ctx-web --filter=mobile --filter=@ctx/design --filter=@ctx/types --cache-dir=/home/example-user/.cache/turbo/ctx-monorepo --output-logs=errors-only && turbo run test:quiet --filter=ctx-web --filter=mobile --cache-dir=/home/example-user/.cache/turbo/ctx-monorepo --output-logs=errors-only && turbo run rust:fmt rust:clippy rust:test --filter=ctx-monorepo --cache-dir=/home/example-user/.cache/turbo/ctx-monorepo --output-logs=errors-only"
+    "rust:clippy": "CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-$HOME/.cache/cargo/ctx-monorepo} cargo clippy --workspace --all-targets --all-features -- -D warnings",
+    "rust:test": "CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-$HOME/.cache/cargo/ctx-monorepo} cargo test -q",
+    "verify:quick": "turbo run typecheck --filter=ctx-web --filter=mobile --filter=@ctx/design --filter=@ctx/types --cache-dir=${TURBO_CACHE_DIR:-$HOME/.cache/turbo/ctx-monorepo} --output-logs=errors-only && turbo run test:quiet --filter=ctx-web --filter=mobile --cache-dir=${TURBO_CACHE_DIR:-$HOME/.cache/turbo/ctx-monorepo} --output-logs=errors-only && turbo run rust:fmt rust:clippy rust:test --filter=ctx-monorepo --cache-dir=${TURBO_CACHE_DIR:-$HOME/.cache/turbo/ctx-monorepo} --output-logs=errors-only"
   },
   "devDependencies": {
     "turbo": "^2.3.0",
