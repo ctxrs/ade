@@ -1198,10 +1198,11 @@ export function SessionView({
   const handleAtBottomStateChange = useCallback(
     (isAtBottom: boolean) => {
       if (restoringScrollRef.current) return;
+      if (!isAtBottom && scrollState?.stickToBottom && !userScrolledRef.current) return;
       setAtBottom(isAtBottom);
       if (isAtBottom) setHasNewActivity(false);
     },
-    [setAtBottom, setHasNewActivity],
+    [scrollState?.stickToBottom, setAtBottom, setHasNewActivity],
   );
 
   const handleWorkbenchRangeChanged = useCallback(
