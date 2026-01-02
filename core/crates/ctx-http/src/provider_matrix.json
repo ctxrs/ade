@@ -12,38 +12,13 @@
       },
       "managed_install": {
         "kind": "archive",
-        "version": "0.7.4-ctx.3",
+        "version": "0.7.4-ctx.4",
         "args": [],
         "targets": {
-          "darwin-aarch64": {
-            "url": "https://github.com/ctxrs/codex-acp/releases/download/v0.7.4-ctx.3/codex-acp-0.7.4-ctx.3-aarch64-apple-darwin.tar.gz",
-            "archive": "tar_gz",
-            "bin_path": "codex-acp"
-          },
-          "darwin-x86_64": {
-            "url": "https://github.com/ctxrs/codex-acp/releases/download/v0.7.4-ctx.3/codex-acp-0.7.4-ctx.3-x86_64-apple-darwin.tar.gz",
-            "archive": "tar_gz",
-            "bin_path": "codex-acp"
-          },
-          "linux-aarch64": {
-            "url": "https://github.com/ctxrs/codex-acp/releases/download/v0.7.4-ctx.3/codex-acp-0.7.4-ctx.3-aarch64-unknown-linux-gnu.tar.gz",
-            "archive": "tar_gz",
-            "bin_path": "codex-acp"
-          },
           "linux-x86_64": {
-            "url": "https://github.com/ctxrs/codex-acp/releases/download/v0.7.4-ctx.3/codex-acp-0.7.4-ctx.3-x86_64-unknown-linux-gnu.tar.gz",
+            "url": "https://github.com/ctxrs/codex-acp/releases/download/v0.7.4-ctx.4/codex-acp-0.7.4-ctx.4-x86_64-unknown-linux-gnu.tar.gz",
             "archive": "tar_gz",
             "bin_path": "codex-acp"
-          },
-          "windows-x86_64": {
-            "url": "https://github.com/ctxrs/codex-acp/releases/download/v0.7.4-ctx.3/codex-acp-0.7.4-ctx.3-x86_64-pc-windows-msvc.zip",
-            "archive": "zip",
-            "bin_path": "codex-acp.exe"
-          },
-          "windows-aarch64": {
-            "url": "https://github.com/ctxrs/codex-acp/releases/download/v0.7.4-ctx.3/codex-acp-0.7.4-ctx.3-aarch64-pc-windows-msvc.zip",
-            "archive": "zip",
-            "bin_path": "codex-acp.exe"
           }
         }
       },
@@ -84,6 +59,12 @@
           "version": "0.7.4-ctx.3",
           "status": "supported",
           "context_min": "0.1.0"
+        },
+        {
+          "version": "0.7.4-ctx.4",
+          "status": "supported",
+          "context_min": "0.1.0",
+          "notes": "Linux x86_64 build only"
         }
       ]
     },
