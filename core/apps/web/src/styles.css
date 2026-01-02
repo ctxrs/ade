@@ -1753,17 +1753,13 @@ button.linklike:hover {
 }
 
 .wb-task-row:hover .wb-task-actions,
-.wb-task-row.wb-task-row-hovered .wb-task-actions,
-.wb-task-row:focus-within .wb-task-actions,
-.wb-task-row:focus-visible .wb-task-actions {
+.wb-task-row.wb-task-row-hovered .wb-task-actions {
   opacity: 1;
   pointer-events: auto;
 }
 
 .wb-task-row:hover .wb-task-meta-status,
-.wb-task-row.wb-task-row-hovered .wb-task-meta-status,
-.wb-task-row:focus-within .wb-task-meta-status,
-.wb-task-row:focus-visible .wb-task-meta-status {
+.wb-task-row.wb-task-row-hovered .wb-task-meta-status {
   opacity: 0;
 }
 
