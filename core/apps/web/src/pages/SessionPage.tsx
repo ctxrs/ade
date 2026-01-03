@@ -242,6 +242,7 @@ type ReasoningSummaryFragment = {
   text: string;
   itemId: string | null;
   summaryIndex: number | null;
+  sectionBreak: boolean;
 };
 
 function normalizeSummaryIndex(value: unknown): number | null {
@@ -268,10 +269,11 @@ function extractReasoningSummaryFragment(event: SessionEvent): ReasoningSummaryF
     payload?.acp_update?.content_fragment ??
     "";
   const text = String(fragment ?? "");
-  if (!text.trim()) return null;
+  const sectionBreak = codexMeta?.section_break === true;
+  if (!text.trim() && !sectionBreak) return null;
   const itemId = typeof codexMeta?.item_id === "string" ? codexMeta.item_id : null;
   const summaryIndex = normalizeSummaryIndex(codexMeta?.summary_index ?? codexMeta?.summaryIndex);
-  return { text, itemId, summaryIndex };
+  return { text, itemId, summaryIndex, sectionBreak };
 }
 
 function buildCustomStatusByTurnId(events: SessionEvent[]): Map<string, string> {
@@ -287,6 +289,7 @@ function buildCustomStatusByTurnId(events: SessionEvent[]): Map<string, string> 
       const nextItemId = summaryFragment.itemId;
       const nextIndex = summaryFragment.summaryIndex;
       const shouldReplace =
+        summaryFragment.sectionBreak ||
         !current ||
         (!!nextItemId && nextItemId !== current.itemId) ||
         (nextIndex != null && nextIndex !== current.summaryIndex);
