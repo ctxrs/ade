@@ -5089,12 +5089,18 @@ button.linklike:hover {
 .settings-attachments-field {
   display: grid;
   gap: 6px;
+  min-width: 0;
 }
 
 .settings-attachments-label {
   font-size: 12px;
   font-weight: 600;
   color: rgba(255, 255, 255, 0.7);
+}
+
+.settings-attachments-form .settings-control {
+  width: 100%;
+  min-width: 0;
 }
 
 .settings-attachments-actions {

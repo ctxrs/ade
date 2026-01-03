@@ -1317,7 +1317,7 @@ export default function SettingsPage() {
                   </label>
                   <input
                     id="attachments-source"
-                    className="settings-control settings-control-wide"
+                    className="settings-control"
                     value={attachmentSource}
                     onChange={(e) => setAttachmentSource(e.target.value)}
                     placeholder="git@github.com:org/repo.git"
