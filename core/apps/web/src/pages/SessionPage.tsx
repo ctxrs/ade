@@ -1767,7 +1767,7 @@ export function SessionView({
               setAtBottom(nearBottom);
               if (nearBottom) setHasNewActivity(false);
               let nextStickToBottom = stickToBottomRef.current;
-              if (trusted) {
+              if (userScroll) {
                 if (nearBottom) {
                   userScrolledRef.current = false;
                   nextStickToBottom = true;
