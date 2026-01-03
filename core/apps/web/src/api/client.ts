@@ -534,6 +534,43 @@ export const createWorkspace = (root_path: string, name?: string) =>
 export const getWorkspace = (id: string) =>
   apiAny<Workspace>(`/api/workspaces/${id}`);
 
+export type CreateWorkspaceAttachmentRequest = {
+  kind: WorkspaceAttachmentKind;
+  name: string;
+  source: string;
+  revision?: string | null;
+  subpath?: string | null;
+  mount_relpath?: string | null;
+  mode?: AttachmentMode | null;
+  update_policy?: AttachmentUpdatePolicy | null;
+};
+
+export type DeleteWorkspaceAttachmentRequest = {
+  kind: WorkspaceAttachmentKind;
+  name: string;
+};
+
+export const listWorkspaceAttachments = (workspaceId: string) =>
+  apiAny<WorkspaceAttachment[]>(`/api/workspaces/${workspaceId}/attachments`);
+
+export const syncWorkspaceAttachments = (workspaceId: string, refresh?: boolean) =>
+  apiAny<WorkspaceAttachment[]>(`/api/workspaces/${workspaceId}/attachments/sync`, {
+    method: "POST",
+    body: JSON.stringify({ refresh: Boolean(refresh) }),
+  });
+
+export const createWorkspaceAttachment = (workspaceId: string, req: CreateWorkspaceAttachmentRequest) =>
+  apiAny<WorkspaceAttachment[]>(`/api/workspaces/${workspaceId}/attachments`, {
+    method: "POST",
+    body: JSON.stringify(req),
+  });
+
+export const deleteWorkspaceAttachment = (workspaceId: string, req: DeleteWorkspaceAttachmentRequest) =>
+  apiAny<WorkspaceAttachment[]>(`/api/workspaces/${workspaceId}/attachments`, {
+    method: "DELETE",
+    body: JSON.stringify(req),
+  });
+
 export type CreateTerminalRequest = {
   task_id?: string | null;
   track_id?: string | null;
