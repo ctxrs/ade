@@ -101,7 +101,7 @@ async fn main() -> Result<()> {
                         {
                             "name": "ctx_artifacts_set",
                             "title": "Set Session Artifacts",
-                            "description": "Sets the ordered list of artifacts for the current session.",
+                            "description": "Sets the ordered list of artifacts for the current session. mp4/webm supported; .mov (video/quicktime) not supported.",
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {
