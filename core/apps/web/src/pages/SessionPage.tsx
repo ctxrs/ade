@@ -1,4 +1,5 @@
 import {
+  Fragment,
   forwardRef,
   memo,
   useCallback,
@@ -50,6 +51,7 @@ import { imageFilesToInlineAttachments } from "../utils/messageAttachments";
 import { registerDropScope } from "../utils/dragDropScopes";
 import { copyTextToClipboard } from "../utils/clipboard";
 import { desktopGetDeepLinkToken, desktopOpenFile, desktopOpenPath, isDesktopApp } from "../utils/desktop";
+import { useRelativeNowMs } from "../utils/useRelativeNowMs";
 
 type ThreadItem =
   | {
@@ -88,10 +90,10 @@ type ThreadItem =
     id: string;
     turn_id: string;
     created_at: string;
+    status: SessionTurn["status"];
     started_at: string;
     updated_at: string;
-    turn_status: SessionTurn["status"];
-    status_text?: string | null;
+    custom_status?: string | null;
   }
   | {
     kind: "tool_group";
@@ -168,6 +170,16 @@ function appendSegment(base: string, addition: string): string {
   return `${base}${needsSpace ? " " : ""}${trimmed}`;
 }
 
+function appendFragment(base: string, fragment: string): string {
+  const b = base ?? "";
+  const f = fragment ?? "";
+  if (!b) return f;
+  if (!f) return b;
+  if (f.startsWith(b)) return f;
+  if (b.endsWith(f)) return b;
+  return `${b}${f}`;
+}
+
 function markdownToPlainText(input: string): string {
   if (!input) return "";
   let text = input.replace(/\r/g, "");
@@ -182,6 +194,162 @@ function markdownToPlainText(input: string): string {
     .join("\n");
   text = text.replace(/\n{3,}/g, "\n\n");
   return text.trim();
+}
+
+const STATUS_KEY_RE = /[\s-]+/g;
+const STANDARD_STATUS_KEYS = new Set([
+  "pending",
+  "queued",
+  "in_progress",
+  "inprogress",
+  "running",
+  "completed",
+  "complete",
+  "ok",
+  "succeeded",
+  "failed",
+  "error",
+]);
+
+function normalizeStatusKey(raw: string): string {
+  return String(raw ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(STATUS_KEY_RE, "_");
+}
+
+function extractCustomToolStatus(payload: any): string | null {
+  const candidates = [
+    payload?.tool_status,
+    payload?.tool?.status,
+    payload?.status,
+    payload?.acp_update?.tool_status,
+    payload?.acp_update?.tool?.status,
+    payload?.acp_update?.status,
+    payload?.acp_update?.toolCall?.status,
+  ];
+  for (const candidate of candidates) {
+    if (typeof candidate !== "string") continue;
+    const trimmed = candidate.trim();
+    if (!trimmed) continue;
+    const key = normalizeStatusKey(trimmed);
+    if (STANDARD_STATUS_KEYS.has(key)) continue;
+    return trimmed;
+  }
+  return null;
+}
+
+type ReasoningSummaryFragment = {
+  text: string;
+  itemId: string | null;
+  summaryIndex: number | null;
+};
+
+function normalizeSummaryIndex(value: unknown): number | null {
+  if (value == null) return null;
+  const n = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function extractReasoningSummaryFragment(event: SessionEvent): ReasoningSummaryFragment | null {
+  if (event.event_type !== "thought_chunk") return null;
+  const payload = event.payload_json ?? {};
+  const meta =
+    payload?.acp_update?._meta ??
+    payload?.acp_update?.meta ??
+    payload?._meta ??
+    payload?.meta ??
+    {};
+  const codexMeta = meta?.codex ?? {};
+  const reasoningKind = codexMeta?.reasoning_kind ?? codexMeta?.reasoningKind;
+  if (reasoningKind !== "summary") return null;
+  const fragment =
+    payload?.content_fragment ??
+    payload?.acp_update?.content?.text ??
+    payload?.acp_update?.content_fragment ??
+    "";
+  const text = String(fragment ?? "");
+  if (!text.trim()) return null;
+  const itemId = typeof codexMeta?.item_id === "string" ? codexMeta.item_id : null;
+  const summaryIndex = normalizeSummaryIndex(codexMeta?.summary_index ?? codexMeta?.summaryIndex);
+  return { text, itemId, summaryIndex };
+}
+
+function buildCustomStatusByTurnId(events: SessionEvent[]): Map<string, string> {
+  const out = new Map<string, string>();
+  const summaryByTurn = new Map<string, { text: string; itemId: string | null; summaryIndex: number | null }>();
+  for (const ev of events) {
+    const eventType = String(ev.event_type ?? "");
+    const turnId = idToString((ev as any).turn_id);
+    if (!turnId) continue;
+    const summaryFragment = extractReasoningSummaryFragment(ev);
+    if (summaryFragment) {
+      const current = summaryByTurn.get(turnId);
+      const nextItemId = summaryFragment.itemId;
+      const nextIndex = summaryFragment.summaryIndex;
+      const shouldReplace =
+        !current ||
+        (!!nextItemId && nextItemId !== current.itemId) ||
+        (nextIndex != null && nextIndex !== current.summaryIndex);
+      if (shouldReplace) {
+        summaryByTurn.set(turnId, {
+          text: summaryFragment.text,
+          itemId: nextItemId ?? current?.itemId ?? null,
+          summaryIndex: nextIndex ?? current?.summaryIndex ?? null,
+        });
+      } else {
+        summaryByTurn.set(turnId, {
+          text: appendFragment(current.text, summaryFragment.text),
+          itemId: current.itemId,
+          summaryIndex: current.summaryIndex,
+        });
+      }
+    }
+    if (!["tool_call", "tool_call_update", "tool_result"].includes(eventType)) continue;
+    const status = extractCustomToolStatus(ev.payload_json ?? {});
+    if (status) out.set(turnId, status);
+  }
+  for (const [turnId, summary] of summaryByTurn) {
+    const trimmed = summary.text.trim();
+    if (!trimmed) continue;
+    if (!out.has(turnId)) out.set(turnId, trimmed);
+  }
+  return out;
+}
+
+function parseIsoMs(value?: string | null): number | null {
+  if (!value) return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function formatElapsedMs(ms: number): string {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const seconds = totalSeconds % 60;
+  const minutes = Math.floor(totalSeconds / 60) % 60;
+  const hours = Math.floor(totalSeconds / 3600);
+
+  if (hours > 0) {
+    return `${hours}h ${String(minutes).padStart(2, "0")}m`;
+  }
+  if (minutes > 0) {
+    return `${minutes}m ${String(seconds).padStart(2, "0")}s`;
+  }
+  return `${seconds}s`;
+}
+
+function humanTurnStatus(status: SessionTurn["status"]): string {
+  switch (status) {
+    case "completed":
+      return "Completed";
+    case "interrupted":
+    case "failed":
+      return "Interrupted";
+    case "queued":
+    case "running":
+    default:
+      return "Working";
+  }
 }
 type WorkbenchThreadView = {
   groups: Array<{
@@ -649,6 +817,8 @@ export function SessionView({
   const session: Session | null = entry?.session ?? null;
   const worktreeId = session ? idToString(session.worktree_id) : null;
   const turns = entry?.turns ?? [];
+  const hasRunningTurn = turns.some((turn) => turn.status === "running" || turn.status === "queued");
+  const nowMs = useRelativeNowMs(hasRunningTurn ? 1000 : 0);
   const turnToolsByTurnId = entry?.turnToolsByTurnId ?? {};
   const turnToolsLoading = entry?.turnToolsLoading ?? [];
   const toolSummariesReady = entry?.toolSummariesReady ?? false;
@@ -1482,6 +1652,7 @@ export function SessionView({
     expandedTurnDetailsById,
     handleFileOpenError,
     id,
+    nowMs,
     supervisor,
     nowMs,
     turnToolsLoading,
@@ -2233,7 +2404,14 @@ function WorkbenchToolRow({
       >
         <span className="wb-event-text">
           <span className="wb-tool-verb">{verb}</span>
-          {rest ? <span className="wb-tool-rest"> {rest}</span> : null}
+          {rest ? (
+            <>
+              <span className="wb-tool-sep" aria-hidden="true">
+                ·
+              </span>
+              <span className="wb-tool-rest">{rest}</span>
+            </>
+          ) : null}
         </span>
       </button>
       {hasDetails && expanded && (
@@ -2273,23 +2451,21 @@ function WorkbenchTurnStatusRow({
   item: Extract<ThreadItem, { kind: "turn_status" }>;
   nowMs: number;
 }) {
-  const startedAt = Date.parse(item.started_at);
-  const updatedAt = Date.parse(item.updated_at);
-  const isActive = item.turn_status === "running" || item.turn_status === "queued";
-  const endMs = isActive ? nowMs : Number.isFinite(updatedAt) ? updatedAt : nowMs;
-  const elapsed = Number.isFinite(startedAt) ? (endMs - startedAt) / 1000 : 0;
-
-  let statusText = String(item.status_text ?? "").trim();
-  if (!statusText) statusText = "Working";
-  if (item.turn_status === "interrupted") statusText = "Interrupted";
-  else if (item.turn_status === "failed") statusText = "Failed";
-  else if (item.turn_status === "completed") statusText = "Completed";
+  const isRunning = item.status === "running" || item.status === "queued";
+  const customStatus = String(item.custom_status ?? "").trim();
+  const statusLabel = isRunning && customStatus ? customStatus : humanTurnStatus(item.status);
+  const startMs = parseIsoMs(item.started_at);
+  const endMs = isRunning ? nowMs : parseIsoMs(item.updated_at) ?? nowMs;
+  const elapsedMs = startMs != null && endMs != null ? Math.max(0, endMs - startMs) : 0;
+  const elapsedLabel = formatElapsedMs(elapsedMs);
 
   return (
     <div className="wb-turn-status">
-      <span className="wb-turn-status-text">{statusText}</span>
-      <span className="wb-turn-status-sep"> - </span>
-      <span className="wb-turn-status-time">{formatElapsedSeconds(elapsed)}</span>
+      <span className="wb-turn-status-label">{statusLabel}</span>
+      <span className="wb-turn-status-dot" aria-hidden="true">
+        ·
+      </span>
+      <span className="wb-turn-status-time">{elapsedLabel}</span>
     </div>
   );
 }
@@ -2372,6 +2548,87 @@ function WorkbenchToolGroupRow({
   );
 }
 
+function ToolCard({ item }: { item: Extract<ThreadItem, { kind: "tool" }> }) {
+  const [expanded, setExpanded] = useState(false);
+  const isRunning = item.status === "in_progress" || item.status === "pending";
+  const isFailed = item.status === "failed";
+  const hasOutput = item.output_text.trim().length > 0;
+  const shouldDefaultOpen = item.tool_kind === "execute" && isRunning;
+  const isOpen = expanded || shouldDefaultOpen;
+  const summary = useMemo(() => toolSummaryLine(item.tool_kind, item.input), [item.tool_kind, item.input]);
+  const path = item.locations?.length === 1 ? item.locations[0]?.path : null;
+  const subtitleItems: ReactNode[] = [
+    <span key="status" className={`pill ${isFailed ? "err" : isRunning ? "run" : "ok"}`}>
+      {humanToolStatus(item.status)}
+    </span>,
+  ];
+  if (path) subtitleItems.push(<span key="path" className="muted tool-path">{path}</span>);
+  if (summary) subtitleItems.push(<span key="summary" className="muted tool-summary">{summary}</span>);
+
+  return (
+    <div className={`tool-card ${isOpen ? "expanded" : ""}`}>
+      <button
+        type="button"
+        className="tool-header"
+        onClick={() => setExpanded((e) => !e)}
+        aria-expanded={isOpen}
+        aria-controls={`tool-${item.id}`}
+      >
+        <div className="tool-header-left">
+          <span className={`tool-icon kind-${item.tool_kind}`}>{toolKindIcon(item.tool_kind)}</span>
+          <div className="tool-title-wrap">
+            <div className="tool-title">{item.title}</div>
+            <div className="tool-subtitle">
+              {subtitleItems.map((node, idx) => (
+                <Fragment key={idx}>
+                  {idx > 0 && (
+                    <span className="tool-status-dot" aria-hidden="true">
+                      ·
+                    </span>
+                  )}
+                  {node}
+                </Fragment>
+              ))}
+            </div>
+          </div>
+        </div>
+        <div className="tool-header-right">
+          <span className="muted">{new Date(item.updated_at).toLocaleTimeString()}</span>
+          <span className="thinking-chev">{isOpen ? "▴" : "▾"}</span>
+        </div>
+      </button>
+
+      {isOpen && (
+        <div id={`tool-${item.id}`} className="tool-body">
+          {item.input && (
+            <div className="tool-section">
+              <div className="tool-section-title">Input</div>
+              <pre className="tool-pre">{formatToolInput(item.tool_kind, item.input)}</pre>
+            </div>
+          )}
+          {hasOutput && (
+            <div className="tool-section">
+              <div className="tool-section-title">Output</div>
+              {looksLikeMarkdown(item.output_text) ? (
+                <div className="tool-markdown">
+                  <Markdown content={item.output_text} />
+                </div>
+              ) : (
+                <pre className="tool-pre tool-output">{item.output_text}</pre>
+              )}
+            </div>
+          )}
+          <details className="tool-raw">
+            <summary className="link">
+              Raw event {item.updates_seen > 1 ? `(updated ${item.updates_seen}×)` : ""}
+            </summary>
+            <pre className="json">{JSON.stringify(item.raw, null, 2)}</pre>
+          </details>
+        </div>
+      )}
+    </div>
+  );
+}
 function DebugPanel({ events }: { events: SessionEvent[] }) {
   const [open, setOpen] = useState(false);
   const kinds = useMemo(() => {
@@ -3078,6 +3335,7 @@ function buildWorkbenchThreadViewModelFromTurns(
 ): WorkbenchThreadView {
   const debugEvents: SessionEvent[] = [];
   const groups: WorkbenchThreadView["groups"] = [];
+  const customStatusByTurnId = buildCustomStatusByTurnId(events);
 
   const messageById = new Map<string, Message>();
   const messagesByTurnId = new Map<string, Message[]>();
@@ -3130,7 +3388,7 @@ function buildWorkbenchThreadViewModelFromTurns(
       }
       : null;
 
-    const tools = (toolsByTurnId[turnId] ?? []).map((tool) => {
+    let tools = (toolsByTurnId[turnId] ?? []).map((tool) => {
       const toolKind = String(tool.tool_kind ?? "tool");
       const title = String(tool.title ?? humanToolKind(toolKind));
       const summaryOnly = (tool as any).summary_only === true;
@@ -3154,13 +3412,12 @@ function buildWorkbenchThreadViewModelFromTurns(
       } satisfies Extract<ThreadItem, { kind: "tool" }>;
     });
 
-    const { activity, tools: activityTools } = buildTurnActivityTimeline({
+    const { activity } = buildTurnActivityTimeline({
       turnId,
       turn,
       tools,
       events: eventsByTurnId.get(turnId) ?? [],
     });
-    const hasToolDetails = activityTools.length > 0;
 
     const assistantMessages = (messagesByTurnId.get(turnId) ?? [])
       .filter((m) => m.role === "assistant")
@@ -3249,37 +3506,20 @@ function buildWorkbenchThreadViewModelFromTurns(
 
     const items: ThreadItem[] = timeline.map((entry) => entry.item);
 
-    if (!hasToolDetails && (turn.tool_total ?? 0) > 0) {
-      items.unshift({
-        kind: "tool_group",
-        id: `tool-group-${turnId}`,
-        turn_id: turnId,
-        created_at: turn.started_at,
-        updated_at: turn.updated_at,
-        tool_total: turn.tool_total ?? 0,
-        tool_pending: turn.tool_pending ?? 0,
-        tool_running: turn.tool_running ?? 0,
-        tool_completed: turn.tool_completed ?? 0,
-        tool_failed: turn.tool_failed ?? 0,
-        tools: [],
-        thought: "",
-      });
-    }
-
     if (items.length === 0) {
       items.push({ kind: "spacer", id: `spacer-${turnId}`, created_at: turn.started_at });
     }
 
-    const statusText = statusByTurnId.get(turnId)?.text ?? null;
+    const statusText = customStatusByTurnId.get(turnId) ?? statusByTurnId.get(turnId)?.text ?? null;
     items.push({
       kind: "turn_status",
       id: `turn-status-${turnId}`,
       turn_id: turnId,
       created_at: turn.updated_at ?? turn.started_at,
+      status: turn.status,
       started_at: turn.started_at,
       updated_at: turn.updated_at ?? turn.started_at,
-      turn_status: turn.status,
-      status_text: statusText,
+      custom_status: statusText,
     });
 
     groups.push({ key: `turn-${turnId}`, header, items });

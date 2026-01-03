@@ -1049,10 +1049,14 @@ button.linklike:hover {
 
 .tool-subtitle {
   display: flex;
-  gap: 8px;
+  gap: 0;
   align-items: center;
   min-width: 0;
   overflow: hidden;
+  font-family: inherit;
+  font-size: 12px;
+  font-style: italic;
+  color: var(--muted);
 }
 
 .tool-path,
@@ -3742,6 +3746,8 @@ button.linklike:hover {
   cursor: default;
   color: var(--muted);
   font-size: 12px;
+  font-family: inherit;
+  font-style: italic;
 }
 
 .wb-event-row[aria-expanded] {
@@ -3796,11 +3802,23 @@ button.linklike:hover {
 
 .wb-tool-verb {
   color: var(--text);
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .wb-tool-rest {
+  color: inherit;
+}
+
+.wb-tool-sep {
+  color: inherit;
+  opacity: 0.65;
+  padding: 0 4px;
+}
+
+.tool-status-dot {
   color: var(--muted);
+  opacity: 0.65;
+  padding: 0 6px;
 }
 
 .wb-tool-details {
@@ -3887,6 +3905,21 @@ button.linklike:hover {
   padding: 0 2px 4px 2px;
   min-width: 0;
   max-width: 100%;
+}
+
+.wb-turn-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 2px 4px;
+  font-size: 12px;
+  font-style: italic;
+  font-family: inherit;
+  color: var(--muted);
+}
+
+.wb-turn-status-dot {
+  color: inherit;
 }
 
 .wb-assistant-body {
