@@ -30,6 +30,7 @@ pub struct QueuedMessage {
 }
 
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 pub enum SchedulerCommand {
     Enqueue(QueuedMessage),
     RemoveQueued(MessageId),

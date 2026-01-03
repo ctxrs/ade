@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
@@ -7,12 +8,15 @@ use chrono::{DateTime, Utc};
 use opentelemetry::global;
 use opentelemetry::metrics::{Counter, Histogram, Meter, MeterProvider, Unit};
 use opentelemetry::propagation::Extractor;
-use opentelemetry::trace::{Span, SpanBuilder, SpanKind, TraceId, Tracer};
+use opentelemetry::trace::{Span, SpanBuilder, SpanKind, TraceId, Tracer, TracerProvider};
 use opentelemetry::{Context as OtelContext, KeyValue};
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::metrics::SdkMeterProvider;
 use opentelemetry_sdk::propagation::TraceContextPropagator;
-use opentelemetry_sdk::trace::{Config as TraceConfig, Sampler, Span as SdkSpan};
+use opentelemetry_sdk::trace::{
+    BatchSpanProcessor, Config as TraceConfig, Sampler, Span as SdkSpan,
+    TracerProvider as SdkTracerProvider,
+};
 use opentelemetry_sdk::{runtime, Resource};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
@@ -23,6 +27,7 @@ use crate::logs;
 const PERF_LOG_PREFIX: &str = "perf-telemetry-";
 const PERF_LOG_SUFFIX: &str = ".jsonl";
 const PERF_CHANNEL_SEND_TIMEOUT: Duration = Duration::from_millis(250);
+static FIRST_REMOTE_EXPORT: AtomicBool = AtomicBool::new(false);
 
 const DEFAULT_TRACE_SAMPLE_RATE: f64 = 0.01;
 const DEFAULT_TRACE_SLOW_MS: u64 = 2000;
@@ -353,16 +358,9 @@ enum PerfCommand {
     UpdateRemoteEnabled(bool),
 }
 
+#[derive(Default)]
 struct PerfAggregator {
     metrics: HashMap<MetricKey, MetricWindow>,
-}
-
-impl Default for PerfAggregator {
-    fn default() -> Self {
-        Self {
-            metrics: HashMap::new(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -491,6 +489,8 @@ impl PerfAggregator {
 struct OtelRuntime {
     tracer: opentelemetry_sdk::trace::Tracer,
     slow_tracer: opentelemetry_sdk::trace::Tracer,
+    _trace_provider: opentelemetry_sdk::trace::TracerProvider,
+    _slow_trace_provider: opentelemetry_sdk::trace::TracerProvider,
     meter: Meter,
     _meter_provider: SdkMeterProvider,
     registry: Mutex<MetricRegistry>,
@@ -576,6 +576,10 @@ async fn perf_worker(
 }
 
 fn export_metric(runtime: &OtelRuntime, metric: &PerfMetric, cfg: &PerfTelemetryConfig) {
+    let is_first = !FIRST_REMOTE_EXPORT.swap(true, Ordering::Relaxed);
+    if is_first {
+        tracing::info!(metric = %metric.name, "exporting perf metric via OTLP");
+    }
     let labels = filter_labels(&metric.labels, cfg);
     let attrs = labels_to_kvs(&labels);
     let mut registry = runtime.registry.lock().unwrap();
@@ -590,10 +594,33 @@ fn export_metric(runtime: &OtelRuntime, metric: &PerfMetric, cfg: &PerfTelemetry
         }
         PerfMetricKind::Gauge => {}
     }
+    drop(registry);
+
+    if is_first {
+        let meter_provider = runtime._meter_provider.clone();
+        tokio::spawn(async move {
+            let flush = tokio::task::spawn_blocking(move || meter_provider.force_flush());
+            match timeout(Duration::from_secs(5), flush).await {
+                Ok(Ok(Ok(()))) => tracing::info!("forced flush perf metrics"),
+                Ok(Ok(Err(err))) => {
+                    tracing::warn!("failed to force flush perf metrics: {err}")
+                }
+                Ok(Err(err)) => tracing::warn!("failed to force flush perf metrics task: {err}"),
+                Err(_) => tracing::warn!("force flush perf metrics timed out"),
+            }
+        });
+    }
 }
 
 fn build_otel(cfg: &PerfTelemetryConfig) -> Option<Arc<OtelRuntime>> {
     let endpoint = cfg.otlp_endpoint.as_ref()?;
+    let trace_endpoint = otlp_endpoint_for_signal(endpoint, "traces");
+    let metric_endpoint = otlp_endpoint_for_signal(endpoint, "metrics");
+    tracing::info!(
+        otlp_traces_endpoint = %trace_endpoint,
+        otlp_metrics_endpoint = %metric_endpoint,
+        "perf telemetry OTLP exporter configured"
+    );
     let resource = Resource::new(vec![
         KeyValue::new("service.name", "ctx-daemon"),
         KeyValue::new("service.version", env!("CARGO_PKG_VERSION").to_string()),
@@ -605,50 +632,59 @@ fn build_otel(cfg: &PerfTelemetryConfig) -> Option<Arc<OtelRuntime>> {
 
     let trace_exporter = opentelemetry_otlp::new_exporter()
         .http()
-        .with_endpoint(endpoint)
+        .with_endpoint(trace_endpoint.clone())
         .with_headers(cfg.otlp_headers.clone());
 
-    let trace_config = TraceConfig::default()
-        .with_resource(resource.clone())
-        .with_sampler(Sampler::ParentBased(Box::new(Sampler::TraceIdRatioBased(
-            cfg.traces_sample_rate,
-        ))));
-    let tracer = match opentelemetry_otlp::new_pipeline()
-        .tracing()
-        .with_exporter(trace_exporter)
-        .with_trace_config(trace_config)
-        .install_batch(runtime::Tokio)
-    {
-        Ok(tracer) => tracer,
+    let trace_exporter = match trace_exporter.build_span_exporter() {
+        Ok(exporter) => exporter,
         Err(err) => {
             tracing::warn!("failed to initialize OTLP trace exporter: {err}");
             return None;
         }
     };
 
+    let trace_config = TraceConfig::default()
+        .with_resource(resource.clone())
+        .with_sampler(Sampler::ParentBased(Box::new(Sampler::TraceIdRatioBased(
+            cfg.traces_sample_rate,
+        ))));
+    let trace_processor = BatchSpanProcessor::builder(trace_exporter, runtime::Tokio).build();
+    let trace_provider = SdkTracerProvider::builder()
+        .with_span_processor(trace_processor)
+        .with_config(trace_config)
+        .build();
+    let tracer = trace_provider
+        .tracer_builder("ctx-daemon")
+        .with_version(env!("CARGO_PKG_VERSION"))
+        .build();
+
     let slow_exporter = opentelemetry_otlp::new_exporter()
         .http()
-        .with_endpoint(endpoint)
+        .with_endpoint(trace_endpoint)
         .with_headers(cfg.otlp_headers.clone());
-    let slow_config = TraceConfig::default()
-        .with_resource(resource.clone())
-        .with_sampler(Sampler::AlwaysOn);
-    let slow_tracer = match opentelemetry_otlp::new_pipeline()
-        .tracing()
-        .with_exporter(slow_exporter)
-        .with_trace_config(slow_config)
-        .install_batch(runtime::Tokio)
-    {
-        Ok(tracer) => tracer,
+    let slow_exporter = match slow_exporter.build_span_exporter() {
+        Ok(exporter) => exporter,
         Err(err) => {
             tracing::warn!("failed to initialize OTLP slow trace exporter: {err}");
             return None;
         }
     };
+    let slow_config = TraceConfig::default()
+        .with_resource(resource.clone())
+        .with_sampler(Sampler::AlwaysOn);
+    let slow_processor = BatchSpanProcessor::builder(slow_exporter, runtime::Tokio).build();
+    let slow_trace_provider = SdkTracerProvider::builder()
+        .with_span_processor(slow_processor)
+        .with_config(slow_config)
+        .build();
+    let slow_tracer = slow_trace_provider
+        .tracer_builder("ctx-daemon-slow")
+        .with_version(env!("CARGO_PKG_VERSION"))
+        .build();
 
     let metric_exporter = opentelemetry_otlp::new_exporter()
         .http()
-        .with_endpoint(endpoint)
+        .with_endpoint(metric_endpoint)
         .with_headers(cfg.otlp_headers.clone());
     let meter_provider = match opentelemetry_otlp::new_pipeline()
         .metrics(runtime::Tokio)
@@ -667,10 +703,23 @@ fn build_otel(cfg: &PerfTelemetryConfig) -> Option<Arc<OtelRuntime>> {
     Some(Arc::new(OtelRuntime {
         tracer,
         slow_tracer,
+        _trace_provider: trace_provider,
+        _slow_trace_provider: slow_trace_provider,
         meter,
         _meter_provider: meter_provider,
         registry: Mutex::new(MetricRegistry::default()),
     }))
+}
+
+fn otlp_endpoint_for_signal(base: &str, signal: &str) -> String {
+    let trimmed = base.trim_end_matches('/');
+    if let Some(prefix) = trimmed.strip_suffix("/v1") {
+        return format!("{}/v1/{}", prefix, signal);
+    }
+    if let Some((prefix, _)) = trimmed.rsplit_once("/v1/") {
+        return format!("{}/v1/{}", prefix, signal);
+    }
+    format!("{}/v1/{}", trimmed, signal)
 }
 
 fn filter_labels(
