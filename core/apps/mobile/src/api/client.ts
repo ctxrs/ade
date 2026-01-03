@@ -467,9 +467,15 @@ export const createSession = (conn: ConnectionConfig, trackId: string, provider_
     body: JSON.stringify({ provider_id, model_id }),
   });
 
-export const getSessionHead = (conn: ConnectionConfig, sessionId: string, limit?: number) => {
+export const getSessionHead = (
+  conn: ConnectionConfig,
+  sessionId: string,
+  limit?: number,
+  includeEvents?: boolean,
+) => {
   const qs = new URLSearchParams();
   if (limit) qs.set("limit", String(limit));
+  if (includeEvents !== undefined) qs.set("include_events", includeEvents ? "1" : "0");
   const suffix = qs.toString() ? `?${qs.toString()}` : "";
   return fetchJson<SessionHead>(conn, `/api/sessions/${sessionId}/head${suffix}`);
 };

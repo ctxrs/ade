@@ -377,7 +377,7 @@ export class SessionSupervisor {
       this.publish();
     }
     try {
-      const head = await getSessionHead(sessionId, HEAD_LIMIT, false);
+      const head = await getSessionHead(sessionId, HEAD_LIMIT, true);
       this.applyHead(entry, head);
       await this.persistHead(entry);
       await this.ensureArtifacts(entry);

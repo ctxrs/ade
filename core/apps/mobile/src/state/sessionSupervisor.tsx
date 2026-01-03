@@ -367,7 +367,7 @@ export class SessionSupervisor {
       this.publish();
     }
     try {
-      const head = await getSessionHead(this.conn, sessionId, HEAD_LIMIT);
+      const head = await getSessionHead(this.conn, sessionId, HEAD_LIMIT, true);
       this.applyHead(entry, head);
       await this.persistHead(entry);
     } catch (e: any) {
