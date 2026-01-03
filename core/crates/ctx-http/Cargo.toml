@@ -25,6 +25,9 @@ tokio-util.workspace = true
 tracing.workspace = true
 tracing-appender = "0.2"
 tracing-subscriber.workspace = true
+opentelemetry = { version = "0.23", features = ["trace", "metrics"] }
+opentelemetry_sdk = { version = "0.23", features = ["trace", "metrics", "rt-tokio"] }
+opentelemetry-otlp = { version = "0.16", features = ["http-proto", "reqwest-client"] }
 toml = "0.8"
 uuid.workspace = true
 sysinfo.workspace = true

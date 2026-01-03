@@ -5,7 +5,7 @@ use std::sync::Arc;
 use anyhow::Context;
 use axum::body::{Body, Bytes};
 use axum::extract::ws::{Message as WsMessage, WebSocket, WebSocketUpgrade};
-use axum::extract::{Extension, Multipart, Path, Query, State};
+use axum::extract::{Extension, MatchedPath, Multipart, Path, Query, State};
 use axum::http::header;
 use axum::http::{HeaderMap, HeaderValue, Request, StatusCode};
 use axum::middleware::{self, Next};
@@ -16,6 +16,8 @@ use axum::routing::{delete, get, post};
 use axum::Json;
 use base64::Engine;
 use futures::{SinkExt, Stream, StreamExt};
+use opentelemetry::trace::SpanKind;
+use opentelemetry::KeyValue;
 use rand_core::RngCore;
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
@@ -45,6 +47,7 @@ use crate::dictation_livekit;
 use crate::installer;
 use crate::installs::{InstallId, InstallInfo, InstallProgressEvent};
 use crate::logs;
+use crate::perf_telemetry::{PerfMetric, PerfMetricKind};
 use crate::resource_governance;
 use crate::resource_utilization;
 use crate::scheduler::SchedulerCommand;
@@ -96,11 +99,15 @@ fn redact_json_value(value: serde_json::Value) -> serde_json::Value {
 
 pub fn router(state: Arc<AppState>) -> axum::Router {
     let auth_state = state.clone();
+    let perf_state = state.clone();
     let api = axum::Router::new()
         .route("/api/health", get(health))
         .route("/api/settings", get(get_settings).post(update_settings))
         .route("/api/diagnostics", get(diagnostics))
         .route("/api/resource_utilization", get(resource_utilization))
+        .route("/api/telemetry/summary", get(get_telemetry_summary))
+        .route("/api/telemetry/export", get(export_telemetry))
+        .route("/api/telemetry/client", post(post_client_telemetry))
         .route("/api/blobs", post(upload_blob))
         .route("/api/blobs/:id", get(get_blob))
         .route("/api/artifacts/:id", get(get_artifact))
@@ -341,6 +348,7 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
             "/api/dictation/livekit/stream",
             get(dictation_livekit_stream_ws),
         )
+        .route_layer(middleware::from_fn_with_state(perf_state, perf_middleware))
         .layer(middleware::from_fn_with_state(auth_state, auth_middleware))
         .with_state(state);
 
@@ -778,6 +786,11 @@ async fn update_settings(
         }
     }
     state.telemetry.update_config(telemetry_cfg).await;
+    let perf_enabled = next.telemetry.as_ref().map(|t| t.enabled).unwrap_or(true);
+    state
+        .perf_telemetry
+        .update_remote_enabled(perf_enabled)
+        .await;
     if let Err(err) = resource_governance::apply_settings(&state, &next).await {
         tracing::warn!("failed to apply resource governance settings: {err:#}");
     }
@@ -1334,6 +1347,7 @@ async fn resolve_session_root_and_file(
     path: &str,
 ) -> Result<(SessionId, WorktreeId, PathBuf, PathBuf), StatusCode> {
     let sid = SessionId(uuid::Uuid::parse_str(session_id).map_err(|_| StatusCode::BAD_REQUEST)?);
+
     let session = state
         .store
         .get_session(sid)
@@ -2194,6 +2208,7 @@ async fn lsp_code_actions_by_diagnostic_plan(
             }),
         )
     })?);
+
     let session = state
         .store
         .get_session(sid)
@@ -2367,6 +2382,7 @@ async fn lsp_execute_command_plan(
             }),
         )
     })?);
+
     let session = state
         .store
         .get_session(sid)
@@ -2595,6 +2611,7 @@ async fn lsp_rename_plan(
             }),
         )
     })?);
+
     let session = state
         .store
         .get_session(sid)
@@ -2706,6 +2723,7 @@ async fn lsp_format_plan(
             }),
         )
     })?);
+
     let session = state
         .store
         .get_session(sid)
@@ -2849,6 +2867,7 @@ async fn lsp_code_actions_plan(
             }),
         )
     })?);
+
     let session = state
         .store
         .get_session(sid)
@@ -2963,6 +2982,7 @@ async fn lsp_organize_imports_plan(
             }),
         )
     })?);
+
     let session = state
         .store
         .get_session(sid)
@@ -3586,6 +3606,63 @@ async fn apply_appimage_update(
             "Update applied in place. Quit and relaunch the desktop app to run the new version."
                 .to_string(),
     }))
+}
+
+async fn perf_middleware(
+    State(state): State<Arc<AppState>>,
+    req: Request<Body>,
+    next: Next,
+) -> Response {
+    let start = Instant::now();
+    let method = req.method().to_string();
+    let run_id = req
+        .headers()
+        .get("x-ctx-run-id")
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.to_string());
+    let endpoint = req
+        .extensions()
+        .get::<MatchedPath>()
+        .map(|m| m.as_str().to_string())
+        .unwrap_or_else(|| req.uri().path().to_string());
+    let parent = state.perf_telemetry.extract_trace_context(req.headers());
+    let span = state.perf_telemetry.start_span(
+        "http_request",
+        SpanKind::Server,
+        Some(parent),
+        vec![
+            KeyValue::new("http.method", method.clone()),
+            KeyValue::new("http.route", endpoint.clone()),
+        ],
+    );
+    let response = next.run(req).await;
+    let status = response.status().as_u16();
+    let duration_ms = start.elapsed().as_millis() as u64;
+    let success = status < 500;
+    let mut labels = HashMap::new();
+    labels.insert("endpoint".to_string(), endpoint);
+    labels.insert("method".to_string(), method);
+    labels.insert("status".to_string(), status.to_string());
+    labels.insert("success".to_string(), success.to_string());
+    labels.insert("source".to_string(), "daemon".to_string());
+    let (trace_id, span_id) = state.perf_telemetry.finish_span(
+        span,
+        Some(status.to_string()),
+        Some(success),
+        vec![KeyValue::new("http.status_code", status as i64)],
+    );
+    let metric = PerfMetric {
+        name: "http.request.duration_ms".to_string(),
+        kind: PerfMetricKind::Histogram,
+        unit: "ms".to_string(),
+        value: duration_ms as f64,
+        labels,
+    };
+    state
+        .perf_telemetry
+        .record_metric(metric, run_id, trace_id, span_id)
+        .await;
+    response
 }
 
 async fn auth_middleware(
@@ -5837,6 +5914,7 @@ async fn terminal_stream_ws(
     ws: WebSocketUpgrade,
 ) -> Result<Response, StatusCode> {
     let terminal_id = TerminalId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
+
     let session = state
         .terminals
         .get(terminal_id)
@@ -6988,6 +7066,7 @@ struct CreateSessionReq {
 async fn create_session_for_track(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
+    headers: axum::http::HeaderMap,
     Json(req): Json<CreateSessionReq>,
 ) -> Result<Json<SessionWithEnv>, StatusCode> {
     let track_id = TrackId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
@@ -6997,6 +7076,10 @@ async fn create_session_for_track(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
+    let run_id_header = headers
+        .get("x-ctx-run-id")
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.to_string());
 
     let session = state
         .store
@@ -7076,7 +7159,12 @@ async fn create_session_for_track(
 
         let prompt = saved.content.clone();
         let tx = state.ensure_scheduler(session.clone()).await;
-        let _ = tx.send(SchedulerCommand::Enqueue(saved)).await;
+        let queued = crate::scheduler::QueuedMessage {
+            message: saved,
+            enqueued_at: Instant::now(),
+            run_id: run_id_header.clone(),
+        };
+        let _ = tx.send(SchedulerCommand::Enqueue(queued)).await;
 
         let _ =
             schedule_session_title_generation(state.clone(), session.clone(), prompt, false).await;
@@ -7240,6 +7328,7 @@ async fn session_file_completions(
     const CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(10);
 
     let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
+
     let session = state
         .store
         .get_session(session_id)
@@ -7911,6 +8000,7 @@ async fn load_and_cache_worktree_files(
     worktree: &Worktree,
     now: Instant,
 ) -> Result<Arc<Vec<String>>, StatusCode> {
+    let started_at = Instant::now();
     let root = PathBuf::from(&worktree.root_path);
     let mut files = list_tracked_files(&root)
         .await
@@ -7937,6 +8027,20 @@ async fn load_and_cache_worktree_files(
             files: files.clone(),
         },
     );
+    let mut labels = HashMap::new();
+    labels.insert("event".to_string(), "list_files_worktree".to_string());
+    labels.insert("source".to_string(), "daemon".to_string());
+    let metric = PerfMetric {
+        name: "fs.list_files_ms".to_string(),
+        kind: PerfMetricKind::Histogram,
+        unit: "ms".to_string(),
+        value: started_at.elapsed().as_millis() as f64,
+        labels,
+    };
+    state
+        .perf_telemetry
+        .record_metric(metric, None, None, None)
+        .await;
     Ok(files)
 }
 
@@ -7946,6 +8050,7 @@ async fn load_and_cache_workspace_files(
     root: &PathBuf,
     now: Instant,
 ) -> Result<Arc<Vec<String>>, StatusCode> {
+    let started_at = Instant::now();
     let mut files = list_tracked_files(root)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -7971,6 +8076,20 @@ async fn load_and_cache_workspace_files(
             files: files.clone(),
         },
     );
+    let mut labels = HashMap::new();
+    labels.insert("event".to_string(), "list_files_workspace".to_string());
+    labels.insert("source".to_string(), "daemon".to_string());
+    let metric = PerfMetric {
+        name: "fs.list_files_ms".to_string(),
+        kind: PerfMetricKind::Histogram,
+        unit: "ms".to_string(),
+        value: started_at.elapsed().as_millis() as f64,
+        labels,
+    };
+    state
+        .perf_telemetry
+        .record_metric(metric, None, None, None)
+        .await;
     Ok(files)
 }
 
@@ -8249,9 +8368,15 @@ async fn schedule_session_title_generation(
 async fn post_message(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
+    headers: axum::http::HeaderMap,
     Json(req): Json<PostMessageReq>,
 ) -> Result<Json<Message>, StatusCode> {
     let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
+    let run_id_header = headers
+        .get("x-ctx-run-id")
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.to_string());
+
     let session = state
         .store
         .get_session(session_id)
@@ -8356,7 +8481,12 @@ async fn post_message(
     }
 
     let tx = state.ensure_scheduler(session.clone()).await;
-    let _ = tx.send(SchedulerCommand::Enqueue(saved.clone())).await;
+    let queued = crate::scheduler::QueuedMessage {
+        message: saved.clone(),
+        enqueued_at: Instant::now(),
+        run_id: run_id_header.clone(),
+    };
+    let _ = tx.send(SchedulerCommand::Enqueue(queued)).await;
 
     if let Ok(count) = state
         .store
@@ -8547,6 +8677,7 @@ async fn cancel_session(
     Path(id): Path<String>,
 ) -> Result<StatusCode, StatusCode> {
     let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
+
     let session = state
         .store
         .get_session(session_id)
@@ -8563,6 +8694,7 @@ async fn interrupt_session(
     Path(id): Path<String>,
 ) -> Result<StatusCode, StatusCode> {
     let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
+
     let session = state
         .store
         .get_session(session_id)
@@ -8585,6 +8717,7 @@ async fn set_session_model(
     Json(req): Json<SetSessionModelReq>,
 ) -> Result<Json<SessionWithEnv>, StatusCode> {
     let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
+
     let session = state
         .store
         .get_session(session_id)
@@ -8639,6 +8772,7 @@ async fn set_session_mode(
     Json(req): Json<SetSessionModeReq>,
 ) -> Result<StatusCode, StatusCode> {
     let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
+
     let session = state
         .store
         .get_session(session_id)
@@ -8803,6 +8937,7 @@ async fn authenticate_session(
             }),
         )
     })?);
+
     let session = state
         .store
         .get_session(session_id)
@@ -9224,6 +9359,20 @@ async fn track_diff_summary(
                 ms = %t0.elapsed().as_millis(),
             );
         }
+        let mut labels = HashMap::new();
+        labels.insert("event".to_string(), "diff_summary_cache".to_string());
+        labels.insert("source".to_string(), "daemon".to_string());
+        let metric = PerfMetric {
+            name: "fs.diff_summary_ms".to_string(),
+            kind: PerfMetricKind::Histogram,
+            unit: "ms".to_string(),
+            value: t0.elapsed().as_millis() as f64,
+            labels,
+        };
+        state
+            .perf_telemetry
+            .record_metric(metric, None, None, None)
+            .await;
         return Ok(Json(TrackDiffSummaryResponse {
             summary: entry.summary,
             too_large: entry.too_large,
@@ -9265,6 +9414,20 @@ async fn track_diff_summary(
         );
     }
 
+    let mut labels = HashMap::new();
+    labels.insert("event".to_string(), "diff_summary".to_string());
+    labels.insert("source".to_string(), "daemon".to_string());
+    let metric = PerfMetric {
+        name: "fs.diff_summary_ms".to_string(),
+        kind: PerfMetricKind::Histogram,
+        unit: "ms".to_string(),
+        value: t0.elapsed().as_millis() as f64,
+        labels,
+    };
+    state
+        .perf_telemetry
+        .record_metric(metric, None, None, None)
+        .await;
     Ok(Json(TrackDiffSummaryResponse {
         summary: entry.summary,
         too_large: entry.too_large,
@@ -9308,6 +9471,20 @@ async fn track_diff(
             bytes = diff.len(),
         );
     }
+    let mut labels = HashMap::new();
+    labels.insert("event".to_string(), "diff".to_string());
+    labels.insert("source".to_string(), "daemon".to_string());
+    let metric = PerfMetric {
+        name: "fs.diff_ms".to_string(),
+        kind: PerfMetricKind::Histogram,
+        unit: "ms".to_string(),
+        value: t0.elapsed().as_millis() as f64,
+        labels,
+    };
+    state
+        .perf_telemetry
+        .record_metric(metric, None, None, None)
+        .await;
     Ok(Json(DiffResponse { diff }))
 }
 
@@ -9480,6 +9657,20 @@ async fn track_diff_apply(
         }
     }
 
+    let mut labels = HashMap::new();
+    labels.insert("event".to_string(), "diff_apply".to_string());
+    labels.insert("source".to_string(), "daemon".to_string());
+    let metric = PerfMetric {
+        name: "fs.diff_apply_ms".to_string(),
+        kind: PerfMetricKind::Histogram,
+        unit: "ms".to_string(),
+        value: t0.elapsed().as_millis() as f64,
+        labels,
+    };
+    state
+        .perf_telemetry
+        .record_metric(metric, None, None, None)
+        .await;
     Ok(Json(DiffResponse { diff }))
 }
 
@@ -9626,4 +9817,85 @@ mod tests {
         let expected = title_generation::fallback_title_from_prompt(prompt);
         assert_eq!(updated.title, expected);
     }
+}
+
+#[derive(Debug, Deserialize)]
+struct TelemetrySummaryQuery {
+    metric: Option<String>,
+    run_id: Option<String>,
+    window_ms: Option<u64>,
+    limit: Option<u32>,
+}
+
+async fn get_telemetry_summary(
+    State(state): State<Arc<AppState>>,
+    Query(q): Query<TelemetrySummaryQuery>,
+) -> Result<Json<crate::perf_telemetry::PerfSummary>, StatusCode> {
+    let limit = q.limit.map(|v| v as usize);
+    let summary =
+        state
+            .perf_telemetry
+            .summary(q.metric.as_deref(), q.run_id.as_deref(), q.window_ms, limit);
+    Ok(Json(summary))
+}
+
+#[derive(Debug, Deserialize)]
+struct TelemetryExportQuery {
+    date: Option<String>,
+}
+
+async fn export_telemetry(
+    State(state): State<Arc<AppState>>,
+    Query(q): Query<TelemetryExportQuery>,
+) -> Result<Response, StatusCode> {
+    let date = q
+        .date
+        .unwrap_or_else(|| chrono::Utc::now().format("%Y-%m-%d").to_string());
+    let path = crate::perf_telemetry::perf_log_path_for_date(&state.data_root, &date);
+    let bytes = tokio::fs::read(&path)
+        .await
+        .map_err(|_| StatusCode::NOT_FOUND)?;
+    let mut resp = Response::new(Body::from(bytes));
+    resp.headers_mut().insert(
+        header::CONTENT_TYPE,
+        header::HeaderValue::from_static("text/plain; charset=utf-8"),
+    );
+    Ok(resp)
+}
+
+#[derive(Debug, Deserialize)]
+struct ClientTelemetryMetric {
+    name: String,
+    kind: PerfMetricKind,
+    unit: String,
+    value: f64,
+    labels: Option<HashMap<String, String>>,
+    run_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ClientTelemetryBatch {
+    events: Vec<ClientTelemetryMetric>,
+}
+
+async fn post_client_telemetry(
+    State(state): State<Arc<AppState>>,
+    Json(batch): Json<ClientTelemetryBatch>,
+) -> Result<StatusCode, StatusCode> {
+    for event in batch.events {
+        let mut labels = event.labels.unwrap_or_default();
+        labels.insert("source".to_string(), "client".to_string());
+        let metric = PerfMetric {
+            name: event.name,
+            kind: event.kind,
+            unit: event.unit,
+            value: event.value,
+            labels,
+        };
+        state
+            .perf_telemetry
+            .record_metric(metric, event.run_id, None, None)
+            .await;
+    }
+    Ok(StatusCode::NO_CONTENT)
 }

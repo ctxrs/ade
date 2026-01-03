@@ -32,6 +32,7 @@ use crate::api;
 use crate::installer;
 use crate::installs::{InstallId, InstallProgressEvent, InstallState, InstallStateKind};
 use crate::mobile_tunnel::MobileTunnelManager;
+use crate::perf_telemetry::PerfTelemetry;
 use crate::resource_governance::{self, ResourceGovernanceRuntime};
 use crate::resource_utilization::ResourceSampler;
 use crate::scheduler::{reconcile_turn_terminal_state, session_worker, SchedulerCommand};
@@ -79,6 +80,7 @@ pub struct AppState {
     pub ask_user_question: Arc<AskUserQuestionBroker>,
     pub shutdown_tx: broadcast::Sender<()>,
     pub telemetry: Telemetry,
+    pub perf_telemetry: PerfTelemetry,
     pub resource_governance: Mutex<ResourceGovernanceRuntime>,
     pub resource_sampler: Mutex<ResourceSampler>,
     pub workspace_catchup: WorkspaceCatchupHub,
@@ -188,6 +190,7 @@ impl AppState {
         let ask_user_question = Arc::new(AskUserQuestionBroker::new());
         let lsp = Arc::new(LspManager::new(lsp_cfg.clone()));
         let telemetry = Telemetry::new(data_root.clone());
+        let perf_telemetry = PerfTelemetry::new(data_root.clone());
         let workspace_catchup = WorkspaceCatchupHub::new();
         Self {
             data_root,
@@ -211,6 +214,7 @@ impl AppState {
             ask_user_question,
             shutdown_tx,
             telemetry,
+            perf_telemetry,
             resource_governance: Mutex::new(ResourceGovernanceRuntime::default()),
             resource_sampler: Mutex::new(ResourceSampler::new()),
             workspace_catchup,
@@ -961,6 +965,15 @@ pub async fn serve(
         }
     }
     state.telemetry.update_config(telemetry_cfg).await;
+    let perf_enabled = settings
+        .telemetry
+        .as_ref()
+        .map(|t| t.enabled)
+        .unwrap_or(true);
+    state
+        .perf_telemetry
+        .update_remote_enabled(perf_enabled)
+        .await;
     if let Err(err) = resource_governance::apply_settings(&state, &settings).await {
         tracing::warn!("failed to apply resource governance settings: {err:#}");
     }

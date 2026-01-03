@@ -535,6 +535,42 @@ export type ResourceUtilization = {
   workspace: ResourceWorkspaceDisk;
 };
 
+export type TelemetryMetricKind = "histogram" | "counter" | "gauge";
+
+export type TelemetryMetricSummary = {
+  name: string;
+  kind: TelemetryMetricKind;
+  unit: string;
+  labels: Record<string, string>;
+  run_id?: string | null;
+  count: number;
+  sum: number;
+  min?: number | null;
+  max?: number | null;
+  p50?: number | null;
+  p95?: number | null;
+  p99?: number | null;
+};
+
+export type TelemetrySummaryResponse = {
+  generated_at: string;
+  window_ms?: number | null;
+  metrics: TelemetryMetricSummary[];
+};
+
+export type ClientTelemetryMetric = {
+  name: string;
+  kind: TelemetryMetricKind;
+  unit: string;
+  value: number;
+  labels?: Record<string, string>;
+  run_id?: string | null;
+};
+
+export type ClientTelemetryBatch = {
+  events: ClientTelemetryMetric[];
+};
+
 export type MobileConnectionProfile = {
   id: string;
   label: string;

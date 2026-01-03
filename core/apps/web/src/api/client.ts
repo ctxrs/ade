@@ -9,6 +9,8 @@ import type {
   MobileDeviceRegistration,
   ProviderStatus,
   ResourceUtilization,
+  TelemetrySummaryResponse,
+  ClientTelemetryBatch,
   Session,
   SessionEvent,
   SessionTurn,
@@ -51,6 +53,8 @@ export type {
   MobileDeviceRegistration,
   ProviderStatus,
   ResourceUtilization,
+  TelemetrySummaryResponse,
+  ClientTelemetryBatch,
   Session,
   SessionEvent,
   SessionTurn,
@@ -277,14 +281,33 @@ const api = async <T>(path: string, init?: RequestInit): Promise<T> => {
       Object.assign(extraHeaders, init.headers as any);
     }
   }
-  const res = await fetch(path, {
-    headers: {
-      "content-type": "application/json",
-      ...(token ? { authorization: `Bearer ${token}` } : {}),
-      ...extraHeaders,
-    },
-    ...init,
-  });
+  const traceparent = createTraceparent();
+  if (traceparent && !extraHeaders.traceparent) {
+    extraHeaders.traceparent = traceparent;
+  }
+  const runId = getTelemetryRunId();
+  if (runId && !extraHeaders["x-ctx-run-id"]) {
+    extraHeaders["x-ctx-run-id"] = runId;
+  }
+  const method = init?.method ? String(init.method) : "GET";
+  const start = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
+  let res: Response;
+  try {
+    res = await fetch(path, {
+      headers: {
+        "content-type": "application/json",
+        ...(token ? { authorization: `Bearer ${token}` } : {}),
+        ...extraHeaders,
+      },
+      ...init,
+    });
+  } catch (err) {
+    const end = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
+    recordClientApiError(path, method, end - start, runId);
+    throw err;
+  }
+  const end = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
+  recordClientApiMetric(path, method, res.status, res.status < 500, end - start, runId);
 
   const looksLikeHtml = (text: string): boolean => {
     const t = String(text || "").trimStart().toLowerCase();
@@ -365,6 +388,14 @@ const desktopApi = async <T>(path: string, init?: RequestInit): Promise<T> => {
       Object.assign(extraHeaders, init.headers as any);
     }
   }
+  const traceparent = createTraceparent();
+  if (traceparent && !extraHeaders.traceparent) {
+    extraHeaders.traceparent = traceparent;
+  }
+  const runId = getTelemetryRunId();
+  if (runId && !extraHeaders["x-ctx-run-id"]) {
+    extraHeaders["x-ctx-run-id"] = runId;
+  }
 
   const method = init?.method ? String(init.method) : "GET";
   const body =
@@ -374,15 +405,25 @@ const desktopApi = async <T>(path: string, init?: RequestInit): Promise<T> => {
         ? init.body
         : String(init.body);
 
-  const resp = await desktopDaemonRequest({
-    method,
-    path,
-    body,
-    headers: Object.entries({
-      "content-type": "application/json",
-      ...extraHeaders,
-    }),
-  });
+  const start = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
+  let resp;
+  try {
+    resp = await desktopDaemonRequest({
+      method,
+      path,
+      body,
+      headers: Object.entries({
+        "content-type": "application/json",
+        ...extraHeaders,
+      }),
+    });
+  } catch (err) {
+    const end = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
+    recordClientApiError(path, method, end - start, runId);
+    throw err;
+  }
+  const end = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
+  recordClientApiMetric(path, method, resp.status, resp.status < 500, end - start, runId);
 
   const contentType = String(resp.content_type ?? "");
   const text = String(resp.body ?? "");
@@ -446,6 +487,141 @@ const apiAny = async <T>(path: string, init?: RequestInit): Promise<T> => {
   return api<T>(path, init);
 };
 
+const CLIENT_TELEMETRY_PATH = "/api/telemetry/client";
+const CLIENT_TELEMETRY_FLUSH_MS = 1000;
+const CLIENT_TELEMETRY_MAX = 200;
+let clientTelemetryTimer: number | null = null;
+const clientTelemetryQueue: ClientTelemetryMetric[] = [];
+
+type ClientTelemetryMetric = {
+  name: string;
+  kind: "histogram" | "counter" | "gauge";
+  unit: string;
+  value: number;
+  labels?: Record<string, string>;
+  run_id?: string | null;
+};
+
+const normalizePath = (path: string): string => {
+  const uuid = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+  const numeric = /\/(\d+)(?=\/|$)/g;
+  return path.replace(uuid, ":id").replace(numeric, "/:id");
+};
+
+const toHex = (bytes: Uint8Array): string =>
+  Array.from(bytes)
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+
+const createTraceparent = (): string | null => {
+  if (typeof crypto === "undefined" || !crypto.getRandomValues) return null;
+  const traceId = new Uint8Array(16);
+  const spanId = new Uint8Array(8);
+  crypto.getRandomValues(traceId);
+  crypto.getRandomValues(spanId);
+  return `00-${toHex(traceId)}-${toHex(spanId)}-01`;
+};
+
+const getTelemetryRunId = (): string | null => {
+  try {
+    return sessionStorage.getItem("ctxRunId");
+  } catch {
+    return null;
+  }
+};
+
+const queueClientTelemetry = (event: ClientTelemetryMetric) => {
+  if (typeof window === "undefined") return;
+  if (clientTelemetryQueue.length >= CLIENT_TELEMETRY_MAX) return;
+  clientTelemetryQueue.push(event);
+  if (clientTelemetryTimer !== null) return;
+  clientTelemetryTimer = window.setTimeout(() => {
+    clientTelemetryTimer = null;
+    flushClientTelemetry().catch(() => {});
+  }, CLIENT_TELEMETRY_FLUSH_MS);
+};
+
+const shouldRecordClientTelemetry = (path: string): boolean =>
+  path.startsWith("/api/") && !path.startsWith("/api/telemetry");
+
+const recordClientApiMetric = (
+  path: string,
+  method: string,
+  status: number | null,
+  ok: boolean,
+  durationMs: number,
+  runId: string | null,
+) => {
+  if (!shouldRecordClientTelemetry(path) || typeof window === "undefined") return;
+  const endpoint = normalizePath(path);
+  queueClientTelemetry({
+    name: "client.api.duration_ms",
+    kind: "histogram",
+    unit: "ms",
+    value: durationMs,
+    run_id: runId,
+    labels: {
+      endpoint,
+      method,
+      status: status === null ? "error" : String(status),
+      success: ok ? "true" : "false",
+      source: "client",
+    },
+  });
+};
+
+const recordClientApiError = (path: string, method: string, durationMs: number, runId: string | null) => {
+  if (!shouldRecordClientTelemetry(path) || typeof window === "undefined") return;
+  const endpoint = normalizePath(path);
+  queueClientTelemetry({
+    name: "client.api.error_count",
+    kind: "counter",
+    unit: "count",
+    value: 1,
+    run_id: runId,
+    labels: {
+      endpoint,
+      method,
+      status: "error",
+      success: "false",
+      source: "client",
+    },
+  });
+  recordClientApiMetric(path, method, null, false, durationMs, runId);
+};
+
+const flushClientTelemetry = async () => {
+  if (!clientTelemetryQueue.length) return;
+  const batch: ClientTelemetryBatch = { events: clientTelemetryQueue.splice(0) };
+  const token = authToken();
+  try {
+    if (isDesktopApp()) {
+      await desktopDaemonRequest({
+        method: "POST",
+        path: CLIENT_TELEMETRY_PATH,
+        body: JSON.stringify(batch),
+        headers: Object.entries({
+          "content-type": "application/json",
+          ...(token ? { authorization: `Bearer ${token}` } : {}),
+        }),
+      });
+      return;
+    }
+    if (typeof fetch === "undefined") return;
+    await fetch(CLIENT_TELEMETRY_PATH, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        ...(token ? { authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify(batch),
+      keepalive: true,
+    });
+  } catch {
+    // Ignore telemetry upload failures.
+  }
+};
+
 export type DaemonRawResponse = {
   status: number;
   body: string;
@@ -478,6 +654,18 @@ export const daemonFetchRaw = async (path: string, init?: RequestInit): Promise<
         ? init.body
         : String(init.body);
 
+  const traceparent = createTraceparent();
+  if (traceparent && !extraHeaders.traceparent) {
+    extraHeaders.traceparent = traceparent;
+  }
+  const runId = getTelemetryRunId();
+  if (runId && !extraHeaders["x-ctx-run-id"]) {
+    extraHeaders["x-ctx-run-id"] = runId;
+  }
+
+  const start =
+    typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
+
   if (isDesktopApp()) {
     const resp = await desktopDaemonRequest({
       method,
@@ -488,6 +676,8 @@ export const daemonFetchRaw = async (path: string, init?: RequestInit): Promise<
         ...extraHeaders,
       }),
     });
+    const end = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
+    recordClientApiMetric(path, method, resp.status, resp.status < 500, end - start, runId);
     return {
       status: resp.status,
       body: String(resp.body ?? ""),
@@ -495,19 +685,27 @@ export const daemonFetchRaw = async (path: string, init?: RequestInit): Promise<
     };
   }
 
-  const res = await fetch(path, {
-    headers: {
-      ...(token ? { authorization: `Bearer ${token}` } : {}),
-      ...extraHeaders,
-    },
-    ...init,
-  });
-  const text = await res.text();
-  return {
-    status: res.status,
-    body: text,
-    content_type: res.headers.get("content-type") ?? "",
-  };
+  try {
+    const res = await fetch(path, {
+      headers: {
+        ...(token ? { authorization: `Bearer ${token}` } : {}),
+        ...extraHeaders,
+      },
+      ...init,
+    });
+    const text = await res.text();
+    const end = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
+    recordClientApiMetric(path, method, res.status, res.status < 500, end - start, runId);
+    return {
+      status: res.status,
+      body: text,
+      content_type: res.headers.get("content-type") ?? "",
+    };
+  } catch (err) {
+    const end = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
+    recordClientApiError(path, method, end - start, runId);
+    throw err;
+  }
 };
 
 const idToString = (id: any): string =>
@@ -926,6 +1124,16 @@ export const installStreamUrl = (installId: string): string => {
 
 export const getDiagnostics = () => apiAny<Diagnostics>(`/api/diagnostics`);
 
+
+export const getTelemetrySummary = (params?: { metric?: string; run_id?: string; window_ms?: number; limit?: number }) => {
+  const qs = new URLSearchParams();
+  if (params?.metric) qs.set("metric", params.metric);
+  if (params?.run_id) qs.set("run_id", params.run_id);
+  if (params?.window_ms) qs.set("window_ms", String(params.window_ms));
+  if (params?.limit) qs.set("limit", String(params.limit));
+  const suffix = qs.toString() ? `?${qs.toString()}` : "";
+  return apiAny<TelemetrySummaryResponse>(`/api/telemetry/summary${suffix}`);
+};
 export const getResourceUtilization = (workspaceId: string) =>
   apiAny<ResourceUtilization>(`/api/resource_utilization?workspace_id=${encodeURIComponent(workspaceId)}`);
 

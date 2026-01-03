@@ -19,11 +19,19 @@ use ctx_store::store::SessionTurnToolCountDeltas;
 
 use crate::daemon::AppState;
 use crate::installer;
+use crate::perf_telemetry::{PerfMetric, PerfMetricKind};
 use crate::telemetry::TelemetryEvent;
 
 #[derive(Debug)]
+pub struct QueuedMessage {
+    pub message: Message,
+    pub enqueued_at: Instant,
+    pub run_id: Option<String>,
+}
+
+#[derive(Debug)]
 pub enum SchedulerCommand {
-    Enqueue(Message),
+    Enqueue(QueuedMessage),
     RemoveQueued(MessageId),
     Cancel,
     Interrupt,
@@ -42,14 +50,18 @@ pub async fn session_worker(
     session: Session,
     mut rx: mpsc::Receiver<SchedulerCommand>,
 ) {
-    let mut queue: VecDeque<Message> = VecDeque::new();
+    let mut queue: VecDeque<QueuedMessage> = VecDeque::new();
     if let Ok(mut queued) = state
         .store
         .list_queued_messages_for_session(session.id)
         .await
     {
         for m in queued.drain(..) {
-            queue.push_back(m);
+            queue.push_back(QueuedMessage {
+                message: m,
+                enqueued_at: Instant::now(),
+                run_id: None,
+            });
         }
     }
     let mut running: Option<RunningTurn> = None;
@@ -90,7 +102,7 @@ pub async fn session_worker(
                         if running.is_some() {
                             queue.push_back(msg);
                         } else {
-                            if matches!(msg.delivery, MessageDelivery::Immediate) {
+                            if matches!(msg.message.delivery, MessageDelivery::Immediate) {
                                 suspend_queue = false;
                             }
                             queue.push_front(msg);
@@ -99,7 +111,7 @@ pub async fn session_worker(
                     Some(SchedulerCommand::RemoveQueued(id)) => {
                         let mut next = VecDeque::new();
                         while let Some(m) = queue.pop_front() {
-                            if m.id != id {
+                            if m.message.id != id {
                                 next.push_back(m);
                             }
                         }
@@ -178,7 +190,7 @@ async fn start_turn(
     session: &Session,
     workdir: &Path,
     env_target: &str,
-    message: Message,
+    queued: QueuedMessage,
 ) -> Result<RunningTurn> {
     state.wait_for_worktree_bootstrap(session.worktree_id).await;
 
@@ -189,7 +201,25 @@ async fn start_turn(
             .ok_or_else(|| anyhow!("provider not available: {}", session.provider_id))?
     };
 
-    let mut message = message;
+    let mut message = queued.message;
+    let perf_run_id = queued.run_id.clone();
+    let queue_wait_ms = queued.enqueued_at.elapsed().as_millis() as u64;
+    let mut queue_labels = HashMap::new();
+    queue_labels.insert("provider_id".to_string(), session.provider_id.clone());
+    queue_labels.insert("model_id".to_string(), session.model_id.clone());
+    queue_labels.insert("env_target".to_string(), env_target.to_string());
+    queue_labels.insert("event".to_string(), "queue_wait".to_string());
+    let queue_metric = PerfMetric {
+        name: "scheduler.queue_wait_ms".to_string(),
+        kind: PerfMetricKind::Histogram,
+        unit: "ms".to_string(),
+        value: queue_wait_ms as f64,
+        labels: queue_labels,
+    };
+    state
+        .perf_telemetry
+        .record_metric(queue_metric, perf_run_id.clone(), None, None)
+        .await;
     let run_id = message.run_id.get_or_insert_with(RunId::new).to_owned();
     let turn_id = message.turn_id.get_or_insert_with(TurnId::new).to_owned();
 
@@ -262,6 +292,7 @@ async fn start_turn(
     }
 
     let run_started_at = Instant::now();
+    let spawn_started_at = Instant::now();
     let handle = match adapter
         .run(
             TurnInput {
@@ -275,7 +306,26 @@ async fn start_turn(
         )
         .await
     {
-        Ok(handle) => handle,
+        Ok(handle) => {
+            let spawn_ms = spawn_started_at.elapsed().as_millis() as u64;
+            let mut spawn_labels = HashMap::new();
+            spawn_labels.insert("provider_id".to_string(), session.provider_id.clone());
+            spawn_labels.insert("model_id".to_string(), session.model_id.clone());
+            spawn_labels.insert("env_target".to_string(), env_target.to_string());
+            spawn_labels.insert("event".to_string(), "spawn".to_string());
+            let spawn_metric = PerfMetric {
+                name: "provider.spawn_ms".to_string(),
+                kind: PerfMetricKind::Histogram,
+                unit: "ms".to_string(),
+                value: spawn_ms as f64,
+                labels: spawn_labels,
+            };
+            state
+                .perf_telemetry
+                .record_metric(spawn_metric, perf_run_id.clone(), None, None)
+                .await;
+            handle
+        }
         Err(err) => {
             let duration_ms = run_started_at.elapsed().as_millis() as u64;
             state
@@ -300,6 +350,7 @@ async fn start_turn(
     let provider_id = session.provider_id.clone();
     let model_id = session.model_id.clone();
     let env_target = env_target.to_string();
+    let perf_run_id = perf_run_id.clone();
     let mut telemetry_emitted = false;
 
     tokio::spawn(async move {
@@ -308,9 +359,30 @@ async fn start_turn(
         let mut thought_partial = String::new();
         let mut tool_cache: HashMap<String, SessionTurnTool> = HashMap::new();
         let mut terminal_status: Option<SessionTurnStatus> = None;
+        let mut first_event_at: Option<Instant> = None;
 
         while let Some(ev) = ev_rx.recv().await {
             let mut payload = ev.payload_json.clone();
+            if first_event_at.is_none() {
+                first_event_at = Some(Instant::now());
+                let first_ms = run_started_at.elapsed().as_millis() as u64;
+                let mut first_labels = HashMap::new();
+                first_labels.insert("provider_id".to_string(), provider_id.clone());
+                first_labels.insert("model_id".to_string(), model_id.clone());
+                first_labels.insert("env_target".to_string(), env_target.clone());
+                first_labels.insert("event".to_string(), "first_event".to_string());
+                let first_metric = PerfMetric {
+                    name: "provider.first_event_ms".to_string(),
+                    kind: PerfMetricKind::Histogram,
+                    unit: "ms".to_string(),
+                    value: first_ms as f64,
+                    labels: first_labels,
+                };
+                state_for_events
+                    .perf_telemetry
+                    .record_metric(first_metric, perf_run_id.clone(), None, None)
+                    .await;
+            }
             if matches!(ev.event_type, SessionEventType::Init) {
                 if let Some(ps) = payload.get("acp_session_id").and_then(Value::as_str) {
                     let _ = store
@@ -549,6 +621,22 @@ async fn start_turn(
                         if !telemetry_emitted {
                             telemetry_emitted = true;
                             let duration_ms = run_started_at.elapsed().as_millis() as u64;
+                            let mut run_labels = HashMap::new();
+                            run_labels.insert("provider_id".to_string(), provider_id.clone());
+                            run_labels.insert("model_id".to_string(), model_id.clone());
+                            run_labels.insert("env_target".to_string(), env_target.clone());
+                            run_labels.insert("event".to_string(), "run_complete".to_string());
+                            let run_metric = PerfMetric {
+                                name: "scheduler.run_total_ms".to_string(),
+                                kind: PerfMetricKind::Histogram,
+                                unit: "ms".to_string(),
+                                value: duration_ms as f64,
+                                labels: run_labels,
+                            };
+                            state_for_events
+                                .perf_telemetry
+                                .record_metric(run_metric, perf_run_id.clone(), None, None)
+                                .await;
                             state_for_events
                                 .telemetry
                                 .emit(TelemetryEvent::provider_call(
@@ -588,6 +676,22 @@ async fn start_turn(
                         if !telemetry_emitted {
                             telemetry_emitted = true;
                             let duration_ms = run_started_at.elapsed().as_millis() as u64;
+                            let mut run_labels = HashMap::new();
+                            run_labels.insert("provider_id".to_string(), provider_id.clone());
+                            run_labels.insert("model_id".to_string(), model_id.clone());
+                            run_labels.insert("env_target".to_string(), env_target.clone());
+                            run_labels.insert("event".to_string(), "run_interrupt".to_string());
+                            let run_metric = PerfMetric {
+                                name: "scheduler.run_total_ms".to_string(),
+                                kind: PerfMetricKind::Histogram,
+                                unit: "ms".to_string(),
+                                value: duration_ms as f64,
+                                labels: run_labels,
+                            };
+                            state_for_events
+                                .perf_telemetry
+                                .record_metric(run_metric, perf_run_id.clone(), None, None)
+                                .await;
                             state_for_events
                                 .telemetry
                                 .emit(TelemetryEvent::provider_call(
@@ -632,6 +736,22 @@ async fn start_turn(
                         if !telemetry_emitted {
                             telemetry_emitted = true;
                             let duration_ms = run_started_at.elapsed().as_millis() as u64;
+                            let mut run_labels = HashMap::new();
+                            run_labels.insert("provider_id".to_string(), provider_id.clone());
+                            run_labels.insert("model_id".to_string(), model_id.clone());
+                            run_labels.insert("env_target".to_string(), env_target.clone());
+                            run_labels.insert("event".to_string(), "run_failed".to_string());
+                            let run_metric = PerfMetric {
+                                name: "scheduler.run_total_ms".to_string(),
+                                kind: PerfMetricKind::Histogram,
+                                unit: "ms".to_string(),
+                                value: duration_ms as f64,
+                                labels: run_labels,
+                            };
+                            state_for_events
+                                .perf_telemetry
+                                .record_metric(run_metric, perf_run_id.clone(), None, None)
+                                .await;
                             state_for_events
                                 .telemetry
                                 .emit(TelemetryEvent::provider_call(
