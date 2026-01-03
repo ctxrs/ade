@@ -1720,8 +1720,9 @@ export function SessionView({
                 restoreCooldownRef.current = null;
               }
             }
-            if (!trusted && !userScrolledRef.current) return;
-            if (trusted) userScrolledRef.current = true;
+            const userScroll = trusted && didScroll;
+            if (!userScroll && !userScrolledRef.current) return;
+            if (userScroll) userScrolledRef.current = true;
             if (scrollerRef.current) {
               liveScrollTopRef.current = scrollerRef.current.scrollTop;
             }
