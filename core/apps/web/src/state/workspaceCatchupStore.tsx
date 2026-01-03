@@ -6,7 +6,6 @@ import type {
   WorkspaceCatchupClientMessage,
   WorkspaceCatchupEvent,
   WorkspaceCatchupSessionSubscription,
-  WorkspaceCatchupSnapshot,
   WorkspaceCatchupTaskSummary,
   WorkspaceCatchupTrackSummary,
 } from "@ctx/types";
@@ -18,7 +17,6 @@ import {
   type WorkspaceCatchupParams,
 } from "../api/client";
 import { parseWsJson } from "../utils/wsJson";
-import { loadWorkspaceCatchupV1, saveWorkspaceCatchupV1 } from "./uiStateStore";
 
 export type WorkspaceCatchupItem = WorkspaceCatchupTaskSummary & {
   id: string;
@@ -112,7 +110,6 @@ class WorkspaceCatchupStoreImpl implements WorkspaceCatchupEventSource {
   private sessionLastEventSeq = new Map<string, number>();
   private subscriptionKey = "";
   private destroyed = false;
-  private persistTimer: number | null = null;
 
   constructor(private workspaceId: string) {
     this.snapshot = {
@@ -153,7 +150,6 @@ class WorkspaceCatchupStoreImpl implements WorkspaceCatchupEventSource {
   };
 
   init = () => {
-    this.loadCached().catch(() => {});
     this.ensureActivePage(true).catch(() => {});
     this.connectStream().catch(() => {});
   };
@@ -171,10 +167,6 @@ class WorkspaceCatchupStoreImpl implements WorkspaceCatchupEventSource {
     if (this.reconnectTimer) {
       window.clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
-    }
-    if (this.persistTimer) {
-      window.clearTimeout(this.persistTimer);
-      this.persistTimer = null;
     }
     this.listeners.clear();
     this.eventListeners.clear();
@@ -211,58 +203,6 @@ class WorkspaceCatchupStoreImpl implements WorkspaceCatchupEventSource {
     this.tasks.set(id, updated);
     this.updateCountsForMove(existing, updated);
     this.placeInOrders(updated);
-    this.publish();
-  }
-
-  private async loadCached() {
-    if (this.destroyed) return;
-    try {
-      const cached = await loadWorkspaceCatchupV1(this.workspaceId);
-      if (!cached?.snapshot) return;
-      this.applySnapshot(cached.snapshot, { isCache: true });
-    } catch {
-      // ignore cache errors
-    }
-  }
-
-  private applySnapshot(snapshot: WorkspaceCatchupSnapshot, opts?: { isCache?: boolean }) {
-    if (this.destroyed) return;
-    const isCache = opts?.isCache ?? false;
-    const active = snapshot.active;
-    const archived = snapshot.archived ?? null;
-    const activeTotal = active.total_count;
-    const archivedTotal = archived?.total_count;
-
-    this.snapshotRev = Math.max(this.snapshotRev, snapshot.snapshot_rev ?? 0);
-    this.totalActive = 0;
-    this.totalArchived = 0;
-
-    if (!isCache) {
-      this.tasks.clear();
-      this.activeOrder = [];
-      this.archivedOrder = [];
-      this.sessionLastEventSeq.clear();
-    }
-
-    active.tasks.forEach((summary) => this.upsertSummary(summary));
-    this.activeCursor = active.next_cursor ?? null;
-    this.hasMoreActive = Boolean(active.next_cursor);
-
-    if (archived) {
-      archived.tasks.forEach((summary) => this.upsertSummary(summary));
-      this.archivedCursor = archived.next_cursor ?? null;
-      this.hasMoreArchived = Boolean(archived.next_cursor);
-      this.archivedLoaded = true;
-    }
-
-    this.totalActive = typeof activeTotal === "number" ? activeTotal : this.activeOrder.length;
-    this.totalArchived =
-      typeof archivedTotal === "number"
-        ? archivedTotal
-        : this.archivedOrder.length;
-
-    this.snapshot.initialized = true;
-    this.rebuildSessionLastEventSeq();
     this.publish();
   }
 
@@ -704,64 +644,6 @@ class WorkspaceCatchupStoreImpl implements WorkspaceCatchupEventSource {
       archivedLoaded: this.archivedLoaded,
     };
     for (const l of this.listeners) l();
-    this.schedulePersist();
-  }
-
-  private schedulePersist() {
-    if (this.persistTimer || this.destroyed) return;
-    this.persistTimer = window.setTimeout(() => {
-      this.persistTimer = null;
-      this.persistSnapshot().catch(() => {});
-    }, 500);
-  }
-
-  private async persistSnapshot() {
-    if (this.destroyed || !this.snapshot.initialized) return;
-    const activeTasks = this.activeOrder
-      .map((id) => this.tasks.get(id))
-      .filter((t): t is WorkspaceCatchupItem => Boolean(t))
-      .map((t) => this.stripItemForPersist(t));
-    const archivedTasks = this.archivedOrder
-      .map((id) => this.tasks.get(id))
-      .filter((t): t is WorkspaceCatchupItem => Boolean(t))
-      .map((t) => this.stripItemForPersist(t));
-
-    const snapshot: WorkspaceCatchupSnapshot = {
-      workspace_id: this.workspaceId,
-      snapshot_rev: this.snapshotRev,
-      active: {
-        tasks: activeTasks,
-        next_cursor: this.activeCursor ?? null,
-        total_count: this.totalActive,
-      },
-      archived: this.archivedLoaded
-        ? {
-          tasks: archivedTasks,
-          next_cursor: this.archivedCursor ?? null,
-          total_count: this.totalArchived,
-        }
-        : null,
-    };
-    await saveWorkspaceCatchupV1(this.workspaceId, snapshot);
-  }
-
-  private stripItemForPersist(item: WorkspaceCatchupItem): WorkspaceCatchupTaskSummary {
-    return {
-      task: { ...item.task },
-      tracks: item.tracks.map((t) => ({
-        track: { ...t.track },
-        primary_session_id: t.primary_session_id,
-        diff_summary: t.diff_summary ? { ...t.diff_summary } : t.diff_summary,
-        sessions: t.sessions.map((s) => ({
-          session: { ...s.session },
-          last_message_at: s.last_message_at ?? null,
-          last_message_preview: s.last_message_preview ?? null,
-          last_event_seq: s.last_event_seq ?? null,
-          unread: s.unread,
-        })),
-      })),
-      sort_at: item.sort_at,
-    };
   }
 }
 
