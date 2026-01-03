@@ -5,13 +5,14 @@ use std::time::{Duration, Instant, SystemTime};
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use opentelemetry::global;
-use opentelemetry::metrics::{Counter, Histogram, Meter, Unit};
+use opentelemetry::metrics::{Counter, Histogram, Meter, MeterProvider, Unit};
 use opentelemetry::propagation::Extractor;
 use opentelemetry::trace::{Span, SpanBuilder, SpanKind, TraceId, Tracer};
 use opentelemetry::{Context as OtelContext, KeyValue};
 use opentelemetry_otlp::WithExportConfig;
-use opentelemetry_sdk::metrics::{PeriodicReader, SdkMeterProvider};
-use opentelemetry_sdk::trace::{Config as TraceConfig, Sampler, Span as SdkSpan, TracerProvider};
+use opentelemetry_sdk::metrics::SdkMeterProvider;
+use opentelemetry_sdk::propagation::TraceContextPropagator;
+use opentelemetry_sdk::trace::{Config as TraceConfig, Sampler, Span as SdkSpan};
 use opentelemetry_sdk::{runtime, Resource};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
@@ -600,48 +601,67 @@ fn build_otel(cfg: &PerfTelemetryConfig) -> Option<Arc<OtelRuntime>> {
         KeyValue::new("host.arch", std::env::consts::ARCH.to_string()),
     ]);
 
-    global::set_text_map_propagator(opentelemetry::propagation::TraceContextPropagator::new());
+    global::set_text_map_propagator(TraceContextPropagator::new());
 
     let trace_exporter = opentelemetry_otlp::new_exporter()
         .http()
         .with_endpoint(endpoint)
         .with_headers(cfg.otlp_headers.clone());
 
-    let tracer_provider = TracerProvider::builder()
-        .with_config(
-            TraceConfig::default()
-                .with_resource(resource.clone())
-                .with_sampler(Sampler::ParentBased(Box::new(Sampler::TraceIdRatioBased(
-                    cfg.traces_sample_rate,
-                )))),
-        )
-        .with_batch_exporter(trace_exporter, runtime::Tokio)
-        .build();
-    let tracer = tracer_provider.tracer("ctx-daemon");
+    let trace_config = TraceConfig::default()
+        .with_resource(resource.clone())
+        .with_sampler(Sampler::ParentBased(Box::new(Sampler::TraceIdRatioBased(
+            cfg.traces_sample_rate,
+        ))));
+    let tracer = match opentelemetry_otlp::new_pipeline()
+        .tracing()
+        .with_exporter(trace_exporter)
+        .with_trace_config(trace_config)
+        .install_batch(runtime::Tokio)
+    {
+        Ok(tracer) => tracer,
+        Err(err) => {
+            tracing::warn!("failed to initialize OTLP trace exporter: {err}");
+            return None;
+        }
+    };
 
     let slow_exporter = opentelemetry_otlp::new_exporter()
         .http()
         .with_endpoint(endpoint)
         .with_headers(cfg.otlp_headers.clone());
-    let slow_provider = TracerProvider::builder()
-        .with_config(
-            TraceConfig::default()
-                .with_resource(resource.clone())
-                .with_sampler(Sampler::AlwaysOn),
-        )
-        .with_batch_exporter(slow_exporter, runtime::Tokio)
-        .build();
-    let slow_tracer = slow_provider.tracer("ctx-daemon-slow");
+    let slow_config = TraceConfig::default()
+        .with_resource(resource.clone())
+        .with_sampler(Sampler::AlwaysOn);
+    let slow_tracer = match opentelemetry_otlp::new_pipeline()
+        .tracing()
+        .with_exporter(slow_exporter)
+        .with_trace_config(slow_config)
+        .install_batch(runtime::Tokio)
+    {
+        Ok(tracer) => tracer,
+        Err(err) => {
+            tracing::warn!("failed to initialize OTLP slow trace exporter: {err}");
+            return None;
+        }
+    };
 
     let metric_exporter = opentelemetry_otlp::new_exporter()
         .http()
         .with_endpoint(endpoint)
         .with_headers(cfg.otlp_headers.clone());
-    let reader = PeriodicReader::builder(metric_exporter, runtime::Tokio).build();
-    let meter_provider = SdkMeterProvider::builder()
+    let meter_provider = match opentelemetry_otlp::new_pipeline()
+        .metrics(runtime::Tokio)
+        .with_exporter(metric_exporter)
         .with_resource(resource)
-        .with_reader(reader)
-        .build();
+        .build()
+    {
+        Ok(provider) => provider,
+        Err(err) => {
+            tracing::warn!("failed to initialize OTLP metrics exporter: {err}");
+            return None;
+        }
+    };
     let meter = meter_provider.meter("ctx-daemon");
 
     Some(Arc::new(OtelRuntime {
@@ -746,7 +766,8 @@ async fn cleanup_old_logs(data_root: &std::path::Path, retention_days: u64) -> R
         let Ok(date) = chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d") else {
             continue;
         };
-        let date = DateTime::<Utc>::from_utc(date.and_hms_opt(0, 0, 0).unwrap_or_default(), Utc);
+        let naive = date.and_hms_opt(0, 0, 0).unwrap_or_default();
+        let date = DateTime::<Utc>::from_naive_utc_and_offset(naive, Utc);
         if date < cutoff {
             let _ = tokio::fs::remove_file(entry.path()).await;
         }
