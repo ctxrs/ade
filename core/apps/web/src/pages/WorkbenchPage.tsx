@@ -249,11 +249,6 @@ const TaskListFooter = ({ context }: { context?: TaskListContext }) => {
           <div className="wb-muted">No active tasks.</div>
         </div>
       )}
-      {activeFetchState === "loading" && (
-        <div className="wb-task-list">
-          <div className="wb-muted">Loading tasks…</div>
-        </div>
-      )}
       <div className="wb-section-header wb-section-header-archived">
         <button
           type="button"
