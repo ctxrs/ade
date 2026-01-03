@@ -51,7 +51,6 @@ import { imageFilesToInlineAttachments } from "../utils/messageAttachments";
 import { registerDropScope } from "../utils/dragDropScopes";
 import { copyTextToClipboard } from "../utils/clipboard";
 import { desktopGetDeepLinkToken, desktopOpenFile, desktopOpenPath, isDesktopApp } from "../utils/desktop";
-import { useRelativeNowMs } from "../utils/useRelativeNowMs";
 
 type ThreadItem =
   | {
@@ -817,8 +816,6 @@ export function SessionView({
   const session: Session | null = entry?.session ?? null;
   const worktreeId = session ? idToString(session.worktree_id) : null;
   const turns = entry?.turns ?? [];
-  const hasRunningTurn = turns.some((turn) => turn.status === "running" || turn.status === "queued");
-  const nowMs = useRelativeNowMs(hasRunningTurn ? 1000 : 0);
   const turnToolsByTurnId = entry?.turnToolsByTurnId ?? {};
   const turnToolsLoading = entry?.turnToolsLoading ?? [];
   const toolSummariesReady = entry?.toolSummariesReady ?? false;

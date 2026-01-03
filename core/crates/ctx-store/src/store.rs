@@ -4030,12 +4030,10 @@ fn session_event_type_to_str(event_type: &SessionEventType) -> &'static str {
         SessionEventType::ToolCallUpdate => "tool_call_update",
         SessionEventType::ToolResult => "tool_result",
         SessionEventType::Plan => "plan",
-        SessionEventType::ArtifactsSet => "artifacts_set",
         SessionEventType::Done => "done",
         SessionEventType::InterruptRequested => "interrupt_requested",
         SessionEventType::TurnInterrupted => "turn_interrupted",
         SessionEventType::Error => "error",
-        SessionEventType::ArtifactsSet => "artifacts_set",
     }
 }
 
@@ -4054,12 +4052,10 @@ fn parse_session_event_type(value: &str) -> SessionEventType {
         "tool_call_update" => SessionEventType::ToolCallUpdate,
         "tool_result" => SessionEventType::ToolResult,
         "plan" => SessionEventType::Plan,
-        "artifacts_set" => SessionEventType::ArtifactsSet,
         "done" => SessionEventType::Done,
         "interrupt_requested" => SessionEventType::InterruptRequested,
         "turn_interrupted" => SessionEventType::TurnInterrupted,
         "error" => SessionEventType::Error,
-        "artifacts_set" => SessionEventType::ArtifactsSet,
         _ => SessionEventType::Error,
     }
 }
