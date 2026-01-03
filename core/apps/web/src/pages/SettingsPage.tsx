@@ -1162,7 +1162,7 @@ export default function SettingsPage() {
 
   const anySaving = saving || editorSaving;
 
-  const Main = () => {
+  const renderMain = () => {
     if (!loaded) return <div className="settings-empty">Loading…</div>;
     if (loadError) return <div className="settings-empty settings-empty-error">{loadError}</div>;
 
@@ -2491,7 +2491,7 @@ export default function SettingsPage() {
             </div>
 
             {saveError ? <div className="settings-banner settings-banner-error">{saveError}</div> : null}
-            <Main />
+            {renderMain()}
           </div>
         </main>
       </div>
