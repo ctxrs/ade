@@ -12,6 +12,7 @@ test("workbench: inline code wraps without horizontal scroll", async ({ page, re
   const rows = page.locator(".wb-task-row");
   await expect(rows).toHaveCount(1);
   await rows.first().click();
+  await page.waitForTimeout(400);
   await expect(page.locator(".wb-session textarea.wb-active-textarea")).toBeVisible({ timeout: 20000 });
 
   const sessionId = seed.sessionIdsByTask[seed.taskIds[0]][0];
@@ -82,6 +83,7 @@ test("workbench: fenced code blocks stay within thread width", async ({ page, re
   const rows = page.locator(".wb-task-row");
   await expect(rows).toHaveCount(1);
   await rows.first().click();
+  await page.waitForTimeout(400);
   await expect(page.locator(".wb-session textarea.wb-active-textarea")).toBeVisible({ timeout: 20000 });
 
   const sessionId = seed.sessionIdsByTask[seed.taskIds[0]][0];

@@ -6261,17 +6261,20 @@ async fn delete_workspace_attachment(
             }),
         ))?;
 
-    let removed =
-        attachments::remove_attachment_config(StdPath::new(&workspace.root_path), req.kind, &req.name)
-            .await
-            .map_err(|e| {
-                (
-                    StatusCode::BAD_REQUEST,
-                    Json(ApiErrorResp {
-                        error: logs::redact_sensitive(&e.to_string()),
-                    }),
-                )
-            })?;
+    let removed = attachments::remove_attachment_config(
+        StdPath::new(&workspace.root_path),
+        req.kind,
+        &req.name,
+    )
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&e.to_string()),
+            }),
+        )
+    })?;
     if !removed {
         return Err((
             StatusCode::NOT_FOUND,

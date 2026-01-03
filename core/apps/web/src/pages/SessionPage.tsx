@@ -379,6 +379,8 @@ export function SessionView({
   const deepLinkTokenTimerRef = useRef<number | null>(null);
   const [atBottom, setAtBottom] = useState(true);
   const [hasNewActivity, setHasNewActivity] = useState(false);
+  const [stickToBottom, setStickToBottom] = useState(true);
+  const stickToBottomRef = useRef(true);
   const lastActivityCountRef = useRef(0);
   const [authMethodId, setAuthMethodId] = useState<string>("");
   const [authBusy, setAuthBusy] = useState(false);
@@ -418,6 +420,7 @@ export function SessionView({
   const restoreCooldownRef = useRef<number | null>(null);
   const restorePendingRef = useRef(true);
   const restoreRetryRef = useRef(0);
+  const pendingScrollToBottomRef = useRef(false);
   const [nowMs, setNowMs] = useState(() => Date.now());
 
   useEffect(() => {
@@ -700,6 +703,7 @@ export function SessionView({
     }
     setAtBottom(true);
     setHasNewActivity(false);
+    setStickToBottom(true);
     lastActivityCountRef.current = 0;
     setExpandedTurnHeaders({});
     setExpandedToolById({});
@@ -724,6 +728,10 @@ export function SessionView({
         window.cancelAnimationFrame(followOutputRafRef.current);
         followOutputRafRef.current = null;
       }
+      if (followOutputTimerRef.current != null) {
+        window.clearTimeout(followOutputTimerRef.current);
+        followOutputTimerRef.current = null;
+      }
     };
   }, []);
 
@@ -736,10 +744,11 @@ export function SessionView({
       const scrollTop = el.scrollTop;
       const remaining = el.scrollHeight - (scrollTop + el.clientHeight);
       const nearBottom = remaining <= bottomThresholdPx;
+      const stickToBottom = stickToBottomRef.current ? nearBottom : false;
       persistScroll({
-        stickToBottom: nearBottom,
-        anchorItemId: nearBottom ? null : latestAnchorIdRef.current,
-        scrollTop: nearBottom ? null : scrollTop,
+        stickToBottom,
+        anchorItemId: stickToBottom ? null : latestAnchorIdRef.current,
+        scrollTop: stickToBottom ? null : scrollTop,
         virtuosoState: lastScrollPersistedRef.current?.virtuosoState ?? undefined,
       });
     };
@@ -1100,10 +1109,12 @@ export function SessionView({
 
   const isActiveRef = useRef(isActive);
   isActiveRef.current = isActive;
+  stickToBottomRef.current = stickToBottom;
   const wasActiveRef = useRef(isActive);
   const prevActiveRef = useRef(isActive);
   const virtuosoPersistTimerRef = useRef<number | null>(null);
   const followOutputRafRef = useRef<number | null>(null);
+  const followOutputTimerRef = useRef<number | null>(null);
   const [restoreInProgress, setRestoreInProgress] = useState(false);
   useLayoutEffect(() => {
     if (isActive && !wasActiveRef.current) {
@@ -1112,8 +1123,12 @@ export function SessionView({
       restorePendingRef.current = !shouldUseVirtuosoRestore;
       didInitialScrollRef.current = false;
       restoringScrollRef.current = false;
-      userScrolledRef.current = false;
-      liveScrollTopRef.current = null;
+      const hasScrolledAway = userScrolledRef.current || scrollState?.stickToBottom === false;
+      userScrolledRef.current = hasScrolledAway;
+      setStickToBottom(!hasScrolledAway);
+      if (!hasScrolledAway) {
+        liveScrollTopRef.current = null;
+      }
       restoreRetryRef.current = 0;
       if (shouldUseVirtuosoRestore) {
         restoringScrollRef.current = true;
@@ -1126,7 +1141,7 @@ export function SessionView({
       }
     }
     wasActiveRef.current = isActive;
-  }, [isActive, preserveScrollOnFocus, scrollState?.virtuosoState]);
+  }, [isActive, preserveScrollOnFocus, scrollState?.stickToBottom, scrollState?.virtuosoState]);
 
   const persistCurrentScroll = useCallback(() => {
     if (!onScrollStateChange) return;
@@ -1138,12 +1153,11 @@ export function SessionView({
       recordedTop != null && Math.abs(observedTop - recordedTop) > 4 ? recordedTop : observedTop;
     const maxScrollTop = Math.max(0, el.scrollHeight - el.clientHeight);
     const scrollTop = Math.min(Math.max(rawTop, 0), maxScrollTop);
-    const remaining = el.scrollHeight - (scrollTop + el.clientHeight);
-    const nearBottom = remaining <= bottomThresholdPx;
+    const stickToBottom = stickToBottomRef.current;
     const next = {
-      stickToBottom: nearBottom,
-      anchorItemId: nearBottom ? null : latestAnchorIdRef.current,
-      scrollTop: nearBottom ? null : scrollTop,
+      stickToBottom,
+      anchorItemId: stickToBottom ? null : latestAnchorIdRef.current,
+      scrollTop: stickToBottom ? null : scrollTop,
     };
     const handle = virtuosoRef.current;
     if (handle) {
@@ -1153,7 +1167,7 @@ export function SessionView({
       return;
     }
     persistScroll(next);
-  }, [onScrollStateChange, persistScroll, bottomThresholdPx]);
+  }, [onScrollStateChange, persistScroll]);
 
   useEffect(() => {
     if (!preserveScrollOnFocus) {
@@ -1179,12 +1193,6 @@ export function SessionView({
       return;
     }
     if (!restorePendingRef.current) return;
-    if (userScrolledRef.current) {
-      restorePendingRef.current = false;
-      didInitialScrollRef.current = true;
-      return;
-    }
-
     const state = scrollState ?? { stickToBottom: true, anchorItemId: null, scrollTop: null };
     setAtBottom(state.stickToBottom);
     const restoreAnchorId = !state.stickToBottom ? (state.anchorItemId ?? null) : null;
@@ -1297,37 +1305,76 @@ export function SessionView({
   }, [threadActivityCount, atBottom]);
 
   const followOutput =
-    preserveScrollOnFocus && !isActive ? false : restoreInProgress ? false : atBottom ? "auto" : false;
+    preserveScrollOnFocus && !isActive ? false : restoreInProgress ? false : stickToBottom ? "auto" : false;
   const restoreStateFrom = preserveScrollOnFocus
     ? undefined
     : (scrollState?.virtuosoState ?? undefined) as StateSnapshot | undefined;
 
   useEffect(() => {
-    if (!atBottom) return;
+    if (!stickToBottom) return;
     if (restoreInProgress) return;
     if (preserveScrollOnFocus && !isActive) return;
     if (wbListItems.length === 0) return;
     if (followOutputRafRef.current != null) return;
+    if (followOutputTimerRef.current != null) {
+      window.clearTimeout(followOutputTimerRef.current);
+      followOutputTimerRef.current = null;
+    }
     followOutputRafRef.current = window.requestAnimationFrame(() => {
       followOutputRafRef.current = null;
-      const handle = virtuosoRef.current;
-      if (handle) {
-        handle.scrollToIndex({ index: wbListItems.length - 1, align: "end" });
-        return;
-      }
+      let attempts = 0;
+      const maxAttempts = 2;
+      const attemptScroll = () => {
+        const handle = virtuosoRef.current;
+        const el = scrollerRef.current;
+        if (!stickToBottomRef.current) return;
+        if (restoreInProgress) return;
+        if (preserveScrollOnFocus && !isActiveRef.current) return;
+        if (handle) {
+          handle.scrollToIndex({ index: wbListItems.length - 1, align: "end" });
+        }
+        if (el) el.scrollTop = el.scrollHeight;
+        if (attempts < maxAttempts) {
+          attempts += 1;
+          followOutputTimerRef.current = window.setTimeout(attemptScroll, 120);
+        }
+      };
+      attemptScroll();
+    });
+  }, [stickToBottom, eventsKey, isActive, preserveScrollOnFocus, restoreInProgress, wbListItems.length]);
+
+  const jumpToLatestWorkbench = useCallback(() => {
+    if (wbListItems.length > 0) {
+      userScrolledRef.current = false;
+      setStickToBottom(true);
+      setHasNewActivity(false);
+      virtuosoRef.current?.scrollToIndex({ index: wbListItems.length - 1, align: "end" });
       const el = scrollerRef.current;
       if (el) el.scrollTop = el.scrollHeight;
-    });
-  }, [atBottom, eventsKey, isActive, preserveScrollOnFocus, restoreInProgress, wbListItems.length]);
+    }
+  }, [virtuosoRef, wbListItems.length]);
+
+  useEffect(() => {
+    if (!pendingScrollToBottomRef.current) return;
+    if (!stickToBottom) {
+      pendingScrollToBottomRef.current = false;
+      return;
+    }
+    if (restoreInProgress) return;
+    if (preserveScrollOnFocus && !isActive) return;
+    if (wbListItems.length === 0) return;
+    pendingScrollToBottomRef.current = false;
+    jumpToLatestWorkbench();
+  }, [stickToBottom, restoreInProgress, preserveScrollOnFocus, isActive, wbListItems.length, jumpToLatestWorkbench]);
 
   const handleAtBottomStateChange = useCallback(
     (isAtBottom: boolean) => {
       if (restoringScrollRef.current) return;
-      if (!isAtBottom && scrollState?.stickToBottom && !userScrolledRef.current) return;
+      if (!isAtBottom && stickToBottom && !userScrolledRef.current) return;
       setAtBottom(isAtBottom);
       if (isAtBottom) setHasNewActivity(false);
     },
-    [scrollState?.stickToBottom, setAtBottom, setHasNewActivity],
+    [stickToBottom, setAtBottom, setHasNewActivity],
   );
 
   const handleWorkbenchRangeChanged = useCallback(
@@ -1346,12 +1393,6 @@ export function SessionView({
     supervisor.loadMoreTurns(id);
   }, [hasMoreTurns, id, supervisor]);
 
-  const jumpToLatestWorkbench = useCallback(() => {
-    if (wbListItems.length > 0) {
-      virtuosoRef.current?.scrollToIndex({ index: wbListItems.length - 1, align: "end" });
-    }
-  }, [virtuosoRef, wbListItems.length]);
-
 
   const sendNow = async () => {
     if (!id) return;
@@ -1365,6 +1406,10 @@ export function SessionView({
       // Refresh Messages immediately so user turns render without waiting for a `done` event.
       await supervisor.refreshQueue(id);
       supervisor.refreshSession(id, { watchDiff: true });
+      userScrolledRef.current = false;
+      setStickToBottom(true);
+      setHasNewActivity(false);
+      pendingScrollToBottomRef.current = true;
       setInput("");
       setDraftAttachments([]);
       try {
@@ -1691,10 +1736,25 @@ export function SessionView({
               const nearBottom = remaining <= bottomThresholdPx;
               setAtBottom(nearBottom);
               if (nearBottom) setHasNewActivity(false);
+              let nextStickToBottom = stickToBottomRef.current;
+              if (trusted) {
+                if (nearBottom) {
+                  userScrolledRef.current = false;
+                  nextStickToBottom = true;
+                } else {
+                  userScrolledRef.current = true;
+                  nextStickToBottom = false;
+                }
+              }
+              if (nextStickToBottom !== stickToBottomRef.current) {
+                stickToBottomRef.current = nextStickToBottom;
+                setStickToBottom(nextStickToBottom);
+              }
+              const persistStick = nextStickToBottom;
               const next = {
-                stickToBottom: nearBottom,
-                anchorItemId: nearBottom ? null : latestAnchorIdRef.current,
-                scrollTop: nearBottom ? null : scrollTop,
+                stickToBottom: persistStick,
+                anchorItemId: persistStick ? null : latestAnchorIdRef.current,
+                scrollTop: persistStick ? null : scrollTop,
               };
               if (virtuosoPersistTimerRef.current) {
                 window.clearTimeout(virtuosoPersistTimerRef.current);

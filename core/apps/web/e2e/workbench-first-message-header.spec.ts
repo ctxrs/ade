@@ -64,6 +64,7 @@ test("workbench: first user message renders from stream when head is stale", asy
   const rows = page.locator(".wb-task-row");
   await expect(rows).toHaveCount(1);
   await rows.first().click();
+  await page.waitForTimeout(400);
 
   const composer = page.locator(".wb-session textarea.wb-active-textarea");
   await expect(composer).toBeVisible({ timeout: 20000 });

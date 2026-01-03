@@ -26,6 +26,10 @@ test("golden path: workspace → task → session → message", async ({ page })
   await page.locator(".wb-new-composer-stack textarea.wb-composer-textarea").fill("hello");
   await page.locator(".wb-new-composer-stack button[aria-label=\"Send\"]").click();
 
-  await expect(page.locator(".wb-session textarea.wb-active-textarea")).toBeVisible();
-  await expect(page.locator(".wb-session .wb-assistant-entry")).toHaveCount(1);
+  const rows = page.locator(".wb-task-row");
+  await expect(rows).toHaveCount(1, { timeout: 20000 });
+  await rows.first().click();
+
+  await expect(page.locator(".wb-session textarea.wb-active-textarea")).toBeVisible({ timeout: 20000 });
+  await expect(page.locator(".wb-session .wb-assistant-entry")).toHaveCount(1, { timeout: 20000 });
 });

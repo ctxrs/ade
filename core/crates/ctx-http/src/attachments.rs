@@ -399,7 +399,10 @@ async fn ensure_attachment_mount(
     Ok(mount)
 }
 
-async fn cleanup_removed_attachment(state: &AppState, attachment: &WorkspaceAttachment) -> Result<()> {
+async fn cleanup_removed_attachment(
+    state: &AppState,
+    attachment: &WorkspaceAttachment,
+) -> Result<()> {
     let mounts = state
         .store
         .list_track_attachment_mounts_for_attachment(attachment.id)

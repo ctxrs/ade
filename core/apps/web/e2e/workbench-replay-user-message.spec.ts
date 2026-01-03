@@ -104,6 +104,7 @@ test("workbench: replay restores missed assistant message after stream drop", as
   const rows = page.locator(".wb-task-row");
   await expect(rows).toHaveCount(1);
   await rows.first().click();
+  await page.waitForTimeout(400);
   await expect(page.locator(".wb-session textarea.wb-active-textarea")).toBeVisible({ timeout: 20000 });
 
   await page.waitForFunction(() => (window as any).__contextStreamOpenCount > 0, null, {

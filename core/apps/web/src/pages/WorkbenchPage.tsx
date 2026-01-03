@@ -1625,16 +1625,6 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     return pickPreferredSessionId(sessions, primarySessionByTrackId[resolvedTrackId]);
   }, [activeTab, activeTrackId, trackIds, sessionsByTrack, primarySessionByTrackId]);
 
-  const defaultScrollState = useMemo<WorkbenchScrollState>(
-    () => ({
-      stickToBottom: true,
-      anchorItemId: null,
-      scrollTop: null,
-      updatedAtMs: 0,
-    }),
-    [],
-  );
-
   const renderSessionBudget = 10;
   const [recentSessionIds, setRecentSessionIds] = useState<string[]>([]);
   useEffect(() => {
@@ -1646,7 +1636,6 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   }, [activeSessionId, renderSessionBudget]);
 
   const sessionIdsToRender = useMemo(() => {
-    if (!activeSessionId) return [];
     const ids: string[] = [];
     const seen = new Set<string>();
     const push = (value: string | null | undefined) => {
@@ -1655,7 +1644,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       seen.add(id);
       ids.push(id);
     };
-    push(activeSessionId);
+    if (activeSessionId) push(activeSessionId);
     activeTaskSessionIds.forEach((id) => push(id));
     recentSessionIds.forEach((id) => push(id));
     warmSessionIds.forEach((id) => push(id));
@@ -3080,25 +3069,23 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
               )}
 
               <div className="wb-session">
-                {activeSessionId ? (
-                  sessionIdsToRender.map((sessionId) => {
-                    const scrollState =
-                      workbenchSnap.window.scrollByKey[scrollKey(sessionId)] ?? defaultScrollState;
-                    return (
-                      <WorkbenchSessionSlot
-                        key={sessionId}
-                        sessionId={sessionId}
-                        active={sessionId === activeSessionId}
-                        scrollState={scrollState}
-                        preserveScrollOnFocus={preserveScrollOnFocus}
-                      />
-                    );
-                  })
-                ) : (
+                {sessionIdsToRender.map((sessionId) => {
+                  const scrollState = workbenchSnap.window.scrollByKey[scrollKey(sessionId)] ?? null;
+                  return (
+                    <WorkbenchSessionSlot
+                      key={sessionId}
+                      sessionId={sessionId}
+                      active={sessionId === activeSessionId}
+                      scrollState={scrollState}
+                      preserveScrollOnFocus={preserveScrollOnFocus}
+                    />
+                  );
+                })}
+                {!activeSessionId ? (
                   <div className="wb-muted" style={{ padding: 16 }}>
                     Select a track with a session.
                   </div>
-                )}
+                ) : null}
               </div>
             </div>
 

@@ -11,8 +11,8 @@ import {
   workbenchDaemonKey,
 } from "./persistence";
 
-
 const WINDOW_ID_STORAGE_KEY = "contextUiWindowId.v1";
+const SCROLL_CACHE_LIMIT = 10;
 export const NEW_TASK_DRAFT_KEY = "new_task";
 
 export function sessionDraftKey(sessionId: string): string {
@@ -132,6 +132,7 @@ export class WorkbenchStore {
   private draftTimers = new Map<string, number>();
   private draftLoadsInFlight = new Map<string, Promise<void>>();
   private channel: BroadcastChannel | null = null;
+  private layoutDirtyBeforeHydrate = false;
   private shellSnapshotCache: {
     window: PersistedWorkbenchWindowV1;
     warnings: string[];
@@ -180,6 +181,40 @@ export class WorkbenchStore {
     for (const l of this.listeners) l();
   }
 
+  private markLayoutDirty() {
+    if (!this.snapshot.hydrated) {
+      this.layoutDirtyBeforeHydrate = true;
+    }
+  }
+
+  private pruneScrollByKey(
+    scrollByKey: Record<string, WorkbenchScrollState | undefined>,
+  ): Record<string, WorkbenchScrollState | undefined> {
+    const entries = Object.entries(scrollByKey)
+      .map(([key, state]) => (state && !state.stickToBottom ? ([key, state] as const) : null))
+      .filter((entry): entry is [string, WorkbenchScrollState] => Boolean(entry));
+    if (entries.length === 0) return {};
+    entries.sort((a, b) => (b[1].updatedAtMs ?? 0) - (a[1].updatedAtMs ?? 0));
+    const next: Record<string, WorkbenchScrollState | undefined> = {};
+    for (const [key, state] of entries.slice(0, SCROLL_CACHE_LIMIT)) {
+      next[key] = state;
+    }
+    return next;
+  }
+
+  private scrollByKeyEquals(
+    a: Record<string, WorkbenchScrollState | undefined>,
+    b: Record<string, WorkbenchScrollState | undefined>,
+  ): boolean {
+    const aKeys = Object.keys(a).filter((key) => a[key]);
+    const bKeys = Object.keys(b).filter((key) => b[key]);
+    if (aKeys.length !== bKeys.length) return false;
+    for (const key of aKeys) {
+      if (a[key] !== b[key]) return false;
+    }
+    return true;
+  }
+
   private addWarning(msg: string) {
     if (this.snapshot.warnings.includes(msg)) return;
     this.snapshot = { ...this.snapshot, warnings: [...this.snapshot.warnings, msg] };
@@ -214,16 +249,23 @@ export class WorkbenchStore {
     const { workspaceId, windowId } = this.snapshot;
     try {
       const loaded = await loadWorkbenchWindowV1(workspaceId, windowId);
-      if (loaded) {
+      if (loaded && !this.layoutDirtyBeforeHydrate) {
         this.snapshot = { ...this.snapshot, window: loaded };
       }
-      const migrated = await migrateLegacySelectionToWindowV1({
-        workspaceId,
-        windowId,
-        defaultWindow: this.snapshot.window,
-      });
-      if (migrated.migrated) {
-        this.snapshot = { ...this.snapshot, window: migrated.window };
+      if (!this.layoutDirtyBeforeHydrate) {
+        const migrated = await migrateLegacySelectionToWindowV1({
+          workspaceId,
+          windowId,
+          defaultWindow: this.snapshot.window,
+        });
+        if (migrated.migrated) {
+          this.snapshot = { ...this.snapshot, window: migrated.window };
+        }
+      }
+      const normalized = this.pruneScrollByKey(this.snapshot.window.scrollByKey);
+      if (!this.scrollByKeyEquals(this.snapshot.window.scrollByKey, normalized)) {
+        this.snapshot = { ...this.snapshot, window: { ...this.snapshot.window, scrollByKey: normalized } };
+        this.schedulePersistWindow(0);
       }
     } catch (e: any) {
       this.persistEnabled = false;
@@ -289,6 +331,7 @@ export class WorkbenchStore {
   }
 
   focusNewTask = () => {
+    this.markLayoutDirty();
     const win = this.snapshot.window;
     const leafId = win.focusedLeafId;
     const leaf = findLeaf(win.layout, leafId);
@@ -304,6 +347,7 @@ export class WorkbenchStore {
   focusTask = (taskId: string, trackId?: string | null, sessionId?: string | null) => {
     const tid = String(taskId).trim();
     if (!tid) return;
+    this.markLayoutDirty();
     const win = this.snapshot.window;
     const leafId = win.focusedLeafId;
     const leaf = findLeaf(win.layout, leafId);
@@ -333,6 +377,7 @@ export class WorkbenchStore {
   };
 
   setActiveTrackForActiveTask = (trackId: string | null) => {
+    this.markLayoutDirty();
     const win = this.snapshot.window;
     const leafId = win.focusedLeafId;
     const leaf = findLeaf(win.layout, leafId);
@@ -370,22 +415,23 @@ export class WorkbenchStore {
       return;
     }
     const win = this.snapshot.window;
-    this.setWindow(
-      {
-        ...win,
-        scrollByKey: {
-          ...win.scrollByKey,
-          [key]: {
-            stickToBottom: next.stickToBottom,
-            anchorItemId: next.anchorItemId,
-            scrollTop: next.scrollTop ?? null,
-            virtuosoState: nextVirtuosoState,
-            updatedAtMs,
-          },
-        },
-      },
-      { persistDelayMs: 500 },
-    );
+    const nextEntry: WorkbenchScrollState = {
+      stickToBottom: next.stickToBottom,
+      anchorItemId: next.anchorItemId,
+      scrollTop: next.scrollTop ?? null,
+      virtuosoState: nextVirtuosoState,
+      updatedAtMs,
+    };
+    const nextScrollByKey = { ...win.scrollByKey };
+    if (nextEntry.stickToBottom) {
+      if (!current) return;
+      delete nextScrollByKey[key];
+    } else {
+      nextScrollByKey[key] = nextEntry;
+    }
+    const pruned = this.pruneScrollByKey(nextScrollByKey);
+    if (this.scrollByKeyEquals(win.scrollByKey, pruned)) return;
+    this.setWindow({ ...win, scrollByKey: pruned }, { persistDelayMs: 500 });
   };
 
   getDraft = (draftKey: string): WorkbenchDraft | null => {

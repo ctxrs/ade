@@ -46,6 +46,12 @@ test("workbench: keeps session slots mounted across task switches", async ({ pag
     )
     .toBeGreaterThan(60);
 
+  const maxTop = await scroller.evaluate((el) => {
+    el.scrollTop = el.scrollHeight;
+    return el.scrollHeight - el.clientHeight;
+  });
+  const minAwayFromBottom = 64;
+
   await page.evaluate(() => {
     (window as any).__slotStats = { min: Number.POSITIVE_INFINITY, max: 0, samples: 0 };
     const sample = () => {
@@ -66,7 +72,7 @@ test("workbench: keeps session slots mounted across task switches", async ({ pag
   await scroller.hover();
   let scrollBefore: { top: number; height: number; client: number; remaining: number } | null = null;
   for (let i = 0; i < 12; i++) {
-    await page.mouse.wheel(0, 80);
+    await page.mouse.wheel(0, -120);
     await page.waitForTimeout(150);
     const snapshot = await scroller.evaluate((el) => {
       const top = el.scrollTop;
@@ -75,14 +81,14 @@ test("workbench: keeps session slots mounted across task switches", async ({ pag
       const remaining = height - (top + client);
       return { top, height, client, remaining };
     });
-    if (snapshot.top > 0) {
+    if (snapshot.top < maxTop - minAwayFromBottom) {
       scrollBefore = snapshot;
       break;
     }
   }
 
   expect(scrollBefore).not.toBeNull();
-  expect((scrollBefore as any).top).toBeGreaterThan(0);
+  expect((scrollBefore as any).top).toBeLessThan(maxTop - minAwayFromBottom);
 
   await taskRowB.click();
   await page.waitForTimeout(600);
