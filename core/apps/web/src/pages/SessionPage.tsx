@@ -1110,11 +1110,19 @@ export function SessionView({
   const isActiveRef = useRef(isActive);
   isActiveRef.current = isActive;
   stickToBottomRef.current = stickToBottom;
+  const programmaticScrollRef = useRef(0);
+  const userScrollIntentRef = useRef(0);
   const wasActiveRef = useRef(isActive);
   const prevActiveRef = useRef(isActive);
   const virtuosoPersistTimerRef = useRef<number | null>(null);
   const followOutputRafRef = useRef<number | null>(null);
   const followOutputTimerRef = useRef<number | null>(null);
+  const markProgrammaticScroll = useCallback(() => {
+    programmaticScrollRef.current = Date.now();
+  }, []);
+  const markUserScrollIntent = useCallback(() => {
+    userScrollIntentRef.current = Date.now();
+  }, []);
   const [restoreInProgress, setRestoreInProgress] = useState(false);
   useLayoutEffect(() => {
     if (isActive && !wasActiveRef.current) {
@@ -1221,6 +1229,7 @@ export function SessionView({
       }
       if (restoreScrollTop !== null) {
         const target = Math.max(0, restoreScrollTop);
+        markProgrammaticScroll();
         handle?.scrollTo({ top: target });
         if (el) el.scrollTop = target;
         if (el && Math.abs(el.scrollTop - target) > 2 && restoreRetryRef.current < 3) {
@@ -1231,11 +1240,14 @@ export function SessionView({
       } else if (restoreAnchorId) {
         const idx = items.findIndex((it) => it?.id === restoreAnchorId);
         if (idx >= 0) {
+          markProgrammaticScroll();
           handle?.scrollToIndex({ index: idx, align: "start" });
         } else {
+          markProgrammaticScroll();
           handle?.scrollToIndex({ index: items.length - 1, align: "end" });
         }
       } else {
+        markProgrammaticScroll();
         handle?.scrollToIndex({ index: items.length - 1, align: "end" });
       }
       finalizeRestore();
@@ -1330,6 +1342,9 @@ export function SessionView({
         if (!stickToBottomRef.current) return;
         if (restoreInProgress) return;
         if (preserveScrollOnFocus && !isActiveRef.current) return;
+        if (handle || el) {
+          markProgrammaticScroll();
+        }
         if (handle) {
           handle.scrollToIndex({ index: wbListItems.length - 1, align: "end" });
         }
@@ -1348,11 +1363,12 @@ export function SessionView({
       userScrolledRef.current = false;
       setStickToBottom(true);
       setHasNewActivity(false);
+      markProgrammaticScroll();
       virtuosoRef.current?.scrollToIndex({ index: wbListItems.length - 1, align: "end" });
       const el = scrollerRef.current;
       if (el) el.scrollTop = el.scrollHeight;
     }
-  }, [virtuosoRef, wbListItems.length]);
+  }, [markProgrammaticScroll, virtuosoRef, wbListItems.length]);
 
   useEffect(() => {
     if (!pendingScrollToBottomRef.current) return;
@@ -1696,6 +1712,18 @@ export function SessionView({
             else if (ref) (ref as React.MutableRefObject<HTMLDivElement | null>).current = node;
           }}
           className={`wb-thread-scroller ${props.className ?? ""}`}
+          onWheel={(event) => {
+            props.onWheel?.(event);
+            markUserScrollIntent();
+          }}
+          onPointerDown={(event) => {
+            props.onPointerDown?.(event);
+            markUserScrollIntent();
+          }}
+          onTouchStart={(event) => {
+            props.onTouchStart?.(event);
+            markUserScrollIntent();
+          }}
           onScroll={(event) => {
             props.onScroll?.(event);
             if (!isActiveRef.current) return;
@@ -1709,6 +1737,7 @@ export function SessionView({
             const nextScrollTop = scroller?.scrollTop ?? 0;
             const prevScrollTop = scrollbarLastScrollTopRef.current ?? nextScrollTop;
             const didScroll = Math.abs(nextScrollTop - prevScrollTop) > 0.5;
+            const hasUserIntent = Date.now() - userScrollIntentRef.current < 300;
             scrollbarLastScrollTopRef.current = nextScrollTop;
             if (trusted && didScroll) showScrollbarTemporarily();
             scheduleScrollbarUpdate();
@@ -1720,7 +1749,7 @@ export function SessionView({
                 restoreCooldownRef.current = null;
               }
             }
-            const userScroll = trusted && didScroll;
+            const userScroll = trusted && didScroll && hasUserIntent;
             if (!userScroll && !userScrolledRef.current) return;
             if (userScroll) userScrolledRef.current = true;
             if (scrollerRef.current) {
