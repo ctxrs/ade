@@ -19,13 +19,14 @@ const legacyCopyText = (text: string): boolean => {
 
 export const copyTextToClipboard = async (text: string): Promise<boolean> => {
   if (!text) return false;
+  if (legacyCopyText(text)) return true;
   if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
     try {
       await navigator.clipboard.writeText(text);
       return true;
     } catch {
-      // Fall through to legacy copy.
+      return false;
     }
   }
-  return legacyCopyText(text);
+  return false;
 };

@@ -2400,13 +2400,21 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const worktreeCopiedTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
+    if (!worktreeCopied) return;
+    if (worktreeCopiedTimerRef.current) {
+      window.clearTimeout(worktreeCopiedTimerRef.current);
+    }
+    worktreeCopiedTimerRef.current = window.setTimeout(() => {
+      setWorktreeCopied(false);
+      worktreeCopiedTimerRef.current = null;
+    }, 1100);
     return () => {
       if (worktreeCopiedTimerRef.current) {
         window.clearTimeout(worktreeCopiedTimerRef.current);
         worktreeCopiedTimerRef.current = null;
       }
     };
-  }, []);
+  }, [worktreeCopied]);
 
   const copyWorktreeLocation = useCallback(async () => {
     const path = String(worktreeChip.worktreePath ?? "").trim();
@@ -2417,13 +2425,6 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       return;
     }
     setWorktreeCopied(true);
-    if (worktreeCopiedTimerRef.current) {
-      window.clearTimeout(worktreeCopiedTimerRef.current);
-    }
-    worktreeCopiedTimerRef.current = window.setTimeout(() => {
-      setWorktreeCopied(false);
-      worktreeCopiedTimerRef.current = null;
-    }, 1100);
   }, [worktreeChip.worktreePath]);
 
   const openWorktreeTerminal = useCallback(async () => {

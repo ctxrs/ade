@@ -2573,18 +2573,22 @@ function FencedCodeBlock({
   const resetTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
+    if (!copied) return;
+    if (resetTimerRef.current) window.clearTimeout(resetTimerRef.current);
+    resetTimerRef.current = window.setTimeout(() => {
+      setCopied(false);
+      resetTimerRef.current = null;
+    }, 1000);
     return () => {
       if (resetTimerRef.current) window.clearTimeout(resetTimerRef.current);
     };
-  }, []);
+  }, [copied]);
 
   const handleCopy = useCallback(async () => {
     const ok = await copyTextToClipboard(codeString);
     if (!ok) return;
 
     setCopied(true);
-    if (resetTimerRef.current) window.clearTimeout(resetTimerRef.current);
-    resetTimerRef.current = window.setTimeout(() => setCopied(false), 1000);
   }, [codeString]);
 
   return (
