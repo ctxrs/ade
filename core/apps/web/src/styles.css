@@ -2124,6 +2124,7 @@ button.linklike:hover {
   justify-content: center;
   padding: 0;
   color: rgba(255, 255, 255, 0.62);
+  position: relative;
 }
 
 .wb-icon:hover:not(:disabled) {
@@ -2137,6 +2138,24 @@ button.linklike:hover {
 
 .wb-icon:disabled {
   opacity: 0.55;
+}
+
+.wb-icon-badge {
+  position: absolute;
+  top: -4px;
+  right: -6px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: rgba(78, 163, 255, 0.95);
+  color: #0a0a0a;
+  font-size: 10px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 0 0 2px rgba(17, 17, 17, 0.9);
 }
 
 .wb-send {
@@ -2995,6 +3014,11 @@ button.linklike:hover {
 
 .wb-terminal-resizer:hover::after,
 .wb-root.wb-root-terminal-resizing .wb-terminal-resizer::after {
+  background: rgba(78, 163, 255, 0.35);
+  height: 2px;
+}
+
+.wb-root.wb-root-artifacts-resizing .wb-right-splitter::after {
   background: rgba(78, 163, 255, 0.35);
   height: 2px;
 }
@@ -4305,7 +4329,54 @@ button.linklike:hover {
   width: 2px;
 }
 
+.wb-right {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+
+.wb-right-stack {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+}
+
+.wb-right-pane {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+
+.wb-right-splitter {
+  position: relative;
+  height: 6px;
+  cursor: row-resize;
+  background: linear-gradient(to bottom, transparent 0 50%, rgba(255, 255, 255, 0.01) 50% 100%);
+}
+
+.wb-right-splitter::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 1px;
+  background: var(--border);
+  transform: translateY(-50%);
+  transition: background 120ms ease, height 120ms ease;
+}
+
+.wb-right-splitter:hover::after {
+  background: rgba(78, 163, 255, 0.35);
+  height: 2px;
+}
+
 .wb-diff {
+  width: 100%;
+  height: 100%;
   min-width: 320px;
   max-width: 60vw;
   background: rgba(255, 255, 255, 0.01);
@@ -4376,6 +4447,154 @@ button.linklike:hover {
 
 .wb-diff-empty {
   padding: 16px;
+}
+
+.wb-artifacts {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: rgba(14, 14, 14, 0.9);
+  border-left: 1px solid var(--border);
+}
+
+.wb-artifacts-top {
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border);
+  background: rgba(20, 20, 20, 0.95);
+}
+
+.wb-artifacts-title {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.wb-artifacts-count {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.7);
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+
+.wb-artifacts-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.wb-artifacts-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.wb-artifact-card {
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+  padding: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.wb-artifact-preview {
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 140px;
+}
+
+.wb-artifact-image,
+.wb-artifact-video {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.wb-artifact-video {
+  background: #000;
+}
+
+.wb-artifact-file {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.7);
+  padding: 20px;
+}
+
+.wb-artifact-missing {
+  font-size: 12px;
+  color: rgba(255, 196, 90, 0.9);
+  padding: 20px;
+}
+
+.wb-artifact-meta {
+  display: grid;
+  gap: 4px;
+}
+
+.wb-artifact-name-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.wb-artifact-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.92);
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wb-artifact-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.wb-artifact-action {
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  color: rgba(255, 255, 255, 0.6);
+  cursor: pointer;
+}
+
+.wb-artifact-action:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.wb-artifact-action:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.wb-artifact-sub {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.6);
+  word-break: break-word;
 }
 
 .wb-editplans {

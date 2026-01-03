@@ -9,6 +9,7 @@ vi.mock("../api/client", () => {
     idToString,
     getSessionHead: vi.fn(),
     getSessionHistory: vi.fn(),
+    listSessionArtifacts: vi.fn(async () => []),
     listTurnTools: vi.fn(async () => []),
     trackDiff: vi.fn(async () => ({ diff: "" })),
   };

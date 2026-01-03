@@ -1,4 +1,5 @@
 import type {
+  Artifact,
   AttachmentMode,
   AttachmentUpdatePolicy,
   Diagnostics,
@@ -40,6 +41,7 @@ import type {
 import { desktopDaemonRequest, desktopUploadBlob, isDesktopApp } from "../utils/desktop";
 
 export type {
+  Artifact,
   AttachmentMode,
   AttachmentUpdatePolicy,
   Diagnostics,
@@ -532,43 +534,6 @@ export const createWorkspace = (root_path: string, name?: string) =>
 export const getWorkspace = (id: string) =>
   apiAny<Workspace>(`/api/workspaces/${id}`);
 
-export type CreateWorkspaceAttachmentRequest = {
-  kind: WorkspaceAttachmentKind;
-  name: string;
-  source: string;
-  revision?: string | null;
-  subpath?: string | null;
-  mount_relpath?: string | null;
-  mode?: AttachmentMode | null;
-  update_policy?: AttachmentUpdatePolicy | null;
-};
-
-export type DeleteWorkspaceAttachmentRequest = {
-  kind: WorkspaceAttachmentKind;
-  name: string;
-};
-
-export const listWorkspaceAttachments = (workspaceId: string) =>
-  apiAny<WorkspaceAttachment[]>(`/api/workspaces/${workspaceId}/attachments`);
-
-export const createWorkspaceAttachment = (workspaceId: string, req: CreateWorkspaceAttachmentRequest) =>
-  apiAny<WorkspaceAttachment[]>(`/api/workspaces/${workspaceId}/attachments`, {
-    method: "POST",
-    body: JSON.stringify(req),
-  });
-
-export const deleteWorkspaceAttachment = (workspaceId: string, req: DeleteWorkspaceAttachmentRequest) =>
-  apiAny<WorkspaceAttachment[]>(`/api/workspaces/${workspaceId}/attachments`, {
-    method: "DELETE",
-    body: JSON.stringify(req),
-  });
-
-export const syncWorkspaceAttachments = (workspaceId: string, refresh?: boolean) =>
-  apiAny<WorkspaceAttachment[]>(`/api/workspaces/${workspaceId}/attachments/sync`, {
-    method: "POST",
-    body: JSON.stringify({ refresh }),
-  });
-
 export type CreateTerminalRequest = {
   task_id?: string | null;
   track_id?: string | null;
@@ -686,6 +651,21 @@ export const getSessionHead = (sessionId: string, limit?: number, includeEvents?
   const suffix = qs.toString() ? `?${qs.toString()}` : "";
   return apiAny<SessionHead>(`/api/sessions/${sessionId}/head${suffix}`);
 };
+
+export type ArtifactInput = {
+  absolute_file_path: string;
+  name?: string | null;
+  mime_type?: string | null;
+};
+
+export const listSessionArtifacts = (sessionId: string) =>
+  apiAny<Artifact[]>(`/api/sessions/${sessionId}/artifacts`);
+
+export const setSessionArtifacts = (sessionId: string, artifacts: ArtifactInput[]) =>
+  apiAny<Artifact[]>(`/api/sessions/${sessionId}/artifacts`, {
+    method: "POST",
+    body: JSON.stringify({ artifacts }),
+  });
 
 export const getSessionEvents = (
   sessionId: string,
@@ -944,6 +924,14 @@ export const blobUrl = (blobId: string): string => {
   const token = authToken();
   const prefix = base ? base.replace(/\/+$/, "") : "";
   const url = `${prefix}/api/blobs/${encodeURIComponent(String(blobId || ""))}`;
+  return token ? `${url}?token=${encodeURIComponent(token)}` : url;
+};
+
+export const artifactUrl = (artifactId: string): string => {
+  const base = getDaemonBaseUrl();
+  const token = authToken();
+  const prefix = base ? base.replace(/\/+$/, "") : "";
+  const url = `${prefix}/api/artifacts/${encodeURIComponent(String(artifactId || ""))}`;
   return token ? `${url}?token=${encodeURIComponent(token)}` : url;
 };
 

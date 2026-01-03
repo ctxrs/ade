@@ -277,6 +277,24 @@ pub struct Message {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Artifact {
+    pub id: ArtifactId,
+    pub session_id: SessionId,
+    pub track_id: TrackId,
+    pub task_id: TaskId,
+    pub workspace_id: WorkspaceId,
+    pub worktree_id: WorktreeId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    pub absolute_path: String,
+    pub mime_type: String,
+    pub bytes: i64,
+    pub created_at: DateTime<Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub missing: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SessionTurnStatus {
     Queued,
@@ -632,6 +650,7 @@ pub enum SessionEventType {
     ToolCallUpdate,
     ToolResult,
     Plan,
+    ArtifactsSet,
     Done,
     InterruptRequested,
     TurnInterrupted,

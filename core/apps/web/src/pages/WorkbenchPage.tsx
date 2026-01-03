@@ -57,6 +57,7 @@ import {
   useSessionSupervisor,
   type SessionCacheEntry,
 } from "../state/sessionSupervisor";
+import { ArtifactsPane } from "../components/ArtifactsPane";
 import { DiffReviewPane } from "../components/DiffReviewPane";
 import { TerminalPanel, type TerminalPanelHandle } from "../components/TerminalPanel";
 import { WorktreeBootstrapSnackbar } from "../components/WorktreeBootstrapSnackbar";
@@ -87,8 +88,10 @@ import {
   useWorkbenchStore,
 } from "../workbench/store";
 import {
+  loadWorkbenchArtifactsPaneOpenV1,
   loadWorkbenchDiffPaneOpenV1,
   loadWorkbenchTerminalPanelOpenV1,
+  saveWorkbenchArtifactsPaneOpenV1,
   saveWorkbenchDiffPaneOpenV1,
   saveWorkbenchTerminalPanelOpenV1,
 } from "../workbench/persistence";
@@ -746,6 +749,14 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const [diffResizing, setDiffResizing] = useState(false);
   const [diffOpen, setDiffOpen] = useState(false);
   const [diffOpenHydrated, setDiffOpenHydrated] = useState(false);
+  const [artifactsOpen, setArtifactsOpen] = useState(false);
+  const [artifactsOpenHydrated, setArtifactsOpenHydrated] = useState(false);
+  const [artifactsOpenSeeded, setArtifactsOpenSeeded] = useState(false);
+  const [artifactsAutoOpenPending, setArtifactsAutoOpenPending] = useState(false);
+  const [artifactsHeight, setArtifactsHeight] = useState(260);
+  const [artifactsResizing, setArtifactsResizing] = useState(false);
+  const artifactsPaneScopeRef = useRef<string | null>(null);
+  const rightPaneRef = useRef<HTMLDivElement | null>(null);
   const reviewTab: "git" = "git";
   const terminalPanelRef = useRef<TerminalPanelHandle | null>(null);
   const [terminalOpen, setTerminalOpen] = useState(false);
@@ -778,15 +789,22 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     return Math.min(max, Math.max(min, Math.round(value)));
   }, []);
 
+  const clampArtifactsHeight = useCallback((value: number) => {
+    const min = 180;
+    const max = Math.max(min, window.innerHeight - 200);
+    return Math.min(max, Math.max(min, Math.round(value)));
+  }, []);
+
   useEffect(() => {
     const onResize = () => {
       const max = Math.max(170, window.innerWidth - 240);
       setSidebarWidth((w) => Math.min(max, Math.max(170, Math.round(w))));
       setTerminalHeight((h) => clampTerminalHeight(h));
+      setArtifactsHeight((h) => clampArtifactsHeight(h));
     };
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
-  }, [clampTerminalHeight]);
+  }, [clampArtifactsHeight, clampTerminalHeight]);
 
   useEffect(() => {
     if (!workspaceId) return;
@@ -1716,6 +1734,16 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
 
   const hasDiff = activeTrackDiff.trim().length > 0;
   const showReviewPane = diffOpen;
+  const showArtifactsPane = artifactsOpen;
+  const rightPaneOpen = showReviewPane || showArtifactsPane;
+  const artifacts = useMemo(() => {
+    if (!activeSessionId) return [];
+    return sessionCache.sessions[activeSessionId]?.artifacts ?? [];
+  }, [activeSessionId, sessionCache.sessions]);
+  const artifactsLoading = activeSessionId
+    ? sessionCache.sessions[activeSessionId]?.artifactsLoading ?? false
+    : false;
+  const artifactsCount = artifacts.length;
   const diffFileCount = useMemo(() => {
     if (!hasDiff) return 0;
     const m = activeTrackDiff.match(/^diff --git /gm);
@@ -1726,11 +1754,21 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     setDiffOpen((open) => !open);
   }, []);
 
+  const toggleArtifactsPane = useCallback(() => {
+    setArtifactsOpenSeeded(true);
+    setArtifactsAutoOpenPending(false);
+    setArtifactsOpen((open) => !open);
+  }, []);
+
   const diffPaneScope = useMemo(() => {
     if (activeSessionId) return `session:${activeSessionId}`;
     if (activeTrackId) return `track:${activeTrackId}`;
     return null;
   }, [activeSessionId, activeTrackId]);
+
+  const artifactsPaneScope = useMemo(() => {
+    return activeSessionId ?? null;
+  }, [activeSessionId]);
 
   useEffect(() => {
     setDiffOpenHydrated(false);
@@ -1757,10 +1795,64 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   }, [workspaceId, diffPaneScope]);
 
   useEffect(() => {
+    setArtifactsOpenHydrated(false);
+    setArtifactsOpenSeeded(false);
+    setArtifactsAutoOpenPending(false);
+    if (!workspaceId || !artifactsPaneScope) {
+      setArtifactsOpen(false);
+      setArtifactsOpenHydrated(true);
+      artifactsPaneScopeRef.current = null;
+      return;
+    }
+    let cancelled = false;
+    loadWorkbenchArtifactsPaneOpenV1(workspaceId, artifactsPaneScope)
+      .then((open) => {
+        if (cancelled) return;
+        if (typeof open === "boolean") {
+          setArtifactsOpen(open);
+          setArtifactsOpenSeeded(true);
+          setArtifactsAutoOpenPending(false);
+        } else {
+          setArtifactsOpen(false);
+          setArtifactsAutoOpenPending(true);
+        }
+        setArtifactsOpenHydrated(true);
+        artifactsPaneScopeRef.current = artifactsPaneScope;
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setArtifactsOpen(false);
+        setArtifactsOpenHydrated(true);
+        setArtifactsAutoOpenPending(true);
+        artifactsPaneScopeRef.current = artifactsPaneScope;
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [workspaceId, artifactsPaneScope]);
+
+  useEffect(() => {
     if (!diffOpenHydrated) return;
     if (!workspaceId || !diffPaneScope) return;
     saveWorkbenchDiffPaneOpenV1(workspaceId, diffPaneScope, diffOpen).catch(() => {});
   }, [diffOpen, diffOpenHydrated, workspaceId, diffPaneScope]);
+
+  useEffect(() => {
+    if (!artifactsOpenHydrated || !artifactsOpenSeeded) return;
+    if (!workspaceId || !artifactsPaneScope) return;
+    if (artifactsPaneScopeRef.current !== artifactsPaneScope) return;
+    saveWorkbenchArtifactsPaneOpenV1(workspaceId, artifactsPaneScope, artifactsOpen).catch(() => {});
+  }, [artifactsOpen, artifactsOpenHydrated, artifactsOpenSeeded, workspaceId, artifactsPaneScope]);
+
+  useEffect(() => {
+    if (!artifactsOpenHydrated) return;
+    if (!artifactsAutoOpenPending) return;
+    if (artifactsCount === 0) return;
+    setArtifactsOpen(true);
+    setArtifactsOpenSeeded(true);
+    setArtifactsAutoOpenPending(false);
+  }, [artifactsAutoOpenPending, artifactsCount, artifactsOpenHydrated]);
+
 
   useEffect(() => {
     setTerminalOpenHydrated(false);
@@ -2185,6 +2277,28 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     };
     const onUp = () => {
       setDiffResizing(false);
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
+
+  const onArtifactsSplitterMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const startY = e.clientY;
+    const startH = artifactsHeight;
+    const containerHeight = rightPaneRef.current?.getBoundingClientRect().height ?? window.innerHeight;
+    const min = 180;
+    const max = Math.max(min, containerHeight - min - 6);
+    setArtifactsResizing(true);
+    const onMove = (ev: MouseEvent) => {
+      const dy = startY - ev.clientY;
+      const next = Math.min(max, Math.max(min, Math.round(startH + dy)));
+      setArtifactsHeight(next);
+    };
+    const onUp = () => {
+      setArtifactsResizing(false);
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
     };
@@ -2617,7 +2731,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   if (!workbenchSnap.hydrated) {
     return (
       <div
-        className={`wb-root ${sidebarCollapsed ? "wb-root-collapsed" : ""} ${sidebarResizing ? "wb-root-resizing" : ""} ${diffResizing ? "wb-root-diff-resizing" : ""} ${terminalResizing ? "wb-root-terminal-resizing" : ""}`}
+        className={`wb-root ${sidebarCollapsed ? "wb-root-collapsed" : ""} ${sidebarResizing ? "wb-root-resizing" : ""} ${diffResizing ? "wb-root-diff-resizing" : ""} ${terminalResizing ? "wb-root-terminal-resizing" : ""} ${artifactsResizing ? "wb-root-artifacts-resizing" : ""}`}
         style={rootStyle}
       >
         <WorktreeBootstrapSnackbar />
@@ -2637,7 +2751,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
 
   return (
     <div
-      className={`wb-root ${sidebarCollapsed ? "wb-root-collapsed" : ""} ${sidebarResizing ? "wb-root-resizing" : ""} ${diffResizing ? "wb-root-diff-resizing" : ""} ${terminalResizing ? "wb-root-terminal-resizing" : ""}`}
+      className={`wb-root ${sidebarCollapsed ? "wb-root-collapsed" : ""} ${sidebarResizing ? "wb-root-resizing" : ""} ${diffResizing ? "wb-root-diff-resizing" : ""} ${terminalResizing ? "wb-root-terminal-resizing" : ""} ${artifactsResizing ? "wb-root-artifacts-resizing" : ""}`}
       style={rootStyle}
     >
       <WorktreeBootstrapSnackbar />
@@ -2889,6 +3003,17 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
                     <div className="wb-icon-row">
                       <button
                         type="button"
+                        className={`wb-icon ${showArtifactsPane ? "wb-icon-active" : ""}`}
+                        aria-label="Toggle artifacts"
+                        aria-pressed={showArtifactsPane}
+                        title={showArtifactsPane ? "Hide artifacts" : "Show artifacts"}
+                        onClick={toggleArtifactsPane}
+                      >
+                        <Image size={14} />
+                        {artifactsCount > 0 && <span className="wb-icon-badge">{artifactsCount}</span>}
+                      </button>
+                      <button
+                        type="button"
                         className={`wb-icon ${showReviewPane ? "wb-icon-active" : ""}`}
                         aria-label="Toggle diff view"
                         aria-pressed={showReviewPane}
@@ -2977,50 +3102,112 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
               </div>
             </div>
 
-            {showReviewPane && (
+            {rightPaneOpen && (
               <>
                 <div className="wb-splitter" onMouseDown={onSplitterMouseDown} />
-                <div className="wb-diff" style={{ width: diffWidth }}>
-                  <div className="wb-diff-top">
-                    <div className="wb-diff-tabs">
-                      <button
-                        type="button"
-                        className={`wb-diff-tab wb-diff-tab-button ${reviewTab === "git" ? "wb-diff-tab-active" : ""}`}
+                <div className="wb-right" style={{ width: diffWidth }} ref={rightPaneRef}>
+                  {showReviewPane && showArtifactsPane ? (
+                    <div className="wb-right-stack">
+                      <div
+                        className="wb-right-pane wb-diff"
+                        style={{ height: `calc(100% - ${artifactsHeight}px - 6px)` }}
                       >
-                        All Changes
-                      </button>
-                      {reviewTab === "git" && (
-                        <div className="wb-diff-pill">
-                          {diffFileCount} Pending Change{diffFileCount === 1 ? "" : "s"}
+                        <div className="wb-diff-top">
+                          <div className="wb-diff-tabs">
+                            <button
+                              type="button"
+                              className={`wb-diff-tab wb-diff-tab-button ${reviewTab === "git" ? "wb-diff-tab-active" : ""}`}
+                            >
+                              All Changes
+                            </button>
+                            {reviewTab === "git" && (
+                              <div className="wb-diff-pill">
+                                {diffFileCount} Pending Change{diffFileCount === 1 ? "" : "s"}
+                              </div>
+                            )}
+                          </div>
+                          <div className="wb-diff-actions">
+                            {reviewTab === "git" && hasDiff && (
+                              <>
+                                <button type="button" className="wb-primary" onClick={approveAll}>
+                                  Approve
+                                </button>
+                                <button type="button" className="wb-small" onClick={rejectAll}>
+                                  Reject
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        </div>
+
+                        {reviewTab === "git" && hasDiff ? (
+                          <DiffReviewPane
+                            diff={activeTrackDiff}
+                            trackId={activeTrackIdFromSession}
+                            sessionId={activeSessionId || undefined}
+                            onDiffUpdated={handleDiffUpdated}
+                            onFileSaved={refreshActiveDiff}
+                            labels={diffLabels}
+                          />
+                        ) : (
+                          <div className="wb-diff-empty">
+                            <div className="wb-muted">No unstaged changes on this branch.</div>
+                          </div>
+                        )}
+                      </div>
+                      <div className="wb-right-splitter" onMouseDown={onArtifactsSplitterMouseDown} />
+                      <div className="wb-right-pane" style={{ height: artifactsHeight }}>
+                        <ArtifactsPane artifacts={artifacts} loading={artifactsLoading} />
+                      </div>
+                    </div>
+                  ) : showReviewPane ? (
+                    <div className="wb-right-pane wb-diff">
+                      <div className="wb-diff-top">
+                        <div className="wb-diff-tabs">
+                          <button
+                            type="button"
+                            className={`wb-diff-tab wb-diff-tab-button ${reviewTab === "git" ? "wb-diff-tab-active" : ""}`}
+                          >
+                            All Changes
+                          </button>
+                          {reviewTab === "git" && (
+                            <div className="wb-diff-pill">
+                              {diffFileCount} Pending Change{diffFileCount === 1 ? "" : "s"}
+                            </div>
+                          )}
+                        </div>
+                        <div className="wb-diff-actions">
+                          {reviewTab === "git" && hasDiff && (
+                            <>
+                              <button type="button" className="wb-primary" onClick={approveAll}>
+                                Approve
+                              </button>
+                              <button type="button" className="wb-small" onClick={rejectAll}>
+                                Reject
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </div>
+
+                      {reviewTab === "git" && hasDiff ? (
+                        <DiffReviewPane
+                          diff={activeTrackDiff}
+                          trackId={activeTrackIdFromSession}
+                          sessionId={activeSessionId || undefined}
+                          onDiffUpdated={handleDiffUpdated}
+                          onFileSaved={refreshActiveDiff}
+                          labels={diffLabels}
+                        />
+                      ) : (
+                        <div className="wb-diff-empty">
+                          <div className="wb-muted">No unstaged changes on this branch.</div>
                         </div>
                       )}
                     </div>
-                    <div className="wb-diff-actions">
-                      {reviewTab === "git" && hasDiff && (
-                        <>
-                          <button type="button" className="wb-primary" onClick={approveAll}>
-                            Approve
-                          </button>
-                          <button type="button" className="wb-small" onClick={rejectAll}>
-                            Reject
-                          </button>
-                        </>
-                      )}
-                    </div>
-                  </div>
-
-                  {reviewTab === "git" && hasDiff ? (
-                    <DiffReviewPane
-                      diff={activeTrackDiff}
-                      trackId={activeTrackIdFromSession}
-                      sessionId={activeSessionId || undefined}
-                      onDiffUpdated={handleDiffUpdated}
-                      onFileSaved={refreshActiveDiff}
-                      labels={diffLabels}
-                    />
                   ) : (
-                    <div className="wb-diff-empty">
-                      <div className="wb-muted">No unstaged changes on this branch.</div>
+                    <div className="wb-right-pane">
+                      <ArtifactsPane artifacts={artifacts} loading={artifactsLoading} />
                     </div>
                   )}
                 </div>

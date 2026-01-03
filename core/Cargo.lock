@@ -638,6 +638,7 @@ dependencies = [
  "hyper",
  "jsonwebtoken",
  "lsp-types",
+ "mime_guess",
  "portable-pty",
  "rand_core 0.6.4",
  "reqwest",

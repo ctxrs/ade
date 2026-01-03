@@ -41,6 +41,7 @@ id_type!(WorktreeId);
 id_type!(SessionId);
 id_type!(MessageId);
 id_type!(SessionEventId);
+id_type!(ArtifactId);
 id_type!(RunId);
 id_type!(TurnId);
 id_type!(ConnectionProfileId);

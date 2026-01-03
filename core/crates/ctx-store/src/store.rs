@@ -3078,6 +3078,81 @@ impl Store {
         }))
     }
 
+    // Artifact APIs
+    pub async fn list_session_artifacts(&self, session_id: SessionId) -> Result<Vec<Artifact>> {
+        let rows = sqlx::query(
+            r#"SELECT id, session_id, track_id, task_id, workspace_id, worktree_id,
+                      name, absolute_path, mime_type, bytes, created_at
+               FROM artifacts
+               WHERE session_id = ?
+               ORDER BY position ASC"#,
+        )
+        .bind(session_id.0.to_string())
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut out = Vec::with_capacity(rows.len());
+        for r in rows {
+            if let Ok(artifact) = build_artifact_from_row(r) {
+                out.push(artifact);
+            }
+        }
+        Ok(out)
+    }
+
+    pub async fn get_artifact(&self, id: ArtifactId) -> Result<Option<Artifact>> {
+        let row = sqlx::query(
+            r#"SELECT id, session_id, track_id, task_id, workspace_id, worktree_id,
+                      name, absolute_path, mime_type, bytes, created_at
+               FROM artifacts
+               WHERE id = ?"#,
+        )
+        .bind(id.0.to_string())
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.and_then(|r| build_artifact_from_row(r).ok()))
+    }
+
+    pub async fn replace_session_artifacts(
+        &self,
+        session_id: SessionId,
+        artifacts: &[Artifact],
+    ) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+        sqlx::query(r#"DELETE FROM artifacts WHERE session_id = ?"#)
+            .bind(session_id.0.to_string())
+            .execute(&mut *tx)
+            .await?;
+
+        for (idx, artifact) in artifacts.iter().enumerate() {
+            sqlx::query(
+                r#"INSERT INTO artifacts (
+                        id, session_id, track_id, task_id, workspace_id, worktree_id,
+                        position, name, absolute_path, mime_type, bytes, created_at
+                   )
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+            )
+            .bind(artifact.id.0.to_string())
+            .bind(artifact.session_id.0.to_string())
+            .bind(artifact.track_id.0.to_string())
+            .bind(artifact.task_id.0.to_string())
+            .bind(artifact.workspace_id.0.to_string())
+            .bind(artifact.worktree_id.0.to_string())
+            .bind(idx as i64)
+            .bind(artifact.name.as_deref())
+            .bind(&artifact.absolute_path)
+            .bind(&artifact.mime_type)
+            .bind(artifact.bytes)
+            .bind(artifact.created_at.to_rfc3339())
+            .execute(&mut *tx)
+            .await?;
+        }
+
+        tx.commit().await?;
+        Ok(())
+    }
+
     // Session event APIs
     pub async fn append_session_event(
         &self,
@@ -3955,6 +4030,7 @@ fn session_event_type_to_str(event_type: &SessionEventType) -> &'static str {
         SessionEventType::ToolCallUpdate => "tool_call_update",
         SessionEventType::ToolResult => "tool_result",
         SessionEventType::Plan => "plan",
+        SessionEventType::ArtifactsSet => "artifacts_set",
         SessionEventType::Done => "done",
         SessionEventType::InterruptRequested => "interrupt_requested",
         SessionEventType::TurnInterrupted => "turn_interrupted",
@@ -3977,12 +4053,38 @@ fn parse_session_event_type(value: &str) -> SessionEventType {
         "tool_call_update" => SessionEventType::ToolCallUpdate,
         "tool_result" => SessionEventType::ToolResult,
         "plan" => SessionEventType::Plan,
+        "artifacts_set" => SessionEventType::ArtifactsSet,
         "done" => SessionEventType::Done,
         "interrupt_requested" => SessionEventType::InterruptRequested,
         "turn_interrupted" => SessionEventType::TurnInterrupted,
         "error" => SessionEventType::Error,
         _ => SessionEventType::Error,
     }
+}
+
+fn build_artifact_from_row(r: sqlx::sqlite::SqliteRow) -> Result<Artifact> {
+    let id: String = r.try_get("id")?;
+    let session_id: String = r.try_get("session_id")?;
+    let track_id: String = r.try_get("track_id")?;
+    let task_id: String = r.try_get("task_id")?;
+    let workspace_id: String = r.try_get("workspace_id")?;
+    let worktree_id: String = r.try_get("worktree_id")?;
+    let created_at: String = r.try_get("created_at")?;
+
+    Ok(Artifact {
+        id: ArtifactId(uuid::Uuid::parse_str(&id)?),
+        session_id: SessionId(uuid::Uuid::parse_str(&session_id)?),
+        track_id: TrackId(uuid::Uuid::parse_str(&track_id)?),
+        task_id: TaskId(uuid::Uuid::parse_str(&task_id)?),
+        workspace_id: WorkspaceId(uuid::Uuid::parse_str(&workspace_id)?),
+        worktree_id: WorktreeId(uuid::Uuid::parse_str(&worktree_id)?),
+        name: r.try_get("name")?,
+        absolute_path: r.try_get("absolute_path")?,
+        mime_type: r.try_get("mime_type")?,
+        bytes: r.try_get("bytes")?,
+        created_at: parse_dt(&created_at)?,
+        missing: None,
+    })
 }
 
 fn build_session_turn_from_row(r: sqlx::sqlite::SqliteRow) -> Result<SessionTurn> {

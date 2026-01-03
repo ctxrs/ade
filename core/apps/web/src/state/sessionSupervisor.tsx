@@ -3,8 +3,10 @@ import {
   getSessionHead,
   getSessionHistory,
   idToString,
+  listSessionArtifacts,
   listTurnTools,
   trackDiff,
+  type Artifact,
   type Message,
   type Session,
   type SessionEvent,
@@ -45,6 +47,8 @@ export type SessionCacheEntry = {
   hasMoreTurns: boolean;
   events: SessionEvent[];
   messages: Message[];
+  artifacts: Artifact[];
+  artifactsLoading: boolean;
   queue: Message[];
   diff?: string;
   diagnosticsByPath?: Record<string, any[]>;
@@ -73,6 +77,8 @@ type InternalEntry = SessionCacheEntry & {
   toolIdsByTurn: Map<string, Set<string>>;
   turnToolsLoadingSet: Set<string>;
   turnToolsHydratedByTurnId: Record<string, boolean>;
+  artifactsLoaded: boolean;
+  artifactsFetchedAtMs?: number;
   trackId?: string;
   diagnosticsByPath: Record<string, any[]>;
   loadedFromCache: boolean;
@@ -276,6 +282,8 @@ export class SessionSupervisor {
         hasMoreTurns: e.hasMoreTurns,
         events: e.events,
         messages: e.messages,
+        artifacts: e.artifacts,
+        artifactsLoading: e.artifactsLoading,
         queue: e.queue,
         diff: e.diff,
         diagnosticsByPath: e.diagnosticsByPath,
@@ -315,6 +323,8 @@ export class SessionSupervisor {
       hasMoreTurns: true,
       events: [],
       messages: [],
+      artifacts: [],
+      artifactsLoading: false,
       queue: [],
       diff: undefined,
       diagnosticsByPath: {},
@@ -334,6 +344,8 @@ export class SessionSupervisor {
       toolIdsByTurn: new Map(),
       turnToolsLoadingSet: new Set(),
       turnToolsHydratedByTurnId: {},
+      artifactsLoaded: false,
+      artifactsFetchedAtMs: undefined,
       trackId: undefined,
       loadedFromCache: false,
       fetching: {
@@ -368,6 +380,7 @@ export class SessionSupervisor {
       const head = await getSessionHead(sessionId, HEAD_LIMIT, false);
       this.applyHead(entry, head);
       await this.persistHead(entry);
+      await this.ensureArtifacts(entry);
     } catch (e: any) {
       if (!opts?.silent) {
         entry.error = e?.message ?? "Failed to load session";
@@ -382,6 +395,26 @@ export class SessionSupervisor {
     }
     if (opts?.watchDiff) {
       void this.refreshDiff(entry);
+    }
+  }
+
+  private async ensureArtifacts(entry: InternalEntry, opts?: { force?: boolean }) {
+    if (entry.artifactsLoading) return;
+    if (entry.artifactsLoaded && !opts?.force) return;
+    entry.artifactsLoading = true;
+    entry.updatedAtMs = Date.now();
+    this.publish();
+    try {
+      const artifacts = await listSessionArtifacts(entry.sessionId);
+      entry.artifacts = artifacts;
+      entry.artifactsLoaded = true;
+      entry.artifactsFetchedAtMs = Date.now();
+    } catch {
+      // ignore artifact load errors (missing session or daemon offline)
+    } finally {
+      entry.artifactsLoading = false;
+      entry.updatedAtMs = Date.now();
+      this.publish();
     }
   }
 
@@ -717,6 +750,17 @@ export class SessionSupervisor {
     return true;
   }
 
+  private applyArtifactsEvent(entry: InternalEntry, event: SessionEvent): boolean {
+    if (String(event.event_type) !== "artifacts_set") return false;
+    const artifacts = Array.isArray(event.payload_json?.artifacts)
+      ? (event.payload_json.artifacts as Artifact[])
+      : [];
+    entry.artifacts = artifacts;
+    entry.artifactsLoaded = true;
+    entry.artifactsFetchedAtMs = Date.now();
+    return true;
+  }
+
   private applyToolEventToTurn(
     entry: InternalEntry,
     turnId: string,
@@ -817,6 +861,9 @@ export class SessionSupervisor {
       if (this.applyEventToTurns(entry, delta.event)) {
         changed = true;
       }
+      if (this.applyArtifactsEvent(entry, delta.event)) {
+        changed = true;
+      }
     }
 
     if (changed) {
@@ -829,6 +876,10 @@ export class SessionSupervisor {
     entry.turns = [];
     entry.events = [];
     entry.messages = [];
+    entry.artifacts = [];
+    entry.artifactsLoaded = false;
+    entry.artifactsLoading = false;
+    entry.artifactsFetchedAtMs = undefined;
     entry.queue = [];
     entry.turnToolsByTurnId = {};
     entry.turnToolsHydratedByTurnId = {};

@@ -343,6 +343,21 @@ export type Message = {
   created_at: string;
 };
 
+export type Artifact = {
+  id: { 0: string } | string;
+  session_id: { 0: string } | string;
+  track_id: { 0: string } | string;
+  task_id: { 0: string } | string;
+  workspace_id: { 0: string } | string;
+  worktree_id: { 0: string } | string;
+  name?: string | null;
+  absolute_path: string;
+  mime_type: string;
+  bytes: number;
+  created_at: string;
+  missing?: boolean | null;
+};
+
 export type MessageAttachment =
   | {
       kind: "image";

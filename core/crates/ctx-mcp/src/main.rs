@@ -87,25 +87,50 @@ async fn main() -> Result<()> {
                 json!({
                     "tools": [
                         {
-                            "name": "ctx.ping",
+                            "name": "ctx_ping",
                             "title": "ctx Ping",
                             "description": "Returns ok=true if ctx MCP is reachable.",
                             "inputSchema": { "type": "object", "additionalProperties": false }
                         },
                         {
-                            "name": "ctx.list_workspaces",
+                            "name": "ctx_list_workspaces",
                             "title": "List Workspaces",
                             "description": "Lists ctx workspaces via the ctx daemon HTTP API.",
                             "inputSchema": { "type": "object", "additionalProperties": false }
                         },
                         {
-                            "name": "ctx.lsp_status",
+                            "name": "ctx_artifacts_set",
+                            "title": "Set Session Artifacts",
+                            "description": "Sets the ordered list of artifacts for the current session.",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "artifacts": {
+                                        "type": "array",
+                                        "items": {
+                                            "type": "object",
+                                            "properties": {
+                                                "absoluteFilePath": { "type": "string", "description": "Absolute file path to the artifact." },
+                                                "name": { "type": "string", "description": "Optional display name." },
+                                                "mimeType": { "type": "string", "description": "Optional MIME type override." }
+                                            },
+                                            "required": ["absoluteFilePath"],
+                                            "additionalProperties": false
+                                        }
+                                    }
+                                },
+                                "required": ["artifacts"],
+                                "additionalProperties": false
+                            }
+                        },
+                        {
+                            "name": "ctx_lsp_status",
                             "title": "LSP Status",
                             "description": "Returns the daemon LSP configuration and server availability (installed/missing).",
                             "inputSchema": { "type": "object", "additionalProperties": false }
                         },
                         {
-                            "name": "ctx.lsp_install_server",
+                            "name": "ctx_lsp_install_server",
                             "title": "Install LSP Server (Managed)",
                             "description": "Triggers a managed install of an LSP server into the daemon data dir (may require restarting the daemon to take effect).",
                             "inputSchema": {
@@ -118,13 +143,13 @@ async fn main() -> Result<()> {
                             }
                         },
                         {
-                            "name": "ctx.lsp_catalog_list",
+                            "name": "ctx_lsp_catalog_list",
                             "title": "List LSP Catalog",
                             "description": "Lists curated LSP servers known to the daemon (installable/enabled without UI).",
                             "inputSchema": { "type": "object", "additionalProperties": false }
                         },
                         {
-                            "name": "ctx.lsp_catalog_install",
+                            "name": "ctx_lsp_catalog_install",
                             "title": "Install LSP Server (Catalog)",
                             "description": "Installs and enables an LSP server from the daemon catalog (may require restarting the daemon to take effect).",
                             "inputSchema": {
@@ -137,7 +162,7 @@ async fn main() -> Result<()> {
                             }
                         },
                         {
-                            "name": "ctx.lsp_diagnostics",
+                            "name": "ctx_lsp_diagnostics",
                             "title": "LSP Diagnostics",
                             "description": "Returns language-server diagnostics for a file in the current session worktree (requires daemon LSP enabled).",
                             "inputSchema": {
@@ -152,7 +177,7 @@ async fn main() -> Result<()> {
                             }
                         },
                         {
-                            "name": "ctx.lsp_definition",
+                            "name": "ctx_lsp_definition",
                             "title": "LSP Definition",
                             "description": "Returns the definition location at a position in a file.",
                             "inputSchema": {
@@ -169,7 +194,7 @@ async fn main() -> Result<()> {
                             }
                         },
                         {
-                            "name": "ctx.lsp_type_definition",
+                            "name": "ctx_lsp_type_definition",
                             "title": "LSP Type Definition",
                             "description": "Returns the type definition location at a position in a file.",
                             "inputSchema": {
@@ -186,7 +211,7 @@ async fn main() -> Result<()> {
                             }
                         },
                         {
-                            "name": "ctx.lsp_implementation",
+                            "name": "ctx_lsp_implementation",
                             "title": "LSP Implementation",
                             "description": "Returns implementations at a position in a file.",
                             "inputSchema": {
@@ -203,7 +228,7 @@ async fn main() -> Result<()> {
                             }
                         },
                         {
-                            "name": "ctx.lsp_references",
+                            "name": "ctx_lsp_references",
                             "title": "LSP References",
                             "description": "Returns references at a position in a file.",
                             "inputSchema": {
@@ -221,7 +246,7 @@ async fn main() -> Result<()> {
                             }
                         },
                         {
-                            "name": "ctx.lsp_hover",
+                            "name": "ctx_lsp_hover",
                             "title": "LSP Hover",
                             "description": "Returns hover information at a position in a file.",
                             "inputSchema": {
@@ -238,7 +263,7 @@ async fn main() -> Result<()> {
                             }
                         },
                         {
-                            "name": "ctx.lsp_signature_help",
+                            "name": "ctx_lsp_signature_help",
                             "title": "LSP Signature Help",
                             "description": "Returns signature help at a position in a file.",
                             "inputSchema": {
@@ -255,7 +280,7 @@ async fn main() -> Result<()> {
                             }
                         },
                             {
-                                "name": "ctx.lsp_completion",
+                                "name": "ctx_lsp_completion",
                                 "title": "LSP Completion",
                                 "description": "Returns completion items at a position in a file.",
                                 "inputSchema": {
@@ -272,7 +297,7 @@ async fn main() -> Result<()> {
                                 }
                             },
                             {
-                                "name": "ctx.lsp_completion_resolve",
+                                "name": "ctx_lsp_completion_resolve",
                                 "title": "LSP Completion Resolve",
                                 "description": "Resolves additional fields for a completion item (server-dependent).",
                                 "inputSchema": {
@@ -288,7 +313,7 @@ async fn main() -> Result<()> {
                                 }
                             },
                             {
-                                "name": "ctx.lsp_code_action_resolve",
+                                "name": "ctx_lsp_code_action_resolve",
                                 "title": "LSP Code Action Resolve",
                                 "description": "Resolves additional fields for a CodeAction (server-dependent).",
                                 "inputSchema": {
@@ -304,7 +329,7 @@ async fn main() -> Result<()> {
                                 }
                             },
                             {
-                                "name": "ctx.lsp_inlay_hints",
+                                "name": "ctx_lsp_inlay_hints",
                                 "title": "LSP Inlay Hints",
                                 "description": "Returns inlay hints for a visible range (server-dependent).",
                                 "inputSchema": {
@@ -323,7 +348,7 @@ async fn main() -> Result<()> {
                                 }
                             },
                             {
-                                "name": "ctx.lsp_document_highlight",
+                                "name": "ctx_lsp_document_highlight",
                                 "title": "LSP Document Highlight",
                                 "description": "Returns document highlights at a position (server-dependent).",
                                 "inputSchema": {
@@ -340,7 +365,7 @@ async fn main() -> Result<()> {
                                 }
                             },
                             {
-                                "name": "ctx.lsp_selection_ranges",
+                                "name": "ctx_lsp_selection_ranges",
                                 "title": "LSP Selection Ranges",
                                 "description": "Returns selection ranges for one or more positions (server-dependent).",
                                 "inputSchema": {
@@ -367,7 +392,7 @@ async fn main() -> Result<()> {
                                 }
                             },
                             {
-                                "name": "ctx.lsp_call_hierarchy_prepare",
+                                "name": "ctx_lsp_call_hierarchy_prepare",
                                 "title": "LSP Call Hierarchy (Prepare)",
                                 "description": "Prepares call hierarchy items at a position.",
                                 "inputSchema": {
@@ -384,7 +409,7 @@ async fn main() -> Result<()> {
                                 }
                             },
                             {
-                                "name": "ctx.lsp_call_hierarchy_incoming",
+                                "name": "ctx_lsp_call_hierarchy_incoming",
                                 "title": "LSP Call Hierarchy (Incoming)",
                                 "description": "Returns incoming calls for a CallHierarchyItem.",
                                 "inputSchema": {
@@ -400,7 +425,7 @@ async fn main() -> Result<()> {
                                 }
                             },
                             {
-                                "name": "ctx.lsp_call_hierarchy_outgoing",
+                                "name": "ctx_lsp_call_hierarchy_outgoing",
                                 "title": "LSP Call Hierarchy (Outgoing)",
                                 "description": "Returns outgoing calls for a CallHierarchyItem.",
                                 "inputSchema": {
@@ -416,7 +441,7 @@ async fn main() -> Result<()> {
                                 }
                             },
                             {
-                                "name": "ctx.lsp_code_lens",
+                                "name": "ctx_lsp_code_lens",
                                 "title": "LSP Code Lens",
                                 "description": "Returns code lenses for a file (server-dependent).",
                                 "inputSchema": {
@@ -431,7 +456,7 @@ async fn main() -> Result<()> {
                                 }
                             },
                             {
-                                "name": "ctx.lsp_code_lens_resolve",
+                                "name": "ctx_lsp_code_lens_resolve",
                                 "title": "LSP Code Lens Resolve",
                                 "description": "Resolves additional fields for a code lens (server-dependent).",
                                 "inputSchema": {
@@ -447,7 +472,7 @@ async fn main() -> Result<()> {
                                 }
                             },
                             {
-                                "name": "ctx.lsp_prepare_rename",
+                                "name": "ctx_lsp_prepare_rename",
                                 "title": "LSP Prepare Rename",
                                 "description": "Preflights a rename at a position and returns the target range (server-dependent).",
                                 "inputSchema": {
@@ -464,7 +489,7 @@ async fn main() -> Result<()> {
                                 }
                             },
                             {
-                                "name": "ctx.lsp_document_links",
+                                "name": "ctx_lsp_document_links",
                                 "title": "LSP Document Links",
                                 "description": "Returns document links for a file (server-dependent).",
                                 "inputSchema": {
@@ -479,7 +504,7 @@ async fn main() -> Result<()> {
                                 }
                             },
                             {
-                                "name": "ctx.lsp_document_link_resolve",
+                                "name": "ctx_lsp_document_link_resolve",
                                 "title": "LSP Document Link Resolve",
                                 "description": "Resolves a document link target (server-dependent).",
                                 "inputSchema": {
@@ -495,7 +520,7 @@ async fn main() -> Result<()> {
                                 }
                             },
                         {
-                            "name": "ctx.lsp_semantic_tokens_full",
+                            "name": "ctx_lsp_semantic_tokens_full",
                             "title": "LSP Semantic Tokens (Full)",
                             "description": "Returns semantic tokens for a file (intended for agent consumption; server-dependent).",
                             "inputSchema": {
@@ -510,7 +535,7 @@ async fn main() -> Result<()> {
                             }
                         },
                         {
-                            "name": "ctx.lsp_semantic_tokens_delta",
+                            "name": "ctx_lsp_semantic_tokens_delta",
                             "title": "LSP Semantic Tokens (Delta)",
                             "description": "Returns semantic tokens delta for a file given a previous result id (server-dependent).",
                             "inputSchema": {
@@ -526,7 +551,7 @@ async fn main() -> Result<()> {
                             }
                         },
                         {
-                            "name": "ctx.lsp_folding_ranges",
+                            "name": "ctx_lsp_folding_ranges",
                             "title": "LSP Folding Ranges",
                             "description": "Returns folding ranges for a file (server-dependent).",
                             "inputSchema": {
@@ -541,7 +566,7 @@ async fn main() -> Result<()> {
                             }
                         },
                         {
-                            "name": "ctx.lsp_linked_editing_range",
+                            "name": "ctx_lsp_linked_editing_range",
                             "title": "LSP Linked Editing Range",
                             "description": "Returns linked editing ranges at a position (server-dependent).",
                             "inputSchema": {
@@ -558,7 +583,7 @@ async fn main() -> Result<()> {
                             }
                         },
                             {
-                                "name": "ctx.lsp_type_hierarchy_prepare",
+                                "name": "ctx_lsp_type_hierarchy_prepare",
                                 "title": "LSP Type Hierarchy Prepare",
                                 "description": "Prepares a type hierarchy item at a position (server-dependent).",
                                 "inputSchema": {
@@ -575,7 +600,7 @@ async fn main() -> Result<()> {
                                 }
                             },
                             {
-                                "name": "ctx.lsp_type_hierarchy_supertypes",
+                                "name": "ctx_lsp_type_hierarchy_supertypes",
                                 "title": "LSP Type Hierarchy Supertypes",
                                 "description": "Returns supertypes for a type hierarchy item (server-dependent).",
                                 "inputSchema": {
@@ -591,7 +616,7 @@ async fn main() -> Result<()> {
                                 }
                             },
                             {
-                                "name": "ctx.lsp_type_hierarchy_subtypes",
+                                "name": "ctx_lsp_type_hierarchy_subtypes",
                                 "title": "LSP Type Hierarchy Subtypes",
                                 "description": "Returns subtypes for a type hierarchy item (server-dependent).",
                                 "inputSchema": {
@@ -607,7 +632,7 @@ async fn main() -> Result<()> {
                                 }
                             },
                             {
-                                "name": "ctx.lsp_code_actions_by_diagnostic_plan",
+                                "name": "ctx_lsp_code_actions_by_diagnostic_plan",
                                 "title": "LSP Code Actions (By Diagnostic) (Plan)",
                                 "description": "Creates ranked edit plans for quick-fixes for a specific diagnostic (requires daemon LSP edit plans enabled).",
                                 "inputSchema": {
@@ -622,7 +647,7 @@ async fn main() -> Result<()> {
                                 }
                             },
                             {
-                                "name": "ctx.lsp_execute_command",
+                                "name": "ctx_lsp_execute_command",
                                 "title": "LSP Execute Command",
                                 "description": "Executes an allowlisted LSP command and returns any captured WorkspaceEdit (disabled by default; see daemon config).",
                                 "inputSchema": {
@@ -639,7 +664,7 @@ async fn main() -> Result<()> {
                                 }
                             },
                             {
-                                "name": "ctx.lsp_execute_command_plan",
+                                "name": "ctx_lsp_execute_command_plan",
                                 "title": "LSP Execute Command (Plan)",
                                 "description": "Creates an edit plan from an allowlisted executeCommand that produces a WorkspaceEdit.",
                                 "inputSchema": {
@@ -655,7 +680,7 @@ async fn main() -> Result<()> {
                                 }
                             },
                         {
-                            "name": "ctx.lsp_document_symbols",
+                            "name": "ctx_lsp_document_symbols",
                             "title": "LSP Document Symbols",
                             "description": "Returns document symbols for a file.",
                             "inputSchema": {
@@ -670,7 +695,7 @@ async fn main() -> Result<()> {
                             }
                         },
                         {
-                            "name": "ctx.lsp_workspace_symbols",
+                            "name": "ctx_lsp_workspace_symbols",
                             "title": "LSP Workspace Symbols",
                             "description": "Returns workspace symbols for a query.",
                             "inputSchema": {
@@ -685,7 +710,7 @@ async fn main() -> Result<()> {
                             }
                         },
                         {
-                            "name": "ctx.lsp_workspace_symbol_resolve",
+                            "name": "ctx_lsp_workspace_symbol_resolve",
                             "title": "LSP Workspace Symbol Resolve",
                             "description": "Resolves a workspace symbol item into a fully detailed representation (server-dependent).",
                             "inputSchema": {
@@ -700,7 +725,7 @@ async fn main() -> Result<()> {
                             }
                         },
                         {
-                            "name": "ctx.lsp_code_actions",
+                            "name": "ctx_lsp_code_actions",
                             "title": "LSP Code Actions",
                             "description": "Returns code actions for a selection.",
                             "inputSchema": {
@@ -719,7 +744,7 @@ async fn main() -> Result<()> {
                             }
                         },
                         {
-                            "name": "ctx.lsp_rename_plan",
+                            "name": "ctx_lsp_rename_plan",
                             "title": "LSP Rename (Plan)",
                             "description": "Creates an edit plan for an LSP rename operation (requires daemon LSP edit plans enabled).",
                             "inputSchema": {
@@ -736,7 +761,7 @@ async fn main() -> Result<()> {
                             }
                         },
                         {
-                            "name": "ctx.lsp_format_plan",
+                            "name": "ctx_lsp_format_plan",
                             "title": "LSP Format (Plan)",
                             "description": "Creates an edit plan for formatting a document.",
                             "inputSchema": {
@@ -750,7 +775,7 @@ async fn main() -> Result<()> {
                             }
                         },
                         {
-                            "name": "ctx.lsp_organize_imports_plan",
+                            "name": "ctx_lsp_organize_imports_plan",
                             "title": "LSP Organize Imports (Plan)",
                             "description": "Creates an edit plan for organizing imports (typically via LSP code actions).",
                             "inputSchema": {
@@ -764,7 +789,7 @@ async fn main() -> Result<()> {
                             }
                         },
                         {
-                            "name": "ctx.lsp_code_action_plan",
+                            "name": "ctx_lsp_code_action_plan",
                             "title": "LSP Code Action (Plan)",
                             "description": "Creates an edit plan from an LSP CodeAction JSON object (expects a CodeAction with an edit).",
                             "inputSchema": {
@@ -778,7 +803,7 @@ async fn main() -> Result<()> {
                             }
                         },
                         {
-                            "name": "ctx.list_edit_plans",
+                            "name": "ctx_list_edit_plans",
                             "title": "List Edit Plans",
                             "description": "Lists pending edit plans for a track (or for the current session's track).",
                             "inputSchema": {
@@ -791,7 +816,7 @@ async fn main() -> Result<()> {
                             }
                         },
                         {
-                            "name": "ctx.get_edit_plan",
+                            "name": "ctx_get_edit_plan",
                             "title": "Get Edit Plan",
                             "description": "Fetches an edit plan summary by id.",
                             "inputSchema": {
@@ -804,7 +829,7 @@ async fn main() -> Result<()> {
                             }
                         },
                         {
-                            "name": "ctx.apply_edit_plan",
+                            "name": "ctx_apply_edit_plan",
                             "title": "Apply Edit Plan Patch",
                             "description": "Applies or rejects a patch from an edit plan. If patch is omitted, applies the entire remaining plan diff.",
                             "inputSchema": {
@@ -819,7 +844,7 @@ async fn main() -> Result<()> {
                             }
                         },
                         {
-                            "name": "ctx.discard_edit_plan",
+                            "name": "ctx_discard_edit_plan",
                             "title": "Discard Edit Plan",
                             "description": "Discards an edit plan by id.",
                             "inputSchema": {
@@ -840,14 +865,14 @@ async fn main() -> Result<()> {
                 let name = name.to_string();
                 let arguments = params.get("arguments").cloned().unwrap_or(json!({}));
                 match name.as_str() {
-                    "ctx.ping" => ok(
+                    "ctx_ping" => ok(
                         id.unwrap(),
                         json!({
                             "content": [{"type":"text","text": "{\"ok\":true}"}],
                             "isError": false
                         }),
                     ),
-                    "ctx.list_workspaces" => {
+                    "ctx_list_workspaces" => {
                         let _ = arguments; // currently unused
                         match list_workspaces(&client, &daemon_url).await {
                             Ok(val) => ok(
@@ -866,14 +891,96 @@ async fn main() -> Result<()> {
                             ),
                         }
                     }
-                    "ctx.lsp_status" => {
+                    "ctx_artifacts_set" => {
+                        let normalized =
+                            (|| -> std::result::Result<(String, Vec<Value>), Value> {
+                                let session_id = ctx_env_opt("SESSION_ID").ok_or_else(|| {
+                                    error(
+                                        id.clone().unwrap(),
+                                        -32602,
+                                        "Invalid params",
+                                        Some(json!({"missing":"CTX_SESSION_ID"})),
+                                    )
+                                })?;
+                                let items = arguments
+                                    .get("artifacts")
+                                    .and_then(|v| v.as_array())
+                                    .ok_or_else(|| {
+                                    error(
+                                        id.clone().unwrap(),
+                                        -32602,
+                                        "Invalid params",
+                                        Some(json!({"missing":"artifacts"})),
+                                    )
+                                })?;
+
+                                let mut normalized = Vec::with_capacity(items.len());
+                                for (idx, item) in items.iter().enumerate() {
+                                    let obj = item.as_object().ok_or_else(|| {
+                                        error(
+                                            id.clone().unwrap(),
+                                            -32602,
+                                            "Invalid params",
+                                            Some(json!({"index": idx, "message": "artifact must be an object"})),
+                                        )
+                                    })?;
+                                    let abs = obj
+                                        .get("absoluteFilePath")
+                                        .or_else(|| obj.get("absolute_file_path"))
+                                        .and_then(|v| v.as_str())
+                                        .map(|s| s.to_string());
+                                    let absolute_file_path = abs
+                                        .filter(|s| !s.trim().is_empty())
+                                        .ok_or_else(|| {
+                                        error(
+                                            id.clone().unwrap(),
+                                            -32602,
+                                            "Invalid params",
+                                            Some(
+                                                json!({"index": idx, "missing":"absoluteFilePath"}),
+                                            ),
+                                        )
+                                    })?;
+                                    let name = obj
+                                        .get("name")
+                                        .and_then(|v| v.as_str())
+                                        .map(|s| s.to_string());
+                                    let mime_type = obj
+                                        .get("mimeType")
+                                        .or_else(|| obj.get("mime_type"))
+                                        .and_then(|v| v.as_str())
+                                        .map(|s| s.to_string());
+
+                                    normalized.push(json!({
+                                        "absolute_file_path": absolute_file_path,
+                                        "name": name,
+                                        "mime_type": mime_type,
+                                    }));
+                                }
+
+                                Ok((session_id, normalized))
+                            })();
+
+                        match normalized {
+                            Ok((session_id, normalized)) => {
+                                match set_artifacts(&client, &daemon_url, &session_id, normalized)
+                                    .await
+                                {
+                                    Ok(val) => ok(id.unwrap(), tool_ok(val)),
+                                    Err(e) => ok(id.unwrap(), tool_err(e)),
+                                }
+                            }
+                            Err(err) => err,
+                        }
+                    }
+                    "ctx_lsp_status" => {
                         let _ = arguments;
                         match lsp_status(&client, &daemon_url).await {
                             Ok(val) => ok(id.unwrap(), tool_ok(val)),
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "ctx.lsp_install_server" => {
+                    "ctx_lsp_install_server" => {
                         let server_id = arguments
                             .get("server_id")
                             .and_then(|v| v.as_str())
@@ -893,14 +1000,14 @@ async fn main() -> Result<()> {
                             }
                         }
                     }
-                    "ctx.lsp_catalog_list" => {
+                    "ctx_lsp_catalog_list" => {
                         let _ = arguments;
                         match lsp_catalog_list(&client, &daemon_url).await {
                             Ok(val) => ok(id.unwrap(), tool_ok(val)),
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "ctx.lsp_catalog_install" => {
+                    "ctx_lsp_catalog_install" => {
                         let catalog_id = arguments
                             .get("catalog_id")
                             .and_then(|v| v.as_str())
@@ -920,7 +1027,7 @@ async fn main() -> Result<()> {
                             }
                         }
                     }
-                    "ctx.lsp_diagnostics" => {
+                    "ctx_lsp_diagnostics" => {
                         let path = arguments
                             .get("path")
                             .and_then(|v| v.as_str())
@@ -964,7 +1071,7 @@ async fn main() -> Result<()> {
                             }
                         }
                     }
-                    "ctx.lsp_definition" => {
+                    "ctx_lsp_definition" => {
                         match lsp_pos_call(&client, &daemon_url, "/api/lsp/definition", &arguments)
                             .await
                         {
@@ -972,7 +1079,7 @@ async fn main() -> Result<()> {
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "ctx.lsp_type_definition" => {
+                    "ctx_lsp_type_definition" => {
                         match lsp_pos_call(
                             &client,
                             &daemon_url,
@@ -985,7 +1092,7 @@ async fn main() -> Result<()> {
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "ctx.lsp_implementation" => {
+                    "ctx_lsp_implementation" => {
                         match lsp_pos_call(
                             &client,
                             &daemon_url,
@@ -998,7 +1105,7 @@ async fn main() -> Result<()> {
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "ctx.lsp_references" => {
+                    "ctx_lsp_references" => {
                         match lsp_pos_call(&client, &daemon_url, "/api/lsp/references", &arguments)
                             .await
                         {
@@ -1006,14 +1113,14 @@ async fn main() -> Result<()> {
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "ctx.lsp_hover" => {
+                    "ctx_lsp_hover" => {
                         match lsp_pos_call(&client, &daemon_url, "/api/lsp/hover", &arguments).await
                         {
                             Ok(val) => ok(id.unwrap(), tool_ok(val)),
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "ctx.lsp_signature_help" => {
+                    "ctx_lsp_signature_help" => {
                         match lsp_pos_call(
                             &client,
                             &daemon_url,
@@ -1026,7 +1133,7 @@ async fn main() -> Result<()> {
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "ctx.lsp_completion" => {
+                    "ctx_lsp_completion" => {
                         match lsp_pos_call(&client, &daemon_url, "/api/lsp/completion", &arguments)
                             .await
                         {
@@ -1034,7 +1141,7 @@ async fn main() -> Result<()> {
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "ctx.lsp_completion_resolve" => {
+                    "ctx_lsp_completion_resolve" => {
                         match lsp_item_call(
                             &client,
                             &daemon_url,
@@ -1047,7 +1154,7 @@ async fn main() -> Result<()> {
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "ctx.lsp_code_action_resolve" => {
+                    "ctx_lsp_code_action_resolve" => {
                         match lsp_item_call(
                             &client,
                             &daemon_url,
@@ -1060,7 +1167,7 @@ async fn main() -> Result<()> {
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "ctx.lsp_inlay_hints" => {
+                    "ctx_lsp_inlay_hints" => {
                         match lsp_range_call(
                             &client,
                             &daemon_url,
@@ -1073,7 +1180,7 @@ async fn main() -> Result<()> {
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "ctx.lsp_document_highlight" => {
+                    "ctx_lsp_document_highlight" => {
                         match lsp_pos_call(
                             &client,
                             &daemon_url,
@@ -1086,7 +1193,7 @@ async fn main() -> Result<()> {
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "ctx.lsp_selection_ranges" => {
+                    "ctx_lsp_selection_ranges" => {
                         match lsp_selection_ranges_call(
                             &client,
                             &daemon_url,
@@ -1099,7 +1206,7 @@ async fn main() -> Result<()> {
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "ctx.lsp_call_hierarchy_prepare" => {
+                    "ctx_lsp_call_hierarchy_prepare" => {
                         match lsp_pos_call(
                             &client,
                             &daemon_url,
@@ -1112,7 +1219,7 @@ async fn main() -> Result<()> {
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "ctx.lsp_call_hierarchy_incoming" => {
+                    "ctx_lsp_call_hierarchy_incoming" => {
                         match lsp_item_call(
                             &client,
                             &daemon_url,
@@ -1125,7 +1232,7 @@ async fn main() -> Result<()> {
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "ctx.lsp_call_hierarchy_outgoing" => {
+                    "ctx_lsp_call_hierarchy_outgoing" => {
                         match lsp_item_call(
                             &client,
                             &daemon_url,
@@ -1138,7 +1245,7 @@ async fn main() -> Result<()> {
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "ctx.lsp_code_lens" => {
+                    "ctx_lsp_code_lens" => {
                         match lsp_file_call(&client, &daemon_url, "/api/lsp/code_lens", &arguments)
                             .await
                         {
@@ -1146,7 +1253,7 @@ async fn main() -> Result<()> {
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "ctx.lsp_code_lens_resolve" => {
+                    "ctx_lsp_code_lens_resolve" => {
                         match lsp_item_call(
                             &client,
                             &daemon_url,
@@ -1159,7 +1266,7 @@ async fn main() -> Result<()> {
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "ctx.lsp_prepare_rename" => {
+                    "ctx_lsp_prepare_rename" => {
                         match lsp_pos_call(
                             &client,
                             &daemon_url,
@@ -1172,7 +1279,7 @@ async fn main() -> Result<()> {
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "ctx.lsp_document_links" => {
+                    "ctx_lsp_document_links" => {
                         match lsp_file_call(
                             &client,
                             &daemon_url,
@@ -1185,7 +1292,7 @@ async fn main() -> Result<()> {
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "ctx.lsp_document_link_resolve" => {
+                    "ctx_lsp_document_link_resolve" => {
                         match lsp_item_call(
                             &client,
                             &daemon_url,
@@ -1198,7 +1305,7 @@ async fn main() -> Result<()> {
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "ctx.lsp_semantic_tokens_full" => {
+                    "ctx_lsp_semantic_tokens_full" => {
                         match lsp_file_call(
                             &client,
                             &daemon_url,
@@ -1211,14 +1318,14 @@ async fn main() -> Result<()> {
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "ctx.lsp_semantic_tokens_delta" => {
+                    "ctx_lsp_semantic_tokens_delta" => {
                         match lsp_semantic_tokens_delta_call(&client, &daemon_url, &arguments).await
                         {
                             Ok(val) => ok(id.unwrap(), tool_ok(val)),
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "ctx.lsp_folding_ranges" => {
+                    "ctx_lsp_folding_ranges" => {
                         match lsp_file_call(
                             &client,
                             &daemon_url,
@@ -1231,7 +1338,7 @@ async fn main() -> Result<()> {
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "ctx.lsp_linked_editing_range" => {
+                    "ctx_lsp_linked_editing_range" => {
                         match lsp_pos_call(
                             &client,
                             &daemon_url,
@@ -1244,7 +1351,7 @@ async fn main() -> Result<()> {
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "ctx.lsp_type_hierarchy_prepare" => {
+                    "ctx_lsp_type_hierarchy_prepare" => {
                         match lsp_pos_call(
                             &client,
                             &daemon_url,
@@ -1257,7 +1364,7 @@ async fn main() -> Result<()> {
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "ctx.lsp_type_hierarchy_supertypes" => {
+                    "ctx_lsp_type_hierarchy_supertypes" => {
                         match lsp_item_call(
                             &client,
                             &daemon_url,
@@ -1270,7 +1377,7 @@ async fn main() -> Result<()> {
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "ctx.lsp_type_hierarchy_subtypes" => {
+                    "ctx_lsp_type_hierarchy_subtypes" => {
                         match lsp_item_call(
                             &client,
                             &daemon_url,
@@ -1283,7 +1390,7 @@ async fn main() -> Result<()> {
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "ctx.lsp_code_actions_by_diagnostic_plan" => {
+                    "ctx_lsp_code_actions_by_diagnostic_plan" => {
                         match lsp_code_actions_by_diagnostic_plan_call(
                             &client,
                             &daemon_url,
@@ -1295,7 +1402,7 @@ async fn main() -> Result<()> {
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "ctx.lsp_execute_command" => {
+                    "ctx_lsp_execute_command" => {
                         match lsp_execute_command_call(
                             &client,
                             &daemon_url,
@@ -1308,7 +1415,7 @@ async fn main() -> Result<()> {
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "ctx.lsp_execute_command_plan" => {
+                    "ctx_lsp_execute_command_plan" => {
                         match lsp_execute_command_call(
                             &client,
                             &daemon_url,
@@ -1321,7 +1428,7 @@ async fn main() -> Result<()> {
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "ctx.lsp_document_symbols" => {
+                    "ctx_lsp_document_symbols" => {
                         match lsp_file_call(
                             &client,
                             &daemon_url,
@@ -1334,13 +1441,13 @@ async fn main() -> Result<()> {
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "ctx.lsp_workspace_symbols" => {
+                    "ctx_lsp_workspace_symbols" => {
                         match lsp_workspace_symbols_call(&client, &daemon_url, &arguments).await {
                             Ok(val) => ok(id.unwrap(), tool_ok(val)),
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "ctx.lsp_workspace_symbol_resolve" => {
+                    "ctx_lsp_workspace_symbol_resolve" => {
                         match lsp_workspace_symbol_resolve_call(&client, &daemon_url, &arguments)
                             .await
                         {
@@ -1348,56 +1455,56 @@ async fn main() -> Result<()> {
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "ctx.lsp_code_actions" => {
+                    "ctx_lsp_code_actions" => {
                         match lsp_code_actions_call(&client, &daemon_url, &arguments).await {
                             Ok(val) => ok(id.unwrap(), tool_ok(val)),
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "ctx.lsp_rename_plan" => {
+                    "ctx_lsp_rename_plan" => {
                         match lsp_rename_plan_call(&client, &daemon_url, &arguments).await {
                             Ok(val) => ok(id.unwrap(), tool_ok(val)),
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "ctx.lsp_format_plan" => {
+                    "ctx_lsp_format_plan" => {
                         match lsp_format_plan_call(&client, &daemon_url, &arguments).await {
                             Ok(val) => ok(id.unwrap(), tool_ok(val)),
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "ctx.lsp_organize_imports_plan" => {
+                    "ctx_lsp_organize_imports_plan" => {
                         match lsp_organize_imports_plan_call(&client, &daemon_url, &arguments).await
                         {
                             Ok(val) => ok(id.unwrap(), tool_ok(val)),
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "ctx.lsp_code_action_plan" => {
+                    "ctx_lsp_code_action_plan" => {
                         match lsp_code_action_plan_call(&client, &daemon_url, &arguments).await {
                             Ok(val) => ok(id.unwrap(), tool_ok(val)),
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "ctx.list_edit_plans" => {
+                    "ctx_list_edit_plans" => {
                         match list_edit_plans_call(&client, &daemon_url, &arguments).await {
                             Ok(val) => ok(id.unwrap(), tool_ok(val)),
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "ctx.get_edit_plan" => {
+                    "ctx_get_edit_plan" => {
                         match get_edit_plan_call(&client, &daemon_url, &arguments).await {
                             Ok(val) => ok(id.unwrap(), tool_ok(val)),
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "ctx.apply_edit_plan" => {
+                    "ctx_apply_edit_plan" => {
                         match apply_edit_plan_call(&client, &daemon_url, &arguments).await {
                             Ok(val) => ok(id.unwrap(), tool_ok(val)),
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
-                    "ctx.discard_edit_plan" => {
+                    "ctx_discard_edit_plan" => {
                         match discard_edit_plan_call(&client, &daemon_url, &arguments).await {
                             Ok(val) => ok(id.unwrap(), tool_ok(val)),
                             Err(e) => ok(id.unwrap(), tool_err(e)),
@@ -1475,6 +1582,22 @@ async fn daemon_post_json(
 
 async fn list_workspaces(client: &reqwest::Client, daemon_url: &str) -> Result<Value> {
     daemon_get_json(client, daemon_url, "/api/workspaces").await
+}
+
+async fn set_artifacts(
+    client: &reqwest::Client,
+    daemon_url: &str,
+    session_id: &str,
+    artifacts: Vec<Value>,
+) -> Result<Value> {
+    let path = format!("/api/sessions/{}/artifacts", session_id);
+    daemon_post_json(
+        client,
+        daemon_url,
+        &path,
+        &json!({ "artifacts": artifacts }),
+    )
+    .await
 }
 
 async fn lsp_status(client: &reqwest::Client, daemon_url: &str) -> Result<Value> {

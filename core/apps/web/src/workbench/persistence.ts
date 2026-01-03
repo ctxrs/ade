@@ -21,6 +21,7 @@ import type {
 const WINDOW_DB_VERSION = 1 as const;
 const DRAFT_DB_VERSION = 1 as const;
 const DIFF_PANE_DB_VERSION = 1 as const;
+const ARTIFACTS_PANE_DB_VERSION = 1 as const;
 const TERMINAL_PANEL_DB_VERSION = 1 as const;
 const TERMINAL_LAYOUT_DB_VERSION = 1 as const;
 const TERMINAL_TITLES_DB_VERSION = 1 as const;
@@ -43,6 +44,10 @@ export function workbenchDraftKeyV1(workspaceId: string, key: string): string {
 
 export function workbenchDiffPaneKeyV1(workspaceId: string, scopeId: string): string {
   return `wb.diff_pane.v${DIFF_PANE_DB_VERSION}.${safeKeyPart(workbenchDaemonKey())}.${safeKeyPart(workspaceId)}.${safeKeyPart(scopeId)}`;
+}
+
+export function workbenchArtifactsPaneKeyV1(workspaceId: string, sessionId: string): string {
+  return `wb.artifacts_pane.v${ARTIFACTS_PANE_DB_VERSION}.${safeKeyPart(workbenchDaemonKey())}.${safeKeyPart(workspaceId)}.${safeKeyPart(sessionId)}`;
 }
 
 export function workbenchTerminalPanelKeyV1(workspaceId: string): string {
@@ -349,6 +354,22 @@ export async function saveWorkbenchDiffPaneOpenV1(
   open: boolean,
 ): Promise<void> {
   await uiStateSet(workbenchDiffPaneKeyV1(workspaceId, scopeId), open);
+}
+
+export async function loadWorkbenchArtifactsPaneOpenV1(
+  workspaceId: string,
+  sessionId: string,
+): Promise<boolean | null> {
+  const raw = await uiStateGet(workbenchArtifactsPaneKeyV1(workspaceId, sessionId));
+  return typeof raw === "boolean" ? raw : null;
+}
+
+export async function saveWorkbenchArtifactsPaneOpenV1(
+  workspaceId: string,
+  sessionId: string,
+  open: boolean,
+): Promise<void> {
+  await uiStateSet(workbenchArtifactsPaneKeyV1(workspaceId, sessionId), open);
 }
 
 export async function loadWorkbenchTerminalPanelOpenV1(
