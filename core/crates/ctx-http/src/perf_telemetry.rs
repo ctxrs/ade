@@ -492,7 +492,7 @@ struct OtelRuntime {
     tracer: opentelemetry_sdk::trace::Tracer,
     slow_tracer: opentelemetry_sdk::trace::Tracer,
     meter: Meter,
-    meter_provider: SdkMeterProvider,
+    _meter_provider: SdkMeterProvider,
     registry: Mutex<MetricRegistry>,
 }
 
@@ -668,7 +668,7 @@ fn build_otel(cfg: &PerfTelemetryConfig) -> Option<Arc<OtelRuntime>> {
         tracer,
         slow_tracer,
         meter,
-        meter_provider,
+        _meter_provider: meter_provider,
         registry: Mutex::new(MetricRegistry::default()),
     }))
 }
