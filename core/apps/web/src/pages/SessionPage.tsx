@@ -195,48 +195,6 @@ function markdownToPlainText(input: string): string {
   return text.trim();
 }
 
-const STATUS_KEY_RE = /[\s-]+/g;
-const STANDARD_STATUS_KEYS = new Set([
-  "pending",
-  "queued",
-  "in_progress",
-  "inprogress",
-  "running",
-  "completed",
-  "complete",
-  "ok",
-  "succeeded",
-  "failed",
-  "error",
-]);
-
-function normalizeStatusKey(raw: string): string {
-  return String(raw ?? "")
-    .trim()
-    .toLowerCase()
-    .replace(STATUS_KEY_RE, "_");
-}
-
-function extractCustomToolStatus(payload: any): string | null {
-  const candidates = [
-    payload?.tool_status,
-    payload?.tool?.status,
-    payload?.status,
-    payload?.acp_update?.tool_status,
-    payload?.acp_update?.tool?.status,
-    payload?.acp_update?.status,
-    payload?.acp_update?.toolCall?.status,
-  ];
-  for (const candidate of candidates) {
-    if (typeof candidate !== "string") continue;
-    const trimmed = candidate.trim();
-    if (!trimmed) continue;
-    const key = normalizeStatusKey(trimmed);
-    if (STANDARD_STATUS_KEYS.has(key)) continue;
-    return trimmed;
-  }
-  return null;
-}
 
 type ReasoningSummaryFragment = {
   text: string;
@@ -280,7 +238,6 @@ function buildCustomStatusByTurnId(events: SessionEvent[]): Map<string, string> 
   const out = new Map<string, string>();
   const summaryByTurn = new Map<string, { text: string; itemId: string | null; summaryIndex: number | null }>();
   for (const ev of events) {
-    const eventType = String(ev.event_type ?? "");
     const turnId = idToString((ev as any).turn_id);
     if (!turnId) continue;
     const summaryFragment = extractReasoningSummaryFragment(ev);
@@ -307,9 +264,6 @@ function buildCustomStatusByTurnId(events: SessionEvent[]): Map<string, string> 
         });
       }
     }
-    if (!["tool_call", "tool_call_update", "tool_result"].includes(eventType)) continue;
-    const status = extractCustomToolStatus(ev.payload_json ?? {});
-    if (status) out.set(turnId, status);
   }
   for (const [turnId, summary] of summaryByTurn) {
     const trimmed = summary.text.trim();
@@ -3351,23 +3305,12 @@ function buildWorkbenchThreadViewModelFromTurns(
   }
 
   const eventsByTurnId = new Map<string, SessionEvent[]>();
-  const statusByTurnId = new Map<string, { text: string; at: string; source: "tool" | "meta" }>();
   for (const ev of events) {
     const turnId = idToString(ev.turn_id);
     if (!turnId) continue;
     const list = eventsByTurnId.get(turnId) ?? [];
     list.push(ev);
     eventsByTurnId.set(turnId, list);
-
-    const statusUpdate = extractStatusUpdate(ev);
-    if (statusUpdate) {
-      const prev = statusByTurnId.get(turnId);
-      if (prev?.source === "tool" && statusUpdate.source === "meta") {
-        continue;
-      }
-      const merged = prev ? mergeStatusText(prev.text, statusUpdate.text) : statusUpdate.text;
-      statusByTurnId.set(turnId, { text: merged, at: statusUpdate.at, source: statusUpdate.source });
-    }
   }
 
   for (const turn of turns) {
@@ -3510,7 +3453,7 @@ function buildWorkbenchThreadViewModelFromTurns(
       items.push({ kind: "spacer", id: `spacer-${turnId}`, created_at: turn.started_at });
     }
 
-    const statusText = customStatusByTurnId.get(turnId) ?? statusByTurnId.get(turnId)?.text ?? null;
+    const statusText = customStatusByTurnId.get(turnId) ?? null;
     items.push({
       kind: "turn_status",
       id: `turn-status-${turnId}`,
@@ -4113,15 +4056,6 @@ function mergeStreamingText(prev: string, next: string): string {
   return n.length >= p.length ? n : p;
 }
 
-function mergeStatusText(prev: string, next: string): string {
-  const p = prev ?? "";
-  const n = next ?? "";
-  if (!p) return n;
-  if (!n) return p;
-  if (n.startsWith(p) || p.startsWith(n)) return mergeStreamingText(p, n);
-  return n;
-}
-
 function pickFirstString(...values: any[]): string | null {
   for (const v of values) {
     if (typeof v === "string" && v.trim()) return v.trim();
@@ -4143,95 +4077,6 @@ function isNonToolStatus(value: string): boolean {
     "success",
     "succeeded",
   ].includes(s);
-}
-
-type StatusUpdate = { text: string; at: string; source: "tool" | "meta" };
-
-function toolStatusLine(opts: {
-  kind: string;
-  status: string;
-  input: any;
-  title: string;
-  eventType: string;
-}): string | null {
-  const normalized = normalizeToolStatus(opts.status || "", opts.eventType);
-  const inProgress = normalized === "pending" || normalized === "in_progress";
-  const completed = normalized === "completed";
-  const failed = normalized === "failed";
-  const summary = toolSummaryLine(opts.kind, opts.input);
-  const detail = summary ? summary : "";
-  const make = (verb: string) => (detail ? `${verb} ${detail}` : verb);
-  const kind = (opts.kind || "").toLowerCase();
-
-  if (kind === "search") return make(inProgress ? "Searching" : completed ? "Searched" : failed ? "Search failed" : "Search");
-  if (kind === "read" || kind === "read_file") {
-    return make(inProgress ? "Reading" : completed ? "Read" : failed ? "Read failed" : "Read");
-  }
-  if (kind === "execute") return make(inProgress ? "Running" : completed ? "Ran" : failed ? "Run failed" : "Run");
-  if (kind === "write") return make(inProgress ? "Writing" : completed ? "Wrote" : failed ? "Write failed" : "Write");
-  if (kind === "edit") return make(inProgress ? "Editing" : completed ? "Edited" : failed ? "Edit failed" : "Edit");
-  if (kind === "fetch") return make(inProgress ? "Fetching" : completed ? "Fetched" : failed ? "Fetch failed" : "Fetch");
-  if (kind === "think") return make(inProgress ? "Thinking" : completed ? "Thought" : failed ? "Thinking failed" : "Thinking");
-  if (kind === "error") return "Error";
-
-  const fallback = opts.title || humanToolKind(opts.kind);
-  if (!fallback) return null;
-  return detail ? `${fallback} ${detail}` : fallback;
-}
-
-function extractToolStatusUpdate(ev: SessionEvent): StatusUpdate | null {
-  if (ev.event_type !== "tool_call" && ev.event_type !== "tool_call_update" && ev.event_type !== "tool_result") {
-    return null;
-  }
-  const update = ev.payload_json?.acp_update ?? ev.payload_json ?? {};
-  const kind = String(update?.kind ?? update?.toolCall?.kind ?? "").trim();
-  const title = String(update?.title ?? update?.toolCall?.title ?? update?.toolCall?.name ?? "").trim();
-  const status = String(update?.status ?? update?.toolCall?.status ?? "").trim();
-  const input = update?.rawInput ?? update?.toolCall?.rawInput ?? update?.toolCall?.input ?? update?.input ?? null;
-
-  const text = toolStatusLine({ kind, status, input, title, eventType: ev.event_type });
-  if (!text) return null;
-  return { text, at: ev.created_at, source: "tool" };
-}
-
-function extractStatusUpdate(ev: SessionEvent): StatusUpdate | null {
-  const toolUpdate = extractToolStatusUpdate(ev);
-  if (toolUpdate) return toolUpdate;
-
-  const payload = ev.payload_json ?? {};
-  const meta =
-    payload?.acp_update?._meta ??
-    payload?.acp_update?.meta ??
-    payload?._meta ??
-    payload?.meta ??
-    null;
-  if (!meta || typeof meta !== "object") return null;
-  const codexMeta = (meta as any)?.codex ?? null;
-
-  const statusText = pickFirstString(
-    (meta as any)?.status_text,
-    (meta as any)?.statusText,
-    (meta as any)?.status_string,
-    (meta as any)?.statusString,
-    codexMeta?.status_text,
-    codexMeta?.statusText,
-    codexMeta?.status_string,
-    codexMeta?.statusString,
-  );
-  if (statusText) return { text: statusText, at: ev.created_at, source: "meta" };
-
-  const statusValue = pickFirstString((meta as any)?.status, codexMeta?.status);
-  if (statusValue && isNonToolStatus(statusValue)) {
-    return { text: statusValue, at: ev.created_at, source: "meta" };
-  }
-
-  const reasoningKind = pickFirstString(codexMeta?.reasoning_kind, codexMeta?.reasoningKind);
-  if (reasoningKind === "status") {
-    const fragment = pickFirstString(payload?.content_fragment, payload?.content?.text);
-    if (fragment) return { text: fragment, at: ev.created_at, source: "meta" };
-  }
-
-  return null;
 }
 
 function formatElapsedSeconds(totalSeconds: number): string {
