@@ -4597,6 +4597,103 @@ button.linklike:hover {
   word-break: break-word;
 }
 
+.wb-artifact-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(6, 6, 6, 0.84);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1200;
+}
+
+.wb-artifact-modal {
+  background: rgba(18, 18, 18, 0.96);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 14px;
+  width: min(1200px, 92vw);
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
+}
+
+.wb-artifact-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(12, 12, 12, 0.9);
+}
+
+.wb-artifact-modal-title {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.wb-artifact-modal-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.95);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 65vw;
+}
+
+.wb-artifact-modal-sub {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.wb-artifact-modal-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.wb-artifact-modal-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(8, 8, 8, 0.9);
+  overflow: hidden;
+  touch-action: none;
+  user-select: none;
+}
+
+.wb-artifact-modal-body.wb-artifact-zoomed {
+  cursor: grab;
+}
+
+.wb-artifact-modal-body.wb-artifact-zoomed:active {
+  cursor: grabbing;
+}
+
+.wb-artifact-modal-image {
+  max-width: 100%;
+  max-height: 100%;
+  display: block;
+  transform-origin: center;
+  transition: transform 0.08s ease-out;
+  pointer-events: none;
+}
+
+.wb-artifact-modal-video {
+  max-width: 100%;
+  max-height: 100%;
+  width: min(100%, 1080px);
+  background: #000;
+  border-radius: 12px;
+}
+
 .wb-editplans {
   min-height: 0;
   display: flex;

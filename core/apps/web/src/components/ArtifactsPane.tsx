@@ -1,5 +1,5 @@
-import React, { useCallback, useMemo, useState } from "react";
-import { Copy, Download } from "lucide-react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Copy, Download, RotateCcw, X, ZoomIn, ZoomOut } from "lucide-react";
 import { artifactUrl, idToString, type Artifact } from "../api/client";
 
 const VIDEO_EXTENSIONS = new Set(["mp4", "mov", "webm", "m4v"]);
@@ -41,6 +41,25 @@ function artifactFileName(artifact: Artifact): string {
   return sanitizeFileName(name || pathBase || "artifact");
 }
 
+function downloadArtifact(artifact: Artifact, url: string) {
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = artifactFileName(artifact);
+  a.rel = "noopener";
+  a.click();
+}
+
+async function copyArtifactImage(artifact: Artifact, url: string) {
+  if (!navigator.clipboard?.write || typeof window.ClipboardItem === "undefined") {
+    throw new Error("Clipboard image copy is not supported in this browser.");
+  }
+  const resp = await fetch(url, { cache: "no-store" });
+  if (!resp.ok) throw new Error("Failed to fetch image for clipboard.");
+  const blob = await resp.blob();
+  const type = blob.type || artifact.mime_type || "image/png";
+  await navigator.clipboard.write([new window.ClipboardItem({ [type]: blob })]);
+}
+
 function isVideoArtifact(artifact: Artifact): boolean {
   const mime = (artifact.mime_type ?? "").toLowerCase();
   if (mime.startsWith("video/")) return true;
@@ -54,7 +73,13 @@ function isImageArtifact(artifact: Artifact): boolean {
   return mime.startsWith("image/");
 }
 
-function ArtifactCard({ artifact }: { artifact: Artifact }) {
+function ArtifactCard({
+  artifact,
+  onOpen,
+}: {
+  artifact: Artifact;
+  onOpen: (next: Artifact) => void;
+}) {
   const [copying, setCopying] = useState(false);
   const name = displayName(artifact);
   const missing = Boolean(artifact.missing);
@@ -68,34 +93,26 @@ function ArtifactCard({ artifact }: { artifact: Artifact }) {
   const canDownload = Boolean(artifactId) && !missing;
   const canCopy = Boolean(artifactId) && !missing && isImage && !copying;
 
-  const onDownload = useCallback(() => {
+  const onDownload = useCallback(
+    (event?: React.MouseEvent) => {
+      event?.stopPropagation();
     if (!canDownload) return;
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = artifactFileName(artifact);
-    a.rel = "noopener";
-    a.click();
-  }, [artifact, canDownload, url]);
+    downloadArtifact(artifact, url);
+    },
+    [artifact, canDownload, url],
+  );
 
   const onCopy = useCallback(async () => {
     if (!canCopy) return;
-    if (!navigator.clipboard?.write || typeof window.ClipboardItem === "undefined") {
-      window.alert("Clipboard image copy is not supported in this browser.");
-      return;
-    }
     setCopying(true);
     try {
-      const resp = await fetch(url, { cache: "no-store" });
-      if (!resp.ok) throw new Error("Failed to fetch image for clipboard.");
-      const blob = await resp.blob();
-      const type = blob.type || artifact.mime_type || "image/png";
-      await navigator.clipboard.write([new window.ClipboardItem({ [type]: blob })]);
+      await copyArtifactImage(artifact, url);
     } catch (err: any) {
       window.alert(err?.message ?? "Failed to copy image.");
     } finally {
       setCopying(false);
     }
-  }, [artifact.mime_type, canCopy, url]);
+  }, [artifact, canCopy, url]);
 
   let preview: React.ReactNode = null;
   if (missing) {
@@ -113,7 +130,7 @@ function ArtifactCard({ artifact }: { artifact: Artifact }) {
   }
 
   return (
-    <div className="wb-artifact-card" title={title}>
+    <div className="wb-artifact-card" title={title} onClick={() => onOpen(artifact)}>
       <div className="wb-artifact-preview">{preview}</div>
       <div className="wb-artifact-meta">
         <div className="wb-artifact-name-row">
@@ -133,7 +150,10 @@ function ArtifactCard({ artifact }: { artifact: Artifact }) {
               <button
                 type="button"
                 className="wb-artifact-action"
-                onClick={onCopy}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  void onCopy();
+                }}
                 disabled={!canCopy}
                 aria-label="Copy image"
                 title={canCopy ? "Copy image" : "Copy unavailable"}
@@ -149,12 +169,228 @@ function ArtifactCard({ artifact }: { artifact: Artifact }) {
   );
 }
 
+function ArtifactViewer({
+  artifact,
+  onClose,
+}: {
+  artifact: Artifact;
+  onClose: () => void;
+}) {
+  const isVideo = isVideoArtifact(artifact);
+  const isImage = isImageArtifact(artifact);
+  const name = displayName(artifact);
+  const artifactId = idToString(artifact.id);
+  const url = artifactUrl(artifactId);
+  const meta = `${artifact.mime_type || "application/octet-stream"} · ${formatBytes(artifact.bytes)}`;
+  const missing = Boolean(artifact.missing);
+  const [copying, setCopying] = useState(false);
+  const [scale, setScale] = useState(1);
+  const [offset, setOffset] = useState({ x: 0, y: 0 });
+  const draggingRef = useRef(false);
+  const lastPointRef = useRef({ x: 0, y: 0 });
+
+  useEffect(() => {
+    setScale(1);
+    setOffset({ x: 0, y: 0 });
+  }, [artifactId]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
+
+  useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, []);
+
+  const clampScale = useCallback((value: number) => Math.min(5, Math.max(1, value)), []);
+
+  const zoomBy = useCallback(
+    (delta: number) => {
+      setScale((current) => {
+        const next = clampScale(current + delta);
+        if (next === 1) {
+          setOffset({ x: 0, y: 0 });
+        }
+        return next;
+      });
+    },
+    [clampScale],
+  );
+
+  const resetZoom = useCallback(() => {
+    setScale(1);
+    setOffset({ x: 0, y: 0 });
+  }, []);
+
+  const onWheel = useCallback(
+    (event: React.WheelEvent<HTMLDivElement>) => {
+      if (!isImage) return;
+      event.preventDefault();
+      const delta = event.deltaY;
+      zoomBy(delta < 0 ? 0.2 : -0.2);
+    },
+    [isImage, zoomBy],
+  );
+
+  const onPointerDown = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      if (!isImage || scale <= 1) return;
+      draggingRef.current = true;
+      lastPointRef.current = { x: event.clientX, y: event.clientY };
+    },
+    [isImage, scale],
+  );
+
+  const onPointerMove = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (!draggingRef.current) return;
+    const dx = event.clientX - lastPointRef.current.x;
+    const dy = event.clientY - lastPointRef.current.y;
+    lastPointRef.current = { x: event.clientX, y: event.clientY };
+    setOffset((prev) => ({ x: prev.x + dx, y: prev.y + dy }));
+  }, []);
+
+  const onPointerUp = useCallback(() => {
+    draggingRef.current = false;
+  }, []);
+
+  const onDownload = useCallback(() => {
+    if (!artifactId || missing) return;
+    downloadArtifact(artifact, url);
+  }, [artifact, artifactId, missing, url]);
+
+  const onCopy = useCallback(async () => {
+    if (!artifactId || missing || !isImage) return;
+    setCopying(true);
+    try {
+      await copyArtifactImage(artifact, url);
+    } catch (err: any) {
+      window.alert(err?.message ?? "Failed to copy image.");
+    } finally {
+      setCopying(false);
+    }
+  }, [artifact, artifactId, isImage, missing, url]);
+
+  return (
+    <div className="wb-artifact-modal-overlay" onClick={onClose}>
+      <div className="wb-artifact-modal" onClick={(event) => event.stopPropagation()}>
+        <div className="wb-artifact-modal-header">
+          <div className="wb-artifact-modal-title">
+            <div className="wb-artifact-modal-name">{name}</div>
+            <div className="wb-artifact-modal-sub">{missing ? "Missing" : meta}</div>
+          </div>
+          <div className="wb-artifact-modal-actions">
+            <button
+              type="button"
+              className="wb-artifact-action"
+              onClick={onDownload}
+              disabled={!artifactId || missing}
+              aria-label="Download artifact"
+              title={missing ? "Missing" : "Download"}
+            >
+              <Download size={14} />
+            </button>
+            {isImage ? (
+              <button
+                type="button"
+                className="wb-artifact-action"
+                onClick={() => void onCopy()}
+                disabled={!artifactId || missing || copying}
+                aria-label="Copy image"
+                title="Copy image"
+              >
+                <Copy size={14} />
+              </button>
+            ) : null}
+            {isImage ? (
+              <>
+                <button
+                  type="button"
+                  className="wb-artifact-action"
+                  onClick={() => zoomBy(-0.2)}
+                  disabled={scale <= 1}
+                  aria-label="Zoom out"
+                  title="Zoom out"
+                >
+                  <ZoomOut size={14} />
+                </button>
+                <button
+                  type="button"
+                  className="wb-artifact-action"
+                  onClick={() => zoomBy(0.2)}
+                  disabled={scale >= 5}
+                  aria-label="Zoom in"
+                  title="Zoom in"
+                >
+                  <ZoomIn size={14} />
+                </button>
+                <button
+                  type="button"
+                  className="wb-artifact-action"
+                  onClick={resetZoom}
+                  disabled={scale === 1 && offset.x === 0 && offset.y === 0}
+                  aria-label="Reset zoom"
+                  title="Reset"
+                >
+                  <RotateCcw size={14} />
+                </button>
+              </>
+            ) : null}
+            <button
+              type="button"
+              className="wb-artifact-action"
+              onClick={onClose}
+              aria-label="Close"
+              title="Close"
+            >
+              <X size={14} />
+            </button>
+          </div>
+        </div>
+        <div
+          className={`wb-artifact-modal-body ${scale > 1 ? "wb-artifact-zoomed" : ""}`}
+          onWheel={onWheel}
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={onPointerUp}
+          onPointerLeave={onPointerUp}
+        >
+          {missing ? (
+            <div className="wb-artifact-missing">Missing on disk</div>
+          ) : isVideo ? (
+            <video className="wb-artifact-modal-video" controls preload="metadata">
+              <source src={url} type={artifact.mime_type || "video/mp4"} />
+            </video>
+          ) : isImage ? (
+            <img
+              className="wb-artifact-modal-image"
+              src={url}
+              alt={name}
+              style={{ transform: `translate(${offset.x}px, ${offset.y}px) scale(${scale})` }}
+            />
+          ) : (
+            <div className="wb-artifact-file">{name}</div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function ArtifactsPane({ artifacts, loading }: { artifacts: Artifact[]; loading?: boolean }) {
+  const [viewerArtifact, setViewerArtifact] = useState<Artifact | null>(null);
   const rows = useMemo(() => {
     return artifacts.map((artifact) => {
       const artifactId = idToString(artifact.id);
       const key = artifactId || artifact.absolute_path || artifact.name || "artifact";
-      return <ArtifactCard key={key} artifact={artifact} />;
+      return <ArtifactCard key={key} artifact={artifact} onOpen={setViewerArtifact} />;
     });
   }, [artifacts]);
 
@@ -173,6 +409,9 @@ export function ArtifactsPane({ artifacts, loading }: { artifacts: Artifact[]; l
           <div className="wb-artifacts-grid">{rows}</div>
         )}
       </div>
+      {viewerArtifact ? (
+        <ArtifactViewer artifact={viewerArtifact} onClose={() => setViewerArtifact(null)} />
+      ) : null}
     </div>
   );
 }
