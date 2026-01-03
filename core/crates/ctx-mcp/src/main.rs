@@ -99,7 +99,7 @@ async fn main() -> Result<()> {
                             "inputSchema": { "type": "object", "additionalProperties": false }
                         },
                         {
-                            "name": "ctx_artifacts_set",
+                            "name": "artifacts_set",
                             "title": "Set Session Artifacts",
                             "description": "Sets the ordered list of artifacts for the current session. mp4/webm supported; .mov (video/quicktime) not supported.",
                             "inputSchema": {
@@ -891,7 +891,7 @@ async fn main() -> Result<()> {
                             ),
                         }
                     }
-                    "ctx_artifacts_set" => {
+                    "artifacts_set" | "ctx_artifacts_set" => {
                         let normalized =
                             (|| -> std::result::Result<(String, Vec<Value>), Value> {
                                 let session_id = ctx_env_opt("SESSION_ID").ok_or_else(|| {
