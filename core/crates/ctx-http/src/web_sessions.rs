@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -36,6 +36,8 @@ pub struct WebSessionViewport {
 pub struct WebSessionInfo {
     pub id: String,
     pub kind: String,
+    pub session_id: Option<String>,
+    pub worktree_id: Option<String>,
     pub status: WebSessionStatus,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -54,6 +56,8 @@ pub struct WebSessionCreateRequest {
     pub viewport: Option<WebSessionViewport>,
     pub fps: Option<u32>,
     pub work_dir: Option<PathBuf>,
+    pub session_id: Option<String>,
+    pub worktree_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -369,6 +373,8 @@ impl WebSessionManager {
         let info = WebSessionInfo {
             id: id.clone(),
             kind: "web".to_string(),
+            session_id: req.session_id.clone(),
+            worktree_id: req.worktree_id.clone(),
             status: WebSessionStatus::Running,
             created_at,
             updated_at: created_at,
@@ -489,6 +495,44 @@ impl WebSessionManager {
             handle.close().await?;
         }
         Ok(())
+    }
+
+    pub async fn close_for_task(
+        &self,
+        session_ids: &HashSet<String>,
+        worktree_ids: &HashSet<String>,
+    ) -> Result<usize> {
+        let handles = {
+            let sessions = self.sessions.lock().await;
+            sessions
+                .iter()
+                .map(|(id, handle)| (id.clone(), handle.clone()))
+                .collect::<Vec<_>>()
+        };
+        let mut to_close = Vec::new();
+        for (id, handle) in handles {
+            let info = &handle.info;
+            let matches_session = info
+                .session_id
+                .as_ref()
+                .map(|sid| session_ids.contains(sid))
+                .unwrap_or(false);
+            let matches_worktree = info
+                .worktree_id
+                .as_ref()
+                .map(|wid| worktree_ids.contains(wid))
+                .unwrap_or(false);
+            if matches_session || matches_worktree {
+                to_close.push(id);
+            }
+        }
+
+        let mut closed = 0;
+        for id in to_close {
+            let _ = self.close(&id).await?;
+            closed += 1;
+        }
+        Ok(closed)
     }
 
     pub async fn bump_viewers(&self, id: &str, delta: i32) -> Result<u32> {

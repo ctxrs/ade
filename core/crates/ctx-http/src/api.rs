@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path as StdPath, PathBuf};
 use std::sync::Arc;
 
@@ -6066,7 +6066,9 @@ async fn create_web_session(
         ));
     }
 
-    let work_dir = resolve_web_session_work_dir(&state, payload.session_id, payload.worktree_id)
+    let session_id = payload.session_id.clone();
+    let worktree_id = payload.worktree_id.clone();
+    let work_dir = resolve_web_session_work_dir(&state, session_id.clone(), worktree_id.clone())
         .await
         .map_err(|e| {
             (
@@ -6082,6 +6084,8 @@ async fn create_web_session(
         viewport: payload.viewport,
         fps: payload.fps,
         work_dir,
+        session_id,
+        worktree_id,
     };
 
     let handle = state.web_sessions.create(req).await.map_err(|e| {
@@ -6747,6 +6751,39 @@ async fn update_task_title(
 
     if let Err(e) = state.emit_workspace_task_upsert(task_id).await {
         tracing::warn!(task_id = %task_id.0, "workspace catchup refresh failed: {e:?}");
+    }
+    match state.store.list_tracks_for_task(task_id).await {
+        Ok(tracks) => {
+            let mut worktree_ids = HashSet::new();
+            let mut session_ids = HashSet::new();
+            for track in tracks {
+                worktree_ids.insert(track.worktree_id.0.to_string());
+                match state.store.list_sessions_for_track(track.id).await {
+                    Ok(sessions) => {
+                        for session in sessions {
+                            session_ids.insert(session.id.0.to_string());
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            task_id = %task_id.0,
+                            track_id = %track.id.0,
+                            "failed to list sessions for archived task: {e:?}"
+                        );
+                    }
+                }
+            }
+            if let Err(e) = state
+                .web_sessions
+                .close_for_task(&session_ids, &worktree_ids)
+                .await
+            {
+                tracing::warn!(task_id = %task_id.0, "failed to close web sessions for archived task: {e:?}");
+            }
+        }
+        Err(e) => {
+            tracing::warn!(task_id = %task_id.0, "failed to list tracks for archived task: {e:?}");
+        }
     }
     Ok(Json(task))
 }
