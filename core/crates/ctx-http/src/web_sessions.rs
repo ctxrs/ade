@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -12,11 +12,22 @@ use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
+use crate::installer::NodeRuntime;
+
 const DEFAULT_WIDTH: u32 = 1280;
 const DEFAULT_HEIGHT: u32 = 720;
 const DEFAULT_FPS: u32 = 30;
 const DEFAULT_IDLE_SECS: u64 = 30 * 60;
 const REAPER_INTERVAL_SECS: u64 = 60;
+
+const WORKER_PACKAGE_JSON: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../packages/web-session-worker/package.json"
+));
+const WORKER_SCRIPT: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../packages/web-session-worker/bin/worker.mjs"
+));
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -58,6 +69,9 @@ pub struct WebSessionCreateRequest {
     pub work_dir: Option<PathBuf>,
     pub session_id: Option<String>,
     pub worktree_id: Option<String>,
+    pub node_bin: PathBuf,
+    pub worker_path: PathBuf,
+    pub node_modules_path: PathBuf,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -72,6 +86,11 @@ pub struct WebSessionRunResponse {
     pub ok: bool,
     pub result: Option<serde_json::Value>,
     pub error: Option<String>,
+}
+
+pub(crate) struct WorkerBundle {
+    pub worker_path: PathBuf,
+    pub node_modules_path: PathBuf,
 }
 
 pub fn render_web_session_view(session: &WebSessionInfo) -> String {
@@ -603,10 +622,11 @@ impl WebSessionManager {
         port: u16,
         display: &str,
     ) -> Result<()> {
-        let node_path = which::which("node").context("node not found in PATH")?;
         let xvfb_path = which::which("Xvfb").context("Xvfb not found in PATH")?;
         let ffmpeg_path = which::which("ffmpeg").context("ffmpeg not found in PATH")?;
-        let (worker_path, node_modules_path) = resolve_worker_paths()?;
+        let node_path = req.node_bin.clone();
+        let worker_path = req.worker_path.clone();
+        let node_modules_path = req.node_modules_path.clone();
 
         let mut cmd = Command::new(node_path);
         cmd.arg(worker_path);
@@ -676,6 +696,57 @@ impl Default for WebSessionManager {
     }
 }
 
+pub(crate) async fn ensure_worker_bundle(
+    data_root: &Path,
+    node: &NodeRuntime,
+) -> Result<WorkerBundle> {
+    if let Ok(worker_path) = std::env::var("CTX_WEB_SESSION_WORKER") {
+        let node_modules_path = std::env::var("CTX_WEB_SESSION_NODE_PATH")
+            .context("CTX_WEB_SESSION_NODE_PATH required with CTX_WEB_SESSION_WORKER")?;
+        let worker_path = PathBuf::from(worker_path);
+        let node_modules_path = PathBuf::from(node_modules_path);
+        if !worker_path.exists() {
+            anyhow::bail!("web session worker not found at {}", worker_path.display());
+        }
+        if !node_modules_path.exists() {
+            anyhow::bail!(
+                "web session node_modules not found at {}",
+                node_modules_path.display()
+            );
+        }
+        return Ok(WorkerBundle {
+            worker_path,
+            node_modules_path,
+        });
+    }
+
+    let version = worker_version()?;
+    let root = data_root
+        .join("tools")
+        .join("web-session-worker")
+        .join(&version);
+    let bin_dir = root.join("bin");
+    tokio::fs::create_dir_all(&bin_dir).await?;
+    tokio::fs::write(root.join("package.json"), WORKER_PACKAGE_JSON).await?;
+    tokio::fs::write(bin_dir.join("worker.mjs"), WORKER_SCRIPT).await?;
+
+    let node_modules = root.join("node_modules");
+    let deps_ready = node_modules.join("playwright").exists() && node_modules.join("wrtc").exists();
+    if !deps_ready {
+        let _guard = worker_install_lock().lock().await;
+        let deps_ready =
+            node_modules.join("playwright").exists() && node_modules.join("wrtc").exists();
+        if !deps_ready {
+            install_worker_deps(node, &root).await?;
+        }
+    }
+
+    Ok(WorkerBundle {
+        worker_path: bin_dir.join("worker.mjs"),
+        node_modules_path: node_modules,
+    })
+}
+
 async fn build_run_payload(
     handle: &WebSessionHandle,
     req: WebSessionRunRequest,
@@ -725,51 +796,43 @@ fn allocate_port() -> Result<u16> {
     Ok(port)
 }
 
-fn resolve_worker_paths() -> Result<(String, String)> {
-    if let Ok(path) = std::env::var("CTX_WEB_SESSION_WORKER") {
-        let node_path = std::env::var("CTX_WEB_SESSION_NODE_PATH")
-            .context("CTX_WEB_SESSION_NODE_PATH required with CTX_WEB_SESSION_WORKER")?;
-        return Ok((path, node_path));
+fn worker_install_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
+
+fn worker_version() -> Result<String> {
+    static VERSION: OnceLock<String> = OnceLock::new();
+    if let Some(version) = VERSION.get() {
+        return Ok(version.clone());
     }
+    let value: serde_json::Value =
+        serde_json::from_str(WORKER_PACKAGE_JSON).context("parsing worker package.json")?;
+    let version = value
+        .get("version")
+        .and_then(|v| v.as_str())
+        .context("worker package.json missing version")?
+        .to_string();
+    let _ = VERSION.set(version.clone());
+    Ok(version)
+}
 
-    let cwd = std::env::current_dir().context("resolve current dir")?;
-    let roots = [
-        cwd.clone(),
-        cwd.parent().unwrap_or(&cwd).to_path_buf(),
-        cwd.parent()
-            .and_then(|p| p.parent())
-            .unwrap_or(&cwd)
-            .to_path_buf(),
-    ];
+async fn install_worker_deps(node: &NodeRuntime, root: &Path) -> Result<()> {
+    let mut cmd = Command::new(&node.node_bin);
+    cmd.arg(&node.npm_cli_js)
+        .arg("install")
+        .arg("--omit=dev")
+        .arg("--no-audit")
+        .arg("--no-fund")
+        .current_dir(root)
+        .env("npm_config_update_notifier", "false");
 
-    for root in roots {
-        for prefix in ["core", ""].iter() {
-            let base = if prefix.is_empty() {
-                root.clone()
-            } else {
-                root.join(prefix)
-            };
-            let candidate = base
-                .join("packages")
-                .join("web-session-worker")
-                .join("bin")
-                .join("worker.mjs");
-            let node_modules = base
-                .join("packages")
-                .join("web-session-worker")
-                .join("node_modules");
-            if candidate.exists() && node_modules.exists() {
-                return Ok((
-                    candidate.to_string_lossy().to_string(),
-                    node_modules.to_string_lossy().to_string(),
-                ));
-            }
-        }
+    let output = cmd.output().await.context("running npm install")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("npm install failed: {}", stderr.trim());
     }
-
-    anyhow::bail!(
-        "web session worker not found; set CTX_WEB_SESSION_WORKER and CTX_WEB_SESSION_NODE_PATH"
-    );
+    Ok(())
 }
 
 async fn log_stream<R: tokio::io::AsyncRead + Unpin>(mut reader: R, label: &str) {

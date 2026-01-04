@@ -6079,6 +6079,34 @@ async fn create_web_session(
             )
         })?;
 
+    let node_runtime = crate::installer::ensure_node_runtime(
+        state.as_ref(),
+        None,
+        "web_session_worker",
+        &state.data_root,
+    )
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResp {
+                error: format!("failed to prepare node runtime: {e}"),
+            }),
+        )
+    })?;
+
+    let worker_bundle =
+        crate::web_sessions::ensure_worker_bundle(&state.data_root, &node_runtime)
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiErrorResp {
+                        error: format!("failed to prepare web session worker: {e}"),
+                    }),
+                )
+            })?;
+
     let req = WebSessionCreateRequest {
         url: payload.url,
         viewport: payload.viewport,
@@ -6086,6 +6114,9 @@ async fn create_web_session(
         work_dir,
         session_id,
         worktree_id,
+        node_bin: node_runtime.node_bin,
+        worker_path: worker_bundle.worker_path,
+        node_modules_path: worker_bundle.node_modules_path,
     };
 
     let handle = state.web_sessions.create(req).await.map_err(|e| {
