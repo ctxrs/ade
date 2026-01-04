@@ -4034,6 +4034,7 @@ fn session_event_type_to_str(event_type: &SessionEventType) -> &'static str {
         SessionEventType::Done => "done",
         SessionEventType::InterruptRequested => "interrupt_requested",
         SessionEventType::TurnInterrupted => "turn_interrupted",
+        SessionEventType::ArtifactsSet => "artifacts_set",
         SessionEventType::Error => "error",
     }
 }
@@ -4057,6 +4058,7 @@ fn parse_session_event_type(value: &str) -> SessionEventType {
         "done" => SessionEventType::Done,
         "interrupt_requested" => SessionEventType::InterruptRequested,
         "turn_interrupted" => SessionEventType::TurnInterrupted,
+        "artifacts_set" => SessionEventType::ArtifactsSet,
         "error" => SessionEventType::Error,
         _ => SessionEventType::Error,
     }

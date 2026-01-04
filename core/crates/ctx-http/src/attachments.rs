@@ -1,10 +1,13 @@
 use std::collections::{HashMap, HashSet};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use tokio::process::Command;
+use tempfile::NamedTempFile;
+use toml::Value as TomlValue;
 
 use ctx_core::ids::{TrackId, WorkspaceAttachmentId, WorkspaceId};
 use ctx_core::models::{
@@ -543,6 +546,9 @@ async fn run_doc_mirror_script(
     attachment: &WorkspaceAttachment,
     dest: &Path,
 ) -> Result<()> {
+    if looks_like_url(&attachment.source) {
+        return run_doc_mirror_cli(workspace, attachment, dest).await;
+    }
     let script_path = resolve_workspace_path(&workspace.root_path, &attachment.source);
     if !script_path.exists() {
         anyhow::bail!("doc mirror script not found: {}", script_path.display());
@@ -568,6 +574,55 @@ async fn run_doc_mirror_script(
     if !output.status.success() {
         anyhow::bail!(
             "doc mirror script failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    Ok(())
+}
+
+fn docs_mirror_bin() -> PathBuf {
+    std::env::var_os("CTX_DOCS_MIRROR_BIN")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("ctx-docs-mirror"))
+}
+
+fn looks_like_url(value: &str) -> bool {
+    value.starts_with("http://") || value.starts_with("https://")
+}
+
+async fn run_doc_mirror_cli(
+    workspace: &Workspace,
+    attachment: &WorkspaceAttachment,
+    dest: &Path,
+) -> Result<()> {
+    let mut table = toml::value::Table::new();
+    table.insert(
+        "source".to_string(),
+        TomlValue::String(attachment.source.clone()),
+    );
+    table.insert(
+        "docs_url".to_string(),
+        TomlValue::String(attachment.source.clone()),
+    );
+    let cfg = TomlValue::Table(table);
+    let cfg_text = toml::to_string_pretty(&cfg).context("serializing docs mirror config")?;
+    let mut temp = NamedTempFile::new().context("creating docs mirror config file")?;
+    temp.write_all(cfg_text.as_bytes())
+        .context("writing docs mirror config")?;
+    temp.flush().context("flushing docs mirror config")?;
+
+    let bin = docs_mirror_bin();
+    let mut cmd = Command::new(&bin);
+    cmd.arg("mirror")
+        .arg("--config")
+        .arg(temp.path())
+        .arg("--out")
+        .arg(dest)
+        .current_dir(&workspace.root_path);
+    let output = cmd.output().await.context("running ctx-docs-mirror")?;
+    if !output.status.success() {
+        anyhow::bail!(
+            "ctx-docs-mirror failed: {}",
             String::from_utf8_lossy(&output.stderr)
         );
     }

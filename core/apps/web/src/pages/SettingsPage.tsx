@@ -376,6 +376,9 @@ export default function SettingsPage() {
   const [attachmentSource, setAttachmentSource] = useState("");
   const [attachmentRevision, setAttachmentRevision] = useState("");
   const [attachmentBusy, setAttachmentBusy] = useState(false);
+  const [docsAttachmentName, setDocsAttachmentName] = useState("");
+  const [docsAttachmentSource, setDocsAttachmentSource] = useState("");
+  const [docsAttachmentBusy, setDocsAttachmentBusy] = useState(false);
   const [attachmentSyncBusy, setAttachmentSyncBusy] = useState(false);
   const [attachmentDeleteBusy, setAttachmentDeleteBusy] = useState<Record<string, boolean>>({});
 
@@ -1103,6 +1106,36 @@ export default function SettingsPage() {
     }
   }, [workspaceId, attachmentSource, attachmentRevision, attachmentName, createWorkspaceAttachment]);
 
+  const handleAddDocsAttachment = useCallback(async () => {
+    if (!workspaceId) return;
+    const source = docsAttachmentSource.trim();
+    const name = docsAttachmentName.trim() || guessAttachmentName(source);
+    if (!source) {
+      setAttachmentsError("Docs URL is required.");
+      return;
+    }
+    if (!name) {
+      setAttachmentsError("Attachment name is required.");
+      return;
+    }
+    setDocsAttachmentBusy(true);
+    setAttachmentsError(null);
+    try {
+      const next = await createWorkspaceAttachment(workspaceId, {
+        kind: "doc_mirror",
+        name,
+        source,
+      });
+      setAttachments(next);
+      setDocsAttachmentName("");
+      setDocsAttachmentSource("");
+    } catch (e: any) {
+      setAttachmentsError(e?.message ?? String(e));
+    } finally {
+      setDocsAttachmentBusy(false);
+    }
+  }, [workspaceId, docsAttachmentSource, docsAttachmentName, createWorkspaceAttachment]);
+
   const handleRemoveAttachment = useCallback(
     async (attachment: WorkspaceAttachment) => {
       if (!workspaceId) return;
@@ -1271,6 +1304,7 @@ export default function SettingsPage() {
       const selectedWorkspace = workspaces.find((ws) => idToString((ws as any).id) === workspaceId) ?? null;
       const configPath = selectedWorkspace ? `${selectedWorkspace.root_path}/.ctx/attachments.toml` : ".ctx/attachments.toml";
       const canAdd = Boolean(workspaceId && attachmentSource.trim());
+      const canAddDocs = Boolean(workspaceId && docsAttachmentSource.trim());
 
       return (
         <>
@@ -1420,6 +1454,50 @@ export default function SettingsPage() {
                   })}
                 </div>
               ) : null}
+            </div>
+          </Card>
+
+          <Card title="Docs">
+            <div className="settings-card-block">
+              <div className="settings-attachments-form">
+                <div className="settings-attachments-field">
+                  <label className="settings-attachments-label" htmlFor="attachments-docs-source">
+                    Docs URL
+                  </label>
+                  <input
+                    id="attachments-docs-source"
+                    className="settings-control"
+                    value={docsAttachmentSource}
+                    onChange={(e) => setDocsAttachmentSource(e.target.value)}
+                    placeholder="https://docs.example.com/"
+                  />
+                </div>
+                <div className="settings-attachments-field">
+                  <label className="settings-attachments-label" htmlFor="attachments-docs-name">
+                    Display name
+                  </label>
+                  <input
+                    id="attachments-docs-name"
+                    className="settings-control"
+                    value={docsAttachmentName}
+                    onChange={(e) => setDocsAttachmentName(e.target.value)}
+                    placeholder={guessAttachmentName(docsAttachmentSource) || "docs"}
+                  />
+                </div>
+              </div>
+              <div className="settings-attachments-actions">
+                <button
+                  type="button"
+                  className="settings-btn"
+                  onClick={() => handleAddDocsAttachment().catch(() => {})}
+                  disabled={!canAddDocs || docsAttachmentBusy || !workspaceId}
+                >
+                  {docsAttachmentBusy ? "Adding…" : "Add docs"}
+                </button>
+              </div>
+              <div className="settings-attachments-hint">
+                Paste any docs page URL. The daemon will infer the crawl entrypoint and mirror it.
+              </div>
             </div>
           </Card>
           {attachmentsError ? <div className="settings-banner settings-banner-error">{attachmentsError}</div> : null}
