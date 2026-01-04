@@ -10,6 +10,9 @@ members = [
   "crates/ctx-lsp",
   "crates/ctx-mcp",
   "crates/ctx-http",
+  "crates/ctx-worker-protocol",
+  "crates/ctx-worker-gateway",
+  "crates/ctx-worker-shim",
   "crates/ctx-tunnel-relay",
   "crates/ctx-tunnel-router",
   "crates/ctx-tunnel-control-plane",
@@ -26,6 +29,7 @@ edition = "2021"
 anyhow = "1"
 async-trait = "0.1"
 axum = { version = "0.7", features = ["ws", "macros", "multipart"] }
+base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
 directories = "5"
