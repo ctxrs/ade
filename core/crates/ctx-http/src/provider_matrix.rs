@@ -653,8 +653,19 @@ pub fn normalize_version(raw: &str) -> String {
     raw.trim().trim_start_matches('v').to_string()
 }
 
+fn strip_cli_suffix(raw: &str) -> &str {
+    raw.strip_suffix("-cli")
+        .or_else(|| raw.strip_suffix("_cli"))
+        .unwrap_or(raw)
+}
+
 fn version_matches(release: &str, detected: &str) -> bool {
-    normalize_version(release) == normalize_version(detected)
+    let a = normalize_version(release);
+    let b = normalize_version(detected);
+    if a == b {
+        return true;
+    }
+    strip_cli_suffix(&a) == strip_cli_suffix(&b)
 }
 
 fn extract_version(text: &str) -> Option<String> {

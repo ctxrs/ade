@@ -4034,7 +4034,6 @@ fn session_event_type_to_str(event_type: &SessionEventType) -> &'static str {
         SessionEventType::Done => "done",
         SessionEventType::InterruptRequested => "interrupt_requested",
         SessionEventType::TurnInterrupted => "turn_interrupted",
-        SessionEventType::ArtifactsSet => "artifacts_set",
         SessionEventType::Error => "error",
     }
 }
@@ -4058,7 +4057,6 @@ fn parse_session_event_type(value: &str) -> SessionEventType {
         "done" => SessionEventType::Done,
         "interrupt_requested" => SessionEventType::InterruptRequested,
         "turn_interrupted" => SessionEventType::TurnInterrupted,
-        "artifacts_set" => SessionEventType::ArtifactsSet,
         "error" => SessionEventType::Error,
         _ => SessionEventType::Error,
     }
@@ -4294,7 +4292,9 @@ fn build_turn_tool_from_event(event: &SessionEvent, turn_id: TurnId) -> Option<S
         .or_else(|| update.pointer("/toolCall/input"))
         .or_else(|| update.pointer("/input"))
         .or_else(|| update.pointer("/args"));
-    let input_json = input.cloned();
+    let input_json = input
+        .cloned()
+        .or_else(|| update.get("input_preview").cloned());
 
     let output_text = extract_tool_output_text(update);
 
@@ -4341,6 +4341,7 @@ fn extract_tool_output_text(update: &Value) -> Option<String> {
         .get("outputText")
         .and_then(|v| v.as_str())
         .or_else(|| update.get("output_text").and_then(|v| v.as_str()))
+        .or_else(|| update.get("output_preview").and_then(|v| v.as_str()))
         .or_else(|| {
             update
                 .pointer("/toolCall/outputText")
@@ -4483,6 +4484,8 @@ fn build_turn_tools_from_events(
             .or_else(|| update.pointer("/args"));
         if let Some(value) = input {
             entry.input_json = Some(value.clone());
+        } else if let Some(preview) = update.get("input_preview") {
+            entry.input_json = Some(preview.clone());
         }
 
         if let Some(output) = extract_tool_output_text(update) {

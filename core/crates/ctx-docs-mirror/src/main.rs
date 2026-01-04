@@ -149,7 +149,9 @@ async fn main() -> Result<()> {
             let plan = resolve_plan(&client, &cfg).await?;
             let out_dir = out
                 .or_else(|| std::env::var_os("CTX_DOCS_OUTPUT_DIR").map(PathBuf::from))
-                .ok_or_else(|| anyhow!("output directory required (--out or CTX_DOCS_OUTPUT_DIR)"))?;
+                .ok_or_else(|| {
+                    anyhow!("output directory required (--out or CTX_DOCS_OUTPUT_DIR)")
+                })?;
             if clean {
                 clean_output_dir(&out_dir)?;
             }
@@ -198,9 +200,7 @@ async fn resolve_plan(client: &reqwest::Client, cfg: &DocsMirrorConfig) -> Resul
 
     let docs_url = resolve_docs_url(cfg);
     let repo_url = resolve_repo_url(cfg);
-    let repo_hint = docs_url
-        .as_deref()
-        .and_then(infer_repo_hint_from_docs_url);
+    let repo_hint = docs_url.as_deref().and_then(infer_repo_hint_from_docs_url);
 
     let min_pages = cfg.min_pages.unwrap_or(10);
     let mut candidate: Option<(MirrorMethod, Vec<PageRef>)> = None;
@@ -211,7 +211,10 @@ async fn resolve_plan(client: &reqwest::Client, cfg: &DocsMirrorConfig) -> Resul
                 .into_iter()
                 .map(|url| {
                     let path = derive_output_path(cfg, docs_url.as_deref(), &url)?;
-                    Ok(PageRef { path, url: Some(url) })
+                    Ok(PageRef {
+                        path,
+                        url: Some(url),
+                    })
                 })
                 .collect::<Result<Vec<_>>>()?;
             if matches!(strategy, Strategy::Llms) {
@@ -264,8 +267,10 @@ async fn resolve_plan(client: &reqwest::Client, cfg: &DocsMirrorConfig) -> Resul
         }
     }
 
-    let (pages_from_sitemap, sitemap_warnings) = if matches!(strategy, Strategy::Auto | Strategy::Sitemap | Strategy::EditLink | Strategy::Html)
-    {
+    let (pages_from_sitemap, sitemap_warnings) = if matches!(
+        strategy,
+        Strategy::Auto | Strategy::Sitemap | Strategy::EditLink | Strategy::Html
+    ) {
         if let Some(base_url) = docs_url.as_deref() {
             match try_sitemap_pages(client, cfg, base_url).await {
                 Ok((pages, warns)) => (Some(pages), warns),
@@ -290,7 +295,10 @@ async fn resolve_plan(client: &reqwest::Client, cfg: &DocsMirrorConfig) -> Resul
                     .into_iter()
                     .map(|url| {
                         let path = derive_output_path(cfg, docs_url.as_deref(), &url)?;
-                        Ok(PageRef { path, url: Some(url) })
+                        Ok(PageRef {
+                            path,
+                            url: Some(url),
+                        })
                     })
                     .collect::<Result<Vec<_>>>()?;
                 if matches!(strategy, Strategy::Sitemap) {
@@ -309,7 +317,9 @@ async fn resolve_plan(client: &reqwest::Client, cfg: &DocsMirrorConfig) -> Resul
             }
         }
         if matches!(strategy, Strategy::Sitemap) {
-            return Err(anyhow!("sitemap strategy failed to find markdown endpoints"));
+            return Err(anyhow!(
+                "sitemap strategy failed to find markdown endpoints"
+            ));
         }
     }
 
@@ -320,7 +330,10 @@ async fn resolve_plan(client: &reqwest::Client, cfg: &DocsMirrorConfig) -> Resul
                     .into_iter()
                     .map(|url| {
                         let path = derive_output_path(cfg, docs_url.as_deref(), &url)?;
-                        Ok(PageRef { path, url: Some(url) })
+                        Ok(PageRef {
+                            path,
+                            url: Some(url),
+                        })
                     })
                     .collect::<Result<Vec<_>>>()?;
                 if matches!(strategy, Strategy::EditLink) {
@@ -379,7 +392,10 @@ async fn resolve_plan(client: &reqwest::Client, cfg: &DocsMirrorConfig) -> Resul
                 .into_iter()
                 .map(|url| {
                     let path = derive_output_path(cfg, docs_url.as_deref(), &url)?;
-                    Ok(PageRef { path, url: Some(url) })
+                    Ok(PageRef {
+                        path,
+                        url: Some(url),
+                    })
                 })
                 .collect::<Result<Vec<_>>>()?;
             return Ok(MirrorPlan {
@@ -394,7 +410,10 @@ async fn resolve_plan(client: &reqwest::Client, cfg: &DocsMirrorConfig) -> Resul
             });
         }
 
-        let candidate_count = candidate.as_ref().map(|(_, pages)| pages.len()).unwrap_or(0);
+        let candidate_count = candidate
+            .as_ref()
+            .map(|(_, pages)| pages.len())
+            .unwrap_or(0);
         let html_threshold = match candidate.as_ref().map(|(method, _)| *method) {
             Some(MirrorMethod::EditLink) => min_pages.max(20),
             _ => min_pages,
@@ -419,7 +438,8 @@ async fn resolve_plan(client: &reqwest::Client, cfg: &DocsMirrorConfig) -> Resul
                             }
                         }
                         Ok(None) => {
-                            warnings.push("playwright not available for rendered crawl".to_string());
+                            warnings
+                                .push("playwright not available for rendered crawl".to_string());
                         }
                         Err(err) => {
                             warnings.push(format!("rendered crawl failed: {err}"));
@@ -437,7 +457,10 @@ async fn resolve_plan(client: &reqwest::Client, cfg: &DocsMirrorConfig) -> Resul
                 .into_iter()
                 .map(|url| {
                     let path = derive_output_path(cfg, docs_url.as_deref(), &url)?;
-                    Ok(PageRef { path, url: Some(url) })
+                    Ok(PageRef {
+                        path,
+                        url: Some(url),
+                    })
                 })
                 .collect::<Result<Vec<_>>>()?;
             if page_refs.len() > candidate_count {
@@ -612,8 +635,7 @@ async fn fetch_sitemap_text(client: &reqwest::Client, url: &str) -> Result<Strin
             .with_context(|| format!("decoding gzip sitemap {}", url))?;
         Ok(out)
     } else {
-        String::from_utf8(bytes)
-            .with_context(|| format!("decoding sitemap {}", url))
+        String::from_utf8(bytes).with_context(|| format!("decoding sitemap {}", url))
     }
 }
 
@@ -646,6 +668,7 @@ async fn try_llms_urls(
     candidates.sort();
     candidates.dedup();
 
+    let url_re = Regex::new("https?://[^\\s)\\\"'>]+").unwrap();
     for llms_url in candidates {
         let text = match fetch_text(client, &llms_url).await {
             Ok(txt) => txt,
@@ -655,7 +678,6 @@ async fn try_llms_urls(
             continue;
         }
 
-        let url_re = Regex::new("https?://[^\\s)\\\"'>]+").unwrap();
         let mut urls: Vec<String> = url_re
             .find_iter(&text)
             .map(|m| m.as_str().to_string())
@@ -686,11 +708,12 @@ fn filter_urls(cfg: &DocsMirrorConfig, urls: Vec<String>) -> Vec<String> {
         return urls;
     }
 
-    urls
-        .into_iter()
+    urls.into_iter()
         .filter(|url| {
             let path = Url::parse(url).ok().map(|u| u.path().to_string());
-            let Some(path) = path else { return false; };
+            let Some(path) = path else {
+                return false;
+            };
             let include_ok = if includes.is_empty() {
                 true
             } else {
@@ -716,9 +739,7 @@ async fn try_sitemap_pages(
 ) -> Result<(Vec<String>, Vec<String>)> {
     let mut warnings = Vec::new();
     let base = Url::parse(base_url).context("parsing docs_url")?;
-    let origin = base
-        .join("/")
-        .context("building origin url")?;
+    let origin = base.join("/").context("building origin url")?;
     let mut sitemap_candidates = Vec::new();
     if let Some(url) = cfg.sitemap_url.as_deref() {
         sitemap_candidates.push(url.to_string());
@@ -783,10 +804,7 @@ async fn try_sitemap_pages(
                     }
                 }
                 Err(err) => {
-                    warnings.push(format!(
-                        "robots.txt fetch failed for {}: {err}",
-                        robots_url
-                    ));
+                    warnings.push(format!("robots.txt fetch failed for {}: {err}", robots_url));
                 }
             }
         }
@@ -1432,7 +1450,10 @@ fn mirror_repo_plan(
         .into_iter()
         .map(|path| {
             let rel = path.strip_prefix(&docs_root).unwrap_or(&path).to_path_buf();
-            PageRef { path: rel, url: None }
+            PageRef {
+                path: rel,
+                url: None,
+            }
         })
         .collect();
 
@@ -1467,9 +1488,7 @@ fn find_docs_root(repo: &Path) -> Option<PathBuf> {
                 continue;
             }
             let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
-            if name.eq_ignore_ascii_case("README.md")
-                || name.eq_ignore_ascii_case("README.mdx")
-            {
+            if name.eq_ignore_ascii_case("README.md") || name.eq_ignore_ascii_case("README.mdx") {
                 return Some(repo.to_path_buf());
             }
             let ext = path
@@ -1492,7 +1511,11 @@ fn collect_markdown_files(root: &Path) -> Result<Vec<PathBuf>> {
         if !path.is_file() {
             continue;
         }
-        let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("").to_lowercase();
+        let ext = path
+            .extension()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_lowercase();
         if ext == "md" || ext == "mdx" {
             out.push(path);
         }
@@ -1523,7 +1546,11 @@ fn looks_like_sha(value: &str) -> bool {
     value.chars().all(|c| c.is_ascii_hexdigit())
 }
 
-fn derive_output_path(cfg: &DocsMirrorConfig, docs_url: Option<&str>, url: &str) -> Result<PathBuf> {
+fn derive_output_path(
+    cfg: &DocsMirrorConfig,
+    docs_url: Option<&str>,
+    url: &str,
+) -> Result<PathBuf> {
     let parsed = Url::parse(url).context("parsing url")?;
     let mut path = parsed.path().to_string();
     if path.starts_with('/') {
