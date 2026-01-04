@@ -103,6 +103,153 @@ async fn mcp_lsp_diagnostics_calls_daemon_http() {
 }
 
 #[tokio::test]
+async fn mcp_web_session_tools_call_daemon_http() {
+    let app = Router::new()
+        .route(
+            "/api/sessions/web",
+            post(|Json(body): Json<serde_json::Value>| async move {
+                assert_eq!(body["url"], "https://example.com");
+                Json(json!({
+                    "id": "sess-1",
+                    "kind": "web",
+                    "status": "running",
+                    "created_at": "2026-01-01T00:00:00Z",
+                    "updated_at": "2026-01-01T00:00:00Z",
+                    "last_activity": "2026-01-01T00:00:00Z",
+                    "url": "https://example.com",
+                    "viewport": {"width": 1280, "height": 720},
+                    "fps": 30,
+                    "viewers": 0,
+                    "stream_path": "/sessions/web/sess-1/view",
+                    "stream_url": "http://127.0.0.1:0/sessions/web/sess-1/view"
+                }))
+            }),
+        )
+        .route(
+            "/api/sessions/web/sess-1/eval",
+            post(|| async {
+                Json(json!({
+                    "ok": true,
+                    "result": "Example Domain",
+                    "error": null
+                }))
+            }),
+        )
+        .route(
+            "/api/sessions/web/sess-1/close",
+            post(|| async { axum::http::StatusCode::NO_CONTENT }),
+        )
+        .layer(ServiceBuilder::new());
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let bin = mcp_bin();
+    let mut child = Command::new(bin)
+        .arg("--stdio")
+        .env("CTX_DAEMON_URL", format!("http://{}", addr))
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let mut stdin = child.stdin.take().unwrap();
+    let stdout = child.stdout.take().unwrap();
+    let mut reader = BufReader::new(stdout).lines();
+
+    for msg in [
+        json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25"}}),
+        json!({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}),
+        json!({
+            "jsonrpc":"2.0",
+            "id":3,
+            "method":"tools/call",
+            "params":{
+                "name":"ctx.session_create",
+                "arguments":{
+                    "kind":"web",
+                    "target":{"url":"https://example.com"}
+                }
+            }
+        }),
+        json!({
+            "jsonrpc":"2.0",
+            "id":4,
+            "method":"tools/call",
+            "params":{
+                "name":"ctx.session_eval",
+                "arguments":{
+                    "kind":"web",
+                    "session_id":"sess-1",
+                    "code":"return await page.title()"
+                }
+            }
+        }),
+        json!({
+            "jsonrpc":"2.0",
+            "id":5,
+            "method":"tools/call",
+            "params":{
+                "name":"ctx.session_close",
+                "arguments":{
+                    "kind":"web",
+                    "session_id":"sess-1"
+                }
+            }
+        }),
+    ] {
+        stdin.write_all(msg.to_string().as_bytes()).await.unwrap();
+        stdin.write_all(b"\n").await.unwrap();
+    }
+    stdin.flush().await.unwrap();
+
+    let mut got_create = false;
+    let mut got_eval = false;
+    let mut got_close = false;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    while tokio::time::Instant::now() < deadline {
+        let Some(line) = reader.next_line().await.unwrap() else {
+            break;
+        };
+        let v: serde_json::Value = serde_json::from_str(&line).unwrap();
+        match v.get("id").and_then(|id| id.as_i64()) {
+            Some(3) => {
+                let text = v["result"]["content"][0]["text"].as_str().unwrap_or("");
+                let payload: serde_json::Value = serde_json::from_str(text).unwrap();
+                assert_eq!(payload["id"], "sess-1");
+                got_create = true;
+            }
+            Some(4) => {
+                let text = v["result"]["content"][0]["text"].as_str().unwrap_or("");
+                let payload: serde_json::Value = serde_json::from_str(text).unwrap();
+                assert_eq!(payload["ok"], true);
+                assert_eq!(payload["result"], "Example Domain");
+                got_eval = true;
+            }
+            Some(5) => {
+                let text = v["result"]["content"][0]["text"].as_str().unwrap_or("");
+                let payload: serde_json::Value = serde_json::from_str(text).unwrap();
+                assert_eq!(payload["closed"], true);
+                got_close = true;
+            }
+            _ => {}
+        }
+        if got_create && got_eval && got_close {
+            break;
+        }
+    }
+
+    assert!(got_create, "did not receive session_create response");
+    assert!(got_eval, "did not receive session_eval response");
+    assert!(got_close, "did not receive session_close response");
+
+    let _ = child.kill().await;
+}
+
+#[tokio::test]
 async fn mcp_lsp_status_calls_daemon_http() {
     let app = Router::new()
         .route(
