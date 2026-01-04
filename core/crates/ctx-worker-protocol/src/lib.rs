@@ -78,6 +78,30 @@ pub struct ExportPatchResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TerminalOpenRequest {
+    pub terminal_id: String,
+    pub shell: String,
+    pub cwd: Option<String>,
+    pub cols: u16,
+    pub rows: u16,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum TerminalControlMessage {
+    Open {
+        terminal_id: String,
+        shell: String,
+        cwd: Option<String>,
+        cols: u16,
+        rows: u16,
+    },
+    Close {
+        terminal_id: String,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum RepoSpec {
     Local { path: String },
     Git { url: String, reference: String },

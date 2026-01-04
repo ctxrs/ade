@@ -39,7 +39,9 @@ use ctx_fs::git::{assert_git_repo, list_tracked_files, list_untracked_files, rev
 use ctx_fs::worktrees::{create_worktree, diff_worktree_summary, managed_worktree_path};
 use ctx_store::store::MobileDeviceUpsert;
 use chrono::Utc;
-use ctx_worker_protocol::{DiffArtifact, RepoSpec, StartWorkerRequest, StartWorkerResponse};
+use ctx_worker_protocol::{
+    DiffArtifact, RepoSpec, StartWorkerRequest, StartWorkerResponse, TerminalOpenRequest,
+};
 
 use crate::attachments;
 use crate::buffers::{
@@ -59,7 +61,9 @@ use crate::resource_utilization;
 use crate::scheduler::SchedulerCommand;
 use crate::settings as user_settings;
 use crate::telemetry::{TelemetryConfig, TelemetryEvent};
-use crate::terminals::TerminalCreateRequest;
+use crate::terminals::{
+    RemoteTerminalRequest, TerminalClientMessage, TerminalCreateRequest, TerminalServerMessage,
+};
 use crate::title_generation;
 use crate::updates;
 use crate::web_sessions::{
@@ -5868,6 +5872,22 @@ async fn create_workspace_terminal(
         )?)),
         None => None,
     };
+    let track_worker = if let Some(track_id) = track_id {
+        state
+            .store
+            .get_track_worker(track_id)
+            .await
+            .map_err(|_| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiErrorResp {
+                        error: "failed to load track worker".to_string(),
+                    }),
+                )
+            })?
+    } else {
+        None
+    };
 
     let workspace_root = PathBuf::from(&workspace.root_path);
     let workspace_root = tokio::fs::canonicalize(&workspace_root)
@@ -5947,17 +5967,86 @@ async fn create_workspace_terminal(
         ));
     }
 
-    let shell = req
-        .shell
-        .and_then(|v| {
-            let trimmed = v.trim();
-            if trimmed.is_empty() {
-                None
-            } else {
-                Some(trimmed.to_string())
-            }
-        })
+    let requested_shell = req.shell.as_deref().and_then(|v| {
+        let trimmed = v.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        }
+    });
+    let shell = requested_shell
+        .map(|value| value.to_string())
         .unwrap_or_else(default_shell);
+    let remote_shell = requested_shell
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "/bin/bash".to_string());
+
+    if let Some(worker) = track_worker {
+        let terminal_id = TerminalId::new();
+        let remote_cwd = worktree_root
+            .as_ref()
+            .and_then(|root| cwd.strip_prefix(root).ok())
+            .and_then(|rel| {
+                let rel = rel.to_string_lossy().to_string();
+                if rel.is_empty() {
+                    None
+                } else {
+                    Some(rel)
+                }
+            });
+        let open_req = TerminalOpenRequest {
+            terminal_id: terminal_id.0.to_string(),
+            shell: remote_shell.clone(),
+            cwd: remote_cwd,
+            cols: 80,
+            rows: 24,
+        };
+        let gateway_token = std::env::var("CTX_WORKER_GATEWAY_TOKEN")
+            .ok()
+            .filter(|value| !value.trim().is_empty());
+        open_remote_terminal(&worker, &open_req, gateway_token.as_deref())
+            .await
+            .map_err(|_| {
+                (
+                    StatusCode::BAD_GATEWAY,
+                    Json(ApiErrorResp {
+                        error: "failed to open remote terminal".to_string(),
+                    }),
+                )
+            })?;
+        let session = state
+            .terminals
+            .create_remote(
+                TerminalCreateRequest {
+                    workspace_id,
+                    task_id,
+                    track_id,
+                    session_id,
+                    worktree_id,
+                    cwd,
+                    shell: remote_shell,
+                    cols: None,
+                    rows: None,
+                },
+                RemoteTerminalRequest {
+                    terminal_id,
+                    gateway_url: worker.gateway_url,
+                    worker_id: worker.worker_id,
+                    token: gateway_token,
+                },
+            )
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiErrorResp {
+                        error: format!("failed to create remote terminal: {e}"),
+                    }),
+                )
+            })?;
+        return Ok(Json(session.snapshot()));
+    }
 
     let session = state
         .terminals
@@ -5992,27 +6081,20 @@ async fn delete_terminal(
     let terminal_id = TerminalId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
     let session = state.terminals.remove(terminal_id).await;
     if let Some(session) = session {
+        let snapshot = session.snapshot();
+        if let Some(track_id) = snapshot.track_id {
+            if let Ok(Some(worker)) = state.store.get_track_worker(track_id).await {
+                let gateway_token = std::env::var("CTX_WORKER_GATEWAY_TOKEN")
+                    .ok()
+                    .filter(|value| !value.trim().is_empty());
+                let _ = close_remote_terminal(&worker, &terminal_id, gateway_token.as_deref()).await;
+            }
+        }
         let _ = session.kill();
         session.mark_exited(None);
         return Ok(StatusCode::NO_CONTENT);
     }
     Err(StatusCode::NOT_FOUND)
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-enum TerminalClientMessage {
-    Resize { cols: u16, rows: u16 },
-    Input { data: String },
-}
-
-#[derive(Debug, Serialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-enum TerminalServerMessage {
-    Status {
-        status: TerminalStatus,
-        exit_code: Option<i32>,
-    },
 }
 
 async fn terminal_stream_ws(
@@ -12337,6 +12419,47 @@ async fn fetch_remote_diff(worker: &TrackWorker) -> Result<DiffArtifact, StatusC
     resp.json::<DiffArtifact>()
         .await
         .map_err(|_| StatusCode::BAD_GATEWAY)
+}
+
+async fn open_remote_terminal(
+    worker: &TrackWorker,
+    req: &TerminalOpenRequest,
+    token: Option<&str>,
+) -> Result<(), StatusCode> {
+    let base = worker.gateway_url.trim_end_matches('/');
+    let url = format!("{base}/workers/{}/terminals", worker.worker_id);
+    let client = reqwest::Client::new();
+    let mut request = client.post(url).json(req);
+    if let Some(token) = token {
+        request = request.header("x-ctx-gateway-token", token);
+    }
+    let resp = request.send().await.map_err(|_| StatusCode::BAD_GATEWAY)?;
+    if !resp.status().is_success() {
+        return Err(StatusCode::BAD_GATEWAY);
+    }
+    Ok(())
+}
+
+async fn close_remote_terminal(
+    worker: &TrackWorker,
+    terminal_id: &TerminalId,
+    token: Option<&str>,
+) -> Result<(), StatusCode> {
+    let base = worker.gateway_url.trim_end_matches('/');
+    let url = format!(
+        "{base}/workers/{}/terminals/{}/close",
+        worker.worker_id, terminal_id.0
+    );
+    let client = reqwest::Client::new();
+    let mut request = client.post(url);
+    if let Some(token) = token {
+        request = request.header("x-ctx-gateway-token", token);
+    }
+    let resp = request.send().await.map_err(|_| StatusCode::BAD_GATEWAY)?;
+    if !resp.status().is_success() {
+        return Err(StatusCode::BAD_GATEWAY);
+    }
+    Ok(())
 }
 
 #[derive(Debug, Deserialize)]

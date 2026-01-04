@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -20,7 +20,8 @@ use tracing::{error, info};
 
 use ctx_worker_protocol::{
     new_worker_id, DiffArtifact, ExportPatchResponse, RelayMessage, StartWorkerRequest,
-    StartWorkerResponse, WorkerInfo, WorkerRegistration, WorkerState,
+    StartWorkerResponse, TerminalControlMessage, TerminalOpenRequest, WorkerInfo, WorkerRegistration,
+    WorkerState,
 };
 use tokio_util::io::ReaderStream;
 
@@ -146,6 +147,7 @@ struct AppState {
     worker_shim_path: String,
     auth_token: Option<String>,
     relays: Arc<RwLock<HashMap<String, Arc<Mutex<RelayState>>>>>,
+    terminal_relays: Arc<RwLock<HashMap<String, Arc<Mutex<TerminalRelayState>>>>>,
 }
 
 struct WorkerStore {
@@ -164,6 +166,19 @@ impl RelayState {
             sessions: HashMap::new(),
         }
     }
+}
+
+#[derive(Default)]
+struct TerminalRelayState {
+    control_tx: Option<mpsc::UnboundedSender<TerminalControlMessage>>,
+    pending: VecDeque<TerminalControlMessage>,
+    sessions: HashMap<String, TerminalSessionRelay>,
+}
+
+#[derive(Default)]
+struct TerminalSessionRelay {
+    daemon_tx: Option<mpsc::UnboundedSender<Message>>,
+    worker_tx: Option<mpsc::UnboundedSender<Message>>,
 }
 
 #[derive(Clone)]
@@ -320,6 +335,7 @@ async fn main() -> Result<()> {
         worker_shim_path: args.worker_shim_path.clone(),
         auth_token,
         relays: Arc::new(RwLock::new(HashMap::new())),
+        terminal_relays: Arc::new(RwLock::new(HashMap::new())),
     };
 
     let app = Router::new()
@@ -333,6 +349,23 @@ async fn main() -> Result<()> {
         .route("/workers/:id/register", post(register_worker))
         .route("/workers/:id/acp/worker", get(acp_worker_ws))
         .route("/workers/:id/acp/daemon", get(acp_daemon_ws))
+        .route("/workers/:id/terminals", post(open_terminal))
+        .route(
+            "/workers/:id/terminals/:terminal_id/close",
+            post(close_terminal),
+        )
+        .route(
+            "/workers/:id/terminals/control/worker",
+            get(terminal_control_ws),
+        )
+        .route(
+            "/workers/:id/terminals/:terminal_id/daemon",
+            get(terminal_daemon_ws),
+        )
+        .route(
+            "/workers/:id/terminals/:terminal_id/worker",
+            get(terminal_worker_ws),
+        )
         .route("/shim", get(get_worker_shim))
         .route("/health", get(health))
         .layer(middleware::from_fn_with_state(state.clone(), auth_middleware))
@@ -380,7 +413,10 @@ async fn auth_middleware(
         return next.run(req).await;
     }
     if method == "GET"
-        && (path.starts_with("/workers/") && !path.contains("/acp/") && !path.ends_with("/export"))
+        && (path.starts_with("/workers/")
+            && !path.contains("/acp/")
+            && !path.contains("/terminals/")
+            && !path.ends_with("/export"))
     {
         // Allow read-only inspection without auth by default.
         return next.run(req).await;
@@ -742,11 +778,217 @@ async fn handle_daemon_socket(state: AppState, worker_id: String, socket: WebSoc
     relay_guard.sessions.remove(&session_id);
 }
 
+async fn open_terminal(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<TerminalOpenRequest>,
+) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
+    ensure_exists(&state, &id).await?;
+    let relay = terminal_relay_for(&state, &id).await;
+    let msg = TerminalControlMessage::Open {
+        terminal_id: req.terminal_id.clone(),
+        shell: req.shell.clone(),
+        cwd: req.cwd.clone(),
+        cols: req.cols,
+        rows: req.rows,
+    };
+    let mut relay_guard = relay.lock().await;
+    relay_guard
+        .sessions
+        .entry(req.terminal_id.clone())
+        .or_insert_with(TerminalSessionRelay::default);
+    if let Some(control_tx) = relay_guard.control_tx.as_ref() {
+        let _ = control_tx.send(msg);
+    } else {
+        relay_guard.pending.push_back(msg);
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn close_terminal(
+    State(state): State<AppState>,
+    Path((id, terminal_id)): Path<(String, String)>,
+) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
+    ensure_exists(&state, &id).await?;
+    let relay = terminal_relay_for(&state, &id).await;
+    let msg = TerminalControlMessage::Close {
+        terminal_id: terminal_id.clone(),
+    };
+    let mut relay_guard = relay.lock().await;
+    if let Some(control_tx) = relay_guard.control_tx.as_ref() {
+        let _ = control_tx.send(msg);
+    } else {
+        relay_guard.pending.push_back(msg);
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn terminal_control_ws(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    ws: WebSocketUpgrade,
+) -> Result<impl axum::response::IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    ensure_exists(&state, &id).await?;
+    Ok(ws.on_upgrade(move |socket| handle_terminal_control_socket(state, id, socket)))
+}
+
+async fn terminal_daemon_ws(
+    State(state): State<AppState>,
+    Path((id, terminal_id)): Path<(String, String)>,
+    ws: WebSocketUpgrade,
+) -> Result<impl axum::response::IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    ensure_exists(&state, &id).await?;
+    Ok(ws.on_upgrade(move |socket| {
+        handle_terminal_data_socket(state, id, terminal_id, TerminalSide::Daemon, socket)
+    }))
+}
+
+async fn terminal_worker_ws(
+    State(state): State<AppState>,
+    Path((id, terminal_id)): Path<(String, String)>,
+    ws: WebSocketUpgrade,
+) -> Result<impl axum::response::IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    ensure_exists(&state, &id).await?;
+    Ok(ws.on_upgrade(move |socket| {
+        handle_terminal_data_socket(state, id, terminal_id, TerminalSide::Worker, socket)
+    }))
+}
+
+async fn handle_terminal_control_socket(
+    state: AppState,
+    worker_id: String,
+    socket: WebSocket,
+) {
+    let relay = terminal_relay_for(&state, &worker_id).await;
+    let (mut sender, mut receiver) = socket.split();
+    let (tx, mut rx) = mpsc::unbounded_channel::<TerminalControlMessage>();
+
+    {
+        let mut relay_guard = relay.lock().await;
+        relay_guard.control_tx = Some(tx);
+        while let Some(pending) = relay_guard.pending.pop_front() {
+            if let Some(control_tx) = relay_guard.control_tx.as_ref() {
+                let _ = control_tx.send(pending);
+            }
+        }
+    }
+
+    let relay_for_sender = relay.clone();
+    let send_task = tokio::spawn(async move {
+        while let Some(msg) = rx.recv().await {
+            if let Ok(text) = serde_json::to_string(&msg) {
+                if sender.send(Message::Text(text)).await.is_err() {
+                    break;
+                }
+            }
+        }
+        let mut relay_guard = relay_for_sender.lock().await;
+        relay_guard.control_tx = None;
+    });
+
+    while let Some(Ok(_msg)) = receiver.next().await {}
+
+    let _ = send_task.await;
+    let mut relay_guard = relay.lock().await;
+    relay_guard.control_tx = None;
+}
+
+#[derive(Clone, Copy)]
+enum TerminalSide {
+    Daemon,
+    Worker,
+}
+
+async fn handle_terminal_data_socket(
+    state: AppState,
+    worker_id: String,
+    terminal_id: String,
+    side: TerminalSide,
+    socket: WebSocket,
+) {
+    let relay = terminal_relay_for(&state, &worker_id).await;
+    let (mut sender, mut receiver) = socket.split();
+    let (tx, mut rx) = mpsc::unbounded_channel::<Message>();
+
+    {
+        let mut relay_guard = relay.lock().await;
+        let entry = relay_guard
+            .sessions
+            .entry(terminal_id.clone())
+            .or_insert_with(TerminalSessionRelay::default);
+        match side {
+            TerminalSide::Daemon => entry.daemon_tx = Some(tx),
+            TerminalSide::Worker => entry.worker_tx = Some(tx),
+        }
+    }
+
+    let relay_for_sender = relay.clone();
+    let terminal_id_for_sender = terminal_id.clone();
+    let send_task = tokio::spawn(async move {
+        while let Some(msg) = rx.recv().await {
+            if sender.send(msg).await.is_err() {
+                break;
+            }
+        }
+        let mut relay_guard = relay_for_sender.lock().await;
+        if let Some(entry) = relay_guard.sessions.get_mut(&terminal_id_for_sender) {
+            match side {
+                TerminalSide::Daemon => entry.daemon_tx = None,
+                TerminalSide::Worker => entry.worker_tx = None,
+            }
+            if entry.daemon_tx.is_none() && entry.worker_tx.is_none() {
+                relay_guard.sessions.remove(&terminal_id_for_sender);
+            }
+        }
+    });
+
+    while let Some(Ok(msg)) = receiver.next().await {
+        let other_tx = {
+            let relay_guard = relay.lock().await;
+            relay_guard.sessions.get(&terminal_id).and_then(|entry| match side {
+                TerminalSide::Daemon => entry.worker_tx.clone(),
+                TerminalSide::Worker => entry.daemon_tx.clone(),
+            })
+        };
+        if let Some(tx) = other_tx {
+            match msg {
+                Message::Text(_) | Message::Binary(_) | Message::Close(_) => {
+                    let _ = tx.send(msg);
+                }
+                Message::Ping(_) | Message::Pong(_) => {}
+            }
+        }
+    }
+
+    let _ = send_task.await;
+    let mut relay_guard = relay.lock().await;
+    if let Some(entry) = relay_guard.sessions.get_mut(&terminal_id) {
+        match side {
+            TerminalSide::Daemon => entry.daemon_tx = None,
+            TerminalSide::Worker => entry.worker_tx = None,
+        }
+        if entry.daemon_tx.is_none() && entry.worker_tx.is_none() {
+            relay_guard.sessions.remove(&terminal_id);
+        }
+    }
+}
+
 async fn relay_for(state: &AppState, worker_id: &str) -> Arc<Mutex<RelayState>> {
     let mut relays = state.relays.write().await;
     relays
         .entry(worker_id.to_string())
         .or_insert_with(|| Arc::new(Mutex::new(RelayState::new())))
+        .clone()
+}
+
+async fn terminal_relay_for(
+    state: &AppState,
+    worker_id: &str,
+) -> Arc<Mutex<TerminalRelayState>> {
+    let mut relays = state.terminal_relays.write().await;
+    relays
+        .entry(worker_id.to_string())
+        .or_insert_with(|| Arc::new(Mutex::new(TerminalRelayState::default())))
         .clone()
 }
 

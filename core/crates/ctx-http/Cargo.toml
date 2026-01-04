@@ -17,6 +17,7 @@ ctx-lsp = { path = "../ctx-lsp" }
 ctx-store = { path = "../ctx-store" }
 directories.workspace = true
 futures.workspace = true
+http = "1"
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true

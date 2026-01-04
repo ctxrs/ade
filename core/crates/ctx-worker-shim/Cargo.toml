@@ -18,6 +18,7 @@ tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
 futures-util = "0.3"
 tracing.workspace = true
 tracing-subscriber.workspace = true
+portable-pty = "0.9"
 
 [[bin]]
 name = "ctx-worker-shim"
