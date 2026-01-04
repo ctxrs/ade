@@ -675,25 +675,43 @@ fn resolve_worker_paths() -> Result<(String, String)> {
     }
 
     let cwd = std::env::current_dir().context("resolve current dir")?;
-    let candidate = cwd
-        .join("core")
-        .join("packages")
-        .join("web-session-worker")
-        .join("bin")
-        .join("worker.mjs");
-    let node_modules = cwd
-        .join("core")
-        .join("packages")
-        .join("web-session-worker")
-        .join("node_modules");
-    if candidate.exists() && node_modules.exists() {
-        return Ok((
-            candidate.to_string_lossy().to_string(),
-            node_modules.to_string_lossy().to_string(),
-        ));
+    let roots = [
+        cwd.clone(),
+        cwd.parent().unwrap_or(&cwd).to_path_buf(),
+        cwd.parent()
+            .and_then(|p| p.parent())
+            .unwrap_or(&cwd)
+            .to_path_buf(),
+    ];
+
+    for root in roots {
+        for prefix in ["core", ""].iter() {
+            let base = if prefix.is_empty() {
+                root.clone()
+            } else {
+                root.join(prefix)
+            };
+            let candidate = base
+                .join("packages")
+                .join("web-session-worker")
+                .join("bin")
+                .join("worker.mjs");
+            let node_modules = base
+                .join("packages")
+                .join("web-session-worker")
+                .join("node_modules");
+            if candidate.exists() && node_modules.exists() {
+                return Ok((
+                    candidate.to_string_lossy().to_string(),
+                    node_modules.to_string_lossy().to_string(),
+                ));
+            }
+        }
     }
 
-    anyhow::bail!("web session worker not found; set CTX_WEB_SESSION_WORKER and CTX_WEB_SESSION_NODE_PATH");
+    anyhow::bail!(
+        "web session worker not found; set CTX_WEB_SESSION_WORKER and CTX_WEB_SESSION_NODE_PATH"
+    );
 }
 
 async fn log_stream<R: tokio::io::AsyncRead + Unpin>(mut reader: R, label: &str) {

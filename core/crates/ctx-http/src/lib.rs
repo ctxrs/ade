@@ -393,4 +393,50 @@ mod tests {
 
         server.abort();
     }
+
+    #[tokio::test]
+    async fn web_session_routes_are_registered() {
+        let home = tempfile::tempdir().unwrap();
+        std::env::set_var("HOME", home.path());
+
+        let data_dir = tempfile::tempdir().unwrap();
+        let db_dir = data_dir.path().join("db");
+        tokio::fs::create_dir_all(&db_dir).await.unwrap();
+        let db_path = db_dir.join("db.sqlite");
+        let store = Store::open(&db_path).await.unwrap();
+
+        let providers: HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> =
+            HashMap::new();
+
+        let state = Arc::new(AppState::new(
+            data_dir.path().to_path_buf(),
+            store,
+            providers,
+            "http://127.0.0.1:4399".to_string(),
+            None,
+        ));
+        let app = api::router(state);
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/sessions/web")
+            .header("content-type", "application/json")
+            .body(Body::from(json!({"url": ""}).to_string()))
+            .unwrap();
+        let res = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+        let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&body).unwrap(),
+            json!({"error":"url is required"})
+        );
+
+        let req = Request::builder()
+            .method("GET")
+            .uri("/sessions/web/does-not-exist/view")
+            .body(Body::empty())
+            .unwrap();
+        let res = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::NOT_FOUND);
+    }
 }
