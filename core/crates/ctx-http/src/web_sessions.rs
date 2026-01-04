@@ -407,10 +407,7 @@ impl WebSessionManager {
     }
 
     pub async fn run(&self, id: &str, req: WebSessionRunRequest) -> Result<WebSessionRunResponse> {
-        let handle = self
-            .get(id)
-            .await
-            .context("session not found")?;
+        let handle = self.get(id).await.context("session not found")?;
         let _guard = handle.run_lock.lock().await;
         handle.touch().await;
 
@@ -439,15 +436,15 @@ impl WebSessionManager {
         Ok(WebSessionRunResponse {
             ok: value.get("ok").and_then(|v| v.as_bool()).unwrap_or(false),
             result: value.get("result").cloned(),
-            error: value.get("error").and_then(|v| v.as_str()).map(|s| s.to_string()),
+            error: value
+                .get("error")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
         })
     }
 
     pub async fn eval(&self, id: &str, req: WebSessionRunRequest) -> Result<WebSessionRunResponse> {
-        let handle = self
-            .get(id)
-            .await
-            .context("session not found")?;
+        let handle = self.get(id).await.context("session not found")?;
         let _guard = handle.run_lock.lock().await;
         handle.touch().await;
 
@@ -476,7 +473,10 @@ impl WebSessionManager {
         Ok(WebSessionRunResponse {
             ok: value.get("ok").and_then(|v| v.as_bool()).unwrap_or(false),
             result: value.get("result").cloned(),
-            error: value.get("error").and_then(|v| v.as_str()).map(|s| s.to_string()),
+            error: value
+                .get("error")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
         })
     }
 
@@ -492,10 +492,7 @@ impl WebSessionManager {
     }
 
     pub async fn bump_viewers(&self, id: &str, delta: i32) -> Result<u32> {
-        let handle = self
-            .get(id)
-            .await
-            .context("session not found")?;
+        let handle = self.get(id).await.context("session not found")?;
         handle.touch().await;
         let mut runtime = handle.runtime.lock().await;
         let next = (runtime.viewers as i32 + delta).max(0) as u32;
@@ -571,8 +568,22 @@ impl WebSessionManager {
         cmd.arg(worker_path);
         cmd.env("PORT", port.to_string());
         cmd.env("TARGET_URL", req.url.clone());
-        cmd.env("WIDTH", req.viewport.as_ref().map(|v| v.width).unwrap_or(DEFAULT_WIDTH).to_string());
-        cmd.env("HEIGHT", req.viewport.as_ref().map(|v| v.height).unwrap_or(DEFAULT_HEIGHT).to_string());
+        cmd.env(
+            "WIDTH",
+            req.viewport
+                .as_ref()
+                .map(|v| v.width)
+                .unwrap_or(DEFAULT_WIDTH)
+                .to_string(),
+        );
+        cmd.env(
+            "HEIGHT",
+            req.viewport
+                .as_ref()
+                .map(|v| v.height)
+                .unwrap_or(DEFAULT_HEIGHT)
+                .to_string(),
+        );
         cmd.env("FPS", req.fps.unwrap_or(DEFAULT_FPS).to_string());
         cmd.env("DISPLAY", display);
         cmd.env("NODE_PATH", node_modules_path);
@@ -621,7 +632,10 @@ impl Default for WebSessionManager {
     }
 }
 
-async fn build_run_payload(handle: &WebSessionHandle, req: WebSessionRunRequest) -> Result<serde_json::Value> {
+async fn build_run_payload(
+    handle: &WebSessionHandle,
+    req: WebSessionRunRequest,
+) -> Result<serde_json::Value> {
     let mut payload = serde_json::Map::new();
     if let Some(code) = req.code {
         payload.insert("code".to_string(), serde_json::Value::String(code));

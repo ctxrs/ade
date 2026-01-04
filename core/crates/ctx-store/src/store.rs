@@ -14,6 +14,11 @@ pub struct Store {
     pool: Pool<Sqlite>,
 }
 
+pub struct SessionRetentionPruneStats {
+    pub tool_summaries_deleted: u64,
+    pub turn_thoughts_cleared: u64,
+}
+
 fn serialize_bootstrap_status(status: &WorktreeBootstrapStatus) -> &'static str {
     match status {
         WorktreeBootstrapStatus::Success => "success",
@@ -97,6 +102,46 @@ impl Store {
 
     pub fn pool(&self) -> &Pool<Sqlite> {
         &self.pool
+    }
+
+    pub async fn prune_session_data_older_than_days(
+        &self,
+        retention_days: u64,
+    ) -> Result<SessionRetentionPruneStats> {
+        if retention_days == 0 {
+            return Ok(SessionRetentionPruneStats {
+                tool_summaries_deleted: 0,
+                turn_thoughts_cleared: 0,
+            });
+        }
+        let cutoff = Utc::now() - chrono::Duration::days(retention_days as i64);
+        let cutoff_str = cutoff.to_rfc3339();
+
+        let tool_summaries_deleted = sqlx::query(
+            r#"DELETE FROM session_turn_tools
+               WHERE updated_at < ?"#,
+        )
+        .bind(&cutoff_str)
+        .execute(&self.pool)
+        .await?
+        .rows_affected();
+
+        // Keep the row (turn metadata is still useful), but remove old final thoughts.
+        let turn_thoughts_cleared = sqlx::query(
+            r#"UPDATE session_turns
+               SET thought_partial = NULL
+               WHERE updated_at < ?
+                 AND thought_partial IS NOT NULL"#,
+        )
+        .bind(&cutoff_str)
+        .execute(&self.pool)
+        .await?
+        .rows_affected();
+
+        Ok(SessionRetentionPruneStats {
+            tool_summaries_deleted,
+            turn_thoughts_cleared,
+        })
     }
 
     // Workspace APIs

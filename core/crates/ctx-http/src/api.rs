@@ -25,8 +25,8 @@ use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncSeekExt, SeekFrom};
 use tokio::process::Command;
 use tokio::sync::mpsc;
-use tokio_util::io::ReaderStream;
 use tokio_tungstenite::{connect_async, tungstenite::Message as TungsteniteMessage};
+use tokio_util::io::ReaderStream;
 use tower::util::ServiceExt;
 use tower_http::services::{ServeDir, ServeFile};
 use url::Url;
@@ -6084,18 +6084,14 @@ async fn create_web_session(
         work_dir,
     };
 
-    let handle = state
-        .web_sessions
-        .create(req)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: format!("failed to create web session: {e}"),
-                }),
-            )
-        })?;
+    let handle = state.web_sessions.create(req).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResp {
+                error: format!("failed to create web session: {e}"),
+            }),
+        )
+    })?;
 
     let mut info = handle.snapshot().await;
     info.stream_url = Some(format!("{}{}", state.daemon_url, info.stream_path));
@@ -6116,7 +6112,11 @@ async fn get_web_session(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<Json<WebSessionInfo>, StatusCode> {
-    let handle = state.web_sessions.get(&id).await.ok_or(StatusCode::NOT_FOUND)?;
+    let handle = state
+        .web_sessions
+        .get(&id)
+        .await
+        .ok_or(StatusCode::NOT_FOUND)?;
     let mut info = handle.snapshot().await;
     info.stream_url = Some(format!("{}{}", state.daemon_url, info.stream_path));
     Ok(Json(info))
@@ -6170,7 +6170,11 @@ async fn web_session_view(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<Response, StatusCode> {
-    let handle = state.web_sessions.get(&id).await.ok_or(StatusCode::NOT_FOUND)?;
+    let handle = state
+        .web_sessions
+        .get(&id)
+        .await
+        .ok_or(StatusCode::NOT_FOUND)?;
     let info = handle.snapshot().await;
     let body = render_web_session_view(&info);
     Ok(([(header::CONTENT_TYPE, "text/html; charset=utf-8")], body).into_response())
@@ -6181,7 +6185,11 @@ async fn web_session_signal(
     Path(id): Path<String>,
     ws: WebSocketUpgrade,
 ) -> Result<Response, StatusCode> {
-    state.web_sessions.get(&id).await.ok_or(StatusCode::NOT_FOUND)?;
+    state
+        .web_sessions
+        .get(&id)
+        .await
+        .ok_or(StatusCode::NOT_FOUND)?;
     let manager = state.web_sessions.clone();
     let session_id = id.clone();
     Ok(ws.on_upgrade(move |socket| async move {
@@ -6225,10 +6233,11 @@ async fn handle_web_session_socket(
                 WsMessage::Ping(bytes) => TungsteniteMessage::Ping(bytes.into()),
                 WsMessage::Pong(bytes) => TungsteniteMessage::Pong(bytes.into()),
                 WsMessage::Close(frame) => {
-                    let frame = frame.map(|f| tokio_tungstenite::tungstenite::protocol::CloseFrame {
-                        code: f.code.into(),
-                        reason: f.reason.to_string().into(),
-                    });
+                    let frame =
+                        frame.map(|f| tokio_tungstenite::tungstenite::protocol::CloseFrame {
+                            code: f.code.into(),
+                            reason: f.reason.to_string().into(),
+                        });
                     TungsteniteMessage::Close(frame)
                 }
             };

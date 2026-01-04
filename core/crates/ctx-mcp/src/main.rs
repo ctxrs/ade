@@ -964,14 +964,21 @@ async fn main() -> Result<()> {
             "tools/call" => {
                 let params = msg.get("params").cloned().unwrap_or(json!({}));
                 let name = params.get("name").and_then(|v| v.as_str()).unwrap_or("");
-                // Accept both `ctx_lsp_status` and `ctx.lsp_status` naming styles.
-                // (Tests and some external harnesses use the dotted style.)
-                let name = if let Some(rest) = name.strip_prefix("ctx.") {
-                    format!("ctx_{rest}")
+                let raw_name = name.to_string();
+                // Tool naming compatibility layer:
+                // - Some tools are exposed as dotted names (`ctx.session_create`).
+                // - Some tools are exposed as underscored names (`ctx_apply_edit_plan`, `ctx_lsp_status`).
+                //
+                // Support common caller conventions without forcing everything to one style.
+                let name = if raw_name.starts_with("ctx.session_") {
+                    raw_name
+                } else if let Some(rest) = raw_name.strip_prefix("ctx.lsp_") {
+                    format!("ctx_lsp_{rest}")
+                } else if let Some(rest) = raw_name.strip_prefix("ctx.") {
+                    format!("ctx_{}", rest.replace('.', "_"))
                 } else {
-                    name.to_string()
+                    raw_name
                 };
-                let name = name.replace('.', "_");
                 let arguments = params.get("arguments").cloned().unwrap_or(json!({}));
                 match name.as_str() {
                     "ctx_ping" => ok(
@@ -2328,10 +2335,7 @@ async fn session_create_call(
     daemon_url: &str,
     arguments: &Value,
 ) -> Result<Value> {
-    let kind = arguments
-        .get("kind")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+    let kind = arguments.get("kind").and_then(|v| v.as_str()).unwrap_or("");
     if kind != "web" {
         anyhow::bail!("unsupported session kind: {}", kind);
     }
@@ -2367,7 +2371,13 @@ async fn session_create_call(
         body.insert("fps".to_string(), fps.clone());
     }
 
-    daemon_post_json(client, daemon_url, "/api/sessions/web", &Value::Object(body)).await
+    daemon_post_json(
+        client,
+        daemon_url,
+        "/api/sessions/web",
+        &Value::Object(body),
+    )
+    .await
 }
 
 async fn session_list_call(
@@ -2392,7 +2402,12 @@ async fn session_info_call(
         .get("session_id")
         .and_then(|v| v.as_str())
         .context("missing session_id")?;
-    daemon_get_json(client, daemon_url, &format!("/api/sessions/web/{}", session_id)).await
+    daemon_get_json(
+        client,
+        daemon_url,
+        &format!("/api/sessions/web/{}", session_id),
+    )
+    .await
 }
 
 async fn session_run_call(

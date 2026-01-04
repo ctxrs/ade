@@ -3,7 +3,7 @@ use std::fs::OpenOptions;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use axum::Router;
@@ -767,6 +767,43 @@ pub async fn serve(
         tokio::fs::rename(&legacy_db_path, &db_path).await?;
     }
     let store = Store::open(&db_path).await?;
+
+    // Hard-coded retention policy (no config surface yet):
+    // - Keep tool summaries and final thoughts for 30 days.
+    // - Do not retain thought chunk events (handled at ingestion time).
+    const SESSION_RETENTION_DAYS: u64 = 30;
+    {
+        let store = store.clone();
+        tokio::spawn(async move {
+            let mut last_cleanup = None::<String>;
+            loop {
+                let today = Utc::now().format("%Y-%m-%d").to_string();
+                if last_cleanup.as_deref() != Some(&today) {
+                    match store
+                        .prune_session_data_older_than_days(SESSION_RETENTION_DAYS)
+                        .await
+                    {
+                        Ok(stats) => {
+                            tracing::info!(
+                                tool_summaries_deleted = stats.tool_summaries_deleted,
+                                turn_thoughts_cleared = stats.turn_thoughts_cleared,
+                                retention_days = SESSION_RETENTION_DAYS,
+                                "pruned old session data",
+                            );
+                        }
+                        Err(err) => {
+                            tracing::warn!(
+                                retention_days = SESSION_RETENTION_DAYS,
+                                "failed to prune old session data: {err:#}",
+                            );
+                        }
+                    }
+                    last_cleanup = Some(today);
+                }
+                tokio::time::sleep(Duration::from_secs(60 * 60)).await;
+            }
+        });
+    }
 
     let agent_cfg = installer::load_agent_server_config(&data_root)
         .await
