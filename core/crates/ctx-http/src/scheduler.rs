@@ -292,6 +292,9 @@ async fn start_turn(
         provider_env.insert("CTX_PROVIDER_SESSION_REF".to_string(), provider_ref);
     }
     provider_env.insert("CTX_SESSION_ID".to_string(), session.id.0.to_string());
+    provider_env.insert("CTX_MODEL_ID".to_string(), session.model_id.clone());
+    let mcp_token = uuid::Uuid::new_v4().to_string();
+    provider_env.insert("CTX_MCP_TOKEN".to_string(), mcp_token);
     let provider_control_mode = settings::load_settings(&state.data_root)
         .await
         .sandboxing
@@ -330,6 +333,7 @@ async fn start_turn(
         }
     }
 
+
     let prompt_config = workspace_config::load_agent_system_prompt_append(workdir)
         .await
         .unwrap_or_else(|_| workspace_config::AgentSystemPromptAppendConfig::new_default(workdir));
@@ -340,6 +344,13 @@ async fn start_turn(
             context_blocks.push(json!({"type":"text","text": append}));
         }
         provider_env.insert("CTX_SYSTEM_PROMPT_APPEND".to_string(), append.to_string());
+    }
+
+    if let Ok(Some(worker)) = state.store.get_track_worker(session.track_id).await {
+        provider_env.insert("CTX_WORKER_GATEWAY_URL".to_string(), worker.gateway_url);
+        provider_env.insert("CTX_WORKER_ID".to_string(), worker.worker_id);
+    }
+theirs
     }
 
     let run_started_at = Instant::now();

@@ -12,6 +12,7 @@ ctx-core = { path = "../ctx-core" }
 ctx-events = { path = "../ctx-events" }
 ctx-fs = { path = "../ctx-fs" }
 ctx-providers = { path = "../ctx-providers" }
+ctx-worker-protocol = { path = "../ctx-worker-protocol" }
 ctx-lsp = { path = "../ctx-lsp" }
 ctx-store = { path = "../ctx-store" }
 directories.workspace = true

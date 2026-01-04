@@ -38,6 +38,8 @@ use ctx_core::models::*;
 use ctx_fs::git::{assert_git_repo, list_tracked_files, list_untracked_files, rev_parse_head};
 use ctx_fs::worktrees::{create_worktree, diff_worktree_summary, managed_worktree_path};
 use ctx_store::store::MobileDeviceUpsert;
+use chrono::Utc;
+use ctx_worker_protocol::{DiffArtifact, RepoSpec, StartWorkerRequest, StartWorkerResponse};
 
 use crate::attachments;
 use crate::buffers::{
@@ -443,6 +445,12 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
         .route("/api/tracks/:id/diff", get(track_diff))
         .route("/api/tracks/:id/diff_summary", get(track_diff_summary))
         .route("/api/tracks/:id/diff/apply", post(track_diff_apply))
+        .route(
+            "/api/tracks/:id/worker",
+            get(get_track_worker)
+                .post(start_track_worker)
+                .delete(delete_track_worker),
+        )
         .route(
             "/api/dictation/livekit/stream",
             get(dictation_livekit_stream_ws),
@@ -12144,6 +12152,40 @@ async fn track_diff_summary(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
 
+    if let Ok(Some(worker)) = state.store.get_track_worker(track_id).await {
+        let diff = fetch_remote_diff(&worker).await?;
+        let (summary, too_large) =
+            build_diff_summary(diff.file_count, diff.line_additions, diff.line_deletions);
+        let entry = write_diff_summary_cache(&state, track_id, summary.clone(), too_large).await;
+
+        if let Ok(Some(mut catchup_summary)) = state
+            .store
+            .get_workspace_catchup_track_summary(track_id)
+            .await
+        {
+            catchup_summary.diff_summary = summary.clone();
+            state
+                .workspace_catchup
+                .publish_track_upsert(track.workspace_id, catchup_summary)
+                .await;
+        }
+
+        if perf {
+            tracing::info!(
+                target: "ctx_perf",
+                endpoint = "track_diff_summary",
+                track_id = %track_id.0,
+                cache_hit = false,
+                ms = %t0.elapsed().as_millis(),
+            );
+        }
+
+        return Ok(Json(TrackDiffSummaryResponse {
+            summary: entry.summary,
+            too_large: entry.too_large,
+        }));
+    }
+
     if let Some(entry) = read_cached_diff_summary(&state, track_id).await {
         if perf {
             tracing::info!(
@@ -12281,6 +12323,20 @@ async fn track_diff(
         .record_metric(metric, None, None, None)
         .await;
     Ok(Json(DiffResponse { diff }))
+}
+
+async fn fetch_remote_diff(worker: &TrackWorker) -> Result<DiffArtifact, StatusCode> {
+    let base = worker.gateway_url.trim_end_matches('/');
+    let url = format!("{base}/workers/{}/diff", worker.worker_id);
+    let resp = reqwest::get(url)
+        .await
+        .map_err(|_| StatusCode::BAD_GATEWAY)?;
+    if !resp.status().is_success() {
+        return Err(StatusCode::BAD_GATEWAY);
+    }
+    resp.json::<DiffArtifact>()
+        .await
+        .map_err(|_| StatusCode::BAD_GATEWAY)
 }
 
 #[derive(Debug, Deserialize)]
@@ -12467,6 +12523,207 @@ async fn track_diff_apply(
         .record_metric(metric, None, None, None)
         .await;
     Ok(Json(DiffResponse { diff }))
+}
+
+#[derive(Debug, Deserialize)]
+struct TrackWorkerStartReq {
+    gateway_url: String,
+    repo: RepoSpec,
+    #[serde(default)]
+    base_commit_sha: Option<String>,
+    #[serde(default)]
+    diff_debounce_ms: Option<u64>,
+    #[serde(default)]
+    ttl_seconds: Option<u64>,
+    #[serde(default)]
+    snapshot_ttl_seconds: Option<u64>,
+}
+
+async fn start_track_worker(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(req): Json<TrackWorkerStartReq>,
+) -> Result<Json<TrackWorker>, (StatusCode, Json<ApiErrorResp>)> {
+    let track_id = TrackId(uuid::Uuid::parse_str(&id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid track id".to_string(),
+            }),
+        )
+    })?);
+    let track = state
+        .store
+        .get_track(track_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: e.to_string(),
+                }),
+            )
+        })?
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "track not found".to_string(),
+            }),
+        ))?;
+    let worktree = state
+        .store
+        .get_worktree(track.worktree_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: e.to_string(),
+                }),
+            )
+        })?
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "worktree not found".to_string(),
+            }),
+        ))?;
+
+    let base_commit = req
+        .base_commit_sha
+        .unwrap_or_else(|| worktree.base_commit_sha.clone());
+
+    let start_req = StartWorkerRequest {
+        task_id: track.task_id.0.to_string(),
+        track_id: track.id.0.to_string(),
+        provider_id: None,
+        model_id: None,
+        repo: req.repo,
+        base_commit_sha: Some(base_commit),
+        diff_debounce_ms: req.diff_debounce_ms,
+        ttl_seconds: req.ttl_seconds,
+        snapshot_ttl_seconds: req.snapshot_ttl_seconds,
+        env: HashMap::new(),
+    };
+
+    let url = format!("{}/workers", req.gateway_url.trim_end_matches('/'));
+    let resp = reqwest::Client::new()
+        .post(url)
+        .json(&start_req)
+        .send()
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_GATEWAY,
+                Json(ApiErrorResp {
+                    error: e.to_string(),
+                }),
+            )
+        })?
+        .error_for_status()
+        .map_err(|e| {
+            (
+                StatusCode::BAD_GATEWAY,
+                Json(ApiErrorResp {
+                    error: e.to_string(),
+                }),
+            )
+        })?
+        .json::<StartWorkerResponse>()
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_GATEWAY,
+                Json(ApiErrorResp {
+                    error: e.to_string(),
+                }),
+            )
+        })?;
+
+    let now = Utc::now();
+    let worker = TrackWorker {
+        track_id: track.id,
+        worker_id: resp.worker_id,
+        gateway_url: req.gateway_url,
+        created_at: now,
+        updated_at: now,
+    };
+
+    state
+        .store
+        .upsert_track_worker(&worker)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: e.to_string(),
+                }),
+            )
+        })?;
+
+    Ok(Json(worker))
+}
+
+async fn get_track_worker(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<TrackWorker>, StatusCode> {
+    let track_id = TrackId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
+    let worker = state
+        .store
+        .get_track_worker(track_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    Ok(Json(worker))
+}
+
+async fn delete_track_worker(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<StatusCode, (StatusCode, Json<ApiErrorResp>)> {
+    let track_id = TrackId(uuid::Uuid::parse_str(&id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid track id".to_string(),
+            }),
+        )
+    })?);
+    let worker = state
+        .store
+        .get_track_worker(track_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: e.to_string(),
+                }),
+            )
+        })?;
+    if let Some(worker) = worker {
+        let url = format!(
+            "{}/workers/{}/stop",
+            worker.gateway_url.trim_end_matches('/'),
+            worker.worker_id
+        );
+        let _ = reqwest::Client::new().post(url).send().await;
+        state
+            .store
+            .delete_track_worker(track_id)
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiErrorResp {
+                        error: e.to_string(),
+                    }),
+                )
+            })?;
+    }
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn dictation_livekit_stream_ws(
