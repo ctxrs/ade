@@ -93,6 +93,7 @@ type ThreadItem =
     started_at: string;
     updated_at: string;
     custom_status?: string | null;
+    status_text?: string | null;
   }
   | {
     kind: "tool_group";
@@ -195,81 +196,126 @@ function markdownToPlainText(input: string): string {
   return text.trim();
 }
 
-
-type ReasoningSummaryFragment = {
-  text: string;
-  itemId: string | null;
-  summaryIndex: number | null;
-  sectionBreak: boolean;
-};
-
-function normalizeSummaryIndex(value: unknown): number | null {
-  if (value == null) return null;
-  const n = typeof value === "number" ? value : Number(value);
-  return Number.isFinite(n) ? n : null;
-}
-
-function extractReasoningSummaryFragment(event: SessionEvent): ReasoningSummaryFragment | null {
-  if (event.event_type !== "thought_chunk") return null;
-  const payload = event.payload_json ?? {};
-  const meta =
-    payload?.acp_update?._meta ??
-    payload?.acp_update?.meta ??
-    payload?._meta ??
-    payload?.meta ??
-    {};
-  const codexMeta = meta?.codex ?? {};
-  const reasoningKind = codexMeta?.reasoning_kind ?? codexMeta?.reasoningKind;
-  if (reasoningKind !== "summary") return null;
-  const fragment =
-    payload?.content_fragment ??
-    payload?.acp_update?.content?.text ??
-    payload?.acp_update?.content_fragment ??
-    "";
-  const text = String(fragment ?? "");
-  const sectionBreak = codexMeta?.section_break === true;
-  if (!text.trim() && !sectionBreak) return null;
-  const itemId = typeof codexMeta?.item_id === "string" ? codexMeta.item_id : null;
-  const summaryIndex = normalizeSummaryIndex(codexMeta?.summary_index ?? codexMeta?.summaryIndex);
-  return { text, itemId, summaryIndex, sectionBreak };
-}
-
 function buildCustomStatusByTurnId(events: SessionEvent[]): Map<string, string> {
-  const out = new Map<string, string>();
-  const summaryByTurn = new Map<string, { text: string; itemId: string | null; summaryIndex: number | null }>();
-  for (const ev of events) {
+  const normalize = (value: unknown): string | null => {
+    const t = String(value ?? "").trim();
+    return t ? t : null;
+  };
+
+  const extractNoticeStatusText = (ev: SessionEvent): string | null => {
+    if (ev.event_type !== "notice") return null;
+    const payload = ev.payload_json ?? {};
+    const meta =
+      payload?.acp_update?._meta ??
+      payload?.acp_update?.meta ??
+      payload?._meta ??
+      payload?.meta ??
+      {};
+    return (
+      normalize(meta?.statusText) ??
+      normalize(meta?.status_text) ??
+      normalize(payload?.statusText) ??
+      normalize(payload?.status_text)
+    );
+  };
+
+  const toolStatusVerb = (kind: string): string | null => {
+    const k = String(kind ?? "").trim().toLowerCase();
+    if (k === "search") return "Searching";
+    if (k === "read" || k === "read_file") return "Reading";
+    if (k === "execute") return "Running";
+    if (k === "write" || k === "edit") return "Writing";
+    return null;
+  };
+
+  const deriveToolStatusText = (update: any): string | null => {
+    const kind = String(update?.kind ?? update?.tool_kind ?? update?.toolKind ?? "").trim();
+    const verb = toolStatusVerb(kind);
+    if (!verb) return null;
+    if (verb === "Searching") {
+      const query = normalize(update?.input?.query ?? update?.input?.q);
+      if (query) return `${verb} ${query}`;
+    }
+    const title = normalize(update?.title);
+    if (title) return `${verb} ${title}`;
+    return verb;
+  };
+
+  const isActiveToolStatus = (status: unknown): boolean => {
+    const s = String(status ?? "").trim().toLowerCase();
+    return s === "pending" || s === "queued" || s === "running" || s === "in_progress" || s === "inprogress";
+  };
+
+  const sorted = events
+    .slice()
+    .sort((a, b) => {
+      const sa = typeof (a as any).seq === "number" ? ((a as any).seq as number) : Number.NaN;
+      const sb = typeof (b as any).seq === "number" ? ((b as any).seq as number) : Number.NaN;
+      if (Number.isFinite(sa) && Number.isFinite(sb) && sa !== sb) return sa - sb;
+      if (Number.isFinite(sa) && !Number.isFinite(sb)) return -1;
+      if (!Number.isFinite(sa) && Number.isFinite(sb)) return 1;
+      return String(a.created_at).localeCompare(String(b.created_at));
+    });
+
+  const noticeByTurn = new Map<string, { order: number; text: string }>();
+  const toolsByTurn = new Map<string, Map<string, { order: number; status: string; text: string | null }>>();
+
+  let order = 0;
+  for (const ev of sorted) {
+    order += 1;
     const turnId = idToString((ev as any).turn_id);
     if (!turnId) continue;
-    const summaryFragment = extractReasoningSummaryFragment(ev);
-    if (summaryFragment) {
-      const current = summaryByTurn.get(turnId);
-      const nextItemId = summaryFragment.itemId;
-      const nextIndex = summaryFragment.summaryIndex;
-      const shouldReplace =
-        summaryFragment.sectionBreak ||
-        !current ||
-        (!!nextItemId && nextItemId !== current.itemId) ||
-        (nextIndex != null && nextIndex !== current.summaryIndex);
-      if (shouldReplace) {
-        summaryByTurn.set(turnId, {
-          text: summaryFragment.text,
-          itemId: nextItemId ?? current?.itemId ?? null,
-          summaryIndex: nextIndex ?? current?.summaryIndex ?? null,
-        });
-      } else {
-        summaryByTurn.set(turnId, {
-          text: appendFragment(current.text, summaryFragment.text),
-          itemId: current.itemId,
-          summaryIndex: current.summaryIndex,
-        });
+
+    const noticeText = extractNoticeStatusText(ev);
+    if (noticeText) {
+      noticeByTurn.set(turnId, { order, text: noticeText });
+      continue;
+    }
+
+    if (ev.event_type !== "tool_call" && ev.event_type !== "tool_call_update" && ev.event_type !== "tool_result") {
+      continue;
+    }
+
+    const update = ev.payload_json?.acp_update ?? ev.payload_json ?? {};
+    const toolCallId =
+      normalize(
+        ev.payload_json?.tool_call_id ??
+          update?.toolCallId ??
+          update?.tool_call_id ??
+          update?.rawInput?.call_id ??
+          update?.raw_input?.call_id ??
+          update?.toolCall?.rawInput?.call_id ??
+          "",
+      ) ?? "";
+    if (!toolCallId) continue;
+
+    const status = String(update?.status ?? update?.tool_status ?? update?.toolStatus ?? "").trim();
+    const text = deriveToolStatusText(update);
+    const perTurn = toolsByTurn.get(turnId) ?? new Map<string, { order: number; status: string; text: string | null }>();
+    perTurn.set(toolCallId, { order, status, text });
+    toolsByTurn.set(turnId, perTurn);
+  }
+
+  const out = new Map<string, string>();
+  const allTurnIds = new Set<string>([...noticeByTurn.keys(), ...toolsByTurn.keys()]);
+  for (const turnId of allTurnIds) {
+    const perTurnTools = toolsByTurn.get(turnId);
+    let bestTool: { order: number; text: string } | null = null;
+    if (perTurnTools) {
+      for (const tool of perTurnTools.values()) {
+        if (!tool.text) continue;
+        if (!isActiveToolStatus(tool.status)) continue;
+        if (!bestTool || tool.order > bestTool.order) bestTool = { order: tool.order, text: tool.text };
       }
     }
+    if (bestTool) {
+      out.set(turnId, bestTool.text);
+      continue;
+    }
+    const notice = noticeByTurn.get(turnId);
+    if (notice?.text) out.set(turnId, notice.text);
   }
-  for (const [turnId, summary] of summaryByTurn) {
-    const trimmed = summary.text.trim();
-    if (!trimmed) continue;
-    if (!out.has(turnId)) out.set(turnId, trimmed);
-  }
+
   return out;
 }
 
@@ -307,6 +353,40 @@ function humanTurnStatus(status: SessionTurn["status"]): string {
       return "Working";
   }
 }
+
+function humanToolStatus(status: string): string {
+  const s = String(status ?? "").trim().toLowerCase();
+  switch (s) {
+    case "pending":
+    case "queued":
+      return "Queued";
+    case "running":
+    case "in_progress":
+    case "inprogress":
+      return "Running";
+    case "completed":
+    case "complete":
+    case "ok":
+    case "success":
+    case "succeeded":
+      return "Completed";
+    case "failed":
+    case "error":
+      return "Failed";
+    default:
+      return status ? String(status) : "";
+  }
+}
+
+function toolKindIcon(kind: string): string {
+  const k = String(kind ?? "").trim().toLowerCase();
+  if (k === "execute") return "$";
+  if (k === "read" || k === "read_file") return "R";
+  if (k === "search") return "S";
+  if (k === "write" || k === "edit") return "W";
+  return "·";
+}
+
 type WorkbenchThreadView = {
   groups: Array<{
     key: string;
@@ -1630,6 +1710,7 @@ export function SessionView({
       return (
         <WorkbenchToolGroupRow
           item={item}
+          verbosity={verbosity}
           expanded={expanded}
           toolsLoading={toolsLoading}
           onToggle={() =>
@@ -1648,6 +1729,7 @@ export function SessionView({
       return (
         <WorkbenchToolRow
           item={item}
+          verbosity={verbosity}
           expanded={toolExpanded}
           onToggle={() => setExpandedToolById((prev) => ({ ...prev, [item.id]: !toolExpanded }))}
         />
@@ -2309,10 +2391,12 @@ function AssistantEntry({
 
 function WorkbenchToolRow({
   item,
+  verbosity,
   expanded,
   onToggle,
 }: {
   item: Extract<ThreadItem, { kind: "tool" }>;
+  verbosity: SessionViewVerbosity;
   expanded: boolean;
   onToggle: () => void;
 }) {
@@ -2435,7 +2519,9 @@ function WorkbenchToolRow({
   })();
 
   const { verb, rest, label } = labelParts;
-  const hasDetails = item.has_details ?? !!(item.input || item.output_text?.trim());
+  const showOutputPreview = verbosity === "verbose";
+  const hasOutputText = !!item.output_text?.trim();
+  const hasDetails = !!item.input || (showOutputPreview && hasOutputText);
 
   return (
     <div className="wb-tool-row">
@@ -2466,7 +2552,7 @@ function WorkbenchToolRow({
               <pre className="wb-tool-pre">{formatToolInput(item.tool_kind, item.input)}</pre>
             </div>
           )}
-          {!!item.output_text?.trim() && (
+          {showOutputPreview && !!item.output_text?.trim() && (
             <div className="wb-tool-section">
               <div className="wb-tool-section-title">Output</div>
               {looksLikeMarkdown(item.output_text) ? (
@@ -2516,6 +2602,7 @@ function WorkbenchTurnStatusRow({
 
 function WorkbenchToolGroupRow({
   item,
+  verbosity,
   expanded,
   onToggle,
   toolsLoading,
@@ -2524,6 +2611,7 @@ function WorkbenchToolGroupRow({
   expandedToolById,
 }: {
   item: Extract<ThreadItem, { kind: "tool_group" }>;
+  verbosity: SessionViewVerbosity;
   expanded: boolean;
   onToggle: () => void;
   toolsLoading: boolean;
@@ -2567,6 +2655,7 @@ function WorkbenchToolGroupRow({
         <span className="wb-event-text">{label}</span>
         {hasDetails && <span className="wb-event-chev">{expanded ? "▴" : "▾"}</span>}
       </button>
+
       {hasDetails && expanded && (
         <div className="wb-tool-group-body">
           {total > 0 && item.tools.length === 0 && toolsLoading && (
@@ -2576,6 +2665,7 @@ function WorkbenchToolGroupRow({
             <WorkbenchToolRow
               key={tool.id}
               item={tool}
+              verbosity={verbosity}
               expanded={expandedToolById[tool.id] ?? false}
               onToggle={() => onToggleTool(tool.id)}
             />
@@ -3259,7 +3349,8 @@ function applyToolUpdateFromEvent(
   const locs = Array.isArray(update?.locations) ? update.locations : [];
   tool.locations = locs.map((l: any) => ({ path: l?.path, range: l?.range }));
 
-  const input = update?.rawInput ?? update?.toolCall?.rawInput ?? update?.toolCall?.input ?? update?.input ?? null;
+  const input =
+    update?.rawInput ?? update?.toolCall?.rawInput ?? update?.toolCall?.input ?? update?.input ?? update?.input_preview ?? null;
   if (input != null) tool.input = input;
 
   const nextOutput = extractToolOutputText(update);
@@ -3553,6 +3644,7 @@ function buildWorkbenchThreadViewModelFromTurns(
       started_at: turn.started_at,
       updated_at: turn.updated_at ?? turn.started_at,
       custom_status: statusText,
+      status_text: statusText,
     });
 
     groups.push({ key: `turn-${turnId}`, header, items });
@@ -4123,8 +4215,15 @@ function buildWorkbenchThreadViewModelFromEvents(events: SessionEvent[], message
 }
 
 function extractToolOutputText(update: any): string {
-  const raw = update?.rawOutput?.aggregated_output ?? update?.rawOutput?.output ?? null;
-  if (typeof raw === "string" && raw.trim()) return raw;
+  const direct =
+    update?.outputText ??
+    update?.output_text ??
+    update?.output_preview ??
+    update?.result ??
+    update?.rawOutput?.aggregated_output ??
+    update?.rawOutput?.output ??
+    null;
+  if (typeof direct === "string" && direct.trim()) return direct.trim();
 
   const blocks = Array.isArray(update?.content) ? update.content : [];
   const parts: string[] = [];

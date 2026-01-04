@@ -862,7 +862,14 @@ async fn main() -> Result<()> {
             "tools/call" => {
                 let params = msg.get("params").cloned().unwrap_or(json!({}));
                 let name = params.get("name").and_then(|v| v.as_str()).unwrap_or("");
-                let name = name.to_string();
+                // Accept both `ctx_lsp_status` and `ctx.lsp_status` naming styles.
+                // (Tests and some external harnesses use the dotted style.)
+                let name = if let Some(rest) = name.strip_prefix("ctx.") {
+                    format!("ctx_{rest}")
+                } else {
+                    name.to_string()
+                };
+                let name = name.replace('.', "_");
                 let arguments = params.get("arguments").cloned().unwrap_or(json!({}));
                 match name.as_str() {
                     "ctx_ping" => ok(

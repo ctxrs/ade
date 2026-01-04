@@ -343,7 +343,7 @@ async fn start_turn(
         }
     };
 
-    let state_for_events = state.clone();
+    let state_for_events = Arc::clone(state);
     let store = state.store.clone();
     let session_id = session.id;
     let task_id = session.task_id;
@@ -363,7 +363,9 @@ async fn start_turn(
         let mut first_event_at: Option<Instant> = None;
 
         while let Some(ev) = ev_rx.recv().await {
-            let mut payload = ev.payload_json.clone();
+            let event_type = ev.event_type.clone();
+            let raw_payload = ev.payload_json.clone();
+            let mut payload = raw_payload.clone();
             if first_event_at.is_none() {
                 first_event_at = Some(Instant::now());
                 let first_ms = run_started_at.elapsed().as_millis() as u64;
@@ -399,12 +401,20 @@ async fn start_turn(
                     obj.entry("status").or_insert(json!("completed"));
                 }
             }
+            if matches!(
+                event_type,
+                SessionEventType::ToolCall
+                    | SessionEventType::ToolCallUpdate
+                    | SessionEventType::ToolResult
+            ) {
+                payload = sanitize_tool_event_payload(&event_type, &raw_payload);
+            }
             let appended = store
                 .append_session_event(
                     session_id,
                     Some(run_id),
                     Some(turn_id),
-                    ev.event_type.clone(),
+                    event_type.clone(),
                     payload,
                 )
                 .await;
@@ -413,10 +423,8 @@ async fn start_turn(
 
                 match event.event_type {
                     SessionEventType::AssistantChunk => {
-                        if let Some(fragment) = event
-                            .payload_json
-                            .get("content_fragment")
-                            .and_then(Value::as_str)
+                        if let Some(fragment) =
+                            raw_payload.get("content_fragment").and_then(Value::as_str)
                         {
                             assistant_partial.push_str(fragment);
                             let _ = store
@@ -431,11 +439,9 @@ async fn start_turn(
                         }
                     }
                     SessionEventType::ThoughtChunk => {
-                        if should_track_thought_chunk(&event.payload_json) {
-                            if let Some(fragment) = event
-                                .payload_json
-                                .get("content_fragment")
-                                .and_then(Value::as_str)
+                        if should_track_thought_chunk(&raw_payload) {
+                            if let Some(fragment) =
+                                raw_payload.get("content_fragment").and_then(Value::as_str)
                             {
                                 thought_partial.push_str(fragment);
                                 let _ = store
@@ -492,7 +498,9 @@ async fn start_turn(
                                 .await;
                             }
                         }
-                        if let Some(update) = build_turn_tool_update(&event) {
+                        if let Some(update) =
+                            build_turn_tool_update_from_payload(&event_type, &raw_payload)
+                        {
                             let prev = if let Some(cached) =
                                 tool_cache.get(&update.tool_call_id).cloned()
                             {
@@ -614,7 +622,10 @@ async fn start_turn(
                             .delete_session_events_for_turn_types(
                                 session_id,
                                 turn_id,
-                                &[SessionEventType::AssistantChunk],
+                                &[
+                                    SessionEventType::AssistantChunk,
+                                    SessionEventType::ThoughtChunk,
+                                ],
                             )
                             .await;
                     }
@@ -672,6 +683,13 @@ async fn start_turn(
                                 )
                                 .await;
                         }
+                        let _ = store
+                            .delete_session_events_for_turn_types(
+                                session_id,
+                                turn_id,
+                                &[SessionEventType::ThoughtChunk],
+                            )
+                            .await;
                     }
                     SessionEventType::TurnInterrupted => {
                         if !telemetry_emitted {
@@ -729,7 +747,10 @@ async fn start_turn(
                             .delete_session_events_for_turn_types(
                                 session_id,
                                 turn_id,
-                                &[SessionEventType::AssistantChunk],
+                                &[
+                                    SessionEventType::AssistantChunk,
+                                    SessionEventType::ThoughtChunk,
+                                ],
                             )
                             .await;
                     }
@@ -783,6 +804,16 @@ async fn start_turn(
                                 None,
                                 None,
                                 event.created_at,
+                            )
+                            .await;
+                        let _ = store
+                            .delete_session_events_for_turn_types(
+                                session_id,
+                                turn_id,
+                                &[
+                                    SessionEventType::AssistantChunk,
+                                    SessionEventType::ThoughtChunk,
+                                ],
                             )
                             .await;
                     }
@@ -873,14 +904,6 @@ pub async fn reconcile_turn_terminal_state(
                         event.created_at,
                     )
                     .await;
-                let _ = state
-                    .store
-                    .delete_session_events_for_turn_types(
-                        session_id,
-                        turn_id,
-                        &[SessionEventType::AssistantChunk],
-                    )
-                    .await;
             }
             SessionEventType::Error => {
                 let _ = state
@@ -918,14 +941,6 @@ pub async fn reconcile_turn_terminal_state(
             Some(event.seq),
             None,
             event.created_at,
-        )
-        .await;
-    let _ = state
-        .store
-        .delete_session_events_for_turn_types(
-            session_id,
-            turn_id,
-            &[SessionEventType::AssistantChunk],
         )
         .await;
     Ok(())
@@ -1123,6 +1138,167 @@ fn estimate_tokens(text: &str) -> usize {
     chars.div_ceil(4)
 }
 
+fn tool_input_preview(input: Option<&Value>) -> Option<Value> {
+    let obj = input?.as_object()?;
+    let mut out = serde_json::Map::new();
+    for key in [
+        "command",
+        "query",
+        "pattern",
+        "text",
+        "path",
+        "file",
+        "glob",
+        "parsed_cmd",
+    ] {
+        if let Some(value) = obj.get(key) {
+            if value.is_string() || value.is_array() || value.is_object() {
+                out.insert(key.to_string(), value.clone());
+            }
+        }
+    }
+    if out.is_empty() {
+        None
+    } else {
+        Some(Value::Object(out))
+    }
+}
+
+fn is_shell_like_tool(tool_kind: Option<&str>, title: Option<&str>) -> bool {
+    let kind = tool_kind.unwrap_or("").trim().to_lowercase();
+    if matches!(
+        kind.as_str(),
+        "shell" | "bash" | "sh" | "command" | "terminal"
+    ) {
+        return true;
+    }
+    let title = title.unwrap_or("").trim().to_lowercase();
+    title.contains("shell") || title.contains("bash") || title.contains("terminal")
+}
+
+fn build_output_preview(text: &str, head_tail_lines: usize, max_chars: usize) -> (String, bool) {
+    if head_tail_lines == 0 {
+        return (String::new(), !text.trim().is_empty());
+    }
+
+    let mut total_lines: usize = 0;
+    let mut first: Vec<String> = Vec::with_capacity(head_tail_lines);
+    let mut last: VecDeque<String> = VecDeque::with_capacity(head_tail_lines);
+    let mut first_2n_plus_1: Vec<String> = Vec::with_capacity(head_tail_lines * 2 + 1);
+
+    for line in text.lines() {
+        total_lines += 1;
+        if first.len() < head_tail_lines {
+            first.push(line.to_string());
+        }
+        if first_2n_plus_1.len() < head_tail_lines * 2 + 1 {
+            first_2n_plus_1.push(line.to_string());
+        }
+        last.push_back(line.to_string());
+        if last.len() > head_tail_lines {
+            let _ = last.pop_front();
+        }
+    }
+
+    if total_lines == 0 {
+        return (String::new(), false);
+    }
+
+    let mut out = if total_lines <= head_tail_lines * 2 {
+        first_2n_plus_1.join(
+            "
+",
+        )
+    } else {
+        let omitted = total_lines.saturating_sub(head_tail_lines * 2);
+        let mut parts: Vec<String> = Vec::with_capacity(head_tail_lines * 2 + 1);
+        parts.extend(first);
+        parts.push(format!("... +{omitted} lines"));
+        parts.extend(last);
+        parts.join(
+            "
+",
+        )
+    };
+
+    let truncated = out.chars().count() > max_chars;
+    if truncated {
+        out = out.chars().take(max_chars).collect::<String>();
+        out.push_str(
+            "
+... [preview truncated]",
+        );
+    }
+    (out, truncated)
+}
+
+fn sanitize_tool_event_payload(event_type: &SessionEventType, raw_payload: &Value) -> Value {
+    let update = extract_tool_update(raw_payload);
+    let tool_call_id = tool_call_id_from_payload(raw_payload).unwrap_or_default();
+
+    let tool_kind = update
+        .get("kind")
+        .and_then(|v| v.as_str())
+        .or_else(|| update.pointer("/toolCall/kind").and_then(|v| v.as_str()))
+        .map(|s| s.to_string());
+    let title = update
+        .get("title")
+        .and_then(|v| v.as_str())
+        .or_else(|| update.pointer("/toolCall/title").and_then(|v| v.as_str()))
+        .or_else(|| update.pointer("/toolCall/name").and_then(|v| v.as_str()))
+        .map(|s| s.to_string());
+
+    let raw_status = update
+        .get("status")
+        .and_then(|v| v.as_str())
+        .or_else(|| update.pointer("/toolCall/status").and_then(|v| v.as_str()));
+    let status = if let Some(raw) = raw_status {
+        normalize_tool_status(raw, event_type.clone())
+    } else if matches!(event_type, SessionEventType::ToolResult) {
+        "completed".to_string()
+    } else {
+        "pending".to_string()
+    };
+
+    let input = update
+        .pointer("/rawInput")
+        .or_else(|| update.pointer("/toolCall/rawInput"))
+        .or_else(|| update.pointer("/toolCall/input"))
+        .or_else(|| update.pointer("/input"))
+        .or_else(|| update.pointer("/args"));
+    let input_preview = tool_input_preview(input);
+
+    let output_preview = extract_tool_output_text(update).and_then(|t| {
+        let shell_like = is_shell_like_tool(tool_kind.as_deref(), title.as_deref());
+        let lines = if shell_like { 50 } else { 5 };
+        let (preview, _truncated) = build_output_preview(&t, lines, 16_384);
+        if preview.trim().is_empty() {
+            None
+        } else {
+            Some(preview)
+        }
+    });
+
+    let mut obj = serde_json::Map::new();
+    if !tool_call_id.trim().is_empty() {
+        obj.insert("tool_call_id".to_string(), Value::String(tool_call_id));
+    }
+    if let Some(v) = tool_kind {
+        obj.insert("kind".to_string(), Value::String(v));
+    }
+    if let Some(v) = title {
+        obj.insert("title".to_string(), Value::String(v));
+    }
+    obj.insert("status".to_string(), Value::String(status));
+    if let Some(v) = input_preview {
+        obj.insert("input_preview".to_string(), v);
+    }
+    if let Some(v) = output_preview {
+        obj.insert("output_preview".to_string(), Value::String(v));
+    }
+    Value::Object(obj)
+}
+
 #[derive(Clone, Debug)]
 struct TurnToolUpdate {
     tool_call_id: String,
@@ -1133,9 +1309,12 @@ struct TurnToolUpdate {
     output_text: Option<String>,
 }
 
-fn build_turn_tool_update(event: &ctx_core::models::SessionEvent) -> Option<TurnToolUpdate> {
-    let update = extract_tool_update(&event.payload_json);
-    let tool_call_id = tool_call_id_from_payload(&event.payload_json)?;
+fn build_turn_tool_update_from_payload(
+    event_type: &SessionEventType,
+    payload_json: &Value,
+) -> Option<TurnToolUpdate> {
+    let update = extract_tool_update(payload_json);
+    let tool_call_id = tool_call_id_from_payload(payload_json)?;
     let tool_kind = update
         .get("kind")
         .and_then(|v| v.as_str())
@@ -1152,22 +1331,34 @@ fn build_turn_tool_update(event: &ctx_core::models::SessionEvent) -> Option<Turn
         .and_then(|v| v.as_str())
         .or_else(|| update.pointer("/toolCall/status").and_then(|v| v.as_str()));
     let status = if let Some(raw) = raw_status {
-        Some(normalize_tool_status(raw, event.event_type.clone()))
-    } else if matches!(event.event_type, SessionEventType::ToolResult) {
+        Some(normalize_tool_status(raw, event_type.clone()))
+    } else if matches!(event_type, SessionEventType::ToolResult) {
         Some("completed".to_string())
-    } else if matches!(event.event_type, SessionEventType::ToolCall) {
+    } else if matches!(event_type, SessionEventType::ToolCall) {
         Some("pending".to_string())
     } else {
         None
     };
-    let input_json = update
+
+    let raw_input = update
         .pointer("/rawInput")
         .or_else(|| update.pointer("/toolCall/rawInput"))
         .or_else(|| update.pointer("/toolCall/input"))
         .or_else(|| update.pointer("/input"))
         .or_else(|| update.pointer("/args"))
         .cloned();
-    let output_text = extract_tool_output_text(update);
+    let input_json = tool_input_preview(raw_input.as_ref());
+
+    let output_text = extract_tool_output_text(update).and_then(|t| {
+        let shell_like = is_shell_like_tool(tool_kind.as_deref(), title.as_deref());
+        let lines = if shell_like { 50 } else { 5 };
+        let (preview, _truncated) = build_output_preview(&t, lines, 16_384);
+        if preview.trim().is_empty() {
+            None
+        } else {
+            Some(preview)
+        }
+    });
 
     Some(TurnToolUpdate {
         tool_call_id,
