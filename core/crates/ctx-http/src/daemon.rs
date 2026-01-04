@@ -39,6 +39,7 @@ use crate::scheduler::{reconcile_turn_terminal_state, session_worker, SchedulerC
 use crate::settings;
 use crate::telemetry::{Telemetry, TelemetryConfig};
 use crate::terminals::TerminalManager;
+use crate::web_sessions::WebSessionManager;
 use crate::workspace_catchup::WorkspaceCatchupHub;
 
 fn acquire_daemon_lock(data_root: &Path) -> Result<std::fs::File> {
@@ -86,6 +87,7 @@ pub struct AppState {
     pub workspace_catchup: WorkspaceCatchupHub,
     pub terminals: TerminalManager,
     pub mobile_tunnel: MobileTunnelManager,
+    pub web_sessions: Arc<WebSessionManager>,
     schedulers: Mutex<HashMap<SessionId, mpsc::Sender<SchedulerCommand>>>,
     broadcasters: Mutex<HashMap<SessionId, broadcast::Sender<SessionEvent>>>,
     session_event_heads: Mutex<HashMap<SessionId, watch::Sender<i64>>>,
@@ -192,6 +194,7 @@ impl AppState {
         let telemetry = Telemetry::new(data_root.clone());
         let perf_telemetry = PerfTelemetry::new(data_root.clone());
         let workspace_catchup = WorkspaceCatchupHub::new();
+        let web_sessions = Arc::new(WebSessionManager::new());
         Self {
             data_root,
             store,
@@ -220,6 +223,7 @@ impl AppState {
             workspace_catchup,
             terminals: TerminalManager::default(),
             mobile_tunnel: MobileTunnelManager::default(),
+            web_sessions,
             schedulers: Mutex::new(HashMap::new()),
             broadcasters: Mutex::new(HashMap::new()),
             session_event_heads: Mutex::new(HashMap::new()),
@@ -953,6 +957,7 @@ pub async fn serve(
         lsp_cfg,
     ));
     state.start_workspace_catchup_listener();
+    state.web_sessions.clone().start_reaper().await;
     if let Err(err) = reconcile_running_turns(&state).await {
         tracing::warn!(err = %err, "failed to reconcile running turns on startup");
     }

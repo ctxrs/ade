@@ -1,0 +1,715 @@
+use std::collections::HashMap;
+use std::net::TcpListener;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::Duration;
+
+use anyhow::{Context, Result};
+use chrono::{DateTime, Utc};
+use reqwest::Client;
+use serde::{Deserialize, Serialize};
+use tokio::process::{Child, Command};
+use tokio::sync::Mutex;
+use uuid::Uuid;
+
+const DEFAULT_WIDTH: u32 = 1280;
+const DEFAULT_HEIGHT: u32 = 720;
+const DEFAULT_FPS: u32 = 30;
+const DEFAULT_IDLE_SECS: u64 = 30 * 60;
+const REAPER_INTERVAL_SECS: u64 = 60;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WebSessionStatus {
+    Running,
+    Closed,
+    Error,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WebSessionViewport {
+    pub width: u32,
+    pub height: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WebSessionInfo {
+    pub id: String,
+    pub kind: String,
+    pub status: WebSessionStatus,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub last_activity: DateTime<Utc>,
+    pub url: String,
+    pub viewport: WebSessionViewport,
+    pub fps: u32,
+    pub viewers: u32,
+    pub stream_path: String,
+    pub stream_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WebSessionCreateRequest {
+    pub url: String,
+    pub viewport: Option<WebSessionViewport>,
+    pub fps: Option<u32>,
+    pub work_dir: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WebSessionRunRequest {
+    pub code: Option<String>,
+    pub script_path: Option<String>,
+    pub timeout_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WebSessionRunResponse {
+    pub ok: bool,
+    pub result: Option<serde_json::Value>,
+    pub error: Option<String>,
+}
+
+pub fn render_web_session_view(session: &WebSessionInfo) -> String {
+    fn escape_html(s: &str) -> String {
+        s.replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+            .replace('\"', "&quot;")
+            .replace('\'', "&#39;")
+    }
+
+    const TEMPLATE: &str = r#"<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Web Session</title>
+    <style>
+      :root { color-scheme: dark; }
+      body { margin: 0; background: #0b0b0b; color: #ddd; font-family: system-ui, sans-serif; }
+      header { padding: 8px 12px; background: #111; font-size: 14px; display: flex; gap: 12px; align-items: center; }
+      #status { font-size: 12px; opacity: 0.7; }
+      #wrap { width: 100vw; height: calc(100vh - 36px); display: flex; align-items: center; justify-content: center; background: #000; }
+      video { width: 100%; height: 100%; object-fit: contain; background: #000; cursor: default; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div>Web Session: %%URL%%</div>
+      <div id="status">connecting…</div>
+    </header>
+    <div id="wrap">
+      <video id="view" autoplay playsinline muted></video>
+    </div>
+    <script>
+      const status = document.getElementById('status');
+      const video = document.getElementById('view');
+      const VIEW_W = %%WIDTH%%;
+      const VIEW_H = %%HEIGHT%%;
+      let focused = false;
+      let lastPoint = { x: VIEW_W / 2, y: VIEW_H / 2 };
+
+      const wsUrl = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '%%SIGNAL_PATH%%';
+      const ws = new WebSocket(wsUrl);
+      const pc = new RTCPeerConnection({ iceServers: [{urls: 'stun:stun.l.google.com:19302'}] });
+
+      pc.ontrack = (ev) => {
+        const stream = ev.streams && ev.streams[0] ? ev.streams[0] : new MediaStream([ev.track]);
+        if (video.srcObject !== stream) {
+          video.srcObject = stream;
+          video.play().catch(() => {});
+        }
+      };
+
+      pc.onicecandidate = (ev) => {
+        if (ev.candidate) ws.send(JSON.stringify({ type: 'candidate', candidate: ev.candidate }));
+      };
+
+      ws.addEventListener('open', async () => {
+        status.textContent = 'signaling';
+        pc.addTransceiver('video', { direction: 'recvonly' });
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        ws.send(JSON.stringify({ type: 'offer', sdp: offer.sdp }));
+      });
+
+      ws.addEventListener('message', async (ev) => {
+        const msg = JSON.parse(ev.data);
+        if (msg.type === 'answer') {
+          await pc.setRemoteDescription({ type: 'answer', sdp: msg.sdp });
+          status.textContent = 'connected';
+        } else if (msg.type === 'candidate') {
+          if (msg.candidate) await pc.addIceCandidate(msg.candidate);
+        } else if (msg.type === 'cursor') {
+          updateCursor(msg.cursor);
+        }
+      });
+
+      function mods(ev) {
+        let m = 0;
+        if (ev.altKey) m |= 1;
+        if (ev.ctrlKey) m |= 2;
+        if (ev.metaKey) m |= 4;
+        if (ev.shiftKey) m |= 8;
+        return m;
+      }
+
+      function mapCoords(ev) {
+        const rect = video.getBoundingClientRect();
+        const actualW = video.videoWidth || VIEW_W;
+        const actualH = video.videoHeight || VIEW_H;
+        const videoAspect = actualW / actualH;
+        const rectAspect = rect.width / rect.height;
+        let displayW = rect.width;
+        let displayH = rect.height;
+        let offsetX = 0;
+        let offsetY = 0;
+        if (rectAspect > videoAspect) {
+          displayH = rect.height;
+          displayW = rect.height * videoAspect;
+          offsetX = (rect.width - displayW) / 2;
+        } else {
+          displayW = rect.width;
+          displayH = rect.width / videoAspect;
+          offsetY = (rect.height - displayH) / 2;
+        }
+        const x = (ev.clientX - rect.left - offsetX) * actualW / displayW;
+        const y = (ev.clientY - rect.top - offsetY) * actualH / displayH;
+        const mapped = { x: Math.max(0, Math.min(actualW, x)), y: Math.max(0, Math.min(actualH, y)) };
+        lastPoint = mapped;
+        return mapped;
+      }
+
+      function buttonName(button) {
+        if (button === 1) return 'middle';
+        if (button === 2) return 'right';
+        return 'left';
+      }
+
+      function send(msg) {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify(msg));
+        }
+      }
+
+      let lastCursor = 'default';
+      let cursorTimer = null;
+      function startCursorProbe() {
+        if (cursorTimer) return;
+        cursorTimer = setInterval(() => {
+          if (!focused) return;
+          send({ type: 'cursor_probe', x: lastPoint.x, y: lastPoint.y });
+        }, 120);
+      }
+
+      function updateCursor(cursor) {
+        if (!cursor || cursor === lastCursor) return;
+        lastCursor = cursor;
+        video.style.cursor = cursor;
+      }
+
+      video.addEventListener('mousedown', (ev) => {
+        ev.preventDefault();
+        focused = true;
+        const { x, y } = mapCoords(ev);
+        send({ type: 'mouse', event: 'down', x, y, button: buttonName(ev.button), buttons: ev.buttons, clickCount: ev.detail, modifiers: mods(ev) });
+        send({ type: 'cursor_probe', x, y });
+        startCursorProbe();
+      });
+      video.addEventListener('mouseup', (ev) => {
+        ev.preventDefault();
+        const { x, y } = mapCoords(ev);
+        send({ type: 'mouse', event: 'up', x, y, button: buttonName(ev.button), buttons: ev.buttons, clickCount: ev.detail, modifiers: mods(ev) });
+      });
+      video.addEventListener('mousemove', (ev) => {
+        const { x, y } = mapCoords(ev);
+        send({ type: 'mouse', event: 'move', x, y, buttons: ev.buttons, modifiers: mods(ev) });
+        send({ type: 'cursor_probe', x, y });
+      });
+      video.addEventListener('wheel', (ev) => {
+        ev.preventDefault();
+        const { x, y } = mapCoords(ev);
+        send({ type: 'mouse', event: 'wheel', x, y, deltaX: ev.deltaX, deltaY: ev.deltaY, modifiers: mods(ev) });
+      }, { passive: false });
+      video.addEventListener('contextmenu', (ev) => ev.preventDefault());
+
+      window.addEventListener('keydown', (ev) => {
+        if (!focused) return;
+        ev.preventDefault();
+        const modifiers = mods(ev);
+        const text = (modifiers === 0 && ev.key && ev.key.length === 1) ? ev.key : '';
+        const raw = modifiers !== 0 || !text;
+        send({ type: 'key', event: 'down', key: ev.key, code: ev.code, keyCode: ev.keyCode, text, modifiers, raw });
+      });
+      window.addEventListener('keyup', (ev) => {
+        if (!focused) return;
+        ev.preventDefault();
+        const modifiers = mods(ev);
+        send({ type: 'key', event: 'up', key: ev.key, code: ev.code, keyCode: ev.keyCode, modifiers });
+      });
+    </script>
+  </body>
+</html>
+"#;
+
+    let signal_path = format!("/sessions/web/{}/signal", session.id);
+    TEMPLATE
+        .replace("%%URL%%", &escape_html(&session.url))
+        .replace("%%WIDTH%%", &session.viewport.width.to_string())
+        .replace("%%HEIGHT%%", &session.viewport.height.to_string())
+        .replace("%%SIGNAL_PATH%%", &signal_path)
+}
+
+pub struct WebSessionHandle {
+    info: WebSessionInfo,
+    runtime: Arc<Mutex<WebSessionRuntime>>,
+    run_lock: Arc<Mutex<()>>,
+}
+
+struct WebSessionRuntime {
+    status: WebSessionStatus,
+    updated_at: DateTime<Utc>,
+    last_activity: DateTime<Utc>,
+    viewers: u32,
+    worker_port: u16,
+    child: Option<Child>,
+    work_dir: Option<PathBuf>,
+}
+
+impl WebSessionHandle {
+    pub async fn snapshot(&self) -> WebSessionInfo {
+        let runtime = self.runtime.lock().await;
+        WebSessionInfo {
+            status: runtime.status.clone(),
+            updated_at: runtime.updated_at,
+            last_activity: runtime.last_activity,
+            viewers: runtime.viewers,
+            ..self.info.clone()
+        }
+    }
+
+    pub async fn touch(&self) {
+        let mut runtime = self.runtime.lock().await;
+        runtime.last_activity = Utc::now();
+        runtime.updated_at = runtime.last_activity;
+    }
+
+    pub async fn set_viewers(&self, viewers: u32) {
+        let mut runtime = self.runtime.lock().await;
+        runtime.viewers = viewers;
+        runtime.updated_at = Utc::now();
+    }
+
+    pub async fn worker_port(&self) -> u16 {
+        let runtime = self.runtime.lock().await;
+        runtime.worker_port
+    }
+
+    pub async fn work_dir(&self) -> Option<PathBuf> {
+        let runtime = self.runtime.lock().await;
+        runtime.work_dir.clone()
+    }
+
+    pub async fn close(&self) -> Result<()> {
+        let mut runtime = self.runtime.lock().await;
+        if let Some(mut child) = runtime.child.take() {
+            let _ = child.kill().await;
+        }
+        runtime.status = WebSessionStatus::Closed;
+        runtime.updated_at = Utc::now();
+        Ok(())
+    }
+}
+
+pub struct WebSessionManager {
+    sessions: Mutex<HashMap<String, Arc<WebSessionHandle>>>,
+    client: Client,
+    next_display: Mutex<u32>,
+}
+
+impl WebSessionManager {
+    pub fn new() -> Self {
+        Self {
+            sessions: Mutex::new(HashMap::new()),
+            client: Client::new(),
+            next_display: Mutex::new(90),
+        }
+    }
+
+    pub async fn list(&self) -> Vec<WebSessionInfo> {
+        let handles = {
+            let sessions = self.sessions.lock().await;
+            sessions.values().cloned().collect::<Vec<_>>()
+        };
+        let mut out = Vec::with_capacity(handles.len());
+        for session in handles {
+            out.push(session.snapshot().await);
+        }
+        out
+    }
+
+    pub async fn get(&self, id: &str) -> Option<Arc<WebSessionHandle>> {
+        let sessions = self.sessions.lock().await;
+        sessions.get(id).cloned()
+    }
+
+    pub async fn create(&self, req: WebSessionCreateRequest) -> Result<Arc<WebSessionHandle>> {
+        let id = Uuid::new_v4().to_string();
+        let viewport = req.viewport.clone().unwrap_or(WebSessionViewport {
+            width: DEFAULT_WIDTH,
+            height: DEFAULT_HEIGHT,
+        });
+        let fps = req.fps.unwrap_or(DEFAULT_FPS);
+        let display = self.next_display().await?;
+        let worker_port = allocate_port()?;
+
+        let stream_path = format!("/sessions/web/{}/view", id);
+        let created_at = Utc::now();
+
+        let info = WebSessionInfo {
+            id: id.clone(),
+            kind: "web".to_string(),
+            status: WebSessionStatus::Running,
+            created_at,
+            updated_at: created_at,
+            last_activity: created_at,
+            url: req.url.clone(),
+            viewport: viewport.clone(),
+            fps,
+            viewers: 0,
+            stream_path,
+            stream_url: None,
+        };
+
+        let runtime = WebSessionRuntime {
+            status: WebSessionStatus::Running,
+            updated_at: created_at,
+            last_activity: created_at,
+            viewers: 0,
+            worker_port,
+            child: None,
+            work_dir: req.work_dir.clone(),
+        };
+
+        let handle = Arc::new(WebSessionHandle {
+            info,
+            runtime: Arc::new(Mutex::new(runtime)),
+            run_lock: Arc::new(Mutex::new(())),
+        });
+
+        self.spawn_worker(&handle, &req, worker_port, &display)
+            .await?;
+        self.await_worker_ready(worker_port).await?;
+
+        let mut sessions = self.sessions.lock().await;
+        sessions.insert(id.clone(), handle.clone());
+        Ok(handle)
+    }
+
+    pub async fn run(&self, id: &str, req: WebSessionRunRequest) -> Result<WebSessionRunResponse> {
+        let handle = self
+            .get(id)
+            .await
+            .context("session not found")?;
+        let _guard = handle.run_lock.lock().await;
+        handle.touch().await;
+
+        let payload = build_run_payload(&handle, req).await?;
+        let port = handle.worker_port().await;
+        let url = format!("http://127.0.0.1:{}/run", port);
+
+        let resp = self
+            .client
+            .post(&url)
+            .json(&payload)
+            .send()
+            .await
+            .context("sending run request")?;
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        if !status.is_success() {
+            return Ok(WebSessionRunResponse {
+                ok: false,
+                result: None,
+                error: Some(format!("worker error: {}", body)),
+            });
+        }
+
+        let value: serde_json::Value = serde_json::from_str(&body).unwrap_or_default();
+        Ok(WebSessionRunResponse {
+            ok: value.get("ok").and_then(|v| v.as_bool()).unwrap_or(false),
+            result: value.get("result").cloned(),
+            error: value.get("error").and_then(|v| v.as_str()).map(|s| s.to_string()),
+        })
+    }
+
+    pub async fn eval(&self, id: &str, req: WebSessionRunRequest) -> Result<WebSessionRunResponse> {
+        let handle = self
+            .get(id)
+            .await
+            .context("session not found")?;
+        let _guard = handle.run_lock.lock().await;
+        handle.touch().await;
+
+        let payload = build_run_payload(&handle, req).await?;
+        let port = handle.worker_port().await;
+        let url = format!("http://127.0.0.1:{}/eval", port);
+
+        let resp = self
+            .client
+            .post(&url)
+            .json(&payload)
+            .send()
+            .await
+            .context("sending eval request")?;
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        if !status.is_success() {
+            return Ok(WebSessionRunResponse {
+                ok: false,
+                result: None,
+                error: Some(format!("worker error: {}", body)),
+            });
+        }
+
+        let value: serde_json::Value = serde_json::from_str(&body).unwrap_or_default();
+        Ok(WebSessionRunResponse {
+            ok: value.get("ok").and_then(|v| v.as_bool()).unwrap_or(false),
+            result: value.get("result").cloned(),
+            error: value.get("error").and_then(|v| v.as_str()).map(|s| s.to_string()),
+        })
+    }
+
+    pub async fn close(&self, id: &str) -> Result<()> {
+        let handle = {
+            let mut sessions = self.sessions.lock().await;
+            sessions.remove(id)
+        };
+        if let Some(handle) = handle {
+            handle.close().await?;
+        }
+        Ok(())
+    }
+
+    pub async fn bump_viewers(&self, id: &str, delta: i32) -> Result<u32> {
+        let handle = self
+            .get(id)
+            .await
+            .context("session not found")?;
+        handle.touch().await;
+        let mut runtime = handle.runtime.lock().await;
+        let next = (runtime.viewers as i32 + delta).max(0) as u32;
+        runtime.viewers = next;
+        runtime.updated_at = Utc::now();
+        Ok(next)
+    }
+
+    pub async fn start_reaper(self: Arc<Self>) {
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(REAPER_INTERVAL_SECS));
+            loop {
+                interval.tick().await;
+                if let Err(err) = self.reap_idle(Duration::from_secs(DEFAULT_IDLE_SECS)).await {
+                    tracing::warn!("web session reap failed: {err:#}");
+                }
+            }
+        });
+    }
+
+    async fn reap_idle(&self, idle_for: Duration) -> Result<()> {
+        let mut to_close = Vec::new();
+        let handles = {
+            let sessions = self.sessions.lock().await;
+            sessions
+                .iter()
+                .map(|(id, handle)| (id.clone(), handle.clone()))
+                .collect::<Vec<_>>()
+        };
+        for (id, handle) in handles {
+            let snapshot = handle.snapshot().await;
+            if snapshot.status != WebSessionStatus::Running {
+                continue;
+            }
+            let idle = Utc::now() - snapshot.last_activity;
+            if idle.to_std().unwrap_or_default() > idle_for && snapshot.viewers == 0 {
+                to_close.push(id);
+            }
+        }
+
+        for id in to_close {
+            let _ = self.close(&id).await;
+        }
+        Ok(())
+    }
+
+    async fn next_display(&self) -> Result<String> {
+        let mut guard = self.next_display.lock().await;
+        for _ in 0..1000 {
+            let candidate = *guard;
+            *guard += 1;
+            let lock_path = format!("/tmp/.X{}-lock", candidate);
+            if !Path::new(&lock_path).exists() {
+                return Ok(format!(":{}", candidate));
+            }
+        }
+        anyhow::bail!("failed to allocate X display");
+    }
+
+    async fn spawn_worker(
+        &self,
+        handle: &Arc<WebSessionHandle>,
+        req: &WebSessionCreateRequest,
+        port: u16,
+        display: &str,
+    ) -> Result<()> {
+        let node_path = which::which("node").context("node not found in PATH")?;
+        let xvfb_path = which::which("Xvfb").context("Xvfb not found in PATH")?;
+        let ffmpeg_path = which::which("ffmpeg").context("ffmpeg not found in PATH")?;
+        let (worker_path, node_modules_path) = resolve_worker_paths()?;
+
+        let mut cmd = Command::new(node_path);
+        cmd.arg(worker_path);
+        cmd.env("PORT", port.to_string());
+        cmd.env("TARGET_URL", req.url.clone());
+        cmd.env("WIDTH", req.viewport.as_ref().map(|v| v.width).unwrap_or(DEFAULT_WIDTH).to_string());
+        cmd.env("HEIGHT", req.viewport.as_ref().map(|v| v.height).unwrap_or(DEFAULT_HEIGHT).to_string());
+        cmd.env("FPS", req.fps.unwrap_or(DEFAULT_FPS).to_string());
+        cmd.env("DISPLAY", display);
+        cmd.env("NODE_PATH", node_modules_path);
+        cmd.env("MAP_META_TO_CTRL", "1");
+        cmd.env("FFMPEG_PATH", ffmpeg_path.to_string_lossy().to_string());
+        cmd.env("XVFB_PATH", xvfb_path.to_string_lossy().to_string());
+        if let Some(work_dir) = &req.work_dir {
+            cmd.env("WORK_DIR", work_dir.to_string_lossy().to_string());
+            cmd.current_dir(work_dir);
+        }
+
+        cmd.stdout(std::process::Stdio::piped());
+        cmd.stderr(std::process::Stdio::piped());
+
+        let mut child = cmd.spawn().context("spawning web session worker")?;
+        if let Some(stdout) = child.stdout.take() {
+            tokio::spawn(log_stream(stdout, "web-session"));
+        }
+        if let Some(stderr) = child.stderr.take() {
+            tokio::spawn(log_stream(stderr, "web-session"));
+        }
+
+        let mut runtime = handle.runtime.lock().await;
+        runtime.child = Some(child);
+        Ok(())
+    }
+
+    async fn await_worker_ready(&self, port: u16) -> Result<()> {
+        let url = format!("http://127.0.0.1:{}/health", port);
+        for _ in 0..40 {
+            let resp = self.client.get(&url).send().await;
+            if let Ok(resp) = resp {
+                if resp.status().is_success() {
+                    return Ok(());
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(250)).await;
+        }
+        anyhow::bail!("worker did not become ready");
+    }
+}
+
+impl Default for WebSessionManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+async fn build_run_payload(handle: &WebSessionHandle, req: WebSessionRunRequest) -> Result<serde_json::Value> {
+    let mut payload = serde_json::Map::new();
+    if let Some(code) = req.code {
+        payload.insert("code".to_string(), serde_json::Value::String(code));
+    }
+    if let Some(script_path) = req.script_path {
+        let resolved = resolve_script_path(handle, &script_path).await?;
+        payload.insert(
+            "script_path".to_string(),
+            serde_json::Value::String(resolved.to_string_lossy().to_string()),
+        );
+    }
+    if let Some(timeout_ms) = req.timeout_ms {
+        payload.insert(
+            "timeout_ms".to_string(),
+            serde_json::Value::Number(timeout_ms.into()),
+        );
+    }
+    Ok(serde_json::Value::Object(payload))
+}
+
+async fn resolve_script_path(handle: &WebSessionHandle, script_path: &str) -> Result<PathBuf> {
+    let candidate = PathBuf::from(script_path);
+    if candidate.is_absolute() {
+        return Ok(candidate);
+    }
+    let work_dir = handle
+        .work_dir()
+        .await
+        .context("script_path requires work_dir")?;
+    let joined = work_dir.join(candidate);
+    let canonical = joined
+        .canonicalize()
+        .with_context(|| format!("failed to resolve script_path {script_path}"))?;
+    if !canonical.starts_with(&work_dir) {
+        anyhow::bail!("script_path must be inside work_dir");
+    }
+    Ok(canonical)
+}
+
+fn allocate_port() -> Result<u16> {
+    let listener = TcpListener::bind("127.0.0.1:0").context("binding port")?;
+    let port = listener.local_addr()?.port();
+    Ok(port)
+}
+
+fn resolve_worker_paths() -> Result<(String, String)> {
+    if let Ok(path) = std::env::var("CTX_WEB_SESSION_WORKER") {
+        let node_path = std::env::var("CTX_WEB_SESSION_NODE_PATH")
+            .context("CTX_WEB_SESSION_NODE_PATH required with CTX_WEB_SESSION_WORKER")?;
+        return Ok((path, node_path));
+    }
+
+    let cwd = std::env::current_dir().context("resolve current dir")?;
+    let candidate = cwd
+        .join("core")
+        .join("packages")
+        .join("web-session-worker")
+        .join("bin")
+        .join("worker.mjs");
+    let node_modules = cwd
+        .join("core")
+        .join("packages")
+        .join("web-session-worker")
+        .join("node_modules");
+    if candidate.exists() && node_modules.exists() {
+        return Ok((
+            candidate.to_string_lossy().to_string(),
+            node_modules.to_string_lossy().to_string(),
+        ));
+    }
+
+    anyhow::bail!("web session worker not found; set CTX_WEB_SESSION_WORKER and CTX_WEB_SESSION_NODE_PATH");
+}
+
+async fn log_stream<R: tokio::io::AsyncRead + Unpin>(mut reader: R, label: &str) {
+    use tokio::io::AsyncReadExt;
+    let mut buf = [0u8; 8192];
+    loop {
+        match reader.read(&mut buf).await {
+            Ok(0) | Err(_) => break,
+            Ok(n) => {
+                let chunk = String::from_utf8_lossy(&buf[..n]);
+                for line in chunk.split('\n') {
+                    if !line.trim().is_empty() {
+                        tracing::info!("[{label}] {line}");
+                    }
+                }
+            }
+        }
+    }
+}

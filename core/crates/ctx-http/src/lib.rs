@@ -22,6 +22,7 @@ pub mod telemetry;
 pub mod terminals;
 pub mod title_generation;
 pub mod updates;
+pub mod web_sessions;
 pub mod workspace_catchup;
 pub mod worktree_bootstrap;
 

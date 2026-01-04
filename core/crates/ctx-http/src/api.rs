@@ -26,6 +26,7 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt, SeekFrom};
 use tokio::process::Command;
 use tokio::sync::mpsc;
 use tokio_util::io::ReaderStream;
+use tokio_tungstenite::{connect_async, tungstenite::Message as TungsteniteMessage};
 use tower::util::ServiceExt;
 use tower_http::services::{ServeDir, ServeFile};
 use url::Url;
@@ -56,6 +57,10 @@ use crate::telemetry::{TelemetryConfig, TelemetryEvent};
 use crate::terminals::TerminalCreateRequest;
 use crate::title_generation;
 use crate::updates;
+use crate::web_sessions::{
+    render_web_session_view, WebSessionCreateRequest, WebSessionInfo, WebSessionRunRequest,
+    WebSessionRunResponse, WebSessionViewport,
+};
 use crate::worktree_bootstrap;
 use ctx_providers::adapters::ProviderStatus;
 use ctx_providers::events::NormalizedEvent;
@@ -337,6 +342,16 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
         .route("/api/sessions/:id/cancel", post(cancel_session))
         .route("/api/sessions/:id/interrupt", post(interrupt_session))
         .route("/api/sessions/:id/authenticate", post(authenticate_session))
+        .route(
+            "/api/sessions/web",
+            post(create_web_session).get(list_web_sessions),
+        )
+        .route("/api/sessions/web/:id", get(get_web_session))
+        .route("/api/sessions/web/:id/run", post(run_web_session))
+        .route("/api/sessions/web/:id/eval", post(eval_web_session))
+        .route("/api/sessions/web/:id/close", post(close_web_session))
+        .route("/sessions/web/:id/view", get(web_session_view))
+        .route("/sessions/web/:id/signal", get(web_session_signal))
         .route(
             "/api/sessions/:id/ask_user_question",
             post(submit_ask_user_question),
@@ -6027,6 +6042,263 @@ async fn handle_terminal_socket(
     send_task.abort();
 
     let _ = tokio::join!(output_task, status_task, input_task, send_task);
+}
+
+#[derive(Debug, Deserialize)]
+struct WebSessionCreatePayload {
+    session_id: Option<String>,
+    worktree_id: Option<String>,
+    url: String,
+    viewport: Option<WebSessionViewport>,
+    fps: Option<u32>,
+}
+
+async fn create_web_session(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<WebSessionCreatePayload>,
+) -> Result<Json<WebSessionInfo>, (StatusCode, Json<ApiErrorResp>)> {
+    if payload.url.trim().is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "url is required".to_string(),
+            }),
+        ));
+    }
+
+    let work_dir = resolve_web_session_work_dir(&state, payload.session_id, payload.worktree_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: e.to_string(),
+                }),
+            )
+        })?;
+
+    let req = WebSessionCreateRequest {
+        url: payload.url,
+        viewport: payload.viewport,
+        fps: payload.fps,
+        work_dir,
+    };
+
+    let handle = state
+        .web_sessions
+        .create(req)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: format!("failed to create web session: {e}"),
+                }),
+            )
+        })?;
+
+    let mut info = handle.snapshot().await;
+    info.stream_url = Some(format!("{}{}", state.daemon_url, info.stream_path));
+    Ok(Json(info))
+}
+
+async fn list_web_sessions(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<WebSessionInfo>>, StatusCode> {
+    let mut sessions = state.web_sessions.list().await;
+    for session in sessions.iter_mut() {
+        session.stream_url = Some(format!("{}{}", state.daemon_url, session.stream_path));
+    }
+    Ok(Json(sessions))
+}
+
+async fn get_web_session(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<WebSessionInfo>, StatusCode> {
+    let handle = state.web_sessions.get(&id).await.ok_or(StatusCode::NOT_FOUND)?;
+    let mut info = handle.snapshot().await;
+    info.stream_url = Some(format!("{}{}", state.daemon_url, info.stream_path));
+    Ok(Json(info))
+}
+
+async fn run_web_session(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(mut payload): Json<WebSessionRunRequest>,
+) -> Result<Json<WebSessionRunResponse>, StatusCode> {
+    if payload.timeout_ms.is_none() {
+        payload.timeout_ms = Some(5 * 60 * 1000);
+    }
+    let resp = state
+        .web_sessions
+        .run(&id, payload)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(resp))
+}
+
+async fn eval_web_session(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(mut payload): Json<WebSessionRunRequest>,
+) -> Result<Json<WebSessionRunResponse>, StatusCode> {
+    if payload.timeout_ms.is_none() {
+        payload.timeout_ms = Some(5 * 60 * 1000);
+    }
+    let resp = state
+        .web_sessions
+        .eval(&id, payload)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(resp))
+}
+
+async fn close_web_session(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<StatusCode, StatusCode> {
+    state
+        .web_sessions
+        .close(&id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn web_session_view(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Response, StatusCode> {
+    let handle = state.web_sessions.get(&id).await.ok_or(StatusCode::NOT_FOUND)?;
+    let info = handle.snapshot().await;
+    let body = render_web_session_view(&info);
+    Ok(([(header::CONTENT_TYPE, "text/html; charset=utf-8")], body).into_response())
+}
+
+async fn web_session_signal(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    ws: WebSocketUpgrade,
+) -> Result<Response, StatusCode> {
+    state.web_sessions.get(&id).await.ok_or(StatusCode::NOT_FOUND)?;
+    let manager = state.web_sessions.clone();
+    let session_id = id.clone();
+    Ok(ws.on_upgrade(move |socket| async move {
+        handle_web_session_socket(socket, manager, session_id).await;
+    }))
+}
+
+async fn handle_web_session_socket(
+    socket: WebSocket,
+    manager: Arc<crate::web_sessions::WebSessionManager>,
+    session_id: String,
+) {
+    let handle = match manager.get(&session_id).await {
+        Some(handle) => handle,
+        None => {
+            let _ = socket.close().await;
+            return;
+        }
+    };
+    let port = handle.worker_port().await;
+    let url = format!("ws://127.0.0.1:{}/signal", port);
+    let _ = manager.bump_viewers(&session_id, 1).await;
+
+    let connect = connect_async(url).await;
+    let upstream = match connect {
+        Ok((stream, _)) => stream,
+        Err(_) => {
+            let _ = manager.bump_viewers(&session_id, -1).await;
+            return;
+        }
+    };
+
+    let (mut client_tx, mut client_rx) = socket.split();
+    let (mut up_tx, mut up_rx) = upstream.split();
+
+    let client_to_up = tokio::spawn(async move {
+        while let Some(Ok(msg)) = client_rx.next().await {
+            let out = match msg {
+                WsMessage::Text(text) => TungsteniteMessage::Text(text.into()),
+                WsMessage::Binary(bytes) => TungsteniteMessage::Binary(bytes.into()),
+                WsMessage::Ping(bytes) => TungsteniteMessage::Ping(bytes.into()),
+                WsMessage::Pong(bytes) => TungsteniteMessage::Pong(bytes.into()),
+                WsMessage::Close(frame) => {
+                    let frame = frame.map(|f| tokio_tungstenite::tungstenite::protocol::CloseFrame {
+                        code: f.code.into(),
+                        reason: f.reason.to_string().into(),
+                    });
+                    TungsteniteMessage::Close(frame)
+                }
+            };
+            if up_tx.send(out).await.is_err() {
+                break;
+            }
+        }
+    });
+
+    let up_to_client = tokio::spawn(async move {
+        while let Some(Ok(msg)) = up_rx.next().await {
+            let out = match msg {
+                TungsteniteMessage::Text(text) => WsMessage::Text(text.to_string()),
+                TungsteniteMessage::Binary(bytes) => WsMessage::Binary(bytes.to_vec()),
+                TungsteniteMessage::Ping(bytes) => WsMessage::Ping(bytes.to_vec()),
+                TungsteniteMessage::Pong(bytes) => WsMessage::Pong(bytes.to_vec()),
+                TungsteniteMessage::Close(frame) => {
+                    let frame = frame.map(|f| axum::extract::ws::CloseFrame {
+                        code: f.code.into(),
+                        reason: f.reason.to_string().into(),
+                    });
+                    WsMessage::Close(frame)
+                }
+                TungsteniteMessage::Frame(_) => continue,
+            };
+            if client_tx.send(out).await.is_err() {
+                break;
+            }
+        }
+    });
+
+    tokio::select! {
+        _ = client_to_up => {},
+        _ = up_to_client => {},
+    };
+
+    let _ = manager.bump_viewers(&session_id, -1).await;
+}
+
+async fn resolve_web_session_work_dir(
+    state: &Arc<AppState>,
+    session_id: Option<String>,
+    worktree_id: Option<String>,
+) -> anyhow::Result<Option<PathBuf>> {
+    if let Some(worktree_id) = worktree_id {
+        let worktree_id =
+            WorktreeId(uuid::Uuid::parse_str(&worktree_id).context("invalid worktree id")?);
+        let worktree = state
+            .store
+            .get_worktree(worktree_id)
+            .await?
+            .context("worktree not found")?;
+        return Ok(Some(PathBuf::from(worktree.root_path)));
+    }
+    if let Some(session_id) = session_id {
+        let session_id =
+            SessionId(uuid::Uuid::parse_str(&session_id).context("invalid session id")?);
+        let session = state
+            .store
+            .get_session(session_id)
+            .await?
+            .context("session not found")?;
+        let worktree = state
+            .store
+            .get_worktree(session.worktree_id)
+            .await?
+            .context("worktree not found")?;
+        return Ok(Some(PathBuf::from(worktree.root_path)));
+    }
+    Ok(None)
 }
 
 async fn create_workspace(

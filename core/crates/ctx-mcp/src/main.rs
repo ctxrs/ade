@@ -855,6 +855,108 @@ async fn main() -> Result<()> {
                                 "required": ["plan_id"],
                                 "additionalProperties": false
                             }
+                        },
+                        {
+                            "name": "ctx.session_create",
+                            "title": "Create Session",
+                            "description": "Creates a new session (currently supports kind=web).",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "kind": { "type": "string", "description": "Session kind (web)." },
+                                    "target": {
+                                        "type": "object",
+                                        "properties": {
+                                            "url": { "type": "string" }
+                                        },
+                                        "required": ["url"],
+                                        "additionalProperties": true
+                                    },
+                                    "viewport": {
+                                        "type": "object",
+                                        "properties": {
+                                            "width": { "type": "integer", "minimum": 1 },
+                                            "height": { "type": "integer", "minimum": 1 }
+                                        },
+                                        "additionalProperties": false
+                                    },
+                                    "fps": { "type": "integer", "minimum": 1 },
+                                    "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
+                                    "worktree_id": { "type": "string" }
+                                },
+                                "required": ["kind", "target"],
+                                "additionalProperties": false
+                            }
+                        },
+                        {
+                            "name": "ctx.session_list",
+                            "title": "List Sessions",
+                            "description": "Lists active sessions (currently web only).",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "kind": { "type": "string" }
+                                },
+                                "additionalProperties": false
+                            }
+                        },
+                        {
+                            "name": "ctx.session_info",
+                            "title": "Get Session Info",
+                            "description": "Fetches session details by id.",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "session_id": { "type": "string" }
+                                },
+                                "required": ["session_id"],
+                                "additionalProperties": false
+                            }
+                        },
+                        {
+                            "name": "ctx.session_run",
+                            "title": "Run Session Script",
+                            "description": "Runs a script against a session (default timeout 5m).",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "session_id": { "type": "string" },
+                                    "code": { "type": "string" },
+                                    "script_path": { "type": "string" },
+                                    "timeout_ms": { "type": "integer", "minimum": 1 }
+                                },
+                                "required": ["session_id"],
+                                "additionalProperties": false
+                            }
+                        },
+                        {
+                            "name": "ctx.session_eval",
+                            "title": "Eval Session Script",
+                            "description": "Evaluates code against a session (default timeout 5m).",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "session_id": { "type": "string" },
+                                    "code": { "type": "string" },
+                                    "script_path": { "type": "string" },
+                                    "timeout_ms": { "type": "integer", "minimum": 1 }
+                                },
+                                "required": ["session_id"],
+                                "additionalProperties": false
+                            }
+                        },
+                        {
+                            "name": "ctx.session_close",
+                            "title": "Close Session",
+                            "description": "Closes a session and tears down resources.",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "session_id": { "type": "string" }
+                                },
+                                "required": ["session_id"],
+                                "additionalProperties": false
+                            }
                         }
                     ]
                 }),
@@ -1506,6 +1608,42 @@ async fn main() -> Result<()> {
                     }
                     "ctx_discard_edit_plan" => {
                         match discard_edit_plan_call(&client, &daemon_url, &arguments).await {
+                            Ok(val) => ok(id.unwrap(), tool_ok(val)),
+                            Err(e) => ok(id.unwrap(), tool_err(e)),
+                        }
+                    }
+                    "ctx.session_create" => {
+                        match session_create_call(&client, &daemon_url, &arguments).await {
+                            Ok(val) => ok(id.unwrap(), tool_ok(val)),
+                            Err(e) => ok(id.unwrap(), tool_err(e)),
+                        }
+                    }
+                    "ctx.session_list" => {
+                        match session_list_call(&client, &daemon_url, &arguments).await {
+                            Ok(val) => ok(id.unwrap(), tool_ok(val)),
+                            Err(e) => ok(id.unwrap(), tool_err(e)),
+                        }
+                    }
+                    "ctx.session_info" => {
+                        match session_info_call(&client, &daemon_url, &arguments).await {
+                            Ok(val) => ok(id.unwrap(), tool_ok(val)),
+                            Err(e) => ok(id.unwrap(), tool_err(e)),
+                        }
+                    }
+                    "ctx.session_run" => {
+                        match session_run_call(&client, &daemon_url, &arguments, false).await {
+                            Ok(val) => ok(id.unwrap(), tool_ok(val)),
+                            Err(e) => ok(id.unwrap(), tool_err(e)),
+                        }
+                    }
+                    "ctx.session_eval" => {
+                        match session_run_call(&client, &daemon_url, &arguments, true).await {
+                            Ok(val) => ok(id.unwrap(), tool_ok(val)),
+                            Err(e) => ok(id.unwrap(), tool_err(e)),
+                        }
+                    }
+                    "ctx.session_close" => {
+                        match session_close_call(&client, &daemon_url, &arguments).await {
                             Ok(val) => ok(id.unwrap(), tool_ok(val)),
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
@@ -2174,6 +2312,133 @@ async fn discard_edit_plan_call(
     let res = req.send().await?.error_for_status()?;
     if res.status().as_u16() == 204 {
         return Ok(json!({"discarded": true}));
+    }
+    Ok(res.json::<Value>().await?)
+}
+
+async fn session_create_call(
+    client: &reqwest::Client,
+    daemon_url: &str,
+    arguments: &Value,
+) -> Result<Value> {
+    let kind = arguments
+        .get("kind")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    if kind != "web" {
+        anyhow::bail!("unsupported session kind: {}", kind);
+    }
+    let target = arguments.get("target").context("missing target")?;
+    let url = target
+        .get("url")
+        .and_then(|v| v.as_str())
+        .context("missing target.url")?;
+    let session_id = arguments
+        .get("session_id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .or_else(|| ctx_env_opt("SESSION_ID"));
+    let worktree_id = arguments
+        .get("worktree_id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let viewport = arguments.get("viewport");
+    let fps = arguments.get("fps");
+
+    let mut body = serde_json::Map::new();
+    body.insert("url".to_string(), json!(url));
+    if let Some(session_id) = session_id {
+        body.insert("session_id".to_string(), json!(session_id));
+    }
+    if let Some(worktree_id) = worktree_id {
+        body.insert("worktree_id".to_string(), json!(worktree_id));
+    }
+    if let Some(viewport) = viewport {
+        body.insert("viewport".to_string(), viewport.clone());
+    }
+    if let Some(fps) = fps {
+        body.insert("fps".to_string(), fps.clone());
+    }
+
+    daemon_post_json(client, daemon_url, "/api/sessions/web", &Value::Object(body)).await
+}
+
+async fn session_list_call(
+    client: &reqwest::Client,
+    daemon_url: &str,
+    arguments: &Value,
+) -> Result<Value> {
+    if let Some(kind) = arguments.get("kind").and_then(|v| v.as_str()) {
+        if kind != "web" {
+            return Ok(json!([]));
+        }
+    }
+    daemon_get_json(client, daemon_url, "/api/sessions/web").await
+}
+
+async fn session_info_call(
+    client: &reqwest::Client,
+    daemon_url: &str,
+    arguments: &Value,
+) -> Result<Value> {
+    let session_id = arguments
+        .get("session_id")
+        .and_then(|v| v.as_str())
+        .context("missing session_id")?;
+    daemon_get_json(client, daemon_url, &format!("/api/sessions/web/{}", session_id)).await
+}
+
+async fn session_run_call(
+    client: &reqwest::Client,
+    daemon_url: &str,
+    arguments: &Value,
+    is_eval: bool,
+) -> Result<Value> {
+    let session_id = arguments
+        .get("session_id")
+        .and_then(|v| v.as_str())
+        .context("missing session_id")?;
+    let mut body = serde_json::Map::new();
+    if let Some(code) = arguments.get("code") {
+        body.insert("code".to_string(), code.clone());
+    }
+    if let Some(script_path) = arguments.get("script_path") {
+        body.insert("script_path".to_string(), script_path.clone());
+    }
+    if let Some(timeout_ms) = arguments.get("timeout_ms") {
+        body.insert("timeout_ms".to_string(), timeout_ms.clone());
+    }
+    let endpoint = if is_eval { "eval" } else { "run" };
+    daemon_post_json(
+        client,
+        daemon_url,
+        &format!("/api/sessions/web/{}/{}", session_id, endpoint),
+        &Value::Object(body),
+    )
+    .await
+}
+
+async fn session_close_call(
+    client: &reqwest::Client,
+    daemon_url: &str,
+    arguments: &Value,
+) -> Result<Value> {
+    let session_id = arguments
+        .get("session_id")
+        .and_then(|v| v.as_str())
+        .context("missing session_id")?;
+    let url = format!(
+        "{}/api/sessions/web/{}/close",
+        daemon_url.trim_end_matches('/'),
+        session_id
+    );
+    let mut req = client.post(url);
+    if let Some(token) = bearer_token() {
+        req = req.bearer_auth(token);
+    }
+    let res = req.send().await?.error_for_status()?;
+    if res.status().as_u16() == 204 {
+        return Ok(json!({"closed": true}));
     }
     Ok(res.json::<Value>().await?)
 }
