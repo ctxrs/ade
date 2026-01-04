@@ -4345,6 +4345,51 @@ function formatToolInput(toolKind: string, input: any): string {
   return JSON.stringify(input, null, 2);
 }
 
+function firstString(value: unknown): string {
+  if (!Array.isArray(value)) return "";
+  for (const item of value) {
+    if (typeof item === "string" && item.trim()) return item;
+  }
+  return "";
+}
+
+function extractPrimaryPath(input: any): string {
+  const direct =
+    input?.path ??
+    input?.file ??
+    input?.filename ??
+    input?.file_path ??
+    input?.filePath ??
+    input?.filepath ??
+    input?.target;
+  if (direct) return String(direct);
+  return (
+    firstString(input?.paths) ||
+    firstString(input?.files) ||
+    firstString(input?.file_paths) ||
+    ""
+  );
+}
+
+function extractDiffStats(input: any): { added: number; removed: number } | null {
+  const stats =
+    input?.diff_stats ??
+    input?.diffStats ??
+    input?.edit_stats ??
+    input?.editStats ??
+    null;
+  if (!stats || typeof stats !== "object") return null;
+  const addedRaw = (stats as any).added ?? (stats as any).additions ?? (stats as any).inserted;
+  const removedRaw = (stats as any).removed ?? (stats as any).deletions ?? (stats as any).deleted;
+  const added = Number(addedRaw);
+  const removed = Number(removedRaw);
+  if (!Number.isFinite(added) && !Number.isFinite(removed)) return null;
+  return {
+    added: Number.isFinite(added) ? added : 0,
+    removed: Number.isFinite(removed) ? removed : 0,
+  };
+}
+
 function toolSummaryLine(toolKind: string, input: any): string {
   const k = (toolKind || "").toLowerCase();
   if (k === "execute") {
@@ -4355,9 +4400,20 @@ function toolSummaryLine(toolKind: string, input: any): string {
     const q = input?.query ?? input?.pattern ?? input?.text;
     return q ? truncateMiddle(String(q), 120) : "";
   }
-  if (k === "read" || k === "edit" || k === "write") {
-    const path = input?.path ?? input?.file ?? input?.filename;
+  if (k === "read") {
+    const path = extractPrimaryPath(input);
     return path ? truncateMiddle(String(path), 120) : "";
+  }
+  if (k === "edit" || k === "write") {
+    const path = extractPrimaryPath(input);
+    const stats = extractDiffStats(input);
+    const parts: string[] = [];
+    if (stats?.added) parts.push(`+${stats.added}`);
+    if (stats?.removed) parts.push(`-${stats.removed}`);
+    const delta = parts.length > 0 ? `(${parts.join("/")})` : "";
+    const base = path ? truncateMiddle(String(path), 120) : "";
+    if (!base) return delta;
+    return delta ? `${base} ${delta}` : base;
   }
   return "";
 }

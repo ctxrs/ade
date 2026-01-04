@@ -1,4 +1,4 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
@@ -1138,8 +1138,120 @@ fn estimate_tokens(text: &str) -> usize {
     chars.div_ceil(4)
 }
 
-fn tool_input_preview(input: Option<&Value>) -> Option<Value> {
-    let obj = input?.as_object()?;
+#[derive(Default)]
+struct DiffStats {
+    added: usize,
+    removed: usize,
+    files: usize,
+}
+
+fn count_lines(text: &str) -> usize {
+    if text.is_empty() {
+        0
+    } else {
+        text.lines().count()
+    }
+}
+
+fn diff_stats_from_patch(patch: &str) -> Option<DiffStats> {
+    let mut stats = DiffStats::default();
+    for line in patch.lines() {
+        if line.starts_with("diff --git ") {
+            stats.files += 1;
+            continue;
+        }
+        if line.starts_with("+++") || line.starts_with("---") || line.starts_with("@@") {
+            continue;
+        }
+        if line.starts_with('+') {
+            stats.added += 1;
+            continue;
+        }
+        if line.starts_with('-') {
+            stats.removed += 1;
+        }
+    }
+    if stats.files == 0 && (stats.added > 0 || stats.removed > 0) {
+        stats.files = 1;
+    }
+    if stats.files == 0 && stats.added == 0 && stats.removed == 0 {
+        None
+    } else {
+        Some(stats)
+    }
+}
+
+fn diff_stats_from_edits(edits: &[Value]) -> Option<DiffStats> {
+    let mut stats = DiffStats::default();
+    let mut files = HashSet::new();
+    for edit in edits {
+        let Some(obj) = edit.as_object() else {
+            continue;
+        };
+        for key in [
+            "path",
+            "file",
+            "file_path",
+            "filePath",
+            "filepath",
+            "target",
+        ] {
+            if let Some(Value::String(path)) = obj.get(key) {
+                files.insert(path.clone());
+            }
+        }
+        let old_text = obj
+            .get("oldText")
+            .or_else(|| obj.get("old_text"))
+            .or_else(|| obj.get("old"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let new_text = obj
+            .get("newText")
+            .or_else(|| obj.get("new_text"))
+            .or_else(|| obj.get("new"))
+            .or_else(|| obj.get("text"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        stats.removed += count_lines(old_text);
+        stats.added += count_lines(new_text);
+    }
+    stats.files = files.len();
+    if stats.files == 0 && (stats.added > 0 || stats.removed > 0) {
+        stats.files = 1;
+    }
+    if stats.files == 0 && stats.added == 0 && stats.removed == 0 {
+        None
+    } else {
+        Some(stats)
+    }
+}
+
+fn extract_patch_text(input: &Value) -> Option<&str> {
+    input
+        .get("patch")
+        .or_else(|| input.get("diff"))
+        .or_else(|| input.get("patch_text"))
+        .or_else(|| input.get("unified_diff"))
+        .and_then(|v| v.as_str())
+}
+
+fn is_edit_tool(tool_kind: Option<&str>, title: Option<&str>) -> bool {
+    let kind = tool_kind.unwrap_or("").trim().to_lowercase();
+    if matches!(kind.as_str(), "edit" | "write" | "apply_patch" | "patch") {
+        return true;
+    }
+    let title = title.unwrap_or("").trim().to_lowercase();
+    title.contains("edit") || title.contains("patch") || title.contains("apply")
+}
+
+fn tool_input_preview(
+    input: Option<&Value>,
+    tool_kind: Option<&str>,
+    title: Option<&str>,
+) -> Option<Value> {
+    let input = input?;
+    let obj = input.as_object()?;
     let mut out = serde_json::Map::new();
     for key in [
         "command",
@@ -1148,6 +1260,14 @@ fn tool_input_preview(input: Option<&Value>) -> Option<Value> {
         "text",
         "path",
         "file",
+        "filename",
+        "file_path",
+        "filePath",
+        "filepath",
+        "target",
+        "paths",
+        "files",
+        "file_paths",
         "glob",
         "parsed_cmd",
     ] {
@@ -1157,6 +1277,27 @@ fn tool_input_preview(input: Option<&Value>) -> Option<Value> {
             }
         }
     }
+
+    if is_edit_tool(tool_kind, title) {
+        let stats = extract_patch_text(input)
+            .and_then(diff_stats_from_patch)
+            .or_else(|| {
+                obj.get("edits")
+                    .and_then(|v| v.as_array())
+                    .and_then(|edits| diff_stats_from_edits(edits))
+            });
+        if let Some(stats) = stats {
+            out.insert(
+                "diff_stats".to_string(),
+                json!({
+                    "added": stats.added,
+                    "removed": stats.removed,
+                    "files": stats.files,
+                }),
+            );
+        }
+    }
+
     if out.is_empty() {
         None
     } else {
@@ -1266,18 +1407,33 @@ fn sanitize_tool_event_payload(event_type: &SessionEventType, raw_payload: &Valu
         .or_else(|| update.pointer("/toolCall/input"))
         .or_else(|| update.pointer("/input"))
         .or_else(|| update.pointer("/args"));
-    let input_preview = tool_input_preview(input);
+    let input_preview = tool_input_preview(input, tool_kind.as_deref(), title.as_deref());
 
-    let output_preview = extract_tool_output_text(update).and_then(|t| {
-        let shell_like = is_shell_like_tool(tool_kind.as_deref(), title.as_deref());
-        let lines = if shell_like { 50 } else { 5 };
-        let (preview, _truncated) = build_output_preview(&t, lines, 16_384);
-        if preview.trim().is_empty() {
-            None
-        } else {
-            Some(preview)
-        }
-    });
+    let patch_preview = if is_edit_tool(tool_kind.as_deref(), title.as_deref()) {
+        input.and_then(|v| extract_patch_text(v)).and_then(|t| {
+            let (preview, _truncated) = build_output_preview(t, 5, 16_384);
+            if preview.trim().is_empty() {
+                None
+            } else {
+                Some(preview)
+            }
+        })
+    } else {
+        None
+    };
+
+    let output_preview = extract_tool_output_text(update)
+        .and_then(|t| {
+            let shell_like = is_shell_like_tool(tool_kind.as_deref(), title.as_deref());
+            let lines = if shell_like { 50 } else { 5 };
+            let (preview, _truncated) = build_output_preview(&t, lines, 16_384);
+            if preview.trim().is_empty() {
+                None
+            } else {
+                Some(preview)
+            }
+        })
+        .or(patch_preview);
 
     let mut obj = serde_json::Map::new();
     if !tool_call_id.trim().is_empty() {
@@ -1347,18 +1503,36 @@ fn build_turn_tool_update_from_payload(
         .or_else(|| update.pointer("/input"))
         .or_else(|| update.pointer("/args"))
         .cloned();
-    let input_json = tool_input_preview(raw_input.as_ref());
+    let input_json = tool_input_preview(raw_input.as_ref(), tool_kind.as_deref(), title.as_deref());
 
-    let output_text = extract_tool_output_text(update).and_then(|t| {
-        let shell_like = is_shell_like_tool(tool_kind.as_deref(), title.as_deref());
-        let lines = if shell_like { 50 } else { 5 };
-        let (preview, _truncated) = build_output_preview(&t, lines, 16_384);
-        if preview.trim().is_empty() {
-            None
-        } else {
-            Some(preview)
-        }
-    });
+    let patch_preview = if is_edit_tool(tool_kind.as_deref(), title.as_deref()) {
+        raw_input
+            .as_ref()
+            .and_then(|v| extract_patch_text(v))
+            .and_then(|t| {
+                let (preview, _truncated) = build_output_preview(t, 5, 16_384);
+                if preview.trim().is_empty() {
+                    None
+                } else {
+                    Some(preview)
+                }
+            })
+    } else {
+        None
+    };
+
+    let output_text = extract_tool_output_text(update)
+        .and_then(|t| {
+            let shell_like = is_shell_like_tool(tool_kind.as_deref(), title.as_deref());
+            let lines = if shell_like { 50 } else { 5 };
+            let (preview, _truncated) = build_output_preview(&t, lines, 16_384);
+            if preview.trim().is_empty() {
+                None
+            } else {
+                Some(preview)
+            }
+        })
+        .or(patch_preview);
 
     Some(TurnToolUpdate {
         tool_call_id,

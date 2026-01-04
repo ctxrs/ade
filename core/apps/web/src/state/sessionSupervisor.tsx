@@ -1142,7 +1142,25 @@ const mergeOrderedIds = (...groups: string[][]): string[] => {
   return out;
 };
 
-const TOOL_INPUT_PREVIEW_KEYS = ["command", "query", "pattern", "text", "path", "file", "glob", "parsed_cmd"];
+const TOOL_INPUT_PREVIEW_KEYS = [
+  "command",
+  "query",
+  "pattern",
+  "text",
+  "path",
+  "file",
+  "filename",
+  "file_path",
+  "filePath",
+  "filepath",
+  "target",
+  "paths",
+  "files",
+  "file_paths",
+  "glob",
+  "parsed_cmd",
+  "diff_stats",
+];
 
 const toolInputPreview = (input: unknown): Record<string, unknown> | null => {
   if (!input || typeof input !== "object" || Array.isArray(input)) return null;

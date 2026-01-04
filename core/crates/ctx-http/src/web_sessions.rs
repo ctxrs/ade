@@ -529,7 +529,7 @@ impl WebSessionManager {
 
         let mut closed = 0;
         for id in to_close {
-            let _ = self.close(&id).await?;
+            self.close(&id).await?;
             closed += 1;
         }
         Ok(closed)
