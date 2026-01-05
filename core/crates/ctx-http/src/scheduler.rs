@@ -1185,7 +1185,11 @@ fn read_codex_context_window_metrics(session_ref: &str) -> Option<serde_json::Va
     let total_tokens = last_usage
         .and_then(|m| m.get("total_tokens"))
         .and_then(Value::as_u64)
-        .unwrap_or(input_tokens.saturating_add(output_tokens).saturating_add(reasoning_tokens));
+        .unwrap_or(
+            input_tokens
+                .saturating_add(output_tokens)
+                .saturating_add(reasoning_tokens),
+        );
 
     if context_window_tokens == 0 {
         return None;
