@@ -15,6 +15,7 @@ pub mod mobile_tunnel;
 pub mod perf_telemetry;
 pub mod provider_matrix;
 pub mod resource_governance;
+pub mod resource_telemetry;
 pub mod resource_utilization;
 pub mod scheduler;
 pub mod settings;
