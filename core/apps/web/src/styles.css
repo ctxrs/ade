@@ -328,6 +328,13 @@ button.linklike:hover {
   background: color-mix(in srgb, var(--panel) 88%, var(--success) 12%);
 }
 
+.msg.system {
+  margin-left: auto;
+  margin-right: auto;
+  background: color-mix(in srgb, var(--panel) 88%, var(--warning) 12%);
+  border-color: color-mix(in srgb, var(--border) 70%, var(--warning) 30%);
+}
+
 .role {
   font-size: 0.75em;
   text-transform: uppercase;
@@ -3414,6 +3421,36 @@ button.linklike:hover {
 
 .wb-single-track-dot {
   opacity: 0.65;
+}
+
+.wb-subagent-label {
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.wb-subagent-list {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.wb-subagent-chip {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 2px 8px;
+  background: color-mix(in srgb, var(--panel) 88%, var(--accent) 12%);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+.wb-subagent-chip:hover {
+  border-color: var(--border-strong);
+  background: color-mix(in srgb, var(--panel) 80%, var(--accent) 20%);
 }
 
 .wb-worktree-chip {

@@ -924,6 +924,9 @@ export const setSessionArtifacts = (sessionId: string, artifacts: ArtifactInput[
     body: JSON.stringify({ artifacts }),
   });
 
+export const listSessionSubagents = (sessionId: string) =>
+  apiAny<SessionSummary[]>(`/api/sessions/${sessionId}/subagents`);
+
 export const listWebSessions = () => apiAny<WebSessionInfo[]>("/api/sessions/web");
 
 export const getSessionEvents = (

@@ -79,6 +79,8 @@ export type Session = {
   task_id: { 0: string } | string;
   workspace_id: { 0: string } | string;
   worktree_id: { 0: string } | string;
+  parent_session_id?: { 0: string } | string | null;
+  relationship?: string | null;
   provider_id: string;
   model_id: string;
   title: string;
@@ -112,6 +114,8 @@ export type SessionSummary = {
   track_id: { 0: string } | string;
   task_id: { 0: string } | string;
   workspace_id: { 0: string } | string;
+  parent_session_id?: { 0: string } | string | null;
+  relationship?: string | null;
   provider_id: string;
   model_id: string;
   title: string;

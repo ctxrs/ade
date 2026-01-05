@@ -57,7 +57,7 @@ type ThreadItem =
   | {
     kind: "message";
     id: string;
-    role: "user" | "assistant";
+    role: "user" | "assistant" | "system";
     content: string;
     attachments: MessageAttachment[];
     created_at: string;
@@ -2340,7 +2340,7 @@ function CollapsibleMessage({
   linkToken,
 }: {
   id: string;
-  role: "user" | "assistant";
+  role: "user" | "assistant" | "system";
   content: string;
   attachments: MessageAttachment[];
   delivery?: "immediate" | "queued";
@@ -3301,6 +3301,59 @@ function filterThreadItemsForVerbosity(items: ThreadItem[], verbosity: SessionVi
   return items;
 }
 
+type SortableThreadGroup = {
+  sort_at: string;
+  group: WorkbenchThreadView["groups"][number];
+};
+
+function buildSystemMessageGroups(messages: Message[]): SortableThreadGroup[] {
+  const systemMessages = messages
+    .filter((m) => m.role === "system")
+    .slice()
+    .sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
+  return systemMessages.map((m, idx) => {
+    const id = idToString(m.id) || `system-${idx}`;
+    const attachments = Array.isArray((m as any).attachments)
+      ? ((m as any).attachments as MessageAttachment[])
+      : [];
+    return {
+      sort_at: m.created_at,
+      group: {
+        key: `system-${id}`,
+        header: null,
+        items: [
+          {
+            kind: "message",
+            id,
+            role: "system",
+            content: m.content ?? "",
+            attachments,
+            created_at: m.created_at,
+            delivery: m.delivery,
+          },
+        ],
+      },
+    };
+  });
+}
+
+function mergeGroupsWithSystemMessages(
+  groups: SortableThreadGroup[],
+  messages: Message[],
+): WorkbenchThreadView["groups"] {
+  const systemGroups = buildSystemMessageGroups(messages);
+  if (systemGroups.length === 0) {
+    return groups.map((g) => g.group);
+  }
+  const combined = [...groups, ...systemGroups];
+  combined.sort((a, b) => {
+    const cmp = String(a.sort_at).localeCompare(String(b.sort_at));
+    if (cmp !== 0) return cmp;
+    return String(a.group.key).localeCompare(String(b.group.key));
+  });
+  return combined.map((g) => g.group);
+}
+
 export function buildWorkbenchThreadViewModel(
   turns: SessionTurn[],
   messages: Message[],
@@ -3506,7 +3559,7 @@ function buildWorkbenchThreadViewModelFromTurns(
   events: SessionEvent[],
 ): WorkbenchThreadView {
   const debugEvents: SessionEvent[] = [];
-  const groups: WorkbenchThreadView["groups"] = [];
+  const groups: SortableThreadGroup[] = [];
   const customStatusByTurnId = buildCustomStatusByTurnId(events);
 
   const messageById = new Map<string, Message>();
@@ -3684,10 +3737,13 @@ function buildWorkbenchThreadViewModelFromTurns(
       status_text: statusText,
     });
 
-    groups.push({ key: `turn-${turnId}`, header, items });
+    groups.push({
+      sort_at: header?.created_at ?? turn.started_at,
+      group: { key: `turn-${turnId}`, header, items },
+    });
   }
 
-  return { groups, debugEvents };
+  return { groups: mergeGroupsWithSystemMessages(groups, messages), debugEvents };
 }
 
 function buildWorkbenchThreadViewModelFromEvents(events: SessionEvent[], messages: Message[]): WorkbenchThreadView {
@@ -3759,7 +3815,7 @@ function buildWorkbenchThreadViewModelFromEvents(events: SessionEvent[], message
       });
     };
 
-    const groups: WorkbenchThreadView["groups"] = [];
+    const groups: SortableThreadGroup[] = [];
 
     if (userEvents.length === 0) {
       // As a last resort, show any tool activity even without a user turn anchor.
@@ -3803,8 +3859,8 @@ function buildWorkbenchThreadViewModelFromEvents(events: SessionEvent[], message
       }
       items.push(...g.toolItems);
       if (items.length === 0) items.push({ kind: "spacer", id: `spacer-${g.key}`, created_at: g.first_at });
-      groups.push({ key: g.key, header: g.header, items });
-      return { groups, debugEvents };
+      groups.push({ sort_at: g.first_at, group: { key: g.key, header: g.header, items } });
+      return { groups: mergeGroupsWithSystemMessages(groups, messages), debugEvents };
     }
 
     for (let i = 0; i < userEvents.length; i++) {
@@ -3994,10 +4050,10 @@ function buildWorkbenchThreadViewModelFromEvents(events: SessionEvent[], message
         items.push({ kind: "spacer", id: `spacer-${g.key}`, created_at: g.first_at });
       }
 
-      groups.push({ key: g.key, header: g.header, items });
+      groups.push({ sort_at: g.first_at, group: { key: g.key, header: g.header, items } });
     }
 
-    return { groups, debugEvents };
+    return { groups: mergeGroupsWithSystemMessages(groups, messages), debugEvents };
   }
 
   const eventsInRange = (startIso: string, endIso: string | null) => {
@@ -4009,7 +4065,7 @@ function buildWorkbenchThreadViewModelFromEvents(events: SessionEvent[], message
     });
   };
 
-  const groups: WorkbenchThreadView["groups"] = [];
+  const groups: SortableThreadGroup[] = [];
 
   for (let i = 0; i < userMessages.length; i++) {
     const u = userMessages[i];
@@ -4219,7 +4275,7 @@ function buildWorkbenchThreadViewModelFromEvents(events: SessionEvent[], message
       items.push({ kind: "spacer", id: `spacer-${g.key}`, created_at: g.first_at });
     }
 
-    groups.push({ key: g.key, header: g.header, items });
+    groups.push({ sort_at: g.first_at, group: { key: g.key, header: g.header, items } });
   }
 
   // If there are no user messages (should be rare), fall back to an event-only group.
@@ -4245,10 +4301,10 @@ function buildWorkbenchThreadViewModelFromEvents(events: SessionEvent[], message
     }
     const items: ThreadItem[] = [...g.toolItems];
     if (items.length === 0) items.push({ kind: "spacer", id: `spacer-${g.key}`, created_at: g.first_at });
-    groups.push({ key: g.key, header: g.header, items });
+    groups.push({ sort_at: g.first_at, group: { key: g.key, header: g.header, items } });
   }
 
-  return { groups, debugEvents };
+  return { groups: mergeGroupsWithSystemMessages(groups, messages), debugEvents };
 }
 
 function extractToolOutputText(update: any): string {

@@ -1112,12 +1112,15 @@ impl Store {
     }
 
     // Session APIs
+    #[allow(clippy::too_many_arguments)]
     pub async fn create_session(
         &self,
         track: &Track,
         provider_id: String,
         model_id: String,
         agent_role: String,
+        parent_session_id: Option<SessionId>,
+        relationship: Option<String>,
         provider_session_ref: Option<String>,
     ) -> Result<Session> {
         let now = Utc::now();
@@ -1127,6 +1130,8 @@ impl Store {
             task_id: track.task_id,
             workspace_id: track.workspace_id,
             worktree_id: track.worktree_id,
+            parent_session_id,
+            relationship,
             provider_id,
             model_id,
             title: "New Task".to_string(),
@@ -1137,15 +1142,17 @@ impl Store {
             updated_at: now,
         };
         sqlx::query(
-            r#"INSERT INTO sessions (id, track_id, task_id, workspace_id, worktree_id, provider_id, model_id, title,
-               agent_role, status, provider_session_ref, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+            r#"INSERT INTO sessions (id, track_id, task_id, workspace_id, worktree_id, parent_session_id, relationship,
+               provider_id, model_id, title, agent_role, status, provider_session_ref, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
         )
         .bind(session.id.0.to_string())
         .bind(session.track_id.0.to_string())
         .bind(session.task_id.0.to_string())
         .bind(session.workspace_id.0.to_string())
         .bind(session.worktree_id.0.to_string())
+        .bind(session.parent_session_id.map(|id| id.0.to_string()))
+        .bind(&session.relationship)
         .bind(&session.provider_id)
         .bind(&session.model_id)
         .bind(&session.title)
@@ -1161,8 +1168,8 @@ impl Store {
 
     pub async fn get_session(&self, id: SessionId) -> Result<Option<Session>> {
         let row = sqlx::query(
-            r#"SELECT id, track_id, task_id, workspace_id, worktree_id, provider_id, model_id, agent_role,
-               title, status, provider_session_ref, created_at, updated_at
+            r#"SELECT id, track_id, task_id, workspace_id, worktree_id, parent_session_id, relationship,
+               provider_id, model_id, agent_role, title, status, provider_session_ref, created_at, updated_at
                FROM sessions WHERE id = ?"#,
         )
         .bind(id.0.to_string())
@@ -1183,6 +1190,12 @@ impl Store {
                 task_id: TaskId(uuid::Uuid::parse_str(&task_id).ok()?),
                 workspace_id: WorkspaceId(uuid::Uuid::parse_str(&ws_id).ok()?),
                 worktree_id: WorktreeId(uuid::Uuid::parse_str(&wt_id).ok()?),
+                parent_session_id: r
+                    .try_get::<Option<String>, _>("parent_session_id")
+                    .ok()?
+                    .and_then(|value| uuid::Uuid::parse_str(&value).ok())
+                    .map(SessionId),
+                relationship: r.try_get("relationship").ok()?,
                 provider_id: r.try_get("provider_id").ok()?,
                 model_id: r.try_get("model_id").ok()?,
                 title: r.try_get("title").ok()?,
@@ -1246,8 +1259,8 @@ impl Store {
 
     pub async fn list_sessions_for_track(&self, track_id: TrackId) -> Result<Vec<Session>> {
         let rows = sqlx::query(
-            r#"SELECT id, track_id, task_id, workspace_id, worktree_id, provider_id, model_id, agent_role,
-               title, status, provider_session_ref, created_at, updated_at
+            r#"SELECT id, track_id, task_id, workspace_id, worktree_id, parent_session_id, relationship,
+               provider_id, model_id, agent_role, title, status, provider_session_ref, created_at, updated_at
                FROM sessions WHERE track_id = ? ORDER BY created_at ASC"#,
         )
         .bind(track_id.0.to_string())
@@ -1269,12 +1282,61 @@ impl Store {
                 task_id: TaskId(uuid::Uuid::parse_str(&task_id)?),
                 workspace_id: WorkspaceId(uuid::Uuid::parse_str(&ws_id)?),
                 worktree_id: WorktreeId(uuid::Uuid::parse_str(&wt_id)?),
+                parent_session_id: r
+                    .try_get::<Option<String>, _>("parent_session_id")?
+                    .and_then(|value| uuid::Uuid::parse_str(&value).ok())
+                    .map(SessionId),
+                relationship: r.try_get("relationship")?,
                 provider_id: r.try_get("provider_id")?,
                 model_id: r.try_get("model_id")?,
                 title: r.try_get("title")?,
                 agent_role: r.try_get("agent_role")?,
                 status: parse_session_status(r.try_get::<String, _>("status")?.as_str()),
                 provider_session_ref: r.try_get("provider_session_ref")?,
+                created_at: parse_dt(&created_at)?,
+                updated_at: parse_dt(&updated_at)?,
+            });
+        }
+        Ok(out)
+    }
+
+    pub async fn list_subagent_sessions(
+        &self,
+        parent_session_id: SessionId,
+    ) -> Result<Vec<SessionSummary>> {
+        let rows = sqlx::query(
+            r#"SELECT id, track_id, task_id, workspace_id, parent_session_id, relationship,
+               provider_id, model_id, title, status, created_at, updated_at
+               FROM sessions
+               WHERE parent_session_id = ? AND relationship = 'sub_agent'
+               ORDER BY created_at ASC"#,
+        )
+        .bind(parent_session_id.0.to_string())
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut out = Vec::with_capacity(rows.len());
+        for r in rows {
+            let id: String = r.try_get("id")?;
+            let track_id: String = r.try_get("track_id")?;
+            let task_id: String = r.try_get("task_id")?;
+            let ws_id: String = r.try_get("workspace_id")?;
+            let created_at: String = r.try_get("created_at")?;
+            let updated_at: String = r.try_get("updated_at")?;
+            out.push(SessionSummary {
+                id: SessionId(uuid::Uuid::parse_str(&id)?),
+                track_id: TrackId(uuid::Uuid::parse_str(&track_id)?),
+                task_id: TaskId(uuid::Uuid::parse_str(&task_id)?),
+                workspace_id: WorkspaceId(uuid::Uuid::parse_str(&ws_id)?),
+                parent_session_id: r
+                    .try_get::<Option<String>, _>("parent_session_id")?
+                    .and_then(|value| uuid::Uuid::parse_str(&value).ok())
+                    .map(SessionId),
+                relationship: r.try_get("relationship")?,
+                provider_id: r.try_get("provider_id")?,
+                model_id: r.try_get("model_id")?,
+                title: r.try_get("title")?,
+                status: parse_session_status(r.try_get::<String, _>("status")?.as_str()),
                 created_at: parse_dt(&created_at)?,
                 updated_at: parse_dt(&updated_at)?,
             });
@@ -1762,6 +1824,62 @@ impl Store {
         Ok(out)
     }
 
+    pub async fn get_last_assistant_message_for_run(
+        &self,
+        session_id: SessionId,
+        run_id: RunId,
+    ) -> Result<Option<Message>> {
+        let row = sqlx::query(
+            r#"SELECT id, session_id, task_id, track_id, run_id, turn_id, turn_sequence, role, content, attachments_json, delivery, delivered_at, created_at
+               FROM messages
+               WHERE session_id = ? AND run_id = ? AND role = 'assistant'
+               ORDER BY created_at DESC, turn_sequence DESC
+               LIMIT 1"#,
+        )
+        .bind(session_id.0.to_string())
+        .bind(run_id.0.to_string())
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.and_then(|r| {
+            let id: String = r.try_get("id").ok()?;
+            let session_id: String = r.try_get("session_id").ok()?;
+            let task_id: String = r.try_get("task_id").ok()?;
+            let track_id: String = r.try_get("track_id").ok()?;
+            let created_at: String = r.try_get("created_at").ok()?;
+            let delivered_at: Option<String> = r.try_get("delivered_at").ok()?;
+            let run_id: Option<String> = r.try_get("run_id").ok()?;
+            let turn_id: Option<String> = r.try_get("turn_id").ok()?;
+            let turn_sequence: Option<i64> = r.try_get("turn_sequence").ok()?;
+            let attachments_json: Option<String> = r.try_get("attachments_json").ok()?;
+            let attachments = attachments_json
+                .as_deref()
+                .and_then(|s| serde_json::from_str::<Vec<MessageAttachment>>(s).ok())
+                .unwrap_or_default();
+            Some(Message {
+                id: MessageId(uuid::Uuid::parse_str(&id).ok()?),
+                session_id: SessionId(uuid::Uuid::parse_str(&session_id).ok()?),
+                task_id: TaskId(uuid::Uuid::parse_str(&task_id).ok()?),
+                track_id: TrackId(uuid::Uuid::parse_str(&track_id).ok()?),
+                run_id: run_id
+                    .as_deref()
+                    .and_then(|s| uuid::Uuid::parse_str(s).ok())
+                    .map(RunId),
+                turn_id: turn_id
+                    .as_deref()
+                    .and_then(|s| uuid::Uuid::parse_str(s).ok())
+                    .map(TurnId),
+                turn_sequence,
+                role: parse_message_role(r.try_get::<String, _>("role").ok()?.as_str()),
+                content: r.try_get("content").ok()?,
+                attachments,
+                delivery: parse_message_delivery(r.try_get::<String, _>("delivery").ok()?.as_str()),
+                delivered_at: delivered_at.as_deref().map(parse_dt).transpose().ok()?,
+                created_at: parse_dt(&created_at).ok()?,
+            })
+        }))
+    }
+
     pub async fn count_user_messages_for_session(&self, session_id: SessionId) -> Result<i64> {
         let count = sqlx::query_scalar::<_, i64>(
             r#"SELECT COUNT(*) FROM messages WHERE session_id = ? AND role = 'user'"#,
@@ -1928,7 +2046,7 @@ impl Store {
         if !track_index.is_empty() {
             let mut session_query = QueryBuilder::new(
                 "
-                SELECT id, track_id, task_id, workspace_id, worktree_id,
+                SELECT id, track_id, task_id, workspace_id, worktree_id, parent_session_id, relationship,
                        provider_id, model_id, title, status, created_at, updated_at
                 FROM (
                     SELECT
@@ -1971,6 +2089,11 @@ impl Store {
                     track_id: TrackId(uuid::Uuid::parse_str(&track_id)?),
                     task_id: TaskId(uuid::Uuid::parse_str(&task_id)?),
                     workspace_id: WorkspaceId(uuid::Uuid::parse_str(&ws_id)?),
+                    parent_session_id: r
+                        .try_get::<Option<String>, _>("parent_session_id")?
+                        .and_then(|value| uuid::Uuid::parse_str(&value).ok())
+                        .map(SessionId),
+                    relationship: r.try_get("relationship")?,
                     provider_id: r.try_get("provider_id")?,
                     model_id: r.try_get("model_id")?,
                     title: r.try_get("title")?,
@@ -2315,6 +2438,8 @@ impl Store {
                 s.task_id,
                 s.workspace_id,
                 s.worktree_id,
+                s.parent_session_id,
+                s.relationship,
                 s.provider_id,
                 s.model_id,
                 s.title,
@@ -2373,6 +2498,11 @@ impl Store {
                 task_id: TaskId(uuid::Uuid::parse_str(&task_id)?),
                 workspace_id: WorkspaceId(uuid::Uuid::parse_str(&ws_id)?),
                 worktree_id: WorktreeId(uuid::Uuid::parse_str(&wt_id)?),
+                parent_session_id: r
+                    .try_get::<Option<String>, _>("parent_session_id")?
+                    .and_then(|value| uuid::Uuid::parse_str(&value).ok())
+                    .map(SessionId),
+                relationship: r.try_get("relationship")?,
                 provider_id: r.try_get("provider_id")?,
                 model_id: r.try_get("model_id")?,
                 title: r.try_get("title")?,
@@ -3396,6 +3526,51 @@ impl Store {
             });
         }
         Ok(out)
+    }
+
+    pub async fn get_terminal_event_for_run(
+        &self,
+        session_id: SessionId,
+        run_id: RunId,
+    ) -> Result<Option<SessionEvent>> {
+        let row = sqlx::query(
+            r#"SELECT seq, id, session_id, run_id, turn_id, event_type, payload_json, created_at
+               FROM session_events
+               WHERE session_id = ? AND run_id = ? AND event_type IN ('done', 'error', 'turn_interrupted')
+               ORDER BY seq DESC
+               LIMIT 1"#,
+        )
+        .bind(session_id.0.to_string())
+        .bind(run_id.0.to_string())
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.and_then(|r| {
+            let id: String = r.try_get("id").ok()?;
+            let session_id: String = r.try_get("session_id").ok()?;
+            let run_id: Option<String> = r.try_get("run_id").ok()?;
+            let turn_id: Option<String> = r.try_get("turn_id").ok()?;
+            let created_at: String = r.try_get("created_at").ok()?;
+            let payload_json: String = r.try_get("payload_json").ok()?;
+            Some(SessionEvent {
+                seq: r.try_get("seq").ok()?,
+                id: SessionEventId(uuid::Uuid::parse_str(&id).ok()?),
+                session_id: SessionId(uuid::Uuid::parse_str(&session_id).ok()?),
+                run_id: run_id
+                    .as_deref()
+                    .and_then(|s| uuid::Uuid::parse_str(s).ok())
+                    .map(RunId),
+                turn_id: turn_id
+                    .as_deref()
+                    .and_then(|s| uuid::Uuid::parse_str(s).ok())
+                    .map(TurnId),
+                event_type: parse_session_event_type(
+                    r.try_get::<String, _>("event_type").ok()?.as_str(),
+                ),
+                payload_json: serde_json::from_str(&payload_json).ok()?,
+                created_at: parse_dt(&created_at).ok()?,
+            })
+        }))
     }
 
     pub async fn delete_session_events_for_turn_types(

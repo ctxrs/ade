@@ -317,6 +317,7 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
         .route("/api/worktrees/:id", get(get_worktree))
         .route("/api/tracks/:id/sessions", post(create_session_for_track))
         .route("/api/sessions/:id/messages", post(post_message))
+        .route("/api/sessions/:id/subagents", get(list_session_subagents))
         .route(
             "/api/sessions/:id/artifacts",
             get(list_session_artifacts).post(set_session_artifacts),
@@ -342,6 +343,8 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
         .route("/api/sessions/:id/cancel", post(cancel_session))
         .route("/api/sessions/:id/interrupt", post(interrupt_session))
         .route("/api/sessions/:id/authenticate", post(authenticate_session))
+        .route("/api/mcp/sessions/:id/agent_init", post(mcp_agent_init))
+        .route("/api/mcp/sessions/:id/agent_reply", post(mcp_agent_reply))
         .route(
             "/api/sessions/web",
             post(create_web_session).get(list_web_sessions),
@@ -437,6 +440,11 @@ struct ApiErrorResp {
 #[derive(Clone, Copy)]
 struct MobileAuthContext {
     profile_id: ConnectionProfileId,
+}
+
+#[derive(Clone, Copy)]
+struct McpAuthContext {
+    session_id: SessionId,
 }
 
 #[derive(Debug, Deserialize)]
@@ -3692,6 +3700,7 @@ async fn auth_middleware(
     if path.starts_with("/api/mobile/secure") || path == "/api/mobile/pair" {
         return Ok(next.run(req).await);
     }
+    let is_mcp_path = path.starts_with("/api/mcp/");
     if req.extensions().get::<MobileAuthContext>().is_some() {
         return Ok(next.run(req).await);
     }
@@ -3721,6 +3730,14 @@ async fn auth_middleware(
             if token.as_deref() == Some(expected.as_str()) {
                 return Ok(next.run(req).await);
             }
+            if is_mcp_path {
+                if let Some(token_value) = token.as_deref() {
+                    if let Some(session_id) = state.lookup_mcp_token(token_value).await {
+                        req.extensions_mut().insert(McpAuthContext { session_id });
+                        return Ok(next.run(req).await);
+                    }
+                }
+            }
             if let Some(token_value) = token {
                 if let Some(profile_id) = verify_mobile_api_token(&state, &token_value).await? {
                     req.extensions_mut()
@@ -3731,6 +3748,14 @@ async fn auth_middleware(
             Err(StatusCode::UNAUTHORIZED)
         }
         None => {
+            if is_mcp_path {
+                if let Some(token_value) = token.as_deref() {
+                    if let Some(session_id) = state.lookup_mcp_token(token_value).await {
+                        req.extensions_mut().insert(McpAuthContext { session_id });
+                        return Ok(next.run(req).await);
+                    }
+                }
+            }
             if let Some(token_value) = token {
                 if let Some(profile_id) = verify_mobile_api_token(&state, &token_value).await? {
                     req.extensions_mut()
@@ -6095,17 +6120,16 @@ async fn create_web_session(
         )
     })?;
 
-    let worker_bundle =
-        crate::web_sessions::ensure_worker_bundle(&state.data_root, &node_runtime)
-            .await
-            .map_err(|e| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ApiErrorResp {
-                        error: format!("failed to prepare web session worker: {e}"),
-                    }),
-                )
-            })?;
+    let worker_bundle = crate::web_sessions::ensure_worker_bundle(&state.data_root, &node_runtime)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: format!("failed to prepare web session worker: {e}"),
+                }),
+            )
+        })?;
 
     let req = WebSessionCreateRequest {
         url: payload.url,
@@ -7437,6 +7461,8 @@ async fn create_session_for_track(
             req.provider_id,
             req.model_id,
             "implementer".into(),
+            None,
+            None,
             None,
         )
         .await
@@ -8853,6 +8879,26 @@ async fn post_message(
     Ok(Json(saved))
 }
 
+async fn list_session_subagents(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<Vec<SessionSummary>>, StatusCode> {
+    let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
+    let session = state
+        .store
+        .get_session(session_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    let subs = state
+        .store
+        .list_subagent_sessions(session.id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(subs))
+}
+
 async fn list_session_artifacts(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
@@ -9156,6 +9202,1075 @@ async fn set_session_mode(
     Ok(StatusCode::OK)
 }
 
+const MAX_SUBAGENTS_PER_CALL: usize = 5;
+const DEFAULT_REASONING_EFFORT: &str = "medium";
+const KNOWN_EFFORT_IDS: [&str; 6] = ["none", "minimal", "low", "medium", "high", "xhigh"];
+
+#[derive(Debug, Deserialize)]
+struct AgentInitReq {
+    agents: Vec<AgentInitItem>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct AgentInitItem {
+    prompt: String,
+    #[serde(default)]
+    label: Option<String>,
+    #[serde(default)]
+    harness: Option<String>,
+    #[serde(default)]
+    model: Option<String>,
+    #[serde(default)]
+    reasoning_effort: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct AgentInitResp {
+    results: Vec<AgentInitResult>,
+}
+
+#[derive(Debug, Serialize)]
+struct AgentInitResult {
+    session_id: SessionId,
+    label: String,
+    provider_id: String,
+    model_id: String,
+    status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    content: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AgentReplyReq {
+    session_id: String,
+    prompt: String,
+}
+
+#[derive(Debug, Serialize)]
+struct AgentReplyResp {
+    session_id: SessionId,
+    status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    content: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct ModelInfo {
+    base: String,
+    effort: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct ModelCatalog {
+    full_ids: Vec<String>,
+    base_ids: Vec<String>,
+    efforts_by_base: HashMap<String, Vec<String>>,
+    full_id_by_base_effort: HashMap<String, HashMap<String, String>>,
+    info_by_full_id: HashMap<String, ModelInfo>,
+}
+
+#[derive(Debug, Clone)]
+struct ResolvedModel {
+    model_id: String,
+}
+
+fn normalize_effort_id(value: &str) -> String {
+    let raw = value.trim().to_lowercase();
+    match raw.as_str() {
+        "extra_high" | "extra-high" | "extra high" | "extrahigh" => "xhigh".to_string(),
+        _ => raw,
+    }
+}
+
+fn is_known_effort_id(value: &str) -> bool {
+    let norm = normalize_effort_id(value);
+    KNOWN_EFFORT_IDS.iter().any(|id| *id == norm)
+}
+
+fn split_model_id(full: &str) -> (String, Option<String>) {
+    let trimmed = full.trim();
+    if trimmed.is_empty() {
+        return (String::new(), None);
+    }
+    if let Some(idx) = trimmed.rfind('/') {
+        if idx > 0 && idx + 1 < trimmed.len() {
+            let base = trimmed[..idx].to_string();
+            let suffix = trimmed[idx + 1..].trim().to_string();
+            if !suffix.is_empty() {
+                return (base, Some(suffix));
+            }
+        }
+    }
+    (trimmed.to_string(), None)
+}
+
+fn has_trailing_paren_suffix(name: &str, suffix: &str) -> bool {
+    let trimmed = name.trim_end();
+    if !trimmed.ends_with(')') {
+        return false;
+    }
+    let Some(start) = trimmed.rfind('(') else {
+        return false;
+    };
+    let inner = trimmed[start + 1..trimmed.len() - 1].trim();
+    normalize_effort_id(inner) == normalize_effort_id(suffix)
+}
+
+fn order_effort_ids(list: &mut [String]) {
+    let order_index = |value: &str| {
+        let norm = normalize_effort_id(value);
+        KNOWN_EFFORT_IDS
+            .iter()
+            .position(|id| *id == norm)
+            .unwrap_or(usize::MAX)
+    };
+    list.sort_by(|a, b| {
+        let ia = order_index(a);
+        let ib = order_index(b);
+        if ia != ib {
+            return ia.cmp(&ib);
+        }
+        a.cmp(b)
+    });
+}
+
+fn extract_model_entries(models: &serde_json::Value) -> Vec<(String, Option<String>)> {
+    let Some(list) = models.as_array() else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for item in list {
+        if let Some(id) = item.as_str() {
+            let id = id.trim();
+            if !id.is_empty() {
+                out.push((id.to_string(), None));
+            }
+            continue;
+        }
+        let Some(obj) = item.as_object() else {
+            continue;
+        };
+        let id = obj
+            .get("id")
+            .or_else(|| obj.get("model_id"))
+            .or_else(|| obj.get("model"))
+            .or_else(|| obj.get("name"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if id.is_empty() {
+            continue;
+        }
+        let name = obj
+            .get("name")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        out.push((id, name));
+    }
+    out
+}
+
+fn build_model_catalog(models: &serde_json::Value) -> Option<ModelCatalog> {
+    let entries = extract_model_entries(models);
+    if entries.is_empty() {
+        return None;
+    }
+    let mut full_ids = HashSet::new();
+    let mut base_ids = HashSet::new();
+    let mut info_by_full_id = HashMap::new();
+    let mut raw_efforts_by_base: HashMap<String, HashSet<String>> = HashMap::new();
+    let mut full_id_by_base_effort: HashMap<String, HashMap<String, String>> = HashMap::new();
+
+    for (id, name) in entries {
+        let trimmed = id.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let (base_candidate, suffix) = split_model_id(trimmed);
+        let effort = suffix.and_then(|s| {
+            if is_known_effort_id(&s)
+                || name
+                    .as_deref()
+                    .map(|n| has_trailing_paren_suffix(n, &s))
+                    .unwrap_or(false)
+            {
+                Some(s)
+            } else {
+                None
+            }
+        });
+        let base = if effort.is_some() {
+            base_candidate
+        } else {
+            trimmed.to_string()
+        };
+        base_ids.insert(base.clone());
+        full_ids.insert(trimmed.to_string());
+        info_by_full_id.insert(
+            trimmed.to_string(),
+            ModelInfo {
+                base: base.clone(),
+                effort: effort.clone(),
+            },
+        );
+        if let Some(effort) = effort {
+            raw_efforts_by_base
+                .entry(base.clone())
+                .or_default()
+                .insert(effort.clone());
+            full_id_by_base_effort
+                .entry(base)
+                .or_default()
+                .insert(normalize_effort_id(&effort), trimmed.to_string());
+        }
+    }
+
+    let mut efforts_by_base = HashMap::new();
+    for (base, efforts) in raw_efforts_by_base {
+        let mut list = efforts.into_iter().collect::<Vec<_>>();
+        order_effort_ids(&mut list);
+        efforts_by_base.insert(base, list);
+    }
+
+    let mut full_ids = full_ids.into_iter().collect::<Vec<_>>();
+    full_ids.sort();
+    let mut base_ids = base_ids.into_iter().collect::<Vec<_>>();
+    base_ids.sort();
+
+    Some(ModelCatalog {
+        full_ids,
+        base_ids,
+        efforts_by_base,
+        full_id_by_base_effort,
+        info_by_full_id,
+    })
+}
+
+fn pick_default_effort(efforts: &[String]) -> Option<String> {
+    let medium = efforts
+        .iter()
+        .find(|e| normalize_effort_id(e) == DEFAULT_REASONING_EFFORT)
+        .cloned();
+    medium.or_else(|| efforts.first().cloned())
+}
+
+fn resolve_model_id(
+    requested_model: Option<&str>,
+    requested_effort: Option<&str>,
+    fallback_model: Option<&str>,
+    catalog: Option<&ModelCatalog>,
+) -> Result<ResolvedModel, String> {
+    let mut model = requested_model
+        .or(fallback_model)
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if model.is_empty() {
+        return Err("model is required".to_string());
+    }
+    let effort_input = requested_effort
+        .map(|e| e.trim())
+        .filter(|e| !e.is_empty())
+        .map(|e| e.to_string());
+
+    if let Some(catalog) = catalog {
+        let model_known = catalog.full_ids.contains(&model) || catalog.base_ids.contains(&model);
+        if !model_known && requested_model.is_some() {
+            return Err(format!(
+                "unknown model '{model}'; available models: {}",
+                catalog.full_ids.join(", ")
+            ));
+        }
+
+        let info = catalog.info_by_full_id.get(&model);
+        let base = info
+            .map(|i| i.base.clone())
+            .unwrap_or_else(|| model.clone());
+        let existing_effort = info.and_then(|i| i.effort.clone());
+        let available_efforts = catalog
+            .efforts_by_base
+            .get(&base)
+            .cloned()
+            .unwrap_or_default();
+        let supports_default_effort = available_efforts.len() >= 2;
+        let effort_map = catalog.full_id_by_base_effort.get(&base);
+
+        if let Some(req_effort) = effort_input {
+            let req_norm = normalize_effort_id(&req_effort);
+            if let Some(existing) = existing_effort.as_ref() {
+                if normalize_effort_id(existing) != req_norm {
+                    return Err(format!(
+                        "model '{model}' already includes effort '{existing}'; requested '{req_effort}'"
+                    ));
+                }
+                return Ok(ResolvedModel { model_id: model });
+            }
+            if let Some(map) = effort_map {
+                if let Some(full_id) = map.get(&req_norm) {
+                    return Ok(ResolvedModel {
+                        model_id: full_id.clone(),
+                    });
+                }
+            }
+            let efforts = if available_efforts.is_empty() {
+                effort_map
+                    .map(|map| map.keys().cloned().collect::<Vec<_>>())
+                    .unwrap_or_default()
+            } else {
+                available_efforts.clone()
+            };
+            if efforts.is_empty() {
+                return Err(format!("model '{base}' does not support reasoning_effort"));
+            }
+            return Err(format!(
+                "invalid reasoning_effort '{req_effort}' for model '{base}'; available: {}",
+                efforts.join(", ")
+            ));
+        }
+
+        if existing_effort.is_some() {
+            return Ok(ResolvedModel { model_id: model });
+        }
+
+        if supports_default_effort {
+            if let Some(default_effort) = pick_default_effort(&available_efforts) {
+                let default_norm = normalize_effort_id(&default_effort);
+                if let Some(map) = effort_map {
+                    if let Some(full_id) = map.get(&default_norm) {
+                        return Ok(ResolvedModel {
+                            model_id: full_id.clone(),
+                        });
+                    }
+                }
+            }
+        } else if available_efforts.len() == 1 {
+            let default_effort = available_efforts[0].clone();
+            let default_norm = normalize_effort_id(&default_effort);
+            if let Some(map) = effort_map {
+                if let Some(full_id) = map.get(&default_norm) {
+                    return Ok(ResolvedModel {
+                        model_id: full_id.clone(),
+                    });
+                }
+            }
+        }
+
+        return Ok(ResolvedModel { model_id: model });
+    }
+
+    if let Some(req_effort) = effort_input {
+        let (_, suffix) = split_model_id(&model);
+        if suffix.is_none() {
+            model = format!("{}/{}", model, req_effort);
+            return Ok(ResolvedModel { model_id: model });
+        }
+    }
+
+    Ok(ResolvedModel { model_id: model })
+}
+
+async fn load_provider_model_catalog(
+    state: &Arc<AppState>,
+    workspace: &Workspace,
+    provider_id: &str,
+) -> Result<Option<ModelCatalog>, String> {
+    let cache_key = format!("{}/{}", workspace.id.0, provider_id);
+    if let Some(entry) = state.provider_options_cache.lock().await.get(&cache_key) {
+        if let Some(models) = entry.value.get("models") {
+            if let Some(catalog) = build_model_catalog(models) {
+                return Ok(Some(catalog));
+            }
+        }
+    }
+
+    let cfg = installer::load_agent_server_config(&state.data_root)
+        .await
+        .unwrap_or_default();
+    let matrix =
+        crate::provider_matrix::load_matrix_cached(&state.data_root, &state.provider_matrix_cache)
+            .await;
+    let (command, args) = cfg
+        .providers
+        .get(provider_id)
+        .map(|c| (c.command.clone(), c.args.clone()))
+        .or_else(|| default_agent_server_command(&matrix, &state.data_root, provider_id))
+        .ok_or_else(|| "unknown provider id".to_string())?;
+
+    let agent = AcpAgentConfig {
+        provider_id: provider_id.to_string(),
+        command,
+        args,
+    };
+    let client = AcpClientConfig {
+        client_name: "ctx".to_string(),
+        client_title: "ctx".to_string(),
+        client_version: env!("CARGO_PKG_VERSION").to_string(),
+        client_capabilities: serde_json::json!({}),
+        mcp_servers: vec![],
+    };
+    let mut env = std::collections::HashMap::new();
+    env.insert("CTX_DAEMON_URL".to_string(), state.daemon_url.clone());
+    if let Some(token) = state.auth_token.as_ref() {
+        env.insert("CTX_AUTH_TOKEN".to_string(), token.clone());
+    }
+
+    let probe =
+        match probe_provider_options(agent, client, PathBuf::from(&workspace.root_path), env).await
+        {
+            Ok(probe) => probe,
+            Err(e) => {
+                tracing::warn!(
+                    provider_id = provider_id,
+                    "provider options probe failed: {}",
+                    logs::redact_sensitive(&e.to_string())
+                );
+                return Ok(None);
+            }
+        };
+
+    if let Some(models) = probe.models.as_ref().and_then(build_model_catalog) {
+        let mut value = serde_json::json!({
+            "provider_id": provider_id,
+            "workspace_id": workspace.id.0,
+            "installed": true,
+            "probe_ok": true,
+            "supports_load": probe.supports_load,
+            "auth_required": probe.auth_required,
+            "auth_methods": probe.auth_methods,
+            "modes": probe.modes,
+            "models": probe.models,
+            "acp_error": probe.acp_error,
+            "probed_at": chrono::Utc::now().to_rfc3339(),
+        });
+        value = redact_json_value(value);
+        state.provider_options_cache.lock().await.insert(
+            cache_key,
+            crate::daemon::CachedProviderOptions {
+                cached_at: std::time::Instant::now(),
+                value,
+            },
+        );
+        return Ok(Some(models));
+    }
+
+    Ok(None)
+}
+
+async fn wait_for_run_terminal_event(
+    state: &Arc<AppState>,
+    session_id: SessionId,
+    run_id: RunId,
+) -> Result<SessionEventType, String> {
+    if let Some(event) = state
+        .store
+        .get_terminal_event_for_run(session_id, run_id)
+        .await
+        .map_err(|e| logs::redact_sensitive(&e.to_string()))?
+    {
+        return Ok(event.event_type);
+    }
+
+    let mut rx = state.get_broadcaster(session_id).await.subscribe();
+    loop {
+        match rx.recv().await {
+            Ok(event) => {
+                if event.run_id == Some(run_id)
+                    && matches!(
+                        event.event_type,
+                        SessionEventType::Done
+                            | SessionEventType::Error
+                            | SessionEventType::TurnInterrupted
+                    )
+                {
+                    return Ok(event.event_type);
+                }
+            }
+            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                if let Some(event) = state
+                    .store
+                    .get_terminal_event_for_run(session_id, run_id)
+                    .await
+                    .map_err(|e| logs::redact_sensitive(&e.to_string()))?
+                {
+                    return Ok(event.event_type);
+                }
+            }
+            Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                return Err("session event stream closed".to_string());
+            }
+        }
+    }
+}
+
+async fn insert_subagent_system_message(
+    state: &Arc<AppState>,
+    parent: &Session,
+    content: String,
+) -> Result<(), (StatusCode, Json<ApiErrorResp>)> {
+    let msg = Message {
+        id: MessageId::new(),
+        session_id: parent.id,
+        task_id: parent.task_id,
+        track_id: parent.track_id,
+        run_id: None,
+        turn_id: None,
+        turn_sequence: None,
+        role: MessageRole::System,
+        content,
+        attachments: vec![],
+        delivery: MessageDelivery::Immediate,
+        delivered_at: None,
+        created_at: chrono::Utc::now(),
+    };
+    let saved = state.store.insert_message(msg).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&e.to_string()),
+            }),
+        )
+    })?;
+
+    let event = state
+        .store
+        .append_session_event(
+            parent.id,
+            None,
+            None,
+            SessionEventType::AssistantMessageInserted,
+            serde_json::json!({ "message_id": saved.id.0 }),
+        )
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
+    state.publish_event(event).await;
+    Ok(())
+}
+
+async fn enqueue_subagent_prompt(
+    state: &Arc<AppState>,
+    session: &Session,
+    prompt: String,
+) -> Result<(RunId, Message), (StatusCode, Json<ApiErrorResp>)> {
+    let run_id = RunId::new();
+    let turn_id = TurnId::new();
+    let msg = Message {
+        id: MessageId::new(),
+        session_id: session.id,
+        task_id: session.task_id,
+        track_id: session.track_id,
+        run_id: Some(run_id),
+        turn_id: Some(turn_id),
+        turn_sequence: Some(0),
+        role: MessageRole::User,
+        content: prompt,
+        attachments: vec![],
+        delivery: MessageDelivery::Immediate,
+        delivered_at: None,
+        created_at: chrono::Utc::now(),
+    };
+    let saved = state.store.insert_message(msg).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&e.to_string()),
+            }),
+        )
+    })?;
+
+    let event = state
+        .store
+        .append_session_event(
+            session.id,
+            Some(run_id),
+            Some(turn_id),
+            SessionEventType::UserMessage,
+            serde_json::json!({
+                "message_id": saved.id.0,
+                "content": saved.content.clone(),
+                "delivery": saved.delivery.clone(),
+                "attachments": saved.attachments,
+            }),
+        )
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
+    let start_seq = event.seq;
+
+    let turn = SessionTurn {
+        turn_id,
+        session_id: session.id,
+        run_id: Some(run_id),
+        user_message_id: Some(saved.id),
+        status: SessionTurnStatus::Running,
+        start_seq: Some(start_seq),
+        end_seq: None,
+        started_at: saved.created_at,
+        updated_at: saved.created_at,
+        assistant_partial: None,
+        thought_partial: None,
+        metrics_json: None,
+        tool_total: 0,
+        tool_pending: 0,
+        tool_running: 0,
+        tool_completed: 0,
+        tool_failed: 0,
+    };
+    let _ = state.store.insert_session_turn(turn).await;
+    state.publish_event(event).await;
+
+    let tx = state.ensure_scheduler(session.clone()).await;
+    let queued = crate::scheduler::QueuedMessage {
+        message: saved.clone(),
+        enqueued_at: Instant::now(),
+        run_id: None,
+    };
+    let _ = tx.send(SchedulerCommand::Enqueue(queued)).await;
+
+    Ok((run_id, saved))
+}
+
+async fn mcp_agent_init(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    mcp_auth: Option<Extension<McpAuthContext>>,
+    Json(req): Json<AgentInitReq>,
+) -> Result<Json<AgentInitResp>, (StatusCode, Json<ApiErrorResp>)> {
+    let auth = mcp_auth.ok_or((
+        StatusCode::UNAUTHORIZED,
+        Json(ApiErrorResp {
+            error: "mcp token required".to_string(),
+        }),
+    ))?;
+    let parent_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid session id".to_string(),
+            }),
+        )
+    })?);
+    if auth.session_id != parent_id {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(ApiErrorResp {
+                error: "mcp token does not match parent session".to_string(),
+            }),
+        ));
+    }
+
+    if req.agents.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "agents is required".to_string(),
+            }),
+        ));
+    }
+    if req.agents.len() > MAX_SUBAGENTS_PER_CALL {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: format!("max {MAX_SUBAGENTS_PER_CALL} subagents per call"),
+            }),
+        ));
+    }
+
+    let parent = state
+        .store
+        .get_session(parent_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "parent session not found".to_string(),
+            }),
+        ))?;
+    let track = state
+        .store
+        .get_track(parent.track_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "parent track not found".to_string(),
+            }),
+        ))?;
+    let workspace = state
+        .store
+        .get_workspace(parent.workspace_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "workspace not found".to_string(),
+            }),
+        ))?;
+
+    let mut provider_ids = HashSet::new();
+    for agent in &req.agents {
+        let provider_id = agent
+            .harness
+            .as_deref()
+            .unwrap_or(&parent.provider_id)
+            .trim();
+        if provider_id.is_empty() {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: "harness is required".to_string(),
+                }),
+            ));
+        }
+        provider_ids.insert(provider_id.to_string());
+    }
+
+    let available_providers: Vec<String> = {
+        let statuses = state.provider_statuses.lock().await;
+        let mut ids = statuses.keys().cloned().collect::<Vec<_>>();
+        ids.sort();
+        ids
+    };
+    let mut provider_statuses = HashMap::new();
+    {
+        let statuses = state.provider_statuses.lock().await;
+        for provider_id in provider_ids.iter() {
+            if let Some(status) = statuses.get(provider_id) {
+                provider_statuses.insert(provider_id.clone(), status.clone());
+            } else {
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    Json(ApiErrorResp {
+                        error: format!(
+                            "unknown harness '{provider_id}'; available harnesses: {}",
+                            available_providers.join(", ")
+                        ),
+                    }),
+                ));
+            }
+        }
+    }
+
+    for (provider_id, status) in &provider_statuses {
+        if !status.installed
+            || !matches!(status.health, ctx_providers::adapters::ProviderHealth::Ok)
+        {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: format!("harness '{provider_id}' is not installed or unhealthy"),
+                }),
+            ));
+        }
+    }
+
+    let mut model_catalogs: HashMap<String, Option<ModelCatalog>> = HashMap::new();
+    for provider_id in provider_ids.iter() {
+        let catalog = load_provider_model_catalog(&state, &workspace, provider_id).await;
+        match catalog {
+            Ok(cat) => {
+                model_catalogs.insert(provider_id.clone(), cat);
+            }
+            Err(err) => {
+                return Err((StatusCode::BAD_REQUEST, Json(ApiErrorResp { error: err })));
+            }
+        }
+    }
+
+    let mut futures = Vec::with_capacity(req.agents.len());
+    for (idx, agent) in req.agents.into_iter().enumerate() {
+        let state = state.clone();
+        let parent = parent.clone();
+        let track = track.clone();
+        let model_catalogs = model_catalogs.clone();
+        futures.push(async move {
+            let prompt = agent.prompt.trim().to_string();
+            if prompt.is_empty() {
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    Json(ApiErrorResp {
+                        error: format!("agent {} prompt is required", idx + 1),
+                    }),
+                ));
+            }
+            let label = agent
+                .label
+                .as_deref()
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| format!("Subagent {}", idx + 1));
+            let provider_id = agent
+                .harness
+                .as_deref()
+                .unwrap_or(&parent.provider_id)
+                .trim()
+                .to_string();
+            let catalog = model_catalogs.get(&provider_id).and_then(|v| v.as_ref());
+            let fallback_model = if agent.model.is_none() {
+                if provider_id == parent.provider_id {
+                    Some(parent.model_id.as_str())
+                } else {
+                    catalog.and_then(|c| c.full_ids.first().map(|s| s.as_str()))
+                }
+            } else {
+                None
+            };
+            if agent.model.is_none() && fallback_model.is_none() {
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    Json(ApiErrorResp {
+                        error: format!("model is required for harness '{provider_id}'"),
+                    }),
+                ));
+            }
+            let resolved = resolve_model_id(
+                agent.model.as_deref(),
+                agent.reasoning_effort.as_deref(),
+                fallback_model,
+                catalog,
+            )
+            .map_err(|error| (StatusCode::BAD_REQUEST, Json(ApiErrorResp { error })))?;
+
+            let session = state
+                .store
+                .create_session(
+                    &track,
+                    provider_id.clone(),
+                    resolved.model_id.clone(),
+                    "subagent".into(),
+                    Some(parent.id),
+                    Some("sub_agent".to_string()),
+                    None,
+                )
+                .await
+                .map_err(|e| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(ApiErrorResp {
+                            error: logs::redact_sensitive(&e.to_string()),
+                        }),
+                    )
+                })?;
+
+            if state
+                .store
+                .update_session_title(session.id, label.clone())
+                .await
+                .is_err()
+            {
+                tracing::warn!(session_id = %session.id.0, "failed to set subagent label");
+            }
+
+            insert_subagent_system_message(&state, &parent, format!("Subagent invoked: {label}"))
+                .await?;
+            let (run_id, _message) = enqueue_subagent_prompt(&state, &session, prompt).await?;
+
+            let terminal = wait_for_run_terminal_event(&state, session.id, run_id).await;
+            let status = match terminal {
+                Ok(SessionEventType::Done) => "completed",
+                Ok(SessionEventType::TurnInterrupted) => "interrupted",
+                Ok(SessionEventType::Error) => "failed",
+                Ok(_) => "completed",
+                Err(_) => "unknown",
+            }
+            .to_string();
+
+            let content = state
+                .store
+                .get_last_assistant_message_for_run(session.id, run_id)
+                .await
+                .ok()
+                .flatten()
+                .map(|m| m.content);
+
+            Ok(AgentInitResult {
+                session_id: session.id,
+                label,
+                provider_id,
+                model_id: resolved.model_id,
+                status,
+                content,
+            })
+        });
+    }
+
+    let results = futures::future::try_join_all(futures)
+        .await
+        .map_err(|e: (StatusCode, Json<ApiErrorResp>)| e)?;
+
+    Ok(Json(AgentInitResp { results }))
+}
+
+async fn mcp_agent_reply(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    mcp_auth: Option<Extension<McpAuthContext>>,
+    Json(req): Json<AgentReplyReq>,
+) -> Result<Json<AgentReplyResp>, (StatusCode, Json<ApiErrorResp>)> {
+    let auth = mcp_auth.ok_or((
+        StatusCode::UNAUTHORIZED,
+        Json(ApiErrorResp {
+            error: "mcp token required".to_string(),
+        }),
+    ))?;
+    let parent_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid session id".to_string(),
+            }),
+        )
+    })?);
+    if auth.session_id != parent_id {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(ApiErrorResp {
+                error: "mcp token does not match parent session".to_string(),
+            }),
+        ));
+    }
+
+    let parent = state
+        .store
+        .get_session(parent_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "parent session not found".to_string(),
+            }),
+        ))?;
+
+    let child_id = SessionId(uuid::Uuid::parse_str(&req.session_id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid child session id".to_string(),
+            }),
+        )
+    })?);
+    let child = state
+        .store
+        .get_session(child_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "subagent session not found".to_string(),
+            }),
+        ))?;
+
+    if child.parent_session_id != Some(parent.id)
+        || child.relationship.as_deref() != Some("sub_agent")
+    {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(ApiErrorResp {
+                error: "session is not a subagent of the parent".to_string(),
+            }),
+        ));
+    }
+
+    let prompt = req.prompt.trim().to_string();
+    if prompt.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "prompt is required".to_string(),
+            }),
+        ));
+    }
+
+    let label = child.title.trim().to_string();
+    if !label.is_empty() {
+        let _ = insert_subagent_system_message(
+            &state,
+            &parent,
+            format!("Replied to subagent: {label}"),
+        )
+        .await;
+    }
+
+    let (run_id, _message) = enqueue_subagent_prompt(&state, &child, prompt).await?;
+    let terminal = wait_for_run_terminal_event(&state, child.id, run_id).await;
+    let status = match terminal {
+        Ok(SessionEventType::Done) => "completed",
+        Ok(SessionEventType::TurnInterrupted) => "interrupted",
+        Ok(SessionEventType::Error) => "failed",
+        Ok(_) => "completed",
+        Err(_) => "unknown",
+    }
+    .to_string();
+
+    let content = state
+        .store
+        .get_last_assistant_message_for_run(child.id, run_id)
+        .await
+        .ok()
+        .flatten()
+        .map(|m| m.content);
+
+    Ok(Json(AgentReplyResp {
+        session_id: child.id,
+        status,
+        content,
+    }))
+}
+
 #[derive(Debug, Deserialize)]
 struct GenerateSessionTitleReq {
     #[serde(default)]
@@ -9354,6 +10469,9 @@ async fn authenticate_session(
     }
     provider_env.insert("CTX_SESSION_ID".to_string(), session.id.0.to_string());
     let mcp_token = uuid::Uuid::new_v4().to_string();
+    state
+        .register_mcp_token(session.id, mcp_token.clone())
+        .await;
     provider_env.insert("CTX_MCP_TOKEN".to_string(), mcp_token);
     if let Ok(v) = std::env::var("CTX_MCP_COMMAND") {
         provider_env.insert("CTX_MCP_COMMAND".to_string(), v);
@@ -10128,6 +11246,8 @@ mod tests {
                 "fake".to_string(),
                 "fake-model".to_string(),
                 "implementer".to_string(),
+                None,
+                None,
                 None,
             )
             .await

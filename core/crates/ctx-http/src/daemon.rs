@@ -99,11 +99,16 @@ pub struct AppState {
     pub edit_plans: Mutex<HashMap<EditPlanId, EditPlan>>,
     session_meta_cache: Mutex<HashMap<SessionId, Session>>,
     worktree_bootstrap_gates: Mutex<HashMap<WorktreeId, WorktreeBootstrapGate>>,
+    mcp_tokens: Mutex<HashMap<String, McpTokenEntry>>,
 }
 
 struct WorktreeBootstrapGate {
     wait_for_completion: bool,
     done_tx: watch::Sender<bool>,
+}
+
+struct McpTokenEntry {
+    session_id: SessionId,
 }
 
 pub struct CachedProviderOptions {
@@ -235,6 +240,7 @@ impl AppState {
             edit_plans: Mutex::new(edit_plans),
             session_meta_cache: Mutex::new(HashMap::new()),
             worktree_bootstrap_gates: Mutex::new(HashMap::new()),
+            mcp_tokens: Mutex::new(HashMap::new()),
         }
     }
 
@@ -316,6 +322,16 @@ impl AppState {
                 done_tx,
             },
         );
+    }
+
+    pub async fn register_mcp_token(&self, session_id: SessionId, token: String) {
+        let mut map = self.mcp_tokens.lock().await;
+        map.insert(token, McpTokenEntry { session_id });
+    }
+
+    pub async fn lookup_mcp_token(&self, token: &str) -> Option<SessionId> {
+        let map = self.mcp_tokens.lock().await;
+        map.get(token).map(|entry| entry.session_id)
     }
 
     pub async fn finish_worktree_bootstrap(&self, worktree_id: WorktreeId) {
