@@ -99,6 +99,48 @@ async fn main() -> Result<()> {
                             "inputSchema": { "type": "object", "additionalProperties": false }
                         },
                         {
+                            "name": "agent_init",
+                            "title": "Init Subagents",
+                            "description": "Spawns one or more subagents (max 5) for the current session and waits for their responses.",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
+                                    "agents": {
+                                        "type": "array",
+                                        "items": {
+                                            "type": "object",
+                                            "properties": {
+                                                "prompt": { "type": "string" },
+                                                "label": { "type": "string" },
+                                                "harness": { "type": "string" },
+                                                "model": { "type": "string" },
+                                                "reasoning_effort": { "type": "string" }
+                                            },
+                                            "required": ["prompt"],
+                                            "additionalProperties": false
+                                        }
+                                    }
+                                },
+                                "required": ["agents"],
+                                "additionalProperties": false
+                            }
+                        },
+                        {
+                            "name": "agent_reply",
+                            "title": "Reply to Subagent",
+                            "description": "Sends a prompt to an existing subagent session and waits for its response.",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "session_id": { "type": "string", "description": "Subagent session id." },
+                                    "prompt": { "type": "string" }
+                                },
+                                "required": ["session_id", "prompt"],
+                                "additionalProperties": false
+                            }
+                        },
+                        {
                             "name": "artifacts_set",
                             "title": "Set Session Artifacts",
                             "description": "Sets the ordered list of artifacts for the current session. mp4/webm supported; .mov (video/quicktime) not supported.",
@@ -1002,6 +1044,15 @@ async fn main() -> Result<()> {
                             ),
                         }
                     }
+                    "agent_init" => match agent_init_call(&client, &daemon_url, &arguments).await {
+                        Ok(val) => ok(id.unwrap(), tool_ok(val)),
+                        Err(e) => ok(id.unwrap(), tool_err(e)),
+                    },
+                    "agent_reply" => match agent_reply_call(&client, &daemon_url, &arguments).await
+                    {
+                        Ok(val) => ok(id.unwrap(), tool_ok(val)),
+                        Err(e) => ok(id.unwrap(), tool_err(e)),
+                    },
                     "artifacts_set" => {
                         let normalized =
                             (|| -> std::result::Result<(String, Vec<Value>), Value> {
@@ -1697,7 +1748,8 @@ fn tool_err(e: anyhow::Error) -> Value {
 }
 
 fn bearer_token() -> Option<String> {
-    ctx_env_opt("DESKTOP_TOKEN")
+    ctx_env_opt("MCP_TOKEN")
+        .or_else(|| ctx_env_opt("DESKTOP_TOKEN"))
         .or_else(|| ctx_env_opt("DAEMON_TOKEN"))
         .or_else(|| ctx_env_opt("AUTH_TOKEN"))
 }
@@ -1729,6 +1781,50 @@ async fn daemon_post_json(
 
 async fn list_workspaces(client: &reqwest::Client, daemon_url: &str) -> Result<Value> {
     daemon_get_json(client, daemon_url, "/api/workspaces").await
+}
+
+async fn agent_init_call(
+    client: &reqwest::Client,
+    daemon_url: &str,
+    args: &Value,
+) -> Result<Value> {
+    let session_id = args
+        .get("session_id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .or_else(|| ctx_env_opt("SESSION_ID"))
+        .context("missing session_id (set CTX_SESSION_ID)")?;
+    let agents = args
+        .get("agents")
+        .and_then(|v| v.as_array())
+        .context("missing agents")?;
+    let path = format!("/api/mcp/sessions/{}/agent_init", session_id);
+    daemon_post_json(client, daemon_url, &path, &json!({ "agents": agents })).await
+}
+
+async fn agent_reply_call(
+    client: &reqwest::Client,
+    daemon_url: &str,
+    args: &Value,
+) -> Result<Value> {
+    let parent_session_id =
+        ctx_env_opt("SESSION_ID").context("missing CTX_SESSION_ID (parent session id)")?;
+    let session_id = args
+        .get("session_id")
+        .and_then(|v| v.as_str())
+        .context("missing session_id")?;
+    let prompt = args
+        .get("prompt")
+        .and_then(|v| v.as_str())
+        .context("missing prompt")?;
+    let path = format!("/api/mcp/sessions/{}/agent_reply", parent_session_id);
+    daemon_post_json(
+        client,
+        daemon_url,
+        &path,
+        &json!({ "session_id": session_id, "prompt": prompt }),
+    )
+    .await
 }
 
 async fn set_artifacts(

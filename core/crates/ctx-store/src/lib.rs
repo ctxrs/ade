@@ -121,6 +121,8 @@ mod tests {
                     "fake".into(),
                     "implementer".into(),
                     None,
+                    None,
+                    None,
                 )
                 .await
                 .unwrap();
@@ -233,6 +235,8 @@ mod tests {
                 "fake-model".into(),
                 "implementer".into(),
                 None,
+                None,
+                None,
             )
             .await
             .unwrap();
@@ -312,5 +316,95 @@ mod tests {
         } else {
             panic!("expected cursor for second page");
         }
+    }
+
+    #[tokio::test]
+    async fn subagent_sessions_and_last_message_for_run() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("db.sqlite");
+        let store = Store::open(&db_path).await.unwrap();
+
+        let ws = store
+            .create_workspace("test".into(), "/tmp/test".into())
+            .await
+            .unwrap();
+        let task = store.create_task(ws.id, "task".into(), None).await.unwrap();
+        let worktree = store
+            .create_worktree(ws.id, "/tmp/test".into(), "deadbeef".into(), None)
+            .await
+            .unwrap();
+        let track = store
+            .create_track(task.id, ws.id, worktree.id, "t1".into())
+            .await
+            .unwrap();
+
+        let parent = store
+            .create_session(
+                &track,
+                "fake".into(),
+                "fake".into(),
+                "implementer".into(),
+                None,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        let subagent = store
+            .create_session(
+                &track,
+                "fake".into(),
+                "fake".into(),
+                "subagent".into(),
+                Some(parent.id),
+                Some("sub_agent".into()),
+                None,
+            )
+            .await
+            .unwrap();
+        let _reviewer = store
+            .create_session(
+                &track,
+                "fake".into(),
+                "fake".into(),
+                "reviewer".into(),
+                Some(parent.id),
+                Some("reviewer".into()),
+                None,
+            )
+            .await
+            .unwrap();
+
+        let subs = store.list_subagent_sessions(parent.id).await.unwrap();
+        assert_eq!(subs.len(), 1);
+        assert_eq!(subs[0].id.0, subagent.id.0);
+
+        let run_id = RunId::new();
+        let turn_id = TurnId::new();
+        store
+            .insert_message(Message {
+                id: MessageId::new(),
+                session_id: subagent.id,
+                task_id: subagent.task_id,
+                track_id: subagent.track_id,
+                run_id: Some(run_id),
+                turn_id: Some(turn_id),
+                turn_sequence: Some(1),
+                role: MessageRole::Assistant,
+                content: "final response".to_string(),
+                attachments: vec![],
+                delivery: MessageDelivery::Immediate,
+                delivered_at: None,
+                created_at: chrono::Utc::now(),
+            })
+            .await
+            .unwrap();
+
+        let last = store
+            .get_last_assistant_message_for_run(subagent.id, run_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(last.content, "final response");
     }
 }

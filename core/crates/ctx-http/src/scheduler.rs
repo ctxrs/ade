@@ -262,6 +262,9 @@ async fn start_turn(
     }
     provider_env.insert("CTX_SESSION_ID".to_string(), session.id.0.to_string());
     let mcp_token = uuid::Uuid::new_v4().to_string();
+    state
+        .register_mcp_token(session.id, mcp_token.clone())
+        .await;
     provider_env.insert("CTX_MCP_TOKEN".to_string(), mcp_token);
     if let Ok(v) = std::env::var("CTX_MCP_COMMAND") {
         provider_env.insert("CTX_MCP_COMMAND".to_string(), v);
