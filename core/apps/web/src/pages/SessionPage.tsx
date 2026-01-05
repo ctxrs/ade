@@ -347,8 +347,9 @@ function humanTurnStatus(status: SessionTurn["status"]): string {
     case "completed":
       return "Completed";
     case "interrupted":
-    case "failed":
       return "Interrupted";
+    case "failed":
+      return "Error";
     case "queued":
     case "running":
     default:
@@ -897,6 +898,10 @@ export function SessionView({
   const hasActiveTurn = useMemo(
     () => turns.some((turn) => turn.status === "running" || turn.status === "queued"),
     [turnsKey],
+  );
+  const sessionError = useMemo(
+    () => deriveSessionError(turns, events),
+    [turnsKey, eventsKey],
   );
 
   useEffect(() => {
@@ -1972,6 +1977,17 @@ export function SessionView({
         {entry?.error && (
           <div className="banner">
             <span className="error">{entry.error}</span>
+          </div>
+        )}
+        {sessionError && (
+          <div className="banner" role="alert">
+            <div className="row" style={{ justifyContent: "space-between" }}>
+              <strong>Error</strong>
+              {sessionError.provider ? <span className="muted">{sessionError.provider}</span> : null}
+            </div>
+            <div className="error" style={{ whiteSpace: "pre-wrap" }}>
+              {sessionError.message}
+            </div>
           </div>
         )}
         {showDebug && (
@@ -3923,7 +3939,7 @@ function buildWorkbenchThreadViewModelFromEvents(events: SessionEvent[], message
 
         switch (ev.event_type) {
           case "error": {
-            const message = String(ev.payload_json?.message ?? "Error");
+            const message = extractErrorMessage(ev.payload_json) ?? "Error";
             const provider = String(ev.payload_json?.provider ?? "").trim();
             const output = provider ? `${message}\nprovider: ${provider}` : message;
             const tool = ensureTool(g, `error-${eventId}`, ev.created_at);
@@ -4131,7 +4147,7 @@ function buildWorkbenchThreadViewModelFromEvents(events: SessionEvent[], message
 
       switch (ev.event_type) {
         case "error": {
-          const message = String(ev.payload_json?.message ?? "Error");
+          const message = extractErrorMessage(ev.payload_json) ?? "Error";
           const provider = String(ev.payload_json?.provider ?? "").trim();
           const output = provider ? `${message}\nprovider: ${provider}` : message;
           const tool = ensureTool(g, `error-${eventId}`, ev.created_at);
@@ -4572,6 +4588,7 @@ function mergeEvents(prev: SessionEvent[], incoming: SessionEvent[]): SessionEve
 }
 
 type AuthMethodOption = { id: string; name: string };
+type SessionErrorInfo = { message: string; provider?: string };
 
 type AuthUi = {
   status: "unknown" | "required" | "failed" | "authenticated";
@@ -4639,4 +4656,97 @@ function deriveAuthUi(events: SessionEvent[]): AuthUi {
   }
 
   return { status, provider, message, methods };
+}
+
+function readNonEmptyString(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const text = value.trim();
+  return text ? text : null;
+}
+
+function extractErrorMessage(payload: any): string | null {
+  if (!payload) return null;
+  const direct =
+    readNonEmptyString(payload.message) ??
+    readNonEmptyString(payload.error) ??
+    readNonEmptyString(payload.error_message) ??
+    readNonEmptyString(payload.errorMessage);
+  if (direct) return direct;
+
+  const acpError = payload.acp_error ?? payload.acpError;
+  if (acpError && typeof acpError === "object") {
+    const acpDataText = extractErrorMessageFromObject((acpError as any).data);
+    if (acpDataText) return acpDataText;
+  }
+  const acpErrorText = extractErrorMessageFromObject(acpError);
+  if (acpErrorText) return acpErrorText;
+
+  const update = payload.acp_update ?? payload.acpUpdate ?? payload.update;
+  const updateText = extractErrorMessageFromObject(update);
+  if (updateText) return updateText;
+
+  const meta = update?._meta ?? update?.meta ?? payload._meta ?? payload.meta ?? null;
+  return (
+    readNonEmptyString(meta?.statusText) ??
+    readNonEmptyString(meta?.status_text) ??
+    readNonEmptyString(meta?.message) ??
+    readNonEmptyString(meta?.error)
+  );
+}
+
+function extractErrorMessageFromObject(value: any): string | null {
+  if (!value) return null;
+  if (typeof value === "string") return readNonEmptyString(value);
+  if (typeof value !== "object") return null;
+
+  const direct =
+    readNonEmptyString(value.message) ??
+    readNonEmptyString(value.error_message) ??
+    readNonEmptyString(value.errorMessage);
+  if (direct) return direct;
+
+  const data = value.data ?? value.details ?? value.detail;
+  const dataText =
+    readNonEmptyString(data) ??
+    readNonEmptyString(data?.message) ??
+    readNonEmptyString(data?.error);
+  if (dataText) return dataText;
+
+  const nested = value.error ?? value.cause;
+  const nestedText =
+    typeof nested === "object"
+      ? extractErrorMessageFromObject(nested)
+      : readNonEmptyString(nested);
+  if (nestedText) return nestedText;
+
+  const meta = value._meta ?? value.meta;
+  return readNonEmptyString(meta?.statusText) ?? readNonEmptyString(meta?.status_text);
+}
+
+function deriveSessionError(
+  turns: SessionTurn[],
+  events: SessionEvent[],
+): SessionErrorInfo | null {
+  if (turns.length === 0) return null;
+  const lastTurn = turns[turns.length - 1];
+  if (lastTurn.status !== "failed") return null;
+  const turnId = idToString(lastTurn.turn_id);
+  let errorEvent: SessionEvent | null = null;
+  for (let i = events.length - 1; i >= 0; i--) {
+    const ev = events[i];
+    if (ev.event_type !== "error") continue;
+    if (turnId && idToString(ev.turn_id) !== turnId) continue;
+    errorEvent = ev;
+    break;
+  }
+  if (!errorEvent) {
+    return { message: "Harness error." };
+  }
+  const message = extractErrorMessage(errorEvent.payload_json) ?? "Harness error.";
+  const provider =
+    readNonEmptyString(errorEvent.payload_json?.provider) ??
+    readNonEmptyString(errorEvent.payload_json?.provider_id) ??
+    readNonEmptyString(errorEvent.payload_json?.providerId) ??
+    undefined;
+  return { message, provider };
 }
