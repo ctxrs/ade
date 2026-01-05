@@ -34,6 +34,7 @@ use crate::installs::{InstallId, InstallProgressEvent, InstallState, InstallStat
 use crate::mobile_tunnel::MobileTunnelManager;
 use crate::perf_telemetry::PerfTelemetry;
 use crate::resource_governance::{self, ResourceGovernanceRuntime};
+use crate::resource_telemetry;
 use crate::resource_utilization::ResourceSampler;
 use crate::scheduler::{reconcile_turn_terminal_state, session_worker, SchedulerCommand};
 use crate::settings;
@@ -579,6 +580,10 @@ impl AppState {
         self.running_sessions.lock().await.contains(&session_id)
     }
 
+    pub async fn list_running_sessions(&self) -> Vec<SessionId> {
+        self.running_sessions.lock().await.iter().copied().collect()
+    }
+
     pub async fn set_running(&self, session_id: SessionId, running: bool) {
         let mut set = self.running_sessions.lock().await;
         if running {
@@ -1035,6 +1040,8 @@ pub async fn serve(
     if let Err(err) = resource_governance::apply_settings(&state, &settings).await {
         tracing::warn!("failed to apply resource governance settings: {err:#}");
     }
+
+    resource_telemetry::spawn_resource_telemetry(state.clone());
 
     // Reconnect managed mobile access tunnel on daemon start when enabled.
     {
