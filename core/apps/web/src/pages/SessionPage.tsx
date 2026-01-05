@@ -2515,9 +2515,27 @@ function WorkbenchToolRow({
       if (c0.type === "list_files" && c0.path) return makeParts("Explored", shortPath(c0.path));
       if (c0.type === "read_file" && c0.path) return makeParts("Read", shortPath(c0.path));
     }
+    const titlePrefixed = parsePrefixed(title, [
+      "Read",
+      "Explored",
+      "Searched",
+      "Wrote",
+      "Edited",
+      "Run",
+      "Fetch",
+    ]);
+    const titleRest = titlePrefixed?.rest ?? "";
 
     if (kind === "search") {
-      const q = String(item.input?.query ?? item.input?.pattern ?? item.input?.text ?? summary ?? "").trim();
+      const q = String(
+        item.input?.query ??
+          item.input?.pattern ??
+          item.input?.regex ??
+          item.input?.text ??
+          summary ??
+          titleRest ??
+          "",
+      ).trim();
       return q ? makeParts("Searched", truncateMiddle(q, 90)) : makeParts("Searched");
     }
     if (kind === "execute") {
@@ -2528,13 +2546,17 @@ function WorkbenchToolRow({
       return short ? makeParts("Run", short) : makeParts("Run");
     }
     if (kind === "read_file" || kind === "read") {
-      const p = pathFromLoc ?? summary;
+      const p = pathFromLoc ?? summary ?? titleRest;
       return p ? makeParts("Read", shortPath(p)) : makeParts("Read");
     }
     if (kind === "write" || kind === "edit") {
-      const p = summary || pathFromLoc;
+      const p = summary || pathFromLoc || titleRest;
       const verb = kind === "write" ? "Wrote" : "Edited";
       return p ? makeParts(verb, shortPath(p)) : makeParts(verb);
+    }
+    if (kind === "fetch" || kind === "http") {
+      const p = summary || titleRest;
+      return p ? makeParts("Fetch", p) : makeParts("Fetch");
     }
     if (kind === "error") return makeParts("Error");
 
@@ -4434,10 +4456,10 @@ function toolSummaryLine(toolKind: string, input: any): string {
     return cmd ? truncateMiddle(String(cmd), 120) : "";
   }
   if (k === "search") {
-    const q = input?.query ?? input?.pattern ?? input?.text;
+    const q = input?.query ?? input?.pattern ?? input?.regex ?? input?.text;
     return q ? truncateMiddle(String(q), 120) : "";
   }
-  if (k === "read") {
+  if (k === "read_file" || k === "read") {
     const path = extractPrimaryPath(input);
     return path ? truncateMiddle(String(path), 120) : "";
   }
@@ -4451,6 +4473,14 @@ function toolSummaryLine(toolKind: string, input: any): string {
     const base = path ? truncateMiddle(String(path), 120) : "";
     if (!base) return delta;
     return delta ? `${base} ${delta}` : base;
+  }
+  if (k === "fetch" || k === "http") {
+    const method = String(input?.method ?? "").toUpperCase();
+    const url = input?.url ?? input?.uri ?? input?.href;
+    if (!url) return "";
+    const base = truncateMiddle(String(url), 120);
+    if (method && method !== "GET") return `${method} ${base}`;
+    return base;
   }
   return "";
 }

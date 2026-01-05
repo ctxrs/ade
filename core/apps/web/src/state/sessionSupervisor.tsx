@@ -1146,6 +1146,7 @@ const TOOL_INPUT_PREVIEW_KEYS = [
   "command",
   "query",
   "pattern",
+  "regex",
   "text",
   "path",
   "file",
@@ -1160,6 +1161,11 @@ const TOOL_INPUT_PREVIEW_KEYS = [
   "glob",
   "parsed_cmd",
   "diff_stats",
+  "url",
+  "uri",
+  "href",
+  "method",
+  "cwd",
 ];
 
 const toolInputPreview = (input: unknown): Record<string, unknown> | null => {
