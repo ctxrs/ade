@@ -25,7 +25,6 @@ import {
   MessageAttachment,
   ProviderOptions,
   ProviderStatus,
-  SessionSummary,
   WebSessionInfo,
   Worktree,
   Workspace,
@@ -45,7 +44,6 @@ import {
   installAllProviders,
   installProvider,
   listWebSessions,
-  listSessionSubagents,
   listProviders,
   markTaskRead as markTaskReadApi,
   markTaskUnread as markTaskUnreadApi,
@@ -1821,38 +1819,6 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     return m ? m.length : 1;
   }, [activeTrackDiff, hasDiff]);
 
-  const [subagents, setSubagents] = useState<SessionSummary[]>([]);
-  const [subagentsLoading, setSubagentsLoading] = useState(false);
-  const subagentRefreshKey = useMemo(() => {
-    const messageCount = activeEntry?.messages?.length ?? 0;
-    const eventCount = activeEntry?.events?.length ?? 0;
-    return `${activeSessionId ?? "none"}:${messageCount}:${eventCount}`;
-  }, [activeEntry?.events?.length, activeEntry?.messages?.length, activeSessionId]);
-
-  useEffect(() => {
-    let cancelled = false;
-    if (!activeSessionId) {
-      setSubagents([]);
-      setSubagentsLoading(false);
-      return () => {};
-    }
-    const run = async () => {
-      setSubagentsLoading(true);
-      try {
-        const next = await listSessionSubagents(activeSessionId);
-        if (!cancelled) setSubagents(next);
-      } catch {
-        if (!cancelled) setSubagents([]);
-      } finally {
-        if (!cancelled) setSubagentsLoading(false);
-      }
-    };
-    void run();
-    return () => {
-      cancelled = true;
-    };
-  }, [activeSessionId, subagentRefreshKey]);
-
   const toggleDiffPane = useCallback(() => {
     setDiffOpen((open) => {
       const next = !open;
@@ -2719,17 +2685,6 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     if (createdId) terminalPanelRef.current.focusTerminal(createdId);
   }, [activeSessionId, activeTaskId, activeTrackId, activeWorktreeId, worktreeChip.worktreePath]);
 
-  const openSubagentSession = useCallback(
-    (session: SessionSummary) => {
-      const taskId = activeTaskId ?? idToString(session.task_id);
-      const trackId = idToString(session.track_id);
-      const sessionId = idToString(session.id);
-      if (!taskId || !sessionId) return;
-      workbenchStore.focusTask(taskId, trackId || null, sessionId);
-    },
-    [activeTaskId, workbenchStore],
-  );
-
   const buildSessionLogExport = useCallback(() => {
     if (!activeEntry?.session) return;
     const sess = activeEntry.session;
@@ -3224,44 +3179,6 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
                               Copied worktree location to clipboard.
                             </span>
                           )}
-                        </>
-                      )}
-                      {subagents.length > 0 && (
-                        <>
-                          <span className="wb-single-track-dot" aria-hidden="true">
-                            ·
-                          </span>
-                          <span className="wb-subagent-label">Subagents</span>
-                          <span className="wb-subagent-list">
-                            {subagents.map((sub) => {
-                              const sid = idToString(sub.id);
-                              if (!sid) return null;
-                              const label =
-                                String(sub.title ?? "").trim() ||
-                                String(sub.provider_id ?? "").trim() ||
-                                sid.slice(0, 8);
-                              return (
-                                <button
-                                  key={sid}
-                                  type="button"
-                                  className="wb-subagent-chip"
-                                  onClick={() => openSubagentSession(sub)}
-                                  title={label}
-                                  aria-label={`Open subagent ${label}`}
-                                >
-                                  {label}
-                                </button>
-                              );
-                            })}
-                          </span>
-                        </>
-                      )}
-                      {subagentsLoading && subagents.length === 0 && (
-                        <>
-                          <span className="wb-single-track-dot" aria-hidden="true">
-                            ·
-                          </span>
-                          <span className="wb-subagent-label">Subagents…</span>
                         </>
                       )}
                     </div>
