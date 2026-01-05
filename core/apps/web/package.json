@@ -7,7 +7,7 @@
     "dev": "HOST=$(tailscale ip -4 2>/dev/null | head -n 1); if [ -z \"$HOST\" ]; then HOST=127.0.0.1; fi; vite --host \"$HOST\"",
     "build": "vite build",
     "preview": "vite preview",
-    "preview:public": "vite preview --host 0.0.0.0 --port 5173",
+    "preview:public": "HOST=$(tailscale ip -4 2>/dev/null | head -n 1); if [ -z \"$HOST\" ]; then HOST=127.0.0.1; fi; vite preview --host \"$HOST\" --port 5173",
     "build:preview:public": "pnpm build && pnpm preview:public",
     "test": "vitest run",
     "test:quiet": "vitest run --silent --reporter=dot",
