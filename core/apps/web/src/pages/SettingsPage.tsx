@@ -353,6 +353,7 @@ export default function SettingsPage() {
   const [editorSettings, setEditorSettings] = useState<DesktopEditorSettings>({
     target: "system",
     custom_command: "",
+    remote_authority: "",
   });
   const [editorLoaded, setEditorLoaded] = useState(false);
   const [editorSaving, setEditorSaving] = useState(false);
@@ -755,6 +756,7 @@ export default function SettingsPage() {
           editorSettings.target === "custom"
             ? editorSettings.custom_command?.trim() || null
             : null,
+        remote_authority: editorSettings.remote_authority?.trim() || null,
       };
       desktopUpdateEditorSettings(next)
         .then((next) => setEditorSettings(next))
@@ -1195,6 +1197,15 @@ export default function SettingsPage() {
 
   const anySaving = saving || editorSaving;
 
+  const vscodeRemoteTargets: DesktopEditorSettings["target"][] = [
+    "vscode",
+    "vscode_insiders",
+    "cursor",
+    "windsurf",
+    "antigravity",
+  ];
+  const showRemoteAuthority = vscodeRemoteTargets.includes(editorSettings.target);
+
   const renderMain = () => {
     if (!loaded) return <div className="settings-empty">Loading…</div>;
     if (loadError) return <div className="settings-empty settings-empty-error">{loadError}</div>;
@@ -1244,6 +1255,21 @@ export default function SettingsPage() {
                     onChange={(e) => setEditorSettings((prev) => ({ ...prev, custom_command: e.target.value }))}
                     disabled={!isDesktopApp() || !editorLoaded}
                     placeholder="code --goto {path}:{line}:{col}"
+                  />
+                }
+              />
+            ) : null}
+            {showRemoteAuthority ? (
+              <Row
+                title="VS Code Remote Authority"
+                description="Optional: ssh-remote+my-host for remote worktrees."
+                control={
+                  <input
+                    className="settings-control settings-control-wide"
+                    value={editorSettings.remote_authority ?? ""}
+                    onChange={(e) => setEditorSettings((prev) => ({ ...prev, remote_authority: e.target.value }))}
+                    disabled={!isDesktopApp() || !editorLoaded}
+                    placeholder="ssh-remote+my-host"
                   />
                 }
               />

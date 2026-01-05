@@ -38,8 +38,6 @@ import {
 } from "../api/client";
 import { useOpenSession, useSessionEntry, useSessionSupervisor } from "../state/sessionSupervisor";
 import { loadSessionViewPrefsV1, saveSessionViewPrefsV1, type SessionViewVerbosity } from "../state/uiStateStore";
-import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
-import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { Check, Copy } from "lucide-react";
 import { AskUserQuestionModal } from "../components/AskUserQuestionModal";
 import { type SlashCommandDescriptor } from "../state/useComposerAutocomplete";
@@ -54,7 +52,8 @@ import { parseWsJson } from "../utils/wsJson";
 import { imageFilesToInlineAttachments } from "../utils/messageAttachments";
 import { registerDropScope } from "../utils/dragDropScopes";
 import { copyTextToClipboard } from "../utils/clipboard";
-import { desktopGetDeepLinkToken, desktopOpenFile, desktopOpenPath, isDesktopApp } from "../utils/desktop";
+import { type FileRef, isAbsolutePath, parseFileRefToken, splitWhitespaceTokens } from "../utils/codeTokenLinks";
+import { desktopOpenFile, desktopOpenPath, isDesktopApp } from "../utils/desktop";
 import { usePinnedScrollManager } from "./usePinnedScrollManager";
 
 type ThreadItem =
@@ -541,8 +540,7 @@ export function SessionView({
   const [sendBusy, setSendBusy] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [fileOpenError, setFileOpenError] = useState<string | null>(null);
-  const [deepLinkToken, setDeepLinkToken] = useState<string | null>(null);
-  const deepLinkTokenTimerRef = useRef<number | null>(null);
+  const [modifierDown, setModifierDown] = useState(false);
   const [atBottom, setAtBottom] = useState(true);
   const [hasNewActivity, setHasNewActivity] = useState(false);
   const [stickToBottom, setStickToBottom] = useState(true);
@@ -607,6 +605,22 @@ export function SessionView({
       .catch(() => {});
     return () => {
       cancelled = true;
+    };
+  }, []);
+
+
+  useEffect(() => {
+    const update = (event: KeyboardEvent) => {
+      setModifierDown(event.metaKey || event.ctrlKey);
+    };
+    const handleBlur = () => setModifierDown(false);
+    window.addEventListener("keydown", update);
+    window.addEventListener("keyup", update);
+    window.addEventListener("blur", handleBlur);
+    return () => {
+      window.removeEventListener("keydown", update);
+      window.removeEventListener("keyup", update);
+      window.removeEventListener("blur", handleBlur);
     };
   }, []);
 
@@ -824,43 +838,6 @@ export function SessionView({
 
   const handleFileOpenError = useCallback((message: string | null) => {
     setFileOpenError(message);
-  }, []);
-
-  useEffect(() => {
-    if (!isDesktopApp()) return;
-    let cancelled = false;
-
-    const scheduleRefresh = (expiresAtMs: number) => {
-      if (deepLinkTokenTimerRef.current) {
-        window.clearTimeout(deepLinkTokenTimerRef.current);
-        deepLinkTokenTimerRef.current = null;
-      }
-      const now = Date.now();
-      const leadTime = 60_000;
-      const delay = Math.max(expiresAtMs - now - leadTime, 10_000);
-      deepLinkTokenTimerRef.current = window.setTimeout(() => {
-        refresh();
-      }, delay);
-    };
-
-    const refresh = () => {
-      desktopGetDeepLinkToken()
-        .then((token) => {
-          if (cancelled) return;
-          setDeepLinkToken(token.token);
-          scheduleRefresh(token.expires_at_ms);
-        })
-        .catch(() => {});
-    };
-
-    refresh();
-    return () => {
-      cancelled = true;
-      if (deepLinkTokenTimerRef.current) {
-        window.clearTimeout(deepLinkTokenTimerRef.current);
-        deepLinkTokenTimerRef.current = null;
-      }
-    };
   }, []);
 
   useOpenSession(id ?? "", { watchDiff: true });
@@ -1815,7 +1792,7 @@ export function SessionView({
           content={item.content}
           worktreeId={worktreeId}
           onFileOpenError={handleFileOpenError}
-          linkToken={deepLinkToken}
+          modifierDown={modifierDown}
         />
       );
     }
@@ -1855,14 +1832,14 @@ export function SessionView({
         item={item}
         worktreeId={worktreeId}
         onFileOpenError={handleFileOpenError}
-        linkToken={deepLinkToken}
+        modifierDown={modifierDown}
       />
     );
   }, [
-    deepLinkToken,
     expandedToolById,
     expandedTurnDetailsById,
     handleFileOpenError,
+    modifierDown,
     id,
     nowMs,
     supervisor,
@@ -2369,12 +2346,12 @@ function ThreadItemView({
   item,
   worktreeId,
   onFileOpenError,
-  linkToken,
+  modifierDown,
 }: {
   item: ThreadItem;
   worktreeId: string | null;
   onFileOpenError: (message: string | null) => void;
-  linkToken: string | null;
+  modifierDown: boolean;
 }) {
   switch (item.kind) {
     case "message":
@@ -2387,7 +2364,7 @@ function ThreadItemView({
           delivery={item.delivery}
           worktreeId={worktreeId}
           onFileOpenError={onFileOpenError}
-          linkToken={linkToken}
+          modifierDown={modifierDown}
         />
       );
     case "assistant":
@@ -2449,7 +2426,7 @@ function CollapsibleMessage({
   delivery,
   worktreeId,
   onFileOpenError,
-  linkToken,
+  modifierDown,
 }: {
   id: string;
   role: "user" | "assistant" | "system";
@@ -2458,7 +2435,7 @@ function CollapsibleMessage({
   delivery?: "immediate" | "queued";
   worktreeId: string | null;
   onFileOpenError: (message: string | null) => void;
-  linkToken: string | null;
+  modifierDown: boolean;
 }) {
   const lines = (content || "").split("\n");
   const isLong = lines.length > 20 || content.length > 1500;
@@ -2474,7 +2451,7 @@ function CollapsibleMessage({
           linkifyFiles={role === "assistant"}
           worktreeId={worktreeId}
           onFileOpenError={onFileOpenError}
-          linkToken={linkToken}
+          modifierDown={modifierDown}
         />
       </div>
       {attachments?.length > 0 && (
@@ -2516,12 +2493,12 @@ function AssistantEntry({
   content,
   worktreeId,
   onFileOpenError,
-  linkToken,
+  modifierDown,
 }: {
   content: string;
   worktreeId: string | null;
   onFileOpenError: (message: string | null) => void;
-  linkToken: string | null;
+  modifierDown: boolean;
 }) {
   return (
     <div className="wb-assistant-entry">
@@ -2531,7 +2508,7 @@ function AssistantEntry({
           linkifyFiles
           worktreeId={worktreeId}
           onFileOpenError={onFileOpenError}
-          linkToken={linkToken}
+          modifierDown={modifierDown}
         />
       </div>
     </div>
@@ -2626,6 +2603,12 @@ function WorkbenchToolRow({
       const c0 = parsed[0] ?? {};
       if (c0.type === "list_files" && c0.path) return makeParts("Explored", shortPath(c0.path));
       if (c0.type === "read_file" && c0.path) return makeParts("Read", shortPath(c0.path));
+      if (c0.type === "search") {
+        const q = String(c0.query ?? c0.pattern ?? c0.regex ?? c0.text ?? "").trim();
+        if (q) return makeParts("Searched", truncateMiddle(q, 90));
+        if (c0.path) return makeParts("Searched", shortPath(c0.path));
+        return makeParts("Searched");
+      }
     }
     const titlePrefixed = parsePrefixed(title, [
       "Read",
@@ -2981,12 +2964,6 @@ type MdastNode = {
   [key: string]: unknown;
 };
 
-type FileRef = {
-  path: string;
-  line?: number;
-  col?: number;
-};
-
 type ParsedContextOpen = {
   worktreeId?: string;
   file?: string;
@@ -2994,28 +2971,6 @@ type ParsedContextOpen = {
   line?: number;
   col?: number;
 };
-
-function isAbsolutePath(path: string): boolean {
-  if (!path) return false;
-  if (path.startsWith("/") || path.startsWith("\\")) return true;
-  return /^[A-Za-z]:[\\/]/.test(path);
-}
-
-function buildContextOpenUrl(worktreeId: string, ref: FileRef, token?: string | null): string {
-  const params = new URLSearchParams();
-  params.set("v", "1");
-  params.set("openWith", "editor");
-  if (isAbsolutePath(ref.path)) {
-    params.set("path", ref.path);
-  } else {
-    params.set("worktreeId", worktreeId);
-    params.set("file", ref.path);
-  }
-  if (typeof ref.line === "number") params.set("line", String(ref.line));
-  if (typeof ref.col === "number") params.set("col", String(ref.col));
-  if (token) params.set("token", token);
-  return `ctx://open?${params.toString()}`;
-}
 
 function parseContextOpenUrl(href: string): ParsedContextOpen | null {
   try {
@@ -3045,91 +3000,95 @@ function parseContextOpenUrl(href: string): ParsedContextOpen | null {
   }
 }
 
-function looksLikeFilePath(path: string): boolean {
-  if (!path) return false;
-  if (path === "." || path === "..") return false;
-  if (path.includes("://")) return false;
-  const hasSlash = /[\\/]/.test(path);
-  const hasExt = /\.[A-Za-z0-9][A-Za-z0-9_-]*$/.test(path);
-  return hasSlash || hasExt;
-}
+type CodeTokenOptions = {
+  enableLinks: boolean;
+  worktreeId: string | null;
+  onFileOpenError?: (message: string | null) => void;
+};
 
-function parseFileRefToken(raw: string): FileRef | null {
-  let path = raw;
-  let line: number | undefined;
-  let col: number | undefined;
+const handleCodeTokenClick = async (
+  event: MouseEvent<HTMLElement>,
+  ref: FileRef,
+  worktreeId: string | null,
+  onFileOpenError?: (message: string | null) => void,
+) => {
+  if (!event.metaKey && !event.ctrlKey) return;
+  if (!isDesktopApp()) return;
+  if (!worktreeId && !isAbsolutePath(ref.path)) return;
+  event.preventDefault();
+  event.stopPropagation();
 
-  const hashMatch = raw.match(/^(.*)#L(\d+)(?:C(\d+))?$/);
-  if (hashMatch) {
-    path = hashMatch[1];
-    line = Number.parseInt(hashMatch[2], 10);
-    if (hashMatch[3]) col = Number.parseInt(hashMatch[3], 10);
-  } else {
-    const colonMatch = raw.match(/^(.*?)(?::(\d+)(?::(\d+))?)$/);
-    if (colonMatch) {
-      path = colonMatch[1];
-      line = Number.parseInt(colonMatch[2], 10);
-      if (colonMatch[3]) col = Number.parseInt(colonMatch[3], 10);
+  try {
+    if (isAbsolutePath(ref.path)) {
+      await desktopOpenPath({
+        path: ref.path,
+        line: ref.line ?? null,
+        col: ref.col ?? null,
+      });
+    } else {
+      await desktopOpenFile({
+        worktree_id: worktreeId ?? "",
+        path: ref.path,
+        line: ref.line ?? null,
+        col: ref.col ?? null,
+      });
     }
+    onFileOpenError?.(null);
+  } catch {
+    // Ignore failures to keep interaction silent.
   }
+};
 
-  if (!looksLikeFilePath(path)) return null;
-  return {
-    path,
-    line: Number.isFinite(line ?? NaN) ? line : undefined,
-    col: Number.isFinite(col ?? NaN) ? col : undefined,
-  };
-}
+const buildCodeTokenNodes = (text: string, opts: CodeTokenOptions): ReactNode[] => {
+  const parts = splitWhitespaceTokens(text);
+  return parts.map((part, idx) => {
+    if (!part) return null;
+    if (part.trim() === "") return part;
+    if (!opts.enableLinks) return part;
+    const ref = parseFileRefToken(part);
+    if (!ref) return part;
+    if (!opts.worktreeId && !isAbsolutePath(ref.path)) return part;
+    return (
+      <span
+        key={`token-${idx}`}
+        className="code-token-path"
+        onClick={(event) => handleCodeTokenClick(event, ref, opts.worktreeId, opts.onFileOpenError)}
+      >
+        {part}
+      </span>
+    );
+  });
+};
 
-function splitFileRefs(text: string, worktreeId: string, linkToken?: string | null): MdastNode[] {
-  const parts = text.split(/(\s+)/);
-  const nodes: MdastNode[] = [];
-  const leadingPunct = new Set(["(", "{", "[", "\"", "'", "`", "<"]);
-  const trailingPunct = new Set([")", "]", "}", "\"", "'", "`", ",", ".", ";", "!", "?"]);
-
-  for (const part of parts) {
-    if (!part) continue;
-    if (part.trim() === "") {
-      nodes.push({ type: "text", value: part });
-      continue;
-    }
-
-    let candidate = part;
-    let prefix = "";
-    let suffix = "";
-    while (candidate && leadingPunct.has(candidate[0])) {
-      prefix += candidate[0];
-      candidate = candidate.slice(1);
-    }
-    while (candidate && trailingPunct.has(candidate[candidate.length - 1])) {
-      suffix = candidate[candidate.length - 1] + suffix;
-      candidate = candidate.slice(0, -1);
-    }
-
-    const ref = parseFileRefToken(candidate);
-    if (!ref) {
-      nodes.push({ type: "text", value: part });
-      continue;
-    }
-
-    if (prefix) nodes.push({ type: "text", value: prefix });
-    nodes.push({
-      type: "link",
-      url: buildContextOpenUrl(worktreeId, ref, linkToken),
-      children: [{ type: "text", value: candidate }],
-    });
-    if (suffix) nodes.push({ type: "text", value: suffix });
-  }
-
-  return nodes;
+function TokenizedInlineCode({
+  codeString,
+  className,
+  enableLinks,
+  worktreeId,
+  onFileOpenError,
+}: {
+  codeString: string;
+  className?: string;
+  enableLinks: boolean;
+  worktreeId: string | null;
+  onFileOpenError?: (message: string | null) => void;
+}) {
+  const content = enableLinks
+    ? buildCodeTokenNodes(codeString, { enableLinks, worktreeId, onFileOpenError })
+    : codeString;
+  return <code className={className}>{content}</code>;
 }
 
 function FencedCodeBlock({
   codeString,
-  lang,
+  enableLinks,
+  worktreeId,
+  onFileOpenError,
 }: {
   codeString: string;
-  lang?: string;
+  enableLinks: boolean;
+  worktreeId: string | null;
+  onFileOpenError?: (message: string | null) => void;
 }) {
   const [copied, setCopied] = useState(false);
   const resetTimerRef = useRef<number | null>(null);
@@ -3153,6 +3112,10 @@ function FencedCodeBlock({
     setCopied(true);
   }, [codeString]);
 
+  const content = enableLinks
+    ? buildCodeTokenNodes(codeString, { enableLinks, worktreeId, onFileOpenError })
+    : codeString;
+
   return (
     <div className="codeblock">
       <div className="codeblock-toolbar">
@@ -3167,51 +3130,12 @@ function FencedCodeBlock({
         </button>
       </div>
       <div className="codeblock-body">
-        <SyntaxHighlighter
-          style={oneDark}
-          language={lang}
-          PreTag="div"
-          customStyle={{
-            margin: 0,
-            background: "transparent",
-            padding: "28px 12px 12px",
-            fontSize: "12px",
-            lineHeight: 1.45,
-            width: "100%",
-            maxWidth: "100%",
-            boxSizing: "border-box",
-            overflowX: "auto",
-          }}
-          codeTagProps={{ style: { fontFamily: "var(--mono)" } }}
-        >
-          {codeString}
-        </SyntaxHighlighter>
+        <pre className="codeblock-pre">
+          <code className="codeblock-code">{content}</code>
+        </pre>
       </div>
     </div>
   );
-}
-
-function remarkLinkifyFileRefs(opts: { worktreeId: string; token?: string | null }) {
-  return (tree: MdastNode) => {
-    const walk = (node: MdastNode) => {
-      if (!node || typeof node !== "object") return;
-      if (node.type && ["code", "inlineCode", "link", "linkReference"].includes(node.type)) return;
-      if (!Array.isArray(node.children)) return;
-
-      const next: MdastNode[] = [];
-      for (const child of node.children) {
-        if (child?.type === "text" && typeof (child as any).value === "string") {
-          next.push(...splitFileRefs(String((child as any).value), opts.worktreeId, opts.token));
-          continue;
-        }
-        walk(child as MdastNode);
-        next.push(child as MdastNode);
-      }
-      node.children = next;
-    };
-
-    walk(tree);
-  };
 }
 
 function remarkNormalizeCursorMarkdown() {
@@ -3298,109 +3222,118 @@ function Markdown({
   linkifyFiles = false,
   worktreeId = null,
   onFileOpenError,
-  linkToken,
+  modifierDown = false,
 }: {
   content: string;
   linkifyFiles?: boolean;
   worktreeId?: string | null;
   onFileOpenError?: (message: string | null) => void;
-  linkToken?: string | null;
+  modifierDown?: boolean;
 }) {
   const remarkPlugins: any[] = [remarkGfm, remarkNormalizeCursorMarkdown];
-  if (linkifyFiles && worktreeId) {
-    remarkPlugins.push([remarkLinkifyFileRefs, { worktreeId, token: linkToken }]);
-  }
+  const wrapperClassName = modifierDown ? "markdown-modifier" : undefined;
 
   return (
-    <ReactMarkdown
-      remarkPlugins={remarkPlugins}
-      urlTransform={(url) =>
-        url.startsWith("ctx://")
-          ? url
-          : defaultUrlTransform(url)
-      }
-      components={{
-        a({ href, children, className, ...rest }) {
-          const isContextOpen =
-            typeof href === "string" && href.startsWith("ctx://open?");
-          if (!isContextOpen) {
+    <div className={wrapperClassName}>
+      <ReactMarkdown
+        remarkPlugins={remarkPlugins}
+        urlTransform={(url) =>
+          url.startsWith("ctx://")
+            ? url
+            : defaultUrlTransform(url)
+        }
+        components={{
+          a({ href, children, className, ...rest }) {
+            const isContextOpen =
+              typeof href === "string" && href.startsWith("ctx://open?");
+            if (!isContextOpen) {
+              return (
+                <a href={href} className={className} {...rest}>
+                  {children}
+                </a>
+              );
+            }
+
+            const handleClick = async (event: MouseEvent<HTMLAnchorElement>) => {
+              if (!isDesktopApp()) {
+                return;
+              }
+              if (!event.metaKey && !event.ctrlKey) return;
+              event.preventDefault();
+              if (!href) return;
+              const parsed = parseContextOpenUrl(href);
+              if (!parsed) return;
+              try {
+                if (parsed.worktreeId && parsed.file) {
+                  await desktopOpenFile({
+                    worktree_id: parsed.worktreeId,
+                    path: parsed.file,
+                    line: parsed.line ?? null,
+                    col: parsed.col ?? null,
+                  });
+                } else if (parsed.path) {
+                  await desktopOpenPath({
+                    path: parsed.path,
+                    line: parsed.line ?? null,
+                    col: parsed.col ?? null,
+                  });
+                } else {
+                  return;
+                }
+                onFileOpenError?.(null);
+              } catch {
+                // Ignore failures to keep interaction silent.
+              }
+            };
+
+            const combinedClassName = [className, "ctx-file-link"].filter(Boolean).join(" ");
             return (
-              <a href={href} className={className} {...rest}>
+              <a
+                href={href}
+                className={combinedClassName}
+                title="Cmd/Ctrl+Click to open in editor"
+                onClick={handleClick}
+                {...rest}
+              >
                 {children}
               </a>
             );
-          }
-
-          const handleClick = async (event: MouseEvent<HTMLAnchorElement>) => {
-            if (!isDesktopApp()) {
-              return;
+          },
+          pre({ children }) {
+            return <>{children}</>;
+          },
+          code({ inline, className, children }: { inline?: boolean; className?: string; children?: ReactNode }) {
+            const match = /language-([A-Za-z0-9_-]+)/.exec(className || "");
+            const rawLang = match?.[1];
+            const lang = rawLang && rawLang !== "code" ? rawLang : undefined;
+            const codeString = String(children ?? "").replace(/[\r\n]+$/, "");
+            const enableLinks = Boolean(linkifyFiles);
+            if (inline || (!lang && !codeString.includes("\n"))) {
+              return (
+                <TokenizedInlineCode
+                  codeString={codeString}
+                  className={className}
+                  enableLinks={enableLinks}
+                  worktreeId={worktreeId}
+                  onFileOpenError={onFileOpenError}
+                />
+              );
             }
-            event.preventDefault();
-            if (!event.metaKey && !event.ctrlKey) return;
-            if (!href) return;
-            const parsed = parseContextOpenUrl(href);
-            if (!parsed) {
-              onFileOpenError?.("Couldn't parse file link.");
-              return;
-            }
-            try {
-              if (parsed.worktreeId && parsed.file) {
-                await desktopOpenFile({
-                  worktree_id: parsed.worktreeId,
-                  path: parsed.file,
-                  line: parsed.line ?? null,
-                  col: parsed.col ?? null,
-                });
-              } else if (parsed.path) {
-                await desktopOpenPath({
-                  path: parsed.path,
-                  line: parsed.line ?? null,
-                  col: parsed.col ?? null,
-                });
-              } else {
-                throw new Error("Missing file reference.");
-              }
-              onFileOpenError?.(null);
-            } catch (e: any) {
-              onFileOpenError?.(e?.message ?? String(e));
-            }
-          };
 
-          const combinedClassName = [className, "ctx-file-link"].filter(Boolean).join(" ");
-          return (
-            <a
-              href={href}
-              className={combinedClassName}
-              title="Cmd/Ctrl+Click to open in editor"
-              onClick={handleClick}
-              {...rest}
-            >
-              {children}
-            </a>
-          );
-        },
-        pre({ children }) {
-          return <>{children}</>;
-        },
-        code({ inline, className, children }: { inline?: boolean; className?: string; children?: ReactNode }) {
-          const match = /language-([A-Za-z0-9_-]+)/.exec(className || "");
-          const rawLang = match?.[1];
-          const lang = rawLang && rawLang !== "code" ? rawLang : undefined;
-          const codeString = String(children ?? "").replace(/[\r\n]+$/, "");
-          if (inline) {
-            return <code className={className}>{children}</code>;
-          }
-
-          if (!lang && !codeString.includes("\n")) {
-            return <code className={className}>{codeString}</code>;
-          }
-
-          return <FencedCodeBlock codeString={codeString} lang={lang} />;
-        },
-      }}
-    >
-      {content}
-    </ReactMarkdown>
+            return (
+              <FencedCodeBlock
+                codeString={codeString}
+                enableLinks={enableLinks}
+                worktreeId={worktreeId}
+                onFileOpenError={onFileOpenError}
+              />
+            );
+          },
+        }}
+      >
+        {content}
+      </ReactMarkdown>
+    </div>
   );
 }
 
