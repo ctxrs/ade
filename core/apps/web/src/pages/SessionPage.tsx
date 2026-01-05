@@ -44,7 +44,11 @@ import { Check, Copy } from "lucide-react";
 import { AskUserQuestionModal } from "../components/AskUserQuestionModal";
 import { type SlashCommandDescriptor } from "../state/useComposerAutocomplete";
 import { HARNESS_CATALOG } from "../utils/harnessCatalog";
-import { WorkbenchComposer as UnifiedWorkbenchComposer, type WorkbenchModeId } from "../components/WorkbenchComposer";
+import {
+  WorkbenchComposer as UnifiedWorkbenchComposer,
+  type ContextWindowInfo,
+  type WorkbenchModeId,
+} from "../components/WorkbenchComposer";
 import { startMicPcmStream } from "../utils/micPcmStream";
 import { parseWsJson } from "../utils/wsJson";
 import { imageFilesToInlineAttachments } from "../utils/messageAttachments";
@@ -325,6 +329,84 @@ function parseIsoMs(value?: string | null): number | null {
   if (!value) return null;
   const parsed = Date.parse(value);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function coerceNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number.parseFloat(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function normalizeContextWindowMetrics(metrics: any): ContextWindowInfo | null {
+  if (!metrics || typeof metrics !== "object") return null;
+  const windowTokens =
+    coerceNumber(metrics.context_window_tokens) ??
+    coerceNumber(metrics.context_window_size) ??
+    coerceNumber(metrics.context_window) ??
+    coerceNumber(metrics.context_size) ??
+    coerceNumber(metrics.window_tokens) ??
+    coerceNumber(metrics.max_context_tokens) ??
+    coerceNumber(metrics.max_tokens);
+  if (!windowTokens || windowTokens <= 0) return null;
+
+  const inputTokens =
+    coerceNumber(metrics.total_input_tokens) ??
+    coerceNumber(metrics.input_tokens) ??
+    coerceNumber(metrics.prompt_tokens) ??
+    coerceNumber(metrics.input);
+  const outputTokens =
+    coerceNumber(metrics.total_output_tokens) ??
+    coerceNumber(metrics.output_tokens) ??
+    coerceNumber(metrics.completion_tokens) ??
+    coerceNumber(metrics.output);
+  const contextTokensEstimate =
+    coerceNumber(metrics.context_tokens_estimate) ??
+    coerceNumber(metrics.context_tokens);
+
+  let usedTokens: number | null = null;
+  if (inputTokens != null || outputTokens != null) {
+    usedTokens = (inputTokens ?? 0) + (outputTokens ?? 0);
+  } else if (contextTokensEstimate != null) {
+    usedTokens = contextTokensEstimate;
+  }
+
+  let remainingTokens =
+    coerceNumber(metrics.remaining_tokens_estimate) ??
+    coerceNumber(metrics.remaining_tokens);
+  let remainingFraction =
+    coerceNumber(metrics.remaining_fraction) ??
+    coerceNumber(metrics.remaining_pct) ??
+    coerceNumber(metrics.remaining_percent);
+
+  if (remainingFraction != null && remainingFraction > 1) {
+    remainingFraction = remainingFraction <= 100 ? remainingFraction / 100 : null;
+  }
+  if (remainingFraction != null) {
+    remainingFraction = Math.max(0, Math.min(1, remainingFraction));
+  }
+
+  if (remainingTokens == null && usedTokens != null) {
+    remainingTokens = Math.max(0, windowTokens - usedTokens);
+  }
+  if (usedTokens == null && remainingTokens != null) {
+    usedTokens = Math.max(0, windowTokens - remainingTokens);
+  }
+  if (remainingFraction == null && usedTokens != null) {
+    remainingFraction = Math.max(0, Math.min(1, 1 - usedTokens / windowTokens));
+  }
+  if (usedTokens == null && remainingFraction != null) {
+    usedTokens = Math.max(0, Math.round(windowTokens * (1 - remainingFraction)));
+  }
+
+  return {
+    windowTokens,
+    usedTokens: usedTokens ?? undefined,
+    remainingTokens: remainingTokens ?? undefined,
+    remainingFraction: remainingFraction ?? undefined,
+  };
 }
 
 function formatElapsedMs(ms: number): string {
@@ -894,6 +976,19 @@ export function SessionView({
   const eventsKey = `${entry?.lastEventSeq ?? 0}:${events.length}`;
   const turnsKey = deriveTurnsKey(turns);
   const messagesKey = deriveMessagesKey(messages);
+  const contextWindow = useMemo<ContextWindowInfo | null>(() => {
+    let latestMetrics: any = null;
+    let latestAt = -1;
+    for (const turn of turns) {
+      if (!turn.metrics_json) continue;
+      const updatedAt = parseIsoMs(turn.updated_at) ?? 0;
+      if (updatedAt >= latestAt) {
+        latestAt = updatedAt;
+        latestMetrics = turn.metrics_json;
+      }
+    }
+    return normalizeContextWindowMetrics(latestMetrics);
+  }, [turnsKey]);
   const hasActiveTurn = useMemo(
     () => turns.some((turn) => turn.status === "running" || turn.status === "queued"),
     [turnsKey],
@@ -2108,6 +2203,7 @@ export function SessionView({
           onSetVerbosity={setVerbosityPref}
           modeId={workbenchMode}
           setModeId={setWorkbenchMode}
+          contextWindow={contextWindow}
           recording={dictationRecording}
           onToggleRecording={() => {
             if (dictationRecording) stopDictation().catch(() => { });
