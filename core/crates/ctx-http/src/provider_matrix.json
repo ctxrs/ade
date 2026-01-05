@@ -12,16 +12,16 @@
       },
       "managed_install": {
         "kind": "archive",
-        "version": "0.7.4-ctx.4",
+        "version": "0.7.4-ctx.5",
         "args": [],
         "targets": {
           "linux-aarch64": {
-            "url": "https://github.com/ctxrs/codex-acp/releases/download/v0.7.4-ctx.4/codex-acp-0.7.4-ctx.4-aarch64-unknown-linux-gnu.tar.gz",
+            "url": "https://github.com/ctxrs/codex-acp/releases/download/v0.7.4-ctx.5/codex-acp-0.7.4-ctx.5-aarch64-unknown-linux-gnu.tar.gz",
             "archive": "tar_gz",
             "bin_path": "codex-acp"
           },
           "linux-x86_64": {
-            "url": "https://github.com/ctxrs/codex-acp/releases/download/v0.7.4-ctx.4/codex-acp-0.7.4-ctx.4-x86_64-unknown-linux-gnu.tar.gz",
+            "url": "https://github.com/ctxrs/codex-acp/releases/download/v0.7.4-ctx.5/codex-acp-0.7.4-ctx.5-x86_64-unknown-linux-gnu.tar.gz",
             "archive": "tar_gz",
             "bin_path": "codex-acp"
           }
@@ -67,6 +67,12 @@
         },
         {
           "version": "0.7.4-ctx.4",
+          "status": "supported",
+          "context_min": "0.1.0",
+          "notes": "Linux x86_64 and aarch64 only"
+        },
+        {
+          "version": "0.7.4-ctx.5",
           "status": "supported",
           "context_min": "0.1.0",
           "notes": "Linux x86_64 and aarch64 only"

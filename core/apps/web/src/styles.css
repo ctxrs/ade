@@ -2065,6 +2065,53 @@ button.linklike:hover {
   display: block;
 }
 
+.wb-context-window {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.wb-context-label {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.wb-context-bar {
+  width: 72px;
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+}
+
+.wb-context-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #22c55e 0%, #fbbf24 60%, #ef4444 100%);
+}
+
+.wb-context-text {
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.wb-context-sub {
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.wb-context-window:hover {
+  border-color: var(--border-strong);
+}
+
 .wb-invert {
   filter: invert(1) hue-rotate(180deg) saturate(1.1);
 }
