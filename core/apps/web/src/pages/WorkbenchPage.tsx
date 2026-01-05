@@ -2685,7 +2685,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     if (createdId) terminalPanelRef.current.focusTerminal(createdId);
   }, [activeSessionId, activeTaskId, activeTrackId, activeWorktreeId, worktreeChip.worktreePath]);
 
-  const buildConversationExport = useCallback(() => {
+  const buildSessionLogExport = useCallback(() => {
     if (!activeEntry?.session) return;
     const sess = activeEntry.session;
 
@@ -2793,25 +2793,80 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     return { title, markdown: lines.join("\n") };
   }, [activeEntry, singleTrackHeader?.title, worktreeChip.worktreePath]);
 
-  const exportConversation = useCallback(async () => {
-    const payload = buildConversationExport();
+  const buildTranscriptExport = useCallback(() => {
+    if (!activeEntry?.session) return;
+    const thread = buildWorkbenchThreadViewModel(
+      activeEntry.turns ?? [],
+      activeEntry.messages ?? [],
+      activeEntry.turnToolsByTurnId ?? {},
+      activeEntry.events ?? [],
+    );
+
+    const title = singleTrackHeader?.title ?? "Conversation";
+    const lines: string[] = [];
+    lines.push(`# ${title}`);
+    lines.push("");
+
+    for (const g of thread.groups ?? []) {
+      if (g?.header) {
+        lines.push("User:");
+        lines.push("");
+        lines.push(String(g.header.content ?? ""));
+        lines.push("");
+      }
+
+      const items: any[] = Array.isArray(g?.items) ? g.items : [];
+      for (const item of items) {
+        if (!item || item.kind !== "assistant") continue;
+        lines.push("Assistant:");
+        lines.push("");
+        lines.push(String(item.content ?? ""));
+        lines.push("");
+      }
+    }
+
+    return { title, markdown: lines.join("\n") };
+  }, [activeEntry, singleTrackHeader?.title]);
+
+  const exportSessionLog = useCallback(async () => {
+    const payload = buildSessionLogExport();
     if (!payload) return;
     try {
-      const fileBase = sanitizeFileName(payload.title);
+      const fileBase = `${sanitizeFileName(payload.title)}-session-log`;
       await saveMarkdownExport(fileBase, payload.markdown);
     } catch (e: any) {
-      window.alert(e?.message ?? "Failed to export conversation.");
+      window.alert(e?.message ?? "Failed to export session log.");
     }
-  }, [buildConversationExport]);
+  }, [buildSessionLogExport]);
 
-  const copyConversation = useCallback(async () => {
-    const payload = buildConversationExport();
+  const copySessionLog = useCallback(async () => {
+    const payload = buildSessionLogExport();
     if (!payload) return;
     const ok = await copyTextToClipboard(payload.markdown);
     if (!ok) {
       window.alert("Clipboard access is blocked; use HTTPS/desktop app or copy manually.");
     }
-  }, [buildConversationExport]);
+  }, [buildSessionLogExport]);
+
+  const exportTranscript = useCallback(async () => {
+    const payload = buildTranscriptExport();
+    if (!payload) return;
+    try {
+      const fileBase = `${sanitizeFileName(payload.title)}-transcript`;
+      await saveMarkdownExport(fileBase, payload.markdown);
+    } catch (e: any) {
+      window.alert(e?.message ?? "Failed to export transcript.");
+    }
+  }, [buildTranscriptExport]);
+
+  const copyTranscript = useCallback(async () => {
+    const payload = buildTranscriptExport();
+    if (!payload) return;
+    const ok = await copyTextToClipboard(payload.markdown);
+    if (!ok) {
+      window.alert("Clipboard access is blocked; use HTTPS/desktop app or copy manually.");
+    }
+  }, [buildTranscriptExport]);
 
   useEffect(() => {
     const el = newComposerRef.current;
@@ -3488,11 +3543,11 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
             disabled={!activeSessionId}
             onClick={() => {
               setConvoMenu(null);
-              void exportConversation();
+              void exportTranscript();
             }}
             role="menuitem"
           >
-            Export Conversation
+            Export Transcript
           </button>
           <button
             type="button"
@@ -3500,11 +3555,35 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
             disabled={!activeSessionId}
             onClick={() => {
               setConvoMenu(null);
-              void copyConversation();
+              void copyTranscript();
             }}
             role="menuitem"
           >
-            Copy Conversation
+            Copy Transcript
+          </button>
+          <button
+            type="button"
+            className="wb-menu-item"
+            disabled={!activeSessionId}
+            onClick={() => {
+              setConvoMenu(null);
+              void exportSessionLog();
+            }}
+            role="menuitem"
+          >
+            Export Session Log
+          </button>
+          <button
+            type="button"
+            className="wb-menu-item"
+            disabled={!activeSessionId}
+            onClick={() => {
+              setConvoMenu(null);
+              void copySessionLog();
+            }}
+            role="menuitem"
+          >
+            Copy Session Log
           </button>
           <button
             type="button"
