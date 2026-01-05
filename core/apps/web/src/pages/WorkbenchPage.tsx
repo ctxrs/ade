@@ -12,6 +12,7 @@ import {
   GitBranch,
   Image,
   Laptop,
+  Monitor,
   LayersPlus,
   MessageSquare,
   Mic,
@@ -24,6 +25,7 @@ import {
   MessageAttachment,
   ProviderOptions,
   ProviderStatus,
+  WebSessionInfo,
   Worktree,
   Workspace,
   archiveTask,
@@ -41,6 +43,7 @@ import {
   idToString,
   installAllProviders,
   installProvider,
+  listWebSessions,
   listProviders,
   markTaskRead as markTaskReadApi,
   markTaskUnread as markTaskUnreadApi,
@@ -59,6 +62,7 @@ import {
 } from "../state/sessionSupervisor";
 import { ArtifactsPane } from "../components/ArtifactsPane";
 import { DiffReviewPane } from "../components/DiffReviewPane";
+import { SessionsPane } from "../components/SessionsPane";
 import { TerminalPanel, type TerminalPanelHandle } from "../components/TerminalPanel";
 import { WorktreeBootstrapSnackbar } from "../components/WorktreeBootstrapSnackbar";
 import { SessionView, buildWorkbenchThreadViewModel } from "./SessionPage";
@@ -90,9 +94,11 @@ import {
 import {
   loadWorkbenchArtifactsPaneOpenV1,
   loadWorkbenchDiffPaneOpenV1,
+  loadWorkbenchSessionsPaneOpenV1,
   loadWorkbenchTerminalPanelOpenV1,
   saveWorkbenchArtifactsPaneOpenV1,
   saveWorkbenchDiffPaneOpenV1,
+  saveWorkbenchSessionsPaneOpenV1,
   saveWorkbenchTerminalPanelOpenV1,
 } from "../workbench/persistence";
 import type { WorkbenchScrollState } from "../workbench/types";
@@ -756,6 +762,9 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const [artifactsHeight, setArtifactsHeight] = useState(260);
   const [artifactsResizing, setArtifactsResizing] = useState(false);
   const artifactsPaneScopeRef = useRef<string | null>(null);
+  const [sessionsOpen, setSessionsOpen] = useState(false);
+  const [sessionsOpenHydrated, setSessionsOpenHydrated] = useState(false);
+  const sessionsPaneScopeRef = useRef<string | null>(null);
   const rightPaneRef = useRef<HTMLDivElement | null>(null);
   const reviewTab: "git" = "git";
   const terminalPanelRef = useRef<TerminalPanelHandle | null>(null);
@@ -1681,6 +1690,10 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const activeTrackDiff = activeEntry?.diff ?? "";
   const activeTrackIdFromSession = activeEntry?.session ? idToString(activeEntry.session.track_id) : "";
   const activeWorktreeId = activeEntry?.session ? idToString(activeEntry.session.worktree_id) : "";
+  const [webSessions, setWebSessions] = useState<WebSessionInfo[]>([]);
+  const [webSessionsLoading, setWebSessionsLoading] = useState(false);
+  const [activeWebSessionId, setActiveWebSessionId] = useState<string | null>(null);
+  const [activeSessionKind, setActiveSessionKind] = useState("web");
 
   useEffect(() => {
     if (!activeWorktreeId) {
@@ -1721,10 +1734,76 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     };
   }, [activeWorktreeId]);
 
+  const refreshWebSessions = useCallback(async () => {
+    if (!activeSessionId) {
+      setWebSessions([]);
+      setWebSessionsLoading(false);
+      return;
+    }
+    setWebSessionsLoading(true);
+    try {
+      const sessions = await listWebSessions();
+      const filtered = sessions.filter(
+        (session) =>
+          session.session_id === activeSessionId && String(session.status).toLowerCase() === "running",
+      );
+      setWebSessions(filtered);
+    } catch {
+      setWebSessions([]);
+    } finally {
+      setWebSessionsLoading(false);
+    }
+  }, [activeSessionId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const run = async () => {
+      if (cancelled) return;
+      await refreshWebSessions();
+    };
+    void run();
+    if (!activeSessionId) return () => {};
+    const timer = window.setInterval(() => void run(), 10000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [activeSessionId, refreshWebSessions]);
+
+  useEffect(() => {
+    if (webSessions.length === 0) {
+      setActiveWebSessionId(null);
+      return;
+    }
+    if (!activeWebSessionId || !webSessions.some((session) => session.id === activeWebSessionId)) {
+      setActiveWebSessionId(webSessions[0].id);
+    }
+  }, [activeWebSessionId, webSessions]);
+
+  const daemonBaseUrl = useMemo(() => getDaemonBaseUrl() ?? window.location.origin, []);
+  const sessionSections = useMemo(
+    () => [
+      {
+        key: "web",
+        label: "Web Sessions",
+        sessions: webSessions,
+      },
+    ],
+    [webSessions],
+  );
+
+  useEffect(() => {
+    if (!sessionSections.length) return;
+    if (!sessionSections.some((section) => section.key === activeSessionKind)) {
+      setActiveSessionKind(sessionSections[0].key);
+    }
+  }, [activeSessionKind, sessionSections]);
+
   const hasDiff = activeTrackDiff.trim().length > 0;
   const showReviewPane = diffOpen;
   const showArtifactsPane = artifactsOpen;
-  const rightPaneOpen = showReviewPane || showArtifactsPane;
+  const showSessionsPane = sessionsOpen;
+  const rightPaneOpen = showReviewPane || showArtifactsPane || showSessionsPane;
   const artifacts = useMemo(() => {
     if (!activeSessionId) return [];
     return sessionCache.sessions[activeSessionId]?.artifacts ?? [];
@@ -1733,6 +1812,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     ? sessionCache.sessions[activeSessionId]?.artifactsLoading ?? false
     : false;
   const artifactsCount = artifacts.length;
+  const sessionsCount = webSessions.length;
   const diffFileCount = useMemo(() => {
     if (!hasDiff) return 0;
     const m = activeTrackDiff.match(/^diff --git /gm);
@@ -1740,13 +1820,26 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   }, [activeTrackDiff, hasDiff]);
 
   const toggleDiffPane = useCallback(() => {
-    setDiffOpen((open) => !open);
+    setDiffOpen((open) => {
+      const next = !open;
+      if (next) setSessionsOpen(false);
+      return next;
+    });
   }, []);
 
   const toggleArtifactsPane = useCallback(() => {
     setArtifactsOpenSeeded(true);
     setArtifactsAutoOpenPending(false);
+    setSessionsOpen(false);
     setArtifactsOpen((open) => !open);
+  }, []);
+
+  const toggleSessionsPane = useCallback(() => {
+    setArtifactsOpenSeeded(true);
+    setArtifactsAutoOpenPending(false);
+    setArtifactsOpen(false);
+    setDiffOpen(false);
+    setSessionsOpen((open) => !open);
   }, []);
 
   const diffPaneScope = useMemo(() => {
@@ -1756,6 +1849,10 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   }, [activeSessionId, activeTrackId]);
 
   const artifactsPaneScope = useMemo(() => {
+    return activeSessionId ?? null;
+  }, [activeSessionId]);
+
+  const sessionsPaneScope = useMemo(() => {
     return activeSessionId ?? null;
   }, [activeSessionId]);
 
@@ -1821,6 +1918,33 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   }, [workspaceId, artifactsPaneScope]);
 
   useEffect(() => {
+    setSessionsOpenHydrated(false);
+    if (!workspaceId || !sessionsPaneScope) {
+      setSessionsOpen(false);
+      setSessionsOpenHydrated(true);
+      sessionsPaneScopeRef.current = null;
+      return;
+    }
+    let cancelled = false;
+    loadWorkbenchSessionsPaneOpenV1(workspaceId, sessionsPaneScope)
+      .then((open) => {
+        if (cancelled) return;
+        setSessionsOpen(open ?? false);
+        setSessionsOpenHydrated(true);
+        sessionsPaneScopeRef.current = sessionsPaneScope;
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setSessionsOpen(false);
+        setSessionsOpenHydrated(true);
+        sessionsPaneScopeRef.current = sessionsPaneScope;
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [workspaceId, sessionsPaneScope]);
+
+  useEffect(() => {
     if (!diffOpenHydrated) return;
     if (!workspaceId || !diffPaneScope) return;
     saveWorkbenchDiffPaneOpenV1(workspaceId, diffPaneScope, diffOpen).catch(() => {});
@@ -1834,6 +1958,13 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   }, [artifactsOpen, artifactsOpenHydrated, artifactsOpenSeeded, workspaceId, artifactsPaneScope]);
 
   useEffect(() => {
+    if (!sessionsOpenHydrated) return;
+    if (!workspaceId || !sessionsPaneScope) return;
+    if (sessionsPaneScopeRef.current !== sessionsPaneScope) return;
+    saveWorkbenchSessionsPaneOpenV1(workspaceId, sessionsPaneScope, sessionsOpen).catch(() => {});
+  }, [sessionsOpen, sessionsOpenHydrated, workspaceId, sessionsPaneScope]);
+
+  useEffect(() => {
     if (!artifactsOpenHydrated) return;
     if (!artifactsAutoOpenPending) return;
     if (artifactsCount === 0) return;
@@ -1841,6 +1972,13 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     setArtifactsOpenSeeded(true);
     setArtifactsAutoOpenPending(false);
   }, [artifactsAutoOpenPending, artifactsCount, artifactsOpenHydrated]);
+
+  useEffect(() => {
+    if (!sessionsOpenHydrated) return;
+    if (!sessionsOpen) return;
+    if (diffOpen) setDiffOpen(false);
+    if (artifactsOpen) setArtifactsOpen(false);
+  }, [artifactsOpen, diffOpen, sessionsOpen, sessionsOpenHydrated]);
 
 
   useEffect(() => {
@@ -3013,6 +3151,18 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
                       </button>
                       <button
                         type="button"
+                        className={`wb-icon ${showSessionsPane ? "wb-icon-active" : ""}`}
+                        aria-label="Toggle sessions view"
+                        aria-pressed={showSessionsPane}
+                        title={showSessionsPane ? "Hide sessions view" : "Show sessions view"}
+                        onClick={toggleSessionsPane}
+                        disabled={!activeSessionId}
+                      >
+                        <Monitor size={14} />
+                        {sessionsCount > 0 && <span className="wb-icon-badge">{sessionsCount}</span>}
+                      </button>
+                      <button
+                        type="button"
                         className={`wb-icon ${terminalOpen ? "wb-icon-active" : ""}`}
                         aria-label="Toggle terminal panel"
                         aria-pressed={terminalOpen}
@@ -3093,7 +3243,19 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
               <>
                 <div className="wb-splitter" onMouseDown={onSplitterMouseDown} />
                 <div className="wb-right" style={{ width: diffWidth }} ref={rightPaneRef}>
-                  {showReviewPane && showArtifactsPane ? (
+                  {showSessionsPane ? (
+                    <div className="wb-right-pane">
+                      <SessionsPane
+                        sections={sessionSections}
+                        activeSection={activeSessionKind}
+                        onSectionChange={setActiveSessionKind}
+                        selectedSessionId={activeWebSessionId}
+                        onSelectSession={setActiveWebSessionId}
+                        daemonBaseUrl={daemonBaseUrl}
+                        loading={webSessionsLoading}
+                      />
+                    </div>
+                  ) : showReviewPane && showArtifactsPane ? (
                     <div className="wb-right-stack">
                       <div
                         className="wb-right-pane wb-diff"
@@ -3192,11 +3354,11 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
                         </div>
                       )}
                     </div>
-                  ) : (
+                  ) : showArtifactsPane ? (
                     <div className="wb-right-pane">
                       <ArtifactsPane artifacts={artifacts} loading={artifactsLoading} />
                     </div>
-                  )}
+                  ) : null}
                 </div>
               </>
             )}
