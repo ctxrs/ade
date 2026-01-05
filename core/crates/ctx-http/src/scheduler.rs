@@ -1149,7 +1149,7 @@ fn read_codex_context_window_metrics(session_ref: &str) -> Option<serde_json::Va
     let reader = BufReader::new(file);
     let mut latest_info: Option<Value> = None;
 
-    for line in reader.lines().flatten() {
+    for line in reader.lines().map_while(Result::ok) {
         let trimmed = line.trim();
         if trimmed.is_empty() {
             continue;
