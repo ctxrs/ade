@@ -25,6 +25,7 @@ use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncSeekExt, SeekFrom};
 use tokio::process::Command;
 use tokio::sync::mpsc;
+use tokio::task::JoinSet;
 use tokio_tungstenite::{connect_async, tungstenite::Message as TungsteniteMessage};
 use tokio_util::io::ReaderStream;
 use tower::util::ServiceExt;
@@ -5991,7 +5992,8 @@ async fn handle_terminal_socket(
     let event_tx_output = event_tx.clone();
     let event_tx_status = event_tx.clone();
 
-    let mut send_task = tokio::spawn(async move {
+    let mut tasks = JoinSet::new();
+    tasks.spawn(async move {
         while let Some(msg) = event_rx.recv().await {
             if ws_tx.send(msg).await.is_err() {
                 break;
@@ -5999,7 +6001,7 @@ async fn handle_terminal_socket(
         }
     });
 
-    let mut output_task = tokio::spawn(async move {
+    tasks.spawn(async move {
         loop {
             match output_rx.recv().await {
                 Ok(bytes) => {
@@ -6011,7 +6013,7 @@ async fn handle_terminal_socket(
         }
     });
 
-    let mut status_task = tokio::spawn(async move {
+    tasks.spawn(async move {
         loop {
             match status_rx.recv().await {
                 Ok(ev) => {
@@ -6028,7 +6030,7 @@ async fn handle_terminal_socket(
         }
     });
 
-    let mut input_task = tokio::spawn(async move {
+    tasks.spawn(async move {
         while let Some(Ok(msg)) = ws_rx.next().await {
             match msg {
                 WsMessage::Binary(data) => {
@@ -6054,19 +6056,9 @@ async fn handle_terminal_socket(
         }
     });
 
-    tokio::select! {
-        _ = &mut output_task => {},
-        _ = &mut status_task => {},
-        _ = &mut input_task => {},
-        _ = &mut send_task => {},
-    };
-
-    output_task.abort();
-    status_task.abort();
-    input_task.abort();
-    send_task.abort();
-
-    let _ = tokio::join!(output_task, status_task, input_task, send_task);
+    let _ = tasks.join_next().await;
+    tasks.abort_all();
+    while tasks.join_next().await.is_some() {}
 }
 
 #[derive(Debug, Deserialize)]
