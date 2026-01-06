@@ -20,10 +20,9 @@ mod tests {
             .run(
                 crate::adapters::TurnInput {
                     content: "hi".into(),
-                    model_id: "fake-model".into(),
                     attachments: vec![],
                     context_blocks: vec![],
-                    model_id: None,
+                    model_id: Some("fake-model".into()),
                 },
                 std::env::current_dir().unwrap(),
                 Default::default(),

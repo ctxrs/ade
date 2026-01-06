@@ -444,13 +444,36 @@ button.linklike:hover {
   z-index: 1;
 }
 
-.codeblock-body>div {
+.codeblock-body > :where(div, pre) {
   max-width: 100%;
   min-width: 0;
   width: 100%;
   box-sizing: border-box;
   overflow-x: auto;
   overflow-y: hidden;
+}
+
+.codeblock-pre {
+  margin: 0;
+  background: transparent;
+  padding: 28px 12px 12px;
+  font-size: 12px;
+  line-height: 1.45;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow-x: auto;
+  white-space: pre;
+  font-family: var(--mono);
+}
+
+.codeblock-pre code {
+  font-family: inherit;
+}
+
+.codeblock pre[class*="language-"],
+.codeblock code[class*="language-"] {
+  background: transparent;
 }
 
 .codeblock-body > pre {

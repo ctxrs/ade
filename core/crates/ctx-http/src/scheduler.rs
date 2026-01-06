@@ -312,7 +312,6 @@ async fn start_turn(
         .run(
             TurnInput {
                 content: prompt,
-                model_id: session.model_id.clone(),
                 attachments: message.attachments.clone(),
                 context_blocks: Vec::new(),
                 model_id: normalize_session_model_id(&session.model_id),
