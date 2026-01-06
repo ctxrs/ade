@@ -3344,7 +3344,7 @@ const MemoMarkdown = memo(
     prev.content === next.content &&
     prev.linkifyFiles === next.linkifyFiles &&
     prev.worktreeId === next.worktreeId &&
-    prev.linkToken === next.linkToken,
+    prev.modifierDown === next.modifierDown,
 );
 
 export function deriveMessagesKey(messages: Message[]): string {
