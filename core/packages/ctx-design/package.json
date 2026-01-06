@@ -26,8 +26,8 @@
     "typecheck": "tsc --noEmit --incremental --tsBuildInfoFile .turbo/tsbuildinfo/ctx-design.tsbuildinfo"
   },
   "devDependencies": {
-    "@types/react": "~19.2.0",
-    "react": "19.2.3",
+    "@types/react": "~19.1.0",
+    "react": "19.1.0",
     "react-native": "0.81.5",
     "typescript": "^5.6.3"
   }

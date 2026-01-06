@@ -3863,6 +3863,8 @@ button.linklike:hover {
 .wb-tool-group {
   display: grid;
   gap: 6px;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .wb-tool-group-body {
@@ -3872,6 +3874,8 @@ button.linklike:hover {
   padding: 8px 10px;
   display: grid;
   gap: 10px;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .wb-tool-loading {
@@ -3887,6 +3891,8 @@ button.linklike:hover {
 .wb-tool-row {
   display: grid;
   gap: 4px;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .wb-tool-verb {
