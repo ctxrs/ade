@@ -3670,6 +3670,7 @@ button.linklike:hover {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  overflow-x: hidden;
   padding-left: var(--wb-session-padding-inline);
   padding-right: var(--wb-session-padding-inline);
   padding-bottom: 12px;
@@ -3694,6 +3695,7 @@ button.linklike:hover {
 .wb-thread-scroller {
   box-sizing: border-box;
   padding-inline: 0;
+  overflow-x: hidden;
   scrollbar-width: none;
   -ms-overflow-style: none;
 }
@@ -3837,6 +3839,8 @@ button.linklike:hover {
   font-size: 12px;
   font-family: inherit;
   font-style: italic;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .wb-event-row[aria-expanded] {
@@ -3849,6 +3853,31 @@ button.linklike:hover {
 }
 
 .wb-event-text {
+  display: block;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Tool rows need an explicit flex layout so the "rest" segment can ellipsis
+   instead of painting past the container edge. */
+.wb-tool-row .wb-event-text {
+  display: flex;
+  align-items: baseline;
+  min-width: 0;
+}
+
+.wb-tool-row .wb-tool-verb,
+.wb-tool-row .wb-tool-sep {
+  flex: none;
+}
+
+.wb-tool-row .wb-tool-rest {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: block;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -3863,6 +3892,7 @@ button.linklike:hover {
 .wb-tool-group {
   display: grid;
   gap: 6px;
+  min-width: 0;
 }
 
 .wb-tool-group-body {
@@ -3872,6 +3902,7 @@ button.linklike:hover {
   padding: 8px 10px;
   display: grid;
   gap: 10px;
+  min-width: 0;
 }
 
 .wb-tool-loading {
@@ -3887,6 +3918,7 @@ button.linklike:hover {
 .wb-tool-row {
   display: grid;
   gap: 4px;
+  min-width: 0;
 }
 
 .wb-tool-verb {
@@ -3896,6 +3928,11 @@ button.linklike:hover {
 
 .wb-tool-rest {
   color: inherit;
+}
+
+.wb-tool-rest,
+.wb-tool-verb {
+  min-width: 0;
 }
 
 .wb-tool-sep {

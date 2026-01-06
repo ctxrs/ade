@@ -1887,6 +1887,7 @@ export function SessionView({
             else if (ref) (ref as React.MutableRefObject<HTMLDivElement | null>).current = node;
           }}
           className={`wb-thread-scroller ${props.className ?? ""}`}
+          style={{ ...props.style, overflowX: "hidden" }}
           onWheel={(event) => {
             props.onWheel?.(event);
             markUserScrollIntent();
