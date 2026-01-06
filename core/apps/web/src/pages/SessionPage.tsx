@@ -2397,11 +2397,25 @@ function WorkbenchTurnHeaderView({
   expanded: boolean;
   onToggle: () => void;
 }) {
+  const handleClick = () => {
+    const selection = window.getSelection()?.toString() ?? "";
+    if (selection.trim()) return;
+    onToggle();
+  };
+
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    onToggle();
+  };
+
   return (
-    <button
-      type="button"
+    <div
       className={`wb-turn-header ${expanded ? "wb-turn-header-expanded" : "wb-turn-header-collapsed"}`}
-      onClick={onToggle}
+      role="button"
+      tabIndex={0}
+      onClick={handleClick}
+      onKeyDown={handleKeyDown}
       aria-expanded={expanded}
     >
       <div className="wb-turn-header-bubble">
@@ -2424,7 +2438,7 @@ function WorkbenchTurnHeaderView({
           </div>
         )}
       </div>
-    </button>
+    </div>
   );
 }
 
@@ -2456,13 +2470,14 @@ function CollapsibleMessage({
     <div className={`msg ${role}`}>
       <div className="role">{role}</div>
       <div id={`msg-${id}`}>
-        <MemoMarkdown
-          content={shown}
-          linkifyFiles={role === "assistant"}
-          worktreeId={worktreeId}
-          onFileOpenError={onFileOpenError}
-          modifierDown={modifierDown}
-        />
+        <div className={modifierDown ? "markdown-modifier" : undefined}>
+          <MemoMarkdown
+            content={shown}
+            linkifyFiles={role === "assistant"}
+            worktreeId={worktreeId}
+            onFileOpenError={onFileOpenError}
+          />
+        </div>
       </div>
       {attachments?.length > 0 && (
         <div className="attachments">
@@ -2513,13 +2528,14 @@ function AssistantEntry({
   return (
     <div className="wb-assistant-entry">
       <div className="wb-assistant-body">
-        <MemoMarkdown
-          content={content}
-          linkifyFiles
-          worktreeId={worktreeId}
-          onFileOpenError={onFileOpenError}
-          modifierDown={modifierDown}
-        />
+        <div className={modifierDown ? "markdown-modifier" : undefined}>
+          <MemoMarkdown
+            content={content}
+            linkifyFiles
+            worktreeId={worktreeId}
+            onFileOpenError={onFileOpenError}
+          />
+        </div>
       </div>
     </div>
   );
@@ -3242,19 +3258,16 @@ function Markdown({
   linkifyFiles = false,
   worktreeId = null,
   onFileOpenError,
-  modifierDown = false,
 }: {
   content: string;
   linkifyFiles?: boolean;
   worktreeId?: string | null;
   onFileOpenError?: (message: string | null) => void;
-  modifierDown?: boolean;
 }) {
   const remarkPlugins: any[] = [remarkGfm, remarkNormalizeCursorMarkdown];
-  const wrapperClassName = modifierDown ? "markdown-modifier" : undefined;
 
   return (
-    <div className={wrapperClassName}>
+    <div>
       <ReactMarkdown
         remarkPlugins={remarkPlugins}
         urlTransform={(url) =>
@@ -3363,8 +3376,7 @@ const MemoMarkdown = memo(
   (prev, next) =>
     prev.content === next.content &&
     prev.linkifyFiles === next.linkifyFiles &&
-    prev.worktreeId === next.worktreeId &&
-    prev.modifierDown === next.modifierDown,
+    prev.worktreeId === next.worktreeId,
 );
 
 export function deriveMessagesKey(messages: Message[]): string {

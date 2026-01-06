@@ -3808,6 +3808,11 @@ button.linklike:hover {
   cursor: pointer;
 }
 
+.wb-turn-header:focus-visible {
+  outline: 2px solid rgba(78, 163, 255, 0.38);
+  outline-offset: 2px;
+}
+
 .wb-turn-header-bubble {
   border-radius: 10px;
   border: 1px solid rgba(255, 255, 255, 0.08);
