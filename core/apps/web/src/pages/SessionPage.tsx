@@ -2357,7 +2357,7 @@ function CollapsibleMessage({
     <div className={`msg ${role}`}>
       <div className="role">{role}</div>
       <div id={`msg-${id}`}>
-        <Markdown
+        <MemoMarkdown
           content={shown}
           linkifyFiles={role === "assistant"}
           worktreeId={worktreeId}
@@ -2414,7 +2414,7 @@ function AssistantEntry({
   return (
     <div className="wb-assistant-entry">
       <div className="wb-assistant-body">
-        <Markdown
+        <MemoMarkdown
           content={content}
           linkifyFiles
           worktreeId={worktreeId}
@@ -2594,7 +2594,7 @@ function WorkbenchToolRow({
               <div className="wb-tool-section-title">Output</div>
               {looksLikeMarkdown(item.output_text) ? (
                 <div className="wb-tool-markdown">
-                  <Markdown content={item.output_text} />
+                  <MemoMarkdown content={item.output_text} />
                 </div>
               ) : (
                 <pre className="wb-tool-pre">{item.output_text}</pre>
@@ -2782,7 +2782,7 @@ function ToolCard({ item }: { item: Extract<ThreadItem, { kind: "tool" }> }) {
               <div className="tool-section-title">Output</div>
               {looksLikeMarkdown(item.output_text) ? (
                 <div className="tool-markdown">
-                  <Markdown content={item.output_text} />
+                  <MemoMarkdown content={item.output_text} />
                 </div>
               ) : (
                 <pre className="tool-pre tool-output">{item.output_text}</pre>
@@ -3269,6 +3269,16 @@ function Markdown({
     </ReactMarkdown>
   );
 }
+
+// Memoize markdown so selection isn't disrupted by unrelated re-renders.
+const MemoMarkdown = memo(
+  Markdown,
+  (prev, next) =>
+    prev.content === next.content &&
+    prev.linkifyFiles === next.linkifyFiles &&
+    prev.worktreeId === next.worktreeId &&
+    prev.linkToken === next.linkToken,
+);
 
 export function deriveMessagesKey(messages: Message[]): string {
   if (messages.length === 0) return "0";
