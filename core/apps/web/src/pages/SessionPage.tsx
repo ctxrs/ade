@@ -2598,6 +2598,27 @@ function WorkbenchToolRow({
   };
 
   const labelParts = (() => {
+    const normalizedTitle = normalizeWorktreePath(title);
+    const titlePrefixed = parsePrefixed(normalizedTitle, [
+      "Read",
+      "Explored",
+      "Searched",
+      "Wrote",
+      "Edited",
+      "Run",
+      "Fetch",
+      "Search",
+      "List",
+      "Write",
+      "Edit",
+    ]);
+    const titleRest = titlePrefixed?.rest ?? "";
+
+    if (normalizedTitle && normalizedTitle !== "Tool") {
+      if (titlePrefixed) return titlePrefixed;
+      return makeParts(normalizedTitle);
+    }
+
     const parsed = Array.isArray((item.input as any)?.parsed_cmd) ? ((item.input as any).parsed_cmd as any[]) : [];
     if (parsed.length > 0) {
       const c0 = parsed[0] ?? {};
@@ -2610,17 +2631,6 @@ function WorkbenchToolRow({
         return makeParts("Searched");
       }
     }
-    const titlePrefixed = parsePrefixed(title, [
-      "Read",
-      "Explored",
-      "Searched",
-      "Wrote",
-      "Edited",
-      "Run",
-      "Fetch",
-    ]);
-    const titleRest = titlePrefixed?.rest ?? "";
-
     if (kind === "search") {
       const q = String(
         item.input?.query ??
