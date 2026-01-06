@@ -37,14 +37,30 @@ describe("WorkbenchStore navigation tokens", () => {
     }
   });
 
-  it("ignores stale system focus after user navigation", async () => {
+  it("defaults to user intent when no source is provided", async () => {
     vi.useFakeTimers();
     try {
       const { WorkbenchStore } = await import("./store");
       const store = new WorkbenchStore("ws-1");
       const token = store.getNavToken();
 
-      store.focusTask("task-1", null, null, { source: "user" });
+      store.focusTask("task-1");
+
+      expect(store.getNavToken()).toBe(token + 1);
+    } finally {
+      vi.runAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  it("ignores stale system focus after default user navigation", async () => {
+    vi.useFakeTimers();
+    try {
+      const { WorkbenchStore } = await import("./store");
+      const store = new WorkbenchStore("ws-1");
+      const token = store.getNavToken();
+
+      store.focusTask("task-1");
       const applied = store.focusTask("task-2", null, null, { navToken: token, source: "system" });
 
       expect(applied).toBe(false);
@@ -55,23 +71,17 @@ describe("WorkbenchStore navigation tokens", () => {
     }
   });
 
-  it("bumps tokens for user navigation but not system updates", async () => {
+  it("does not bump tokens for system track updates", async () => {
     vi.useFakeTimers();
     try {
       const { WorkbenchStore } = await import("./store");
       const store = new WorkbenchStore("ws-1");
 
-      store.focusTask("task-1", "track-1", "session-1", { source: "user" });
-      const afterUserFocus = store.getNavToken();
-      store.setActiveTrackForActiveTask("track-2", { source: "user" });
+      store.focusTask("task-1", "track-1", "session-1");
+      const beforeSystem = store.getNavToken();
+      store.setActiveTrackForActiveTask("track-2", { source: "system" });
 
-      expect(store.getNavToken()).toBe(afterUserFocus + 1);
-      expect(getActiveTaskId(store)).toBe("task-1");
-
-      const token = store.getNavToken();
-      store.setActiveTrackForActiveTask("track-3", { source: "system" });
-
-      expect(store.getNavToken()).toBe(token);
+      expect(store.getNavToken()).toBe(beforeSystem);
       expect(getActiveTabKind(store)).toBe("track");
     } finally {
       vi.runAllTimers();

@@ -347,7 +347,7 @@ export class WorkbenchStore {
   }
 
   private applyNavSource(source?: WorkbenchNavSource) {
-    if (source === "user") this.bumpNavToken();
+    if (source !== "system") this.bumpNavToken();
   }
 
   focusNewTask = (opts?: WorkbenchNavOpts): boolean => {

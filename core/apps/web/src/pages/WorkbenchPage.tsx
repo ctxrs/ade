@@ -915,7 +915,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       const wanted = prevTrackId ?? null;
       const nextTrackId = pickPreferredTrackId(trackIds, sessionsMap, wanted);
       if (activeTab?.kind === "track" && activeTab.ref.taskId === taskId && nextTrackId !== prevTrackId) {
-        workbenchStore.setActiveTrackForActiveTask(nextTrackId);
+        workbenchStore.setActiveTrackForActiveTask(nextTrackId, { source: "system" });
       }
     },
     [workbenchStore],
@@ -1241,7 +1241,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       return;
     }
     if (trackIds.length === 0) {
-      workbenchStore.setActiveTrackForActiveTask(null);
+      workbenchStore.setActiveTrackForActiveTask(null, { source: "system" });
       return;
     }
     ensureActiveTrackSelection(activeTaskId, trackIds, sessionsByTrack);
