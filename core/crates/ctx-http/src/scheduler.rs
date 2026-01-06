@@ -53,6 +53,7 @@ pub async fn session_worker(
     session: Session,
     mut rx: mpsc::Receiver<SchedulerCommand>,
 ) {
+    let mut session = session;
     let mut queue: VecDeque<QueuedMessage> = VecDeque::new();
     if let Ok(mut queued) = state
         .store
@@ -84,7 +85,14 @@ pub async fn session_worker(
     loop {
         if running.is_none() && !suspend_queue {
             if let Some(msg) = queue.pop_front() {
-                match start_turn(&state, &session, &workdir, &env_target, msg).await {
+                let session_for_turn = match state.store.get_session(session.id).await {
+                    Ok(Some(fresh)) => {
+                        session = fresh.clone();
+                        fresh
+                    }
+                    _ => session.clone(),
+                };
+                match start_turn(&state, &session_for_turn, &workdir, &env_target, msg).await {
                     Ok(turn) => {
                         state.set_running(session.id, true).await;
                         running = Some(turn);
@@ -307,6 +315,7 @@ async fn start_turn(
                 model_id: session.model_id.clone(),
                 attachments: message.attachments.clone(),
                 context_blocks: Vec::new(),
+                model_id: normalize_session_model_id(&session.model_id),
             },
             workdir.to_path_buf(),
             provider_env,
@@ -399,6 +408,20 @@ async fn start_turn(
                     let _ = store
                         .update_session_provider_session_ref(session_id, Some(ps.to_string()))
                         .await;
+                }
+                if model_id.trim().is_empty() || model_id.eq_ignore_ascii_case("default") {
+                    if let Some(current) = payload
+                        .get("models")
+                        .and_then(|m| {
+                            m.get("currentModelId")
+                                .or_else(|| m.get("current_model_id"))
+                        })
+                        .and_then(Value::as_str)
+                    {
+                        let _ = store
+                            .update_session_model(session_id, current.to_string())
+                            .await;
+                    }
                 }
             }
             if matches!(ev.event_type, SessionEventType::Done) {
@@ -1242,6 +1265,15 @@ fn model_context_window(provider_id: &str, model_id: &str) -> Option<usize> {
 fn estimate_tokens(text: &str) -> usize {
     let chars = text.chars().count();
     chars.div_ceil(4)
+}
+
+fn normalize_session_model_id(model_id: &str) -> Option<String> {
+    let trimmed = model_id.trim();
+    if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("default") {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
 }
 
 #[derive(Default)]

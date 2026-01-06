@@ -62,6 +62,7 @@ pub struct AcpSessionPool {
 #[derive(Debug, Clone)]
 struct AcpContextSession {
     acp_session_id: String,
+    model_id: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -99,6 +100,7 @@ pub struct AcpPromptRequest {
     pub env: HashMap<String, String>,
     pub event_sink: mpsc::Sender<NormalizedEvent>,
     pub cancel_rx: oneshot::Receiver<()>,
+    pub model_id: Option<String>,
 }
 
 impl AcpSessionPool {
@@ -166,6 +168,7 @@ impl AcpSessionPool {
             env,
             event_sink,
             cancel_rx,
+            model_id,
         } = request;
 
         self.ensure_process(&client, workdir.clone(), env.clone(), event_sink.clone())
@@ -207,6 +210,30 @@ impl AcpSessionPool {
                 return Err(e);
             }
         };
+
+        if let Some(desired_model_id) = normalize_session_model_id(model_id.as_deref()) {
+            let already_set = {
+                let map = self.sessions.lock().await;
+                map.get(&session_key)
+                    .and_then(|s| s.model_id.as_deref())
+                    .is_some_and(|m| m == desired_model_id)
+            };
+            if !already_set
+                && process
+                    .set_model(
+                        &acp_session_id,
+                        desired_model_id.clone(),
+                        event_sink.clone(),
+                    )
+                    .await
+                    .is_ok()
+            {
+                let mut map = self.sessions.lock().await;
+                if let Some(entry) = map.get_mut(&session_key) {
+                    entry.model_id = Some(desired_model_id);
+                }
+            }
+        }
 
         let result = process
             .prompt(
@@ -280,7 +307,14 @@ impl AcpSessionPool {
                 .cloned()
                 .context("no active ACP process")?
         };
-        process.set_model(&acp_session_id, model_id, tx).await
+        process
+            .set_model(&acp_session_id, model_id.clone(), tx)
+            .await?;
+        let mut map = self.sessions.lock().await;
+        if let Some(entry) = map.get_mut(&session_key) {
+            entry.model_id = Some(model_id);
+        }
+        Ok(())
     }
 
     pub async fn set_mode(&self, session_key: String, mode_id: String) -> Result<()> {
@@ -385,6 +419,7 @@ impl AcpSessionPool {
             session_key.to_string(),
             AcpContextSession {
                 acp_session_id: created.session_id.clone(),
+                model_id: None,
             },
         );
         Ok(created.session_id)
@@ -1337,6 +1372,15 @@ fn filter_process_env(env: HashMap<String, String>) -> HashMap<String, String> {
             )
         })
         .collect()
+}
+
+fn normalize_session_model_id(model_id: Option<&str>) -> Option<String> {
+    let trimmed = model_id?.trim();
+    if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("default") {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
 }
 
 fn build_request_permission_response(

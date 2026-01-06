@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import {
+  getProviderOptions,
   getSessionHead,
   getSessionHistory,
   idToString,
@@ -8,6 +9,7 @@ import {
   trackDiff,
   type Artifact,
   type Message,
+  type ProviderOptions,
   type Session,
   type SessionEvent,
   type SessionTurn,
@@ -16,7 +18,7 @@ import {
   type WorkspaceCatchupEvent,
 } from "../api/client";
 import type { WorkspaceCatchupEventSource } from "./workspaceCatchupStore";
-import { loadSessionHeadV1, saveSessionHeadV1 } from "./uiStateStore";
+import { loadSessionAcpMetaV1, loadSessionHeadV1, saveSessionAcpMetaV1, saveSessionHeadV1 } from "./uiStateStore";
 
 const readTunableInt = (key: string, fallback: number) => {
   try {
@@ -40,6 +42,9 @@ export type SessionSupervisorSnapshot = {
 export type SessionCacheEntry = {
   sessionId: string;
   session?: Session;
+  acpModels?: any;
+  acpModes?: any;
+  acpCurrentModelId?: string;
   turns: SessionTurn[];
   turnToolsByTurnId: Record<string, SessionTurnTool[]>;
   turnToolsLoading: string[];
@@ -65,10 +70,44 @@ type OpenOptions = {
   silent?: boolean;
 };
 
+type AcpMeta = {
+  models?: any;
+  modes?: any;
+  currentModelId?: string;
+};
+
+const readAcpCurrentModelId = (models: any): string | undefined => {
+  if (!models || typeof models !== "object") return;
+  return models.currentModelId ?? models.current_model_id ?? undefined;
+};
+
+const hasModelList = (models: any): boolean => {
+  const list =
+    models?.availableModels ??
+    models?.available_models ??
+    models?.models ??
+    [];
+  return Array.isArray(list) && list.length > 0;
+};
+
+const extractAcpMetaFromEvent = (event: SessionEvent): AcpMeta | null => {
+  if (event.event_type !== "init") return null;
+  const payload = (event as any)?.payload_json ?? {};
+  const models = payload?.models ?? undefined;
+  const modes = payload?.modes ?? undefined;
+  if (!models && !modes) return null;
+  return {
+    models,
+    modes,
+    currentModelId: readAcpCurrentModelId(models),
+  };
+};
+
 type InternalEntry = SessionCacheEntry & {
   refCount: number;
   wantDiffCount: number;
   warmUntilMs: number;
+  acpMetaUpdatedAtMs?: number;
   seqSet: Set<number>;
   turnsHydrated: boolean;
   oldestTurnSeq?: number;
@@ -111,6 +150,8 @@ export class SessionSupervisor {
   private activeTaskSessionIds: string[] = [];
   private warmSessionIds: string[] = [];
   private subscribedSessionIds: string[] = [];
+  private providerOptionsCache = new Map<string, ProviderOptions>();
+  private providerOptionsInFlight = new Map<string, Promise<ProviderOptions | undefined>>();
 
   subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener);
@@ -275,6 +316,9 @@ export class SessionSupervisor {
       sessions[id] = {
         sessionId: e.sessionId,
         session: e.session,
+        acpModels: e.acpModels,
+        acpModes: e.acpModes,
+        acpCurrentModelId: e.acpCurrentModelId,
         turns: e.turns,
         turnToolsByTurnId: e.turnToolsByTurnId,
         turnToolsLoading: [...e.turnToolsLoadingSet],
@@ -316,6 +360,9 @@ export class SessionSupervisor {
     const entry: InternalEntry = {
       sessionId,
       session: undefined,
+      acpModels: undefined,
+      acpModes: undefined,
+      acpCurrentModelId: undefined,
       turns: [],
       turnToolsByTurnId: {},
       turnToolsLoading: [],
@@ -336,6 +383,7 @@ export class SessionSupervisor {
       refCount: 0,
       wantDiffCount: 0,
       warmUntilMs: Date.now() + WARM_TTL_MS,
+      acpMetaUpdatedAtMs: undefined,
       seqSet: new Set<number>(),
       turnsHydrated: false,
       oldestTurnSeq: undefined,
@@ -356,6 +404,96 @@ export class SessionSupervisor {
     };
     this.entries.set(sessionId, entry);
     return entry;
+  }
+
+  private applyAcpMeta(entry: InternalEntry, meta: AcpMeta, opts?: { persist?: boolean }): boolean {
+    const nextModels = meta.models ?? entry.acpModels;
+    const nextModes = meta.modes ?? entry.acpModes;
+    const nextCurrent =
+      meta.currentModelId ?? readAcpCurrentModelId(nextModels) ?? entry.acpCurrentModelId;
+    const modelsChanged = JSON.stringify(nextModels ?? null) !== JSON.stringify(entry.acpModels ?? null);
+    const modesChanged = JSON.stringify(nextModes ?? null) !== JSON.stringify(entry.acpModes ?? null);
+    const currentChanged = nextCurrent !== entry.acpCurrentModelId;
+    if (!modelsChanged && !modesChanged && !currentChanged) return false;
+
+    entry.acpModels = nextModels;
+    entry.acpModes = nextModes;
+    entry.acpCurrentModelId = nextCurrent;
+    entry.acpMetaUpdatedAtMs = Date.now();
+    if (opts?.persist !== false && (nextModels || nextModes || nextCurrent)) {
+      saveSessionAcpMetaV1(entry.sessionId, {
+        models: nextModels,
+        modes: nextModes,
+        currentModelId: nextCurrent,
+      }).catch(() => {});
+    }
+    return true;
+  }
+
+  private applyAcpMetaFromEvents(entry: InternalEntry, events: SessionEvent[]): boolean {
+    for (let i = events.length - 1; i >= 0; i -= 1) {
+      const meta = extractAcpMetaFromEvent(events[i]);
+      if (meta) {
+        return this.applyAcpMeta(entry, meta);
+      }
+    }
+    return false;
+  }
+
+  private providerOptionsKey(session: Session): string {
+    return `${idToString(session.workspace_id)}:${session.provider_id}`;
+  }
+
+  private seedAcpMetaFromProviderOptions(entry: InternalEntry, opts?: ProviderOptions): boolean {
+    if (!opts?.models && !opts?.modes) return false;
+    return this.applyAcpMeta(entry, {
+      models: opts.models,
+      modes: opts.modes,
+      currentModelId: readAcpCurrentModelId(opts.models),
+    });
+  }
+
+  private async ensureProviderOptions(entry: InternalEntry) {
+    if (entry.acpModels && hasModelList(entry.acpModels)) return;
+    const session = entry.session;
+    if (!session) return;
+    const key = this.providerOptionsKey(session);
+    const cached = this.providerOptionsCache.get(key);
+    if (cached) {
+      if (this.seedAcpMetaFromProviderOptions(entry, cached)) {
+        entry.updatedAtMs = Date.now();
+        this.publish();
+      }
+      return;
+    }
+    const existing = this.providerOptionsInFlight.get(key);
+    if (existing) {
+      const opts = await existing.catch(() => undefined);
+      if (opts && this.seedAcpMetaFromProviderOptions(entry, opts)) {
+        entry.updatedAtMs = Date.now();
+        this.publish();
+      }
+      return;
+    }
+    const workspaceId = idToString(session.workspace_id);
+    if (!workspaceId) return;
+    const request = getProviderOptions(workspaceId, session.provider_id)
+      .then((opts) => {
+        this.providerOptionsCache.set(key, opts);
+        return opts;
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (this.providerOptionsInFlight.get(key) === request) {
+          this.providerOptionsInFlight.delete(key);
+        }
+      });
+    this.providerOptionsInFlight.set(key, request);
+    const opts = await request;
+    if (opts && this.seedAcpMetaFromProviderOptions(entry, opts)) {
+      entry.updatedAtMs = Date.now();
+      this.publish();
+    }
   }
 
   private async ensureLoaded(sessionId: string, opts?: OpenOptions) {
@@ -423,6 +561,22 @@ export class SessionSupervisor {
       const cached = await loadSessionHeadV1(entry.sessionId);
       if (!cached?.head) return;
       this.applyHead(entry, cached.head, { fromCache: true });
+      const cachedMeta = await loadSessionAcpMetaV1(entry.sessionId);
+      if (cachedMeta) {
+        const changed = this.applyAcpMeta(
+          entry,
+          {
+            models: cachedMeta.models,
+            modes: cachedMeta.modes,
+            currentModelId: cachedMeta.currentModelId,
+          },
+          { persist: false },
+        );
+        if (changed) {
+          entry.updatedAtMs = Date.now();
+          this.publish();
+        }
+      }
     } catch {
       // ignore cache errors
     }
@@ -449,6 +603,10 @@ export class SessionSupervisor {
     this.mergeTurns(entry, head.turns ?? []);
     this.mergeEvents(entry, head.events ?? []);
     this.mergeMessages(entry, head.messages ?? []);
+    this.applyAcpMetaFromEvents(entry, head.events ?? []);
+    if (!entry.acpModels || !hasModelList(entry.acpModels)) {
+      void this.ensureProviderOptions(entry);
+    }
     if (head.tool_summaries && head.tool_summaries.length > 0) {
       const hydrated = entry.turnToolsHydratedByTurnId;
       const nextByTurn: Record<string, SessionTurnTool[]> = {};
@@ -855,6 +1013,10 @@ export class SessionSupervisor {
           const removed = entry.events.splice(0, overflow);
           removed.forEach((e) => entry.seqSet.delete(e.seq));
         }
+        changed = true;
+      }
+      const meta = extractAcpMetaFromEvent(delta.event);
+      if (meta && this.applyAcpMeta(entry, meta)) {
         changed = true;
       }
       this.ensureTurnFromEvent(entry, delta.event);

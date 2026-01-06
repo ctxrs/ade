@@ -51,6 +51,7 @@ async fn run_and_collect(
                 model_id: "test-model".to_string(),
                 attachments: vec![],
                 context_blocks: vec![],
+                model_id: None,
             },
             workdir.to_path_buf(),
             HashMap::new(),

@@ -23,6 +23,7 @@ mod tests {
                     model_id: "fake-model".into(),
                     attachments: vec![],
                     context_blocks: vec![],
+                    model_id: None,
                 },
                 std::env::current_dir().unwrap(),
                 Default::default(),

@@ -1494,7 +1494,9 @@ export function SessionView({
       .find((e) => e.event_type === "init" && (e.payload_json?.models || e.payload_json?.modes));
   }, [eventsKey]);
 
-  const acpModels = acpSessionInfo?.payload_json?.models;
+  const acpModels = entry?.acpModels ?? acpSessionInfo?.payload_json?.models;
+  const acpCurrentModelId =
+    entry?.acpCurrentModelId ?? acpModels?.currentModelId ?? acpModels?.current_model_id;
   const modelOptions = useMemo(() => {
     const list =
       acpModels?.availableModels ??
@@ -1509,12 +1511,19 @@ export function SessionView({
       }))
       .filter((m: any) => typeof m.id === "string" && m.id.length > 0);
   }, [acpModels]);
+  const modelOptionIds = useMemo(() => new Set(modelOptions.map((m) => String(m.id))), [modelOptions]);
 
-  const currentModelId =
-    session?.model_id ??
-    acpModels?.currentModelId ??
-    acpModels?.current_model_id ??
-    "";
+  const currentModelId = useMemo(() => {
+    const sessionModelId = String(session?.model_id ?? "").trim();
+    const acpModelId = String(acpCurrentModelId ?? "").trim();
+    if (!sessionModelId || sessionModelId === "default") {
+      return acpModelId || sessionModelId;
+    }
+    if (modelOptionIds.size > 0 && !modelOptionIds.has(sessionModelId)) {
+      return acpModelId || sessionModelId;
+    }
+    return sessionModelId || acpModelId;
+  }, [acpCurrentModelId, modelOptionIds, session?.model_id]);
 
   const threadActivityCount = wbListItems.length;
 
