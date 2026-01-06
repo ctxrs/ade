@@ -48,6 +48,7 @@ async fn run_and_collect(
         .run(
             TurnInput {
                 content: prompt.to_string(),
+                model_id: "test-model".to_string(),
                 attachments: vec![],
                 context_blocks: vec![],
             },

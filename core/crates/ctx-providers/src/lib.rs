@@ -20,6 +20,7 @@ mod tests {
             .run(
                 crate::adapters::TurnInput {
                     content: "hi".into(),
+                    model_id: "fake-model".into(),
                     attachments: vec![],
                     context_blocks: vec![],
                 },

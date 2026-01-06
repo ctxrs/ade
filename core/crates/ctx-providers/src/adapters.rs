@@ -72,6 +72,7 @@ pub struct ProviderProcessInfo {
 #[derive(Debug, Clone)]
 pub struct TurnInput {
     pub content: String,
+    pub model_id: String,
     pub attachments: Vec<MessageAttachment>,
     pub context_blocks: Vec<Value>,
 }
