@@ -1282,6 +1282,8 @@ struct DiffStats {
     files: usize,
 }
 
+const MAX_PREVIEW_PATHS: usize = 5;
+
 fn count_lines(text: &str) -> usize {
     if text.is_empty() {
         0
@@ -1539,6 +1541,7 @@ fn collect_paths_from_value(value: &Value, paths: &mut Vec<String>) {
                 "filePath",
                 "filepath",
                 "target",
+                "uri",
             ] {
                 if let Some(Value::String(path)) = obj.get(key) {
                     let trimmed = path.trim();
@@ -1547,13 +1550,32 @@ fn collect_paths_from_value(value: &Value, paths: &mut Vec<String>) {
                     }
                 }
             }
-            for key in ["paths", "files", "file_paths"] {
+            for key in ["paths", "files", "file_paths", "filePaths"] {
                 if let Some(value) = obj.get(key) {
                     collect_paths_from_value(value, paths);
                 }
             }
+            if let Some(Value::Array(cmds)) = obj.get("parsed_cmd") {
+                for cmd in cmds {
+                    if let Some(path) = cmd.get("path") {
+                        collect_paths_from_value(path, paths);
+                    }
+                }
+            }
         }
         _ => {}
+    }
+}
+
+fn collect_paths_from_changes(value: &Value, paths: &mut Vec<String>) {
+    let Some(changes) = value.as_object() else {
+        return;
+    };
+    for (path, _) in changes {
+        let trimmed = path.trim();
+        if !trimmed.is_empty() {
+            paths.push(trimmed.to_string());
+        }
     }
 }
 
@@ -1636,6 +1658,7 @@ fn tool_input_preview(
             "paths",
             "files",
             "file_paths",
+            "filePaths",
             "glob",
             "parsed_cmd",
             "url",
@@ -1643,9 +1666,10 @@ fn tool_input_preview(
             "href",
             "method",
             "cwd",
+            "root",
         ] {
             if let Some(value) = obj.get(key) {
-                if matches!(key, "paths" | "files" | "file_paths") {
+                if matches!(key, "paths" | "files" | "file_paths" | "filePaths") {
                     let mut paths = Vec::new();
                     collect_paths_from_value(value, &mut paths);
                     dedupe_paths(&mut paths);
@@ -1667,10 +1691,24 @@ fn tool_input_preview(
     let mut paths = Vec::new();
     if let Some(input) = input {
         collect_paths_from_value(input, &mut paths);
+        if let Some(changes) = input.get("changes") {
+            collect_paths_from_changes(changes, &mut paths);
+        }
     }
     paths.extend(extract_paths_from_update(update));
+    if let Some(changes) = update.get("changes") {
+        collect_paths_from_changes(changes, &mut paths);
+    }
     dedupe_paths(&mut paths);
     if !paths.is_empty() {
+        let total_paths = paths.len();
+        if total_paths > MAX_PREVIEW_PATHS {
+            paths.truncate(MAX_PREVIEW_PATHS);
+            out.insert(
+                "paths_total".to_string(),
+                Value::Number(serde_json::Number::from(total_paths as u64)),
+            );
+        }
         if !out.contains_key("path")
             && !out.contains_key("file")
             && !out.contains_key("filename")
@@ -1707,7 +1745,10 @@ fn tool_input_preview(
                     .and_then(diff_stats_from_changes)
             })
             .or_else(|| diff_stats_from_content_blocks(&content_blocks));
-        if let Some(stats) = stats {
+        if let Some(mut stats) = stats {
+            if stats.files == 0 && !paths.is_empty() {
+                stats.files = paths.len();
+            }
             out.insert(
                 "diff_stats".to_string(),
                 json!({

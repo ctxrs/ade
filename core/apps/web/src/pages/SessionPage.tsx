@@ -466,8 +466,8 @@ function toolKindIcon(kind: string): string {
   const k = String(kind ?? "").trim().toLowerCase();
   if (k === "execute") return "$";
   if (k === "read" || k === "read_file") return "R";
-  if (k === "search") return "S";
-  if (k === "write" || k === "edit") return "W";
+  if (k === "search" || k === "list" || k === "list_files") return "S";
+  if (k === "write" || k === "edit" || k === "apply_patch") return "W";
   return "·";
 }
 
@@ -2680,7 +2680,11 @@ function WorkbenchToolRow({
       const p = pathFromLoc ?? summary ?? titleRest;
       return p ? makeParts("Read", shortPath(p)) : makeParts("Read");
     }
-    if (kind === "write" || kind === "edit") {
+    if (kind === "list" || kind === "list_files") {
+      const p = summary || pathFromLoc || titleRest;
+      return p ? makeParts("Explored", shortPath(p)) : makeParts("Explored");
+    }
+    if (kind === "write" || kind === "edit" || kind === "apply_patch") {
       const p = summary || pathFromLoc || titleRest;
       const verb = kind === "write" ? "Wrote" : "Edited";
       return p ? makeParts(verb, shortPath(p)) : makeParts(verb);
@@ -4525,9 +4529,10 @@ function humanToolKind(kind: string): string {
   const k = (kind || "").toLowerCase();
   if (k === "execute") return "Run Command";
   if (k === "search") return "Search";
-  if (k === "read") return "Read File";
-  if (k === "edit" || k === "write") return "Edit File";
-  if (k === "fetch") return "Fetch";
+  if (k === "read" || k === "read_file") return "Read File";
+  if (k === "edit" || k === "write" || k === "apply_patch") return "Edit File";
+  if (k === "list" || k === "list_files") return "List Files";
+  if (k === "fetch" || k === "http" || k === "curl") return "Fetch";
   if (k === "think") return "Think";
   if (k === "error") return "Error";
   return kind || "Tool";
@@ -4547,49 +4552,78 @@ function formatToolInput(toolKind: string, input: any): string {
   return JSON.stringify(input, null, 2);
 }
 
-function firstString(value: unknown): string {
-  if (!Array.isArray(value)) return "";
-  for (const item of value) {
-    if (typeof item === "string" && item.trim()) return item;
-  }
-  return "";
-}
+type ToolDiffStats = {
+  added?: number;
+  removed?: number;
+  files?: number;
+};
 
-function extractPrimaryPath(input: any): string {
-  const direct =
-    input?.path ??
-    input?.file ??
-    input?.filename ??
-    input?.file_path ??
-    input?.filePath ??
-    input?.filepath ??
-    input?.target;
-  if (direct) return String(direct);
-  return (
-    firstString(input?.paths) ||
-    firstString(input?.files) ||
-    firstString(input?.file_paths) ||
-    ""
-  );
-}
-
-function extractDiffStats(input: any): { added: number; removed: number } | null {
-  const stats =
-    input?.diff_stats ??
-    input?.diffStats ??
-    input?.edit_stats ??
-    input?.editStats ??
-    null;
-  if (!stats || typeof stats !== "object") return null;
-  const addedRaw = (stats as any).added ?? (stats as any).additions ?? (stats as any).inserted;
-  const removedRaw = (stats as any).removed ?? (stats as any).deletions ?? (stats as any).deleted;
-  const added = Number(addedRaw);
-  const removed = Number(removedRaw);
-  if (!Number.isFinite(added) && !Number.isFinite(removed)) return null;
+function extractToolDiffStats(input: any): ToolDiffStats | null {
+  const raw = input?.diff_stats;
+  if (!raw || typeof raw !== "object") return null;
+  const added = Number((raw as any).added);
+  const removed = Number((raw as any).removed);
+  const files = Number((raw as any).files);
+  const hasAny =
+    Number.isFinite(added) || Number.isFinite(removed) || Number.isFinite(files);
+  if (!hasAny) return null;
   return {
-    added: Number.isFinite(added) ? added : 0,
-    removed: Number.isFinite(removed) ? removed : 0,
+    added: Number.isFinite(added) ? added : undefined,
+    removed: Number.isFinite(removed) ? removed : undefined,
+    files: Number.isFinite(files) ? files : undefined,
   };
+}
+
+function formatToolDiffStats(input: any): string {
+  const stats = extractToolDiffStats(input);
+  if (!stats) return "";
+  const parts: string[] = [];
+  if (stats.added && stats.added > 0) parts.push(`+${stats.added}`);
+  if (stats.removed && stats.removed > 0) parts.push(`-${stats.removed}`);
+  if (!parts.length && stats.files && stats.files > 0) {
+    parts.push(`${stats.files} files`);
+  }
+  return parts.length ? `(${parts.join(" ")})` : "";
+}
+
+function extractToolPaths(input: any): { paths: string[]; total?: number } {
+  const paths: string[] = [];
+  const push = (value: unknown) => {
+    if (typeof value !== "string") return;
+    const trimmed = value.trim();
+    if (trimmed) paths.push(trimmed);
+  };
+  push(input?.path);
+  push(input?.file);
+  push(input?.filename);
+  push(input?.file_path);
+  push(input?.filePath);
+  push(input?.filepath);
+  push(input?.target);
+  if (Array.isArray(input?.paths)) input.paths.forEach(push);
+  if (Array.isArray(input?.files)) input.files.forEach(push);
+  if (Array.isArray(input?.file_paths)) input.file_paths.forEach(push);
+  if (Array.isArray(input?.filePaths)) input.filePaths.forEach(push);
+  if (Array.isArray(input?.parsed_cmd)) {
+    input.parsed_cmd.forEach((cmd: any) => push(cmd?.path));
+  }
+  const seen = new Set<string>();
+  const unique = paths.filter((p) => {
+    if (seen.has(p)) return false;
+    seen.add(p);
+    return true;
+  });
+  const total =
+    typeof input?.paths_total === "number" ? input.paths_total : unique.length;
+  return { paths: unique, total };
+}
+
+function formatToolPathSummary(input: any): string {
+  const { paths, total } = extractToolPaths(input);
+  if (!paths.length) return "";
+  const more = Math.max(0, (total ?? paths.length) - 1);
+  const head = truncateMiddle(paths[0], 120);
+  return more > 0 ? `${head} +${more} more` : head;
 }
 
 function toolSummaryLine(toolKind: string, input: any): string {
@@ -4600,30 +4634,28 @@ function toolSummaryLine(toolKind: string, input: any): string {
   }
   if (k === "search") {
     const q = input?.query ?? input?.pattern ?? input?.regex ?? input?.text;
-    return q ? truncateMiddle(String(q), 120) : "";
+    const path = formatToolPathSummary(input);
+    const query = q ? truncateMiddle(String(q), 120) : "";
+    if (query && path) return truncateMiddle(`${query} in ${path}`, 120);
+    return query || path;
   }
-  if (k === "read_file" || k === "read") {
-    const path = extractPrimaryPath(input);
-    return path ? truncateMiddle(String(path), 120) : "";
+  if (k === "list" || k === "list_files") {
+    return formatToolPathSummary(input);
   }
-  if (k === "edit" || k === "write") {
-    const path = extractPrimaryPath(input);
-    const stats = extractDiffStats(input);
-    const parts: string[] = [];
-    if (stats?.added) parts.push(`+${stats.added}`);
-    if (stats?.removed) parts.push(`-${stats.removed}`);
-    const delta = parts.length > 0 ? `(${parts.join("/")})` : "";
-    const base = path ? truncateMiddle(String(path), 120) : "";
-    if (!base) return delta;
-    return delta ? `${base} ${delta}` : base;
+  if (k === "read" || k === "read_file") {
+    return formatToolPathSummary(input);
   }
-  if (k === "fetch" || k === "http") {
-    const method = String(input?.method ?? "").toUpperCase();
+  if (k === "edit" || k === "write" || k === "apply_patch") {
+    const path = formatToolPathSummary(input);
+    const stats = formatToolDiffStats(input);
+    if (path && stats) return `${path} ${stats}`;
+    return path || stats;
+  }
+  if (k === "fetch" || k === "http" || k === "curl") {
+    const method = String(input?.method ?? "GET").trim().toUpperCase();
     const url = input?.url ?? input?.uri ?? input?.href;
-    if (!url) return "";
-    const base = truncateMiddle(String(url), 120);
-    if (method && method !== "GET") return `${method} ${base}`;
-    return base;
+    if (url) return truncateMiddle(`${method} ${String(url)}`, 120);
+    return method;
   }
   return "";
 }

@@ -4424,11 +4424,29 @@ fn tool_input_preview_from_value(input: Option<&Value>) -> Option<Value> {
         "text",
         "path",
         "file",
+        "filename",
+        "file_path",
+        "filePath",
+        "filepath",
+        "paths",
+        "paths_total",
+        "files",
+        "file_paths",
+        "filePaths",
+        "target",
         "glob",
         "parsed_cmd",
+        "cwd",
+        "root",
+        "url",
+        "uri",
+        "href",
+        "method",
+        "regex",
+        "diff_stats",
     ] {
         if let Some(value) = obj.get(key) {
-            if value.is_string() || value.is_array() || value.is_object() {
+            if value.is_string() || value.is_number() || value.is_array() || value.is_object() {
                 out.insert(key.to_string(), value.clone());
             }
         }

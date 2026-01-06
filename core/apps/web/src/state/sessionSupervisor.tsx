@@ -1318,8 +1318,10 @@ const TOOL_INPUT_PREVIEW_KEYS = [
   "filepath",
   "target",
   "paths",
+  "paths_total",
   "files",
   "file_paths",
+  "filePaths",
   "glob",
   "parsed_cmd",
   "diff_stats",
@@ -1328,6 +1330,7 @@ const TOOL_INPUT_PREVIEW_KEYS = [
   "href",
   "method",
   "cwd",
+  "root",
 ];
 
 const toolInputPreview = (input: unknown): Record<string, unknown> | null => {
