@@ -156,7 +156,6 @@ vi.mock("../workbench/store", () => ({
   useWorkbenchStore: () => ({
     focusNewTask: vi.fn(),
     focusTask: vi.fn(),
-    bumpNavToken: vi.fn(() => 0),
     setActiveTrackForActiveTask: vi.fn(),
     setScrollState: vi.fn(),
     flushDraft: vi.fn(),

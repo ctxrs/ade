@@ -705,12 +705,12 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const worktreeFetchRef = useRef<Map<string, Promise<Worktree | null>>>(new Map());
 
   const focusNewTask = useCallback(() => {
-    workbenchStore.focusNewTask({ source: "user" });
+    workbenchStore.focusNewTask();
   }, [workbenchStore]);
 
   const focusTask = useCallback(
     (taskId: string, trackId?: string | null, sessionId?: string | null) => {
-      workbenchStore.focusTask(taskId, trackId, sessionId, { source: "user" });
+      workbenchStore.focusTask(taskId, trackId, sessionId);
     },
     [workbenchStore],
   );
@@ -1417,15 +1417,13 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
 
   const onToggleArchive = useCallback(
     async (taskId: string, nextArchived: boolean) => {
-      const shouldFocus = nextArchived && activeTaskId === taskId;
-      const navToken = shouldFocus ? workbenchStore.bumpNavToken() : null;
       const updated = nextArchived ? await archiveTask(taskId) : await unarchiveTask(taskId);
       workspaceCatchupStore.applyTaskUpdate(updated);
-      if (shouldFocus && navToken !== null) {
-        workbenchStore.focusNewTask({ navToken, source: "system" });
+      if (nextArchived && activeTaskId === taskId) {
+        focusNewTask();
       }
     },
-    [activeTaskId, workbenchStore, workspaceCatchupStore],
+    [activeTaskId, focusNewTask, workspaceCatchupStore],
   );
 
   const openTaskMenu = useCallback((taskId: string, opts: { triggerEl: HTMLElement } | { x: number; y: number }) => {
@@ -1606,17 +1604,15 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       const title = String(summary?.task.title ?? "this task");
       if (!window.confirm(`Delete “${title}”? This deletes all sessions and messages in the task.`)) return;
       try {
-        const shouldFocus = activeTaskId === taskId;
-        const navToken = shouldFocus ? workbenchStore.bumpNavToken() : null;
         await deleteTask(taskId);
-        if (shouldFocus && navToken !== null) {
-          workbenchStore.focusNewTask({ navToken, source: "system" });
+        if (activeTaskId === taskId) {
+          focusNewTask();
         }
       } catch (e: any) {
         window.alert(e?.message ?? "Failed to delete task.");
       }
     },
-    [activeTaskId, workbenchStore, tasksById],
+    [activeTaskId, focusNewTask, tasksById],
   );
 
   const openConvoMenu = useCallback((triggerEl: HTMLElement) => {
@@ -2310,7 +2306,6 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     }
     setStartBusy(true);
     setStartError(null);
-    const navToken = workbenchStore.bumpNavToken();
 
     try {
       const title = deriveTaskTitle(prompt);
@@ -2343,7 +2338,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
         if (!firstTrackId) firstTrackId = trackId;
         if (!firstSessionId) {
           firstSessionId = sessionId;
-          workbenchStore.focusTask(taskId, trackId, sessionId, { navToken, source: "system" });
+          focusTask(taskId, trackId, sessionId);
         }
         supervisor.refreshSession(sessionId, { watchDiff: true });
         await postMessage(sessionId, prompt, "immediate", draftAttachments);
@@ -3267,7 +3262,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
                           key={trid}
                           type="button"
                           className={`wb-trackcard ${selected ? "wb-trackcard-active" : ""}`}
-                          onClick={() => workbenchStore.setActiveTrackForActiveTask(trid, { source: "user" })}
+                          onClick={() => workbenchStore.setActiveTrackForActiveTask(trid)}
                         >
                           <div className="wb-trackcard-title">{model}</div>
                           <div className="wb-trackcard-sub">{status}</div>
