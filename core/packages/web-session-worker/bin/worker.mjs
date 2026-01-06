@@ -326,7 +326,7 @@ async function startBrowser() {
     ],
     env: { ...process.env, DISPLAY },
   });
-  context = await browser.newContext({ viewport: null });
+  context = await browser.newContext({ viewport: null, ignoreHTTPSErrors: true });
   page = await context.newPage();
   page.on("console", (msg) => console.log(`[console:${msg.type()}] ${msg.text()}`));
   page.on("pageerror", (err) => console.log(`[pageerror] ${err.message}`));
