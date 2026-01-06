@@ -4024,6 +4024,23 @@ button.linklike:hover {
   line-height: 1.55;
 }
 
+.wb-turn-header-content a,
+.wb-tool-markdown a,
+.wb-assistant-body a,
+.tool-markdown a,
+.msg a {
+  color: inherit;
+  text-decoration-color: currentColor;
+}
+
+.wb-turn-header-content a:visited,
+.wb-tool-markdown a:visited,
+.wb-assistant-body a:visited,
+.tool-markdown a:visited,
+.msg a:visited {
+  color: inherit;
+}
+
 .wb-turn-header-content :where(p, ul, ol, pre, blockquote, table, hr),
 .wb-tool-markdown :where(p, ul, ol, pre, blockquote, table, hr),
 .wb-assistant-body :where(p, ul, ol, pre, blockquote, table, hr) {
