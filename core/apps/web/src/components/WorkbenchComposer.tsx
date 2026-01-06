@@ -448,13 +448,15 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
     const percent = Math.max(0, Math.min(100, Math.round(fraction * 100)));
     const usedLabel = formatTokenCount(clampedUsed);
     const windowLabel = formatTokenCount(windowTokens);
-    const title = `${clampedUsed.toLocaleString()} / ${windowTokens.toLocaleString()} tokens (${percent}% used)`;
+    const summary = `${percent}% · ${usedLabel}/${windowLabel}`;
+    const title = `Context Window: ${summary}`;
 
     return {
       percent,
       usedLabel,
       windowLabel,
       title,
+      summary,
     };
   }, [contextWindow]);
 
@@ -1503,6 +1505,15 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
       ref={rootRef}
       className={variant === "newSession" ? "wb-composer-card wb-new-composer-card" : "wb-composer wb-active-composer"}
     >
+      {contextWindowDisplay && (
+        <div
+          className="wb-context-window"
+          title={contextWindowDisplay.title}
+          aria-label={contextWindowDisplay.title}
+        >
+          {contextWindowDisplay.summary}
+        </div>
+      )}
       {attachments.length > 0 && (
         <div className="wb-composer-attachments">
           {attachments.map((a, idx) => {
@@ -1687,26 +1698,6 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
             </button>
             {openMenu === "env" && envMenu}
           </div>
-
-          {contextWindowDisplay && (
-            <div
-              className="wb-context-window"
-              title={contextWindowDisplay.title}
-              aria-label={contextWindowDisplay.title}
-            >
-              <span className="wb-context-label">Context</span>
-              <div className="wb-context-bar" aria-hidden="true">
-                <div
-                  className="wb-context-fill"
-                  style={{ width: `${contextWindowDisplay.percent}%` }}
-                />
-              </div>
-              <span className="wb-context-text">{contextWindowDisplay.percent}%</span>
-              <span className="wb-context-sub">
-                {contextWindowDisplay.usedLabel}/{contextWindowDisplay.windowLabel}
-              </span>
-            </div>
-          )}
         </div>
 
         <div className="wb-action-row">
