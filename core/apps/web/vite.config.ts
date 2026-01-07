@@ -81,6 +81,7 @@ export default defineConfig(({ command }) => {
           ws: true,
           xfwd: true,
         },
+        // Web sessions are served by the daemon; proxy for dev server parity.
         "/sessions": {
           target: daemonUrl,
           changeOrigin: true,
