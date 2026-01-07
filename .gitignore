@@ -62,3 +62,6 @@ supabase/supabase/
 
 # Harness junk
 .kiro/
+
+# Cloudflare Wrangler
+.wrangler/

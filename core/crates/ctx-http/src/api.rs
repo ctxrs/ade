@@ -35,7 +35,10 @@ use url::Url;
 use ctx_core::ids::*;
 use ctx_core::models::*;
 use ctx_fs::git::{assert_git_repo, list_tracked_files, list_untracked_files, rev_parse_head};
-use ctx_fs::worktrees::{create_worktree, diff_worktree_summary, managed_worktree_path};
+use ctx_fs::worktrees::{
+    create_worktree, diff_worktree_summary, ensure_worktree_attached, managed_worktree_path,
+    prune_worktrees, remove_worktree,
+};
 use ctx_store::store::MobileDeviceUpsert;
 
 use crate::attachments;
@@ -6860,11 +6863,104 @@ async fn delete_task(
     Ok(StatusCode::NO_CONTENT)
 }
 
+fn managed_worktree_root(
+    state: &AppState,
+    workspace: &Workspace,
+    worktree: &Worktree,
+) -> Option<PathBuf> {
+    let root = PathBuf::from(&worktree.root_path);
+    let expected = managed_worktree_path(&state.data_root, workspace.id, worktree.id);
+    if root == expected {
+        Some(root)
+    } else {
+        None
+    }
+}
+
 async fn archive_task(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<Json<Task>, StatusCode> {
     let task_id = TaskId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
+    let task = state
+        .store
+        .get_task(task_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    let workspace = state
+        .store
+        .get_workspace(task.workspace_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    let tracks = state
+        .store
+        .list_tracks_for_task(task_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let mut seen = HashSet::new();
+    let mut worktrees = Vec::new();
+    for track in tracks {
+        if !seen.insert(track.worktree_id) {
+            continue;
+        }
+        let worktree = state
+            .store
+            .get_worktree(track.worktree_id)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+            .ok_or(StatusCode::NOT_FOUND)?;
+        worktrees.push(worktree);
+    }
+
+    let mut errors: Vec<anyhow::Error> = Vec::new();
+    let mut needs_prune = false;
+    for worktree in &worktrees {
+        let Some(root) = managed_worktree_root(&state, &workspace, worktree) else {
+            continue;
+        };
+        needs_prune = true;
+        if tokio::fs::metadata(&root).await.is_ok() {
+            if let Err(err) = remove_worktree(&workspace.root_path, &root).await {
+                tracing::warn!(
+                    task_id = %task_id.0,
+                    worktree_id = %worktree.id.0,
+                    "failed to remove worktree: {err:#}"
+                );
+                errors.push(err);
+                continue;
+            }
+            // Defensive: ensure the directory is actually gone even if `git worktree remove`
+            // succeeds but leaves the directory behind.
+            if tokio::fs::metadata(&root).await.is_ok() {
+                if let Err(err) = tokio::fs::remove_dir_all(&root)
+                    .await
+                    .with_context(|| format!("removing worktree dir at {}", root.display()))
+                {
+                    tracing::warn!(
+                        task_id = %task_id.0,
+                        worktree_id = %worktree.id.0,
+                        "failed to remove worktree dir: {err:#}"
+                    );
+                    errors.push(err);
+                }
+            }
+        }
+    }
+    if needs_prune {
+        if let Err(err) = prune_worktrees(&workspace.root_path).await {
+            tracing::warn!(
+                task_id = %task_id.0,
+                "failed to prune worktrees: {err:#}"
+            );
+            errors.push(err);
+        }
+    }
+    if !errors.is_empty() {
+        return Err(StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
     let updated = state
         .store
         .archive_task(task_id)
@@ -6893,6 +6989,82 @@ async fn unarchive_task(
     Path(id): Path<String>,
 ) -> Result<Json<Task>, StatusCode> {
     let task_id = TaskId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
+    let task = state
+        .store
+        .get_task(task_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    let workspace = state
+        .store
+        .get_workspace(task.workspace_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    let tracks = state
+        .store
+        .list_tracks_for_task(task_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let mut seen = HashSet::new();
+    let mut managed_worktrees: Vec<(Worktree, PathBuf)> = Vec::new();
+    let mut managed_tracks: Vec<(Track, Worktree)> = Vec::new();
+    for track in tracks {
+        let worktree = state
+            .store
+            .get_worktree(track.worktree_id)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+            .ok_or(StatusCode::NOT_FOUND)?;
+        if let Some(root) = managed_worktree_root(&state, &workspace, &worktree) {
+            if seen.insert(worktree.id) {
+                managed_worktrees.push((worktree.clone(), root));
+            }
+            managed_tracks.push((track, worktree));
+        }
+    }
+
+    for (worktree, root) in &managed_worktrees {
+        let branch = worktree.git_branch.as_deref().unwrap_or_default();
+        if let Err(err) = ensure_worktree_attached(
+            &workspace.root_path,
+            root,
+            &worktree.base_commit_sha,
+            branch,
+        )
+        .await
+        {
+            tracing::warn!(
+                task_id = %task_id.0,
+                worktree_id = %worktree.id.0,
+                "failed to recreate worktree: {err:#}"
+            );
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    for (track, worktree) in &managed_tracks {
+        if let Err(e) =
+            attachments::ensure_track_attachment_mounts(&state, &workspace, track, worktree, false)
+                .await
+        {
+            tracing::warn!(
+                task_id = %task_id.0,
+                track_id = %track.id.0,
+                "attachment mounts failed: {e:?}"
+            );
+        }
+        if let Err(e) = worktree_bootstrap::spawn_worktree_bootstrap(
+            Arc::clone(&state),
+            workspace.clone(),
+            worktree.clone(),
+        )
+        .await
+        {
+            tracing::warn!(task_id = %task_id.0, "worktree bootstrap failed: {e:?}");
+        }
+    }
+
     let updated = state
         .store
         .unarchive_task(task_id)
