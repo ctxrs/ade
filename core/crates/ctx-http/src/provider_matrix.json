@@ -89,6 +89,12 @@
           "status": "supported",
           "context_min": "0.1.0",
           "notes": "Linux x86_64 only"
+        },
+        {
+          "version": "0.7.4-ctx.9",
+          "status": "blocked",
+          "context_min": "0.1.0",
+          "notes": "Rolled back to ctx.8 (Linux x86_64 only)"
         }
       ]
     },

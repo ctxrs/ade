@@ -353,6 +353,8 @@ impl ProviderAdapter for Tier1AcpAdapter {
 }
 
 fn build_acp_client_config(env: &HashMap<String, String>) -> AcpClientConfig {
+    const DEFAULT_CTX_MCP_TOOL_TIMEOUT_SECS: u64 = 30 * 60;
+
     let mut mcp_env = HashMap::new();
     if let Some(url) = env.get("CTX_DAEMON_URL") {
         mcp_env.insert("CTX_DAEMON_URL".to_string(), url.clone());
@@ -375,11 +377,19 @@ fn build_acp_client_config(env: &HashMap<String, String>) -> AcpClientConfig {
         .unwrap_or(true);
 
     let mcp_servers = if mcp_enabled {
+        let tool_timeout_sec = env
+            .get("CTX_MCP_TOOL_TIMEOUT_SEC")
+            .and_then(|value| value.parse::<u64>().ok())
+            .filter(|value| *value > 0)
+            .unwrap_or(DEFAULT_CTX_MCP_TOOL_TIMEOUT_SECS);
         vec![AcpMcpServer {
             name: "ctx".to_string(),
             command: mcp_command,
             args: vec!["--stdio".to_string()],
             env: mcp_env,
+            meta: Some(json!({
+                "tool_timeout_sec": tool_timeout_sec,
+            })),
         }]
     } else {
         vec![]

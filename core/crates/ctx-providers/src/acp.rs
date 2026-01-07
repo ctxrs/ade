@@ -27,6 +27,7 @@ pub struct AcpMcpServer {
     pub command: String,
     pub args: Vec<String>,
     pub env: HashMap<String, String>,
+    pub meta: Option<Value>,
 }
 
 #[derive(Debug, Clone)]
@@ -731,12 +732,18 @@ impl AcpProcess {
             .mcp_servers
             .iter()
             .map(|s| {
-                json!({
+                let mut server = json!({
                     "name": s.name,
                     "command": s.command,
                     "args": s.args,
                     "env": s.env.iter().map(|(name, value)| json!({"name": name, "value": value})).collect::<Vec<_>>(),
-                })
+                });
+                if let Some(meta) = &s.meta {
+                    if let Some(obj) = server.as_object_mut() {
+                        obj.insert("_meta".to_string(), meta.clone());
+                    }
+                }
+                server
             })
             .collect::<Vec<_>>();
 
