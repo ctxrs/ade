@@ -106,6 +106,67 @@ fn redact_json_value(value: serde_json::Value) -> serde_json::Value {
     }
 }
 
+fn header_first_value(headers: &HeaderMap, name: &str) -> Option<String> {
+    let value = headers.get(name)?.to_str().ok()?;
+    Some(value.split(',').next()?.trim().to_string())
+}
+
+fn parse_forwarded_header(value: &str) -> (Option<String>, Option<String>) {
+    let mut proto = None;
+    let mut host = None;
+    let first = value.split(',').next().unwrap_or(value);
+    for part in first.split(';') {
+        let part = part.trim();
+        if let Some(raw) = part.strip_prefix("proto=") {
+            let clean = raw.trim().trim_matches('"').trim_matches('\'');
+            if !clean.is_empty() {
+                proto = Some(clean.to_string());
+            }
+        } else if let Some(raw) = part.strip_prefix("host=") {
+            let clean = raw.trim().trim_matches('"').trim_matches('\'');
+            if !clean.is_empty() {
+                host = Some(clean.to_string());
+            }
+        }
+    }
+    (proto, host)
+}
+
+fn resolve_request_base_url(headers: &HeaderMap, fallback: &str) -> String {
+    let fallback = fallback.trim_end_matches('/');
+    let fallback_url = Url::parse(fallback).ok();
+    let fallback_scheme = fallback_url
+        .as_ref()
+        .map(|url| url.scheme().to_string())
+        .unwrap_or_else(|| "http".to_string());
+    let fallback_host = fallback_url.as_ref().and_then(|url| {
+        let host = url.host_str()?;
+        Some(match url.port() {
+            Some(port) => format!("{host}:{port}"),
+            None => host.to_string(),
+        })
+    });
+
+    let (forwarded_proto, forwarded_host) = headers
+        .get(header::FORWARDED)
+        .and_then(|value| value.to_str().ok())
+        .map(parse_forwarded_header)
+        .unwrap_or((None, None));
+
+    let proto = forwarded_proto
+        .or_else(|| header_first_value(headers, "x-forwarded-proto"))
+        .unwrap_or(fallback_scheme);
+    let host = forwarded_host
+        .or_else(|| header_first_value(headers, "x-forwarded-host"))
+        .or_else(|| header_first_value(headers, header::HOST.as_str()))
+        .or(fallback_host);
+
+    match host {
+        Some(host) => format!("{}://{}", proto, host.trim_end_matches('/')),
+        None => fallback.to_string(),
+    }
+}
+
 pub fn router(state: Arc<AppState>) -> axum::Router {
     let auth_state = state.clone();
     let perf_state = state.clone();
@@ -6041,6 +6102,7 @@ struct WebSessionCreatePayload {
 
 async fn create_web_session(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Json(payload): Json<WebSessionCreatePayload>,
 ) -> Result<Json<WebSessionInfo>, (StatusCode, Json<ApiErrorResp>)> {
     if payload.url.trim().is_empty() {
@@ -6114,22 +6176,26 @@ async fn create_web_session(
     })?;
 
     let mut info = handle.snapshot().await;
-    info.stream_url = Some(format!("{}{}", state.daemon_url, info.stream_path));
+    let base_url = resolve_request_base_url(&headers, &state.daemon_url);
+    info.stream_url = Some(format!("{}{}", base_url, info.stream_path));
     Ok(Json(info))
 }
 
 async fn list_web_sessions(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
 ) -> Result<Json<Vec<WebSessionInfo>>, StatusCode> {
     let mut sessions = state.web_sessions.list().await;
+    let base_url = resolve_request_base_url(&headers, &state.daemon_url);
     for session in sessions.iter_mut() {
-        session.stream_url = Some(format!("{}{}", state.daemon_url, session.stream_path));
+        session.stream_url = Some(format!("{}{}", base_url, session.stream_path));
     }
     Ok(Json(sessions))
 }
 
 async fn get_web_session(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Json<WebSessionInfo>, StatusCode> {
     let handle = state
@@ -6138,7 +6204,8 @@ async fn get_web_session(
         .await
         .ok_or(StatusCode::NOT_FOUND)?;
     let mut info = handle.snapshot().await;
-    info.stream_url = Some(format!("{}{}", state.daemon_url, info.stream_path));
+    let base_url = resolve_request_base_url(&headers, &state.daemon_url);
+    info.stream_url = Some(format!("{}{}", base_url, info.stream_path));
     Ok(Json(info))
 }
 
