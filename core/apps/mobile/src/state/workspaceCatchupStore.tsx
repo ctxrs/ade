@@ -145,6 +145,7 @@ export class WorkspaceCatchupStoreImpl implements WorkspaceCatchupEventSource {
   getSnapshot = (): WorkspaceCatchupState => this.snapshot;
 
   init = () => {
+    this.destroyed = false;
     this.ensureActivePage(true).catch(() => {});
     if (this.streamEnabled) {
       this.connectStream().catch(() => {});
