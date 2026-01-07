@@ -37,7 +37,8 @@ fn parse_bootstrap_status(raw: Option<String>) -> Option<WorktreeBootstrapStatus
 }
 
 fn parse_optional_session_id(raw: Option<String>) -> Option<SessionId> {
-    raw.and_then(|value| uuid::Uuid::parse_str(&value).ok()).map(SessionId)
+    raw.and_then(|value| uuid::Uuid::parse_str(&value).ok())
+        .map(SessionId)
 }
 
 pub struct WorktreeBootstrapResultUpdate {
@@ -1127,6 +1128,20 @@ impl Store {
         relationship: Option<String>,
         provider_session_ref: Option<String>,
     ) -> Result<Session> {
+        let relationship = relationship.and_then(|value| {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        });
+        if parent_session_id.is_some() && relationship.is_none() {
+            anyhow::bail!("parent_session_id requires relationship");
+        }
+        if parent_session_id.is_none() && relationship.is_some() {
+            anyhow::bail!("relationship requires parent_session_id");
+        }
         let now = Utc::now();
         let session = Session {
             id: SessionId::new(),
@@ -2494,11 +2509,6 @@ impl Store {
                 task_id: TaskId(uuid::Uuid::parse_str(&task_id)?),
                 workspace_id: WorkspaceId(uuid::Uuid::parse_str(&ws_id)?),
                 worktree_id: WorktreeId(uuid::Uuid::parse_str(&wt_id)?),
-                parent_session_id: r
-                    .try_get::<Option<String>, _>("parent_session_id")?
-                    .and_then(|value| uuid::Uuid::parse_str(&value).ok())
-                    .map(SessionId),
-                relationship: r.try_get("relationship")?,
                 provider_id: r.try_get("provider_id")?,
                 model_id: r.try_get("model_id")?,
                 title: r.try_get("title")?,

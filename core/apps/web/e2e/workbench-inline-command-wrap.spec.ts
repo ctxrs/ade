@@ -125,7 +125,9 @@ test("workbench: fenced code blocks stay within thread width", async ({ page, re
   }
 
   const scrollMetrics = await page.evaluate(() => {
-    const scroller = document.querySelector(".wb-assistant-entry .codeblock-body > div") as HTMLElement | null;
+    const scroller = document.querySelector(
+      ".wb-assistant-entry .codeblock-body > pre, .wb-assistant-entry .codeblock-body > div",
+    ) as HTMLElement | null;
     if (!scroller) return null;
     return {
       scrollWidth: scroller.scrollWidth,

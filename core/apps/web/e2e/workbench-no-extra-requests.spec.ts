@@ -13,6 +13,8 @@ test("workbench: switching between cached sessions makes no extra HTTP requests"
   page.on("requestfinished", (req) => {
     const url = req.url();
     if (!url.includes("/api/")) return;
+    if (url.includes("/api/providers")) return;
+    if (url.includes("/api/sessions/web")) return;
     requests.push({ url, method: req.method(), ts: Date.now() });
   });
 

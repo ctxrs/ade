@@ -7449,9 +7449,20 @@ async fn create_session_for_track(
         .map(|v| v.to_string());
 
     let parent_session_id = match req.parent_session_id {
-        Some(id) => Some(SessionId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?)),
+        Some(id) => Some(SessionId(
+            uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?,
+        )),
         None => None,
     };
+    let relationship = req
+        .relationship
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_string());
+    if parent_session_id.is_some() != relationship.is_some() {
+        return Err(StatusCode::BAD_REQUEST);
+    }
 
     let session = state
         .store
@@ -7461,7 +7472,7 @@ async fn create_session_for_track(
             req.model_id,
             "implementer".into(),
             parent_session_id,
-            req.relationship,
+            relationship,
             None,
         )
         .await
