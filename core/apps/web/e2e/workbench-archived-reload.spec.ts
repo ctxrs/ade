@@ -31,6 +31,7 @@ test("workbench: archived tasks load after reload", async ({ page, request }) =>
   await page.reload({ waitUntil: "domcontentloaded" });
   await ensureArchivedExpanded(page);
 
-  const archivedList = page.locator(".wb-task-list-archived");
-  await expect(archivedList.getByText("fixture task 1")).toBeVisible({ timeout: 20000 });
+  await expect(page.locator(".wb-task-row-archived", { hasText: "fixture task 1" })).toBeVisible({
+    timeout: 20000,
+  });
 });

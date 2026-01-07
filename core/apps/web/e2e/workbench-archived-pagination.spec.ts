@@ -27,7 +27,7 @@ test("workbench: archived pagination uses archived-only catchup", async ({ page,
 
   const waitForFirstPage = page.waitForRequest((req) => req.url().includes("archived_only=1"));
   await waitForFirstPage;
-  await expect(page.locator("#wb-archived-list .wb-task-row").first()).toBeVisible({ timeout: 20000 });
+  await expect(page.locator(".wb-task-row-archived").first()).toBeVisible({ timeout: 20000 });
 
   const scroller = page.locator(".wb-task-scroll");
   const waitForNextPage = page.waitForRequest((req) =>
