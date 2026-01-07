@@ -4,7 +4,12 @@ export type FileRef = {
   col?: number;
 };
 
+export type UrlRef = {
+  url: string;
+};
+
 const WINDOWS_DRIVE_RE = /^[A-Za-z]:[\\/]/;
+const URL_SCHEME_RE = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//;
 
 export const isAbsolutePath = (path: string): boolean => {
   if (!path) return false;
@@ -67,4 +72,16 @@ export const parseFileRefToken = (raw: string): FileRef | null => {
   if (withSuffix) return withSuffix;
   if (!hasExplicitPathCue(raw)) return null;
   return { path: raw };
+};
+
+export const parseUrlToken = (raw: string): UrlRef | null => {
+  if (!raw) return null;
+  if (!URL_SCHEME_RE.test(raw)) return null;
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+    return { url: raw };
+  } catch {
+    return null;
+  }
 };

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isAbsolutePath, parseFileRefToken, splitWhitespaceTokens } from "./codeTokenLinks";
+import { isAbsolutePath, parseFileRefToken, parseUrlToken, splitWhitespaceTokens } from "./codeTokenLinks";
 
 describe("splitWhitespaceTokens", () => {
   it("preserves whitespace segments", () => {
@@ -46,6 +46,18 @@ describe("parseFileRefToken", () => {
 
   it("ignores urls", () => {
     expect(parseFileRefToken("https://example.com/foo")).toBeNull();
+  });
+});
+
+describe("parseUrlToken", () => {
+  it("accepts http and https urls", () => {
+    expect(parseUrlToken("http://127.0.0.1:54321")).toEqual({ url: "http://127.0.0.1:54321" });
+    expect(parseUrlToken("https://example.com/foo")).toEqual({ url: "https://example.com/foo" });
+  });
+
+  it("rejects non-http schemes", () => {
+    expect(parseUrlToken("ctx://open?path=%2Ftmp%2Ffoo")).toBeNull();
+    expect(parseUrlToken("file:///tmp/foo")).toBeNull();
   });
 });
 
