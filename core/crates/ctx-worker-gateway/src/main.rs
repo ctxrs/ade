@@ -13,6 +13,7 @@ use axum::response::Response;
 use axum::routing::{get, post};
 use axum::Json;
 use axum::Router;
+use axum_server::tls_rustls::RustlsConfig;
 use chrono::{DateTime, Utc};
 use clap::Parser;
 use futures_util::{SinkExt, StreamExt};
@@ -71,6 +72,8 @@ struct ServerConfigFile {
     worker_shim_url: Option<String>,
     auth_token: Option<String>,
     public_base_url: Option<String>,
+    tls_cert_path: Option<String>,
+    tls_key_path: Option<String>,
     session_mount_path: Option<String>,
     workdir_path: Option<String>,
 }
@@ -135,6 +138,8 @@ struct ResolvedArgs {
     worker_shim_url: Option<String>,
     auth_token: Option<String>,
     public_base_url: String,
+    tls_cert_path: Option<String>,
+    tls_key_path: Option<String>,
     session_mount_path: String,
     workdir_path: String,
     aws_region: Option<String>,
@@ -196,6 +201,10 @@ struct Args {
     auth_token: Option<String>,
     #[arg(long)]
     public_base_url: Option<String>,
+    #[arg(long)]
+    tls_cert_path: Option<String>,
+    #[arg(long)]
+    tls_key_path: Option<String>,
     #[arg(long)]
     session_mount_path: Option<String>,
     #[arg(long)]
@@ -324,6 +333,12 @@ fn resolve_args(args: Args, config: Option<GatewayConfigFile>) -> ResolvedArgs {
         .public_base_url
         .or_else(|| server.and_then(|s| s.public_base_url.clone()))
         .unwrap_or_else(|| DEFAULT_PUBLIC_BASE_URL.to_string());
+    let tls_cert_path = args
+        .tls_cert_path
+        .or_else(|| server.and_then(|s| s.tls_cert_path.clone()));
+    let tls_key_path = args
+        .tls_key_path
+        .or_else(|| server.and_then(|s| s.tls_key_path.clone()));
     let session_mount_path = args
         .session_mount_path
         .or_else(|| server.and_then(|s| s.session_mount_path.clone()))
@@ -352,6 +367,8 @@ fn resolve_args(args: Args, config: Option<GatewayConfigFile>) -> ResolvedArgs {
         worker_shim_url,
         auth_token,
         public_base_url,
+        tls_cert_path,
+        tls_key_path,
         session_mount_path,
         workdir_path,
         aws_region: args
@@ -754,7 +771,25 @@ async fn main() -> Result<()> {
 
     let addr: SocketAddr = resolved.bind.parse().context("parsing bind addr")?;
     info!("ctx-worker-gateway listening on {addr}");
-    axum::serve(tokio::net::TcpListener::bind(addr).await?, app).await?;
+    match (
+        resolved.tls_cert_path.as_deref(),
+        resolved.tls_key_path.as_deref(),
+    ) {
+        (Some(cert_path), Some(key_path)) => {
+            let tls_config = RustlsConfig::from_pem_file(cert_path, key_path)
+                .await
+                .context("loading tls cert/key")?;
+            axum_server::bind_rustls(addr, tls_config)
+                .serve(app.into_make_service())
+                .await?;
+        }
+        (None, None) => {
+            axum::serve(tokio::net::TcpListener::bind(addr).await?, app).await?;
+        }
+        _ => {
+            anyhow::bail!("both tls_cert_path and tls_key_path must be set to enable TLS");
+        }
+    }
     Ok(())
 }
 

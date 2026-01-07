@@ -90,6 +90,36 @@ pub fn render_bootstrap_script(spec: &BootstrapSpec<'_>) -> String {
     script.push_str("  fi\n");
     script.push_str("}\n\n");
 
+    script.push_str("install_gateway_ca() {\n");
+    script.push_str("  if [ -z \"${CTX_GATEWAY_CA_B64:-}\" ]; then\n");
+    script.push_str("    return 0\n");
+    script.push_str("  fi\n");
+    script.push_str("  local ca_path=\"/etc/ctx-gateway-ca.pem\"\n");
+    script.push_str("  if base64 --help 2>&1 | grep -q -- '--decode'; then\n");
+    script.push_str("    echo \"$CTX_GATEWAY_CA_B64\" | base64 --decode > \"$ca_path\"\n");
+    script.push_str("  else\n");
+    script.push_str("    echo \"$CTX_GATEWAY_CA_B64\" | base64 -d > \"$ca_path\"\n");
+    script.push_str("  fi\n");
+    script.push_str("  chmod 600 \"$ca_path\"\n");
+    script.push_str("  export CTX_GATEWAY_CA_PATH=\"$ca_path\"\n");
+    script.push_str("}\n\n");
+
+    script.push_str("curl_gateway() {\n");
+    script.push_str("  local url=\"$1\"\n");
+    script.push_str("  local dest=\"$2\"\n");
+    script.push_str(
+        "  if [ -n \"${CTX_GATEWAY_CA_PATH:-}\" ] && [ -n \"${CTX_GATEWAY_URL:-}\" ]; then\n",
+    );
+    script.push_str("    case \"$url\" in\n");
+    script.push_str("      \"${CTX_GATEWAY_URL%/}\"*)\n");
+    script.push_str("        curl --cacert \"$CTX_GATEWAY_CA_PATH\" -fsSL \"$url\" -o \"$dest\"\n");
+    script.push_str("        return $?\n");
+    script.push_str("        ;;\n");
+    script.push_str("    esac\n");
+    script.push_str("  fi\n");
+    script.push_str("  curl -fsSL \"$url\" -o \"$dest\"\n");
+    script.push_str("}\n\n");
+
     script.push_str("install_codex_auth() {\n");
     script.push_str("  if [ -n \"${CTX_CODEX_AUTH_B64:-}\" ]; then\n");
     script.push_str("    mkdir -p /root/.codex\n");
@@ -261,7 +291,7 @@ pub fn render_bootstrap_script(spec: &BootstrapSpec<'_>) -> String {
 
     script.push_str("install_shim() {\n");
     script.push_str("  if [ ! -x /usr/local/bin/ctx-worker-shim ]; then\n");
-    script.push_str("    curl -fsSL \"$CTX_SHIM_URL\" -o /usr/local/bin/ctx-worker-shim\n");
+    script.push_str("    curl_gateway \"$CTX_SHIM_URL\" /usr/local/bin/ctx-worker-shim\n");
     script.push_str("    chmod +x /usr/local/bin/ctx-worker-shim\n");
     script.push_str("  fi\n");
     script.push_str("}\n\n");
@@ -273,6 +303,8 @@ pub fn render_bootstrap_script(spec: &BootstrapSpec<'_>) -> String {
     script.push_str(
         "  if [ -n \"${CTX_WORKER_GATEWAY_TOKEN:-}\" ]; then export CTX_WORKER_GATEWAY_TOKEN; fi\n",
     );
+    script
+        .push_str("  if [ -n \"${CTX_GATEWAY_CA_B64:-}\" ]; then export CTX_GATEWAY_CA_B64; fi\n");
     script.push_str("  export CTX_BASE_COMMIT\n");
     script.push_str("  export CTX_DIFF_DEBOUNCE_MS\n");
     script.push_str("  export CTX_WORKDIR\n");
@@ -288,6 +320,7 @@ pub fn render_bootstrap_script(spec: &BootstrapSpec<'_>) -> String {
 
     script.push_str("main() {\n");
     script.push_str("  install_deps\n");
+    script.push_str("  install_gateway_ca\n");
     script.push_str("  install_codex_auth\n");
     script.push_str("  install_providers\n");
     script.push_str("  mount_session_disk\n");

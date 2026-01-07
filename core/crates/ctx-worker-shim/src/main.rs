@@ -7,17 +7,24 @@ use std::time::Duration;
 use std::{env, fmt};
 
 use anyhow::{Context, Result};
+use base64::Engine;
 use chrono::Utc;
 use clap::Parser;
 use ctx_worker_protocol::{DiffArtifact, RelayMessage, TerminalControlMessage, WorkerRegistration};
 use futures_util::{SinkExt, StreamExt};
 use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
 use portable_pty::{CommandBuilder, NativePtySystem, PtySize, PtySystem};
+use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
+use rustls::client::WebPkiServerVerifier;
+use rustls::pki_types::pem::PemObject;
+use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
+use rustls::{ClientConfig, RootCertStore, SignatureScheme};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter};
 use tokio::process::Command;
 use tokio::sync::{mpsc, Mutex};
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::{connect_async, connect_async_tls_with_config, Connector};
 use tracing::{debug, info, warn};
 
 #[derive(Parser, Debug)]
@@ -43,7 +50,7 @@ async fn main() -> Result<()> {
 
     let args = Args::parse();
     let args = ResolvedArgs::from_args(args)?;
-    let client = reqwest::Client::new();
+    let client = gateway_http_client(args.gateway_ca_pem.as_deref())?;
 
     register_worker(&client, &args).await?;
     emit_diff(&client, &args).await.ok();
@@ -102,9 +109,16 @@ async fn run_acp_relay(args: ResolvedArgs) -> Result<()> {
         );
     }
 
-    let (ws_stream, _) = tokio_tungstenite::connect_async(req)
-        .await
-        .context("connecting to gateway acp relay")?;
+    let (ws_stream, _) = if let Some(pem) = args.gateway_ca_pem.as_deref() {
+        let connector = gateway_ws_connector(pem)?;
+        connect_async_tls_with_config(req, None, false, Some(connector))
+            .await
+            .context("connecting to gateway acp relay")?
+    } else {
+        connect_async(req)
+            .await
+            .context("connecting to gateway acp relay")?
+    };
     let (ws_write, mut ws_read) = ws_stream.split();
     let ws_write = std::sync::Arc::new(Mutex::new(ws_write));
     let sessions: std::sync::Arc<Mutex<HashMap<String, SessionRelay>>> =
@@ -220,9 +234,16 @@ async fn run_terminal_control(args: ResolvedArgs) -> Result<()> {
         );
     }
 
-    let (ws_stream, _) = tokio_tungstenite::connect_async(req)
-        .await
-        .context("connecting to gateway terminal control")?;
+    let (ws_stream, _) = if let Some(pem) = args.gateway_ca_pem.as_deref() {
+        let connector = gateway_ws_connector(pem)?;
+        connect_async_tls_with_config(req, None, false, Some(connector))
+            .await
+            .context("connecting to gateway terminal control")?
+    } else {
+        connect_async(req)
+            .await
+            .context("connecting to gateway terminal control")?
+    };
     debug!("terminal control connected");
     let (_, mut ws_read) = ws_stream.split();
 
@@ -351,9 +372,16 @@ async fn run_terminal_session(
             token.parse().context("parsing gateway token")?,
         );
     }
-    let (ws_stream, _) = tokio_tungstenite::connect_async(req)
-        .await
-        .context("connecting to gateway terminal relay")?;
+    let (ws_stream, _) = if let Some(pem) = args.gateway_ca_pem.as_deref() {
+        let connector = gateway_ws_connector(pem)?;
+        connect_async_tls_with_config(req, None, false, Some(connector))
+            .await
+            .context("connecting to gateway terminal relay")?
+    } else {
+        connect_async(req)
+            .await
+            .context("connecting to gateway terminal relay")?
+    };
     debug!(terminal_id = %spec.terminal_id, "terminal session connected");
     let (mut ws_write, mut ws_read) = ws_stream.split();
 
@@ -480,6 +508,88 @@ fn websocket_base(url: &str) -> String {
         base = format!("ws://{base}");
     }
     base
+}
+
+#[derive(Debug)]
+struct GatewayCertVerifier {
+    inner: Arc<WebPkiServerVerifier>,
+    server_name: ServerName<'static>,
+}
+
+impl ServerCertVerifier for GatewayCertVerifier {
+    fn verify_server_cert(
+        &self,
+        end_entity: &CertificateDer<'_>,
+        intermediates: &[CertificateDer<'_>],
+        _server_name: &ServerName<'_>,
+        ocsp_response: &[u8],
+        now: UnixTime,
+    ) -> Result<ServerCertVerified, rustls::Error> {
+        self.inner.verify_server_cert(
+            end_entity,
+            intermediates,
+            &self.server_name,
+            ocsp_response,
+            now,
+        )
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        self.inner.verify_tls12_signature(message, cert, dss)
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        self.inner.verify_tls13_signature(message, cert, dss)
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+        self.inner.supported_verify_schemes()
+    }
+}
+
+fn gateway_ws_connector(pem: &[u8]) -> Result<Connector> {
+    let mut roots = RootCertStore::empty();
+    for cert in CertificateDer::pem_slice_iter(pem) {
+        let cert = cert.context("parsing gateway CA")?;
+        roots.add(cert).context("adding gateway CA")?;
+    }
+    let verifier = WebPkiServerVerifier::builder(Arc::new(roots.clone()))
+        .build()
+        .context("building gateway verifier")?;
+    let server_name =
+        ServerName::try_from("ctx-gateway").context("building gateway server name")?;
+    let verifier = GatewayCertVerifier {
+        inner: verifier,
+        server_name,
+    };
+    let mut config = ClientConfig::builder()
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    config
+        .dangerous()
+        .set_certificate_verifier(Arc::new(verifier));
+    Ok(Connector::Rustls(Arc::new(config)))
+}
+
+fn gateway_http_client(gateway_ca_pem: Option<&[u8]>) -> Result<reqwest::Client> {
+    let mut builder = reqwest::Client::builder();
+    if let Some(pem) = gateway_ca_pem {
+        let cert = reqwest::Certificate::from_pem(pem).context("parsing gateway CA certificate")?;
+        builder = builder
+            .add_root_certificate(cert)
+            .danger_accept_invalid_hostnames(true);
+    }
+    builder.build().context("building gateway http client")
 }
 
 fn should_ignore_event(event: &Event) -> bool {
@@ -613,6 +723,7 @@ struct ResolvedArgs {
     base_commit: String,
     diff_debounce_ms: u64,
     gateway_token: Option<String>,
+    gateway_ca_pem: Option<Vec<u8>>,
 }
 
 impl ResolvedArgs {
@@ -623,6 +734,16 @@ impl ResolvedArgs {
         let gateway_token = env::var("CTX_WORKER_GATEWAY_TOKEN")
             .ok()
             .filter(|v| !v.is_empty());
+        let gateway_ca_pem = env::var("CTX_GATEWAY_CA_B64")
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .map(|value| {
+                base64::engine::general_purpose::STANDARD
+                    .decode(value.as_bytes())
+                    .context("decoding CTX_GATEWAY_CA_B64")
+            })
+            .transpose()?;
 
         Ok(Self {
             gateway_url,
@@ -631,6 +752,7 @@ impl ResolvedArgs {
             base_commit: args.base_commit,
             diff_debounce_ms: args.diff_debounce_ms,
             gateway_token,
+            gateway_ca_pem,
         })
     }
 }

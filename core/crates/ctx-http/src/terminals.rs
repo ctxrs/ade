@@ -8,10 +8,16 @@ use anyhow::{Context, Result};
 use chrono::Utc;
 use futures::{SinkExt, StreamExt};
 use portable_pty::{CommandBuilder, NativePtySystem, PtySize, PtySystem};
+use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
+use rustls::client::WebPkiServerVerifier;
+use rustls::pki_types::pem::PemObject;
+use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
+use rustls::{ClientConfig, RootCertStore, SignatureScheme};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, mpsc};
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::{connect_async, connect_async_tls_with_config, Connector};
 
 use ctx_core::ids::{SessionId, TaskId, TerminalId, TrackId, WorkspaceId, WorktreeId};
 use ctx_core::models::{TerminalSession, TerminalStatus};
@@ -61,6 +67,7 @@ pub struct RemoteTerminalRequest {
     pub gateway_url: String,
     pub worker_id: String,
     pub token: Option<String>,
+    pub gateway_ca_pem: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -475,6 +482,77 @@ fn push_output(
     let _ = output_tx.send(bytes.to_vec());
 }
 
+#[derive(Debug)]
+struct GatewayCertVerifier {
+    inner: Arc<WebPkiServerVerifier>,
+    server_name: ServerName<'static>,
+}
+
+impl ServerCertVerifier for GatewayCertVerifier {
+    fn verify_server_cert(
+        &self,
+        end_entity: &CertificateDer<'_>,
+        intermediates: &[CertificateDer<'_>],
+        _server_name: &ServerName<'_>,
+        ocsp_response: &[u8],
+        now: UnixTime,
+    ) -> Result<ServerCertVerified, rustls::Error> {
+        self.inner.verify_server_cert(
+            end_entity,
+            intermediates,
+            &self.server_name,
+            ocsp_response,
+            now,
+        )
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        self.inner.verify_tls12_signature(message, cert, dss)
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        self.inner.verify_tls13_signature(message, cert, dss)
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+        self.inner.supported_verify_schemes()
+    }
+}
+
+fn gateway_ws_connector(pem: &str) -> Result<Connector> {
+    let mut roots = RootCertStore::empty();
+    for cert in CertificateDer::pem_slice_iter(pem.as_bytes()) {
+        let cert = cert.context("parsing gateway CA")?;
+        roots.add(cert).context("adding gateway CA")?;
+    }
+    let verifier = WebPkiServerVerifier::builder(Arc::new(roots.clone()))
+        .build()
+        .context("building gateway verifier")?;
+    let server_name =
+        ServerName::try_from("ctx-gateway").context("building gateway server name")?;
+    let verifier = GatewayCertVerifier {
+        inner: verifier,
+        server_name,
+    };
+    let mut config = ClientConfig::builder()
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    config
+        .dangerous()
+        .set_certificate_verifier(Arc::new(verifier));
+    Ok(Connector::Rustls(Arc::new(config)))
+}
+
 async fn connect_terminal_gateway(
     remote: &RemoteTerminalRequest,
 ) -> Result<
@@ -502,8 +580,15 @@ async fn connect_terminal_gateway(
             token.parse().context("parsing gateway token")?,
         );
     }
-    let (ws_stream, _) = tokio_tungstenite::connect_async(req)
-        .await
-        .with_context(|| format!("connecting to gateway terminal relay at {url}"))?;
+    let (ws_stream, _) = if let Some(pem) = remote.gateway_ca_pem.as_deref() {
+        let connector = gateway_ws_connector(pem)?;
+        connect_async_tls_with_config(req, None, false, Some(connector))
+            .await
+            .with_context(|| format!("connecting to gateway terminal relay at {url}"))?
+    } else {
+        connect_async(req)
+            .await
+            .with_context(|| format!("connecting to gateway terminal relay at {url}"))?
+    };
     Ok(ws_stream)
 }

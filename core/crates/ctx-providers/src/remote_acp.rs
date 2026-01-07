@@ -5,10 +5,16 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use base64::Engine;
 use futures_util::{SinkExt, StreamExt};
+use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
+use rustls::client::WebPkiServerVerifier;
+use rustls::pki_types::pem::PemObject;
+use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
+use rustls::{ClientConfig, RootCertStore, SignatureScheme};
 use serde_json::{json, Value};
 use tokio::sync::{mpsc, oneshot, Mutex};
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::{connect_async, connect_async_tls_with_config, Connector};
 
 use ctx_core::models::SessionEventType;
 use ctx_worker_protocol::RelayMessage;
@@ -21,11 +27,83 @@ use crate::tier1::build_acp_client_config;
 const GATEWAY_ENV_URL: &str = "CTX_WORKER_GATEWAY_URL";
 const GATEWAY_ENV_WORKER: &str = "CTX_WORKER_ID";
 const GATEWAY_ENV_TOKEN: &str = "CTX_WORKER_GATEWAY_TOKEN";
+const GATEWAY_ENV_CA: &str = "CTX_WORKER_GATEWAY_CA_B64";
 
 type WsSink = futures_util::stream::SplitSink<
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
     Message,
 >;
+
+#[derive(Debug)]
+struct GatewayCertVerifier {
+    inner: Arc<WebPkiServerVerifier>,
+    server_name: ServerName<'static>,
+}
+
+impl ServerCertVerifier for GatewayCertVerifier {
+    fn verify_server_cert(
+        &self,
+        end_entity: &CertificateDer<'_>,
+        intermediates: &[CertificateDer<'_>],
+        _server_name: &ServerName<'_>,
+        ocsp_response: &[u8],
+        now: UnixTime,
+    ) -> Result<ServerCertVerified, rustls::Error> {
+        self.inner.verify_server_cert(
+            end_entity,
+            intermediates,
+            &self.server_name,
+            ocsp_response,
+            now,
+        )
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        self.inner.verify_tls12_signature(message, cert, dss)
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        self.inner.verify_tls13_signature(message, cert, dss)
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+        self.inner.supported_verify_schemes()
+    }
+}
+
+fn gateway_ws_connector(pem: &[u8]) -> Result<Connector> {
+    let mut roots = RootCertStore::empty();
+    for cert in CertificateDer::pem_slice_iter(pem) {
+        let cert = cert.context("parsing gateway CA")?;
+        roots.add(cert).context("adding gateway CA")?;
+    }
+    let verifier = WebPkiServerVerifier::builder(Arc::new(roots.clone()))
+        .build()
+        .context("building gateway verifier")?;
+    let server_name =
+        ServerName::try_from("ctx-gateway").context("building gateway server name")?;
+    let verifier = GatewayCertVerifier {
+        inner: verifier,
+        server_name,
+    };
+    let mut config = ClientConfig::builder()
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    config
+        .dangerous()
+        .set_certificate_verifier(Arc::new(verifier));
+    Ok(Connector::Rustls(Arc::new(config)))
+}
 
 pub async fn run_remote_prompt(
     provider_id: String,
@@ -42,6 +120,16 @@ pub async fn run_remote_prompt(
         .get(GATEWAY_ENV_WORKER)
         .cloned()
         .context("missing CTX_WORKER_ID")?;
+    let gateway_ca_pem = env
+        .get(GATEWAY_ENV_CA)
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .map(|value| {
+            base64::engine::general_purpose::STANDARD
+                .decode(value.as_bytes())
+                .context("decoding CTX_WORKER_GATEWAY_CA_B64")
+        })
+        .transpose()?;
 
     let session_id = env
         .get("CTX_SESSION_ID")
@@ -55,8 +143,14 @@ pub async fn run_remote_prompt(
     let join: tokio::task::JoinHandle<Result<()>> = tokio::spawn(async move {
         let client = build_acp_client_config(&env);
         let token = env.get(GATEWAY_ENV_TOKEN).map(|v| v.as_str());
-        let (ws_write, mut inbound) =
-            connect_gateway(&gateway_url, &worker_id, &session_id, token).await?;
+        let (ws_write, mut inbound) = connect_gateway(
+            &gateway_url,
+            &worker_id,
+            &session_id,
+            token,
+            gateway_ca_pem.as_deref(),
+        )
+        .await?;
 
         let init_msg = RelayMessage::Init {
             session_id: session_id.clone(),
@@ -275,6 +369,7 @@ async fn connect_gateway(
     worker_id: &str,
     session_id: &str,
     token: Option<&str>,
+    gateway_ca_pem: Option<&[u8]>,
 ) -> Result<(Arc<Mutex<WsSink>>, mpsc::UnboundedReceiver<String>)> {
     let mut base = gateway_url.trim_end_matches('/').to_string();
     if base.starts_with("https://") {
@@ -294,9 +389,14 @@ async fn connect_gateway(
         );
     }
 
-    let (ws_stream, _) = tokio_tungstenite::connect_async(req)
-        .await
-        .context("connecting to gateway")?;
+    let (ws_stream, _) = if let Some(pem) = gateway_ca_pem {
+        let connector = gateway_ws_connector(pem)?;
+        connect_async_tls_with_config(req, None, false, Some(connector))
+            .await
+            .context("connecting to gateway")?
+    } else {
+        connect_async(req).await.context("connecting to gateway")?
+    };
     let (ws_write, mut ws_read) = ws_stream.split();
     let (tx, rx) = mpsc::unbounded_channel::<String>();
     let session_id = session_id.to_string();

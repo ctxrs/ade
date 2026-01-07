@@ -19,6 +19,7 @@ uuid.workspace = true
 which = "7"
 base64 = "0.22"
 http = "1"
+rustls.workspace = true
 ctx-worker-protocol = { path = "../ctx-worker-protocol" }
 
 [dev-dependencies]
