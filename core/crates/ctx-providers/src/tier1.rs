@@ -353,7 +353,7 @@ impl ProviderAdapter for Tier1AcpAdapter {
 }
 
 fn build_acp_client_config(env: &HashMap<String, String>) -> AcpClientConfig {
-    const DEFAULT_CTX_MCP_TOOL_TIMEOUT_SECS: u64 = 30 * 60;
+    const DEFAULT_CTX_MCP_TOOL_TIMEOUT_SECS: u64 = 2 * 60 * 60;
 
     let mut mcp_env = HashMap::new();
     if let Some(url) = env.get("CTX_DAEMON_URL") {
