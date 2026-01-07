@@ -232,6 +232,8 @@ type TaskRowProps = {
   taskId: string;
   title: string;
   archived: boolean;
+  archiving: boolean;
+  archivePending: boolean;
   selected: boolean;
   hovered: boolean;
   isRenaming: boolean;
@@ -313,6 +315,8 @@ export const TaskRow = React.memo(function TaskRow({
   taskId,
   title,
   archived,
+  archiving,
+  archivePending,
   selected,
   hovered,
   isRenaming,
@@ -370,6 +374,14 @@ export const TaskRow = React.memo(function TaskRow({
       window.removeEventListener("pointerdown", onPointerDown);
     };
   }, [isRenaming]);
+
+  const archiveLabel = archivePending
+    ? archiving
+      ? "Archiving..."
+      : "Unarchiving..."
+    : archived
+      ? "Unarchive"
+      : "Archive";
 
   return (
     <div
@@ -462,6 +474,11 @@ export const TaskRow = React.memo(function TaskRow({
             data-active={working ? "true" : "false"}
             style={{ animationDelay: `${spinnerDelayRef.current}ms` }}
           />
+          <span
+            className="wb-task-spinner wb-task-spinner-archive"
+            data-active={archiving ? "true" : "false"}
+            style={{ animationDelay: `${spinnerDelayRef.current}ms` }}
+          />
           {dotKind === "unread" && <span className="wb-task-status-dot wb-task-status-dot-unread" />}
           {dotKind === "error" && <span className="wb-task-status-dot wb-task-status-dot-error" />}
         </div>
@@ -481,13 +498,14 @@ export const TaskRow = React.memo(function TaskRow({
           <button
             type="button"
             className="wb-icon wb-task-action wb-archive-confirm-trigger"
+            disabled={archivePending}
             onClick={(e) => {
               e.stopPropagation();
               const anchor = e.currentTarget.getBoundingClientRect();
               onToggleArchive(taskId, !archived, anchor).catch(() => {});
             }}
-            aria-label={archived ? "Unarchive" : "Archive"}
-            title={archived ? "Unarchive" : "Archive"}
+            aria-label={archiveLabel}
+            title={archiveLabel}
           >
             <Archive size={14} />
           </button>
@@ -682,6 +700,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const [archiveConfirm, setArchiveConfirm] = useState<ArchiveConfirmState | null>(null);
   const [archiveConfirmDontRemind, setArchiveConfirmDontRemind] = useState(false);
   const [archiveConfirmDismissed, setArchiveConfirmDismissed] = useState(false);
+  const [archivePendingById, setArchivePendingById] = useState<Record<string, "archive" | "unarchive">>({});
   const archiveConfirmRef = useRef<HTMLDivElement | null>(null);
   const [taskMenu, setTaskMenu] = useState<{ taskId: string; style: React.CSSProperties } | null>(null);
   const taskMenuRef = useRef<HTMLDivElement | null>(null);
@@ -1449,10 +1468,23 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
 
   const applyArchiveToggle = useCallback(
     async (taskId: string, nextArchived: boolean) => {
-      const updated = nextArchived ? await archiveTask(taskId) : await unarchiveTask(taskId);
-      workspaceCatchupStore.applyTaskUpdate(updated);
-      if (nextArchived && activeTaskId === taskId) {
-        focusNewTask();
+      setArchivePendingById((prev) => ({
+        ...prev,
+        [taskId]: nextArchived ? "archive" : "unarchive",
+      }));
+      try {
+        const updated = nextArchived ? await archiveTask(taskId) : await unarchiveTask(taskId);
+        workspaceCatchupStore.applyTaskUpdate(updated);
+        if (nextArchived && activeTaskId === taskId) {
+          focusNewTask();
+        }
+      } finally {
+        setArchivePendingById((prev) => {
+          if (!(taskId in prev)) return prev;
+          const next = { ...prev };
+          delete next[taskId];
+          return next;
+        });
       }
     },
     [activeTaskId, focusNewTask, workspaceCatchupStore],
@@ -1460,6 +1492,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
 
   const onToggleArchive = useCallback(
     async (taskId: string, nextArchived: boolean, anchor?: AnchorRect | null) => {
+      if (taskId in archivePendingById) return;
       if (!nextArchived || archiveConfirmDismissed) {
         if (!nextArchived) {
           setArchiveConfirm(null);
@@ -1471,12 +1504,16 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       setArchiveConfirm({ taskId, anchor: normalized });
       setArchiveConfirmDontRemind(false);
     },
-    [applyArchiveToggle, archiveConfirmDismissed],
+    [applyArchiveToggle, archiveConfirmDismissed, archivePendingById],
   );
 
   const confirmArchive = useCallback(async () => {
     if (!archiveConfirm) return;
     const taskId = archiveConfirm.taskId;
+    if (taskId in archivePendingById) {
+      setArchiveConfirm(null);
+      return;
+    }
     setArchiveConfirm(null);
     if (archiveConfirmDontRemind) {
       try {
@@ -1487,7 +1524,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       setArchiveConfirmDismissed(true);
     }
     await applyArchiveToggle(taskId, true);
-  }, [applyArchiveToggle, archiveConfirm, archiveConfirmDontRemind]);
+  }, [applyArchiveToggle, archiveConfirm, archiveConfirmDontRemind, archivePendingById]);
 
   const cancelArchiveConfirm = useCallback(() => {
     setArchiveConfirm(null);
@@ -1566,6 +1603,9 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       const selected = tid === activeTaskId;
       const hovered = tid === hoveredTaskId;
       const archived = !!opts?.archived;
+      const pendingAction = archivePendingById[tid];
+      const archivePending = typeof pendingAction !== "undefined";
+      const archiving = pendingAction === "archive";
       const title = t.title ?? "New Task";
       const working = taskLiveInfo.workingByTask.has(tid);
       const hasError = taskLiveInfo.errorByTask.has(tid);
@@ -1596,6 +1636,8 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
           taskId={tid}
           title={title}
           archived={archived}
+          archiving={archiving}
+          archivePending={archivePending}
           selected={selected}
           hovered={hovered}
           isRenaming={renamingTaskId === tid}
@@ -1618,6 +1660,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     },
     [
       activeTaskId,
+      archivePendingById,
       cancelRenameTask,
       commitRenameTask,
       focusTask,
@@ -3639,6 +3682,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
           <button
             type="button"
             className="wb-menu-item wb-archive-confirm-trigger"
+            disabled={Boolean(archivePendingById[taskMenu.taskId])}
             onClick={(e) => {
               const tid = taskMenu.taskId;
               const summary = tasksById[tid];
@@ -3819,7 +3863,9 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
           <button
             type="button"
             className="wb-menu-item wb-archive-confirm-trigger"
-            disabled={!activeTaskId || !!activeTask?.archived_at}
+            disabled={
+              !activeTaskId || !!activeTask?.archived_at || (activeTaskId ? Boolean(archivePendingById[activeTaskId]) : false)
+            }
             onClick={(e) => {
               if (!activeTaskId) return;
               setConvoMenu(null);
