@@ -114,6 +114,22 @@ function deriveTaskTitle(_prompt: string): string {
   return "New Task";
 }
 
+const ARCHIVE_CONFIRM_STORAGE_KEY = "wb.archiveConfirmDismissed";
+
+type AnchorRect = {
+  left: number;
+  right: number;
+  top: number;
+  bottom: number;
+  width: number;
+  height: number;
+};
+
+type ArchiveConfirmState = {
+  taskId: string;
+  anchor: AnchorRect;
+};
+
 function modelIdsFromOptions(opts?: ProviderOptions): string[] {
   const raw = opts?.models;
   if (!raw) return [];
@@ -184,6 +200,33 @@ function spinnerDelayForNow(): number {
   return -((now - SPINNER_ANCHOR_MS) % SPINNER_DURATION_MS);
 }
 
+function normalizeAnchorRect(rect: DOMRect | AnchorRect | null | undefined): AnchorRect {
+  if (rect) {
+    return {
+      left: rect.left,
+      right: rect.right,
+      top: rect.top,
+      bottom: rect.bottom,
+      width: rect.width,
+      height: rect.height,
+    };
+  }
+  const viewportW = typeof window === "undefined" ? 1200 : window.innerWidth;
+  const viewportH = typeof window === "undefined" ? 800 : window.innerHeight;
+  return {
+    left: viewportW / 2,
+    right: viewportW / 2,
+    top: viewportH / 2,
+    bottom: viewportH / 2,
+    width: 0,
+    height: 0,
+  };
+}
+
+function clampNum(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
 type TaskRowProps = {
   taskId: string;
   title: string;
@@ -200,7 +243,7 @@ type TaskRowProps = {
   setRenameDraft: (taskId: string, nextValue: string) => void;
   onFocusTask: (taskId: string) => void;
   onOpenMenu: (taskId: string, opts: { triggerEl: HTMLElement } | { x: number; y: number }) => void;
-  onToggleArchive: (taskId: string, nextArchived: boolean) => Promise<void>;
+  onToggleArchive: (taskId: string, nextArchived: boolean, anchor?: AnchorRect | null) => Promise<void>;
   onHoverEnter: (taskId: string) => void;
   onHoverLeave: (taskId: string) => void;
   onCancelRename: () => void;
@@ -482,10 +525,11 @@ export const TaskRow = React.memo(function TaskRow({
           </button>
           <button
             type="button"
-            className="wb-icon wb-task-action"
+            className="wb-icon wb-task-action wb-archive-confirm-trigger"
             onClick={(e) => {
               e.stopPropagation();
-              onToggleArchive(taskId, !archived).catch(() => {});
+              const anchor = e.currentTarget.getBoundingClientRect();
+              onToggleArchive(taskId, !archived, anchor).catch(() => {});
             }}
             aria-label={archived ? "Unarchive" : "Archive"}
             title={archived ? "Unarchive" : "Archive"}
@@ -680,6 +724,10 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
 
   const [taskQuery, setTaskQuery] = useState("");
   const [archivedCollapsed, setArchivedCollapsed] = useState(true);
+  const [archiveConfirm, setArchiveConfirm] = useState<ArchiveConfirmState | null>(null);
+  const [archiveConfirmDontRemind, setArchiveConfirmDontRemind] = useState(false);
+  const [archiveConfirmDismissed, setArchiveConfirmDismissed] = useState(false);
+  const archiveConfirmRef = useRef<HTMLDivElement | null>(null);
   const [taskMenu, setTaskMenu] = useState<{ taskId: string; style: React.CSSProperties } | null>(null);
   const taskMenuRef = useRef<HTMLDivElement | null>(null);
   const [hoveredTaskId, setHoveredTaskId] = useState<string | null>(null);
@@ -824,6 +872,15 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   }, [workspaceId]);
 
   useEffect(() => {
+    try {
+      const v = localStorage.getItem(ARCHIVE_CONFIRM_STORAGE_KEY);
+      setArchiveConfirmDismissed(v === "1");
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  useEffect(() => {
     if (!workspaceId) return;
     localStorage.setItem(`wb.archivedCollapsed.${workspaceId}`, archivedCollapsed ? "1" : "0");
   }, [archivedCollapsed, workspaceId]);
@@ -888,6 +945,26 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       window.removeEventListener("keydown", onKeyDown);
     };
   }, [convoMenu]);
+
+  useEffect(() => {
+    if (!archiveConfirm) return;
+    const onPointerDown = (e: PointerEvent) => {
+      const el = e.target as HTMLElement | null;
+      if (!el) return;
+      if (el.closest(".wb-archive-confirm")) return;
+      if (el.closest(".wb-archive-confirm-trigger")) return;
+      setArchiveConfirm(null);
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setArchiveConfirm(null);
+    };
+    window.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [archiveConfirm]);
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -1415,7 +1492,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     ensureArchivedLoaded: workspaceCatchupStore.ensureArchivedLoaded,
   });
 
-  const onToggleArchive = useCallback(
+  const applyArchiveToggle = useCallback(
     async (taskId: string, nextArchived: boolean) => {
       const updated = nextArchived ? await archiveTask(taskId) : await unarchiveTask(taskId);
       workspaceCatchupStore.applyTaskUpdate(updated);
@@ -1425,6 +1502,53 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     },
     [activeTaskId, focusNewTask, workspaceCatchupStore],
   );
+
+  const onToggleArchive = useCallback(
+    async (taskId: string, nextArchived: boolean, anchor?: AnchorRect | null) => {
+      if (!nextArchived || archiveConfirmDismissed) {
+        if (!nextArchived) {
+          setArchiveConfirm(null);
+        }
+        await applyArchiveToggle(taskId, nextArchived);
+        return;
+      }
+      const normalized = normalizeAnchorRect(anchor);
+      setArchiveConfirm({ taskId, anchor: normalized });
+      setArchiveConfirmDontRemind(false);
+    },
+    [applyArchiveToggle, archiveConfirmDismissed],
+  );
+
+  const confirmArchive = useCallback(async () => {
+    if (!archiveConfirm) return;
+    const taskId = archiveConfirm.taskId;
+    setArchiveConfirm(null);
+    if (archiveConfirmDontRemind) {
+      try {
+        localStorage.setItem(ARCHIVE_CONFIRM_STORAGE_KEY, "1");
+      } catch {
+        // ignore
+      }
+      setArchiveConfirmDismissed(true);
+    }
+    await applyArchiveToggle(taskId, true);
+  }, [applyArchiveToggle, archiveConfirm, archiveConfirmDontRemind]);
+
+  const cancelArchiveConfirm = useCallback(() => {
+    setArchiveConfirm(null);
+  }, []);
+
+  const archiveConfirmStyle = useMemo(() => {
+    if (!archiveConfirm) return null;
+    const rect = archiveConfirm.anchor;
+    const margin = 12;
+    const viewportW = typeof window === "undefined" ? 1200 : window.innerWidth;
+    const viewportH = typeof window === "undefined" ? 800 : window.innerHeight;
+    const width = Math.min(360, viewportW - margin * 2);
+    const left = clampNum(rect.left + rect.width / 2 - width / 2, margin, viewportW - width - margin);
+    const top = clampNum(rect.bottom + 10, margin, viewportH - 180);
+    return { left, top, width };
+  }, [archiveConfirm]);
 
   const openTaskMenu = useCallback((taskId: string, opts: { triggerEl: HTMLElement } | { x: number; y: number }) => {
     const baseLeft =
@@ -3462,12 +3586,13 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
           </button>
           <button
             type="button"
-            className="wb-menu-item"
-            onClick={() => {
+            className="wb-menu-item wb-archive-confirm-trigger"
+            onClick={(e) => {
               const tid = taskMenu.taskId;
               const summary = tasksById[tid];
               const nextArchived = !summary?.task.archived_at;
-              onToggleArchive(tid, nextArchived).catch(() => { });
+              const anchor = e.currentTarget.getBoundingClientRect();
+              onToggleArchive(tid, nextArchived, anchor).catch(() => { });
               setTaskMenu(null);
             }}
             role="menuitem"
@@ -3535,6 +3660,48 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
         </div>
       )}
 
+      {archiveConfirm && archiveConfirmStyle && (
+        <div
+          className="wb-archive-confirm wb-menu-tooltip"
+          data-open="true"
+          role="dialog"
+          aria-label="Archive confirmation"
+          ref={archiveConfirmRef}
+          style={archiveConfirmStyle}
+        >
+          <div className="wb-archive-confirm-title">Archive conversation?</div>
+          <div className="wb-archive-confirm-body">
+            Archiving removes the worktree on disk. You can unarchive to recreate it. Uncommitted changes will be lost.
+          </div>
+          <label className="wb-archive-confirm-toggle">
+            <input
+              type="checkbox"
+              checked={archiveConfirmDontRemind}
+              onChange={(e) => setArchiveConfirmDontRemind(e.target.checked)}
+            />
+            Don&apos;t remind me again
+          </label>
+          <div className="wb-archive-confirm-actions">
+            <button
+              type="button"
+              className="wb-snackbar-btn wb-snackbar-btn-secondary"
+              onClick={cancelArchiveConfirm}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="wb-snackbar-btn wb-archive-confirm-danger"
+              onClick={() => {
+                void confirmArchive();
+              }}
+            >
+              Archive
+            </button>
+          </div>
+        </div>
+      )}
+
       {convoMenu && (
         <div className="wb-menu wb-convo-menu" role="menu" ref={convoMenuRef} style={convoMenu.style}>
           <button
@@ -3599,12 +3766,13 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
           </button>
           <button
             type="button"
-            className="wb-menu-item"
+            className="wb-menu-item wb-archive-confirm-trigger"
             disabled={!activeTaskId || !!activeTask?.archived_at}
-            onClick={() => {
+            onClick={(e) => {
               if (!activeTaskId) return;
               setConvoMenu(null);
-              onToggleArchive(activeTaskId, true).catch(() => { });
+              const anchor = e.currentTarget.getBoundingClientRect();
+              onToggleArchive(activeTaskId, true, anchor).catch(() => { });
             }}
             role="menuitem"
           >
