@@ -341,6 +341,20 @@ function formatTokenCount(value: number): string {
   return `${Math.round(value)}`;
 }
 
+function formatUsedTokenCount(value: number): string {
+  if (!Number.isFinite(value)) return "0";
+  if (value >= 1_000_000) {
+    const scaled = value / 1_000_000;
+    const fixed = scaled >= 10 ? scaled.toFixed(0) : scaled.toFixed(1);
+    return `${fixed.replace(/\.0$/, "")}m`;
+  }
+  if (value >= 1_000) {
+    const rounded = Math.round(value / 1_000);
+    return `${rounded}k`;
+  }
+  return `${Math.round(value)}`;
+}
+
 function buildModelsFromProviderOptions(opts?: ProviderOptions): Array<{ id: string; name?: string }> {
   const raw = opts?.models;
   if (!raw) return [];
@@ -446,7 +460,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
     const clampedUsed = Math.max(0, Math.min(windowTokens, Math.round(usedTokens)));
     const fraction = clampedUsed / windowTokens;
     const percent = Math.max(0, Math.min(100, Math.round(fraction * 100)));
-    const usedLabel = formatTokenCount(clampedUsed);
+    const usedLabel = formatUsedTokenCount(clampedUsed);
     const windowLabel = formatTokenCount(windowTokens);
     const summary = `${percent}% · ${usedLabel}/${windowLabel}`;
     const title = `Context Window: ${summary}`;
