@@ -273,6 +273,27 @@ export const getDaemonBaseUrl = (): string | null => {
   }
 };
 
+const isLoopbackHost = (host: string): boolean => {
+  const normalized = host.replace(/^\[|\]$/g, "").toLowerCase();
+  return normalized === "localhost" || normalized === "::1" || normalized.startsWith("127.");
+};
+
+const resolveDaemonBaseUrl = (): string | null => {
+  const base = getDaemonBaseUrl();
+  if (!base) return null;
+  if (typeof window === "undefined") return base;
+  try {
+    const baseUrl = new URL(base, window.location.origin);
+    const originUrl = new URL(window.location.origin);
+    if (isLoopbackHost(baseUrl.hostname) && !isLoopbackHost(originUrl.hostname)) {
+      return window.location.origin;
+    }
+  } catch {
+    return base;
+  }
+  return base;
+};
+
 export const setDaemonBaseUrl = (baseUrl: string | null, persist?: boolean) => {
   try {
     if (!baseUrl) {
@@ -1192,7 +1213,7 @@ export const applyAppImageUpdate = () =>
   });
 
 export const blobUrl = (blobId: string): string => {
-  const base = getDaemonBaseUrl();
+  const base = resolveDaemonBaseUrl();
   const token = authToken();
   const prefix = base ? base.replace(/\/+$/, "") : "";
   const url = `${prefix}/api/blobs/${encodeURIComponent(String(blobId || ""))}`;
@@ -1200,7 +1221,7 @@ export const blobUrl = (blobId: string): string => {
 };
 
 export const artifactUrl = (artifactId: string): string => {
-  const base = getDaemonBaseUrl();
+  const base = resolveDaemonBaseUrl();
   const token = authToken();
   const prefix = base ? base.replace(/\/+$/, "") : "";
   const url = `${prefix}/api/artifacts/${encodeURIComponent(String(artifactId || ""))}`;
