@@ -52,7 +52,13 @@ import { parseWsJson } from "../utils/wsJson";
 import { imageFilesToInlineAttachments } from "../utils/messageAttachments";
 import { registerDropScope } from "../utils/dragDropScopes";
 import { copyTextToClipboard } from "../utils/clipboard";
-import { type FileRef, isAbsolutePath, parseFileRefToken, splitWhitespaceTokens } from "../utils/codeTokenLinks";
+import {
+  type FileRef,
+  isAbsolutePath,
+  parseFileRefToken,
+  parseUrlToken,
+  splitWhitespaceTokens,
+} from "../utils/codeTokenLinks";
 import { desktopOpenFile, desktopOpenPath, isDesktopApp } from "../utils/desktop";
 import { usePinnedScrollManager } from "./usePinnedScrollManager";
 
@@ -3026,6 +3032,7 @@ type CodeTokenOptions = {
   enableLinks: boolean;
   worktreeId: string | null;
   onFileOpenError?: (message: string | null) => void;
+  wrapPlainTokens?: boolean;
 };
 
 const handleCodeTokenClick = async (
@@ -3061,21 +3068,55 @@ const handleCodeTokenClick = async (
   }
 };
 
+const handleUrlTokenClick = (event: MouseEvent<HTMLElement>, href: string) => {
+  if (!event.metaKey && !event.ctrlKey) {
+    event.preventDefault();
+    return;
+  }
+  event.preventDefault();
+  event.stopPropagation();
+  window.open(href, "_blank", "noopener,noreferrer");
+};
+
 const buildCodeTokenNodes = (text: string, opts: CodeTokenOptions): ReactNode[] => {
   const parts = splitWhitespaceTokens(text);
   return parts.map((part, idx) => {
     if (!part) return null;
     if (part.trim() === "") return part;
-    if (!opts.enableLinks) return part;
-    const ref = parseFileRefToken(part);
-    if (!ref) return part;
-    if (!opts.worktreeId && !isAbsolutePath(ref.path)) return part;
+    if (opts.enableLinks) {
+      const urlRef = parseUrlToken(part);
+      if (urlRef) {
+        return (
+          <a
+            key={`token-${idx}`}
+            className="code-token code-token-url"
+            href={urlRef.url}
+            rel="noreferrer noopener"
+            target="_blank"
+            onClick={(event) => handleUrlTokenClick(event, urlRef.url)}
+          >
+            {part}
+          </a>
+        );
+      }
+
+      const ref = parseFileRefToken(part);
+      if (ref && (opts.worktreeId || isAbsolutePath(ref.path))) {
+        return (
+          <span
+            key={`token-${idx}`}
+            className="code-token code-token-path"
+            onClick={(event) => handleCodeTokenClick(event, ref, opts.worktreeId, opts.onFileOpenError)}
+          >
+            {part}
+          </span>
+        );
+      }
+    }
+
+    if (!opts.wrapPlainTokens) return part;
     return (
-      <span
-        key={`token-${idx}`}
-        className="code-token-path"
-        onClick={(event) => handleCodeTokenClick(event, ref, opts.worktreeId, opts.onFileOpenError)}
-      >
+      <span key={`token-${idx}`} className="code-token">
         {part}
       </span>
     );
@@ -3095,10 +3136,27 @@ function TokenizedInlineCode({
   worktreeId: string | null;
   onFileOpenError?: (message: string | null) => void;
 }) {
-  const content = enableLinks
-    ? buildCodeTokenNodes(codeString, { enableLinks, worktreeId, onFileOpenError })
-    : codeString;
-  return <code className={className}>{content}</code>;
+  const handleDoubleClick = useCallback((event: MouseEvent<HTMLElement>) => {
+    if (event.metaKey || event.ctrlKey) return;
+    const selection = window.getSelection();
+    if (!selection) return;
+    const range = document.createRange();
+    range.selectNodeContents(event.currentTarget);
+    selection.removeAllRanges();
+    selection.addRange(range);
+  }, []);
+
+  const content = buildCodeTokenNodes(codeString, {
+    enableLinks,
+    worktreeId,
+    onFileOpenError,
+    wrapPlainTokens: true,
+  });
+  return (
+    <code className={className} onDoubleClick={handleDoubleClick}>
+      {content}
+    </code>
+  );
 }
 
 function FencedCodeBlock({

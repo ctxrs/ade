@@ -254,7 +254,12 @@ button.linklike:hover {
   text-decoration: none;
 }
 
-.code-token-path {
+.code-token {
+  user-select: all;
+}
+
+.code-token-path,
+.code-token-url {
   text-decoration: none;
 }
 
@@ -265,6 +270,19 @@ button.linklike:hover {
   text-decoration-thickness: 1px;
   text-underline-offset: 2px;
   cursor: pointer;
+}
+
+.markdown-modifier .code-token-url:hover {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.code-token-url {
+  color: inherit;
+  cursor: text;
 }
 
 .ctx-file-link:focus-visible {
