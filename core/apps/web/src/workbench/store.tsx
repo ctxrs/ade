@@ -88,6 +88,13 @@ type DraftSnapshot = {
   loadedKeys: Record<string, boolean | undefined>;
 };
 
+type WorkbenchNavToken = number;
+type WorkbenchNavSource = "system" | "user";
+type WorkbenchNavOpts = {
+  navToken?: WorkbenchNavToken;
+  source?: WorkbenchNavSource;
+};
+
 export type WorkbenchStoreSnapshot = {
   workspaceId: string;
   windowId: string;
@@ -139,6 +146,7 @@ export class WorkbenchStore {
     hydrated: boolean;
     value: WorkbenchShellSnapshot;
   } | null = null;
+  private navEpoch = 0;
 
   constructor(workspaceId: string) {
     const windowId = getOrCreateWindowId();
