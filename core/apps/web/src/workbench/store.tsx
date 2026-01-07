@@ -88,9 +88,9 @@ type DraftSnapshot = {
   loadedKeys: Record<string, boolean | undefined>;
 };
 
-type WorkbenchNavToken = number;
-type WorkbenchNavSource = "system" | "user";
-type WorkbenchNavOpts = {
+export type WorkbenchNavToken = number;
+export type WorkbenchNavSource = "system" | "user";
+export type WorkbenchNavOpts = {
   navToken?: WorkbenchNavToken;
   source?: WorkbenchNavSource;
 };
@@ -111,13 +111,6 @@ export type WorkbenchShellSnapshot = {
   hydrated: boolean;
   warnings: string[];
   window: PersistedWorkbenchWindowV1;
-};
-
-export type WorkbenchNavToken = number;
-export type WorkbenchNavSource = "system" | "user";
-export type WorkbenchNavOpts = {
-  navToken?: WorkbenchNavToken;
-  source?: WorkbenchNavSource;
 };
 
 type WorkbenchStoreListener = () => void;
@@ -147,7 +140,6 @@ export class WorkbenchStore {
   private draftLoadsInFlight = new Map<string, Promise<void>>();
   private channel: BroadcastChannel | null = null;
   private layoutDirtyBeforeHydrate = false;
-  private navEpoch = 0;
   private shellSnapshotCache: {
     window: PersistedWorkbenchWindowV1;
     warnings: string[];

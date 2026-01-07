@@ -5,6 +5,7 @@ CTX_MCP_COMMAND ?= $(CARGO_TARGET_DIR)/debug/ctx-mcp
 SUPABASE_LOCAL ?= 1
 SUPABASE_FUNCTIONS ?= 1
 SUPABASE_FUNCTIONS_BG ?= 1
+CTX_WEB_PORT ?= 5173
 export CARGO_TARGET_DIR
 
 test:
@@ -41,10 +42,10 @@ web: supabase-local supabase-functions
 ifeq ($(SUPABASE_LOCAL),1)
 	@SUPABASE_ENV="$$(../scripts/supabase_local_env.sh)"; \
 	if [ -n "$$SUPABASE_ENV" ]; then \
-		env $$SUPABASE_ENV pnpm -C apps/web dev; \
+		env CTX_WEB_PORT=$(CTX_WEB_PORT) $$SUPABASE_ENV pnpm -C apps/web dev; \
 	else \
-		pnpm -C apps/web dev; \
+		CTX_WEB_PORT=$(CTX_WEB_PORT) pnpm -C apps/web dev; \
 	fi
 else
-	pnpm -C apps/web dev
+	CTX_WEB_PORT=$(CTX_WEB_PORT) pnpm -C apps/web dev
 endif

@@ -30,6 +30,8 @@ export default defineConfig(({ command }) => {
   const daemonUrl =
     process.env.CTX_DAEMON_URL ?? auth?.daemon_url ?? "http://127.0.0.1:4399";
   const supabaseUrl = String(process.env.VITE_SUPABASE_URL ?? "").trim();
+  const supabaseProxyTarget = String(process.env.CTX_SUPABASE_PROXY_TARGET ?? "").trim();
+  const devPort = Number(process.env.CTX_WEB_PORT ?? 5173);
   const useHttps =
     process.env.CTX_DEV_HTTPS === "1"
       ? true
@@ -41,6 +43,18 @@ export default defineConfig(({ command }) => {
     process.env.VITE_CTX_AUTH_TOKEN ??= auth.token;
     process.env.VITE_CTX_DAEMON_URL ??= daemonUrl;
   }
+
+  const supabaseProxy =
+    supabaseProxyTarget.length > 0
+      ? {
+          "/auth": { target: supabaseProxyTarget, changeOrigin: true, secure: false },
+          "/rest": { target: supabaseProxyTarget, changeOrigin: true, secure: false },
+          "/storage": { target: supabaseProxyTarget, changeOrigin: true, secure: false },
+          "/functions": { target: supabaseProxyTarget, changeOrigin: true, secure: false },
+          "/realtime": { target: supabaseProxyTarget, changeOrigin: true, secure: false, ws: true },
+          "/graphql": { target: supabaseProxyTarget, changeOrigin: true, secure: false },
+        }
+      : {};
 
   return {
     plugins: [
@@ -57,7 +71,8 @@ export default defineConfig(({ command }) => {
     },
     server: {
       host: "0.0.0.0",
-      port: 5173,
+      port: Number.isFinite(devPort) ? devPort : 5173,
+      strictPort: true,
       https: useHttps,
       proxy: {
         "/api": {
@@ -65,6 +80,7 @@ export default defineConfig(({ command }) => {
           changeOrigin: true,
           ws: true,
         },
+        ...supabaseProxy,
       },
     },
     preview: {

@@ -20,16 +20,20 @@ if [ -z "$api_url" ] || [ -z "$anon_key" ]; then
   exit 0
 fi
 
-tailscale_ip=""
+dev_host=""
 if command -v tailscale >/dev/null 2>&1; then
-  tailscale_ip="$(tailscale ip -4 2>/dev/null | head -n 1 || true)"
+  dev_host="$(tailscale ip -4 2>/dev/null | head -n 1 || true)"
+fi
+if [ -z "$dev_host" ]; then
+  dev_host="127.0.0.1"
 fi
 
-if [ -n "$tailscale_ip" ]; then
-  api_host="$(node -e 'const u=new URL(process.argv[1]); console.log(u.hostname);' "$api_url")"
-  if [ "$api_host" = "127.0.0.1" ] || [ "$api_host" = "localhost" ] || [ "$api_host" = "::1" ]; then
-    api_url="$(node -e 'const u=new URL(process.argv[1]); u.hostname=process.argv[2]; console.log(u.toString());' "$api_url" "$tailscale_ip")"
-  fi
-fi
+dev_port="${CTX_WEB_PORT:-5173}"
+dev_origin="https://${dev_host}:${dev_port}"
+https_hosts="${dev_host},localhost,127.0.0.1"
 
-printf 'VITE_SUPABASE_URL=%s VITE_SUPABASE_ANON_KEY=%s' "$api_url" "$anon_key"
+printf 'VITE_SUPABASE_URL=%s VITE_SUPABASE_ANON_KEY=%s CTX_SUPABASE_PROXY_TARGET=%s CTX_DEV_HTTPS_HOSTS=%s' \
+  "$dev_origin" \
+  "$anon_key" \
+  "$api_url" \
+  "$https_hosts"
