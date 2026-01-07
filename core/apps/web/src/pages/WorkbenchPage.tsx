@@ -251,18 +251,20 @@ type TaskRowProps = {
 };
 
 type TaskListContext = {
-  activeCount: number;
-  activeInitialized: boolean;
-  activeFetchState: "idle" | "loading" | "error";
   archivedCollapsed: boolean;
   archivedFetchState: "idle" | "loading" | "error";
-  archivedLoaded: boolean;
-  archivedTaskSummaries: WorkspaceCatchupItem[];
   hasMoreArchived: boolean;
-  onToggleArchivedCollapsed: () => void;
   onLoadMoreArchived: () => void;
-  renderArchivedRow: (summary: WorkspaceCatchupItem) => React.ReactNode;
 };
+
+type TaskListItem =
+  | { kind: "active-empty" }
+  | { kind: "active-task"; summary: WorkspaceCatchupItem }
+  | { kind: "archived-header" }
+  | { kind: "archived-loading" }
+  | { kind: "archived-error" }
+  | { kind: "archived-empty" }
+  | { kind: "archived-task"; summary: WorkspaceCatchupItem };
 
 type TaskListScrollerProps = React.HTMLAttributes<HTMLDivElement> & {
   context?: TaskListContext;
@@ -291,78 +293,19 @@ const TaskListScroller = React.forwardRef<HTMLDivElement, TaskListScrollerProps>
 });
 
 const TaskListContainer = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>((props, ref) => (
-  <div {...props} ref={ref} className="wb-task-list" role="list" aria-label="Active tasks" />
+  <div {...props} ref={ref} className="wb-task-list" role="list" aria-label="Tasks" />
 ));
 
-const TaskListHeader = ({ context }: { context?: TaskListContext }) => (
+const TaskListHeader = () => (
   <div className="wb-section-header">
     <div className="wb-section-title">Active</div>
   </div>
 );
 
-const TaskListFooter = ({ context }: { context?: TaskListContext }) => {
-  if (!context) return null;
-  const {
-    activeCount,
-    activeInitialized,
-    activeFetchState,
-    archivedCollapsed,
-    archivedFetchState,
-    archivedLoaded,
-    archivedTaskSummaries,
-    onToggleArchivedCollapsed,
-    renderArchivedRow,
-  } = context;
-
-  return (
-    <>
-      {activeCount === 0 && activeInitialized && activeFetchState !== "loading" && (
-        <div className="wb-task-list">
-          <div className="wb-muted">No active tasks.</div>
-        </div>
-      )}
-      <div className="wb-section-header wb-section-header-archived">
-        <button
-          type="button"
-          className="wb-section-toggle"
-          onClick={onToggleArchivedCollapsed}
-          aria-expanded={!archivedCollapsed}
-          aria-controls="wb-archived-list"
-        >
-          <span className="wb-section-title">Archived</span>
-          <span className={`wb-section-chev ${archivedCollapsed ? "wb-section-chev-collapsed" : ""}`}>
-            <ChevronDown size={14} />
-          </span>
-        </button>
-      </div>
-      {!archivedCollapsed && (
-        <div
-          id="wb-archived-list"
-          className="wb-task-list wb-task-list-archived"
-          role="list"
-          aria-label="Archived tasks"
-        >
-          {archivedFetchState === "loading" && (
-            <div className="wb-muted">Loading archived tasks…</div>
-          )}
-          {archivedFetchState === "error" && (
-            <div className="wb-muted">Failed to load archived tasks. Retry.</div>
-          )}
-          {archivedTaskSummaries.map((summary) => renderArchivedRow(summary))}
-          {archivedTaskSummaries.length === 0 && archivedLoaded && archivedFetchState !== "loading" && (
-            <div className="wb-muted">No archived tasks.</div>
-          )}
-        </div>
-      )}
-    </>
-  );
-};
-
 const TASK_LIST_COMPONENTS = {
   Scroller: TaskListScroller,
   List: TaskListContainer,
   Header: TaskListHeader,
-  Footer: TaskListFooter,
 };
 
 export const TaskRow = React.memo(function TaskRow({
@@ -1696,13 +1639,129 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     [renderTaskRow],
   );
 
-  const toggleArchivedCollapsed = useCallback(() => {
-    const next = !archivedCollapsed;
-    setArchivedCollapsed(next);
-    if (!next) {
-      workspaceCatchupStore.ensureArchivedLoaded();
+  const taskListItems = useMemo<TaskListItem[]>(() => {
+    const items: TaskListItem[] = [];
+    if (
+      activeTaskSummaries.length === 0 &&
+      workspaceCatchup.initialized &&
+      workspaceCatchup.fetchState.active !== "loading"
+    ) {
+      items.push({ kind: "active-empty" });
     }
-  }, [archivedCollapsed, workspaceCatchupStore]);
+    activeTaskSummaries.forEach((summary) => items.push({ kind: "active-task", summary }));
+    items.push({ kind: "archived-header" });
+    if (!archivedCollapsed) {
+      if (workspaceCatchup.fetchState.archived === "loading") {
+        items.push({ kind: "archived-loading" });
+      }
+      if (workspaceCatchup.fetchState.archived === "error") {
+        items.push({ kind: "archived-error" });
+      }
+      archivedTaskSummaries.forEach((summary) => items.push({ kind: "archived-task", summary }));
+      if (
+        archivedTaskSummaries.length === 0 &&
+        workspaceCatchup.archivedLoaded &&
+        workspaceCatchup.fetchState.archived !== "loading"
+      ) {
+        items.push({ kind: "archived-empty" });
+      }
+    }
+    return items;
+  }, [
+    activeTaskSummaries,
+    archivedCollapsed,
+    archivedTaskSummaries,
+    workspaceCatchup.archivedLoaded,
+    workspaceCatchup.fetchState.active,
+    workspaceCatchup.fetchState.archived,
+    workspaceCatchup.initialized,
+  ]);
+
+  const activeSectionLastIndex = useMemo(() => {
+    if (activeTaskSummaries.length > 0) {
+      return activeTaskSummaries.length - 1;
+    }
+    if (workspaceCatchup.initialized && workspaceCatchup.fetchState.active !== "loading") {
+      return 0;
+    }
+    return -1;
+  }, [activeTaskSummaries.length, workspaceCatchup.fetchState.active, workspaceCatchup.initialized]);
+
+  const renderTaskListItem = useCallback(
+    (item: TaskListItem) => {
+      switch (item.kind) {
+        case "active-empty":
+          return <div className="wb-muted">No active tasks.</div>;
+        case "active-task":
+          return renderTaskRow(item.summary);
+        case "archived-header":
+          return (
+            <div className="wb-section-header wb-section-header-archived">
+              <button
+                type="button"
+                className="wb-section-toggle"
+                onClick={() => {
+                  const next = !archivedCollapsed;
+                  setArchivedCollapsed(next);
+                  if (!next) {
+                    workspaceCatchupStore.ensureArchivedLoaded();
+                  }
+                }}
+                aria-expanded={!archivedCollapsed}
+              >
+                <span className="wb-section-title">Archived</span>
+                <span className={`wb-section-chev ${archivedCollapsed ? "wb-section-chev-collapsed" : ""}`}>
+                  <ChevronDown size={14} />
+                </span>
+              </button>
+            </div>
+          );
+        case "archived-loading":
+          return <div className="wb-muted">Loading archived tasks…</div>;
+        case "archived-error":
+          return <div className="wb-muted">Failed to load archived tasks. Retry.</div>;
+        case "archived-empty":
+          return <div className="wb-muted">No archived tasks.</div>;
+        case "archived-task":
+          return renderArchivedRow(item.summary);
+        default:
+          return null;
+      }
+    },
+    [archivedCollapsed, renderArchivedRow, renderTaskRow, workspaceCatchupStore],
+  );
+
+  const computeTaskListItemKey = useCallback((_: number, item: TaskListItem) => {
+    switch (item.kind) {
+      case "active-task":
+        return `active-${item.summary.id}`;
+      case "archived-task":
+        return `archived-${item.summary.id}`;
+      case "active-empty":
+        return "active-empty";
+      case "archived-header":
+        return "archived-header";
+      case "archived-loading":
+        return "archived-loading";
+      case "archived-error":
+        return "archived-error";
+      case "archived-empty":
+        return "archived-empty";
+      default:
+        return "unknown";
+    }
+  }, []);
+
+  const onTaskListRangeChanged = useCallback(
+    (range: { startIndex: number; endIndex: number }) => {
+      if (!workspaceCatchup.hasMoreActive) return;
+      if (workspaceCatchup.fetchState.active === "loading") return;
+      if (activeSectionLastIndex < 0) return;
+      if (range.endIndex < activeSectionLastIndex) return;
+      workspaceCatchupStore.loadMoreActive();
+    },
+    [activeSectionLastIndex, workspaceCatchup.fetchState.active, workspaceCatchup.hasMoreActive, workspaceCatchupStore],
+  );
 
   const loadMoreArchived = useCallback(() => {
     workspaceCatchupStore.loadMoreArchived();
@@ -1710,31 +1769,12 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
 
   const taskListContext = useMemo<TaskListContext>(
     () => ({
-      activeCount: activeTaskSummaries.length,
-      activeInitialized: workspaceCatchup.initialized,
-      activeFetchState: workspaceCatchup.fetchState.active,
       archivedCollapsed,
       archivedFetchState: workspaceCatchup.fetchState.archived,
-      archivedLoaded: workspaceCatchup.archivedLoaded,
-      archivedTaskSummaries,
       hasMoreArchived: workspaceCatchup.hasMoreArchived,
-      onToggleArchivedCollapsed: toggleArchivedCollapsed,
       onLoadMoreArchived: loadMoreArchived,
-      renderArchivedRow,
     }),
-    [
-      activeTaskSummaries.length,
-      archivedCollapsed,
-      archivedTaskSummaries,
-      loadMoreArchived,
-      renderArchivedRow,
-      toggleArchivedCollapsed,
-      workspaceCatchup.archivedLoaded,
-      workspaceCatchup.fetchState.active,
-      workspaceCatchup.fetchState.archived,
-      workspaceCatchup.hasMoreArchived,
-      workspaceCatchup.initialized,
-    ],
+    [archivedCollapsed, loadMoreArchived, workspaceCatchup.fetchState.archived, workspaceCatchup.hasMoreArchived],
   );
 
   const onDeleteTask = useCallback(
@@ -3163,16 +3203,12 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
         <div className="wb-sidebar-section wb-sidebar-grow" style={{ minHeight: 0, display: "flex" }}>
           <Virtuoso
             style={{ height: "100%" }}
-            data={activeTaskSummaries}
+            data={taskListItems}
             overscan={8}
-            computeItemKey={(_, summary) => summary.id}
-            itemContent={(_, summary) => renderTaskRow(summary)}
+            computeItemKey={computeTaskListItemKey}
+            itemContent={(_, item) => renderTaskListItem(item)}
             context={taskListContext}
-            endReached={() => {
-              if (workspaceCatchup.hasMoreActive) {
-                workspaceCatchupStore.loadMoreActive();
-              }
-            }}
+            rangeChanged={onTaskListRangeChanged}
             components={TASK_LIST_COMPONENTS}
           />
         </div>
