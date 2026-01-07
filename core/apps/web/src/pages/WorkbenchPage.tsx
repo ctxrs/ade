@@ -78,6 +78,7 @@ import { pickPreferredSession, pickPreferredSessionId, pickPreferredTrackId } fr
 import { imageFilesToInlineAttachments } from "../utils/messageAttachments";
 import { parseModelId } from "../utils/modelEffort";
 import { formatRelativeAgeShort } from "../utils/relativeTime";
+import { shouldSendOnEnter } from "../utils/keyboard";
 import { useRelativeNowMs } from "../utils/useRelativeNowMs";
 import {
   NEW_TASK_DRAFT_KEY,
@@ -486,11 +487,11 @@ export const TaskRow = React.memo(function TaskRow({
                 ignoreBlurRef.current = true;
                 onCancelRename();
               }
-              if (e.key === "Enter") {
+              if (shouldSendOnEnter(e)) {
                 e.preventDefault();
                 e.stopPropagation();
                 ignoreBlurRef.current = true;
-                onCommitRename(taskId, renameDraft);
+                onCommitRename(taskId, e.currentTarget.value);
               }
             }}
             onBlur={(e) => {
