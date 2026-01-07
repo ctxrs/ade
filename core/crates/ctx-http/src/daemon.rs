@@ -10,6 +10,7 @@ use axum::Router;
 use chrono::Utc;
 use directories::BaseDirs;
 use fs2::FileExt;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::sync::{broadcast, mpsc, watch, Mutex};
 
@@ -62,6 +63,66 @@ fn acquire_daemon_lock(data_root: &Path) -> Result<std::fs::File> {
     }
 }
 
+const DAEMON_AUTH_FILENAME: &str = "daemon_auth.json";
+
+#[derive(Debug, Serialize, Deserialize)]
+struct DaemonAuthFile {
+    token: String,
+    #[serde(default)]
+    daemon_url: Option<String>,
+}
+
+fn daemon_auth_path(data_root: &Path) -> PathBuf {
+    data_root.join(DAEMON_AUTH_FILENAME)
+}
+
+fn read_daemon_auth_file(path: &Path) -> Result<Option<DaemonAuthFile>> {
+    match std::fs::read(path) {
+        Ok(bytes) => {
+            let auth: DaemonAuthFile = serde_json::from_slice(&bytes)
+                .with_context(|| format!("parsing daemon auth file {}", path.display()))?;
+            if auth.token.trim().is_empty() {
+                anyhow::bail!("daemon auth file {} contains empty token", path.display());
+            }
+            Ok(Some(auth))
+        }
+        Err(err) if err.kind() == ErrorKind::NotFound => Ok(None),
+        Err(err) => {
+            Err(err).with_context(|| format!("reading daemon auth file {}", path.display()))
+        }
+    }
+}
+
+fn write_daemon_auth_file(path: &Path, auth: &DaemonAuthFile) -> Result<()> {
+    let tmp = path.with_extension("json.tmp");
+    let bytes = serde_json::to_vec_pretty(auth)?;
+    std::fs::write(&tmp, bytes)?;
+    if path.exists() {
+        let _ = std::fs::remove_file(path);
+    }
+    std::fs::rename(&tmp, path)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let perms = std::fs::Permissions::from_mode(0o600);
+        let _ = std::fs::set_permissions(path, perms);
+    }
+    Ok(())
+}
+
+fn load_or_init_daemon_auth(data_root: &Path) -> Result<DaemonAuthFile> {
+    let path = daemon_auth_path(data_root);
+    if let Some(auth) = read_daemon_auth_file(&path)? {
+        return Ok(auth);
+    }
+    let auth = DaemonAuthFile {
+        token: uuid::Uuid::new_v4().to_string(),
+        daemon_url: None,
+    };
+    write_daemon_auth_file(&path, &auth)?;
+    Ok(auth)
+}
+
 pub struct AppState {
     pub data_root: PathBuf,
     pub store: Store,
@@ -100,16 +161,11 @@ pub struct AppState {
     pub edit_plans: Mutex<HashMap<EditPlanId, EditPlan>>,
     session_meta_cache: Mutex<HashMap<SessionId, Session>>,
     worktree_bootstrap_gates: Mutex<HashMap<WorktreeId, WorktreeBootstrapGate>>,
-    mcp_tokens: Mutex<HashMap<String, McpTokenEntry>>,
 }
 
 struct WorktreeBootstrapGate {
     wait_for_completion: bool,
     done_tx: watch::Sender<bool>,
-}
-
-struct McpTokenEntry {
-    session_id: SessionId,
 }
 
 pub struct CachedProviderOptions {
@@ -241,7 +297,6 @@ impl AppState {
             edit_plans: Mutex::new(edit_plans),
             session_meta_cache: Mutex::new(HashMap::new()),
             worktree_bootstrap_gates: Mutex::new(HashMap::new()),
-            mcp_tokens: Mutex::new(HashMap::new()),
         }
     }
 
@@ -323,16 +378,6 @@ impl AppState {
                 done_tx,
             },
         );
-    }
-
-    pub async fn register_mcp_token(&self, session_id: SessionId, token: String) {
-        let mut map = self.mcp_tokens.lock().await;
-        map.insert(token, McpTokenEntry { session_id });
-    }
-
-    pub async fn lookup_mcp_token(&self, token: &str) -> Option<SessionId> {
-        let map = self.mcp_tokens.lock().await;
-        map.get(token).map(|entry| entry.session_id)
     }
 
     pub async fn finish_worktree_bootstrap(&self, worktree_id: WorktreeId) {
@@ -762,12 +807,7 @@ fn delete_edit_plan_file(data_root: &Path, plan_id: EditPlanId) -> anyhow::Resul
     Ok(())
 }
 
-pub async fn serve(
-    bind: String,
-    data_dir: Option<String>,
-    auth_token: Option<String>,
-    auth_disabled: bool,
-) -> Result<()> {
+pub async fn serve(bind: String, data_dir: Option<String>) -> Result<()> {
     let data_root = match data_dir {
         Some(p) => PathBuf::from(p),
         None => {
@@ -995,17 +1035,17 @@ pub async fn serve(
     };
     let daemon_url = format!("http://{}:{}", host, local_addr.port());
 
-    let auth_token = if auth_disabled {
-        None
-    } else {
-        auth_token.or_else(|| std::env::var("CTX_DESKTOP_TOKEN").ok())
-    };
+    let mut auth = load_or_init_daemon_auth(&data_root)?;
+    let auth_token = Some(auth.token.clone());
     let auth_token_for_env = auth_token.clone();
     let prewarm_workdir = data_root.clone();
 
     let mut lsp_cfg = LspManagerConfig::default();
     let _ = installer::apply_managed_lsp_server_config(&data_root, &mut lsp_cfg).await;
     let _ = installer::apply_user_lsp_server_config(&data_root, &mut lsp_cfg).await;
+    auth.daemon_url = Some(daemon_url.clone());
+    write_daemon_auth_file(&daemon_auth_path(&data_root), &auth)?;
+
     let state = Arc::new(AppState::new_with_lsp_config(
         data_root,
         store,

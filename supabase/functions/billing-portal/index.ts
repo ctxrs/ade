@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { corsHeaders } from "../_shared/cors.ts";
+import { resolveLocalOrigin } from "../_shared/origin.ts";
 import { getStripe } from "../_shared/stripe.ts";
 
 function requiredEnv(name: string): string {
@@ -13,7 +14,13 @@ function optionalEnv(name: string): string {
   return (Deno.env.get(name) ?? "").trim();
 }
 
-function buildReturnUrl(): string {
+function resolveAppOrigin(origin: string | null): string {
+  const localOrigin = resolveLocalOrigin(origin);
+  if (localOrigin) return localOrigin;
+  return requiredEnv("CTX_APP_ORIGIN");
+}
+
+function buildReturnUrl(origin: string | null): string {
   const redirectBase = optionalEnv("CTX_BILLING_REDIRECT_URL");
   if (redirectBase) {
     const url = new URL(redirectBase);
@@ -23,8 +30,8 @@ function buildReturnUrl(): string {
     return url.toString();
   }
 
-  const appOrigin = requiredEnv("CTX_APP_ORIGIN");
-  return `${appOrigin}/settings#billing`;
+  const appOrigin = resolveAppOrigin(origin);
+  return new URL("/settings#billing", appOrigin).toString();
 }
 
 function asBearerToken(req: Request): string {
@@ -83,7 +90,7 @@ serve(async (req) => {
   const stripe = getStripe();
   const portal = await stripe.billingPortal.sessions.create({
     customer: String(profile.stripe_customer_id),
-    return_url: buildReturnUrl(),
+    return_url: buildReturnUrl(origin),
   });
 
   return new Response(JSON.stringify({ url: portal.url }), {

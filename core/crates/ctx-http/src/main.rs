@@ -17,14 +17,6 @@ enum Commands {
         bind: String,
         #[arg(long)]
         data_dir: Option<String>,
-        /// Require a bearer token for all `/api/*` HTTP + WS requests.
-        ///
-        /// In desktop mode, this should be a random per-install token and passed by the wrapper.
-        #[arg(long)]
-        auth_token: Option<String>,
-        /// Disable auth enforcement even if `--auth-token` or `CTX_DESKTOP_TOKEN` is present.
-        #[arg(long)]
-        auth_disabled: bool,
     },
     Init {
         #[arg(long)]
@@ -91,13 +83,8 @@ async fn main() -> Result<()> {
     }
 
     match cli.command {
-        Commands::Serve {
-            bind,
-            data_dir,
-            auth_token,
-            auth_disabled,
-        } => {
-            ctx_http::daemon::serve(bind, data_dir, auth_token, auth_disabled).await?;
+        Commands::Serve { bind, data_dir } => {
+            ctx_http::daemon::serve(bind, data_dir).await?;
         }
         Commands::Init { root } => {
             ctx_http::daemon::init_workspace(root).await?;

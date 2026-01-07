@@ -150,6 +150,7 @@ class WorkspaceCatchupStoreImpl implements WorkspaceCatchupEventSource {
   };
 
   init = () => {
+    this.destroyed = false;
     this.ensureActivePage(true).catch(() => {});
     this.connectStream().catch(() => {});
   };

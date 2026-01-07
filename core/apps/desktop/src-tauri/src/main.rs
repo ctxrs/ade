@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, ErrorKind};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -78,6 +78,13 @@ struct DesktopConnectionInfo {
 }
 
 #[derive(Debug, Deserialize)]
+struct DaemonAuthFile {
+    token: String,
+    #[serde(default)]
+    daemon_url: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 struct SshConnectReq {
     host: String,
     #[serde(default)]
@@ -86,8 +93,6 @@ struct SshConnectReq {
     remote_port: Option<u16>,
     #[serde(default)]
     start_remote: bool,
-    #[serde(default)]
-    auth_token: Option<String>,
     #[serde(default)]
     remote_data_dir: Option<String>,
 }
@@ -204,6 +209,10 @@ struct WorkspaceWindowRegistry {
 }
 
 const DEEP_LINK_TOKEN_TTL: Duration = Duration::from_secs(600);
+const DAEMON_AUTH_FILENAME: &str = "daemon_auth.json";
+const DAEMON_AUTH_READ_TIMEOUT: Duration = Duration::from_secs(5);
+const DAEMON_AUTH_REMOTE_TIMEOUT: Duration = Duration::from_secs(10);
+const DAEMON_AUTH_RETRY_DELAY: Duration = Duration::from_millis(200);
 
 impl DeepLinkTokenStore {
     fn mint(&self) -> DesktopDeepLinkToken {
@@ -475,10 +484,10 @@ fn desktop_connect_local(
     state: tauri::State<ConnectionManager>,
 ) -> Result<DesktopConnectionInfo, String> {
     state.disconnect();
-    let token = uuid::Uuid::new_v4().to_string();
     let data_dir = daemon_data_dir(&app).map_err(to_err)?;
-    let (url, child, systemd_scope) = spawn_daemon(&app, &token, &data_dir).map_err(to_err)?;
-    state.set_local(url.clone(), token.clone(), child, systemd_scope);
+    let (url, child, systemd_scope) = spawn_daemon(&app, &data_dir).map_err(to_err)?;
+    let auth = read_daemon_auth_with_retry(&data_dir).map_err(to_err)?;
+    state.set_local(url.clone(), auth.token.clone(), child, systemd_scope);
     Ok(state.info())
 }
 
@@ -496,30 +505,16 @@ async fn desktop_connect_ssh(
     }
     let remote_port = req.remote_port.unwrap_or(4399);
 
-    let token = if req.start_remote {
-        Some(
-            req.auth_token
-                .clone()
-                .filter(|t| !t.trim().is_empty())
-                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
-        )
-    } else {
-        req.auth_token
-            .clone()
-            .filter(|t| !t.trim().is_empty())
-    };
-
     let user = req.user.clone();
     let remote_data_dir = req.remote_data_dir.clone();
     let start_remote = req.start_remote;
-    let token_for_connect = token.clone();
-    let (base_url, tunnel) = tauri::async_runtime::spawn_blocking(move || -> Result<(String, Child)> {
+    let (base_url, token, tunnel) =
+        tauri::async_runtime::spawn_blocking(move || -> Result<(String, String, Child)> {
         if start_remote {
             start_remote_daemon_over_ssh(
                 &host,
                 user.as_deref(),
                 remote_port,
-                token_for_connect.as_deref(),
                 remote_data_dir.as_deref(),
             )?;
         }
@@ -529,24 +524,24 @@ async fn desktop_connect_ssh(
             start_ssh_tunnel(&host, user.as_deref(), local_port, remote_port)?;
         let base_url = format!("http://127.0.0.1:{local_port}");
 
-        let health = probe_daemon_health_with_retry(
-            &base_url,
-            token_for_connect.as_deref(),
-            local_port,
-            &mut tunnel,
-            &tunnel_stderr,
-        );
+        let health =
+            probe_daemon_health_with_retry(&base_url, local_port, &mut tunnel, &tunnel_stderr);
         if let Err(e) = health {
             let _ = try_kill_child(tunnel);
             return Err(e);
         }
-        Ok((base_url, tunnel))
+        let auth = read_remote_daemon_auth_with_retry(
+            &host,
+            user.as_deref(),
+            remote_data_dir.as_deref(),
+        )?;
+        Ok((base_url, auth.token, tunnel))
     })
     .await
     .map_err(|e| format!("failed to reach remote daemon: {e}"))?
     .map_err(|e| format!("failed to reach remote daemon: {e:#}"))?;
 
-    state.set_ssh(base_url, token, tunnel);
+    state.set_ssh(base_url, Some(token), tunnel);
     Ok(state.info())
 }
 
@@ -554,10 +549,10 @@ fn ensure_local_connection(app: &tauri::AppHandle, state: &ConnectionManager) ->
     if !matches!(state.info().kind, DesktopConnectionKind::None) {
         return Ok(());
     }
-    let token = uuid::Uuid::new_v4().to_string();
     let data_dir = daemon_data_dir(app)?;
-    let (url, child, systemd_scope) = spawn_daemon(app, &token, &data_dir)?;
-    state.set_local(url, token, child, systemd_scope);
+    let (url, child, systemd_scope) = spawn_daemon(app, &data_dir)?;
+    let auth = read_daemon_auth_with_retry(&data_dir)?;
+    state.set_local(url, auth.token, child, systemd_scope);
     Ok(())
 }
 
@@ -1883,7 +1878,6 @@ fn start_remote_daemon_over_ssh(
     host: &str,
     user: Option<&str>,
     remote_port: u16,
-    token: Option<&str>,
     remote_data_dir: Option<&str>,
 ) -> Result<()> {
     let target = match user {
@@ -1892,14 +1886,9 @@ fn start_remote_daemon_over_ssh(
     };
 
     let data_dir = remote_data_dir.unwrap_or("~/.ctx");
-    let auth_flag = token
-        .filter(|t| !t.trim().is_empty())
-        .map(|t| format!(" --auth-token {}", shell_escape(t)))
-        .unwrap_or_default();
     let exec_cmd = format!(
-        "if command -v ctx >/dev/null 2>&1; then ctx serve --bind 127.0.0.1:{remote_port} --data-dir {dir}{auth}; else echo 'ctx not found on PATH' >&2; exit 127; fi",
-        dir = shell_escape(data_dir),
-        auth = auth_flag
+        "if command -v ctx >/dev/null 2>&1; then ctx serve --bind 127.0.0.1:{remote_port} --data-dir {dir}; else echo 'ctx not found on PATH' >&2; exit 127; fi",
+        dir = remote_path_expr(data_dir),
     );
     let log_cmd = format!("{exec_cmd} > ~/.ctx/logs/daemon.log 2>&1");
     let systemd_cmd = format!(
@@ -1932,38 +1921,145 @@ fn start_remote_daemon_over_ssh(
 }
 
 fn shell_escape(s: &str) -> String {
-    // Minimal POSIX shell escaping for tokens: wrap in single quotes and escape inner single quotes.
+    // Minimal POSIX shell escaping: wrap in single quotes and escape inner single quotes.
     let inner = s.replace('\'', "'\"'\"'");
     format!("'{}'", inner)
 }
 
-fn probe_daemon_health(base_url: &str, token: Option<&str>) -> Result<()> {
+fn escape_for_double_quotes(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('$', "\\$")
+        .replace('`', "\\`")
+}
+
+fn remote_path_expr(path: &str) -> String {
+    let trimmed = path.trim();
+    if trimmed == "~" {
+        return "\"$HOME\"".to_string();
+    }
+    if let Some(rest) = trimmed.strip_prefix("~/") {
+        let escaped = escape_for_double_quotes(rest);
+        if escaped.is_empty() {
+            return "\"$HOME\"".to_string();
+        }
+        return format!("\"$HOME/{}\"", escaped);
+    }
+    shell_escape(trimmed)
+}
+
+fn parse_daemon_auth(bytes: &[u8], path: &Path) -> Result<DaemonAuthFile> {
+    let auth: DaemonAuthFile =
+        serde_json::from_slice(bytes).with_context(|| format!("parsing {}", path.display()))?;
+    if auth.token.trim().is_empty() {
+        anyhow::bail!("daemon auth file {} contains empty token", path.display());
+    }
+    Ok(auth)
+}
+
+fn read_daemon_auth_with_retry(data_dir: &Path) -> Result<DaemonAuthFile> {
+    let path = data_dir.join(DAEMON_AUTH_FILENAME);
+    let deadline = Instant::now() + DAEMON_AUTH_READ_TIMEOUT;
+    let mut last_err: Option<anyhow::Error> = None;
+    loop {
+        match std::fs::read(&path) {
+            Ok(bytes) => return parse_daemon_auth(&bytes, &path),
+            Err(err) if err.kind() == ErrorKind::NotFound => {
+                last_err = Some(anyhow!("daemon auth file not found at {}", path.display()));
+            }
+            Err(err) => {
+                last_err = Some(
+                    err.context(format!("reading daemon auth file {}", path.display())),
+                );
+            }
+        }
+        if Instant::now() > deadline {
+            return Err(last_err.unwrap_or_else(|| {
+                anyhow!("daemon auth file not found at {}", path.display())
+            }));
+        }
+        std::thread::sleep(DAEMON_AUTH_RETRY_DELAY);
+    }
+}
+
+fn read_remote_daemon_auth(
+    host: &str,
+    user: Option<&str>,
+    remote_data_dir: Option<&str>,
+) -> Result<DaemonAuthFile> {
+    let target = match user {
+        Some(u) if !u.trim().is_empty() => format!("{}@{}", u.trim(), host),
+        _ => host.to_string(),
+    };
+    let data_dir = remote_data_dir
+        .filter(|d| !d.trim().is_empty())
+        .unwrap_or("~/.ctx");
+    let auth_path = format!("{}/{}", data_dir.trim_end_matches('/'), DAEMON_AUTH_FILENAME);
+    let cmd = format!("cat -- {}", remote_path_expr(&auth_path));
+
+    let output = Command::new("ssh")
+        .arg(target)
+        .arg("sh")
+        .arg("-lc")
+        .arg(cmd)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .context("reading daemon auth file over ssh")?;
+
+    if !output.status.success() {
+        return Err(anyhow!(
+            "ssh read failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+
+    parse_daemon_auth(&output.stdout, Path::new(&auth_path))
+}
+
+fn read_remote_daemon_auth_with_retry(
+    host: &str,
+    user: Option<&str>,
+    remote_data_dir: Option<&str>,
+) -> Result<DaemonAuthFile> {
+    let deadline = Instant::now() + DAEMON_AUTH_REMOTE_TIMEOUT;
+    let mut last_err: Option<anyhow::Error> = None;
+    loop {
+        match read_remote_daemon_auth(host, user, remote_data_dir) {
+            Ok(auth) => return Ok(auth),
+            Err(err) => last_err = Some(err),
+        }
+        if Instant::now() > deadline {
+            return Err(last_err.unwrap_or_else(|| {
+                anyhow!("timed out reading daemon auth file over ssh")
+            }));
+        }
+        std::thread::sleep(DAEMON_AUTH_RETRY_DELAY);
+    }
+}
+
+fn probe_daemon_health(base_url: &str) -> Result<()> {
     let url = format!("{}/api/health", base_url.trim_end_matches('/'));
     let client = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(5))
         .build()
         .context("building http client")?;
-    let mut req = client.get(url);
-    if let Some(t) = token {
-        if !t.trim().is_empty() {
-            req = req.bearer_auth(t);
-        }
-    }
-    let res = req.send().context("requesting /api/health")?;
+    let res = client.get(url).send().context("requesting /api/health")?;
     res.error_for_status().context("health status")?;
     Ok(())
 }
 
 fn probe_daemon_health_with_retry(
     base_url: &str,
-    token: Option<&str>,
     local_port: u16,
     tunnel: &mut Child,
     stderr_log: &std::sync::Arc<std::sync::Mutex<String>>,
 ) -> Result<()> {
     let mut last_err: Option<anyhow::Error> = None;
     for attempt in 0..SSH_TUNNEL_HEALTH_RETRIES {
-        match probe_daemon_health(base_url, token) {
+        match probe_daemon_health(base_url) {
             Ok(()) => return Ok(()),
             Err(err) => {
                 last_err = Some(err);
@@ -2132,11 +2228,7 @@ fn stop_systemd_scope() {
     }
 }
 
-fn spawn_daemon(
-    app: &tauri::AppHandle,
-    token: &str,
-    data_dir: &Path,
-) -> Result<(String, Child, bool)> {
+fn spawn_daemon(app: &tauri::AppHandle, data_dir: &Path) -> Result<(String, Child, bool)> {
     let ctx_bin = resource_bin(app, "ctx")
         .or_else(|| dev_bin("ctx"))
         .unwrap_or_else(|| PathBuf::from("ctx"));
@@ -2198,8 +2290,6 @@ fn spawn_daemon(
         .arg("127.0.0.1:0")
         .arg("--data-dir")
         .arg(data_dir.to_string_lossy().to_string())
-        .arg("--auth-token")
-        .arg(token)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit());

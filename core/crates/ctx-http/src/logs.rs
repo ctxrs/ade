@@ -59,7 +59,7 @@ pub fn redact_sensitive(input: &str) -> String {
     out = redact_after_marker(out, "authorization: Bearer ");
     out = redact_after_marker(out, "token=");
     out = redact_after_marker(out, "TOKEN=");
-    out = redact_after_marker(out, "CTX_DESKTOP_TOKEN=");
+    out = redact_after_marker(out, "CTX_AUTH_TOKEN=");
     out = redact_after_marker(out, "ctxAuthToken\":\"");
     out = redact_after_marker(out, "ctx_auth_token\":\"");
     out
