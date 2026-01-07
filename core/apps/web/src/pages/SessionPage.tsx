@@ -2386,6 +2386,33 @@ function WorkbenchTurnHeaderView({
   expanded: boolean;
   onToggle: () => void;
 }) {
+  const [copied, setCopied] = useState(false);
+  const resetTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (!copied) return;
+    if (resetTimerRef.current) window.clearTimeout(resetTimerRef.current);
+    resetTimerRef.current = window.setTimeout(() => {
+      setCopied(false);
+      resetTimerRef.current = null;
+    }, 1000);
+    return () => {
+      if (resetTimerRef.current) window.clearTimeout(resetTimerRef.current);
+    };
+  }, [copied]);
+
+  const handleCopy = useCallback(
+    async (e: React.MouseEvent) => {
+      e.stopPropagation();
+      const content = header.content ?? "";
+      if (!content.trim()) return;
+      const ok = await copyTextToClipboard(content);
+      if (!ok) return;
+      setCopied(true);
+    },
+    [header.content]
+  );
+
   const handleClick = () => {
     const selection = window.getSelection()?.toString() ?? "";
     if (selection.trim()) return;
@@ -2398,6 +2425,8 @@ function WorkbenchTurnHeaderView({
     onToggle();
   };
 
+  const hasContent = (header.content ?? "").trim().length > 0;
+
   return (
     <div
       className={`wb-turn-header ${expanded ? "wb-turn-header-expanded" : "wb-turn-header-collapsed"}`}
@@ -2408,6 +2437,17 @@ function WorkbenchTurnHeaderView({
       aria-expanded={expanded}
     >
       <div className="wb-turn-header-bubble">
+        {hasContent && (
+          <button
+            type="button"
+            className="wb-turn-header-copy"
+            aria-label={copied ? "Copied" : "Copy message"}
+            title={copied ? "Copied" : "Copy message"}
+            onClick={handleCopy}
+          >
+            {copied ? <Check size={12} aria-hidden="true" /> : <Copy size={12} aria-hidden="true" />}
+          </button>
+        )}
         <div className="wb-turn-header-content">
           {header.plain_text.split("\n").map((line, idx, list) => (
             <span key={`${header.id}-${idx}`}>

@@ -3853,10 +3853,37 @@ button.linklike:hover {
 }
 
 .wb-turn-header-bubble {
+  position: relative;
   border-radius: 10px;
   border: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(255, 255, 255, 0.02);
   padding: 8px 10px;
+}
+
+.wb-turn-header-copy {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  border: none;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 4px;
+  color: inherit;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.wb-turn-header-bubble:hover .wb-turn-header-copy {
+  opacity: 0.6;
+}
+
+.wb-turn-header-copy:hover {
+  opacity: 1 !important;
+  background: rgba(255, 255, 255, 0.1);
 }
 
 .wb-turn-header-content {
