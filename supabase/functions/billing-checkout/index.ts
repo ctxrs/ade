@@ -131,6 +131,9 @@ serve(async (req) => {
     client_reference_id: userId,
     line_items: [{ price: priceId, quantity: 1 }],
     allow_promotion_codes: true,
+    subscription_data: {
+      metadata: { supabase_user_id: userId },
+    },
     success_url: buildReturnUrl("checkout_success", origin),
     cancel_url: buildReturnUrl("checkout_cancel", origin),
     metadata: { supabase_user_id: userId, plan_type: "pro", billing_interval: interval },
