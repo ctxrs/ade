@@ -189,14 +189,7 @@ impl ProviderAdapter for Tier1AcpAdapter {
         event_sink: mpsc::Sender<NormalizedEvent>,
     ) -> Result<RunHandle> {
         if env.contains_key("CTX_WORKER_GATEWAY_URL") && env.contains_key("CTX_WORKER_ID") {
-            return run_remote_prompt(
-                self.id.clone(),
-                input,
-                workdir,
-                env,
-                event_sink,
-            )
-            .await;
+            return run_remote_prompt(self.id.clone(), input, workdir, env, event_sink).await;
         }
         let (cancel_tx, cancel_rx) = oneshot::channel::<()>();
         let (done_tx, done_rx) = oneshot::channel::<()>();

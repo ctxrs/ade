@@ -35,9 +35,7 @@ impl WorkerDriver for LocalDriver {
             .env("CTX_BASE_COMMIT", base_commit_sha)
             .env(
                 "CTX_DIFF_DEBOUNCE_MS",
-                spec.diff_debounce_ms
-                    .unwrap_or(1500)
-                    .to_string(),
+                spec.diff_debounce_ms.unwrap_or(1500).to_string(),
             )
             .current_dir(&workdir);
         if let Some(provider_id) = spec.provider_id.as_ref() {

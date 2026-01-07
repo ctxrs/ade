@@ -98,9 +98,7 @@ impl GcpDriver {
     }
 
     fn image_url(&self) -> String {
-        if self.config.image.starts_with("projects/")
-            || self.config.image.starts_with("https://")
-        {
+        if self.config.image.starts_with("projects/") || self.config.image.starts_with("https://") {
             self.config.image.clone()
         } else {
             format!(
@@ -237,9 +235,10 @@ impl GcpDriver {
             "type": self.disk_type_url(),
         });
         if let Some(snapshot) = source_snapshot {
-            body.as_object_mut()
-                .expect("body object")
-                .insert("sourceSnapshot".to_string(), Value::String(snapshot.to_string()));
+            body.as_object_mut().expect("body object").insert(
+                "sourceSnapshot".to_string(),
+                Value::String(snapshot.to_string()),
+            );
         }
         let resp = self.request(Method::POST, &url, Some(body)).await?;
         let op_name = resp
@@ -250,12 +249,7 @@ impl GcpDriver {
     }
 
     async fn disk_exists(&self, name: &str) -> Result<bool> {
-        let url = format!(
-            "{}/zones/{}/disks/{}",
-            self.api_base(),
-            self.zone(),
-            name
-        );
+        let url = format!("{}/zones/{}/disks/{}", self.api_base(), self.zone(), name);
         let token = self.token().await?;
         let resp = self
             .http
@@ -271,12 +265,7 @@ impl GcpDriver {
     }
 
     async fn delete_disk(&self, name: &str) -> Result<()> {
-        let url = format!(
-            "{}/zones/{}/disks/{}",
-            self.api_base(),
-            self.zone(),
-            name
-        );
+        let url = format!("{}/zones/{}/disks/{}", self.api_base(), self.zone(), name);
         let resp = self.request(Method::DELETE, &url, None).await?;
         let op_name = resp
             .get("name")
@@ -335,6 +324,8 @@ impl GcpDriver {
             base_commit: base_commit_sha,
             diff_debounce_ms: spec.diff_debounce_ms.unwrap_or(1500),
             repo: &spec.repo,
+            provider_id: spec.provider_id.as_deref(),
+            env: &spec.env,
             shim_url: &self.config.worker_shim_url,
             workdir: &self.config.workdir,
             mount_path: &self.config.mount_path,
@@ -401,9 +392,7 @@ impl GcpDriver {
         }
 
         let url = format!("{}/zones/{}/instances", self.api_base(), self.zone());
-        let resp = self
-            .request(Method::POST, &url, Some(instance))
-            .await?;
+        let resp = self.request(Method::POST, &url, Some(instance)).await?;
         let op_name = resp
             .get("name")
             .and_then(|v| v.as_str())
@@ -500,11 +489,7 @@ impl WorkerDriver for GcpDriver {
                 let _ = self.delete_disk(&disk).await;
             }
             if let Some(snapshot) = entry.snapshot_name.take() {
-                let url = format!(
-                    "{}/global/snapshots/{}",
-                    self.api_base(),
-                    snapshot
-                );
+                let url = format!("{}/global/snapshots/{}", self.api_base(), snapshot);
                 let _ = self.request(Method::DELETE, &url, None).await;
             }
         }
@@ -562,7 +547,7 @@ impl WorkerDriver for GcpDriver {
             base_commit_sha,
             gateway_url,
         )
-            .await?;
+        .await?;
         let public_ip = self.fetch_instance_ip(&instance_name).await.ok().flatten();
 
         let ssh = self.config.ssh_user.as_ref().and_then(|user| {

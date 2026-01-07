@@ -109,11 +109,11 @@ impl AwsDriver {
         spec: &StartWorkerRequest,
     ) -> TagSpecification {
         let tags = vec![
+            Tag::builder().key("ctx-worker-id").value(worker_id).build(),
             Tag::builder()
-                .key("ctx-worker-id")
-                .value(worker_id)
+                .key("ctx-task-id")
+                .value(&spec.task_id)
                 .build(),
-            Tag::builder().key("ctx-task-id").value(&spec.task_id).build(),
             Tag::builder()
                 .key("ctx-track-id")
                 .value(&spec.track_id)
@@ -125,18 +125,19 @@ impl AwsDriver {
             .build()
     }
 
-    async fn create_volume(&self, zone: &str, worker_id: &str, spec: &StartWorkerRequest) -> Result<String> {
+    async fn create_volume(
+        &self,
+        zone: &str,
+        worker_id: &str,
+        spec: &StartWorkerRequest,
+    ) -> Result<String> {
         let resp = self
             .client
             .create_volume()
             .availability_zone(zone)
             .size(self.config.volume_size_gb)
             .volume_type(self.volume_type())
-            .tag_specifications(self.tag_specifications(
-                ResourceType::Volume,
-                worker_id,
-                spec,
-            ))
+            .tag_specifications(self.tag_specifications(ResourceType::Volume, worker_id, spec))
             .send()
             .await
             .context("create_volume")?;
@@ -173,6 +174,8 @@ impl AwsDriver {
             base_commit: base_commit_sha,
             diff_debounce_ms: spec.diff_debounce_ms.unwrap_or(1500),
             repo: &spec.repo,
+            provider_id: spec.provider_id.as_deref(),
+            env: &spec.env,
             shim_url: &self.config.worker_shim_url,
             workdir: &self.config.workdir,
             mount_path: &self.config.mount_path,
@@ -190,11 +193,7 @@ impl AwsDriver {
             .max_count(1)
             .subnet_id(&self.config.subnet_id)
             .user_data(user_data_b64)
-            .tag_specifications(self.tag_specifications(
-                ResourceType::Instance,
-                worker_id,
-                spec,
-            ));
+            .tag_specifications(self.tag_specifications(ResourceType::Instance, worker_id, spec));
 
         if !self.config.security_group_ids.is_empty() {
             run = run.set_security_group_ids(Some(self.config.security_group_ids.clone()));
@@ -210,10 +209,7 @@ impl AwsDriver {
         }
 
         let resp = run.send().await.context("run_instances")?;
-        let instance = resp
-            .instances()
-            .first()
-            .context("missing instance")?;
+        let instance = resp.instances().first().context("missing instance")?;
         let instance_id = instance
             .instance_id()
             .map(|id| id.to_string())
@@ -256,10 +252,7 @@ impl AwsDriver {
             };
             if let Some(res) = resp.reservations().first() {
                 if let Some(instance) = res.instances().first() {
-                    let state = instance
-                        .state()
-                        .and_then(|s| s.name())
-                        .map(|s| s.as_str());
+                    let state = instance.state().and_then(|s| s.name()).map(|s| s.as_str());
                     if matches!(state, Some("running")) {
                         return Ok(());
                     }
@@ -273,7 +266,10 @@ impl AwsDriver {
         anyhow::bail!("instance wait timeout")
     }
 
-    async fn wait_instance_ips(&self, instance_id: &str) -> Result<(Option<String>, Option<String>)> {
+    async fn wait_instance_ips(
+        &self,
+        instance_id: &str,
+    ) -> Result<(Option<String>, Option<String>)> {
         for _ in 0..40 {
             let resp = match self
                 .client
@@ -297,15 +293,10 @@ impl AwsDriver {
             };
             if let Some(res) = resp.reservations().first() {
                 if let Some(instance) = res.instances().first() {
-                    let state = instance
-                        .state()
-                        .and_then(|s| s.name())
-                        .map(|s| s.as_str());
+                    let state = instance.state().and_then(|s| s.name()).map(|s| s.as_str());
                     if matches!(state, Some("running")) {
-                        let public_ip =
-                            instance.public_ip_address().map(|v| v.to_string());
-                        let private_ip =
-                            instance.private_ip_address().map(|v| v.to_string());
+                        let public_ip = instance.public_ip_address().map(|v| v.to_string());
+                        let private_ip = instance.private_ip_address().map(|v| v.to_string());
                         return Ok((public_ip, private_ip));
                     }
                 }
@@ -350,7 +341,11 @@ impl AwsDriver {
         anyhow::bail!("snapshot wait timeout")
     }
 
-    fn build_ssh_info(&self, public_ip: Option<String>, private_ip: Option<String>) -> Option<SshInfo> {
+    fn build_ssh_info(
+        &self,
+        public_ip: Option<String>,
+        private_ip: Option<String>,
+    ) -> Option<SshInfo> {
         let user = self.config.ssh_user.as_ref()?.clone();
         let host = public_ip.or(private_ip)?;
         Some(SshInfo {
@@ -420,7 +415,12 @@ impl WorkerDriver for AwsDriver {
                     .await;
             }
             if let Some(volume_id) = entry.volume_id.take() {
-                let _ = self.client.delete_volume().volume_id(volume_id).send().await;
+                let _ = self
+                    .client
+                    .delete_volume()
+                    .volume_id(volume_id)
+                    .send()
+                    .await;
             }
             if let Some(snapshot_id) = entry.snapshot_id.take() {
                 let _ = self
@@ -436,9 +436,7 @@ impl WorkerDriver for AwsDriver {
 
     async fn pause(&self, worker_id: &str) -> Result<()> {
         let mut state = self.state.write().await;
-        let entry = state
-            .get_mut(worker_id)
-            .context("missing worker state")?;
+        let entry = state.get_mut(worker_id).context("missing worker state")?;
         let Some(volume_id) = entry.volume_id.clone() else {
             anyhow::bail!("missing volume id");
         };
@@ -472,7 +470,12 @@ impl WorkerDriver for AwsDriver {
 
         if self.config.delete_volume_on_pause {
             if let Some(volume_id) = entry.volume_id.take() {
-                let _ = self.client.delete_volume().volume_id(volume_id).send().await;
+                let _ = self
+                    .client
+                    .delete_volume()
+                    .volume_id(volume_id)
+                    .send()
+                    .await;
             }
         }
 
@@ -539,11 +542,7 @@ impl AwsDriver {
             .availability_zone(zone)
             .snapshot_id(snapshot_id)
             .volume_type(self.volume_type())
-            .tag_specifications(self.tag_specifications(
-                ResourceType::Volume,
-                worker_id,
-                spec,
-            ))
+            .tag_specifications(self.tag_specifications(ResourceType::Volume, worker_id, spec))
             .send()
             .await
             .context("create_volume from snapshot")?;

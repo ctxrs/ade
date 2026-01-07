@@ -327,14 +327,15 @@ impl AzureDriver {
             base_commit: base_commit_sha,
             diff_debounce_ms: spec.diff_debounce_ms.unwrap_or(1500),
             repo: &spec.repo,
+            provider_id: spec.provider_id.as_deref(),
+            env: &spec.env,
             shim_url: &self.config.worker_shim_url,
             workdir: &self.config.workdir,
             mount_path: &self.config.mount_path,
             mount_device_candidates: vec![device_by_id],
         };
         let custom_data = render_bootstrap_script(&bootstrap);
-        let custom_data_b64 =
-            base64::engine::general_purpose::STANDARD.encode(custom_data);
+        let custom_data_b64 = base64::engine::general_purpose::STANDARD.encode(custom_data);
         let url = format!(
             "{}/resourceGroups/{}/providers/Microsoft.Compute/virtualMachines/{}?api-version=2023-07-01",
             self.api_base(),
@@ -429,7 +430,8 @@ impl WorkerDriver for AzureDriver {
         if let Some(name) = public_ip_name.as_ref() {
             self.create_public_ip(name).await?;
         }
-        self.create_nic(&nic_name, public_ip_name.as_deref()).await?;
+        self.create_nic(&nic_name, public_ip_name.as_deref())
+            .await?;
         self.create_disk(&disk_name, None).await?;
         self.create_vm(
             worker_id,
@@ -603,10 +605,7 @@ impl WorkerDriver for AzureDriver {
             self.rg(),
             disk_name
         );
-        let disk_exists = self
-            .request(Method::GET, &disk_url, None)
-            .await
-            .is_ok();
+        let disk_exists = self.request(Method::GET, &disk_url, None).await.is_ok();
         if !disk_exists {
             let snapshot_name = Self::sanitize_name("ctx-snap", worker_id);
             self.create_disk(&disk_name, Some(self.snapshot_id(&snapshot_name)))
@@ -616,7 +615,8 @@ impl WorkerDriver for AzureDriver {
         if let Some(name) = public_ip_name.as_ref() {
             self.create_public_ip(name).await?;
         }
-        self.create_nic(&nic_name, public_ip_name.as_deref()).await?;
+        self.create_nic(&nic_name, public_ip_name.as_deref())
+            .await?;
         self.create_vm(
             worker_id,
             &vm_name,

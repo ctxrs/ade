@@ -7,10 +7,10 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use chrono::Utc;
 use futures::{SinkExt, StreamExt};
-use http::Request;
 use portable_pty::{CommandBuilder, NativePtySystem, PtySize, PtySystem};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, mpsc};
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::Message;
 
 use ctx_core::ids::{SessionId, TaskId, TerminalId, TrackId, WorkspaceId, WorktreeId};
@@ -428,24 +428,17 @@ impl TerminalManager {
                         {
                             match parsed {
                                 TerminalServerMessage::Status { status, exit_code } => {
-                                    let mut runtime = runtime_clone
-                                        .lock()
-                                        .expect("terminal runtime lock");
+                                    let mut runtime =
+                                        runtime_clone.lock().expect("terminal runtime lock");
                                     runtime.status = status.clone();
                                     runtime.exit_code = exit_code;
                                     runtime.updated_at = Utc::now();
-                                    let _ = status_tx_clone.send(TerminalStatusEvent {
-                                        status,
-                                        exit_code,
-                                    });
+                                    let _ = status_tx_clone
+                                        .send(TerminalStatusEvent { status, exit_code });
                                 }
                             }
                         } else {
-                            push_output(
-                                &output_buffer_clone,
-                                &output_tx_clone,
-                                text.as_bytes(),
-                            );
+                            push_output(&output_buffer_clone, &output_tx_clone, text.as_bytes());
                         }
                     }
                     Message::Close(_) => break,
@@ -471,9 +464,7 @@ fn push_output(
     bytes: &[u8],
 ) {
     {
-        let mut buffer = output_buffer
-            .lock()
-            .expect("terminal output buffer lock");
+        let mut buffer = output_buffer.lock().expect("terminal output buffer lock");
         for b in bytes {
             buffer.push_back(*b);
         }
@@ -486,19 +477,33 @@ fn push_output(
 
 async fn connect_terminal_gateway(
     remote: &RemoteTerminalRequest,
-) -> Result<tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>> {
-    let base = remote.gateway_url.trim_end_matches('/');
+) -> Result<
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
+> {
+    let mut base = remote.gateway_url.trim_end_matches('/').to_string();
+    if base.starts_with("https://") {
+        base = base.replacen("https://", "wss://", 1);
+    } else if base.starts_with("http://") {
+        base = base.replacen("http://", "ws://", 1);
+    } else if !base.starts_with("ws://") && !base.starts_with("wss://") {
+        base = format!("ws://{base}");
+    }
     let url = format!(
         "{base}/workers/{}/terminals/{}/daemon",
         remote.worker_id, remote.terminal_id.0
     );
-    let mut req = Request::builder().uri(url);
+    let mut req = url
+        .as_str()
+        .into_client_request()
+        .context("building terminal relay request")?;
     if let Some(token) = remote.token.as_deref() {
-        req = req.header("x-ctx-gateway-token", token);
+        req.headers_mut().insert(
+            "x-ctx-gateway-token",
+            token.parse().context("parsing gateway token")?,
+        );
     }
-    let req = req.body(()).context("building terminal relay request")?;
     let (ws_stream, _) = tokio_tungstenite::connect_async(req)
         .await
-        .context("connecting to gateway terminal relay")?;
+        .with_context(|| format!("connecting to gateway terminal relay at {url}"))?;
     Ok(ws_stream)
 }

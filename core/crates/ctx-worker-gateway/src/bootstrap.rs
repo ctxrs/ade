@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use ctx_worker_protocol::RepoSpec;
 
 pub struct BootstrapSpec<'a> {
@@ -7,6 +9,8 @@ pub struct BootstrapSpec<'a> {
     pub base_commit: &'a str,
     pub diff_debounce_ms: u64,
     pub repo: &'a RepoSpec,
+    pub provider_id: Option<&'a str>,
+    pub env: &'a HashMap<String, String>,
     pub shim_url: &'a str,
     pub workdir: &'a str,
     pub mount_path: &'a str,
@@ -18,10 +22,7 @@ pub fn render_bootstrap_script(spec: &BootstrapSpec<'_>) -> String {
     script.push_str("#!/usr/bin/env bash\n");
     script.push_str("set -euo pipefail\n\n");
 
-    script.push_str(&format!(
-        "CTX_WORKER_ID={}\n",
-        shell_quote(spec.worker_id)
-    ));
+    script.push_str(&format!("CTX_WORKER_ID={}\n", shell_quote(spec.worker_id)));
     script.push_str(&format!(
         "CTX_GATEWAY_URL={}\n",
         shell_quote(spec.gateway_url)
@@ -40,34 +41,37 @@ pub fn render_bootstrap_script(spec: &BootstrapSpec<'_>) -> String {
         "CTX_DIFF_DEBOUNCE_MS={}\n",
         shell_quote(&spec.diff_debounce_ms.to_string())
     ));
-    script.push_str(&format!(
-        "CTX_SHIM_URL={}\n",
-        shell_quote(spec.shim_url)
-    ));
-    script.push_str(&format!(
-        "CTX_WORKDIR={}\n",
-        shell_quote(spec.workdir)
-    ));
+    script.push_str(&format!("CTX_SHIM_URL={}\n", shell_quote(spec.shim_url)));
+    script.push_str(&format!("CTX_WORKDIR={}\n", shell_quote(spec.workdir)));
     script.push_str(&format!(
         "CTX_MOUNT_PATH={}\n",
         shell_quote(spec.mount_path)
     ));
+    if let Some(provider_id) = spec.provider_id {
+        script.push_str(&format!("CTX_PROVIDER_ID={}\n", shell_quote(provider_id)));
+    }
+    if !spec.env.is_empty() {
+        let mut keys: Vec<&String> = spec.env.keys().collect();
+        keys.sort();
+        for key in keys {
+            if !is_safe_env_key(key) {
+                continue;
+            }
+            if let Some(value) = spec.env.get(key) {
+                script.push_str(&format!("{}={}\n", key, shell_quote(value)));
+            }
+        }
+    }
 
     match spec.repo {
         RepoSpec::Git { url, reference } => {
             script.push_str(&format!("CTX_REPO_TYPE={}\n", shell_quote("git")));
             script.push_str(&format!("CTX_REPO_URL={}\n", shell_quote(url)));
-            script.push_str(&format!(
-                "CTX_REPO_REF={}\n",
-                shell_quote(reference)
-            ));
+            script.push_str(&format!("CTX_REPO_REF={}\n", shell_quote(reference)));
         }
         RepoSpec::Archive { url } => {
             script.push_str(&format!("CTX_REPO_TYPE={}\n", shell_quote("archive")));
-            script.push_str(&format!(
-                "CTX_REPO_ARCHIVE_URL={}\n",
-                shell_quote(url)
-            ));
+            script.push_str(&format!("CTX_REPO_ARCHIVE_URL={}\n", shell_quote(url)));
         }
         RepoSpec::Local { .. } => {
             script.push_str(&format!("CTX_REPO_TYPE={}\n", shell_quote("local")));
@@ -84,6 +88,93 @@ pub fn render_bootstrap_script(spec: &BootstrapSpec<'_>) -> String {
     script.push_str("  elif command -v yum >/dev/null 2>&1; then\n");
     script.push_str("    yum install -y git curl tar >/dev/null 2>&1 || true\n");
     script.push_str("  fi\n");
+    script.push_str("}\n\n");
+
+    script.push_str("install_codex_auth() {\n");
+    script.push_str("  if [ -n \"${CTX_CODEX_AUTH_B64:-}\" ]; then\n");
+    script.push_str("    mkdir -p /root/.codex\n");
+    script.push_str("    if base64 --help 2>&1 | grep -q -- '--decode'; then\n");
+    script.push_str(
+        "      echo \"$CTX_CODEX_AUTH_B64\" | base64 --decode > /root/.codex/auth.json\n",
+    );
+    script.push_str("    else\n");
+    script.push_str("      echo \"$CTX_CODEX_AUTH_B64\" | base64 -d > /root/.codex/auth.json\n");
+    script.push_str("    fi\n");
+    script.push_str("    chmod 600 /root/.codex/auth.json\n");
+    script.push_str("    unset CTX_CODEX_AUTH_B64\n");
+    script.push_str("  fi\n");
+    script.push_str("}\n\n");
+
+    script.push_str("install_codex_acp() {\n");
+    script.push_str("  if command -v codex-acp >/dev/null 2>&1; then\n");
+    script.push_str("    return 0\n");
+    script.push_str("  fi\n");
+    script.push_str("  local arch\n");
+    script.push_str("  arch=$(uname -m || true)\n");
+    script.push_str("  local url=\"\"\n");
+    script.push_str("  case \"$arch\" in\n");
+    script.push_str("    x86_64|amd64)\n");
+    script.push_str("      url=\"https://github.com/ctxrs/codex-acp/releases/download/v0.7.4-ctx.4/codex-acp-0.7.4-ctx.4-x86_64-unknown-linux-gnu.tar.gz\"\n");
+    script.push_str("      ;;\n");
+    script.push_str("    aarch64|arm64)\n");
+    script.push_str("      url=\"https://github.com/ctxrs/codex-acp/releases/download/v0.7.4-ctx.4/codex-acp-0.7.4-ctx.4-aarch64-unknown-linux-gnu.tar.gz\"\n");
+    script.push_str("      ;;\n");
+    script.push_str("    *)\n");
+    script.push_str("      log \"unsupported arch for codex-acp: $arch\"\n");
+    script.push_str("      return 0\n");
+    script.push_str("      ;;\n");
+    script.push_str("  esac\n");
+    script.push_str("  curl -fsSL \"$url\" -o /tmp/ctx-codex-acp.tgz\n");
+    script.push_str("  tar -xzf /tmp/ctx-codex-acp.tgz -C /tmp\n");
+    script.push_str("  if [ -f /tmp/codex-acp ]; then\n");
+    script.push_str("    mkdir -p /usr/local/bin\n");
+    script.push_str("    chmod +x /tmp/codex-acp\n");
+    script.push_str("    mv /tmp/codex-acp /usr/local/bin/codex-acp\n");
+    script.push_str("  else\n");
+    script.push_str("    log \"codex-acp binary missing after extract\"\n");
+    script.push_str("  fi\n");
+    script.push_str("}\n\n");
+
+    script.push_str("install_node() {\n");
+    script
+        .push_str("  if command -v node >/dev/null 2>&1 && command -v npm >/dev/null 2>&1; then\n");
+    script.push_str("    return 0\n");
+    script.push_str("  fi\n");
+    script.push_str("  if command -v apt-get >/dev/null 2>&1; then\n");
+    script.push_str(
+        "    curl -fsSL https://deb.nodesource.com/setup_20.x | bash - >/dev/null 2>&1 || true\n",
+    );
+    script.push_str("    apt-get install -y nodejs >/dev/null 2>&1 || apt-get install -y nodejs npm >/dev/null 2>&1 || true\n");
+    script.push_str("  elif command -v dnf >/dev/null 2>&1; then\n");
+    script.push_str("    dnf install -y nodejs npm >/dev/null 2>&1 || true\n");
+    script.push_str("  elif command -v yum >/dev/null 2>&1; then\n");
+    script.push_str("    yum install -y nodejs npm >/dev/null 2>&1 || true\n");
+    script.push_str("  fi\n");
+    script.push_str("}\n\n");
+
+    script.push_str("install_claude_acp() {\n");
+    script.push_str("  if command -v claude-code-acp >/dev/null 2>&1; then\n");
+    script.push_str("    return 0\n");
+    script.push_str("  fi\n");
+    script.push_str("  install_node\n");
+    script.push_str("  if command -v npm >/dev/null 2>&1; then\n");
+    script.push_str("    npm install -g @zed-industries/claude-code-acp >/dev/null 2>&1 || true\n");
+    script.push_str("  else\n");
+    script.push_str("    log \"npm not available; skipping claude-code-acp install\"\n");
+    script.push_str("  fi\n");
+    script.push_str("}\n\n");
+
+    script.push_str("install_providers() {\n");
+    script.push_str("  case \"${CTX_PROVIDER_ID:-}\" in\n");
+    script.push_str("    codex)\n");
+    script.push_str("      install_codex_acp\n");
+    script.push_str("      ;;\n");
+    script.push_str("    claude)\n");
+    script.push_str("      install_claude_acp\n");
+    script.push_str("      ;;\n");
+    script.push_str("    *)\n");
+    script.push_str("      ;;\n");
+    script.push_str("  esac\n");
     script.push_str("}\n\n");
 
     if !spec.mount_device_candidates.is_empty() {
@@ -139,8 +230,22 @@ pub fn render_bootstrap_script(spec: &BootstrapSpec<'_>) -> String {
     script.push_str("    archive)\n");
     script.push_str("      if [ ! -f \"$CTX_WORKDIR/.ctx_archive_done\" ]; then\n");
     script.push_str("        curl -fsSL \"$CTX_REPO_ARCHIVE_URL\" -o /tmp/ctx-repo.tgz\n");
-    script.push_str("        tar -xzf /tmp/ctx-repo.tgz -C \"$CTX_WORKDIR\" --strip-components=1\n");
+    script
+        .push_str("        tar -xzf /tmp/ctx-repo.tgz -C \"$CTX_WORKDIR\" --strip-components=1\n");
+    script.push_str("        if [ ! -d \"$CTX_WORKDIR/.git\" ]; then\n");
+    script.push_str("          git init >/dev/null 2>&1 || true\n");
+    script.push_str(
+        "          git config user.email \"ctx-worker@localhost\" >/dev/null 2>&1 || true\n",
+    );
+    script.push_str("          git config user.name \"ctx-worker\" >/dev/null 2>&1 || true\n");
+    script.push_str("          git add . >/dev/null 2>&1 || true\n");
+    script.push_str("          git commit -m \"ctx base\" >/dev/null 2>&1 || true\n");
+    script.push_str("        fi\n");
     script.push_str("        touch \"$CTX_WORKDIR/.ctx_archive_done\"\n");
+    script.push_str("      fi\n");
+    script.push_str("      if [ -d \"$CTX_WORKDIR/.git\" ]; then\n");
+    script.push_str("        CTX_BASE_COMMIT=$(git rev-parse HEAD 2>/dev/null || echo \"HEAD\")\n");
+    script.push_str("        export CTX_BASE_COMMIT\n");
     script.push_str("      fi\n");
     script.push_str("      ;;\n");
     script.push_str("    local)\n");
@@ -165,21 +270,26 @@ pub fn render_bootstrap_script(spec: &BootstrapSpec<'_>) -> String {
     script.push_str("  log \"starting ctx-worker-shim\"\n");
     script.push_str("  export CTX_WORKER_ID\n");
     script.push_str("  export CTX_GATEWAY_URL\n");
-    script.push_str("  if [ -n \"${CTX_WORKER_GATEWAY_TOKEN:-}\" ]; then export CTX_WORKER_GATEWAY_TOKEN; fi\n");
+    script.push_str(
+        "  if [ -n \"${CTX_WORKER_GATEWAY_TOKEN:-}\" ]; then export CTX_WORKER_GATEWAY_TOKEN; fi\n",
+    );
     script.push_str("  export CTX_BASE_COMMIT\n");
     script.push_str("  export CTX_DIFF_DEBOUNCE_MS\n");
     script.push_str("  export CTX_WORKDIR\n");
+    script.push_str("  export RUST_LOG=${CTX_SHIM_LOG_LEVEL:-info}\n");
     script.push_str("  nohup /usr/local/bin/ctx-worker-shim \\\n");
     script.push_str("    --gateway-url \"$CTX_GATEWAY_URL\" \\\n");
     script.push_str("    --worker-id \"$CTX_WORKER_ID\" \\\n");
     script.push_str("    --workdir \"$CTX_WORKDIR\" \\\n");
     script.push_str("    --base-commit \"$CTX_BASE_COMMIT\" \\\n");
     script.push_str("    --diff-debounce-ms \"$CTX_DIFF_DEBOUNCE_MS\" \\\n");
-    script.push_str("    >/var/log/ctx-worker-shim.log 2>&1 &\n");
+    script.push_str("    2>&1 | tee -a /var/log/ctx-worker-shim.log &\n");
     script.push_str("}\n\n");
 
     script.push_str("main() {\n");
     script.push_str("  install_deps\n");
+    script.push_str("  install_codex_auth\n");
+    script.push_str("  install_providers\n");
     script.push_str("  mount_session_disk\n");
     script.push_str("  hydrate_repo\n");
     script.push_str("  install_shim\n");
@@ -201,4 +311,12 @@ fn shell_quote(value: &str) -> String {
     }
     out.push('\'');
     out
+}
+
+fn is_safe_env_key(key: &str) -> bool {
+    if key.is_empty() {
+        return false;
+    }
+    key.chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
 }

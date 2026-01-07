@@ -52,6 +52,14 @@ export type Track = {
   updated_at?: string;
 };
 
+export type TrackWorker = {
+  track_id: { 0: string } | string;
+  worker_id: string;
+  gateway_url: string;
+  created_at: string;
+  updated_at: string;
+};
+
 export type Worktree = {
   id: { 0: string } | string;
   workspace_id: { 0: string } | string;

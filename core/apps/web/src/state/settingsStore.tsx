@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useSyncExternalStore } from "react";
-import type { Settings } from "../api/client";
+import type { Settings, UpdateSettingsPatch } from "../api/client";
 import { getSettings, updateSettings } from "../api/client";
 import { loadSettingsV1, saveSettingsV1 } from "./uiStateStore";
 
@@ -44,8 +44,8 @@ class SettingsStore {
     return this.loadOnce({ force: true });
   }
 
-  async update(patch: Partial<Settings>) {
-    const next = await updateSettings(patch as Settings);
+  async update(patch: UpdateSettingsPatch) {
+    const next = await updateSettings(patch);
     this.snapshot = {
       ...this.snapshot,
       settings: next,

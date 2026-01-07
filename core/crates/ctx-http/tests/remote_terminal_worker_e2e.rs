@@ -150,13 +150,14 @@ async fn remote_terminal_via_gateway() {
 
     let tracks = store.list_tracks_for_task(task.id).await.unwrap();
     let track = &tracks[0];
-    let worktree = store.get_worktree(track.worktree_id).await.unwrap().unwrap();
+    let worktree = store
+        .get_worktree(track.worktree_id)
+        .await
+        .unwrap()
+        .unwrap();
 
     let worker_resp = client
-        .post(format!(
-            "{daemon_base}/api/tracks/{}/worker",
-            track.id.0
-        ))
+        .post(format!("{daemon_base}/api/tracks/{}/worker", track.id.0))
         .json(&json!({
             "gateway_url": gateway_base,
             "repo": {
@@ -168,8 +169,11 @@ async fn remote_terminal_via_gateway() {
         .unwrap();
     assert_eq!(worker_resp.status(), reqwest::StatusCode::OK);
 
-    let terminal: ctx_core::models::TerminalSession = client
-        .post(format!("{daemon_base}/api/workspaces/{}/terminals", ws.id.0))
+    let terminal_resp = client
+        .post(format!(
+            "{daemon_base}/api/workspaces/{}/terminals",
+            ws.id.0
+        ))
         .json(&json!({
             "task_id": task.id.0,
             "track_id": track.id.0,
@@ -178,12 +182,17 @@ async fn remote_terminal_via_gateway() {
         }))
         .send()
         .await
-        .unwrap()
-        .json()
-        .await
         .unwrap();
+    if terminal_resp.status() != reqwest::StatusCode::OK {
+        let body = terminal_resp.text().await.unwrap_or_default();
+        panic!("terminal create failed: {}", body);
+    }
+    let terminal: ctx_core::models::TerminalSession = terminal_resp.json().await.unwrap();
 
-    let ws_url = format!("ws://{}/api/terminals/{}/stream", daemon_addr, terminal.id.0);
+    let ws_url = format!(
+        "ws://{}/api/terminals/{}/stream",
+        daemon_addr, terminal.id.0
+    );
     let (mut ws_stream, _) = tokio_tungstenite::connect_async(ws_url).await.unwrap();
     ws_stream
         .send(tokio_tungstenite::tungstenite::Message::Text(
@@ -213,10 +222,7 @@ async fn remote_terminal_via_gateway() {
         .send()
         .await;
     let _ = client
-        .delete(format!(
-            "{daemon_base}/api/tracks/{}/worker",
-            track.id.0
-        ))
+        .delete(format!("{daemon_base}/api/tracks/{}/worker", track.id.0))
         .send()
         .await;
 

@@ -11,14 +11,14 @@ use chrono::Utc;
 use clap::Parser;
 use ctx_worker_protocol::{DiffArtifact, RelayMessage, TerminalControlMessage, WorkerRegistration};
 use futures_util::{SinkExt, StreamExt};
-use http::Request;
 use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
 use portable_pty::{CommandBuilder, NativePtySystem, PtySize, PtySystem};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter};
 use tokio::process::Command;
 use tokio::sync::{mpsc, Mutex};
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::Message;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 #[derive(Parser, Debug)]
 #[command(name = "ctx-worker-shim")]
@@ -88,15 +88,19 @@ async fn run_diff_watcher(client: reqwest::Client, args: ResolvedArgs) -> Result
 }
 
 async fn run_acp_relay(args: ResolvedArgs) -> Result<()> {
-    let url = format!(
-        "{}/workers/{}/acp/worker",
-        args.gateway_url, args.worker_id
-    );
-    let mut req = Request::builder().uri(url);
+    let base = websocket_base(&args.gateway_url);
+    let url = format!("{}/workers/{}/acp/worker", base, args.worker_id);
+    debug!(url = %url, "connecting acp relay");
+    let mut req = url
+        .as_str()
+        .into_client_request()
+        .context("building websocket request")?;
     if let Some(token) = args.gateway_token.as_deref() {
-        req = req.header("x-ctx-gateway-token", token);
+        req.headers_mut().insert(
+            "x-ctx-gateway-token",
+            token.parse().context("parsing gateway token")?,
+        );
     }
-    let req = req.body(()).context("building websocket request")?;
 
     let (ws_stream, _) = tokio_tungstenite::connect_async(req)
         .await
@@ -143,7 +147,10 @@ async fn run_acp_relay(args: ResolvedArgs) -> Result<()> {
                     .await?;
                     sessions_guard.insert(session_id, relay);
                 }
-                RelayMessage::Acp { session_id, payload } => {
+                RelayMessage::Acp {
+                    session_id,
+                    payload,
+                } => {
                     let sessions_guard = sessions.lock().await;
                     if let Some(relay) = sessions_guard.get(&session_id) {
                         let payload = rewrite_cwd(&payload, &relay.workdir);
@@ -176,7 +183,10 @@ enum TerminalClientMessage {
 #[derive(Debug, serde::Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum TerminalServerMessage {
-    Status { status: String, exit_code: Option<i32> },
+    Status {
+        status: String,
+        exit_code: Option<i32>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -193,19 +203,27 @@ struct TerminalHandle {
 }
 
 async fn run_terminal_control(args: ResolvedArgs) -> Result<()> {
+    let base = websocket_base(&args.gateway_url);
     let url = format!(
         "{}/workers/{}/terminals/control/worker",
-        args.gateway_url, args.worker_id
+        base, args.worker_id
     );
-    let mut req = Request::builder().uri(url);
+    debug!(url = %url, "connecting terminal control");
+    let mut req = url
+        .as_str()
+        .into_client_request()
+        .context("building terminal control request")?;
     if let Some(token) = args.gateway_token.as_deref() {
-        req = req.header("x-ctx-gateway-token", token);
+        req.headers_mut().insert(
+            "x-ctx-gateway-token",
+            token.parse().context("parsing gateway token")?,
+        );
     }
-    let req = req.body(()).context("building terminal control request")?;
 
     let (ws_stream, _) = tokio_tungstenite::connect_async(req)
         .await
         .context("connecting to gateway terminal control")?;
+    debug!("terminal control connected");
     let (_, mut ws_read) = ws_stream.split();
 
     let terminals: Arc<Mutex<HashMap<String, TerminalHandle>>> =
@@ -230,15 +248,13 @@ async fn run_terminal_control(args: ResolvedArgs) -> Result<()> {
                     cols,
                     rows,
                 } => {
+                    debug!(terminal_id = %terminal_id, "opening terminal");
                     let mut guard = terminals.lock().await;
                     if guard.contains_key(&terminal_id) {
                         continue;
                     }
                     let (shutdown_tx, shutdown_rx) = mpsc::unbounded_channel::<()>();
-                    guard.insert(
-                        terminal_id.clone(),
-                        TerminalHandle { shutdown_tx },
-                    );
+                    guard.insert(terminal_id.clone(), TerminalHandle { shutdown_tx });
                     let spec = TerminalOpenSpec {
                         terminal_id,
                         shell,
@@ -250,8 +266,7 @@ async fn run_terminal_control(args: ResolvedArgs) -> Result<()> {
                     let terminals_clone = terminals.clone();
                     let terminal_id_clone = spec.terminal_id.clone();
                     tokio::spawn(async move {
-                        if let Err(err) =
-                            run_terminal_session(args_clone, spec, shutdown_rx).await
+                        if let Err(err) = run_terminal_session(args_clone, spec, shutdown_rx).await
                         {
                             warn!("terminal session error: {err:#}");
                         }
@@ -277,8 +292,16 @@ async fn run_terminal_session(
     spec: TerminalOpenSpec,
     mut shutdown_rx: mpsc::UnboundedReceiver<()>,
 ) -> Result<()> {
-    let cols = if spec.cols == 0 { DEFAULT_COLS } else { spec.cols };
-    let rows = if spec.rows == 0 { DEFAULT_ROWS } else { spec.rows };
+    let cols = if spec.cols == 0 {
+        DEFAULT_COLS
+    } else {
+        spec.cols
+    };
+    let rows = if spec.rows == 0 {
+        DEFAULT_ROWS
+    } else {
+        spec.rows
+    };
     let pty_system = NativePtySystem::default();
     let pair = pty_system
         .openpty(PtySize {
@@ -313,16 +336,25 @@ async fn run_terminal_session(
 
     let url = format!(
         "{}/workers/{}/terminals/{}/worker",
-        args.gateway_url, args.worker_id, spec.terminal_id
+        websocket_base(&args.gateway_url),
+        args.worker_id,
+        spec.terminal_id
     );
-    let mut req = Request::builder().uri(url);
+    debug!(terminal_id = %spec.terminal_id, url = %url, "connecting terminal session");
+    let mut req = url
+        .as_str()
+        .into_client_request()
+        .context("building terminal websocket")?;
     if let Some(token) = args.gateway_token.as_deref() {
-        req = req.header("x-ctx-gateway-token", token);
+        req.headers_mut().insert(
+            "x-ctx-gateway-token",
+            token.parse().context("parsing gateway token")?,
+        );
     }
-    let req = req.body(()).context("building terminal websocket")?;
     let (ws_stream, _) = tokio_tungstenite::connect_async(req)
         .await
         .context("connecting to gateway terminal relay")?;
+    debug!(terminal_id = %spec.terminal_id, "terminal session connected");
     let (mut ws_write, mut ws_read) = ws_stream.split();
 
     let (out_tx, mut out_rx) = mpsc::unbounded_channel::<Message>();
@@ -362,9 +394,7 @@ async fn run_terminal_session(
     let child_for_status = child_arc.clone();
     std::thread::spawn(move || loop {
         let exit: Option<portable_pty::ExitStatus> = {
-            let mut child = child_for_status
-                .lock()
-                .expect("terminal child lock");
+            let mut child = child_for_status.lock().expect("terminal child lock");
             child.try_wait().ok().flatten()
         };
         if let Some(status) = exit {
@@ -440,6 +470,18 @@ fn watcher(tx: mpsc::UnboundedSender<Event>) -> Result<RecommendedWatcher> {
     Ok(watcher)
 }
 
+fn websocket_base(url: &str) -> String {
+    let mut base = url.trim_end_matches('/').to_string();
+    if base.starts_with("https://") {
+        base = base.replacen("https://", "wss://", 1);
+    } else if base.starts_with("http://") {
+        base = base.replacen("http://", "ws://", 1);
+    } else if !base.starts_with("ws://") && !base.starts_with("wss://") {
+        base = format!("ws://{base}");
+    }
+    base
+}
+
 fn should_ignore_event(event: &Event) -> bool {
     event.paths.iter().all(|path| should_ignore_path(path))
 }
@@ -473,8 +515,7 @@ async fn register_worker(client: &reqwest::Client, args: &ResolvedArgs) -> Resul
         req = req.header("x-ctx-gateway-token", token);
     }
 
-    req
-        .send()
+    req.send()
         .await
         .context("registering worker")?
         .error_for_status()
@@ -491,8 +532,11 @@ async fn emit_diff(client: &reqwest::Client, args: &ResolvedArgs) -> Result<()> 
         &["diff", "--binary", &format!("{base}..HEAD")],
     )
     .await?;
-    let changed_files_raw =
-        git_output(&args.workdir, &["diff", "--name-only", &format!("{base}..HEAD")]).await?;
+    let changed_files_raw = git_output(
+        &args.workdir,
+        &["diff", "--name-only", &format!("{base}..HEAD")],
+    )
+    .await?;
     let changed_files = changed_files_raw
         .lines()
         .filter(|line| !line.trim().is_empty())
@@ -518,8 +562,7 @@ async fn emit_diff(client: &reqwest::Client, args: &ResolvedArgs) -> Result<()> 
         req = req.header("x-ctx-gateway-token", token);
     }
 
-    req
-        .send()
+    req.send()
         .await
         .context("sending diff")?
         .error_for_status()
@@ -577,7 +620,9 @@ impl ResolvedArgs {
         let gateway_url = resolve_string(args.gateway_url, "CTX_GATEWAY_URL")?;
         let worker_id = resolve_string(args.worker_id, "CTX_WORKER_ID")?;
         let workdir = resolve_path(args.workdir, "CTX_WORKDIR")?;
-        let gateway_token = env::var("CTX_WORKER_GATEWAY_TOKEN").ok().filter(|v| !v.is_empty());
+        let gateway_token = env::var("CTX_WORKER_GATEWAY_TOKEN")
+            .ok()
+            .filter(|v| !v.is_empty());
 
         Ok(Self {
             gateway_url,
@@ -652,14 +697,16 @@ async fn spawn_acp_session(
     model_id: Option<&str>,
     env: HashMap<String, String>,
     workdir: PathBuf,
-    ws_write: std::sync::Arc<Mutex<
-        futures_util::stream::SplitSink<
-            tokio_tungstenite::WebSocketStream<
-                tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+    ws_write: std::sync::Arc<
+        Mutex<
+            futures_util::stream::SplitSink<
+                tokio_tungstenite::WebSocketStream<
+                    tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+                >,
+                Message,
             >,
-            Message,
         >,
-    >>,
+    >,
 ) -> Result<SessionRelay> {
     let (cmd, args) = provider_command(provider_id);
     let mut command = Command::new(cmd);
@@ -671,7 +718,10 @@ async fn spawn_acp_session(
         command.env(key, value);
     }
     command.current_dir(&workdir);
-    command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::inherit());
+    command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit());
 
     let mut child = command.spawn().context("spawning acp provider")?;
     let stdin = child.stdin.take().context("missing stdin")?;

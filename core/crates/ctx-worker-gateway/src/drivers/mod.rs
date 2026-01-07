@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use ctx_worker_protocol::{StartWorkerRequest, SshInfo};
+use ctx_worker_protocol::{SshInfo, StartWorkerRequest};
 
 pub mod aws;
 pub mod azure;

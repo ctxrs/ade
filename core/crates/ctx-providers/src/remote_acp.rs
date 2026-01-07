@@ -5,9 +5,9 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use base64::Engine;
 use futures_util::{SinkExt, StreamExt};
-use http::Request;
 use serde_json::{json, Value};
 use tokio::sync::{mpsc, oneshot, Mutex};
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::Message;
 
 use ctx_core::models::SessionEventType;
@@ -68,152 +68,155 @@ pub async fn run_remote_prompt(
         send_relay(&ws_write, init_msg).await?;
 
         let mut stream_state = StreamState::default();
-        let init_resp = send_request(
-            &ws_write,
-            &session_id,
-            &mut inbound,
-            &mut stream_state,
-            1,
-            "initialize",
-            json!({
-                "protocolVersion": 1,
-                "clientCapabilities": client.client_capabilities,
-                "clientInfo": {
-                    "name": client.client_name,
-                    "title": client.client_title,
-                    "version": client.client_version,
-                }
-            }),
-            &event_sink,
-            &provider_id,
-        )
-        .await?;
+        let (acp_session_id, prompt_resp, cancel_task) = {
+            let mut request_ctx = RequestContext {
+                ws_write: &ws_write,
+                session_id: &session_id,
+                inbound: &mut inbound,
+                state: &mut stream_state,
+                event_sink: &event_sink,
+                provider_id: &provider_id,
+            };
+            let init_resp = request_ctx
+                .send_request(
+                    1,
+                    "initialize",
+                    json!({
+                        "protocolVersion": 1,
+                        "clientCapabilities": client.client_capabilities,
+                        "clientInfo": {
+                            "name": client.client_name,
+                            "title": client.client_title,
+                            "version": client.client_version,
+                        }
+                    }),
+                )
+                .await?;
 
-        let auth_methods = init_resp
-            .get("result")
-            .and_then(|v| v.get("authMethods").or_else(|| v.get("auth_methods")))
-            .cloned();
-        let capabilities = init_resp
-            .get("result")
-            .and_then(|v| v.get("capabilities").or_else(|| v.get("agentCapabilities")));
-        let supports_load = capabilities
-            .and_then(|v| v.get("loadSession"))
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-        let supports_resume = capabilities
-            .and_then(|v| v.get("sessionCapabilities").or_else(|| v.get("session_capabilities")))
-            .and_then(|v| v.get("resume"))
-            .map(|v| match v {
-                Value::Bool(value) => *value,
-                Value::Null => false,
-                _ => true,
-            })
-            .unwrap_or(false);
-
-        let mcp_servers = client
-            .mcp_servers
-            .iter()
-            .map(|srv| {
-                json!({
-                    "name": srv.name,
-                    "command": srv.command,
-                    "args": srv.args,
-                    "env": srv.env,
+            let auth_methods = init_resp
+                .get("result")
+                .and_then(|v| v.get("authMethods").or_else(|| v.get("auth_methods")))
+                .cloned();
+            let capabilities = init_resp
+                .get("result")
+                .and_then(|v| v.get("capabilities").or_else(|| v.get("agentCapabilities")));
+            let supports_load = capabilities
+                .and_then(|v| v.get("loadSession"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let supports_resume = capabilities
+                .and_then(|v| {
+                    v.get("sessionCapabilities")
+                        .or_else(|| v.get("session_capabilities"))
                 })
-            })
-            .collect::<Vec<_>>();
-        let session_resp = send_request(
-            &ws_write,
-            &session_id,
-            &mut inbound,
-            &mut stream_state,
-            2,
-            "session/new",
-            json!({"cwd": workdir.to_string_lossy().to_string(), "mcpServers": mcp_servers}),
-            &event_sink,
-            &provider_id,
-        )
-        .await?;
-
-        if let Some(err) = session_resp.get("error") {
-            let _ = event_sink
-                .send(NormalizedEvent {
-                    event_type: SessionEventType::Error,
-                    payload_json: json!({"provider": provider_id, "acp_error": err}),
+                .and_then(|v| v.get("resume"))
+                .map(|v| match v {
+                    Value::Bool(value) => *value,
+                    Value::Null => false,
+                    _ => true,
                 })
-                .await;
-            let _ = event_sink
-                .send(NormalizedEvent {
-                    event_type: SessionEventType::Done,
-                    payload_json: json!({"provider": provider_id, "status": "error"}),
+                .unwrap_or(false);
+
+            let mcp_servers = client
+                .mcp_servers
+                .iter()
+                .map(|srv| {
+                    json!({
+                        "name": srv.name,
+                        "command": srv.command,
+                        "args": srv.args,
+                        "env": srv.env,
+                    })
                 })
-                .await;
-            return Ok(());
-        }
+                .collect::<Vec<_>>();
+            let session_resp = request_ctx
+                .send_request(
+                    2,
+                    "session/new",
+                    json!({"cwd": workdir.to_string_lossy().to_string(), "mcpServers": mcp_servers}),
+                )
+                .await?;
 
-        let acp_session_id = session_resp
-            .get("result")
-            .and_then(|v| v.get("sessionId"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        let modes = session_resp.get("result").and_then(|v| v.get("modes")).cloned();
-        let models = session_resp
-            .get("result")
-            .and_then(|v| v.get("models"))
-            .cloned();
-
-        let _ = event_sink
-            .send(NormalizedEvent {
-                event_type: SessionEventType::Init,
-                payload_json: json!({
-                    "provider": provider_id,
-                    "acp_session_id": acp_session_id,
-                    "resumed": false,
-                    "supports_load": supports_load,
-                    "supports_resume": supports_resume,
-                    "modes": modes,
-                    "models": models,
-                    "auth_methods": auth_methods.clone(),
-                    "authMethods": auth_methods,
-                }),
-            })
-            .await;
-
-        let prompt = build_prompt(&input, &env, &provider_id, &event_sink).await?;
-
-        let acp_session_id_for_cancel = acp_session_id.clone();
-        let cancel_task = tokio::spawn({
-            let ws_write = ws_write.clone();
-            let session_id = session_id.clone();
-            async move {
-                if cancel_rx.await.is_ok() && !acp_session_id_for_cancel.is_empty() {
-                    let _ = send_notification(
-                        &ws_write,
-                        &session_id,
-                        json!({
-                            "jsonrpc": "2.0",
-                            "method": "session/cancel",
-                            "params": { "sessionId": acp_session_id_for_cancel }
-                        }),
-                    )
+            if let Some(err) = session_resp.get("error") {
+                let _ = event_sink
+                    .send(NormalizedEvent {
+                        event_type: SessionEventType::Error,
+                        payload_json: json!({"provider": provider_id, "acp_error": err}),
+                    })
                     .await;
-                }
+                let _ = event_sink
+                    .send(NormalizedEvent {
+                        event_type: SessionEventType::Done,
+                        payload_json: json!({"provider": provider_id, "status": "error"}),
+                    })
+                    .await;
+                return Ok(());
             }
-        });
 
-        let prompt_resp = send_request(
-            &ws_write,
-            &session_id,
-            &mut inbound,
-            &mut stream_state,
-            3,
-            "session/prompt",
-            json!({"sessionId": acp_session_id, "prompt": prompt}),
-            &event_sink,
-            &provider_id,
-        )
-        .await?;
+            let acp_session_id = session_resp
+                .get("result")
+                .and_then(|v| v.get("sessionId"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let modes = session_resp
+                .get("result")
+                .and_then(|v| v.get("modes"))
+                .cloned();
+            let models = session_resp
+                .get("result")
+                .and_then(|v| v.get("models"))
+                .cloned();
+
+            let _ = event_sink
+                .send(NormalizedEvent {
+                    event_type: SessionEventType::Init,
+                    payload_json: json!({
+                        "provider": provider_id,
+                        "acp_session_id": acp_session_id,
+                        "resumed": false,
+                        "supports_load": supports_load,
+                        "supports_resume": supports_resume,
+                        "modes": modes,
+                        "models": models,
+                        "auth_methods": auth_methods.clone(),
+                        "authMethods": auth_methods,
+                    }),
+                })
+                .await;
+
+            let prompt = build_prompt(&input, &env, &provider_id, &event_sink).await?;
+
+            let acp_session_id_for_cancel = acp_session_id.clone();
+            let cancel_task = tokio::spawn({
+                let ws_write = ws_write.clone();
+                let session_id = session_id.clone();
+                async move {
+                    if cancel_rx.await.is_ok() && !acp_session_id_for_cancel.is_empty() {
+                        let _ = send_notification(
+                            &ws_write,
+                            &session_id,
+                            json!({
+                                "jsonrpc": "2.0",
+                                "method": "session/cancel",
+                                "params": { "sessionId": acp_session_id_for_cancel }
+                            }),
+                        )
+                        .await;
+                    }
+                }
+            });
+
+            let prompt_resp = request_ctx
+                .send_request(
+                    3,
+                    "session/prompt",
+                    json!({"sessionId": acp_session_id.clone(), "prompt": prompt}),
+                )
+                .await?;
+
+            (acp_session_id, prompt_resp, cancel_task)
+        };
 
         let _ = cancel_task.await;
 
@@ -272,10 +275,7 @@ async fn connect_gateway(
     worker_id: &str,
     session_id: &str,
     token: Option<&str>,
-) -> Result<(
-    Arc<Mutex<WsSink>>,
-    mpsc::UnboundedReceiver<String>,
-)> {
+) -> Result<(Arc<Mutex<WsSink>>, mpsc::UnboundedReceiver<String>)> {
     let mut base = gateway_url.trim_end_matches('/').to_string();
     if base.starts_with("https://") {
         base = base.replacen("https://", "wss://", 1);
@@ -286,11 +286,13 @@ async fn connect_gateway(
     }
     let url = format!("{base}/workers/{worker_id}/acp/daemon");
 
-    let mut req = Request::builder().uri(url);
+    let mut req = url.as_str().into_client_request()?;
     if let Some(token) = token {
-        req = req.header("x-ctx-gateway-token", token);
+        req.headers_mut().insert(
+            "x-ctx-gateway-token",
+            token.parse().context("parsing gateway token")?,
+        );
     }
-    let req = req.body(())?;
 
     let (ws_stream, _) = tokio_tungstenite::connect_async(req)
         .await
@@ -302,11 +304,13 @@ async fn connect_gateway(
     tokio::spawn(async move {
         while let Some(msg) = ws_read.next().await {
             if let Ok(Message::Text(text)) = msg {
-                if let Ok(relay) = serde_json::from_str::<RelayMessage>(&text) {
-                    if let RelayMessage::Acp { session_id: sid, payload } = relay {
-                        if sid == session_id {
-                            let _ = tx.send(payload);
-                        }
+                if let Ok(RelayMessage::Acp {
+                    session_id: sid,
+                    payload,
+                }) = serde_json::from_str::<RelayMessage>(&text)
+                {
+                    if sid == session_id {
+                        let _ = tx.send(payload);
                     }
                 }
             }
@@ -316,10 +320,7 @@ async fn connect_gateway(
     Ok((Arc::new(Mutex::new(ws_write)), rx))
 }
 
-async fn send_relay(
-    ws_write: &Arc<Mutex<WsSink>>,
-    message: RelayMessage,
-) -> Result<()> {
+async fn send_relay(ws_write: &Arc<Mutex<WsSink>>, message: RelayMessage) -> Result<()> {
     let text = serde_json::to_string(&message)?;
     let mut writer = ws_write.lock().await;
     writer.send(Message::Text(text.into())).await?;
@@ -338,54 +339,61 @@ async fn send_notification(
     send_relay(ws_write, msg).await
 }
 
-async fn send_request(
-    ws_write: &Arc<Mutex<WsSink>>,
-    session_id: &str,
-    inbound: &mut mpsc::UnboundedReceiver<String>,
-    state: &mut StreamState,
-    id: u64,
-    method: &str,
-    params: Value,
-    event_sink: &mpsc::Sender<NormalizedEvent>,
-    provider_id: &str,
-) -> Result<Value> {
-    let req = json!({
-        "jsonrpc": "2.0",
-        "id": id,
-        "method": method,
-        "params": params,
-    });
-    send_notification(ws_write, session_id, req).await?;
+struct RequestContext<'a> {
+    ws_write: &'a Arc<Mutex<WsSink>>,
+    session_id: &'a str,
+    inbound: &'a mut mpsc::UnboundedReceiver<String>,
+    state: &'a mut StreamState,
+    event_sink: &'a mpsc::Sender<NormalizedEvent>,
+    provider_id: &'a str,
+}
 
-    while let Some(payload) = inbound.recv().await {
-        let Ok(msg) = serde_json::from_str::<Value>(&payload) else {
-            continue;
-        };
-        if msg.get("method") == Some(&Value::String("session/update".to_string())) {
-            let events = normalize_session_update(&msg, state);
-            for ev in events {
-                let _ = event_sink.send(ev).await;
+impl<'a> RequestContext<'a> {
+    async fn send_request(&mut self, id: u64, method: &str, params: Value) -> Result<Value> {
+        let req = json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": method,
+            "params": params,
+        });
+        send_notification(self.ws_write, self.session_id, req).await?;
+
+        while let Some(payload) = self.inbound.recv().await {
+            let Ok(msg) = serde_json::from_str::<Value>(&payload) else {
+                continue;
+            };
+            if msg.get("method") == Some(&Value::String("session/update".to_string())) {
+                let events = normalize_session_update(&msg, self.state);
+                for ev in events {
+                    let _ = self.event_sink.send(ev).await;
+                }
+                continue;
             }
-            continue;
+            if jsonrpc_id(&msg) == Some(id) {
+                return Ok(msg);
+            }
         }
-        if jsonrpc_id(&msg) == Some(id) {
-            return Ok(msg);
-        }
+
+        let _ = self
+            .event_sink
+            .send(NormalizedEvent {
+                event_type: SessionEventType::Error,
+                payload_json: json!({
+                    "provider": self.provider_id,
+                    "message": "gateway connection closed"
+                }),
+            })
+            .await;
+
+        anyhow::bail!("gateway connection closed")
     }
-
-    let _ = event_sink
-        .send(NormalizedEvent {
-            event_type: SessionEventType::Error,
-            payload_json: json!({"provider": provider_id, "message": "gateway connection closed"}),
-        })
-        .await;
-
-    anyhow::bail!("gateway connection closed")
 }
 
 fn jsonrpc_id(msg: &Value) -> Option<u64> {
-    msg.get("id")
-        .and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
+    msg.get("id").and_then(|v| {
+        v.as_u64()
+            .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+    })
 }
 
 async fn build_prompt(
