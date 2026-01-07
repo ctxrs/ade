@@ -424,12 +424,14 @@ function fileAccentClass(file: DiffFile): string {
 
 function DecoratedDiffEditor({ file }: { file: DiffFile }) {
   const decorationIdsRef = useRef<string[]>([]);
+  const modelPath = `inmemory://diff/${encodeURIComponent(file.key)}`;
 
   return (
     <Editor
       key={file.key}
       height={`${estimateDiffHeightPx(file)}px`}
       language={guessMonacoLanguage(file.filePath)}
+      path={modelPath}
       value={file.renderText}
       theme="vs-dark"
       options={{

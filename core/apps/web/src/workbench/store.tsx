@@ -330,28 +330,48 @@ export class WorkbenchStore {
     return getActiveTabFromLeaf(leaf);
   }
 
-  focusNewTask = () => {
+  getNavToken = (): WorkbenchNavToken => this.navEpoch;
+
+  bumpNavToken = (): WorkbenchNavToken => {
+    this.navEpoch += 1;
+    return this.navEpoch;
+  };
+
+  private shouldApplyNavToken(navToken?: WorkbenchNavToken): boolean {
+    return navToken === undefined || navToken === this.navEpoch;
+  }
+
+  private applyNavSource(source?: WorkbenchNavSource) {
+    if (source !== "system") this.bumpNavToken();
+  }
+
+  focusNewTask = (opts?: WorkbenchNavOpts): boolean => {
+    if (!this.shouldApplyNavToken(opts?.navToken)) return false;
+    this.applyNavSource(opts?.source);
     this.markLayoutDirty();
     const win = this.snapshot.window;
     const leafId = win.focusedLeafId;
     const leaf = findLeaf(win.layout, leafId);
-    if (!leaf) return;
+    if (!leaf) return false;
     const existing = leaf.tabs.find((t) => t.kind === "new_task");
     const tabId = existing?.id ?? randomUuid();
     const newTab: WorkbenchTab = { id: tabId, kind: "new_task" };
     const nextTabs = existing ? leaf.tabs : [newTab, ...leaf.tabs];
     const nextLeaf = ensureLeafActiveTab({ ...leaf, tabs: nextTabs, activeTabId: tabId });
     this.setWindow({ ...win, layout: updateLeaf(win.layout, leafId, () => nextLeaf) }, { persistDelayMs: 0 });
+    return true;
   };
 
-  focusTask = (taskId: string, trackId?: string | null, sessionId?: string | null) => {
+  focusTask = (taskId: string, trackId?: string | null, sessionId?: string | null, opts?: WorkbenchNavOpts): boolean => {
     const tid = String(taskId).trim();
-    if (!tid) return;
+    if (!tid) return false;
+    if (!this.shouldApplyNavToken(opts?.navToken)) return false;
+    this.applyNavSource(opts?.source);
     this.markLayoutDirty();
     const win = this.snapshot.window;
     const leafId = win.focusedLeafId;
     const leaf = findLeaf(win.layout, leafId);
-    if (!leaf) return;
+    if (!leaf) return false;
 
     const existing = leaf.tabs.find((t) => t.kind === "track" && t.ref.taskId === tid);
     const tabId = existing?.id ?? randomUuid();
@@ -374,16 +394,19 @@ export class WorkbenchStore {
 
     const nextLeaf = ensureLeafActiveTab({ ...leaf, tabs: nextTabs, activeTabId: tabId });
     this.setWindow({ ...win, layout: updateLeaf(win.layout, leafId, () => nextLeaf) }, { persistDelayMs: 0 });
+    return true;
   };
 
-  setActiveTrackForActiveTask = (trackId: string | null) => {
+  setActiveTrackForActiveTask = (trackId: string | null, opts?: WorkbenchNavOpts): boolean => {
+    if (!this.shouldApplyNavToken(opts?.navToken)) return false;
+    this.applyNavSource(opts?.source);
     this.markLayoutDirty();
     const win = this.snapshot.window;
     const leafId = win.focusedLeafId;
     const leaf = findLeaf(win.layout, leafId);
-    if (!leaf) return;
+    if (!leaf) return false;
     const tab = getActiveTabFromLeaf(leaf);
-    if (!tab || tab.kind !== "track") return;
+    if (!tab || tab.kind !== "track") return false;
     const nextLeaf = ensureLeafActiveTab({
       ...leaf,
       tabs: leaf.tabs.map((t) =>
@@ -393,6 +416,7 @@ export class WorkbenchStore {
       ),
     });
     this.setWindow({ ...win, layout: updateLeaf(win.layout, leafId, () => nextLeaf) }, { persistDelayMs: 0 });
+    return true;
   };
 
   setScrollState = (

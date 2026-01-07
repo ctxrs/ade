@@ -142,6 +142,8 @@ struct DesktopEditorSettings {
     target: DesktopEditorTarget,
     #[serde(default)]
     custom_command: Option<String>,
+    #[serde(default)]
+    remote_authority: Option<String>,
 }
 
 impl Default for DesktopEditorSettings {
@@ -149,6 +151,7 @@ impl Default for DesktopEditorSettings {
         Self {
             target: DesktopEditorTarget::System,
             custom_command: None,
+            remote_authority: None,
         }
     }
 }
@@ -327,9 +330,6 @@ fn desktop_open_file(
     app: tauri::AppHandle,
     req: DesktopOpenFileReq,
 ) -> Result<(), String> {
-    if state.is_remote() {
-        return Err("cannot open remote worktree paths in a local editor".to_string());
-    }
     let worktree_id = req.worktree_id.trim();
     if worktree_id.is_empty() {
         return Err("worktree_id is required".to_string());
@@ -344,7 +344,7 @@ fn desktop_open_file(
     let line = req.line.filter(|v| *v > 0);
     let col = req.col.filter(|v| *v > 0);
     let editor_settings = load_desktop_settings(&app).editor;
-    open_in_editor(&editor_settings, &resolved, line, col).map_err(to_err)?;
+    open_in_editor(&editor_settings, &resolved, line, col, state.is_remote()).map_err(to_err)?;
     Ok(())
 }
 
@@ -353,22 +353,19 @@ fn desktop_open_path(
     app: tauri::AppHandle,
     req: DesktopOpenPathReq,
 ) -> Result<(), String> {
-    let path = req.path.trim();
-    if path.is_empty() {
+    let raw = req.path.trim();
+    if raw.is_empty() {
         return Err("path is required".to_string());
     }
-    let path = PathBuf::from(path);
+    let mut path = expand_tilde(raw).unwrap_or_else(|| PathBuf::from(raw));
     if !path.is_absolute() {
         return Err("path must be absolute".to_string());
     }
-    let resolved = std::fs::canonicalize(&path).map_err(|e| format!("invalid path: {e}"))?;
-    if !resolved.exists() {
-        return Err("path does not exist".to_string());
-    }
+    path = normalize_path(&path);
     let line = req.line.filter(|v| *v > 0);
     let col = req.col.filter(|v| *v > 0);
     let editor_settings = load_desktop_settings(&app).editor;
-    open_in_editor(&editor_settings, &resolved, line, col).map_err(to_err)?;
+    open_in_editor(&editor_settings, &path, line, col, false).map_err(to_err)?;
     Ok(())
 }
 
@@ -866,6 +863,7 @@ fn handle_open(
                 &resolve_target_path(state, &req.target)?,
                 req.line,
                 req.col,
+                false,
             )
         }
         DeepLinkOpenWith::System => {
@@ -1013,12 +1011,14 @@ fn open_in_editor_with_target(
     path: &Path,
     line: Option<u32>,
     col: Option<u32>,
+    remote: bool,
 ) -> Result<()> {
     let adjusted = DesktopEditorSettings {
         target,
         custom_command: settings.custom_command.clone(),
+        remote_authority: settings.remote_authority.clone(),
     };
-    open_in_editor(&adjusted, path, line, col)
+    open_in_editor(&adjusted, path, line, col, remote)
 }
 
 fn resolve_target_path(state: &ConnectionManager, target: &DeepLinkTarget) -> Result<PathBuf> {
@@ -1526,20 +1526,47 @@ fn resolve_worktree_root(state: &ConnectionManager, worktree_id: &str) -> Result
     Ok(PathBuf::from(root))
 }
 
+
+fn normalize_path(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for c in path.components() {
+        match c {
+            std::path::Component::Prefix(p) => out.push(p.as_os_str()),
+            std::path::Component::RootDir => out.push(std::path::MAIN_SEPARATOR_STR),
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                out.pop();
+            }
+            std::path::Component::Normal(x) => out.push(x),
+        }
+    }
+    out
+}
+
+fn expand_tilde(raw: &str) -> Option<PathBuf> {
+    if raw == "~" || raw.starts_with("~/") {
+        let base = directories::BaseDirs::new()?;
+        let home = base.home_dir();
+        if raw == "~" {
+            Some(home.to_path_buf())
+        } else {
+            Some(home.join(raw.trim_start_matches("~/")))
+        }
+    } else {
+        None
+    }
+}
+
 fn resolve_worktree_path(worktree_root: &Path, raw_path: &str) -> Result<PathBuf> {
     let root = std::fs::canonicalize(worktree_root)
         .with_context(|| format!("canonicalizing {}", worktree_root.display()))?;
-    let mut candidate = PathBuf::from(raw_path);
+    let mut candidate = expand_tilde(raw_path).unwrap_or_else(|| PathBuf::from(raw_path));
     if !candidate.is_absolute() {
-        candidate = root.join(raw_path);
+        candidate = root.join(candidate);
     }
-    let candidate = std::fs::canonicalize(&candidate)
-        .with_context(|| format!("resolving {}", candidate.display()))?;
+    let candidate = normalize_path(&candidate);
     if !candidate.starts_with(&root) {
         return Err(anyhow!("path is outside the worktree root"));
-    }
-    if !candidate.exists() {
-        return Err(anyhow!("path does not exist"));
     }
     Ok(candidate)
 }
@@ -1549,30 +1576,72 @@ fn open_in_editor(
     path: &Path,
     line: Option<u32>,
     col: Option<u32>,
+    remote: bool,
 ) -> Result<()> {
-    match settings.target {
-        DesktopEditorTarget::System => open_with_system(path.to_string_lossy().as_ref()),
-        DesktopEditorTarget::VsCode => open_with_system(&vscode_uri("vscode", path, line, col)),
-        DesktopEditorTarget::VsCodeInsiders => {
-            open_with_system(&vscode_uri("vscode-insiders", path, line, col))
+    let remote_authority = settings
+        .remote_authority
+        .as_ref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty());
+
+    if remote {
+        match settings.target {
+            DesktopEditorTarget::VsCode => {
+                let authority = remote_authority.ok_or_else(|| anyhow!("remote authority is not configured"))?;
+                open_with_system(&vscode_remote_uri("vscode", authority, path, line, col))
+            }
+            DesktopEditorTarget::VsCodeInsiders => {
+                let authority = remote_authority.ok_or_else(|| anyhow!("remote authority is not configured"))?;
+                open_with_system(&vscode_remote_uri("vscode-insiders", authority, path, line, col))
+            }
+            DesktopEditorTarget::Cursor => {
+                let authority = remote_authority.ok_or_else(|| anyhow!("remote authority is not configured"))?;
+                open_with_system(&vscode_remote_uri("cursor", authority, path, line, col))
+            }
+            DesktopEditorTarget::Windsurf => {
+                let authority = remote_authority.ok_or_else(|| anyhow!("remote authority is not configured"))?;
+                open_with_system(&vscode_remote_uri("windsurf", authority, path, line, col))
+            }
+            DesktopEditorTarget::Antigravity => {
+                let authority = remote_authority.ok_or_else(|| anyhow!("remote authority is not configured"))?;
+                open_with_system(&vscode_remote_uri("antigravity", authority, path, line, col))
+            }
+            DesktopEditorTarget::Custom => {
+                let cmd = settings
+                    .custom_command
+                    .as_ref()
+                    .map(|s| s.trim())
+                    .filter(|s| !s.is_empty())
+                    .ok_or_else(|| anyhow!("custom command is not configured"))?;
+                open_custom_command(cmd, path, line, col)
+            }
+            _ => anyhow::bail!("remote editor target does not support remote paths"),
         }
-        DesktopEditorTarget::Cursor => open_with_system(&vscode_uri("cursor", path, line, col)),
-        DesktopEditorTarget::Windsurf => open_with_system(&vscode_uri("windsurf", path, line, col)),
-        DesktopEditorTarget::Antigravity => {
-            open_with_system(&vscode_uri("antigravity", path, line, col))
-        }
-        DesktopEditorTarget::Idea => open_with_system(&jetbrains_uri("idea", path, line)),
-        DesktopEditorTarget::Pycharm => open_with_system(&jetbrains_uri("pycharm", path, line)),
-        DesktopEditorTarget::Xcode => open_xcode(path, line),
-        DesktopEditorTarget::AndroidStudio => open_android_studio(path, line),
-        DesktopEditorTarget::Custom => {
-            let cmd = settings
-                .custom_command
-                .as_ref()
-                .map(|s| s.trim())
-                .filter(|s| !s.is_empty())
-                .ok_or_else(|| anyhow!("custom command is not configured"))?;
-            open_custom_command(cmd, path, line, col)
+    } else {
+        match settings.target {
+            DesktopEditorTarget::System => open_with_system(path.to_string_lossy().as_ref()),
+            DesktopEditorTarget::VsCode => open_with_system(&vscode_uri("vscode", path, line, col)),
+            DesktopEditorTarget::VsCodeInsiders => {
+                open_with_system(&vscode_uri("vscode-insiders", path, line, col))
+            }
+            DesktopEditorTarget::Cursor => open_with_system(&vscode_uri("cursor", path, line, col)),
+            DesktopEditorTarget::Windsurf => open_with_system(&vscode_uri("windsurf", path, line, col)),
+            DesktopEditorTarget::Antigravity => {
+                open_with_system(&vscode_uri("antigravity", path, line, col))
+            }
+            DesktopEditorTarget::Idea => open_with_system(&jetbrains_uri("idea", path, line)),
+            DesktopEditorTarget::Pycharm => open_with_system(&jetbrains_uri("pycharm", path, line)),
+            DesktopEditorTarget::Xcode => open_xcode(path, line),
+            DesktopEditorTarget::AndroidStudio => open_android_studio(path, line),
+            DesktopEditorTarget::Custom => {
+                let cmd = settings
+                    .custom_command
+                    .as_ref()
+                    .map(|s| s.trim())
+                    .filter(|s| !s.is_empty())
+                    .ok_or_else(|| anyhow!("custom command is not configured"))?;
+                open_custom_command(cmd, path, line, col)
+            }
         }
     }
 }
@@ -1660,6 +1729,26 @@ fn open_custom_command(
         anyhow::bail!("custom command failed (exit={status})");
     }
     Ok(())
+}
+
+
+fn vscode_remote_uri(
+    scheme: &str,
+    authority: &str,
+    path: &Path,
+    line: Option<u32>,
+    col: Option<u32>,
+) -> String {
+    let mut uri = format!("{scheme}://vscode-remote/{authority}{}", encode_uri_path(path));
+    if let Some(line) = line {
+        uri.push(':');
+        uri.push_str(&line.to_string());
+        if let Some(col) = col {
+            uri.push(':');
+            uri.push_str(&col.to_string());
+        }
+    }
+    uri
 }
 
 fn vscode_uri(scheme: &str, path: &Path, line: Option<u32>, col: Option<u32>) -> String {

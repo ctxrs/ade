@@ -2333,7 +2333,7 @@ fn install_dir_rel(data_root: &Path, install_dir: &Path) -> String {
         .unwrap_or_else(|_| install_dir.to_string_lossy().to_string())
 }
 
-async fn ensure_node_runtime(
+pub(crate) async fn ensure_node_runtime(
     state: &AppState,
     install_id: Option<InstallId>,
     provider_id: &str,

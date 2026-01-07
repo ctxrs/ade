@@ -7,6 +7,7 @@ use std::sync::{
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use chrono::Utc;
 use serde_json::{json, Map, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
@@ -62,6 +63,7 @@ pub struct AcpSessionPool {
 #[derive(Debug, Clone)]
 struct AcpContextSession {
     acp_session_id: String,
+    model_id: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -99,6 +101,7 @@ pub struct AcpPromptRequest {
     pub env: HashMap<String, String>,
     pub event_sink: mpsc::Sender<NormalizedEvent>,
     pub cancel_rx: oneshot::Receiver<()>,
+    pub model_id: Option<String>,
 }
 
 impl AcpSessionPool {
@@ -166,6 +169,7 @@ impl AcpSessionPool {
             env,
             event_sink,
             cancel_rx,
+            model_id,
         } = request;
 
         self.ensure_process(&client, workdir.clone(), env.clone(), event_sink.clone())
@@ -207,6 +211,30 @@ impl AcpSessionPool {
                 return Err(e);
             }
         };
+
+        if let Some(desired_model_id) = normalize_session_model_id(model_id.as_deref()) {
+            let already_set = {
+                let map = self.sessions.lock().await;
+                map.get(&session_key)
+                    .and_then(|s| s.model_id.as_deref())
+                    .is_some_and(|m| m == desired_model_id)
+            };
+            if !already_set
+                && process
+                    .set_model(
+                        &acp_session_id,
+                        desired_model_id.clone(),
+                        event_sink.clone(),
+                    )
+                    .await
+                    .is_ok()
+            {
+                let mut map = self.sessions.lock().await;
+                if let Some(entry) = map.get_mut(&session_key) {
+                    entry.model_id = Some(desired_model_id);
+                }
+            }
+        }
 
         let result = process
             .prompt(
@@ -280,7 +308,14 @@ impl AcpSessionPool {
                 .cloned()
                 .context("no active ACP process")?
         };
-        process.set_model(&acp_session_id, model_id, tx).await
+        process
+            .set_model(&acp_session_id, model_id.clone(), tx)
+            .await?;
+        let mut map = self.sessions.lock().await;
+        if let Some(entry) = map.get_mut(&session_key) {
+            entry.model_id = Some(model_id);
+        }
+        Ok(())
     }
 
     pub async fn set_mode(&self, session_key: String, mode_id: String) -> Result<()> {
@@ -385,6 +420,7 @@ impl AcpSessionPool {
             session_key.to_string(),
             AcpContextSession {
                 acp_session_id: created.session_id.clone(),
+                model_id: None,
             },
         );
         Ok(created.session_id)
@@ -404,6 +440,8 @@ struct AcpProcess {
     agent: AcpAgentConfig,
     child: Mutex<Child>,
     write_tx: mpsc::UnboundedSender<String>,
+    log_path: Option<PathBuf>,
+    log_tx: Option<mpsc::UnboundedSender<String>>,
     next_id: AtomicU64,
     pending: Mutex<HashMap<u64, oneshot::Sender<serde_json::Value>>>,
     supports_load: AtomicBool,
@@ -489,6 +527,14 @@ impl AcpProcess {
         ask_user_question: Option<Arc<AskUserQuestionBroker>>,
         event_sink: mpsc::Sender<NormalizedEvent>,
     ) -> Result<Arc<Self>> {
+        let (log_tx, log_path) = match acp_log_path(&env, &agent.provider_id) {
+            Some(path) => match spawn_acp_log_writer(path.clone()).await {
+                Some(tx) => (Some(tx), Some(path)),
+                None => (None, None),
+            },
+            None => (None, None),
+        };
+
         let mut cmd = Command::new(&agent.command);
         cmd.args(&agent.args);
         cmd.current_dir(&workdir);
@@ -505,6 +551,14 @@ impl AcpProcess {
                 agent.provider_id, agent.command
             )
         })?;
+
+        if let Some(tx) = log_tx.as_ref() {
+            let pid = child.id().unwrap_or(0);
+            let _ = tx.send(format!(
+                "[meta] started provider={} pid={}",
+                agent.provider_id, pid
+            ));
+        }
 
         let stdin = child.stdin.take().context("capturing agent stdin")?;
         let stdout = child.stdout.take().context("capturing agent stdout")?;
@@ -531,6 +585,8 @@ impl AcpProcess {
             agent,
             child: Mutex::new(child),
             write_tx,
+            log_path,
+            log_tx,
             next_id: AtomicU64::new(1),
             pending: Mutex::new(HashMap::new()),
             supports_load: AtomicBool::new(false),
@@ -1159,6 +1215,7 @@ async fn stdout_pump(
                 let parsed = match serde_json::from_str::<serde_json::Value>(&line) {
                     Ok(v) => v,
                     Err(_) => {
+                        log_acp_line(&process, "stdout", &line);
                         push_capped(&process.stdout_non_json, line, 500).await;
                         continue;
                     }
@@ -1275,15 +1332,15 @@ async fn stdout_pump(
                 }
             }
             Ok(None) => {
-                fail_pending(&process, "agent stdout closed").await;
-                process
-                    .router
-                    .broadcast_shutdown("agent stdout closed".to_string())
-                    .await;
+                let message = shutdown_message(&process, "agent stdout closed");
+                log_acp_line(&process, "meta", &message);
+                fail_pending(&process, &message).await;
+                process.router.broadcast_shutdown(message).await;
                 break;
             }
             Err(e) => {
-                let message = format!("agent stdout read error: {e}");
+                let message = shutdown_message(&process, &format!("agent stdout read error: {e}"));
+                log_acp_line(&process, "meta", &message);
                 fail_pending(&process, &message).await;
                 process.router.broadcast_shutdown(message).await;
                 break;
@@ -1299,11 +1356,14 @@ async fn stderr_pump(
     loop {
         match stderr_reader.next_line().await {
             Ok(Some(line)) => {
+                log_acp_line(&process, "stderr", &line);
                 push_capped(&process.stderr_lines, line, 500).await;
             }
             Ok(None) => break,
             Err(e) => {
-                push_capped(&process.stderr_lines, e.to_string(), 500).await;
+                let message = format!("stderr read error: {e}");
+                log_acp_line(&process, "stderr", &message);
+                push_capped(&process.stderr_lines, message, 500).await;
                 break;
             }
         }
@@ -1337,6 +1397,113 @@ fn filter_process_env(env: HashMap<String, String>) -> HashMap<String, String> {
             )
         })
         .collect()
+}
+
+fn acp_log_path(env: &HashMap<String, String>, provider_id: &str) -> Option<PathBuf> {
+    let data_root = env.get("CTX_DATA_ROOT")?;
+    let timestamp = Utc::now().format("%Y-%m-%dT%H-%M-%SZ");
+    Some(
+        Path::new(data_root)
+            .join("logs")
+            .join("providers")
+            .join(format!("acp-{}-{}.log", provider_id, timestamp)),
+    )
+}
+
+async fn spawn_acp_log_writer(path: PathBuf) -> Option<mpsc::UnboundedSender<String>> {
+    if let Some(parent) = path.parent() {
+        if tokio::fs::create_dir_all(parent).await.is_err() {
+            return None;
+        }
+    }
+
+    let file = tokio::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .await
+        .ok()?;
+
+    let (tx, mut rx) = mpsc::unbounded_channel::<String>();
+    tokio::spawn(async move {
+        let mut file = file;
+        while let Some(line) = rx.recv().await {
+            let redacted = redact_sensitive(&line);
+            if file.write_all(redacted.as_bytes()).await.is_err() {
+                break;
+            }
+            if !redacted.ends_with('\n') && file.write_all(b"\n").await.is_err() {
+                break;
+            }
+            let _ = file.flush().await;
+        }
+    });
+
+    Some(tx)
+}
+
+fn redact_sensitive(input: &str) -> String {
+    fn redact_after_marker(mut s: String, marker: &str) -> String {
+        let redacted = "[REDACTED]";
+        let mut search_from = 0usize;
+        while let Some(rel) = s[search_from..].find(marker) {
+            let marker_start = search_from + rel;
+            let start = marker_start + marker.len();
+            if start >= s.len() {
+                break;
+            }
+            if s[start..].starts_with(redacted) {
+                search_from = start + redacted.len();
+                continue;
+            }
+
+            let mut end = s.len();
+            for (i, ch) in s[start..].char_indices() {
+                if ch.is_whitespace() || ch == '"' || ch == '\'' || ch == '&' {
+                    end = start + i;
+                    break;
+                }
+            }
+
+            s.replace_range(start..end, redacted);
+            search_from = start + redacted.len();
+        }
+        s
+    }
+
+    let mut out = input.to_string();
+    out = redact_after_marker(out, "Bearer ");
+    out = redact_after_marker(out, "bearer ");
+    out = redact_after_marker(out, "Authorization: Bearer ");
+    out = redact_after_marker(out, "authorization: Bearer ");
+    out = redact_after_marker(out, "token=");
+    out = redact_after_marker(out, "TOKEN=");
+    out = redact_after_marker(out, "CTX_DESKTOP_TOKEN=");
+    out = redact_after_marker(out, "ctxAuthToken\":\"");
+    out = redact_after_marker(out, "ctx_auth_token\":\"");
+    out
+}
+
+fn log_acp_line(process: &AcpProcess, prefix: &str, line: &str) {
+    if let Some(tx) = process.log_tx.as_ref() {
+        let _ = tx.send(format!("[{prefix}] {line}"));
+    }
+}
+
+fn shutdown_message(process: &AcpProcess, base: &str) -> String {
+    match process.log_path.as_ref() {
+        Some(path) => format!("{base} (see {})", path.display()),
+        None => base.to_string(),
+    }
+}
+
+fn normalize_session_model_id(model_id: Option<&str>) -> Option<String> {
+    let trimmed = model_id?.trim();
+    if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("default") {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
 }
 
 fn build_request_permission_response(

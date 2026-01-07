@@ -8,6 +8,7 @@ vi.mock("../api/client", () => {
   const idToString = (id: any): string => (typeof id === "string" ? id : id?.["0"]);
   return {
     idToString,
+    getProviderOptions: vi.fn(async () => undefined),
     getSessionHead: vi.fn(),
     getSessionHistory: vi.fn(),
     listSessionArtifacts: vi.fn(async () => []),
@@ -17,7 +18,9 @@ vi.mock("../api/client", () => {
 });
 
 vi.mock("./uiStateStore", () => ({
+  loadSessionAcpMetaV1: vi.fn(async () => null),
   loadSessionHeadV1: vi.fn(async () => null),
+  saveSessionAcpMetaV1: vi.fn(async () => {}),
   saveSessionHeadV1: vi.fn(async () => {}),
 }));
 

@@ -226,6 +226,28 @@ export type Settings = {
   resource_governance?: ResourceGovernanceSettings | null;
 };
 
+export type WebSessionViewport = {
+  width: number;
+  height: number;
+};
+
+export type WebSessionInfo = {
+  id: string;
+  kind: string;
+  session_id?: string | null;
+  worktree_id?: string | null;
+  status: string;
+  created_at: string;
+  updated_at: string;
+  last_activity: string;
+  url: string;
+  viewport: WebSessionViewport;
+  fps: number;
+  viewers: number;
+  stream_path: string;
+  stream_url?: string | null;
+};
+
 export type EditPlanSummary = {
   id: { 0: string } | string;
   title: string;
@@ -901,6 +923,11 @@ export const setSessionArtifacts = (sessionId: string, artifacts: ArtifactInput[
     method: "POST",
     body: JSON.stringify({ artifacts }),
   });
+
+export const listSessionSubagents = (sessionId: string) =>
+  apiAny<SessionSummary[]>(`/api/sessions/${sessionId}/subagents`);
+
+export const listWebSessions = () => apiAny<WebSessionInfo[]>("/api/sessions/web");
 
 export const getSessionEvents = (
   sessionId: string,

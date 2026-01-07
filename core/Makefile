@@ -1,14 +1,27 @@
-.PHONY: test dev web
+.PHONY: test dev web supabase-local supabase-functions
 
 CARGO_TARGET_DIR ?= $(HOME)/.cache/cargo/ctx-monorepo
 CTX_MCP_COMMAND ?= $(CARGO_TARGET_DIR)/debug/ctx-mcp
+SUPABASE_LOCAL ?= 1
+SUPABASE_FUNCTIONS ?= 1
+SUPABASE_FUNCTIONS_BG ?= 1
 export CARGO_TARGET_DIR
 
 test:
 	cargo test -q
 	pnpm -C apps/web test
 
-dev:
+supabase-local:
+ifeq ($(SUPABASE_LOCAL),1)
+	@../scripts/supabase_local_ensure.sh
+endif
+
+supabase-functions: supabase-local
+ifeq ($(SUPABASE_FUNCTIONS),1)
+	@../scripts/supabase_local_functions.sh $(if $(filter 1,$(SUPABASE_FUNCTIONS_BG)),--background,)
+endif
+
+dev: supabase-local supabase-functions
 	cargo build -p ctx-mcp
 ifeq ($(shell uname -s),Linux)
 	@if command -v systemd-run >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then \
@@ -24,5 +37,14 @@ else
 	CTX_MCP_COMMAND=$(CTX_MCP_COMMAND) cargo run -p ctx-http --bin ctx -- serve
 endif
 
-web:
+web: supabase-local supabase-functions
+ifeq ($(SUPABASE_LOCAL),1)
+	@SUPABASE_ENV="$$(../scripts/supabase_local_env.sh)"; \
+	if [ -n "$$SUPABASE_ENV" ]; then \
+		env $$SUPABASE_ENV pnpm -C apps/web dev; \
+	else \
+		pnpm -C apps/web dev; \
+	fi
+else
 	pnpm -C apps/web dev
+endif

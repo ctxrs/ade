@@ -33,6 +33,12 @@ import type { SessionViewVerbosity } from "../state/uiStateStore";
 
 export type WorkbenchModeId = "default" | "research" | "plan" | "review";
 export type WorkbenchEnvTarget = "local" | "worktree" | "container";
+export type ContextWindowInfo = {
+  windowTokens?: number;
+  usedTokens?: number;
+  remainingTokens?: number;
+  remainingFraction?: number;
+};
 
 const MENU_DESCRIPTIONS = {
   harness: `Agent harnesses are the low-level wrappers around models that provide the basic plumbing to allow the model to interact with the workspace. This normally includes features like filesystem access, shell access, configurations to set up MCP servers, and more. Despite similiarities between them, different harnesses will have varying tools, capabilities, and performance - even if used with the same underlying models. From here, you can install agent harnesses you haven't used before, switch between them for new tasks, and even run multiple agent harnesses in parallel on the same task. This can be useful to compare performance or to survey multiple different approaches to the same problem.`,
@@ -292,6 +298,8 @@ type ActiveSessionProps = SharedProps & {
   availableModels: Array<{ id: string; name?: string }>;
   currentModelId: string;
   onSetModelId: (next: string) => void;
+
+  contextWindow?: ContextWindowInfo | null;
 };
 
 export type WorkbenchComposerProps = NewSessionProps | ActiveSessionProps;
@@ -316,6 +324,21 @@ function labelForVerbosity(level: SessionViewVerbosity): string {
   if (level === "terse") return "Terse";
   if (level === "verbose") return "Verbose";
   return "Default";
+}
+
+function formatTokenCount(value: number): string {
+  if (!Number.isFinite(value)) return "0";
+  if (value >= 1_000_000) {
+    const scaled = value / 1_000_000;
+    const fixed = scaled >= 10 ? scaled.toFixed(0) : scaled.toFixed(1);
+    return `${fixed.replace(/\.0$/, "")}m`;
+  }
+  if (value >= 1_000) {
+    const scaled = value / 1_000;
+    const fixed = scaled >= 100 ? scaled.toFixed(0) : scaled.toFixed(1);
+    return `${fixed.replace(/\.0$/, "")}k`;
+  }
+  return `${Math.round(value)}`;
 }
 
 function buildModelsFromProviderOptions(opts?: ProviderOptions): Array<{ id: string; name?: string }> {
@@ -406,6 +429,36 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
   const multiTrackMode = (newSession?.draftTracks.length ?? 0) > 1;
   const verbosity = props.verbosity ?? "default";
   const canAdjustVerbosity = typeof props.onSetVerbosity === "function";
+  const contextWindow =
+    variant === "activeSession" ? (props as ActiveSessionProps).contextWindow ?? null : null;
+  const contextWindowDisplay = useMemo(() => {
+    if (!contextWindow?.windowTokens) return null;
+    let usedTokens = contextWindow.usedTokens;
+    if (usedTokens == null && contextWindow.remainingTokens != null) {
+      usedTokens = contextWindow.windowTokens - contextWindow.remainingTokens;
+    }
+    if (usedTokens == null && contextWindow.remainingFraction != null) {
+      usedTokens = Math.round(contextWindow.windowTokens * (1 - contextWindow.remainingFraction));
+    }
+    if (usedTokens == null) return null;
+
+    const windowTokens = Math.max(1, Math.round(contextWindow.windowTokens));
+    const clampedUsed = Math.max(0, Math.min(windowTokens, Math.round(usedTokens)));
+    const fraction = clampedUsed / windowTokens;
+    const percent = Math.max(0, Math.min(100, Math.round(fraction * 100)));
+    const usedLabel = formatTokenCount(clampedUsed);
+    const windowLabel = formatTokenCount(windowTokens);
+    const summary = `${percent}% · ${usedLabel}/${windowLabel}`;
+    const title = `Context Window: ${summary}`;
+
+    return {
+      percent,
+      usedLabel,
+      windowLabel,
+      title,
+      summary,
+    };
+  }, [contextWindow]);
 
   useEffect(() => {
     if (!newSession) return;
@@ -1452,6 +1505,15 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
       ref={rootRef}
       className={variant === "newSession" ? "wb-composer-card wb-new-composer-card" : "wb-composer wb-active-composer"}
     >
+      {contextWindowDisplay && (
+        <div
+          className="wb-context-window"
+          title={contextWindowDisplay.title}
+          aria-label={contextWindowDisplay.title}
+        >
+          {contextWindowDisplay.summary}
+        </div>
+      )}
       {attachments.length > 0 && (
         <div className="wb-composer-attachments">
           {attachments.map((a, idx) => {

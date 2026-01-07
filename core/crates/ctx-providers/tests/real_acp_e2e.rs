@@ -50,6 +50,7 @@ async fn run_and_collect(
                 content: prompt.to_string(),
                 attachments: vec![],
                 context_blocks: vec![],
+                model_id: Some("test-model".to_string()),
             },
             workdir.to_path_buf(),
             HashMap::new(),

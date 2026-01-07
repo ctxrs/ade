@@ -164,11 +164,11 @@ async fn mcp_web_session_tools_call_daemon_http() {
         json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25"}}),
         json!({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}),
         json!({
-            "jsonrpc":"2.0",
-            "id":3,
-            "method":"tools/call",
-            "params":{
-                "name":"ctx.session_create",
+                "jsonrpc":"2.0",
+                "id":3,
+                "method":"tools/call",
+                "params":{
+                "name":"session_create",
                 "arguments":{
                     "kind":"web",
                     "target":{"url":"https://example.com"}
@@ -176,11 +176,11 @@ async fn mcp_web_session_tools_call_daemon_http() {
             }
         }),
         json!({
-            "jsonrpc":"2.0",
-            "id":4,
-            "method":"tools/call",
-            "params":{
-                "name":"ctx.session_eval",
+                "jsonrpc":"2.0",
+                "id":4,
+                "method":"tools/call",
+                "params":{
+                "name":"session_eval",
                 "arguments":{
                     "kind":"web",
                     "session_id":"sess-1",
@@ -189,11 +189,11 @@ async fn mcp_web_session_tools_call_daemon_http() {
             }
         }),
         json!({
-            "jsonrpc":"2.0",
-            "id":5,
-            "method":"tools/call",
-            "params":{
-                "name":"ctx.session_close",
+                "jsonrpc":"2.0",
+                "id":5,
+                "method":"tools/call",
+                "params":{
+                "name":"session_close",
                 "arguments":{
                     "kind":"web",
                     "session_id":"sess-1"

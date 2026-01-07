@@ -250,13 +250,21 @@ button.linklike:hover {
 }
 
 .ctx-file-link {
-  color: var(--accent);
-  text-decoration: underline dotted;
-  cursor: pointer;
+  color: inherit;
+  text-decoration: none;
 }
 
-.ctx-file-link:hover {
-  text-decoration-style: solid;
+.code-token-path {
+  text-decoration: none;
+}
+
+.markdown-modifier .ctx-file-link:hover,
+.markdown-modifier .code-token-path:hover {
+  color: var(--accent);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+  cursor: pointer;
 }
 
 .ctx-file-link:focus-visible {
@@ -328,6 +336,13 @@ button.linklike:hover {
   background: color-mix(in srgb, var(--panel) 88%, var(--success) 12%);
 }
 
+.msg.system {
+  margin-left: auto;
+  margin-right: auto;
+  background: color-mix(in srgb, var(--panel) 88%, var(--warning) 12%);
+  border-color: color-mix(in srgb, var(--border) 70%, var(--warning) 30%);
+}
+
 .role {
   font-size: 0.75em;
   text-transform: uppercase;
@@ -336,7 +351,7 @@ button.linklike:hover {
 
 .badge {
   font-size: 0.75em;
-  margin-left: 8px;
+  margin-right: 8px;
   padding: 2px 6px;
   background: var(--panel-2);
   background: color-mix(in srgb, var(--warning) 25%, var(--panel) 75%);
@@ -429,13 +444,63 @@ button.linklike:hover {
   z-index: 1;
 }
 
-.codeblock-body>div {
+.codeblock-body > :where(div, pre) {
   max-width: 100%;
   min-width: 0;
   width: 100%;
   box-sizing: border-box;
   overflow-x: auto;
   overflow-y: hidden;
+}
+
+.codeblock-pre {
+  margin: 0;
+  background: transparent;
+  padding: 28px 12px 12px;
+  font-size: 12px;
+  line-height: 1.45;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow-x: auto;
+  white-space: pre;
+  font-family: var(--mono);
+}
+
+.codeblock-pre code {
+  font-family: inherit;
+}
+
+.codeblock pre[class*="language-"],
+.codeblock code[class*="language-"] {
+  background: transparent;
+}
+
+.codeblock-body > pre {
+  max-width: 100%;
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.codeblock-pre {
+  margin: 0;
+  background: transparent;
+  padding: 28px 12px 12px;
+  font-size: 12px;
+  line-height: 1.45;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow-x: auto;
+  white-space: pre;
+  font-family: var(--mono);
+}
+
+.codeblock-code {
+  font-family: inherit;
 }
 
 .sr-only {
@@ -1923,6 +1988,7 @@ button.linklike:hover {
   padding: 14px;
   display: grid;
   gap: 10px;
+  position: relative;
 }
 
 .wb-new-composer-card {
@@ -2057,6 +2123,18 @@ button.linklike:hover {
   background: rgba(255, 255, 255, 0.08);
   display: block;
 }
+
+.wb-context-window {
+  position: absolute;
+  top: 2px;
+  right: 8px;
+  color: rgba(255, 255, 255, 0.42);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  z-index: 1;
+}
+
 
 .wb-invert {
   filter: invert(1) hue-rotate(180deg) saturate(1.1);
@@ -3581,6 +3659,7 @@ button.linklike:hover {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  overflow-x: hidden;
   padding-left: var(--wb-session-padding-inline);
   padding-right: var(--wb-session-padding-inline);
   padding-bottom: 12px;
@@ -3605,6 +3684,7 @@ button.linklike:hover {
 .wb-thread-scroller {
   box-sizing: border-box;
   padding-inline: 0;
+  overflow-x: hidden;
   scrollbar-width: none;
   -ms-overflow-style: none;
 }
@@ -3694,6 +3774,11 @@ button.linklike:hover {
   cursor: pointer;
 }
 
+.wb-turn-header:focus-visible {
+  outline: 2px solid rgba(78, 163, 255, 0.38);
+  outline-offset: 2px;
+}
+
 .wb-turn-header-bubble {
   border-radius: 10px;
   border: 1px solid rgba(255, 255, 255, 0.08);
@@ -3748,6 +3833,8 @@ button.linklike:hover {
   font-size: 12px;
   font-family: inherit;
   font-style: italic;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .wb-event-row[aria-expanded] {
@@ -3760,6 +3847,31 @@ button.linklike:hover {
 }
 
 .wb-event-text {
+  display: block;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Tool rows need an explicit flex layout so the "rest" segment can ellipsis
+   instead of painting past the container edge. */
+.wb-tool-row .wb-event-text {
+  display: flex;
+  align-items: baseline;
+  min-width: 0;
+}
+
+.wb-tool-row .wb-tool-verb,
+.wb-tool-row .wb-tool-sep {
+  flex: none;
+}
+
+.wb-tool-row .wb-tool-rest {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: block;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -3774,6 +3886,8 @@ button.linklike:hover {
 .wb-tool-group {
   display: grid;
   gap: 6px;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .wb-tool-group-body {
@@ -3783,6 +3897,8 @@ button.linklike:hover {
   padding: 8px 10px;
   display: grid;
   gap: 10px;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .wb-tool-loading {
@@ -3798,6 +3914,8 @@ button.linklike:hover {
 .wb-tool-row {
   display: grid;
   gap: 4px;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .wb-tool-verb {
@@ -3807,6 +3925,11 @@ button.linklike:hover {
 
 .wb-tool-rest {
   color: inherit;
+}
+
+.wb-tool-rest,
+.wb-tool-verb {
+  min-width: 0;
 }
 
 .wb-tool-sep {
@@ -3935,6 +4058,23 @@ button.linklike:hover {
   line-height: 1.55;
 }
 
+.wb-turn-header-content a,
+.wb-tool-markdown a,
+.wb-assistant-body a,
+.tool-markdown a,
+.msg a {
+  color: inherit;
+  text-decoration-color: currentColor;
+}
+
+.wb-turn-header-content a:visited,
+.wb-tool-markdown a:visited,
+.wb-assistant-body a:visited,
+.tool-markdown a:visited,
+.msg a:visited {
+  color: inherit;
+}
+
 .wb-turn-header-content :where(p, ul, ol, pre, blockquote, table, hr),
 .wb-tool-markdown :where(p, ul, ol, pre, blockquote, table, hr),
 .wb-assistant-body :where(p, ul, ol, pre, blockquote, table, hr) {
@@ -4029,6 +4169,7 @@ button.linklike:hover {
   padding: 10px 12px;
   display: grid;
   gap: 10px;
+  position: relative;
 }
 
 .wb-composer-input {
@@ -4416,6 +4557,115 @@ button.linklike:hover {
   min-height: 0;
   display: flex;
   flex-direction: column;
+}
+
+.wb-sessions {
+  width: 100%;
+  height: 100%;
+  min-width: 320px;
+  max-width: 60vw;
+  background: rgba(255, 255, 255, 0.01);
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.wb-sessions-top {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.wb-sessions-title {
+  font-weight: 600;
+}
+
+.wb-sessions-meta {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.wb-sessions-sections {
+  display: flex;
+  gap: 6px;
+}
+
+.wb-sessions-section {
+  color: var(--muted);
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+}
+
+.wb-sessions-section:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.wb-sessions-section-active {
+  color: var(--text);
+  border-color: var(--border);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.wb-sessions-count {
+  color: var(--muted);
+}
+
+.wb-sessions-tabs {
+  display: flex;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+}
+
+.wb-sessions-tab {
+  color: var(--muted);
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  white-space: nowrap;
+}
+
+.wb-sessions-tab:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.wb-sessions-tab-active {
+  color: var(--text);
+  border-color: var(--border);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.wb-sessions-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.wb-sessions-frame {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  border: none;
+  background: #000;
+}
+
+.wb-sessions-empty {
+  padding: 16px;
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .wb-diff-top {

@@ -1,4 +1,6 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::fs::File;
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
@@ -51,6 +53,7 @@ pub async fn session_worker(
     session: Session,
     mut rx: mpsc::Receiver<SchedulerCommand>,
 ) {
+    let mut session = session;
     let mut queue: VecDeque<QueuedMessage> = VecDeque::new();
     if let Ok(mut queued) = state
         .store
@@ -82,7 +85,14 @@ pub async fn session_worker(
     loop {
         if running.is_none() && !suspend_queue {
             if let Some(msg) = queue.pop_front() {
-                match start_turn(&state, &session, &workdir, &env_target, msg).await {
+                let session_for_turn = match state.store.get_session(session.id).await {
+                    Ok(Some(fresh)) => {
+                        session = fresh.clone();
+                        fresh
+                    }
+                    _ => session.clone(),
+                };
+                match start_turn(&state, &session_for_turn, &workdir, &env_target, msg).await {
                     Ok(turn) => {
                         state.set_running(session.id, true).await;
                         running = Some(turn);
@@ -242,6 +252,7 @@ async fn start_turn(
         .await;
 
     let prompt = message.content.clone();
+    let mut provider_session_ref = session.provider_session_ref.clone();
     let context_window_metrics =
         compute_context_window_metrics(&session.provider_id, &session.model_id, &prompt);
 
@@ -262,6 +273,9 @@ async fn start_turn(
     }
     provider_env.insert("CTX_SESSION_ID".to_string(), session.id.0.to_string());
     let mcp_token = uuid::Uuid::new_v4().to_string();
+    state
+        .register_mcp_token(session.id, mcp_token.clone())
+        .await;
     provider_env.insert("CTX_MCP_TOKEN".to_string(), mcp_token);
     if let Ok(v) = std::env::var("CTX_MCP_COMMAND") {
         provider_env.insert("CTX_MCP_COMMAND".to_string(), v);
@@ -300,6 +314,7 @@ async fn start_turn(
                 content: prompt,
                 attachments: message.attachments.clone(),
                 context_blocks: Vec::new(),
+                model_id: normalize_session_model_id(&session.model_id),
             },
             workdir.to_path_buf(),
             provider_env,
@@ -388,16 +403,41 @@ async fn start_turn(
             }
             if matches!(ev.event_type, SessionEventType::Init) {
                 if let Some(ps) = payload.get("acp_session_id").and_then(Value::as_str) {
+                    provider_session_ref = Some(ps.to_string());
                     let _ = store
                         .update_session_provider_session_ref(session_id, Some(ps.to_string()))
                         .await;
                 }
+                if model_id.trim().is_empty() || model_id.eq_ignore_ascii_case("default") {
+                    if let Some(current) = payload
+                        .get("models")
+                        .and_then(|m| {
+                            m.get("currentModelId")
+                                .or_else(|| m.get("current_model_id"))
+                        })
+                        .and_then(Value::as_str)
+                    {
+                        let _ = store
+                            .update_session_model(session_id, current.to_string())
+                            .await;
+                    }
+                }
             }
             if matches!(ev.event_type, SessionEventType::Done) {
-                if let (Some(metrics), Some(obj)) =
-                    (context_window_metrics.clone(), payload.as_object_mut())
-                {
-                    obj.entry("context_window").or_insert(metrics);
+                if let Some(obj) = payload.as_object_mut() {
+                    if obj.get("context_window").is_none() {
+                        let metrics = if provider_id == "codex" {
+                            provider_session_ref
+                                .as_deref()
+                                .and_then(read_codex_context_window_metrics)
+                                .or_else(|| context_window_metrics.clone())
+                        } else {
+                            context_window_metrics.clone()
+                        };
+                        if let Some(metrics) = metrics {
+                            obj.entry("context_window").or_insert(metrics);
+                        }
+                    }
                     obj.entry("status").or_insert(json!("completed"));
                 }
             }
@@ -1126,6 +1166,94 @@ fn compute_context_window_metrics(
     }))
 }
 
+fn read_codex_context_window_metrics(session_ref: &str) -> Option<serde_json::Value> {
+    let path = find_codex_session_log(session_ref)?;
+    let file = File::open(path).ok()?;
+    let reader = BufReader::new(file);
+    let mut latest_info: Option<Value> = None;
+
+    for line in reader.lines().map_while(Result::ok) {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let payload: Value = serde_json::from_str(trimmed).ok()?;
+        if payload.get("type").and_then(Value::as_str) != Some("event_msg") {
+            continue;
+        }
+        let event_payload = payload.get("payload")?;
+        if event_payload.get("type").and_then(Value::as_str) != Some("token_count") {
+            continue;
+        }
+        if let Some(info) = event_payload.get("info") {
+            latest_info = Some(info.clone());
+        }
+    }
+
+    let info = latest_info?;
+    let context_window_tokens = info.get("model_context_window").and_then(Value::as_u64)?;
+    let last_usage = info.get("last_token_usage").and_then(Value::as_object);
+    let input_tokens = last_usage
+        .and_then(|m| m.get("input_tokens"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let output_tokens = last_usage
+        .and_then(|m| m.get("output_tokens"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let reasoning_tokens = last_usage
+        .and_then(|m| m.get("reasoning_output_tokens"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let total_tokens = last_usage
+        .and_then(|m| m.get("total_tokens"))
+        .and_then(Value::as_u64)
+        .unwrap_or(
+            input_tokens
+                .saturating_add(output_tokens)
+                .saturating_add(reasoning_tokens),
+        );
+
+    if context_window_tokens == 0 {
+        return None;
+    }
+    let remaining_tokens_estimate = context_window_tokens.saturating_sub(total_tokens);
+    let remaining_fraction = remaining_tokens_estimate as f64 / context_window_tokens as f64;
+
+    Some(json!({
+        "context_tokens_estimate": total_tokens,
+        "context_window_tokens": context_window_tokens,
+        "remaining_tokens_estimate": remaining_tokens_estimate,
+        "remaining_fraction": remaining_fraction,
+        "total_input_tokens": input_tokens,
+        "total_output_tokens": output_tokens.saturating_add(reasoning_tokens),
+    }))
+}
+
+fn find_codex_session_log(session_ref: &str) -> Option<PathBuf> {
+    let base = directories::BaseDirs::new()?;
+    let root = base.home_dir().join(".codex").join("sessions");
+    if !root.exists() {
+        return None;
+    }
+    let mut stack = vec![root];
+    while let Some(dir) = stack.pop() {
+        let entries = std::fs::read_dir(&dir).ok()?;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if name.ends_with(".jsonl") && name.contains(session_ref) {
+                return Some(path);
+            }
+        }
+    }
+    None
+}
+
 fn model_context_window(provider_id: &str, model_id: &str) -> Option<usize> {
     match (provider_id, model_id) {
         ("fake", "fake-model") => Some(8192),
@@ -1138,30 +1266,525 @@ fn estimate_tokens(text: &str) -> usize {
     chars.div_ceil(4)
 }
 
-fn tool_input_preview(input: Option<&Value>) -> Option<Value> {
-    let obj = input?.as_object()?;
-    let mut out = serde_json::Map::new();
-    for key in [
-        "command",
-        "query",
-        "pattern",
-        "text",
-        "path",
-        "file",
-        "glob",
-        "parsed_cmd",
-    ] {
-        if let Some(value) = obj.get(key) {
-            if value.is_string() || value.is_array() || value.is_object() {
-                out.insert(key.to_string(), value.clone());
+fn normalize_session_model_id(model_id: &str) -> Option<String> {
+    let trimmed = model_id.trim();
+    if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("default") {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+#[derive(Default)]
+struct DiffStats {
+    added: usize,
+    removed: usize,
+    files: usize,
+}
+
+const MAX_PREVIEW_PATHS: usize = 5;
+
+fn count_lines(text: &str) -> usize {
+    if text.is_empty() {
+        0
+    } else {
+        text.lines().count()
+    }
+}
+
+fn diff_stats_from_patch(patch: &str) -> Option<DiffStats> {
+    let mut stats = DiffStats::default();
+    for line in patch.lines() {
+        if line.starts_with("diff --git ") {
+            stats.files += 1;
+            continue;
+        }
+        if line.starts_with("+++") || line.starts_with("---") || line.starts_with("@@") {
+            continue;
+        }
+        if line.starts_with('+') {
+            stats.added += 1;
+            continue;
+        }
+        if line.starts_with('-') {
+            stats.removed += 1;
+        }
+    }
+    if stats.files == 0 && (stats.added > 0 || stats.removed > 0) {
+        stats.files = 1;
+    }
+    if stats.files == 0 && stats.added == 0 && stats.removed == 0 {
+        None
+    } else {
+        Some(stats)
+    }
+}
+
+fn extract_old_new_text(obj: &serde_json::Map<String, Value>) -> (Option<&str>, Option<&str>) {
+    let old_text = obj
+        .get("oldText")
+        .or_else(|| obj.get("old_text"))
+        .or_else(|| obj.get("old"))
+        .or_else(|| obj.get("before"))
+        .and_then(|v| v.as_str());
+    let new_text = obj
+        .get("newText")
+        .or_else(|| obj.get("new_text"))
+        .or_else(|| obj.get("new"))
+        .or_else(|| obj.get("text"))
+        .or_else(|| obj.get("after"))
+        .and_then(|v| v.as_str());
+    (old_text, new_text)
+}
+
+fn diff_stats_from_edits(edits: &[Value]) -> Option<DiffStats> {
+    let mut stats = DiffStats::default();
+    let mut files = HashSet::new();
+    for edit in edits {
+        let Some(obj) = edit.as_object() else {
+            continue;
+        };
+        for key in [
+            "path",
+            "file",
+            "file_path",
+            "filePath",
+            "filepath",
+            "target",
+        ] {
+            if let Some(Value::String(path)) = obj.get(key) {
+                files.insert(path.clone());
+            }
+        }
+        let (old_text, new_text) = extract_old_new_text(obj);
+        stats.removed += count_lines(old_text.unwrap_or(""));
+        stats.added += count_lines(new_text.unwrap_or(""));
+    }
+    stats.files = files.len();
+    if stats.files == 0 && (stats.added > 0 || stats.removed > 0) {
+        stats.files = 1;
+    }
+    if stats.files == 0 && stats.added == 0 && stats.removed == 0 {
+        None
+    } else {
+        Some(stats)
+    }
+}
+
+fn diff_stats_from_changes(changes: &Value) -> Option<DiffStats> {
+    match changes {
+        Value::Array(edits) => diff_stats_from_edits(edits),
+        Value::String(text) => diff_stats_from_patch(text),
+        Value::Object(map) => {
+            let mut stats = DiffStats::default();
+            let mut files = HashSet::new();
+            for (path, entry) in map {
+                if !path.trim().is_empty() {
+                    files.insert(path.clone());
+                }
+                if let Some(patch) = extract_patch_text(entry) {
+                    if let Some(patch_stats) = diff_stats_from_patch(patch) {
+                        stats.added += patch_stats.added;
+                        stats.removed += patch_stats.removed;
+                        stats.files = stats.files.max(patch_stats.files);
+                    }
+                    continue;
+                }
+                if let Some(text) = entry.as_str() {
+                    if let Some(patch_stats) = diff_stats_from_patch(text) {
+                        stats.added += patch_stats.added;
+                        stats.removed += patch_stats.removed;
+                        stats.files = stats.files.max(patch_stats.files);
+                        continue;
+                    }
+                }
+                if let Some(obj) = entry.as_object() {
+                    let (old_text, new_text) = extract_old_new_text(obj);
+                    stats.removed += count_lines(old_text.unwrap_or(""));
+                    stats.added += count_lines(new_text.unwrap_or(""));
+                }
+            }
+            stats.files = stats.files.max(files.len());
+            if stats.files == 0 && (stats.added > 0 || stats.removed > 0) {
+                stats.files = 1;
+            }
+            if stats.files == 0 && stats.added == 0 && stats.removed == 0 {
+                None
+            } else {
+                Some(stats)
+            }
+        }
+        _ => None,
+    }
+}
+
+fn diff_stats_from_content_blocks(blocks: &[&Value]) -> Option<DiffStats> {
+    let mut stats = DiffStats::default();
+    let mut files = HashSet::new();
+    for block in blocks {
+        let candidate = block.get("content").unwrap_or(block);
+        if let Some(obj) = candidate.as_object() {
+            for key in [
+                "path",
+                "file",
+                "file_path",
+                "filePath",
+                "filepath",
+                "target",
+            ] {
+                if let Some(Value::String(path)) = obj.get(key) {
+                    files.insert(path.clone());
+                }
+            }
+            if let Some(patch) = extract_patch_text(candidate) {
+                if let Some(patch_stats) = diff_stats_from_patch(patch) {
+                    stats.added += patch_stats.added;
+                    stats.removed += patch_stats.removed;
+                    stats.files = stats.files.max(patch_stats.files);
+                    continue;
+                }
+            }
+            let (old_text, new_text) = extract_old_new_text(obj);
+            stats.removed += count_lines(old_text.unwrap_or(""));
+            stats.added += count_lines(new_text.unwrap_or(""));
+        } else if let Some(text) = candidate.as_str() {
+            if let Some(patch_stats) = diff_stats_from_patch(text) {
+                stats.added += patch_stats.added;
+                stats.removed += patch_stats.removed;
+                stats.files = stats.files.max(patch_stats.files);
             }
         }
     }
+    stats.files = stats.files.max(files.len());
+    if stats.files == 0 && (stats.added > 0 || stats.removed > 0) {
+        stats.files = 1;
+    }
+    if stats.files == 0 && stats.added == 0 && stats.removed == 0 {
+        None
+    } else {
+        Some(stats)
+    }
+}
+
+fn extract_patch_text(input: &Value) -> Option<&str> {
+    if let Some(text) = input.as_str() {
+        return Some(text);
+    }
+    input
+        .get("patch")
+        .or_else(|| input.get("diff"))
+        .or_else(|| input.get("patch_text"))
+        .or_else(|| input.get("unified_diff"))
+        .and_then(|v| v.as_str())
+}
+
+fn extract_patch_text_from_changes(changes: &Value) -> Option<String> {
+    match changes {
+        Value::String(text) => Some(text.to_string()),
+        Value::Array(items) => {
+            for item in items {
+                if let Some(patch) = extract_patch_text(item) {
+                    return Some(patch.to_string());
+                }
+                if let Some(text) = item.as_str() {
+                    return Some(text.to_string());
+                }
+            }
+            None
+        }
+        Value::Object(map) => {
+            for (_path, entry) in map {
+                if let Some(patch) = extract_patch_text(entry) {
+                    return Some(patch.to_string());
+                }
+                if let Some(text) = entry.as_str() {
+                    return Some(text.to_string());
+                }
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+fn extract_content_blocks(update: &Value) -> Vec<&Value> {
+    let mut out = Vec::new();
+    for candidate in [update.get("content"), update.pointer("/toolCall/content")] {
+        if let Some(items) = candidate.and_then(|v| v.as_array()) {
+            for item in items {
+                out.push(item);
+            }
+        }
+    }
+    out
+}
+
+fn collect_paths_from_value(value: &Value, paths: &mut Vec<String>) {
+    match value {
+        Value::String(path) => {
+            let trimmed = path.trim();
+            if !trimmed.is_empty() {
+                paths.push(trimmed.to_string());
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                collect_paths_from_value(item, paths);
+            }
+        }
+        Value::Object(obj) => {
+            for key in [
+                "path",
+                "file",
+                "filename",
+                "file_path",
+                "filePath",
+                "filepath",
+                "target",
+                "uri",
+            ] {
+                if let Some(Value::String(path)) = obj.get(key) {
+                    let trimmed = path.trim();
+                    if !trimmed.is_empty() {
+                        paths.push(trimmed.to_string());
+                    }
+                }
+            }
+            for key in ["paths", "files", "file_paths", "filePaths"] {
+                if let Some(value) = obj.get(key) {
+                    collect_paths_from_value(value, paths);
+                }
+            }
+            if let Some(Value::Array(cmds)) = obj.get("parsed_cmd") {
+                for cmd in cmds {
+                    if let Some(path) = cmd.get("path") {
+                        collect_paths_from_value(path, paths);
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn collect_paths_from_changes(value: &Value, paths: &mut Vec<String>) {
+    let Some(changes) = value.as_object() else {
+        return;
+    };
+    for (path, _) in changes {
+        let trimmed = path.trim();
+        if !trimmed.is_empty() {
+            paths.push(trimmed.to_string());
+        }
+    }
+}
+
+fn dedupe_paths(paths: &mut Vec<String>) {
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    for path in paths.drain(..) {
+        let trimmed = path.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if seen.insert(trimmed.to_string()) {
+            out.push(trimmed.to_string());
+        }
+    }
+    *paths = out;
+}
+
+fn extract_paths_from_update(update: &Value) -> Vec<String> {
+    let mut paths = Vec::new();
+    for value in [
+        update.get("locations"),
+        update.pointer("/toolCall/locations"),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        collect_paths_from_value(value, &mut paths);
+    }
+    for block in extract_content_blocks(update) {
+        let candidate = block.get("content").unwrap_or(block);
+        collect_paths_from_value(candidate, &mut paths);
+    }
+    dedupe_paths(&mut paths);
+    paths
+}
+
+fn extract_tool_input(update: &Value) -> Option<&Value> {
+    update
+        .pointer("/rawInput")
+        .or_else(|| update.pointer("/raw_input"))
+        .or_else(|| update.pointer("/toolCall/rawInput"))
+        .or_else(|| update.pointer("/toolCall/raw_input"))
+        .or_else(|| update.pointer("/toolCall/input"))
+        .or_else(|| update.pointer("/input"))
+        .or_else(|| update.pointer("/args"))
+}
+
+fn is_edit_tool(tool_kind: Option<&str>, title: Option<&str>) -> bool {
+    let kind = tool_kind.unwrap_or("").trim().to_lowercase();
+    if matches!(kind.as_str(), "edit" | "write" | "apply_patch" | "patch") {
+        return true;
+    }
+    let title = title.unwrap_or("").trim().to_lowercase();
+    title.contains("edit") || title.contains("patch") || title.contains("apply")
+}
+
+fn tool_input_preview(
+    input: Option<&Value>,
+    update: &Value,
+    tool_kind: Option<&str>,
+    title: Option<&str>,
+) -> Option<Value> {
+    let mut out = serde_json::Map::new();
+    let obj = input.and_then(|value| value.as_object());
+    if let Some(obj) = obj {
+        for key in [
+            "command",
+            "query",
+            "pattern",
+            "regex",
+            "text",
+            "path",
+            "file",
+            "filename",
+            "file_path",
+            "filePath",
+            "filepath",
+            "target",
+            "paths",
+            "files",
+            "file_paths",
+            "filePaths",
+            "glob",
+            "parsed_cmd",
+            "url",
+            "uri",
+            "href",
+            "method",
+            "cwd",
+            "root",
+        ] {
+            if let Some(value) = obj.get(key) {
+                if matches!(key, "paths" | "files" | "file_paths" | "filePaths") {
+                    let mut paths = Vec::new();
+                    collect_paths_from_value(value, &mut paths);
+                    dedupe_paths(&mut paths);
+                    if !paths.is_empty() {
+                        out.insert(
+                            key.to_string(),
+                            Value::Array(paths.into_iter().map(Value::String).collect()),
+                        );
+                    }
+                    continue;
+                }
+                if value.is_string() || value.is_array() || value.is_object() {
+                    out.insert(key.to_string(), value.clone());
+                }
+            }
+        }
+    }
+
+    let mut paths = Vec::new();
+    if let Some(input) = input {
+        collect_paths_from_value(input, &mut paths);
+        if let Some(changes) = input.get("changes") {
+            collect_paths_from_changes(changes, &mut paths);
+        }
+    }
+    paths.extend(extract_paths_from_update(update));
+    if let Some(changes) = update.get("changes") {
+        collect_paths_from_changes(changes, &mut paths);
+    }
+    dedupe_paths(&mut paths);
+    if !paths.is_empty() {
+        let total_paths = paths.len();
+        if total_paths > MAX_PREVIEW_PATHS {
+            paths.truncate(MAX_PREVIEW_PATHS);
+            out.insert(
+                "paths_total".to_string(),
+                Value::Number(serde_json::Number::from(total_paths as u64)),
+            );
+        }
+        if !out.contains_key("path")
+            && !out.contains_key("file")
+            && !out.contains_key("filename")
+            && !out.contains_key("file_path")
+            && !out.contains_key("filePath")
+            && !out.contains_key("filepath")
+            && !out.contains_key("target")
+            && paths.len() == 1
+        {
+            out.insert("path".to_string(), Value::String(paths[0].clone()));
+        }
+        if out.contains_key("paths") || paths.len() > 1 {
+            out.insert(
+                "paths".to_string(),
+                Value::Array(paths.iter().cloned().map(Value::String).collect()),
+            );
+        }
+    }
+
+    if is_edit_tool(tool_kind, title) {
+        let content_blocks = extract_content_blocks(update);
+        let stats = input
+            .and_then(extract_patch_text)
+            .and_then(diff_stats_from_patch)
+            .or_else(|| {
+                input
+                    .and_then(|value| value.get("edits"))
+                    .and_then(|v| v.as_array())
+                    .and_then(|edits| diff_stats_from_edits(edits))
+            })
+            .or_else(|| {
+                input
+                    .and_then(|value| value.get("changes"))
+                    .and_then(diff_stats_from_changes)
+            })
+            .or_else(|| diff_stats_from_content_blocks(&content_blocks));
+        if let Some(mut stats) = stats {
+            if stats.files == 0 && !paths.is_empty() {
+                stats.files = paths.len();
+            }
+            out.insert(
+                "diff_stats".to_string(),
+                json!({
+                    "added": stats.added,
+                    "removed": stats.removed,
+                    "files": stats.files,
+                }),
+            );
+        }
+    }
+
     if out.is_empty() {
         None
     } else {
         Some(Value::Object(out))
     }
+}
+
+fn extract_patch_text_owned(input: Option<&Value>, update: &Value) -> Option<String> {
+    if let Some(input) = input {
+        if let Some(patch) = extract_patch_text(input) {
+            return Some(patch.to_string());
+        }
+        if let Some(changes) = input.get("changes") {
+            if let Some(patch) = extract_patch_text_from_changes(changes) {
+                return Some(patch);
+            }
+        }
+    }
+    for block in extract_content_blocks(update) {
+        let candidate = block.get("content").unwrap_or(block);
+        if let Some(patch) = extract_patch_text(candidate) {
+            return Some(patch.to_string());
+        }
+    }
+    None
 }
 
 fn is_shell_like_tool(tool_kind: Option<&str>, title: Option<&str>) -> bool {
@@ -1260,24 +1883,34 @@ fn sanitize_tool_event_payload(event_type: &SessionEventType, raw_payload: &Valu
         "pending".to_string()
     };
 
-    let input = update
-        .pointer("/rawInput")
-        .or_else(|| update.pointer("/toolCall/rawInput"))
-        .or_else(|| update.pointer("/toolCall/input"))
-        .or_else(|| update.pointer("/input"))
-        .or_else(|| update.pointer("/args"));
-    let input_preview = tool_input_preview(input);
+    let input = extract_tool_input(update);
+    let input_preview = tool_input_preview(input, update, tool_kind.as_deref(), title.as_deref());
 
-    let output_preview = extract_tool_output_text(update).and_then(|t| {
-        let shell_like = is_shell_like_tool(tool_kind.as_deref(), title.as_deref());
-        let lines = if shell_like { 50 } else { 5 };
-        let (preview, _truncated) = build_output_preview(&t, lines, 16_384);
-        if preview.trim().is_empty() {
-            None
-        } else {
-            Some(preview)
-        }
-    });
+    let patch_preview = if is_edit_tool(tool_kind.as_deref(), title.as_deref()) {
+        extract_patch_text_owned(input, update).and_then(|t| {
+            let (preview, _truncated) = build_output_preview(&t, 5, 16_384);
+            if preview.trim().is_empty() {
+                None
+            } else {
+                Some(preview)
+            }
+        })
+    } else {
+        None
+    };
+
+    let output_preview = extract_tool_output_text(update)
+        .and_then(|t| {
+            let shell_like = is_shell_like_tool(tool_kind.as_deref(), title.as_deref());
+            let lines = if shell_like { 50 } else { 5 };
+            let (preview, _truncated) = build_output_preview(&t, lines, 16_384);
+            if preview.trim().is_empty() {
+                None
+            } else {
+                Some(preview)
+            }
+        })
+        .or(patch_preview);
 
     let mut obj = serde_json::Map::new();
     if !tool_call_id.trim().is_empty() {
@@ -1340,25 +1973,34 @@ fn build_turn_tool_update_from_payload(
         None
     };
 
-    let raw_input = update
-        .pointer("/rawInput")
-        .or_else(|| update.pointer("/toolCall/rawInput"))
-        .or_else(|| update.pointer("/toolCall/input"))
-        .or_else(|| update.pointer("/input"))
-        .or_else(|| update.pointer("/args"))
-        .cloned();
-    let input_json = tool_input_preview(raw_input.as_ref());
+    let input = extract_tool_input(update);
+    let input_json = tool_input_preview(input, update, tool_kind.as_deref(), title.as_deref());
 
-    let output_text = extract_tool_output_text(update).and_then(|t| {
-        let shell_like = is_shell_like_tool(tool_kind.as_deref(), title.as_deref());
-        let lines = if shell_like { 50 } else { 5 };
-        let (preview, _truncated) = build_output_preview(&t, lines, 16_384);
-        if preview.trim().is_empty() {
-            None
-        } else {
-            Some(preview)
-        }
-    });
+    let patch_preview = if is_edit_tool(tool_kind.as_deref(), title.as_deref()) {
+        extract_patch_text_owned(input, update).and_then(|t| {
+            let (preview, _truncated) = build_output_preview(&t, 5, 16_384);
+            if preview.trim().is_empty() {
+                None
+            } else {
+                Some(preview)
+            }
+        })
+    } else {
+        None
+    };
+
+    let output_text = extract_tool_output_text(update)
+        .and_then(|t| {
+            let shell_like = is_shell_like_tool(tool_kind.as_deref(), title.as_deref());
+            let lines = if shell_like { 50 } else { 5 };
+            let (preview, _truncated) = build_output_preview(&t, lines, 16_384);
+            if preview.trim().is_empty() {
+                None
+            } else {
+                Some(preview)
+            }
+        })
+        .or(patch_preview);
 
     Some(TurnToolUpdate {
         tool_call_id,

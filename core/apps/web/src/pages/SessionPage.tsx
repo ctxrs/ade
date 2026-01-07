@@ -15,7 +15,7 @@ import {
 } from "react";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Virtuoso, VirtuosoHandle, type StateSnapshot } from "react-virtuoso";
+import { Virtuoso, VirtuosoHandle, type IndexLocationWithAlign, type StateSnapshot } from "react-virtuoso";
 import {
   deleteMessage,
   DictationSettings,
@@ -38,25 +38,29 @@ import {
 } from "../api/client";
 import { useOpenSession, useSessionEntry, useSessionSupervisor } from "../state/sessionSupervisor";
 import { loadSessionViewPrefsV1, saveSessionViewPrefsV1, type SessionViewVerbosity } from "../state/uiStateStore";
-import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
-import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { Check, Copy } from "lucide-react";
 import { AskUserQuestionModal } from "../components/AskUserQuestionModal";
 import { type SlashCommandDescriptor } from "../state/useComposerAutocomplete";
 import { HARNESS_CATALOG } from "../utils/harnessCatalog";
-import { WorkbenchComposer as UnifiedWorkbenchComposer, type WorkbenchModeId } from "../components/WorkbenchComposer";
+import {
+  WorkbenchComposer as UnifiedWorkbenchComposer,
+  type ContextWindowInfo,
+  type WorkbenchModeId,
+} from "../components/WorkbenchComposer";
 import { startMicPcmStream } from "../utils/micPcmStream";
 import { parseWsJson } from "../utils/wsJson";
 import { imageFilesToInlineAttachments } from "../utils/messageAttachments";
 import { registerDropScope } from "../utils/dragDropScopes";
 import { copyTextToClipboard } from "../utils/clipboard";
-import { desktopGetDeepLinkToken, desktopOpenFile, desktopOpenPath, isDesktopApp } from "../utils/desktop";
+import { type FileRef, isAbsolutePath, parseFileRefToken, splitWhitespaceTokens } from "../utils/codeTokenLinks";
+import { desktopOpenFile, desktopOpenPath, isDesktopApp } from "../utils/desktop";
+import { usePinnedScrollManager } from "./usePinnedScrollManager";
 
 type ThreadItem =
   | {
     kind: "message";
     id: string;
-    role: "user" | "assistant";
+    role: "user" | "assistant" | "system";
     content: string;
     attachments: MessageAttachment[];
     created_at: string;
@@ -319,10 +323,89 @@ function buildCustomStatusByTurnId(events: SessionEvent[]): Map<string, string> 
   return out;
 }
 
+
 function parseIsoMs(value?: string | null): number | null {
   if (!value) return null;
   const parsed = Date.parse(value);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function coerceNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number.parseFloat(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function normalizeContextWindowMetrics(metrics: any): ContextWindowInfo | null {
+  if (!metrics || typeof metrics !== "object") return null;
+  const windowTokens =
+    coerceNumber(metrics.context_window_tokens) ??
+    coerceNumber(metrics.context_window_size) ??
+    coerceNumber(metrics.context_window) ??
+    coerceNumber(metrics.context_size) ??
+    coerceNumber(metrics.window_tokens) ??
+    coerceNumber(metrics.max_context_tokens) ??
+    coerceNumber(metrics.max_tokens);
+  if (!windowTokens || windowTokens <= 0) return null;
+
+  const inputTokens =
+    coerceNumber(metrics.total_input_tokens) ??
+    coerceNumber(metrics.input_tokens) ??
+    coerceNumber(metrics.prompt_tokens) ??
+    coerceNumber(metrics.input);
+  const outputTokens =
+    coerceNumber(metrics.total_output_tokens) ??
+    coerceNumber(metrics.output_tokens) ??
+    coerceNumber(metrics.completion_tokens) ??
+    coerceNumber(metrics.output);
+  const contextTokensEstimate =
+    coerceNumber(metrics.context_tokens_estimate) ??
+    coerceNumber(metrics.context_tokens);
+
+  let usedTokens: number | null = null;
+  if (inputTokens != null || outputTokens != null) {
+    usedTokens = (inputTokens ?? 0) + (outputTokens ?? 0);
+  } else if (contextTokensEstimate != null) {
+    usedTokens = contextTokensEstimate;
+  }
+
+  let remainingTokens =
+    coerceNumber(metrics.remaining_tokens_estimate) ??
+    coerceNumber(metrics.remaining_tokens);
+  let remainingFraction =
+    coerceNumber(metrics.remaining_fraction) ??
+    coerceNumber(metrics.remaining_pct) ??
+    coerceNumber(metrics.remaining_percent);
+
+  if (remainingFraction != null && remainingFraction > 1) {
+    remainingFraction = remainingFraction <= 100 ? remainingFraction / 100 : null;
+  }
+  if (remainingFraction != null) {
+    remainingFraction = Math.max(0, Math.min(1, remainingFraction));
+  }
+
+  if (remainingTokens == null && usedTokens != null) {
+    remainingTokens = Math.max(0, windowTokens - usedTokens);
+  }
+  if (usedTokens == null && remainingTokens != null) {
+    usedTokens = Math.max(0, windowTokens - remainingTokens);
+  }
+  if (remainingFraction == null && usedTokens != null) {
+    remainingFraction = Math.max(0, Math.min(1, 1 - usedTokens / windowTokens));
+  }
+  if (usedTokens == null && remainingFraction != null) {
+    usedTokens = Math.max(0, Math.round(windowTokens * (1 - remainingFraction)));
+  }
+
+  return {
+    windowTokens,
+    usedTokens: usedTokens ?? undefined,
+    remainingTokens: remainingTokens ?? undefined,
+    remainingFraction: remainingFraction ?? undefined,
+  };
 }
 
 function formatElapsedMs(ms: number): string {
@@ -345,8 +428,9 @@ function humanTurnStatus(status: SessionTurn["status"]): string {
     case "completed":
       return "Completed";
     case "interrupted":
-    case "failed":
       return "Interrupted";
+    case "failed":
+      return "Error";
     case "queued":
     case "running":
     default:
@@ -382,8 +466,8 @@ function toolKindIcon(kind: string): string {
   const k = String(kind ?? "").trim().toLowerCase();
   if (k === "execute") return "$";
   if (k === "read" || k === "read_file") return "R";
-  if (k === "search") return "S";
-  if (k === "write" || k === "edit") return "W";
+  if (k === "search" || k === "list" || k === "list_files") return "S";
+  if (k === "write" || k === "edit" || k === "apply_patch") return "W";
   return "·";
 }
 
@@ -447,6 +531,7 @@ export function SessionView({
   }, [id]);
   const perfStartRef = useRef<number>(0);
   const bottomThresholdPx = 16;
+  const userIntentWindowMs = 1000;
   const [verbosity, setVerbosity] = useState<SessionViewVerbosity>("default");
   const [inputInternal, setInputInternal] = useState("");
   const [draftAttachments, setDraftAttachments] = useState<MessageAttachment[]>([]);
@@ -455,13 +540,10 @@ export function SessionView({
   const [sendBusy, setSendBusy] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [fileOpenError, setFileOpenError] = useState<string | null>(null);
-  const [deepLinkToken, setDeepLinkToken] = useState<string | null>(null);
-  const deepLinkTokenTimerRef = useRef<number | null>(null);
+  const [modifierDown, setModifierDown] = useState(false);
   const [atBottom, setAtBottom] = useState(true);
-  const [hasNewActivity, setHasNewActivity] = useState(false);
   const [stickToBottom, setStickToBottom] = useState(true);
   const stickToBottomRef = useRef(true);
-  const lastActivityCountRef = useRef(0);
   const [authMethodId, setAuthMethodId] = useState<string>("");
   const [authBusy, setAuthBusy] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
@@ -479,8 +561,17 @@ export function SessionView({
   } | null>(null);
   const liveScrollTopRef = useRef<number | null>(null);
   const scrollSyncRafRef = useRef<number | null>(null);
-  const userScrolledRef = useRef(false);
+  const autoScrollRef = useRef(0);
+  const autoScrollRafRef = useRef<number | null>(null);
+  const autoScrollAttemptRef = useRef(0);
+  const userScrollIntentRef = useRef(0);
   const scrollerRef = useRef<HTMLDivElement | null>(null);
+  const [scrollerNode, setScrollerNode] = useState<HTMLDivElement | null>(null);
+  const listRef = useRef<HTMLDivElement | null>(null);
+  const bottomSentinelRef = useRef<HTMLDivElement | null>(null);
+  const [bottomSentinelNode, setBottomSentinelNode] = useState<HTMLDivElement | null>(null);
+  const sentinelMeasuredRef = useRef(false);
+  const sentinelVisibleRef = useRef(true);
   const [scrollbarNeeded, setScrollbarNeeded] = useState(false);
   const [scrollbarActive, setScrollbarActive] = useState(false);
   const [scrollbarDragging, setScrollbarDragging] = useState(false);
@@ -512,6 +603,22 @@ export function SessionView({
       .catch(() => {});
     return () => {
       cancelled = true;
+    };
+  }, []);
+
+
+  useEffect(() => {
+    const update = (event: KeyboardEvent) => {
+      setModifierDown(event.metaKey || event.ctrlKey);
+    };
+    const handleBlur = () => setModifierDown(false);
+    window.addEventListener("keydown", update);
+    window.addEventListener("keyup", update);
+    window.addEventListener("blur", handleBlur);
+    return () => {
+      window.removeEventListener("keydown", update);
+      window.removeEventListener("keyup", update);
+      window.removeEventListener("blur", handleBlur);
     };
   }, []);
 
@@ -621,10 +728,15 @@ export function SessionView({
     updateScrollbar();
   }, [setScrollbarActiveState, setScrollbarNeededState, updateScrollbar]);
 
+  const markUserScrollIntent = useCallback(() => {
+    userScrollIntentRef.current = Date.now();
+  }, []);
+
   const handleScrollbarTrackPointerDown = useCallback(
     (event: PointerEvent<HTMLDivElement>) => {
       if (event.button !== 0) return;
       if (event.target === scrollbarThumbRef.current) return;
+      markUserScrollIntent();
       const scroller = scrollerRef.current;
       const track = scrollbarTrackRef.current;
       if (!scroller || !track) return;
@@ -636,12 +748,13 @@ export function SessionView({
       scheduleScrollbarUpdate();
       showScrollbarTemporarily();
     },
-    [scheduleScrollbarUpdate, showScrollbarTemporarily],
+    [markUserScrollIntent, scheduleScrollbarUpdate, showScrollbarTemporarily],
   );
 
   const handleScrollbarThumbPointerDown = useCallback(
     (event: PointerEvent<HTMLDivElement>) => {
       if (event.button !== 0) return;
+      markUserScrollIntent();
       const scroller = scrollerRef.current;
       const track = scrollbarTrackRef.current;
       if (!scroller || !track) return;
@@ -667,7 +780,7 @@ export function SessionView({
       };
       scrollbarThumbRef.current?.setPointerCapture(event.pointerId);
     },
-    [setScrollbarActiveState, updateScrollbar],
+    [markUserScrollIntent, setScrollbarActiveState, updateScrollbar],
   );
 
   const handleScrollbarThumbPointerMove = useCallback(
@@ -675,6 +788,7 @@ export function SessionView({
       const drag = scrollbarDragRef.current;
       const scroller = scrollerRef.current;
       if (!drag || !scroller || drag.pointerId !== event.pointerId) return;
+      markUserScrollIntent();
       const maxScrollTop = Math.max(drag.scrollHeight - drag.clientHeight, 0);
       const maxThumbTop = Math.max(drag.trackHeight - drag.thumbHeight, 1);
       const delta = event.clientY - drag.startY;
@@ -682,7 +796,7 @@ export function SessionView({
       scroller.scrollTop = Math.min(maxScrollTop, Math.max(0, nextScrollTop));
       scheduleScrollbarUpdate();
     },
-    [scheduleScrollbarUpdate],
+    [markUserScrollIntent, scheduleScrollbarUpdate],
   );
 
   const handleScrollbarThumbPointerUp = useCallback(
@@ -724,43 +838,6 @@ export function SessionView({
     setFileOpenError(message);
   }, []);
 
-  useEffect(() => {
-    if (!isDesktopApp()) return;
-    let cancelled = false;
-
-    const scheduleRefresh = (expiresAtMs: number) => {
-      if (deepLinkTokenTimerRef.current) {
-        window.clearTimeout(deepLinkTokenTimerRef.current);
-        deepLinkTokenTimerRef.current = null;
-      }
-      const now = Date.now();
-      const leadTime = 60_000;
-      const delay = Math.max(expiresAtMs - now - leadTime, 10_000);
-      deepLinkTokenTimerRef.current = window.setTimeout(() => {
-        refresh();
-      }, delay);
-    };
-
-    const refresh = () => {
-      desktopGetDeepLinkToken()
-        .then((token) => {
-          if (cancelled) return;
-          setDeepLinkToken(token.token);
-          scheduleRefresh(token.expires_at_ms);
-        })
-        .catch(() => {});
-    };
-
-    refresh();
-    return () => {
-      cancelled = true;
-      if (deepLinkTokenTimerRef.current) {
-        window.clearTimeout(deepLinkTokenTimerRef.current);
-        deepLinkTokenTimerRef.current = null;
-      }
-    };
-  }, []);
-
   useOpenSession(id ?? "", { watchDiff: true });
   const refreshAll = useCallback(async () => {
     if (!id) return;
@@ -774,17 +851,22 @@ export function SessionView({
     didInitialScrollRef.current = false;
     lastScrollPersistedRef.current = null;
     latestAnchorIdRef.current = null;
-    userScrolledRef.current = false;
     liveScrollTopRef.current = null;
     restoringScrollRef.current = false;
+    autoScrollRef.current = 0;
+    autoScrollAttemptRef.current = 0;
+    sentinelMeasuredRef.current = false;
+    sentinelVisibleRef.current = true;
+    if (autoScrollRafRef.current != null) {
+      window.cancelAnimationFrame(autoScrollRafRef.current);
+      autoScrollRafRef.current = null;
+    }
     if (scrollSyncRafRef.current != null) {
       window.cancelAnimationFrame(scrollSyncRafRef.current);
       scrollSyncRafRef.current = null;
     }
     setAtBottom(true);
-    setHasNewActivity(false);
     setStickToBottom(true);
-    lastActivityCountRef.current = 0;
     setExpandedTurnHeaders({});
     setExpandedToolById({});
     setSendError(null);
@@ -804,13 +886,9 @@ export function SessionView({
         window.clearTimeout(restoreCooldownRef.current);
         restoreCooldownRef.current = null;
       }
-      if (followOutputRafRef.current != null) {
-        window.cancelAnimationFrame(followOutputRafRef.current);
-        followOutputRafRef.current = null;
-      }
-      if (followOutputTimerRef.current != null) {
-        window.clearTimeout(followOutputTimerRef.current);
-        followOutputTimerRef.current = null;
+      if (autoScrollRafRef.current != null) {
+        window.cancelAnimationFrame(autoScrollRafRef.current);
+        autoScrollRafRef.current = null;
       }
     };
   }, []);
@@ -818,7 +896,7 @@ export function SessionView({
   useEffect(() => {
     return () => {
       if (!onScrollStateChange) return;
-      if (!userScrolledRef.current) return;
+      if (stickToBottomRef.current) return;
       const el = scrollerRef.current;
       if (!el) return;
       const scrollTop = el.scrollTop;
@@ -872,9 +950,26 @@ export function SessionView({
   const eventsKey = `${entry?.lastEventSeq ?? 0}:${events.length}`;
   const turnsKey = deriveTurnsKey(turns);
   const messagesKey = deriveMessagesKey(messages);
+  const contextWindow = useMemo<ContextWindowInfo | null>(() => {
+    let latestMetrics: any = null;
+    let latestAt = -1;
+    for (const turn of turns) {
+      if (!turn.metrics_json) continue;
+      const updatedAt = parseIsoMs(turn.updated_at) ?? 0;
+      if (updatedAt >= latestAt) {
+        latestAt = updatedAt;
+        latestMetrics = turn.metrics_json;
+      }
+    }
+    return normalizeContextWindowMetrics(latestMetrics);
+  }, [turnsKey]);
   const hasActiveTurn = useMemo(
     () => turns.some((turn) => turn.status === "running" || turn.status === "queued"),
     [turnsKey],
+  );
+  const sessionError = useMemo(
+    () => deriveSessionError(turns, events),
+    [turnsKey, eventsKey],
   );
 
   useEffect(() => {
@@ -1190,31 +1285,54 @@ export function SessionView({
   const isActiveRef = useRef(isActive);
   isActiveRef.current = isActive;
   stickToBottomRef.current = stickToBottom;
-  const programmaticScrollRef = useRef(0);
-  const userScrollIntentRef = useRef(0);
   const wasActiveRef = useRef(isActive);
   const prevActiveRef = useRef(isActive);
   const virtuosoPersistTimerRef = useRef<number | null>(null);
-  const followOutputRafRef = useRef<number | null>(null);
-  const followOutputTimerRef = useRef<number | null>(null);
-  const markProgrammaticScroll = useCallback(() => {
-    programmaticScrollRef.current = Date.now();
-  }, []);
-  const markUserScrollIntent = useCallback(() => {
-    userScrollIntentRef.current = Date.now();
-  }, []);
+  const scrollSyncKey = useMemo(
+    () => `${eventsKey}:${messagesKey}:${turnsKey}`,
+    [eventsKey, messagesKey, turnsKey],
+  );
   const [restoreInProgress, setRestoreInProgress] = useState(false);
+  const { initialTopMostItemIndex, markAutoScroll, scheduleAutoScroll } = usePinnedScrollManager({
+    isActive,
+    preserveScrollOnFocus,
+    bottomThresholdPx,
+    userIntentWindowMs,
+    itemsLength: wbListItems.length,
+    scrollStateStickToBottom: scrollState?.stickToBottom,
+    syncKey: scrollSyncKey,
+    restoreInProgress,
+    stickToBottomRef,
+    setStickToBottom,
+    setAtBottom,
+    latestAnchorIdRef,
+    liveScrollTopRef,
+    userScrollIntentRef,
+    scrollbarDraggingRef,
+    persistScroll,
+    virtuosoRef,
+    scrollerRef,
+    listRef,
+    scrollerNode,
+    bottomSentinelNode,
+    sentinelMeasuredRef,
+    sentinelVisibleRef,
+    autoScrollRef,
+    autoScrollRafRef,
+    autoScrollAttemptRef,
+  });
   useLayoutEffect(() => {
     if (isActive && !wasActiveRef.current) {
       const hasVirtuosoState = Boolean(scrollState?.virtuosoState);
-      const shouldUseVirtuosoRestore = hasVirtuosoState && !preserveScrollOnFocus;
+      const shouldUseVirtuosoRestore = hasVirtuosoState && !preserveScrollOnFocus && scrollState?.stickToBottom === false;
       restorePendingRef.current = !shouldUseVirtuosoRestore;
       didInitialScrollRef.current = false;
       restoringScrollRef.current = false;
-      const hasScrolledAway = userScrolledRef.current || scrollState?.stickToBottom === false;
-      userScrolledRef.current = hasScrolledAway;
-      setStickToBottom(!hasScrolledAway);
-      if (!hasScrolledAway) {
+      const hasScrolledAway = scrollState?.stickToBottom === false;
+      const nextStickToBottom = !hasScrolledAway;
+      stickToBottomRef.current = nextStickToBottom;
+      setStickToBottom(nextStickToBottom);
+      if (nextStickToBottom) {
         liveScrollTopRef.current = null;
       }
       restoreRetryRef.current = 0;
@@ -1276,7 +1394,7 @@ export function SessionView({
     if (!isActive) return;
     const items = wbListItems;
     if (items.length === 0) return;
-    if (scrollState?.virtuosoState && !preserveScrollOnFocus) {
+    if (scrollState?.virtuosoState && !preserveScrollOnFocus && scrollState?.stickToBottom === false) {
       restorePendingRef.current = false;
       return;
     }
@@ -1285,6 +1403,13 @@ export function SessionView({
     setAtBottom(state.stickToBottom);
     const restoreAnchorId = !state.stickToBottom ? (state.anchorItemId ?? null) : null;
     const restoreScrollTop = !state.stickToBottom ? (state.scrollTop ?? null) : null;
+    if (state.stickToBottom && initialTopMostItemIndex != null) {
+      restorePendingRef.current = false;
+      didInitialScrollRef.current = true;
+      restoringScrollRef.current = false;
+      setRestoreInProgress(false);
+      return;
+    }
 
     restoringScrollRef.current = true;
     setRestoreInProgress(true);
@@ -1309,7 +1434,7 @@ export function SessionView({
       }
       if (restoreScrollTop !== null) {
         const target = Math.max(0, restoreScrollTop);
-        markProgrammaticScroll();
+        markAutoScroll();
         handle?.scrollTo({ top: target });
         if (el) el.scrollTop = target;
         if (el && Math.abs(el.scrollTop - target) > 2 && restoreRetryRef.current < 3) {
@@ -1320,14 +1445,14 @@ export function SessionView({
       } else if (restoreAnchorId) {
         const idx = items.findIndex((it) => it?.id === restoreAnchorId);
         if (idx >= 0) {
-          markProgrammaticScroll();
+          markAutoScroll();
           handle?.scrollToIndex({ index: idx, align: "start" });
         } else {
-          markProgrammaticScroll();
+          markAutoScroll();
           handle?.scrollToIndex({ index: items.length - 1, align: "end" });
         }
       } else {
-        markProgrammaticScroll();
+        markAutoScroll();
         handle?.scrollToIndex({ index: items.length - 1, align: "end" });
       }
       finalizeRestore();
@@ -1345,6 +1470,7 @@ export function SessionView({
     scrollState?.stickToBottom,
     scrollState?.scrollTop,
     scrollState?.virtuosoState,
+    initialTopMostItemIndex,
     wbListItems.length,
   ]);
 
@@ -1363,7 +1489,9 @@ export function SessionView({
       .find((e) => e.event_type === "init" && (e.payload_json?.models || e.payload_json?.modes));
   }, [eventsKey]);
 
-  const acpModels = acpSessionInfo?.payload_json?.models;
+  const acpModels = entry?.acpModels ?? acpSessionInfo?.payload_json?.models;
+  const acpCurrentModelId =
+    entry?.acpCurrentModelId ?? acpModels?.currentModelId ?? acpModels?.current_model_id;
   const modelOptions = useMemo(() => {
     const list =
       acpModels?.availableModels ??
@@ -1378,77 +1506,36 @@ export function SessionView({
       }))
       .filter((m: any) => typeof m.id === "string" && m.id.length > 0);
   }, [acpModels]);
+  const modelOptionIds = useMemo(() => new Set(modelOptions.map((m) => String(m.id))), [modelOptions]);
 
-  const currentModelId =
-    session?.model_id ??
-    acpModels?.currentModelId ??
-    acpModels?.current_model_id ??
-    "";
-
-  const threadActivityCount = wbListItems.length;
-
-  useEffect(() => {
-    if (!didInitialScrollRef.current) return;
-    const prev = lastActivityCountRef.current;
-    lastActivityCountRef.current = threadActivityCount;
-    if (atBottom) return;
-    if (prev === 0) return;
-    if (threadActivityCount > prev) setHasNewActivity(true);
-  }, [threadActivityCount, atBottom]);
-
-  const followOutput =
-    preserveScrollOnFocus && !isActive ? false : restoreInProgress ? false : stickToBottom ? "auto" : false;
-  const restoreStateFrom = preserveScrollOnFocus
-    ? undefined
-    : (scrollState?.virtuosoState ?? undefined) as StateSnapshot | undefined;
-
-  useEffect(() => {
-    if (!stickToBottom) return;
-    if (restoreInProgress) return;
-    if (preserveScrollOnFocus && !isActive) return;
-    if (wbListItems.length === 0) return;
-    if (followOutputRafRef.current != null) return;
-    if (followOutputTimerRef.current != null) {
-      window.clearTimeout(followOutputTimerRef.current);
-      followOutputTimerRef.current = null;
+  const currentModelId = useMemo(() => {
+    const sessionModelId = String(session?.model_id ?? "").trim();
+    const acpModelId = String(acpCurrentModelId ?? "").trim();
+    if (!sessionModelId || sessionModelId === "default") {
+      return acpModelId || sessionModelId;
     }
-    followOutputRafRef.current = window.requestAnimationFrame(() => {
-      followOutputRafRef.current = null;
-      let attempts = 0;
-      const maxAttempts = 2;
-      const attemptScroll = () => {
-        const handle = virtuosoRef.current;
-        const el = scrollerRef.current;
-        if (!stickToBottomRef.current) return;
-        if (restoreInProgress) return;
-        if (preserveScrollOnFocus && !isActiveRef.current) return;
-        if (handle || el) {
-          markProgrammaticScroll();
-        }
-        if (handle) {
-          handle.scrollToIndex({ index: wbListItems.length - 1, align: "end" });
-        }
-        if (el) el.scrollTop = el.scrollHeight;
-        if (attempts < maxAttempts) {
-          attempts += 1;
-          followOutputTimerRef.current = window.setTimeout(attemptScroll, 120);
-        }
-      };
-      attemptScroll();
-    });
-  }, [stickToBottom, eventsKey, isActive, preserveScrollOnFocus, restoreInProgress, wbListItems.length]);
+    if (modelOptionIds.size > 0 && !modelOptionIds.has(sessionModelId)) {
+      return acpModelId || sessionModelId;
+    }
+    return sessionModelId || acpModelId;
+  }, [acpCurrentModelId, modelOptionIds, session?.model_id]);
+
+  const restoreStateFrom =
+    preserveScrollOnFocus || scrollState?.stickToBottom !== false
+      ? undefined
+      : (scrollState?.virtuosoState ?? undefined) as StateSnapshot | undefined;
 
   const jumpToLatestWorkbench = useCallback(() => {
     if (wbListItems.length > 0) {
-      userScrolledRef.current = false;
+      stickToBottomRef.current = true;
       setStickToBottom(true);
-      setHasNewActivity(false);
-      markProgrammaticScroll();
-      virtuosoRef.current?.scrollToIndex({ index: wbListItems.length - 1, align: "end" });
-      const el = scrollerRef.current;
-      if (el) el.scrollTop = el.scrollHeight;
+      setAtBottom(true);
+      latestAnchorIdRef.current = null;
+      liveScrollTopRef.current = null;
+      persistScroll({ stickToBottom: true, anchorItemId: null, scrollTop: null });
+      scheduleAutoScroll();
     }
-  }, [markProgrammaticScroll, virtuosoRef, wbListItems.length]);
+  }, [persistScroll, scheduleAutoScroll, wbListItems.length]);
 
   useEffect(() => {
     if (!pendingScrollToBottomRef.current) return;
@@ -1456,23 +1543,19 @@ export function SessionView({
       pendingScrollToBottomRef.current = false;
       return;
     }
-    if (restoreInProgress) return;
+    if (restoreInProgress) {
+      restoringScrollRef.current = false;
+      setRestoreInProgress(false);
+      if (restoreCooldownRef.current) {
+        window.clearTimeout(restoreCooldownRef.current);
+        restoreCooldownRef.current = null;
+      }
+    }
     if (preserveScrollOnFocus && !isActive) return;
     if (wbListItems.length === 0) return;
     pendingScrollToBottomRef.current = false;
     jumpToLatestWorkbench();
   }, [stickToBottom, restoreInProgress, preserveScrollOnFocus, isActive, wbListItems.length, jumpToLatestWorkbench]);
-
-  const handleAtBottomStateChange = useCallback(
-    (isAtBottom: boolean) => {
-      if (restoringScrollRef.current) return;
-      if (!isAtBottom && stickToBottom && !userScrolledRef.current) return;
-      setAtBottom(isAtBottom);
-      if (isAtBottom) setHasNewActivity(false);
-    },
-    [stickToBottom, setAtBottom, setHasNewActivity],
-  );
-
   const handleWorkbenchRangeChanged = useCallback(
     (range: { startIndex: number }) => {
       if (restoringScrollRef.current) return;
@@ -1502,9 +1585,9 @@ export function SessionView({
       // Refresh Messages immediately so user turns render without waiting for a `done` event.
       await supervisor.refreshQueue(id);
       supervisor.refreshSession(id, { watchDiff: true });
-      userScrolledRef.current = false;
+      stickToBottomRef.current = true;
       setStickToBottom(true);
-      setHasNewActivity(false);
+      liveScrollTopRef.current = null;
       pendingScrollToBottomRef.current = true;
       setInput("");
       setDraftAttachments([]);
@@ -1700,7 +1783,7 @@ export function SessionView({
           content={item.content}
           worktreeId={worktreeId}
           onFileOpenError={handleFileOpenError}
-          linkToken={deepLinkToken}
+          modifierDown={modifierDown}
         />
       );
     }
@@ -1740,14 +1823,14 @@ export function SessionView({
         item={item}
         worktreeId={worktreeId}
         onFileOpenError={handleFileOpenError}
-        linkToken={deepLinkToken}
+        modifierDown={modifierDown}
       />
     );
   }, [
-    deepLinkToken,
     expandedToolById,
     expandedTurnDetailsById,
     handleFileOpenError,
+    modifierDown,
     id,
     nowMs,
     supervisor,
@@ -1784,6 +1867,7 @@ export function SessionView({
           {...props}
           ref={(node) => {
             scrollerRef.current = node;
+            setScrollerNode((prev) => (prev === node ? prev : node));
             if (node) {
               scrollbarLastScrollTopRef.current = node.scrollTop;
               scheduleScrollbarUpdate();
@@ -1794,6 +1878,7 @@ export function SessionView({
             else if (ref) (ref as React.MutableRefObject<HTMLDivElement | null>).current = node;
           }}
           className={`wb-thread-scroller ${props.className ?? ""}`}
+          style={{ ...props.style, overflowX: "hidden" }}
           onWheel={(event) => {
             props.onWheel?.(event);
             markUserScrollIntent();
@@ -1819,21 +1904,30 @@ export function SessionView({
             const nextScrollTop = scroller?.scrollTop ?? 0;
             const prevScrollTop = scrollbarLastScrollTopRef.current ?? nextScrollTop;
             const didScroll = Math.abs(nextScrollTop - prevScrollTop) > 0.5;
-            const hasUserIntent = Date.now() - userScrollIntentRef.current < 300;
+            const now = Date.now();
+            const hasUserIntent = now - userScrollIntentRef.current < userIntentWindowMs;
             scrollbarLastScrollTopRef.current = nextScrollTop;
             if (trusted && didScroll) showScrollbarTemporarily();
             scheduleScrollbarUpdate();
-            if (restoringScrollRef.current && !trusted) return;
-            if (restoringScrollRef.current && trusted) {
+            const userIntent = hasUserIntent || scrollbarDraggingRef.current;
+            if (restoringScrollRef.current && !userIntent) return;
+            if (restoringScrollRef.current && userIntent) {
               restoringScrollRef.current = false;
               if (restoreCooldownRef.current) {
                 window.clearTimeout(restoreCooldownRef.current);
                 restoreCooldownRef.current = null;
               }
+              setRestoreInProgress(false);
             }
-            const userScroll = trusted && didScroll && hasUserIntent;
-            if (!userScroll && !userScrolledRef.current) return;
-            if (userScroll) userScrolledRef.current = true;
+            const userScroll = didScroll && userIntent;
+            if (userScroll && stickToBottomRef.current && scroller) {
+              const remaining = scroller.scrollHeight - (scroller.scrollTop + scroller.clientHeight);
+              const nearBottom = remaining <= bottomThresholdPx;
+              if (!nearBottom) {
+                stickToBottomRef.current = false;
+                setStickToBottom(false);
+              }
+            }
             if (scrollerRef.current) {
               liveScrollTopRef.current = scrollerRef.current.scrollTop;
             }
@@ -1846,23 +1940,16 @@ export function SessionView({
               const scrollTop = el.scrollTop;
               const remaining = el.scrollHeight - (scrollTop + el.clientHeight);
               const nearBottom = remaining <= bottomThresholdPx;
-              setAtBottom(nearBottom);
-              if (nearBottom) setHasNewActivity(false);
               let nextStickToBottom = stickToBottomRef.current;
               if (userScroll) {
-                if (nearBottom) {
-                  userScrolledRef.current = false;
-                  nextStickToBottom = true;
-                } else {
-                  userScrolledRef.current = true;
-                  nextStickToBottom = false;
-                }
+                nextStickToBottom = nearBottom;
               }
               if (nextStickToBottom !== stickToBottomRef.current) {
                 stickToBottomRef.current = nextStickToBottom;
                 setStickToBottom(nextStickToBottom);
               }
               const persistStick = nextStickToBottom;
+              if (!userScroll && persistStick) return;
               const next = {
                 stickToBottom: persistStick,
                 anchorItemId: persistStick ? null : latestAnchorIdRef.current,
@@ -1888,13 +1975,42 @@ export function SessionView({
         />
       )),
       List: forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>((props, ref) => (
-        <div {...props} ref={ref} role="list" className={`wb-thread-list ${props.className ?? ""}`} />
+        <div
+          {...props}
+          ref={(node) => {
+            listRef.current = node;
+            if (typeof ref === "function") ref(node);
+            else if (ref) (ref as React.MutableRefObject<HTMLDivElement | null>).current = node;
+          }}
+          role="list"
+          className={`wb-thread-list ${props.className ?? ""}`}
+        />
+      )),
+      Footer: forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>((props, ref) => (
+        <div
+          {...props}
+          ref={(node) => {
+            bottomSentinelRef.current = node;
+            setBottomSentinelNode((prev) => (prev === node ? prev : node));
+            if (typeof ref === "function") ref(node);
+            else if (ref) (ref as React.MutableRefObject<HTMLDivElement | null>).current = node;
+          }}
+          aria-hidden="true"
+          data-bottom-sentinel="true"
+          style={{ height: 1, minHeight: 1, ...props.style }}
+        />
       )),
       Item: forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>((props, ref) => (
         <div {...props} ref={ref} role="listitem" />
       )),
     }),
-    [persistScroll, scheduleScrollbarUpdate, showScrollbarTemporarily, bottomThresholdPx],
+    [
+      bottomThresholdPx,
+      persistScroll,
+      scheduleScrollbarUpdate,
+      showScrollbarTemporarily,
+      userIntentWindowMs,
+    ],
   );
 
   return (
@@ -1927,13 +2043,22 @@ export function SessionView({
             <span className="error">{entry.error}</span>
           </div>
         )}
+        {sessionError && (
+          <div className="banner" role="alert">
+            <div className="row" style={{ justifyContent: "space-between" }}>
+              <strong>Error</strong>
+              {sessionError.provider ? <span className="muted">{sessionError.provider}</span> : null}
+            </div>
+            <div className="error" style={{ whiteSpace: "pre-wrap" }}>
+              {sessionError.message}
+            </div>
+          </div>
+        )}
         {showDebug && (
           <div className="wb-muted" style={{ fontFamily: "var(--mono)" }}>
             debug: events={events.length} messages={messages.length} userMessages={messages.filter((m) => m.role === "user").length} items={wbListItems.length}
           </div>
         )}
-
-
         {(authUi.status === "required" || authUi.status === "failed") && (
           <div className="banner">
             <div className="row" style={{ justifyContent: "space-between" }}>
@@ -2023,16 +2148,14 @@ export function SessionView({
           virtuosoStyle={virtuosoStyle}
           data={wbListItems}
           virtuosoRef={virtuosoRef}
-          followOutput={followOutput}
+          initialTopMostItemIndex={initialTopMostItemIndex}
           restoreStateFrom={restoreStateFrom}
-          atBottomThreshold={bottomThresholdPx}
           increaseViewportBy={workbenchViewportBy}
           onStartReached={handleStartReached}
-          onAtBottomStateChange={handleAtBottomStateChange}
           onRangeChanged={handleWorkbenchRangeChanged}
           components={workbenchComponents}
           itemContent={workbenchItemContent}
-          hasNewActivity={hasNewActivity}
+          showJumpToLatest={!atBottom}
           onJumpToLatest={jumpToLatestWorkbench}
           scrollbarActive={scrollbarActive}
           scrollbarDragging={scrollbarDragging}
@@ -2065,6 +2188,7 @@ export function SessionView({
           onSetVerbosity={setVerbosityPref}
           modeId={workbenchMode}
           setModeId={setWorkbenchMode}
+          contextWindow={contextWindow}
           recording={dictationRecording}
           onToggleRecording={() => {
             if (dictationRecording) stopDictation().catch(() => { });
@@ -2103,16 +2227,14 @@ type WorkbenchThreadStackProps = {
   virtuosoStyle: CSSProperties;
   data: WorkbenchListItem[];
   virtuosoRef: React.MutableRefObject<VirtuosoHandle | null>;
-  followOutput: false | "auto";
+  initialTopMostItemIndex?: IndexLocationWithAlign | number;
   restoreStateFrom?: StateSnapshot;
-  atBottomThreshold: number;
   increaseViewportBy: { top: number; bottom: number };
   onStartReached: () => void;
-  onAtBottomStateChange: (isAtBottom: boolean) => void;
   onRangeChanged: (range: any) => void;
   components: any;
   itemContent: (index: number, item: WorkbenchListItem) => ReactNode;
-  hasNewActivity: boolean;
+  showJumpToLatest: boolean;
   onJumpToLatest: () => void;
   scrollbarActive: boolean;
   scrollbarDragging: boolean;
@@ -2131,16 +2253,14 @@ const WorkbenchThreadStack = memo(function WorkbenchThreadStack({
   virtuosoStyle,
   data,
   virtuosoRef,
-  followOutput,
+  initialTopMostItemIndex,
   restoreStateFrom,
-  atBottomThreshold,
   increaseViewportBy,
   onStartReached,
-  onAtBottomStateChange,
   onRangeChanged,
   components,
   itemContent,
-  hasNewActivity,
+  showJumpToLatest,
   onJumpToLatest,
   scrollbarActive,
   scrollbarDragging,
@@ -2162,14 +2282,12 @@ const WorkbenchThreadStack = memo(function WorkbenchThreadStack({
         ref={(node) => {
           virtuosoRef.current = node;
         }}
-        followOutput={followOutput}
-        atBottomThreshold={atBottomThreshold}
+        initialTopMostItemIndex={initialTopMostItemIndex}
         defaultItemHeight={56}
         increaseViewportBy={increaseViewportBy}
         computeItemKey={(index, item) => item?.id ?? `i:${index}`}
         restoreStateFrom={restoreStateFrom}
         startReached={onStartReached}
-        atBottomStateChange={onAtBottomStateChange}
         rangeChanged={onRangeChanged}
         components={components}
         itemContent={itemContent}
@@ -2201,7 +2319,7 @@ const WorkbenchThreadStack = memo(function WorkbenchThreadStack({
         </div>
       </div>
 
-      {hasNewActivity && (
+      {showJumpToLatest && (
         <button
           type="button"
           className="new-activity-overlay"
@@ -2220,12 +2338,12 @@ function ThreadItemView({
   item,
   worktreeId,
   onFileOpenError,
-  linkToken,
+  modifierDown,
 }: {
   item: ThreadItem;
   worktreeId: string | null;
   onFileOpenError: (message: string | null) => void;
-  linkToken: string | null;
+  modifierDown: boolean;
 }) {
   switch (item.kind) {
     case "message":
@@ -2238,7 +2356,7 @@ function ThreadItemView({
           delivery={item.delivery}
           worktreeId={worktreeId}
           onFileOpenError={onFileOpenError}
-          linkToken={linkToken}
+          modifierDown={modifierDown}
         />
       );
     case "assistant":
@@ -2261,11 +2379,25 @@ function WorkbenchTurnHeaderView({
   expanded: boolean;
   onToggle: () => void;
 }) {
+  const handleClick = () => {
+    const selection = window.getSelection()?.toString() ?? "";
+    if (selection.trim()) return;
+    onToggle();
+  };
+
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    onToggle();
+  };
+
   return (
-    <button
-      type="button"
+    <div
       className={`wb-turn-header ${expanded ? "wb-turn-header-expanded" : "wb-turn-header-collapsed"}`}
-      onClick={onToggle}
+      role="button"
+      tabIndex={0}
+      onClick={handleClick}
+      onKeyDown={handleKeyDown}
       aria-expanded={expanded}
     >
       <div className="wb-turn-header-bubble">
@@ -2288,7 +2420,7 @@ function WorkbenchTurnHeaderView({
           </div>
         )}
       </div>
-    </button>
+    </div>
   );
 }
 
@@ -2300,16 +2432,16 @@ function CollapsibleMessage({
   delivery,
   worktreeId,
   onFileOpenError,
-  linkToken,
+  modifierDown,
 }: {
   id: string;
-  role: "user" | "assistant";
+  role: "user" | "assistant" | "system";
   content: string;
   attachments: MessageAttachment[];
   delivery?: "immediate" | "queued";
   worktreeId: string | null;
   onFileOpenError: (message: string | null) => void;
-  linkToken: string | null;
+  modifierDown: boolean;
 }) {
   const lines = (content || "").split("\n");
   const isLong = lines.length > 20 || content.length > 1500;
@@ -2320,13 +2452,14 @@ function CollapsibleMessage({
     <div className={`msg ${role}`}>
       <div className="role">{role}</div>
       <div id={`msg-${id}`}>
-        <Markdown
-          content={shown}
-          linkifyFiles={role === "assistant"}
-          worktreeId={worktreeId}
-          onFileOpenError={onFileOpenError}
-          linkToken={linkToken}
-        />
+        <div className={modifierDown ? "markdown-modifier" : undefined}>
+          <MemoMarkdown
+            content={shown}
+            linkifyFiles={role === "assistant"}
+            worktreeId={worktreeId}
+            onFileOpenError={onFileOpenError}
+          />
+        </div>
       </div>
       {attachments?.length > 0 && (
         <div className="attachments">
@@ -2367,23 +2500,24 @@ function AssistantEntry({
   content,
   worktreeId,
   onFileOpenError,
-  linkToken,
+  modifierDown,
 }: {
   content: string;
   worktreeId: string | null;
   onFileOpenError: (message: string | null) => void;
-  linkToken: string | null;
+  modifierDown: boolean;
 }) {
   return (
     <div className="wb-assistant-entry">
       <div className="wb-assistant-body">
-        <Markdown
-          content={content}
-          linkifyFiles
-          worktreeId={worktreeId}
-          onFileOpenError={onFileOpenError}
-          linkToken={linkToken}
-        />
+        <div className={modifierDown ? "markdown-modifier" : undefined}>
+          <MemoMarkdown
+            content={content}
+            linkifyFiles
+            worktreeId={worktreeId}
+            onFileOpenError={onFileOpenError}
+          />
+        </div>
       </div>
     </div>
   );
@@ -2472,15 +2606,49 @@ function WorkbenchToolRow({
   };
 
   const labelParts = (() => {
+    const normalizedTitle = normalizeWorktreePath(title);
+    const titlePrefixed = parsePrefixed(normalizedTitle, [
+      "Read",
+      "Explored",
+      "Searched",
+      "Wrote",
+      "Edited",
+      "Run",
+      "Fetch",
+      "Search",
+      "List",
+      "Write",
+      "Edit",
+    ]);
+    const titleRest = titlePrefixed?.rest ?? "";
+
+    if (normalizedTitle && normalizedTitle !== "Tool") {
+      if (titlePrefixed) return titlePrefixed;
+      return makeParts(normalizedTitle);
+    }
+
     const parsed = Array.isArray((item.input as any)?.parsed_cmd) ? ((item.input as any).parsed_cmd as any[]) : [];
     if (parsed.length > 0) {
       const c0 = parsed[0] ?? {};
       if (c0.type === "list_files" && c0.path) return makeParts("Explored", shortPath(c0.path));
       if (c0.type === "read_file" && c0.path) return makeParts("Read", shortPath(c0.path));
+      if (c0.type === "search") {
+        const q = String(c0.query ?? c0.pattern ?? c0.regex ?? c0.text ?? "").trim();
+        if (q) return makeParts("Searched", truncateMiddle(q, 90));
+        if (c0.path) return makeParts("Searched", shortPath(c0.path));
+        return makeParts("Searched");
+      }
     }
-
     if (kind === "search") {
-      const q = String(item.input?.query ?? item.input?.pattern ?? item.input?.text ?? summary ?? "").trim();
+      const q = String(
+        item.input?.query ??
+          item.input?.pattern ??
+          item.input?.regex ??
+          item.input?.text ??
+          summary ??
+          titleRest ??
+          "",
+      ).trim();
       return q ? makeParts("Searched", truncateMiddle(q, 90)) : makeParts("Searched");
     }
     if (kind === "execute") {
@@ -2491,13 +2659,21 @@ function WorkbenchToolRow({
       return short ? makeParts("Run", short) : makeParts("Run");
     }
     if (kind === "read_file" || kind === "read") {
-      const p = pathFromLoc ?? summary;
+      const p = pathFromLoc ?? summary ?? titleRest;
       return p ? makeParts("Read", shortPath(p)) : makeParts("Read");
     }
-    if (kind === "write" || kind === "edit") {
-      const p = summary || pathFromLoc;
+    if (kind === "list" || kind === "list_files") {
+      const p = summary || pathFromLoc || titleRest;
+      return p ? makeParts("Explored", shortPath(p)) : makeParts("Explored");
+    }
+    if (kind === "write" || kind === "edit" || kind === "apply_patch") {
+      const p = summary || pathFromLoc || titleRest;
       const verb = kind === "write" ? "Wrote" : "Edited";
       return p ? makeParts(verb, shortPath(p)) : makeParts(verb);
+    }
+    if (kind === "fetch" || kind === "http") {
+      const p = summary || titleRest;
+      return p ? makeParts("Fetch", p) : makeParts("Fetch");
     }
     if (kind === "error") return makeParts("Error");
 
@@ -2557,7 +2733,7 @@ function WorkbenchToolRow({
               <div className="wb-tool-section-title">Output</div>
               {looksLikeMarkdown(item.output_text) ? (
                 <div className="wb-tool-markdown">
-                  <Markdown content={item.output_text} />
+                  <MemoMarkdown content={item.output_text} />
                 </div>
               ) : (
                 <pre className="wb-tool-pre">{item.output_text}</pre>
@@ -2582,7 +2758,7 @@ function WorkbenchTurnStatusRow({
   nowMs: number;
 }) {
   const isRunning = item.status === "running" || item.status === "queued";
-  const customStatus = String(item.custom_status ?? "").trim();
+  const customStatus = String(item.custom_status ?? item.status_text ?? "").trim();
   const statusLabel = isRunning && customStatus ? customStatus : humanTurnStatus(item.status);
   const startMs = parseIsoMs(item.started_at);
   const endMs = isRunning ? nowMs : parseIsoMs(item.updated_at) ?? nowMs;
@@ -2745,7 +2921,7 @@ function ToolCard({ item }: { item: Extract<ThreadItem, { kind: "tool" }> }) {
               <div className="tool-section-title">Output</div>
               {looksLikeMarkdown(item.output_text) ? (
                 <div className="tool-markdown">
-                  <Markdown content={item.output_text} />
+                  <MemoMarkdown content={item.output_text} />
                 </div>
               ) : (
                 <pre className="tool-pre tool-output">{item.output_text}</pre>
@@ -2810,12 +2986,6 @@ type MdastNode = {
   [key: string]: unknown;
 };
 
-type FileRef = {
-  path: string;
-  line?: number;
-  col?: number;
-};
-
 type ParsedContextOpen = {
   worktreeId?: string;
   file?: string;
@@ -2823,28 +2993,6 @@ type ParsedContextOpen = {
   line?: number;
   col?: number;
 };
-
-function isAbsolutePath(path: string): boolean {
-  if (!path) return false;
-  if (path.startsWith("/") || path.startsWith("\\")) return true;
-  return /^[A-Za-z]:[\\/]/.test(path);
-}
-
-function buildContextOpenUrl(worktreeId: string, ref: FileRef, token?: string | null): string {
-  const params = new URLSearchParams();
-  params.set("v", "1");
-  params.set("openWith", "editor");
-  if (isAbsolutePath(ref.path)) {
-    params.set("path", ref.path);
-  } else {
-    params.set("worktreeId", worktreeId);
-    params.set("file", ref.path);
-  }
-  if (typeof ref.line === "number") params.set("line", String(ref.line));
-  if (typeof ref.col === "number") params.set("col", String(ref.col));
-  if (token) params.set("token", token);
-  return `ctx://open?${params.toString()}`;
-}
 
 function parseContextOpenUrl(href: string): ParsedContextOpen | null {
   try {
@@ -2874,91 +3022,95 @@ function parseContextOpenUrl(href: string): ParsedContextOpen | null {
   }
 }
 
-function looksLikeFilePath(path: string): boolean {
-  if (!path) return false;
-  if (path === "." || path === "..") return false;
-  if (path.includes("://")) return false;
-  const hasSlash = /[\\/]/.test(path);
-  const hasExt = /\.[A-Za-z0-9][A-Za-z0-9_-]*$/.test(path);
-  return hasSlash || hasExt;
-}
+type CodeTokenOptions = {
+  enableLinks: boolean;
+  worktreeId: string | null;
+  onFileOpenError?: (message: string | null) => void;
+};
 
-function parseFileRefToken(raw: string): FileRef | null {
-  let path = raw;
-  let line: number | undefined;
-  let col: number | undefined;
+const handleCodeTokenClick = async (
+  event: MouseEvent<HTMLElement>,
+  ref: FileRef,
+  worktreeId: string | null,
+  onFileOpenError?: (message: string | null) => void,
+) => {
+  if (!event.metaKey && !event.ctrlKey) return;
+  if (!isDesktopApp()) return;
+  if (!worktreeId && !isAbsolutePath(ref.path)) return;
+  event.preventDefault();
+  event.stopPropagation();
 
-  const hashMatch = raw.match(/^(.*)#L(\d+)(?:C(\d+))?$/);
-  if (hashMatch) {
-    path = hashMatch[1];
-    line = Number.parseInt(hashMatch[2], 10);
-    if (hashMatch[3]) col = Number.parseInt(hashMatch[3], 10);
-  } else {
-    const colonMatch = raw.match(/^(.*?)(?::(\d+)(?::(\d+))?)$/);
-    if (colonMatch) {
-      path = colonMatch[1];
-      line = Number.parseInt(colonMatch[2], 10);
-      if (colonMatch[3]) col = Number.parseInt(colonMatch[3], 10);
+  try {
+    if (isAbsolutePath(ref.path)) {
+      await desktopOpenPath({
+        path: ref.path,
+        line: ref.line ?? null,
+        col: ref.col ?? null,
+      });
+    } else {
+      await desktopOpenFile({
+        worktree_id: worktreeId ?? "",
+        path: ref.path,
+        line: ref.line ?? null,
+        col: ref.col ?? null,
+      });
     }
+    onFileOpenError?.(null);
+  } catch {
+    // Ignore failures to keep interaction silent.
   }
+};
 
-  if (!looksLikeFilePath(path)) return null;
-  return {
-    path,
-    line: Number.isFinite(line ?? NaN) ? line : undefined,
-    col: Number.isFinite(col ?? NaN) ? col : undefined,
-  };
-}
+const buildCodeTokenNodes = (text: string, opts: CodeTokenOptions): ReactNode[] => {
+  const parts = splitWhitespaceTokens(text);
+  return parts.map((part, idx) => {
+    if (!part) return null;
+    if (part.trim() === "") return part;
+    if (!opts.enableLinks) return part;
+    const ref = parseFileRefToken(part);
+    if (!ref) return part;
+    if (!opts.worktreeId && !isAbsolutePath(ref.path)) return part;
+    return (
+      <span
+        key={`token-${idx}`}
+        className="code-token-path"
+        onClick={(event) => handleCodeTokenClick(event, ref, opts.worktreeId, opts.onFileOpenError)}
+      >
+        {part}
+      </span>
+    );
+  });
+};
 
-function splitFileRefs(text: string, worktreeId: string, linkToken?: string | null): MdastNode[] {
-  const parts = text.split(/(\s+)/);
-  const nodes: MdastNode[] = [];
-  const leadingPunct = new Set(["(", "{", "[", "\"", "'", "`", "<"]);
-  const trailingPunct = new Set([")", "]", "}", "\"", "'", "`", ",", ".", ";", "!", "?"]);
-
-  for (const part of parts) {
-    if (!part) continue;
-    if (part.trim() === "") {
-      nodes.push({ type: "text", value: part });
-      continue;
-    }
-
-    let candidate = part;
-    let prefix = "";
-    let suffix = "";
-    while (candidate && leadingPunct.has(candidate[0])) {
-      prefix += candidate[0];
-      candidate = candidate.slice(1);
-    }
-    while (candidate && trailingPunct.has(candidate[candidate.length - 1])) {
-      suffix = candidate[candidate.length - 1] + suffix;
-      candidate = candidate.slice(0, -1);
-    }
-
-    const ref = parseFileRefToken(candidate);
-    if (!ref) {
-      nodes.push({ type: "text", value: part });
-      continue;
-    }
-
-    if (prefix) nodes.push({ type: "text", value: prefix });
-    nodes.push({
-      type: "link",
-      url: buildContextOpenUrl(worktreeId, ref, linkToken),
-      children: [{ type: "text", value: candidate }],
-    });
-    if (suffix) nodes.push({ type: "text", value: suffix });
-  }
-
-  return nodes;
+function TokenizedInlineCode({
+  codeString,
+  className,
+  enableLinks,
+  worktreeId,
+  onFileOpenError,
+}: {
+  codeString: string;
+  className?: string;
+  enableLinks: boolean;
+  worktreeId: string | null;
+  onFileOpenError?: (message: string | null) => void;
+}) {
+  const content = enableLinks
+    ? buildCodeTokenNodes(codeString, { enableLinks, worktreeId, onFileOpenError })
+    : codeString;
+  return <code className={className}>{content}</code>;
 }
 
 function FencedCodeBlock({
   codeString,
-  lang,
+  enableLinks,
+  worktreeId,
+  onFileOpenError,
 }: {
   codeString: string;
-  lang?: string;
+  enableLinks: boolean;
+  worktreeId: string | null;
+  onFileOpenError?: (message: string | null) => void;
 }) {
   const [copied, setCopied] = useState(false);
   const resetTimerRef = useRef<number | null>(null);
@@ -2982,6 +3134,10 @@ function FencedCodeBlock({
     setCopied(true);
   }, [codeString]);
 
+  const content = enableLinks
+    ? buildCodeTokenNodes(codeString, { enableLinks, worktreeId, onFileOpenError })
+    : codeString;
+
   return (
     <div className="codeblock">
       <div className="codeblock-toolbar">
@@ -2996,51 +3152,12 @@ function FencedCodeBlock({
         </button>
       </div>
       <div className="codeblock-body">
-        <SyntaxHighlighter
-          style={oneDark}
-          language={lang}
-          PreTag="div"
-          customStyle={{
-            margin: 0,
-            background: "transparent",
-            padding: "28px 12px 12px",
-            fontSize: "12px",
-            lineHeight: 1.45,
-            width: "100%",
-            maxWidth: "100%",
-            boxSizing: "border-box",
-            overflowX: "auto",
-          }}
-          codeTagProps={{ style: { fontFamily: "var(--mono)" } }}
-        >
-          {codeString}
-        </SyntaxHighlighter>
+        <pre className="codeblock-pre">
+          <code className="codeblock-code">{content}</code>
+        </pre>
       </div>
     </div>
   );
-}
-
-function remarkLinkifyFileRefs(opts: { worktreeId: string; token?: string | null }) {
-  return (tree: MdastNode) => {
-    const walk = (node: MdastNode) => {
-      if (!node || typeof node !== "object") return;
-      if (node.type && ["code", "inlineCode", "link", "linkReference"].includes(node.type)) return;
-      if (!Array.isArray(node.children)) return;
-
-      const next: MdastNode[] = [];
-      for (const child of node.children) {
-        if (child?.type === "text" && typeof (child as any).value === "string") {
-          next.push(...splitFileRefs(String((child as any).value), opts.worktreeId, opts.token));
-          continue;
-        }
-        walk(child as MdastNode);
-        next.push(child as MdastNode);
-      }
-      node.children = next;
-    };
-
-    walk(tree);
-  };
 }
 
 function remarkNormalizeCursorMarkdown() {
@@ -3127,111 +3244,126 @@ function Markdown({
   linkifyFiles = false,
   worktreeId = null,
   onFileOpenError,
-  linkToken,
 }: {
   content: string;
   linkifyFiles?: boolean;
   worktreeId?: string | null;
   onFileOpenError?: (message: string | null) => void;
-  linkToken?: string | null;
 }) {
   const remarkPlugins: any[] = [remarkGfm, remarkNormalizeCursorMarkdown];
-  if (linkifyFiles && worktreeId) {
-    remarkPlugins.push([remarkLinkifyFileRefs, { worktreeId, token: linkToken }]);
-  }
 
   return (
-    <ReactMarkdown
-      remarkPlugins={remarkPlugins}
-      urlTransform={(url) =>
-        url.startsWith("ctx://")
-          ? url
-          : defaultUrlTransform(url)
-      }
-      components={{
-        a({ href, children, className, ...rest }) {
-          const isContextOpen =
-            typeof href === "string" && href.startsWith("ctx://open?");
-          if (!isContextOpen) {
+    <div>
+      <ReactMarkdown
+        remarkPlugins={remarkPlugins}
+        urlTransform={(url) =>
+          url.startsWith("ctx://")
+            ? url
+            : defaultUrlTransform(url)
+        }
+        components={{
+          a({ href, children, className, ...rest }) {
+            const isContextOpen =
+              typeof href === "string" && href.startsWith("ctx://open?");
+            if (!isContextOpen) {
+              return (
+                <a href={href} className={className} {...rest}>
+                  {children}
+                </a>
+              );
+            }
+
+            const handleClick = async (event: MouseEvent<HTMLAnchorElement>) => {
+              if (!isDesktopApp()) {
+                return;
+              }
+              if (!event.metaKey && !event.ctrlKey) return;
+              event.preventDefault();
+              if (!href) return;
+              const parsed = parseContextOpenUrl(href);
+              if (!parsed) return;
+              try {
+                if (parsed.worktreeId && parsed.file) {
+                  await desktopOpenFile({
+                    worktree_id: parsed.worktreeId,
+                    path: parsed.file,
+                    line: parsed.line ?? null,
+                    col: parsed.col ?? null,
+                  });
+                } else if (parsed.path) {
+                  await desktopOpenPath({
+                    path: parsed.path,
+                    line: parsed.line ?? null,
+                    col: parsed.col ?? null,
+                  });
+                } else {
+                  return;
+                }
+                onFileOpenError?.(null);
+              } catch {
+                // Ignore failures to keep interaction silent.
+              }
+            };
+
+            const combinedClassName = [className, "ctx-file-link"].filter(Boolean).join(" ");
             return (
-              <a href={href} className={className} {...rest}>
+              <a
+                href={href}
+                className={combinedClassName}
+                title="Cmd/Ctrl+Click to open in editor"
+                onClick={handleClick}
+                {...rest}
+              >
                 {children}
               </a>
             );
-          }
-
-          const handleClick = async (event: MouseEvent<HTMLAnchorElement>) => {
-            if (!isDesktopApp()) {
-              return;
+          },
+          pre({ children }) {
+            return <>{children}</>;
+          },
+          code({ inline, className, children }: { inline?: boolean; className?: string; children?: ReactNode }) {
+            const match = /language-([A-Za-z0-9_-]+)/.exec(className || "");
+            const rawLang = match?.[1];
+            const lang = rawLang && rawLang !== "code" ? rawLang : undefined;
+            const codeString = String(children ?? "").replace(/[\r\n]+$/, "");
+            const enableLinks = Boolean(linkifyFiles);
+            if (inline || (!lang && !codeString.includes("\n"))) {
+              return (
+                <TokenizedInlineCode
+                  codeString={codeString}
+                  className={className}
+                  enableLinks={enableLinks}
+                  worktreeId={worktreeId}
+                  onFileOpenError={onFileOpenError}
+                />
+              );
             }
-            event.preventDefault();
-            if (!event.metaKey && !event.ctrlKey) return;
-            if (!href) return;
-            const parsed = parseContextOpenUrl(href);
-            if (!parsed) {
-              onFileOpenError?.("Couldn't parse file link.");
-              return;
-            }
-            try {
-              if (parsed.worktreeId && parsed.file) {
-                await desktopOpenFile({
-                  worktree_id: parsed.worktreeId,
-                  path: parsed.file,
-                  line: parsed.line ?? null,
-                  col: parsed.col ?? null,
-                });
-              } else if (parsed.path) {
-                await desktopOpenPath({
-                  path: parsed.path,
-                  line: parsed.line ?? null,
-                  col: parsed.col ?? null,
-                });
-              } else {
-                throw new Error("Missing file reference.");
-              }
-              onFileOpenError?.(null);
-            } catch (e: any) {
-              onFileOpenError?.(e?.message ?? String(e));
-            }
-          };
 
-          const combinedClassName = [className, "ctx-file-link"].filter(Boolean).join(" ");
-          return (
-            <a
-              href={href}
-              className={combinedClassName}
-              title="Cmd/Ctrl+Click to open in editor"
-              onClick={handleClick}
-              {...rest}
-            >
-              {children}
-            </a>
-          );
-        },
-        pre({ children }) {
-          return <>{children}</>;
-        },
-        code({ inline, className, children }: { inline?: boolean; className?: string; children?: ReactNode }) {
-          const match = /language-([A-Za-z0-9_-]+)/.exec(className || "");
-          const rawLang = match?.[1];
-          const lang = rawLang && rawLang !== "code" ? rawLang : undefined;
-          const codeString = String(children ?? "").replace(/[\r\n]+$/, "");
-          if (inline) {
-            return <code className={className}>{children}</code>;
-          }
-
-          if (!lang && !codeString.includes("\n")) {
-            return <code className={className}>{codeString}</code>;
-          }
-
-          return <FencedCodeBlock codeString={codeString} lang={lang} />;
-        },
-      }}
-    >
-      {content}
-    </ReactMarkdown>
+            return (
+              <FencedCodeBlock
+                codeString={codeString}
+                enableLinks={enableLinks}
+                worktreeId={worktreeId}
+                onFileOpenError={onFileOpenError}
+              />
+            );
+          },
+        }}
+      >
+        {content}
+      </ReactMarkdown>
+    </div>
   );
 }
+
+// Memoize markdown so selection isn't disrupted by unrelated re-renders.
+const MemoMarkdown = memo(
+  Markdown,
+  (prev, next) =>
+    prev.content === next.content &&
+    prev.linkifyFiles === next.linkifyFiles &&
+    prev.worktreeId === next.worktreeId,
+);
 
 export function deriveMessagesKey(messages: Message[]): string {
   if (messages.length === 0) return "0";
@@ -3262,6 +3394,59 @@ function filterThreadItemsForVerbosity(items: ThreadItem[], verbosity: SessionVi
     return items.filter((item) => item.kind !== "tool" && item.kind !== "tool_group" && item.kind !== "thought");
   }
   return items;
+}
+
+type SortableThreadGroup = {
+  sort_at: string;
+  group: WorkbenchThreadView["groups"][number];
+};
+
+function buildSystemMessageGroups(messages: Message[]): SortableThreadGroup[] {
+  const systemMessages = messages
+    .filter((m) => m.role === "system")
+    .slice()
+    .sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
+  return systemMessages.map((m, idx) => {
+    const id = idToString(m.id) || `system-${idx}`;
+    const attachments = Array.isArray((m as any).attachments)
+      ? ((m as any).attachments as MessageAttachment[])
+      : [];
+    return {
+      sort_at: m.created_at,
+      group: {
+        key: `system-${id}`,
+        header: null,
+        items: [
+          {
+            kind: "message",
+            id,
+            role: "system",
+            content: m.content ?? "",
+            attachments,
+            created_at: m.created_at,
+            delivery: m.delivery,
+          },
+        ],
+      },
+    };
+  });
+}
+
+function mergeGroupsWithSystemMessages(
+  groups: SortableThreadGroup[],
+  messages: Message[],
+): WorkbenchThreadView["groups"] {
+  const systemGroups = buildSystemMessageGroups(messages);
+  if (systemGroups.length === 0) {
+    return groups.map((g) => g.group);
+  }
+  const combined = [...groups, ...systemGroups];
+  combined.sort((a, b) => {
+    const cmp = String(a.sort_at).localeCompare(String(b.sort_at));
+    if (cmp !== 0) return cmp;
+    return String(a.group.key).localeCompare(String(b.group.key));
+  });
+  return combined.map((g) => g.group);
 }
 
 export function buildWorkbenchThreadViewModel(
@@ -3469,7 +3654,7 @@ function buildWorkbenchThreadViewModelFromTurns(
   events: SessionEvent[],
 ): WorkbenchThreadView {
   const debugEvents: SessionEvent[] = [];
-  const groups: WorkbenchThreadView["groups"] = [];
+  const groups: SortableThreadGroup[] = [];
   const customStatusByTurnId = buildCustomStatusByTurnId(events);
 
   const messageById = new Map<string, Message>();
@@ -3647,10 +3832,13 @@ function buildWorkbenchThreadViewModelFromTurns(
       status_text: statusText,
     });
 
-    groups.push({ key: `turn-${turnId}`, header, items });
+    groups.push({
+      sort_at: header?.created_at ?? turn.started_at,
+      group: { key: `turn-${turnId}`, header, items },
+    });
   }
 
-  return { groups, debugEvents };
+  return { groups: mergeGroupsWithSystemMessages(groups, messages), debugEvents };
 }
 
 function buildWorkbenchThreadViewModelFromEvents(events: SessionEvent[], messages: Message[]): WorkbenchThreadView {
@@ -3722,7 +3910,7 @@ function buildWorkbenchThreadViewModelFromEvents(events: SessionEvent[], message
       });
     };
 
-    const groups: WorkbenchThreadView["groups"] = [];
+    const groups: SortableThreadGroup[] = [];
 
     if (userEvents.length === 0) {
       // As a last resort, show any tool activity even without a user turn anchor.
@@ -3766,8 +3954,8 @@ function buildWorkbenchThreadViewModelFromEvents(events: SessionEvent[], message
       }
       items.push(...g.toolItems);
       if (items.length === 0) items.push({ kind: "spacer", id: `spacer-${g.key}`, created_at: g.first_at });
-      groups.push({ key: g.key, header: g.header, items });
-      return { groups, debugEvents };
+      groups.push({ sort_at: g.first_at, group: { key: g.key, header: g.header, items } });
+      return { groups: mergeGroupsWithSystemMessages(groups, messages), debugEvents };
     }
 
     for (let i = 0; i < userEvents.length; i++) {
@@ -3808,7 +3996,7 @@ function buildWorkbenchThreadViewModelFromEvents(events: SessionEvent[], message
 
         switch (ev.event_type) {
           case "error": {
-            const message = String(ev.payload_json?.message ?? "Error");
+            const message = extractErrorMessage(ev.payload_json) ?? "Error";
             const provider = String(ev.payload_json?.provider ?? "").trim();
             const output = provider ? `${message}\nprovider: ${provider}` : message;
             const tool = ensureTool(g, `error-${eventId}`, ev.created_at);
@@ -3957,10 +4145,10 @@ function buildWorkbenchThreadViewModelFromEvents(events: SessionEvent[], message
         items.push({ kind: "spacer", id: `spacer-${g.key}`, created_at: g.first_at });
       }
 
-      groups.push({ key: g.key, header: g.header, items });
+      groups.push({ sort_at: g.first_at, group: { key: g.key, header: g.header, items } });
     }
 
-    return { groups, debugEvents };
+    return { groups: mergeGroupsWithSystemMessages(groups, messages), debugEvents };
   }
 
   const eventsInRange = (startIso: string, endIso: string | null) => {
@@ -3972,7 +4160,7 @@ function buildWorkbenchThreadViewModelFromEvents(events: SessionEvent[], message
     });
   };
 
-  const groups: WorkbenchThreadView["groups"] = [];
+  const groups: SortableThreadGroup[] = [];
 
   for (let i = 0; i < userMessages.length; i++) {
     const u = userMessages[i];
@@ -4016,7 +4204,7 @@ function buildWorkbenchThreadViewModelFromEvents(events: SessionEvent[], message
 
       switch (ev.event_type) {
         case "error": {
-          const message = String(ev.payload_json?.message ?? "Error");
+          const message = extractErrorMessage(ev.payload_json) ?? "Error";
           const provider = String(ev.payload_json?.provider ?? "").trim();
           const output = provider ? `${message}\nprovider: ${provider}` : message;
           const tool = ensureTool(g, `error-${eventId}`, ev.created_at);
@@ -4182,7 +4370,7 @@ function buildWorkbenchThreadViewModelFromEvents(events: SessionEvent[], message
       items.push({ kind: "spacer", id: `spacer-${g.key}`, created_at: g.first_at });
     }
 
-    groups.push({ key: g.key, header: g.header, items });
+    groups.push({ sort_at: g.first_at, group: { key: g.key, header: g.header, items } });
   }
 
   // If there are no user messages (should be rare), fall back to an event-only group.
@@ -4208,10 +4396,10 @@ function buildWorkbenchThreadViewModelFromEvents(events: SessionEvent[], message
     }
     const items: ThreadItem[] = [...g.toolItems];
     if (items.length === 0) items.push({ kind: "spacer", id: `spacer-${g.key}`, created_at: g.first_at });
-    groups.push({ key: g.key, header: g.header, items });
+    groups.push({ sort_at: g.first_at, group: { key: g.key, header: g.header, items } });
   }
 
-  return { groups, debugEvents };
+  return { groups: mergeGroupsWithSystemMessages(groups, messages), debugEvents };
 }
 
 function extractToolOutputText(update: any): string {
@@ -4323,9 +4511,10 @@ function humanToolKind(kind: string): string {
   const k = (kind || "").toLowerCase();
   if (k === "execute") return "Run Command";
   if (k === "search") return "Search";
-  if (k === "read") return "Read File";
-  if (k === "edit" || k === "write") return "Edit File";
-  if (k === "fetch") return "Fetch";
+  if (k === "read" || k === "read_file") return "Read File";
+  if (k === "edit" || k === "write" || k === "apply_patch") return "Edit File";
+  if (k === "list" || k === "list_files") return "List Files";
+  if (k === "fetch" || k === "http" || k === "curl") return "Fetch";
   if (k === "think") return "Think";
   if (k === "error") return "Error";
   return kind || "Tool";
@@ -4345,6 +4534,80 @@ function formatToolInput(toolKind: string, input: any): string {
   return JSON.stringify(input, null, 2);
 }
 
+type ToolDiffStats = {
+  added?: number;
+  removed?: number;
+  files?: number;
+};
+
+function extractToolDiffStats(input: any): ToolDiffStats | null {
+  const raw = input?.diff_stats;
+  if (!raw || typeof raw !== "object") return null;
+  const added = Number((raw as any).added);
+  const removed = Number((raw as any).removed);
+  const files = Number((raw as any).files);
+  const hasAny =
+    Number.isFinite(added) || Number.isFinite(removed) || Number.isFinite(files);
+  if (!hasAny) return null;
+  return {
+    added: Number.isFinite(added) ? added : undefined,
+    removed: Number.isFinite(removed) ? removed : undefined,
+    files: Number.isFinite(files) ? files : undefined,
+  };
+}
+
+function formatToolDiffStats(input: any): string {
+  const stats = extractToolDiffStats(input);
+  if (!stats) return "";
+  const parts: string[] = [];
+  if (stats.added && stats.added > 0) parts.push(`+${stats.added}`);
+  if (stats.removed && stats.removed > 0) parts.push(`-${stats.removed}`);
+  if (!parts.length && stats.files && stats.files > 0) {
+    parts.push(`${stats.files} files`);
+  }
+  return parts.length ? `(${parts.join(" ")})` : "";
+}
+
+function extractToolPaths(input: any): { paths: string[]; total?: number } {
+  const paths: string[] = [];
+  const push = (value: unknown) => {
+    if (typeof value !== "string") return;
+    const trimmed = value.trim();
+    if (trimmed) paths.push(trimmed);
+  };
+  push(input?.path);
+  push(input?.file);
+  push(input?.filename);
+  push(input?.file_path);
+  push(input?.filePath);
+  push(input?.filepath);
+  push(input?.target);
+  if (Array.isArray(input?.paths)) input.paths.forEach(push);
+  if (Array.isArray(input?.files)) input.files.forEach(push);
+  if (Array.isArray(input?.file_paths)) input.file_paths.forEach(push);
+  if (Array.isArray(input?.filePaths)) input.filePaths.forEach(push);
+  if (Array.isArray(input?.parsed_cmd)) {
+    input.parsed_cmd.forEach((cmd: any) => push(cmd?.path));
+  }
+  const seen = new Set<string>();
+  const unique = paths.filter((p) => {
+    if (seen.has(p)) return false;
+    seen.add(p);
+    return true;
+  });
+  const total =
+    typeof input?.paths_total === "number" ? input.paths_total : unique.length;
+  return { paths: unique, total };
+}
+
+function formatToolPathSummary(input: any): string {
+  const { paths, total } = extractToolPaths(input);
+  if (!paths.length) return "";
+  const more = Math.max(0, (total ?? paths.length) - 1);
+  const head = truncateMiddle(paths[0], 120);
+  return more > 0 ? `${head} +${more} more` : head;
+}
+
 function toolSummaryLine(toolKind: string, input: any): string {
   const k = (toolKind || "").toLowerCase();
   if (k === "execute") {
@@ -4352,12 +4615,29 @@ function toolSummaryLine(toolKind: string, input: any): string {
     return cmd ? truncateMiddle(String(cmd), 120) : "";
   }
   if (k === "search") {
-    const q = input?.query ?? input?.pattern ?? input?.text;
-    return q ? truncateMiddle(String(q), 120) : "";
+    const q = input?.query ?? input?.pattern ?? input?.regex ?? input?.text;
+    const path = formatToolPathSummary(input);
+    const query = q ? truncateMiddle(String(q), 120) : "";
+    if (query && path) return truncateMiddle(`${query} in ${path}`, 120);
+    return query || path;
   }
-  if (k === "read" || k === "edit" || k === "write") {
-    const path = input?.path ?? input?.file ?? input?.filename;
-    return path ? truncateMiddle(String(path), 120) : "";
+  if (k === "list" || k === "list_files") {
+    return formatToolPathSummary(input);
+  }
+  if (k === "read" || k === "read_file") {
+    return formatToolPathSummary(input);
+  }
+  if (k === "edit" || k === "write" || k === "apply_patch") {
+    const path = formatToolPathSummary(input);
+    const stats = formatToolDiffStats(input);
+    if (path && stats) return `${path} ${stats}`;
+    return path || stats;
+  }
+  if (k === "fetch" || k === "http" || k === "curl") {
+    const method = String(input?.method ?? "GET").trim().toUpperCase();
+    const url = input?.url ?? input?.uri ?? input?.href;
+    if (url) return truncateMiddle(`${method} ${String(url)}`, 120);
+    return method;
   }
   return "";
 }
@@ -4393,6 +4673,7 @@ function mergeEvents(prev: SessionEvent[], incoming: SessionEvent[]): SessionEve
 }
 
 type AuthMethodOption = { id: string; name: string };
+type SessionErrorInfo = { message: string; provider?: string };
 
 type AuthUi = {
   status: "unknown" | "required" | "failed" | "authenticated";
@@ -4460,4 +4741,97 @@ function deriveAuthUi(events: SessionEvent[]): AuthUi {
   }
 
   return { status, provider, message, methods };
+}
+
+function readNonEmptyString(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const text = value.trim();
+  return text ? text : null;
+}
+
+function extractErrorMessage(payload: any): string | null {
+  if (!payload) return null;
+  const direct =
+    readNonEmptyString(payload.message) ??
+    readNonEmptyString(payload.error) ??
+    readNonEmptyString(payload.error_message) ??
+    readNonEmptyString(payload.errorMessage);
+  if (direct) return direct;
+
+  const acpError = payload.acp_error ?? payload.acpError;
+  if (acpError && typeof acpError === "object") {
+    const acpDataText = extractErrorMessageFromObject((acpError as any).data);
+    if (acpDataText) return acpDataText;
+  }
+  const acpErrorText = extractErrorMessageFromObject(acpError);
+  if (acpErrorText) return acpErrorText;
+
+  const update = payload.acp_update ?? payload.acpUpdate ?? payload.update;
+  const updateText = extractErrorMessageFromObject(update);
+  if (updateText) return updateText;
+
+  const meta = update?._meta ?? update?.meta ?? payload._meta ?? payload.meta ?? null;
+  return (
+    readNonEmptyString(meta?.statusText) ??
+    readNonEmptyString(meta?.status_text) ??
+    readNonEmptyString(meta?.message) ??
+    readNonEmptyString(meta?.error)
+  );
+}
+
+function extractErrorMessageFromObject(value: any): string | null {
+  if (!value) return null;
+  if (typeof value === "string") return readNonEmptyString(value);
+  if (typeof value !== "object") return null;
+
+  const direct =
+    readNonEmptyString(value.message) ??
+    readNonEmptyString(value.error_message) ??
+    readNonEmptyString(value.errorMessage);
+  if (direct) return direct;
+
+  const data = value.data ?? value.details ?? value.detail;
+  const dataText =
+    readNonEmptyString(data) ??
+    readNonEmptyString(data?.message) ??
+    readNonEmptyString(data?.error);
+  if (dataText) return dataText;
+
+  const nested = value.error ?? value.cause;
+  const nestedText =
+    typeof nested === "object"
+      ? extractErrorMessageFromObject(nested)
+      : readNonEmptyString(nested);
+  if (nestedText) return nestedText;
+
+  const meta = value._meta ?? value.meta;
+  return readNonEmptyString(meta?.statusText) ?? readNonEmptyString(meta?.status_text);
+}
+
+function deriveSessionError(
+  turns: SessionTurn[],
+  events: SessionEvent[],
+): SessionErrorInfo | null {
+  if (turns.length === 0) return null;
+  const lastTurn = turns[turns.length - 1];
+  if (lastTurn.status !== "failed") return null;
+  const turnId = idToString(lastTurn.turn_id);
+  let errorEvent: SessionEvent | null = null;
+  for (let i = events.length - 1; i >= 0; i--) {
+    const ev = events[i];
+    if (ev.event_type !== "error") continue;
+    if (turnId && idToString(ev.turn_id) !== turnId) continue;
+    errorEvent = ev;
+    break;
+  }
+  if (!errorEvent) {
+    return { message: "Harness error." };
+  }
+  const message = extractErrorMessage(errorEvent.payload_json) ?? "Harness error.";
+  const provider =
+    readNonEmptyString(errorEvent.payload_json?.provider) ??
+    readNonEmptyString(errorEvent.payload_json?.provider_id) ??
+    readNonEmptyString(errorEvent.payload_json?.providerId) ??
+    undefined;
+  return { message, provider };
 }

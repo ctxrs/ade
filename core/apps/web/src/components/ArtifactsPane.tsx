@@ -3,6 +3,8 @@ import { Copy, Download, RotateCcw, X, ZoomIn, ZoomOut } from "lucide-react";
 import { artifactUrl, idToString, type Artifact } from "../api/client";
 
 const VIDEO_EXTENSIONS = new Set(["mp4", "mov", "webm", "m4v"]);
+const DEFAULT_MIN_SCALE = 0.2;
+const MAX_SCALE = 5;
 
 function formatBytes(bytes: number | null | undefined): string {
   if (!bytes || bytes <= 0) return "0 B";
@@ -185,12 +187,18 @@ function ArtifactViewer({
   const missing = Boolean(artifact.missing);
   const [copying, setCopying] = useState(false);
   const [scale, setScale] = useState(1);
+  const [baseScale, setBaseScale] = useState(1);
+  const [minScale, setMinScale] = useState(DEFAULT_MIN_SCALE);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const imageRef = useRef<HTMLImageElement | null>(null);
   const draggingRef = useRef(false);
   const lastPointRef = useRef({ x: 0, y: 0 });
 
   useEffect(() => {
     setScale(1);
+    setBaseScale(1);
+    setMinScale(DEFAULT_MIN_SCALE);
     setOffset({ x: 0, y: 0 });
   }, [artifactId]);
 
@@ -210,25 +218,43 @@ function ArtifactViewer({
     };
   }, []);
 
-  const clampScale = useCallback((value: number) => Math.min(5, Math.max(1, value)), []);
+  const clampScale = useCallback(
+    (value: number) => Math.min(MAX_SCALE, Math.max(minScale, value)),
+    [minScale],
+  );
 
   const zoomBy = useCallback(
     (delta: number) => {
       setScale((current) => {
         const next = clampScale(current + delta);
-        if (next === 1) {
+        if (next === baseScale) {
           setOffset({ x: 0, y: 0 });
         }
         return next;
       });
     },
-    [clampScale],
+    [baseScale, clampScale],
   );
 
   const resetZoom = useCallback(() => {
-    setScale(1);
+    setScale(baseScale);
     setOffset({ x: 0, y: 0 });
-  }, []);
+  }, [baseScale]);
+
+  const onImageLoad = useCallback(() => {
+    if (!isImage) return;
+    const container = containerRef.current;
+    const img = imageRef.current;
+    if (!container || !img) return;
+    const { clientWidth, clientHeight } = container;
+    const { naturalWidth, naturalHeight } = img;
+    if (!clientWidth || !clientHeight || !naturalWidth || !naturalHeight) return;
+    const fitScale = Math.min(1, clientWidth / naturalWidth, clientHeight / naturalHeight);
+    setBaseScale(fitScale);
+    setMinScale(Math.min(DEFAULT_MIN_SCALE, fitScale));
+    setScale(fitScale);
+    setOffset({ x: 0, y: 0 });
+  }, [isImage]);
 
   const onWheel = useCallback(
     (event: React.WheelEvent<HTMLDivElement>) => {
@@ -242,11 +268,11 @@ function ArtifactViewer({
 
   const onPointerDown = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
-      if (!isImage || scale <= 1) return;
+      if (!isImage || scale <= baseScale) return;
       draggingRef.current = true;
       lastPointRef.current = { x: event.clientX, y: event.clientY };
     },
-    [isImage, scale],
+    [baseScale, isImage, scale],
   );
 
   const onPointerMove = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
@@ -315,7 +341,7 @@ function ArtifactViewer({
                   type="button"
                   className="wb-artifact-action"
                   onClick={() => zoomBy(-0.2)}
-                  disabled={scale <= 1}
+                  disabled={scale <= minScale}
                   aria-label="Zoom out"
                   title="Zoom out"
                 >
@@ -325,7 +351,7 @@ function ArtifactViewer({
                   type="button"
                   className="wb-artifact-action"
                   onClick={() => zoomBy(0.2)}
-                  disabled={scale >= 5}
+                  disabled={scale >= MAX_SCALE}
                   aria-label="Zoom in"
                   title="Zoom in"
                 >
@@ -335,7 +361,7 @@ function ArtifactViewer({
                   type="button"
                   className="wb-artifact-action"
                   onClick={resetZoom}
-                  disabled={scale === 1 && offset.x === 0 && offset.y === 0}
+                  disabled={scale === baseScale && offset.x === 0 && offset.y === 0}
                   aria-label="Reset zoom"
                   title="Reset"
                 >
@@ -355,7 +381,8 @@ function ArtifactViewer({
           </div>
         </div>
         <div
-          className={`wb-artifact-modal-body ${scale > 1 ? "wb-artifact-zoomed" : ""}`}
+          ref={containerRef}
+          className={`wb-artifact-modal-body ${scale > baseScale ? "wb-artifact-zoomed" : ""}`}
           onWheel={onWheel}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
@@ -371,8 +398,10 @@ function ArtifactViewer({
           ) : isImage ? (
             <img
               className="wb-artifact-modal-image"
+              ref={imageRef}
               src={url}
               alt={name}
+              onLoad={onImageLoad}
               style={{ transform: `translate(${offset.x}px, ${offset.y}px) scale(${scale})` }}
             />
           ) : (

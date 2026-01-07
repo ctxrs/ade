@@ -6,7 +6,7 @@ use std::time::{Duration, Instant, SystemTime};
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use opentelemetry::global;
-use opentelemetry::metrics::{Counter, Histogram, Meter, MeterProvider, Unit};
+use opentelemetry::metrics::{Counter, Gauge, Histogram, Meter, MeterProvider, Unit};
 use opentelemetry::propagation::Extractor;
 use opentelemetry::trace::{Span, SpanBuilder, SpanKind, TraceId, Tracer, TracerProvider};
 use opentelemetry::{Context as OtelContext, KeyValue};
@@ -211,6 +211,18 @@ impl PerfTelemetry {
             self.tx.send(PerfCommand::Event(event)),
         )
         .await;
+    }
+
+    pub fn export_remote_metric(&self, metric: PerfMetric) {
+        let cfg = self.config.lock().unwrap().clone();
+        if !cfg.effective_remote_enabled() {
+            return;
+        }
+        let otel = self.otel.lock().unwrap().clone();
+        let Some(otel) = otel else {
+            return;
+        };
+        export_metric(&otel, &metric, &cfg);
     }
 
     pub fn start_span(
@@ -510,6 +522,7 @@ impl OtelRuntime {
 struct MetricRegistry {
     histograms: HashMap<String, Histogram<f64>>,
     counters: HashMap<String, Counter<u64>>,
+    gauges: HashMap<String, Gauge<f64>>,
 }
 
 impl MetricRegistry {
@@ -535,6 +548,18 @@ impl MetricRegistry {
             .init();
         self.counters.insert(name.to_string(), c.clone());
         c
+    }
+
+    fn gauge(&mut self, meter: &Meter, name: &str, unit: &str) -> Gauge<f64> {
+        if let Some(g) = self.gauges.get(name) {
+            return g.clone();
+        }
+        let g = meter
+            .f64_gauge(name.to_string())
+            .with_unit(Unit::new(unit.to_string()))
+            .init();
+        self.gauges.insert(name.to_string(), g.clone());
+        g
     }
 }
 
@@ -592,7 +617,10 @@ fn export_metric(runtime: &OtelRuntime, metric: &PerfMetric, cfg: &PerfTelemetry
             let counter = registry.counter(&runtime.meter, &metric.name, &metric.unit);
             counter.add(metric.value as u64, &attrs);
         }
-        PerfMetricKind::Gauge => {}
+        PerfMetricKind::Gauge => {
+            let gauge = registry.gauge(&runtime.meter, &metric.name, &metric.unit);
+            gauge.record(metric.value, &attrs);
+        }
     }
     drop(registry);
 

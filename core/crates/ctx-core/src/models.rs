@@ -186,16 +186,16 @@ pub struct Session {
     pub task_id: TaskId,
     pub workspace_id: WorkspaceId,
     pub worktree_id: WorktreeId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_session_id: Option<SessionId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relationship: Option<String>,
     pub provider_id: String,
     pub model_id: String,
     pub title: String,
     pub agent_role: String,
     pub status: SessionStatus,
     pub provider_session_ref: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub parent_session_id: Option<SessionId>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub relationship: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -370,14 +370,14 @@ pub struct SessionSummary {
     pub track_id: TrackId,
     pub task_id: TaskId,
     pub workspace_id: WorkspaceId,
-    pub provider_id: String,
-    pub model_id: String,
-    pub title: String,
-    pub status: SessionStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_session_id: Option<SessionId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub relationship: Option<String>,
+    pub provider_id: String,
+    pub model_id: String,
+    pub title: String,
+    pub status: SessionStatus,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

@@ -265,6 +265,7 @@ impl ProviderAdapter for Tier1AcpAdapter {
                 env,
                 event_sink: event_sink.clone(),
                 cancel_rx,
+                model_id: input.model_id,
             };
             if let Err(e) = pool.prompt(request).await {
                 let _ = event_sink

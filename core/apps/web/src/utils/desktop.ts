@@ -53,6 +53,7 @@ export type DesktopEditorSettings = {
     | "android_studio"
     | "custom";
   custom_command?: string | null;
+  remote_authority?: string | null;
 };
 
 export const isDesktopApp = (): boolean => {

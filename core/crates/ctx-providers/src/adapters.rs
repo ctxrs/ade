@@ -74,6 +74,7 @@ pub struct TurnInput {
     pub content: String,
     pub attachments: Vec<MessageAttachment>,
     pub context_blocks: Vec<Value>,
+    pub model_id: Option<String>,
 }
 
 #[derive(Debug)]
