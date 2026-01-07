@@ -542,10 +542,8 @@ export function SessionView({
   const [fileOpenError, setFileOpenError] = useState<string | null>(null);
   const [modifierDown, setModifierDown] = useState(false);
   const [atBottom, setAtBottom] = useState(true);
-  const [hasNewActivity, setHasNewActivity] = useState(false);
   const [stickToBottom, setStickToBottom] = useState(true);
   const stickToBottomRef = useRef(true);
-  const lastActivityCountRef = useRef(0);
   const [authMethodId, setAuthMethodId] = useState<string>("");
   const [authBusy, setAuthBusy] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
@@ -868,9 +866,7 @@ export function SessionView({
       scrollSyncRafRef.current = null;
     }
     setAtBottom(true);
-    setHasNewActivity(false);
     setStickToBottom(true);
-    lastActivityCountRef.current = 0;
     setExpandedTurnHeaders({});
     setExpandedToolById({});
     setSendError(null);
@@ -1309,7 +1305,6 @@ export function SessionView({
     stickToBottomRef,
     setStickToBottom,
     setAtBottom,
-    setHasNewActivity,
     latestAnchorIdRef,
     liveScrollTopRef,
     userScrollIntentRef,
@@ -1525,17 +1520,6 @@ export function SessionView({
     return sessionModelId || acpModelId;
   }, [acpCurrentModelId, modelOptionIds, session?.model_id]);
 
-  const threadActivityCount = wbListItems.length;
-
-  useEffect(() => {
-    if (!didInitialScrollRef.current) return;
-    const prev = lastActivityCountRef.current;
-    lastActivityCountRef.current = threadActivityCount;
-    if (atBottom) return;
-    if (prev === 0) return;
-    if (threadActivityCount > prev) setHasNewActivity(true);
-  }, [threadActivityCount, atBottom]);
-
   const restoreStateFrom =
     preserveScrollOnFocus || scrollState?.stickToBottom !== false
       ? undefined
@@ -1545,7 +1529,6 @@ export function SessionView({
     if (wbListItems.length > 0) {
       stickToBottomRef.current = true;
       setStickToBottom(true);
-      setHasNewActivity(false);
       setAtBottom(true);
       latestAnchorIdRef.current = null;
       liveScrollTopRef.current = null;
@@ -1604,7 +1587,6 @@ export function SessionView({
       supervisor.refreshSession(id, { watchDiff: true });
       stickToBottomRef.current = true;
       setStickToBottom(true);
-      setHasNewActivity(false);
       liveScrollTopRef.current = null;
       pendingScrollToBottomRef.current = true;
       setInput("");
@@ -2173,7 +2155,7 @@ export function SessionView({
           onRangeChanged={handleWorkbenchRangeChanged}
           components={workbenchComponents}
           itemContent={workbenchItemContent}
-          hasNewActivity={hasNewActivity}
+          showJumpToLatest={!atBottom}
           onJumpToLatest={jumpToLatestWorkbench}
           scrollbarActive={scrollbarActive}
           scrollbarDragging={scrollbarDragging}
@@ -2252,7 +2234,7 @@ type WorkbenchThreadStackProps = {
   onRangeChanged: (range: any) => void;
   components: any;
   itemContent: (index: number, item: WorkbenchListItem) => ReactNode;
-  hasNewActivity: boolean;
+  showJumpToLatest: boolean;
   onJumpToLatest: () => void;
   scrollbarActive: boolean;
   scrollbarDragging: boolean;
@@ -2278,7 +2260,7 @@ const WorkbenchThreadStack = memo(function WorkbenchThreadStack({
   onRangeChanged,
   components,
   itemContent,
-  hasNewActivity,
+  showJumpToLatest,
   onJumpToLatest,
   scrollbarActive,
   scrollbarDragging,
@@ -2337,7 +2319,7 @@ const WorkbenchThreadStack = memo(function WorkbenchThreadStack({
         </div>
       </div>
 
-      {hasNewActivity && (
+      {showJumpToLatest && (
         <button
           type="button"
           className="new-activity-overlay"
