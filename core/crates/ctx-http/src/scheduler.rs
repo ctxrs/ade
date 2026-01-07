@@ -1128,7 +1128,7 @@ fn should_track_thought_chunk(payload: &serde_json::Value) -> bool {
 }
 
 fn strip_emitted_prefix(full_content: &str, emitted: &str) -> Option<String> {
-    let full = full_content.trim_end_matches(|c: char| c == '\r' || c == '\n');
+    let full = full_content.trim_end_matches(['\r', '\n']);
     if full.is_empty() {
         return None;
     }
@@ -1164,7 +1164,10 @@ mod strip_emitted_prefix_tests {
     fn returns_suffix_when_full_contains_emitted_prefix() {
         let full = "Planning:Done.";
         let emitted = "Planning:";
-        assert_eq!(strip_emitted_prefix(full, emitted), Some("Done.".to_string()));
+        assert_eq!(
+            strip_emitted_prefix(full, emitted),
+            Some("Done.".to_string())
+        );
     }
 
     #[test]
@@ -1174,7 +1177,10 @@ mod strip_emitted_prefix_tests {
 
     #[test]
     fn returns_full_when_prefix_does_not_match() {
-        assert_eq!(strip_emitted_prefix("Hello", "Nope"), Some("Hello".to_string()));
+        assert_eq!(
+            strip_emitted_prefix("Hello", "Nope"),
+            Some("Hello".to_string())
+        );
     }
 }
 
