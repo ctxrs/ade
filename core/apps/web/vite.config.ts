@@ -79,6 +79,13 @@ export default defineConfig(({ command }) => {
           target: daemonUrl,
           changeOrigin: true,
           ws: true,
+          xfwd: true,
+        },
+        "/sessions": {
+          target: daemonUrl,
+          changeOrigin: true,
+          ws: true,
+          xfwd: true,
         },
         ...supabaseProxy,
       },
