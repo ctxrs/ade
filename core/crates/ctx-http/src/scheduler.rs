@@ -367,6 +367,7 @@ async fn start_turn(
     tokio::spawn(async move {
         let mut assistant_partial = String::new();
         let mut assistant_sequence: i64 = 0;
+        let mut assistant_emitted = String::new();
         let mut thought_partial = String::new();
         let mut tool_cache: HashMap<String, SessionTurnTool> = HashMap::new();
         let mut terminal_status: Option<SessionTurnStatus> = None;
@@ -509,6 +510,7 @@ async fn start_turn(
                             .await
                             {
                                 assistant_sequence += 1;
+                                assistant_emitted.push_str(&saved.content);
                                 assistant_partial.clear();
                                 let _ = store
                                     .update_session_turn_partial(
@@ -601,7 +603,9 @@ async fn start_turn(
                                 }
                             });
                         if let Some(content) = content {
-                            if !content.is_empty() {
+                            if let Some(content) =
+                                strip_emitted_prefix(&content, &assistant_emitted)
+                            {
                                 if let Ok(saved) = persist_assistant_message(
                                     &store,
                                     session_id,
@@ -616,6 +620,7 @@ async fn start_turn(
                                 .await
                                 {
                                     assistant_sequence += 1;
+                                    assistant_emitted.push_str(&saved.content);
                                     assistant_partial.clear();
                                     let _ = store
                                         .update_session_turn_partial(
@@ -639,6 +644,17 @@ async fn start_turn(
                                     )
                                     .await;
                                 }
+                            } else {
+                                assistant_partial.clear();
+                                let _ = store
+                                    .update_session_turn_partial(
+                                        session_id,
+                                        turn_id,
+                                        Some(""),
+                                        None,
+                                        event.created_at,
+                                    )
+                                    .await;
                             }
                         }
                         if terminal_status.is_none() {
@@ -1109,6 +1125,57 @@ fn should_track_thought_chunk(payload: &serde_json::Value) -> bool {
         }
     }
     true
+}
+
+fn strip_emitted_prefix(full_content: &str, emitted: &str) -> Option<String> {
+    let full = full_content.trim_end_matches(|c: char| c == '\r' || c == '\n');
+    if full.is_empty() {
+        return None;
+    }
+    let emitted_trimmed = emitted.trim_end_matches(|c: char| c.is_whitespace());
+    if emitted_trimmed.is_empty() {
+        return Some(full.to_string());
+    }
+    if full == emitted_trimmed {
+        return None;
+    }
+    if full.starts_with(emitted_trimmed) {
+        let suffix = full.get(emitted_trimmed.len()..).unwrap_or("").to_string();
+        if suffix.trim().is_empty() {
+            None
+        } else {
+            Some(suffix)
+        }
+    } else {
+        Some(full.to_string())
+    }
+}
+
+#[cfg(test)]
+mod strip_emitted_prefix_tests {
+    use super::strip_emitted_prefix;
+
+    #[test]
+    fn returns_full_when_no_emitted() {
+        assert_eq!(strip_emitted_prefix("Hello", ""), Some("Hello".to_string()));
+    }
+
+    #[test]
+    fn returns_suffix_when_full_contains_emitted_prefix() {
+        let full = "Planning:Done.";
+        let emitted = "Planning:";
+        assert_eq!(strip_emitted_prefix(full, emitted), Some("Done.".to_string()));
+    }
+
+    #[test]
+    fn returns_none_when_full_equals_emitted() {
+        assert_eq!(strip_emitted_prefix("Same", "Same"), None);
+    }
+
+    #[test]
+    fn returns_full_when_prefix_does_not_match() {
+        assert_eq!(strip_emitted_prefix("Hello", "Nope"), Some("Hello".to_string()));
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
