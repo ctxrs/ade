@@ -1,3 +1,7 @@
+use std::io::ErrorKind;
+use std::path::Path;
+use std::time::{Duration, Instant};
+
 use anyhow::{anyhow, Context, Result};
 use base64::Engine;
 use futures::StreamExt;
@@ -16,6 +20,11 @@ struct EnableMobileAccessResp {
 #[derive(Debug, Serialize)]
 struct EnableMobileAccessReq {
     supabase_token: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct DaemonAuthFile {
+    token: String,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -80,15 +89,13 @@ async fn main() -> Result<()> {
     let port = pick_port().context("pick daemon port")?;
     let bind = format!("127.0.0.1:{port}");
     let daemon_url = format!("http://127.0.0.1:{port}");
-    let auth_token = Uuid::new_v4().to_string();
 
     let serve_task = tokio::spawn(ctx_http::daemon::serve(
         bind,
         Some(data_dir.path().to_string_lossy().to_string()),
-        Some(auth_token.clone()),
-        false,
     ));
 
+    let auth_token = read_daemon_auth_token(data_dir.path()).await?;
     let outcome = run_e2e(&daemon_url, &auth_token, &supabase_token, repo_dir.path()).await;
 
     serve_task.abort();
@@ -327,6 +334,35 @@ async fn wait_for_health(client: &reqwest::Client, daemon_url: &str) -> Result<(
         }
     }
     Err(anyhow!("timed out waiting for daemon health"))
+}
+
+async fn read_daemon_auth_token(data_dir: &Path) -> Result<String> {
+    let path = data_dir.join("daemon_auth.json");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        match tokio::fs::read(&path).await {
+            Ok(bytes) => {
+                let auth: DaemonAuthFile = serde_json::from_slice(&bytes)
+                    .with_context(|| format!("parsing daemon auth file {}", path.display()))?;
+                if auth.token.trim().is_empty() {
+                    return Err(anyhow!(
+                        "daemon auth file {} contains empty token",
+                        path.display()
+                    ));
+                }
+                return Ok(auth.token);
+            }
+            Err(err) if err.kind() == ErrorKind::NotFound => {}
+            Err(err) => {
+                return Err(err)
+                    .with_context(|| format!("reading daemon auth file {}", path.display()));
+            }
+        }
+        if Instant::now() > deadline {
+            return Err(anyhow!("daemon auth file not found at {}", path.display()));
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
 }
 
 fn pick_port() -> Result<u16> {

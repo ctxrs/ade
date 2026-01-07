@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { BrowserRouter, Route, Routes } from "react-router-dom";
-import { appendDesktopLog } from "./api/client";
+import { appendDesktopLog, getDaemonBaseUrl, setDaemonBaseUrl } from "./api/client";
 import DaemonAvailabilityOverlay from "./components/DaemonAvailabilityOverlay";
 import LauncherPage from "./pages/LauncherPage";
 import AppSettingsPage from "./pages/AppSettingsPage";
@@ -24,6 +24,16 @@ export default function App() {
         (params.toString() ? `?${params.toString()}` : "") +
         window.location.hash;
       window.history.replaceState({}, "", next);
+    }
+    if (import.meta.env.DEV) {
+      const envToken = import.meta.env.VITE_CTX_AUTH_TOKEN;
+      const envDaemonUrl = import.meta.env.VITE_CTX_DAEMON_URL;
+      if (envToken && !sessionStorage.getItem("ctxAuthToken")) {
+        sessionStorage.setItem("ctxAuthToken", envToken);
+      }
+      if (envDaemonUrl && !getDaemonBaseUrl()) {
+        setDaemonBaseUrl(envDaemonUrl, true);
+      }
     }
   }, []);
 
