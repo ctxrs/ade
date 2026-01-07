@@ -411,10 +411,10 @@ export default function SettingsPage() {
     };
   }, [supabase]);
 
-  const refreshEntitlements = useCallback(async () => {
+  const refreshEntitlements = useCallback(async (opts?: { force?: boolean }) => {
     if (!supabase) return;
     const cached = readCachedValue<EntitlementsSnapshot>(window.localStorage, ENTITLEMENTS_CACHE_KEY);
-    if (cached && shouldUseCachedValue(cached, ENTITLEMENTS_CACHE_TTL_MS)) {
+    if (!opts?.force && cached && shouldUseCachedValue(cached, ENTITLEMENTS_CACHE_TTL_MS)) {
       setEntitlements(cached.value);
       setEntitlementsBusy(false);
       return;
@@ -490,10 +490,37 @@ export default function SettingsPage() {
     }
   }, [getSupabaseToken, refreshMobileAccess]);
 
+  const checkoutStatus = useMemo(
+    () => new URLSearchParams(location.search).get("checkout"),
+    [location.search],
+  );
+
   useEffect(() => {
     if (!supabase) return;
     refreshEntitlements().catch(() => {});
   }, [supabase, billingUser, refreshEntitlements]);
+
+  useEffect(() => {
+    if (!supabase || checkoutStatus !== "success") return;
+    let cancelled = false;
+    let attempt = 0;
+    const maxAttempts = 6;
+
+    const poll = async () => {
+      if (cancelled || attempt >= maxAttempts) return;
+      attempt += 1;
+      window.localStorage.removeItem(ENTITLEMENTS_CACHE_KEY);
+      await refreshEntitlements({ force: true });
+      if (!cancelled && attempt < maxAttempts) {
+        window.setTimeout(poll, 2000);
+      }
+    };
+
+    poll().catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [supabase, checkoutStatus, refreshEntitlements]);
 
   useEffect(() => {
     if (active !== "mobile_access") return;
@@ -2167,8 +2194,6 @@ export default function SettingsPage() {
 
       const plan = entitlements?.plan_type ?? "free_local";
       const proEnabled = entitlements?.features?.remote_mobile_access === "enabled";
-      const checkoutStatus = new URLSearchParams(location.search).get("checkout");
-
       const doSignIn = async () => {
         setBillingBusy(true);
         setBillingError(null);

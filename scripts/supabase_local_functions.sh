@@ -15,6 +15,15 @@ if ! command -v supabase >/dev/null 2>&1; then
   exit 0
 fi
 
+strip_quotes() {
+  local raw="$1"
+  raw="${raw%\"}"
+  raw="${raw#\"}"
+  raw="${raw%\'}"
+  raw="${raw#\'}"
+  printf '%s' "$raw"
+}
+
 ENV_FILE="${SUPABASE_FUNCTIONS_ENV:-$ROOT/supabase/.env}"
 ENV_FILE_ARG=()
 if [ -f "$ENV_FILE" ]; then
@@ -82,12 +91,18 @@ done
 stripe_listen="${STRIPE_LISTEN:-1}"
 if [ "$stripe_listen" = "1" ]; then
   stripe_secret="$(rg -m1 '^STRIPE_WEBHOOK_SECRET=' "$MERGED_ENV" | cut -d= -f2- || true)"
+  stripe_secret="$(strip_quotes "$stripe_secret")"
   if [ -z "$stripe_secret" ]; then
     if command -v stripe >/dev/null 2>&1; then
       stripe_forward_url="${STRIPE_WEBHOOK_FORWARD_URL:-http://127.0.0.1:54321/functions/v1/stripe-webhook}"
       stripe_log="${STRIPE_LISTEN_LOG:-/tmp/ctx-stripe-listen.log}"
       stripe_pid_file="${STRIPE_LISTEN_PID_FILE:-/tmp/ctx-stripe-listen.pid}"
       stripe_api_key="$(rg -m1 '^STRIPE_SECRET_KEY=' "$MERGED_ENV" | cut -d= -f2- || true)"
+      stripe_api_key="$(strip_quotes "$stripe_api_key")"
+      case "$stripe_api_key" in
+        sk_*|rk_*) ;;
+        *) stripe_api_key="";;
+      esac
 
       start_listener() {
         : >"$stripe_log"
@@ -126,6 +141,7 @@ if [ "$stripe_listen" = "1" ]; then
         if [ -n "$old_pid" ] && kill -0 "$old_pid" 2>/dev/null; then
           kill "$old_pid" >/dev/null 2>&1 || true
           rm -f "$stripe_pid_file"
+          stripe_api_key=""
           start_listener
           for _ in $(seq 1 40); do
             stripe_secret="$(rg -o 'whsec_[A-Za-z0-9_]+' "$stripe_log" | tail -n 1 || true)"
