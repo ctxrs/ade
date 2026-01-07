@@ -25,11 +25,18 @@ test("workbench: archived pagination uses archived-only catchup", async ({ page,
   await page.goto(`/workspaces/${seed.workspaceId}`, { waitUntil: "domcontentloaded" });
   await page.getByRole("button", { name: "Archived" }).click();
 
-  const loadMore = page.getByRole("button", { name: "Load more" });
-  await expect(loadMore).toBeVisible({ timeout: 20000 });
-  const waitForArchived = page.waitForRequest((req) => req.url().includes("archived_only=1"));
-  await loadMore.click();
-  await waitForArchived;
+  const waitForFirstPage = page.waitForRequest((req) => req.url().includes("archived_only=1"));
+  await waitForFirstPage;
+  await expect(page.locator("#wb-archived-list .wb-task-row").first()).toBeVisible({ timeout: 20000 });
+
+  const scroller = page.locator(".wb-task-scroll");
+  const waitForNextPage = page.waitForRequest((req) =>
+    req.url().includes("archived_only=1") && req.url().includes("archived_cursor_task_id="),
+  );
+  await scroller.evaluate((el) => {
+    el.scrollTop = el.scrollHeight;
+  });
+  await waitForNextPage;
 
   const archivedOnlyRequests = seenRequests.filter((url) => url.includes("archived_only=1"));
   expect(archivedOnlyRequests.length).toBeGreaterThan(0);
