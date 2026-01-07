@@ -29,6 +29,8 @@ describe("TaskRow rename draft", () => {
       taskId: "task-1",
       title: "Initial title",
       archived: false,
+      archiving: false,
+      archivePending: false,
       selected: false,
       hovered: false,
       isRenaming: true,
