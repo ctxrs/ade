@@ -89,16 +89,7 @@ if [ "$stripe_listen" = "1" ]; then
       stripe_pid_file="${STRIPE_LISTEN_PID_FILE:-/tmp/ctx-stripe-listen.pid}"
       stripe_api_key="$(rg -m1 '^STRIPE_SECRET_KEY=' "$MERGED_ENV" | cut -d= -f2- || true)"
 
-      if [ -f "$stripe_pid_file" ]; then
-        old_pid="$(cat "$stripe_pid_file" 2>/dev/null || true)"
-        if [ -n "$old_pid" ] && kill -0 "$old_pid" 2>/dev/null; then
-          :
-        else
-          rm -f "$stripe_pid_file"
-        fi
-      fi
-
-      if [ ! -f "$stripe_pid_file" ]; then
+      start_listener() {
         : >"$stripe_log"
         if [ -n "$stripe_api_key" ]; then
           STRIPE_API_KEY="$stripe_api_key" nohup stripe listen --forward-to "$stripe_forward_url" >"$stripe_log" 2>&1 &
@@ -107,6 +98,17 @@ if [ "$stripe_listen" = "1" ]; then
         fi
         echo "$!" >"$stripe_pid_file"
         sleep 0.2
+      }
+
+      if [ -f "$stripe_pid_file" ]; then
+        old_pid="$(cat "$stripe_pid_file" 2>/dev/null || true)"
+        if [ -z "$old_pid" ] || ! kill -0 "$old_pid" 2>/dev/null; then
+          rm -f "$stripe_pid_file"
+        fi
+      fi
+
+      if [ ! -f "$stripe_pid_file" ]; then
+        start_listener
       fi
 
       stripe_secret=""
@@ -118,6 +120,24 @@ if [ "$stripe_listen" = "1" ]; then
         fi
         sleep 0.25
       done
+
+      if [ -z "$stripe_secret" ]; then
+        old_pid="$(cat "$stripe_pid_file" 2>/dev/null || true)"
+        if [ -n "$old_pid" ] && kill -0 "$old_pid" 2>/dev/null; then
+          kill "$old_pid" >/dev/null 2>&1 || true
+          rm -f "$stripe_pid_file"
+          start_listener
+          for _ in $(seq 1 40); do
+            stripe_secret="$(rg -o 'whsec_[A-Za-z0-9_]+' "$stripe_log" | tail -n 1 || true)"
+            if [ -n "$stripe_secret" ]; then
+              printf 'STRIPE_WEBHOOK_SECRET=%s\n' "$stripe_secret" >>"$MERGED_ENV"
+              break
+            fi
+            sleep 0.25
+          done
+        fi
+      fi
+
       if [ -z "$stripe_secret" ]; then
         echo "warning: stripe listen did not output a webhook secret; entitlements may not update." >&2
       fi
