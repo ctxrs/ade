@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { corsHeaders } from "../_shared/cors.ts";
+import { resolveLocalOrigin } from "../_shared/origin.ts";
 import { getStripe } from "../_shared/stripe.ts";
 
 type CheckoutRequest = {
@@ -21,7 +22,16 @@ function optionalEnv(name: string): string {
   return (Deno.env.get(name) ?? "").trim();
 }
 
-function buildReturnUrl(kind: "checkout_success" | "checkout_cancel" | "portal_return"): string {
+function resolveAppOrigin(origin: string | null): string {
+  const localOrigin = resolveLocalOrigin(origin);
+  if (localOrigin) return localOrigin;
+  return requiredEnv("CTX_APP_ORIGIN");
+}
+
+function buildReturnUrl(
+  kind: "checkout_success" | "checkout_cancel" | "portal_return",
+  origin: string | null,
+): string {
   // Preferred: a stable hosted redirect page (e.g. https://ctx.rs/redirect)
   // that will attempt to deep-link back into the desktop app via ctx://focus.
   const redirectBase = optionalEnv("CTX_BILLING_REDIRECT_URL");
@@ -34,10 +44,10 @@ function buildReturnUrl(kind: "checkout_success" | "checkout_cancel" | "portal_r
   }
 
   // Local/dev fallback: return to the web app origin.
-  const appOrigin = requiredEnv("CTX_APP_ORIGIN");
-  if (kind === "portal_return") return `${appOrigin}/settings#billing`;
+  const appOrigin = resolveAppOrigin(origin);
+  if (kind === "portal_return") return new URL("/settings#billing", appOrigin).toString();
   const status = kind === "checkout_success" ? "success" : "cancel";
-  return `${appOrigin}/settings?checkout=${status}#billing`;
+  return new URL(`/settings?checkout=${status}#billing`, appOrigin).toString();
 }
 
 function asBearerToken(req: Request): string {
@@ -121,8 +131,8 @@ serve(async (req) => {
     client_reference_id: userId,
     line_items: [{ price: priceId, quantity: 1 }],
     allow_promotion_codes: true,
-    success_url: buildReturnUrl("checkout_success"),
-    cancel_url: buildReturnUrl("checkout_cancel"),
+    success_url: buildReturnUrl("checkout_success", origin),
+    cancel_url: buildReturnUrl("checkout_cancel", origin),
     metadata: { supabase_user_id: userId, plan_type: "pro", billing_interval: interval },
   });
 
