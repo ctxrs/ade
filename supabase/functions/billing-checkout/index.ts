@@ -1,11 +1,12 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
+import { createClient } from "npm:@supabase/supabase-js@2.49.1";
 import { corsHeaders } from "../_shared/cors.ts";
 import { resolveLocalOrigin } from "../_shared/origin.ts";
 import { getStripe } from "../_shared/stripe.ts";
 
 type CheckoutRequest = {
   interval: "month" | "year";
+  return_path?: string;
 };
 
 function parseJson<T>(req: Request): Promise<T | null> {
@@ -28,10 +29,26 @@ function resolveAppOrigin(origin: string | null): string {
   return requiredEnv("CTX_APP_ORIGIN");
 }
 
+function sanitizeReturnPath(path: string | null | undefined): string | null {
+  const raw = (path ?? "").trim();
+  if (!raw) return null;
+  if (!raw.startsWith("/") || raw.startsWith("//")) return null;
+  try {
+    const url = new URL(raw, "http://local");
+    if (url.origin !== "http://local") return null;
+    return `${url.pathname}${url.search}${url.hash}`;
+  } catch {
+    return null;
+  }
+}
+
 function buildReturnUrl(
   kind: "checkout_success" | "checkout_cancel" | "portal_return",
   origin: string | null,
+  returnPath: string | null,
 ): string {
+  const safeReturnPath = sanitizeReturnPath(returnPath);
+
   // Preferred: a stable hosted redirect page (e.g. https://ctx.rs/redirect)
   // that will attempt to deep-link back into the desktop app via ctx://focus.
   const redirectBase = optionalEnv("CTX_BILLING_REDIRECT_URL");
@@ -40,14 +57,18 @@ function buildReturnUrl(
     url.searchParams.set("v", "1");
     url.searchParams.set("source", "stripe");
     url.searchParams.set("kind", kind);
+    if (safeReturnPath) url.searchParams.set("return_path", safeReturnPath);
     return url.toString();
   }
 
   // Local/dev fallback: return to the web app origin.
   const appOrigin = resolveAppOrigin(origin);
-  if (kind === "portal_return") return new URL("/settings#billing", appOrigin).toString();
+  const fallbackPath = safeReturnPath ?? "/settings#billing";
+  const url = new URL(fallbackPath, appOrigin);
+  if (kind === "portal_return") return url.toString();
   const status = kind === "checkout_success" ? "success" : "cancel";
-  return new URL(`/settings?checkout=${status}#billing`, appOrigin).toString();
+  url.searchParams.set("checkout", status);
+  return url.toString();
 }
 
 function asBearerToken(req: Request): string {
@@ -77,6 +98,7 @@ serve(async (req) => {
 
   const payload = await parseJson<CheckoutRequest>(req);
   const interval = payload?.interval === "year" ? "year" : "month";
+  const returnPath = payload?.return_path ?? null;
 
   const supabaseUrl = requiredEnv("SUPABASE_URL");
   const serviceRoleKey = requiredEnv("SUPABASE_SERVICE_ROLE_KEY");
@@ -134,8 +156,8 @@ serve(async (req) => {
     subscription_data: {
       metadata: { supabase_user_id: userId },
     },
-    success_url: buildReturnUrl("checkout_success", origin),
-    cancel_url: buildReturnUrl("checkout_cancel", origin),
+    success_url: buildReturnUrl("checkout_success", origin, returnPath),
+    cancel_url: buildReturnUrl("checkout_cancel", origin, returnPath),
     metadata: { supabase_user_id: userId, plan_type: "pro", billing_interval: interval },
   });
 

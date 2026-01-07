@@ -5,8 +5,14 @@ CTX_MCP_COMMAND ?= $(CARGO_TARGET_DIR)/debug/ctx-mcp
 SUPABASE_LOCAL ?= 1
 SUPABASE_FUNCTIONS ?= 1
 SUPABASE_FUNCTIONS_BG ?= 1
+SUPABASE_PROD ?= 0
 CTX_WEB_PORT ?= 5173
 export CARGO_TARGET_DIR
+
+ifeq ($(SUPABASE_PROD),1)
+  SUPABASE_LOCAL := 0
+  SUPABASE_FUNCTIONS := 0
+endif
 
 test:
 	cargo test -q
@@ -39,6 +45,14 @@ else
 endif
 
 web: supabase-local supabase-functions
+ifeq ($(SUPABASE_PROD),1)
+	@SUPABASE_ENV="$$(../scripts/supabase_prod_env.sh)"; \
+	if [ -z "$$SUPABASE_ENV" ]; then \
+		echo "error: SUPABASE_PROD=1 but prod Supabase env is missing." >&2; \
+		exit 1; \
+	fi; \
+	env CTX_WEB_PORT=$(CTX_WEB_PORT) $$SUPABASE_ENV pnpm -C apps/web dev
+else
 ifeq ($(SUPABASE_LOCAL),1)
 	@SUPABASE_ENV="$$(../scripts/supabase_local_env.sh)"; \
 	if [ -n "$$SUPABASE_ENV" ]; then \
@@ -48,4 +62,5 @@ ifeq ($(SUPABASE_LOCAL),1)
 	fi
 else
 	CTX_WEB_PORT=$(CTX_WEB_PORT) pnpm -C apps/web dev
+endif
 endif

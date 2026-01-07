@@ -1,5 +1,5 @@
 import { Fragment, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link, useLocation } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import type { User } from "@supabase/supabase-js";
 import { QRCodeSVG } from "qrcode.react";
 import {
@@ -282,9 +282,32 @@ function Metric({
 
 export default function SettingsPage() {
   const location = useLocation();
+  const navigate = useNavigate();
   const [active, setActive] = useState<SectionId>(() => sectionFromHash(window.location.hash) ?? "general");
   const [query, setQuery] = useState("");
   const supabase = useMemo(() => getSupabaseClient(), []);
+
+  const billingReturnPath = useMemo(() => {
+    const params = new URLSearchParams(location.search);
+    params.delete("checkout");
+    const search = params.toString();
+    return `${location.pathname}${search ? `?${search}` : ""}#billing`;
+  }, [location.pathname, location.search]);
+
+  const clearCheckoutStatus = useCallback(() => {
+    const params = new URLSearchParams(location.search);
+    if (!params.has("checkout")) return;
+    params.delete("checkout");
+    const search = params.toString();
+    navigate(
+      {
+        pathname: location.pathname,
+        search: search ? `?${search}` : "",
+        hash: location.hash,
+      },
+      { replace: true },
+    );
+  }, [location.hash, location.pathname, location.search, navigate]);
 
   type EntitlementsSnapshot = {
     plan_type: "free_local" | "pro" | "team" | "enterprise";
@@ -411,26 +434,36 @@ export default function SettingsPage() {
     };
   }, [supabase]);
 
-  const refreshEntitlements = useCallback(async (opts?: { force?: boolean }) => {
-    if (!supabase) return;
+  const refreshEntitlements = useCallback(async (opts?: { force?: boolean; silent?: boolean }) => {
+    if (!supabase) return null;
     const cached = readCachedValue<EntitlementsSnapshot>(window.localStorage, ENTITLEMENTS_CACHE_KEY);
     if (!opts?.force && cached && shouldUseCachedValue(cached, ENTITLEMENTS_CACHE_TTL_MS)) {
       setEntitlements(cached.value);
-      setEntitlementsBusy(false);
-      return;
+      if (!opts?.silent) {
+        setEntitlementsBusy(false);
+      }
+      return cached.value;
     }
-    setEntitlementsBusy(true);
-    setBillingError(null);
+    if (!opts?.silent) {
+      setEntitlementsBusy(true);
+      setBillingError(null);
+    }
     try {
       const res = await supabase.functions.invoke("entitlements", { method: "GET" });
       if (res.error) throw res.error;
       const next = (res.data ?? null) as any;
       setEntitlements(next);
       if (next) writeCachedValue(window.localStorage, ENTITLEMENTS_CACHE_KEY, next);
+      return next;
     } catch (e: any) {
-      setBillingError(e?.message ?? String(e));
+      if (!opts?.silent) {
+        setBillingError(e?.message ?? String(e));
+      }
+      return null;
     } finally {
-      setEntitlementsBusy(false);
+      if (!opts?.silent) {
+        setEntitlementsBusy(false);
+      }
     }
   }, [supabase]);
 
@@ -495,6 +528,10 @@ export default function SettingsPage() {
     [location.search],
   );
 
+  const isPaidPlan = useCallback((snapshot: EntitlementsSnapshot | null) => {
+    return Boolean(snapshot?.plan_type && snapshot.plan_type !== "free_local");
+  }, []);
+
   useEffect(() => {
     if (!supabase) return;
     refreshEntitlements().catch(() => {});
@@ -510,7 +547,11 @@ export default function SettingsPage() {
       if (cancelled || attempt >= maxAttempts) return;
       attempt += 1;
       window.localStorage.removeItem(ENTITLEMENTS_CACHE_KEY);
-      await refreshEntitlements({ force: true });
+      const next = await refreshEntitlements({ force: true, silent: true });
+      if (next && isPaidPlan(next)) {
+        clearCheckoutStatus();
+        return;
+      }
       if (!cancelled && attempt < maxAttempts) {
         window.setTimeout(poll, 2000);
       }
@@ -520,7 +561,7 @@ export default function SettingsPage() {
     return () => {
       cancelled = true;
     };
-  }, [supabase, checkoutStatus, refreshEntitlements]);
+  }, [clearCheckoutStatus, checkoutStatus, isPaidPlan, refreshEntitlements, supabase]);
 
   useEffect(() => {
     if (active !== "mobile_access") return;
@@ -2244,7 +2285,7 @@ export default function SettingsPage() {
         setBillingError(null);
         try {
           const res = await supabase.functions.invoke("billing-checkout", {
-            body: { interval },
+            body: { interval, return_path: billingReturnPath },
           });
           if (res.error) throw res.error;
           const url = String((res.data as any)?.url ?? "").trim();
@@ -2260,7 +2301,9 @@ export default function SettingsPage() {
         setBillingBusy(true);
         setBillingError(null);
         try {
-          const res = await supabase.functions.invoke("billing-portal", { body: {} });
+          const res = await supabase.functions.invoke("billing-portal", {
+            body: { return_path: billingReturnPath },
+          });
           if (res.error) throw res.error;
           const url = String((res.data as any)?.url ?? "").trim();
           if (!url) throw new Error("Portal URL missing.");

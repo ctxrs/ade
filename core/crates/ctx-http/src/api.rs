@@ -3999,6 +3999,12 @@ struct MobileSecureStreamQuery {
 }
 
 const PAIRING_TOKEN_TTL_SECS: i64 = 10 * 60;
+const DEFAULT_TUNNEL_CONTROL_PLANE_URL: &str = "https://tunnel.ctx.rs";
+
+fn resolve_control_plane_url() -> String {
+    std::env::var("CTX_TUNNEL_CONTROL_PLANE_URL")
+        .unwrap_or_else(|_| DEFAULT_TUNNEL_CONTROL_PLANE_URL.to_string())
+}
 
 async fn get_mobile_access_status(
     State(state): State<Arc<AppState>>,
@@ -4056,7 +4062,7 @@ async fn enable_mobile_access(
         ));
     }
 
-    let control_plane_url = std::env::var("CTX_TUNNEL_CONTROL_PLANE_URL").unwrap_or_default();
+    let control_plane_url = resolve_control_plane_url();
     if control_plane_url.trim().is_empty() {
         return Err((
             StatusCode::BAD_REQUEST,
@@ -4267,7 +4273,7 @@ async fn disable_mobile_access(
         ));
     }
 
-    let control_plane_url = std::env::var("CTX_TUNNEL_CONTROL_PLANE_URL").unwrap_or_default();
+    let control_plane_url = resolve_control_plane_url();
     if !control_plane_url.trim().is_empty() {
         let _ = reqwest::Client::new()
             .post(format!(
