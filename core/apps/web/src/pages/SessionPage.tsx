@@ -104,6 +104,7 @@ type ThreadItem =
     updated_at: string;
     custom_status?: string | null;
     status_text?: string | null;
+    assistant_messages_content?: string;
   }
   | {
     kind: "tool_group";
@@ -2764,12 +2765,39 @@ function WorkbenchTurnStatusRow({
   nowMs: number;
 }) {
   const isRunning = item.status === "running" || item.status === "queued";
+  const isCompleted = item.status === "completed";
   const customStatus = String(item.custom_status ?? item.status_text ?? "").trim();
   const statusLabel = isRunning && customStatus ? customStatus : humanTurnStatus(item.status);
   const startMs = parseIsoMs(item.started_at);
   const endMs = isRunning ? nowMs : parseIsoMs(item.updated_at) ?? nowMs;
   const elapsedMs = startMs != null && endMs != null ? Math.max(0, endMs - startMs) : 0;
   const elapsedLabel = formatElapsedMs(elapsedMs);
+
+  const [copied, setCopied] = useState(false);
+  const resetTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (!copied) return;
+    if (resetTimerRef.current) window.clearTimeout(resetTimerRef.current);
+    resetTimerRef.current = window.setTimeout(() => {
+      setCopied(false);
+      resetTimerRef.current = null;
+    }, 1000);
+    return () => {
+      if (resetTimerRef.current) window.clearTimeout(resetTimerRef.current);
+    };
+  }, [copied]);
+
+  const handleCopy = useCallback(async () => {
+    const content = item.assistant_messages_content ?? "";
+    if (!content.trim()) return;
+    const ok = await copyTextToClipboard(content);
+    if (!ok) return;
+    setCopied(true);
+  }, [item.assistant_messages_content]);
+
+  const hasContent = (item.assistant_messages_content ?? "").trim().length > 0;
+  const showCopyButton = isCompleted && hasContent;
 
   return (
     <div className="wb-turn-status">
@@ -2778,6 +2806,22 @@ function WorkbenchTurnStatusRow({
         ·
       </span>
       <span className="wb-turn-status-time">{elapsedLabel}</span>
+      {showCopyButton && (
+        <>
+          <span className="wb-turn-status-dot" aria-hidden="true">
+            ·
+          </span>
+          <button
+            type="button"
+            className="wb-turn-status-copy"
+            aria-label={copied ? "Copied" : "Copy response"}
+            title={copied ? "Copied" : "Copy response"}
+            onClick={() => void handleCopy()}
+          >
+            {copied ? <Check size={12} aria-hidden="true" /> : <Copy size={12} aria-hidden="true" />}
+          </button>
+        </>
+      )}
     </div>
   );
 }
@@ -3878,6 +3922,10 @@ function buildWorkbenchThreadViewModelFromTurns(
     }
 
     const statusText = customStatusByTurnId.get(turnId) ?? null;
+    const assistantMessagesContent = assistantMessages
+      .map((m) => m.content ?? "")
+      .filter((c) => c.trim().length > 0)
+      .join("\n\n");
     items.push({
       kind: "turn_status",
       id: `turn-status-${turnId}`,
@@ -3888,6 +3936,7 @@ function buildWorkbenchThreadViewModelFromTurns(
       updated_at: turn.updated_at ?? turn.started_at,
       custom_status: statusText,
       status_text: statusText,
+      assistant_messages_content: assistantMessagesContent,
     });
 
     groups.push({
