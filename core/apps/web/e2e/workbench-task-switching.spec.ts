@@ -61,10 +61,15 @@ test("workbench: task switching never desyncs selection (no URL state)", async (
   expect(url2.searchParams.get("session")).toBeNull();
 
   // Switching tasks must keep sidebar + conversation pane aligned.
-  await page.locator(".wb-task-row").filter({ hasText: msg1 }).first().click();
+  const taskRows = page.locator(".wb-task-row");
+  await expect(taskRows).toHaveCount(2, { timeout: 20000 });
+  const newestTaskRow = taskRows.nth(0);
+  const olderTaskRow = taskRows.nth(1);
+
+  await olderTaskRow.click();
   await expect(page.locator(".wb-session")).toContainText(`done: ${msg1}`, { timeout: 20000 });
 
-  await page.locator(".wb-task-row").filter({ hasText: msg2 }).first().click();
+  await newestTaskRow.click();
   await expect(page.locator(".wb-session")).toContainText(`done: ${msg2}`, { timeout: 20000 });
 
   // Refresh should restore the same selection from IndexedDB (window-scoped).

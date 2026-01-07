@@ -1,43 +1,12 @@
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::path::PathBuf;
 
 use axum::body::{to_bytes, Body};
-use axum::http::{Request, StatusCode};
+use axum::http::{Method, Request, StatusCode};
 use base64::Engine;
-use ctx_http::api;
-use ctx_http::daemon::AppState;
-use ctx_providers::fake::FakeProviderAdapter;
-use ctx_store::Store;
 use serde_json::json;
 use tower::ServiceExt;
 
-async fn run_git(repo: &Path, args: &[&str]) {
-    let out = tokio::process::Command::new("git")
-        .current_dir(repo)
-        .args(args)
-        .output()
-        .await
-        .expect("git");
-    assert!(
-        out.status.success(),
-        "git {:?} failed: {}",
-        args,
-        String::from_utf8_lossy(&out.stderr)
-    );
-}
-
-async fn create_test_repo() -> tempfile::TempDir {
-    let dir = tempfile::tempdir().unwrap();
-    let root = dir.path();
-    run_git(root, &["init"]).await;
-    run_git(root, &["config", "user.email", "test@example.com"]).await;
-    run_git(root, &["config", "user.name", "Test"]).await;
-    std::fs::write(root.join("README.md"), "hello\n").unwrap();
-    run_git(root, &["add", "."]).await;
-    run_git(root, &["commit", "-m", "init"]).await;
-    dir
-}
+mod common;
 
 fn multipart_body(
     boundary: &str,
@@ -68,23 +37,14 @@ async fn image_attachments_use_blobs_and_never_persist_base64() {
         .unwrap();
 
     let data_dir = tempfile::tempdir().unwrap();
-    let db_dir = data_dir.path().join("db");
-    tokio::fs::create_dir_all(&db_dir).await.unwrap();
-    let store = Store::open(db_dir.join("db.sqlite")).await.unwrap();
-
-    let mut providers: HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> =
-        HashMap::new();
-    providers.insert("fake".into(), Arc::new(FakeProviderAdapter::new()));
-
-    let state = Arc::new(AppState::new(
+    let store = common::setup_store(data_dir.path()).await;
+    let state = common::build_state(
         data_dir.path().to_path_buf(),
         store,
-        providers,
-        "http://127.0.0.1:4399".to_string(),
-        None,
-    ));
-    state.start_workspace_catchup_listener();
-    let app = api::router(state.clone());
+        common::fake_providers(),
+        "http://127.0.0.1:0",
+    );
+    let app = common::router(state.clone());
 
     // 1) Upload blob and fetch it back.
     let boundary = "ctx-test-boundary";
@@ -123,78 +83,28 @@ async fn image_attachments_use_blobs_and_never_persist_base64() {
 
     // 2) Create workspace/task/track/session and post message with legacy base64 attachment;
     //    server should normalize it to image_ref before persisting.
-    let repo = create_test_repo().await;
-    let req = Request::builder()
-        .method("POST")
-        .uri("/api/workspaces")
-        .header("content-type", "application/json")
-        .body(Body::from(
-            json!({
-                "root_path": repo.path().to_string_lossy(),
-                "name": "ws"
-            })
-            .to_string(),
-        ))
-        .unwrap();
-    let res = app.clone().oneshot(req).await.unwrap();
-    assert_eq!(res.status(), StatusCode::OK);
-    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
-    let ws: ctx_core::models::Workspace = serde_json::from_slice(&body).unwrap();
+    let repo = common::init_git_repo(&[("README.md", "hello\n")]).await;
 
-    let req = Request::builder()
-        .method("POST")
-        .uri(format!("/api/workspaces/{}/tasks", ws.id.0))
-        .header("content-type", "application/json")
-        .body(Body::from(json!({"title":"t1"}).to_string()))
-        .unwrap();
-    let res = app.clone().oneshot(req).await.unwrap();
-    assert_eq!(res.status(), StatusCode::OK);
-    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
-    let task: ctx_core::models::Task = serde_json::from_slice(&body).unwrap();
+    let ws = common::create_workspace(&app, repo.path(), "ws").await;
+    let task = common::create_task(&app, ws.id.0, "t1").await;
     let task_id = task.id.0;
 
-    let req = Request::builder()
-        .method("POST")
-        .uri(format!("/api/tasks/{task_id}/tracks"))
-        .header("content-type", "application/json")
-        .body(Body::from(json!({"label":"t"}).to_string()))
-        .unwrap();
-    let res = app.clone().oneshot(req).await.unwrap();
-    assert_eq!(res.status(), StatusCode::OK);
-    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
-    let track: ctx_core::models::Track = serde_json::from_slice(&body).unwrap();
-
-    let req = Request::builder()
-        .method("POST")
-        .uri(format!("/api/tracks/{}/sessions", track.id.0))
-        .header("content-type", "application/json")
-        .body(Body::from(
-            json!({"provider_id":"fake","model_id":"fake-model"}).to_string(),
-        ))
-        .unwrap();
-    let res = app.clone().oneshot(req).await.unwrap();
-    assert_eq!(res.status(), StatusCode::OK);
-    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
-    let session: ctx_core::models::Session = serde_json::from_slice(&body).unwrap();
+    let track = common::create_track(&app, task_id, "t").await;
+    let session = common::create_session(&app, track.id.0, "fake", "fake-model").await;
 
     let data_base64 = base64::engine::general_purpose::STANDARD.encode(&png_bytes);
-    let req = Request::builder()
-        .method("POST")
-        .uri(format!("/api/sessions/{}/messages", session.id.0))
-        .header("content-type", "application/json")
-        .body(Body::from(
-            json!({
-                "content":"hi",
-                "delivery":"queued",
-                "attachments":[{"kind":"image","mime_type":"image/png","data_base64":data_base64,"name":"x.png"}]
-            })
-            .to_string(),
-        ))
-        .unwrap();
-    let res = app.clone().oneshot(req).await.unwrap();
-    assert_eq!(res.status(), StatusCode::OK);
-    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
-    let msg: ctx_core::models::Message = serde_json::from_slice(&body).unwrap();
+    let (status, msg): (StatusCode, ctx_core::models::Message) = common::json_request(
+        &app,
+        Method::POST,
+        format!("/api/sessions/{}/messages", session.id.0),
+        Some(json!({
+            "content":"hi",
+            "delivery":"queued",
+            "attachments":[{"kind":"image","mime_type":"image/png","data_base64":data_base64,"name":"x.png"}]
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
 
     assert_eq!(msg.attachments.len(), 1);
     let att_json = serde_json::to_value(&msg.attachments[0]).unwrap();

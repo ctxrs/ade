@@ -36,6 +36,10 @@ fn parse_bootstrap_status(raw: Option<String>) -> Option<WorktreeBootstrapStatus
     }
 }
 
+fn parse_optional_session_id(raw: Option<String>) -> Option<SessionId> {
+    raw.and_then(|value| uuid::Uuid::parse_str(&value).ok()).map(SessionId)
+}
+
 pub struct WorktreeBootstrapResultUpdate {
     pub worktree_id: WorktreeId,
     pub status: WorktreeBootstrapStatus,
@@ -1119,6 +1123,8 @@ impl Store {
         model_id: String,
         agent_role: String,
         provider_session_ref: Option<String>,
+        parent_session_id: Option<SessionId>,
+        relationship: Option<String>,
     ) -> Result<Session> {
         let now = Utc::now();
         let session = Session {
@@ -1133,13 +1139,15 @@ impl Store {
             agent_role,
             status: SessionStatus::Active,
             provider_session_ref,
+            parent_session_id,
+            relationship,
             created_at: now,
             updated_at: now,
         };
         sqlx::query(
             r#"INSERT INTO sessions (id, track_id, task_id, workspace_id, worktree_id, provider_id, model_id, title,
-               agent_role, status, provider_session_ref, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+               agent_role, status, provider_session_ref, parent_session_id, relationship, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
         )
         .bind(session.id.0.to_string())
         .bind(session.track_id.0.to_string())
@@ -1152,6 +1160,8 @@ impl Store {
         .bind(&session.agent_role)
         .bind(session_status_to_str(&session.status))
         .bind(&session.provider_session_ref)
+        .bind(session.parent_session_id.map(|id| id.0.to_string()))
+        .bind(&session.relationship)
         .bind(session.created_at.to_rfc3339())
         .bind(session.updated_at.to_rfc3339())
         .execute(&self.pool)
@@ -1162,7 +1172,7 @@ impl Store {
     pub async fn get_session(&self, id: SessionId) -> Result<Option<Session>> {
         let row = sqlx::query(
             r#"SELECT id, track_id, task_id, workspace_id, worktree_id, provider_id, model_id, agent_role,
-               title, status, provider_session_ref, created_at, updated_at
+               title, status, provider_session_ref, parent_session_id, relationship, created_at, updated_at
                FROM sessions WHERE id = ?"#,
         )
         .bind(id.0.to_string())
@@ -1189,6 +1199,8 @@ impl Store {
                 agent_role: r.try_get("agent_role").ok()?,
                 status: parse_session_status(r.try_get::<String, _>("status").ok()?.as_str()),
                 provider_session_ref: r.try_get("provider_session_ref").ok()?,
+                parent_session_id: parse_optional_session_id(r.try_get("parent_session_id").ok()?),
+                relationship: r.try_get("relationship").ok()?,
                 created_at: parse_dt(&created_at).ok()?,
                 updated_at: parse_dt(&updated_at).ok()?,
             })
@@ -1247,7 +1259,7 @@ impl Store {
     pub async fn list_sessions_for_track(&self, track_id: TrackId) -> Result<Vec<Session>> {
         let rows = sqlx::query(
             r#"SELECT id, track_id, task_id, workspace_id, worktree_id, provider_id, model_id, agent_role,
-               title, status, provider_session_ref, created_at, updated_at
+               title, status, provider_session_ref, parent_session_id, relationship, created_at, updated_at
                FROM sessions WHERE track_id = ? ORDER BY created_at ASC"#,
         )
         .bind(track_id.0.to_string())
@@ -1275,6 +1287,8 @@ impl Store {
                 agent_role: r.try_get("agent_role")?,
                 status: parse_session_status(r.try_get::<String, _>("status")?.as_str()),
                 provider_session_ref: r.try_get("provider_session_ref")?,
+                parent_session_id: parse_optional_session_id(r.try_get("parent_session_id")?),
+                relationship: r.try_get("relationship")?,
                 created_at: parse_dt(&created_at)?,
                 updated_at: parse_dt(&updated_at)?,
             });
@@ -1929,7 +1943,7 @@ impl Store {
             let mut session_query = QueryBuilder::new(
                 "
                 SELECT id, track_id, task_id, workspace_id, worktree_id,
-                       provider_id, model_id, title, status, created_at, updated_at
+                       provider_id, model_id, title, status, parent_session_id, relationship, created_at, updated_at
                 FROM (
                     SELECT
                         s.*,
@@ -1975,6 +1989,8 @@ impl Store {
                     model_id: r.try_get("model_id")?,
                     title: r.try_get("title")?,
                     status: parse_session_status(r.try_get::<String, _>("status")?.as_str()),
+                    parent_session_id: parse_optional_session_id(r.try_get("parent_session_id")?),
+                    relationship: r.try_get("relationship")?,
                     created_at: parse_dt(&created_at)?,
                     updated_at: parse_dt(&updated_at)?,
                 };
@@ -2321,6 +2337,8 @@ impl Store {
                 s.agent_role,
                 s.status,
                 s.provider_session_ref,
+                s.parent_session_id,
+                s.relationship,
                 s.created_at,
                 s.updated_at,
                 lm.content AS last_message_content,
@@ -2379,6 +2397,8 @@ impl Store {
                 agent_role: r.try_get("agent_role")?,
                 status: parse_session_status(r.try_get::<String, _>("status")?.as_str()),
                 provider_session_ref: r.try_get("provider_session_ref")?,
+                parent_session_id: parse_optional_session_id(r.try_get("parent_session_id")?),
+                relationship: r.try_get("relationship")?,
                 created_at: parse_dt(&created_at)?,
                 updated_at: parse_dt(&updated_at)?,
             };
@@ -3207,6 +3227,7 @@ impl Store {
         event_type: SessionEventType,
         payload_json: serde_json::Value,
     ) -> Result<SessionEvent> {
+        crate::fault_injection::maybe_fail("ctx_store.append_session_event")?;
         let mut event = SessionEvent {
             seq: 0,
             id: SessionEventId::new(),
@@ -3265,6 +3286,7 @@ impl Store {
         after_seq: Option<i64>,
         limit: Option<u32>,
     ) -> Result<Vec<SessionEvent>> {
+        crate::fault_injection::maybe_fail("ctx_store.list_session_events_page_by_seq")?;
         let session_id_str = session_id.0.to_string();
         let limit_i64 = limit.map(|n| n as i64);
         let rows = if let Some(after_seq) = after_seq {

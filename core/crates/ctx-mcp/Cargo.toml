@@ -21,3 +21,7 @@ urlencoding = "2"
 [dev-dependencies]
 axum.workspace = true
 tower = "0.5"
+rand = "0.8"
+
+[features]
+fuzz_tests = []

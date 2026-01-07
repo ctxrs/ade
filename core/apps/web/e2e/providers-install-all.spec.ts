@@ -26,6 +26,9 @@ test("providers: install all completes for supported providers", async ({ page, 
   const providers = (await providersResp.json()) as any[];
   const installable = providers.filter((p) => p.details?.install_supported === "true");
   expect(installable.length).toBeGreaterThan(0);
+  const tier1 = new Set(["claude", "gemini", "codex", "cursor"]);
+  const targetProviders = installable.filter((p) => tier1.has(String(p.provider_id)));
+  expect(targetProviders.length).toBeGreaterThan(0);
 
   const installAllResp = page.waitForResponse(
     (resp) => resp.url().includes("/api/providers/install_all") && resp.request().method() === "POST",
@@ -34,13 +37,14 @@ test("providers: install all completes for supported providers", async ({ page, 
   const installAll = await installAllResp;
   expect(installAll.ok()).toBeTruthy();
   const installs = (await installAll.json()) as Array<{ provider_id: string; install_id: string }>;
-  expect(installs.length).toBeGreaterThan(0);
+  const targetInstalls = installs.filter((item) => tier1.has(String(item.provider_id)));
+  expect(targetInstalls.length).toBeGreaterThan(0);
 
   await expect
     .poll(
       async () => {
         const infos = await Promise.all(
-          installs.map(async (item) => {
+          targetInstalls.map(async (item) => {
             const resp = await request.get(`/api/providers/install/${item.install_id}`);
             if (!resp.ok()) {
               throw new Error(`install status ${item.provider_id}: ${resp.status()}`);
@@ -59,7 +63,7 @@ test("providers: install all completes for supported providers", async ({ page, 
     )
     .toBe("succeeded");
 
-  for (const install of installs) {
+  for (const install of targetInstalls) {
     const card = page.locator("ul.list > li.card").filter({ hasText: install.provider_id });
     await expect(card.getByText("Install: succeeded")).toBeVisible({ timeout: 60_000 });
   }

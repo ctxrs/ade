@@ -29,6 +29,14 @@ type InstallSession = {
   error?: string;
 };
 
+const nextInstallState = (prev: InstallInfo["state"] | undefined, ev?: InstallProgressEvent) => {
+  if (prev && prev !== "running") return prev;
+  if (!ev) return prev ?? "running";
+  if (ev.level === "error") return "failed";
+  if (ev.stage === "done" || ev.level === "success") return "succeeded";
+  return prev ?? "running";
+};
+
 const fmtBytes = (n: number): string => {
   if (!Number.isFinite(n)) return "";
   const units = ["B", "KB", "MB", "GB"];
@@ -116,21 +124,24 @@ export default function ProvidersPage() {
       },
     }));
 
-    try {
-      const history = await listInstallEvents(installId);
-      setInstalls((prev) => ({
-        ...prev,
-        [providerId]: {
-          installId,
-          state: prev[providerId]?.state ?? "running",
-          events: history,
-          streamError: prev[providerId]?.streamError,
-          error: prev[providerId]?.error,
-        },
-      }));
-    } catch {
-      // ignore
-    }
+    void (async () => {
+      try {
+        const history = await listInstallEvents(installId);
+        const last = history[history.length - 1];
+        setInstalls((prev) => ({
+          ...prev,
+          [providerId]: {
+            installId,
+            state: nextInstallState(prev[providerId]?.state, last),
+            events: history,
+            streamError: prev[providerId]?.streamError,
+            error: prev[providerId]?.error,
+          },
+        }));
+      } catch {
+        // ignore
+      }
+    })();
 
     let eventSource: EventSource | null = null;
     try {
@@ -154,7 +165,7 @@ export default function ProvidersPage() {
               ...prev,
               [providerId]: {
                 installId,
-                state: existing?.state ?? "running",
+                state: nextInstallState(existing?.state, ev),
                 events,
                 streamError: existing?.streamError,
                 error: existing?.error,

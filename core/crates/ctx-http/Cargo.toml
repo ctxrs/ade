@@ -63,6 +63,10 @@ tempfile = "3"
 hyper = { version = "1", features = ["full"] }
 reqwest.workspace = true
 
+[features]
+fault_injection = ["ctx-store/fault_injection"]
+property_tests = []
+
 [[bin]]
 name = "ctx"
 path = "src/main.rs"

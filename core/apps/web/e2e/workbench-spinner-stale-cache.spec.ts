@@ -9,6 +9,13 @@ const getWorkspaceIdFromUrl = (url: string): string => {
   return parts[parts.length - 1] ?? "";
 };
 
+const readId = (v: any): string => {
+  if (!v) return "";
+  if (typeof v === "string") return v;
+  if (typeof v === "object" && typeof v["0"] === "string") return v["0"];
+  return "";
+};
+
 test("workbench: stale cached events do not re-show running", async ({ page }) => {
   test.setTimeout(120000);
   await page.setViewportSize({ width: 1400, height: 900 });
@@ -55,16 +62,21 @@ test("workbench: stale cached events do not re-show running", async ({ page }) =
   const workspaceId = getWorkspaceIdFromUrl(page.url());
   expect(workspaceId).not.toBe("");
 
-  const sessionId = await page.waitForFunction(async (wsId) => {
-    const resp = await fetch(`/api/workspaces/${wsId}/catchup`);
-    if (!resp.ok) return null;
-    const data = await resp.json();
-    const session = data?.active?.tasks?.[0]?.tracks?.[0]?.sessions?.[0]?.session?.id;
-    if (!session) return null;
-    return typeof session === "string" ? session : session?.[0] ?? null;
-  }, workspaceId, { timeout: 20000 });
-  const sessionIdValue = await sessionId.jsonValue();
-  expect(sessionIdValue).not.toBeNull();
+  let sessionIdValue = "";
+  await expect
+    .poll(
+      async () => {
+        const resp = await page.request.get(`/api/workspaces/${workspaceId}/catchup`);
+        if (!resp.ok()) return "";
+        const data = await resp.json();
+        const session = data?.active?.tasks?.[0]?.tracks?.[0]?.sessions?.[0]?.session?.id;
+        sessionIdValue = readId(session);
+        return sessionIdValue;
+      },
+      { timeout: 20000 },
+    )
+    .not.toBe("");
+  expect(sessionIdValue).not.toBe("");
 
   await page.waitForFunction(async (sid) => {
     const resp = await fetch(`/api/sessions/${sid}/head?include_events=1&limit=60`);

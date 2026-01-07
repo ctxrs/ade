@@ -9,8 +9,7 @@ import type {
   WorkspaceCatchupTrackSummary,
 } from "@ctx/types";
 
-const isoAt = (offsetSeconds: number) =>
-  new Date(Date.UTC(2025, 0, 1, 0, 0, offsetSeconds)).toISOString();
+import { isoAt } from "../utils/deterministic";
 
 export type DummyWorkspaceOptions = {
   workspaceId?: string;

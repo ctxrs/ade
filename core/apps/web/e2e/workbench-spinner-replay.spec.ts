@@ -104,13 +104,13 @@ test("workbench: spinner clears after replayed completion", async ({ page }) => 
   await page.locator(".wb-new-composer-stack textarea.wb-composer-textarea").fill(prompt);
   await page.locator(".wb-new-composer-stack button[aria-label=\"Send\"]").click();
 
-  const spinners = page.locator(".wb-task-spinner");
-  await expect(spinners.first()).toBeVisible({ timeout: 20000 });
+  const activeSpinners = page.locator('.wb-task-spinner[data-active="true"]');
+  await expect(activeSpinners.first()).toBeVisible({ timeout: 20000 });
   blockHead = true;
 
   await page.waitForFunction(() => (window as any).__contextSawToolResult === true, undefined, {
     timeout: 20000,
   });
 
-  await expect(spinners).toHaveCount(0, { timeout: 12000 });
+  await expect(activeSpinners).toHaveCount(0, { timeout: 12000 });
 });

@@ -7378,6 +7378,8 @@ fn env_target_for_worktree(wt: Option<&Worktree>) -> String {
 struct CreateSessionReq {
     provider_id: String,
     model_id: String,
+    parent_session_id: Option<String>,
+    relationship: Option<String>,
     initial_prompt: Option<String>,
 }
 
@@ -7399,6 +7401,11 @@ async fn create_session_for_track(
         .and_then(|v| v.to_str().ok())
         .map(|v| v.to_string());
 
+    let parent_session_id = match req.parent_session_id {
+        Some(id) => Some(SessionId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?)),
+        None => None,
+    };
+
     let session = state
         .store
         .create_session(
@@ -7407,6 +7414,8 @@ async fn create_session_for_track(
             req.model_id,
             "implementer".into(),
             None,
+            parent_session_id,
+            req.relationship,
         )
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -7893,6 +7902,9 @@ async fn send_secure_workspace_gap(
     device_id: &str,
     outbound_seq: &mut i64,
 ) -> bool {
+    if crate::fault_injection::maybe_fail("ctx_http.send_secure_workspace_gap").is_err() {
+        return false;
+    }
     let snapshot_rev = state.workspace_catchup.current_rev(workspace_id).await;
     let event = WorkspaceCatchupEvent::SessionGap {
         workspace_id,
@@ -7921,11 +7933,37 @@ async fn replay_session_events_secure(
     let snapshot_rev = state.workspace_catchup.current_rev(workspace_id).await;
     let mut last_sent = after_seq.max(0);
     let limit = u32::try_from(SESSION_REPLAY_MAX_EVENTS + 1).unwrap_or(u32::MAX);
-    let events = state
-        .store
-        .list_session_events_page_by_seq(session_id, Some(last_sent), Some(limit))
-        .await
-        .map_err(|_| ())?;
+    let events =
+        match crate::fault_injection::maybe_fail("ctx_http.replay_session_events_secure.list") {
+            Ok(()) => state
+                .store
+                .list_session_events_page_by_seq(session_id, Some(last_sent), Some(limit))
+                .await
+                .map_err(|_| ())?,
+            Err(_) => {
+                let latest = state
+                    .store
+                    .get_session_last_event_seq(session_id)
+                    .await
+                    .unwrap_or(last_sent);
+                if !send_secure_workspace_gap(
+                    socket,
+                    state,
+                    workspace_id,
+                    session_id,
+                    latest,
+                    "replay_error",
+                    key,
+                    device_id,
+                    outbound_seq,
+                )
+                .await
+                {
+                    return Err(());
+                }
+                return Ok((latest, true));
+            }
+        };
 
     if events.len() > SESSION_REPLAY_MAX_EVENTS {
         let latest = state
@@ -8014,6 +8052,9 @@ async fn send_workspace_gap(
     after_seq: i64,
     reason: &str,
 ) -> bool {
+    if crate::fault_injection::maybe_fail("ctx_http.send_workspace_gap").is_err() {
+        return false;
+    }
     let snapshot_rev = state.workspace_catchup.current_rev(workspace_id).await;
     let event = WorkspaceCatchupEvent::SessionGap {
         workspace_id,
@@ -8039,11 +8080,55 @@ async fn replay_session_events(
     let snapshot_rev = state.workspace_catchup.current_rev(workspace_id).await;
     let mut last_sent = after_seq.max(0);
     let limit = u32::try_from(SESSION_REPLAY_MAX_EVENTS + 1).unwrap_or(u32::MAX);
-    let events = state
-        .store
-        .list_session_events_page_by_seq(session_id, Some(last_sent), Some(limit))
-        .await
-        .map_err(|_| ())?;
+    let events = match crate::fault_injection::maybe_fail("ctx_http.replay_session_events.list") {
+        Ok(()) => match state
+            .store
+            .list_session_events_page_by_seq(session_id, Some(last_sent), Some(limit))
+            .await
+        {
+            Ok(events) => events,
+            Err(_) => {
+                let latest = state
+                    .store
+                    .get_session_last_event_seq(session_id)
+                    .await
+                    .unwrap_or(last_sent);
+                if !send_workspace_gap(
+                    socket,
+                    state,
+                    workspace_id,
+                    session_id,
+                    latest,
+                    "replay_error",
+                )
+                .await
+                {
+                    return Err(());
+                }
+                return Ok((latest, true));
+            }
+        },
+        Err(_) => {
+            let latest = state
+                .store
+                .get_session_last_event_seq(session_id)
+                .await
+                .unwrap_or(last_sent);
+            if !send_workspace_gap(
+                socket,
+                state,
+                workspace_id,
+                session_id,
+                latest,
+                "replay_error",
+            )
+            .await
+            {
+                return Err(());
+            }
+            return Ok((latest, true));
+        }
+    };
 
     if events.len() > SESSION_REPLAY_MAX_EVENTS {
         let latest = state
@@ -8113,6 +8198,8 @@ async fn replay_session_events(
             delta: Box::new(delta),
         };
         let text = serde_json::to_string(&wrapped).map_err(|_| ())?;
+        crate::fault_injection::maybe_fail("ctx_http.replay_session_events.send")
+            .map_err(|_| ())?;
         socket.send(WsMessage::Text(text)).await.map_err(|_| ())?;
         last_sent = next_seq;
     }
@@ -10097,6 +10184,8 @@ mod tests {
                 "fake".to_string(),
                 "fake-model".to_string(),
                 "implementer".to_string(),
+                None,
+                None,
                 None,
             )
             .await

@@ -1976,11 +1976,7 @@ fn lsp_file_call_body(arguments: &Value) -> Result<Value> {
     }))
 }
 
-async fn lsp_workspace_symbols_call(
-    client: &reqwest::Client,
-    daemon_url: &str,
-    arguments: &Value,
-) -> Result<Value> {
+fn lsp_workspace_symbols_body(arguments: &Value) -> Result<Value> {
     let session_id = arguments
         .get("session_id")
         .and_then(|v| v.as_str())
@@ -1995,19 +1991,14 @@ async fn lsp_workspace_symbols_call(
         .and_then(|v| v.as_str())
         .context("missing query")?
         .to_string();
-    let body = json!({
+    Ok(json!({
         "session_id": session_id,
         "root_path": root_path,
         "query": query
-    });
-    daemon_post_json(client, daemon_url, "/api/lsp/workspace_symbols", &body).await
+    }))
 }
 
-async fn lsp_workspace_symbol_resolve_call(
-    client: &reqwest::Client,
-    daemon_url: &str,
-    arguments: &Value,
-) -> Result<Value> {
+fn lsp_workspace_symbol_resolve_body(arguments: &Value) -> Result<Value> {
     let session_id = arguments
         .get("session_id")
         .and_then(|v| v.as_str())
@@ -2018,11 +2009,28 @@ async fn lsp_workspace_symbol_resolve_call(
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
     let item = arguments.get("item").cloned().context("missing item")?;
-    let body = json!({
+    Ok(json!({
         "session_id": session_id,
         "root_path": root_path,
         "item": item,
-    });
+    }))
+}
+
+async fn lsp_workspace_symbols_call(
+    client: &reqwest::Client,
+    daemon_url: &str,
+    arguments: &Value,
+) -> Result<Value> {
+    let body = lsp_workspace_symbols_body(arguments)?;
+    daemon_post_json(client, daemon_url, "/api/lsp/workspace_symbols", &body).await
+}
+
+async fn lsp_workspace_symbol_resolve_call(
+    client: &reqwest::Client,
+    daemon_url: &str,
+    arguments: &Value,
+) -> Result<Value> {
+    let body = lsp_workspace_symbol_resolve_body(arguments)?;
     daemon_post_json(
         client,
         daemon_url,
@@ -2463,4 +2471,111 @@ async fn session_close_call(
         return Ok(json!({"closed": true}));
     }
     Ok(res.json::<Value>().await?)
+}
+
+#[cfg(all(test, feature = "fuzz_tests"))]
+mod fuzz_tests {
+    use super::*;
+    use rand::rngs::StdRng;
+    use rand::{Rng, SeedableRng};
+    use serde_json::{Map, Value};
+    use std::panic::{catch_unwind, AssertUnwindSafe};
+
+    const ITERATIONS: usize = 200;
+    const MAX_DEPTH: u8 = 3;
+
+    fn random_string(rng: &mut StdRng, max_len: usize) -> String {
+        const ALPHABET: &[u8] = b"abcdefghijklmnopqrstuvwxyz0123456789_-";
+        let len = rng.gen_range(1..=max_len);
+        (0..len)
+            .map(|_| ALPHABET[rng.gen_range(0..ALPHABET.len())] as char)
+            .collect()
+    }
+
+    fn random_value(rng: &mut StdRng, depth: u8) -> Value {
+        if depth == 0 {
+            return match rng.gen_range(0..4) {
+                0 => Value::String(random_string(rng, 12)),
+                1 => Value::Number(rng.gen_range(0..=9999).into()),
+                2 => Value::Bool(rng.gen_bool(0.5)),
+                _ => Value::Null,
+            };
+        }
+
+        match rng.gen_range(0..4) {
+            0 => Value::String(random_string(rng, 24)),
+            1 => {
+                let mut map = Map::new();
+                let entries = rng.gen_range(0..=3);
+                for _ in 0..entries {
+                    map.insert(random_string(rng, 10), random_value(rng, depth - 1));
+                }
+                Value::Object(map)
+            }
+            2 => {
+                let items = rng.gen_range(0..=4);
+                Value::Array((0..items).map(|_| random_value(rng, depth - 1)).collect())
+            }
+            _ => Value::Number(rng.gen_range(0..=9999).into()),
+        }
+    }
+
+    fn random_lsp_arguments(rng: &mut StdRng) -> Value {
+        if rng.gen_bool(0.2) {
+            return random_value(rng, MAX_DEPTH);
+        }
+
+        let mut map = Map::new();
+        if rng.gen_bool(0.7) {
+            map.insert("path".into(), Value::String(random_string(rng, 32)));
+        }
+        if rng.gen_bool(0.6) {
+            map.insert("query".into(), Value::String(random_string(rng, 20)));
+        }
+        if rng.gen_bool(0.6) {
+            map.insert(
+                "item".into(),
+                random_value(rng, MAX_DEPTH.saturating_sub(1)),
+            );
+        }
+        if rng.gen_bool(0.5) {
+            map.insert("session_id".into(), Value::String(random_string(rng, 12)));
+        }
+        if rng.gen_bool(0.3) {
+            map.insert(
+                "root_path".into(),
+                Value::String(format!("/tmp/{}", random_string(rng, 8))),
+            );
+        }
+
+        let extras = rng.gen_range(0..=3);
+        for _ in 0..extras {
+            map.insert(random_string(rng, 8), random_value(rng, MAX_DEPTH));
+        }
+
+        Value::Object(map)
+    }
+
+    #[test]
+    fn fuzz_lsp_argument_body_builders_do_not_panic() {
+        let mut rng = StdRng::seed_from_u64(0xC0DE_2025);
+
+        for idx in 0..ITERATIONS {
+            let arguments = random_lsp_arguments(&mut rng);
+
+            let result = catch_unwind(AssertUnwindSafe(|| lsp_file_call_body(&arguments)));
+            assert!(result.is_ok(), "panic in lsp_file_call_body: {idx}");
+
+            let result = catch_unwind(AssertUnwindSafe(|| lsp_workspace_symbols_body(&arguments)));
+            assert!(result.is_ok(), "panic in lsp_workspace_symbols_body: {idx}");
+
+            let result = catch_unwind(AssertUnwindSafe(|| {
+                lsp_workspace_symbol_resolve_body(&arguments)
+            }));
+            assert!(
+                result.is_ok(),
+                "panic in lsp_workspace_symbol_resolve_body: {idx}"
+            );
+        }
+    }
 }

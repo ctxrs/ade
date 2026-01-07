@@ -4,6 +4,7 @@
   "packageManager": "pnpm@9.15.1",
   "scripts": {
     "test": "cargo test -q && pnpm -C apps/web test",
+    "test:agent": "CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-$HOME/.cache/cargo/ctx-monorepo} cargo test -q -p ctx-core -p ctx-providers -p ctx-http -p ctx-mcp -p ctx-lsp && pnpm -C apps/web test:quiet && pnpm -C apps/mobile test:quiet",
     "test:e2e": "pnpm -C apps/web test:e2e",
     "test:providers:e2e": "cargo test -p ctx-providers --test real_acp_e2e -- --ignored --nocapture --test-threads=1",
     "test:providers:e2e:runner": "cargo test -p ctx-http --test provider_runner_acp_e2e -- --ignored --nocapture --test-threads=1",

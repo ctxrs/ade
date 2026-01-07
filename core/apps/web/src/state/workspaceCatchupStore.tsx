@@ -345,6 +345,7 @@ class WorkspaceCatchupStoreImpl implements WorkspaceCatchupEventSource {
         opened = true;
         window.clearTimeout(timeoutId);
         this.ws = ws;
+        this.reconnectDelayMs = 1000;
         this.snapshot.connection = "connected";
         this.publish();
         this.flushSubscriptions();

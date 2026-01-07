@@ -9,10 +9,9 @@ async function createWorkspaceAndStartRun(opts: {
   request: any;
   repo: string;
   workspaceName: string;
-  taskTitle: string;
   prompt: string;
 }) {
-  const { page, repo, workspaceName, taskTitle, prompt, request } = opts;
+  const { page, repo, workspaceName, prompt, request } = opts;
 
   await page.goto("/");
   await page.getByLabel("Root path").fill(repo);
@@ -66,7 +65,7 @@ async function createWorkspaceAndStartRun(opts: {
         const resp = await request.get(`/api/workspaces/${workspaceId}/catchup`);
         if (!resp.ok()) return "";
         const snapshot = (await resp.json()) as any;
-        const taskSummary = snapshot?.active?.tasks?.find((t: any) => String(t?.task?.title ?? "") === taskTitle);
+        const taskSummary = snapshot?.active?.tasks?.[0];
         if (!taskSummary) return "";
         taskId = readId(taskSummary?.task?.id);
         const trackSummary = taskSummary?.tracks?.[0];
@@ -113,7 +112,6 @@ test("workbench: diff updates mid-turn", async ({ page, request }) => {
     request,
     repo,
     workspaceName,
-    taskTitle,
     prompt: taskTitle,
   });
 
@@ -141,7 +139,6 @@ test("workbench: diff updates for manual edits while idle", async ({ page, reque
     request,
     repo,
     workspaceName,
-    taskTitle,
     prompt: taskTitle,
   });
 

@@ -82,6 +82,7 @@ type InternalEntry = SessionCacheEntry & {
   trackId?: string;
   diagnosticsByPath: Record<string, any[]>;
   loadedFromCache: boolean;
+  headFromCache: boolean;
   fetching: {
     head: boolean;
     history: boolean;
@@ -348,6 +349,7 @@ export class SessionSupervisor {
       artifactsFetchedAtMs: undefined,
       trackId: undefined,
       loadedFromCache: false,
+      headFromCache: false,
       fetching: {
         head: false,
         history: false,
@@ -365,7 +367,7 @@ export class SessionSupervisor {
       await this.loadCachedHead(entry);
     }
     if (entry.fetching.head) return;
-    if (entry.turnsHydrated && !opts?.force) {
+    if (entry.turnsHydrated && !opts?.force && !entry.headFromCache) {
       if (opts?.watchDiff) {
         void this.refreshDiff(entry);
       }
@@ -441,6 +443,7 @@ export class SessionSupervisor {
     },
     opts?: { fromCache?: boolean },
   ) {
+    entry.headFromCache = Boolean(opts?.fromCache);
     entry.session = head.session;
     entry.trackId = idToString(head.session.track_id);
     entry.turnsHydrated = true;

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { waitForCondition } from "../testUtils/waitForCondition";
 
 import type { Message, Session, SessionEvent, SessionTurn, WorkspaceCatchupEvent } from "../api/client";
 import type { WorkspaceCatchupEventSource } from "./workspaceCatchupStore";
@@ -34,15 +35,6 @@ const mkSession = (sessionId: string, trackId: string): Session => ({
   agent_role: "assistant",
   status: "active",
 });
-
-async function waitForCondition(cond: () => boolean, timeoutMs = 1000) {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    if (cond()) return;
-    await new Promise((r) => setTimeout(r, 0));
-  }
-  throw new Error("Timed out waiting for condition");
-}
 
 describe("SessionSupervisor", () => {
   afterEach(() => {

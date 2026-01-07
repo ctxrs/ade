@@ -10,6 +10,7 @@ const dataDir =
 export default defineConfig({
   testDir: "./e2e",
   timeout: 60_000,
+  workers: Number(process.env.PW_WORKERS ?? 4),
   use: {
     baseURL,
     headless: true,

@@ -1,0 +1,63 @@
+{
+  "version": 1,
+  "provider": "claude",
+  "case": "error_auth_required_tool_failed",
+  "description": "Synthetic error case: failed tool_call_update + prompt returns auth-required error.",
+  "events": [
+    {
+      "type": "session_update",
+      "msg": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "sess_claude_err_1",
+          "update": {
+            "sessionUpdate": "agent_message_chunk",
+            "content": { "type": "text", "text": "Starting..." }
+          }
+        }
+      }
+    },
+    {
+      "type": "session_update",
+      "msg": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "sess_claude_err_1",
+          "update": {
+            "sessionUpdate": "tool_call",
+            "toolCallId": "tool_claude_shell",
+            "name": "shell",
+            "input": { "cmd": "false" }
+          }
+        }
+      }
+    },
+    {
+      "type": "session_update",
+      "msg": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "sess_claude_err_1",
+          "update": {
+            "sessionUpdate": "tool_call_update",
+            "toolCallId": "tool_claude_shell",
+            "status": "failed",
+            "output": { "exit_code": 1 }
+          }
+        }
+      }
+    },
+    {
+      "type": "prompt_response",
+      "msg": {
+        "jsonrpc": "2.0",
+        "id": 11,
+        "error": { "code": -32001, "message": "AuthRequired" }
+      }
+    }
+  ]
+}
+

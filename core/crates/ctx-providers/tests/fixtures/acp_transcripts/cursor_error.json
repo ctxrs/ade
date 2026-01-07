@@ -1,0 +1,63 @@
+{
+  "version": 1,
+  "provider": "cursor",
+  "case": "error_auth_required_tool_failed",
+  "description": "Synthetic error case: tool_call_update failed + auth-required prompt error.",
+  "events": [
+    {
+      "type": "session_update",
+      "msg": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "sess_cursor_err_1",
+          "update": {
+            "sessionUpdate": "agent_message_chunk",
+            "content": { "type": "text", "text": "..." }
+          }
+        }
+      }
+    },
+    {
+      "type": "session_update",
+      "msg": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "sess_cursor_err_1",
+          "update": {
+            "sessionUpdate": "tool_call",
+            "toolCallId": "tool_cursor_shell",
+            "name": "shell",
+            "input": { "cmd": "exit 1" }
+          }
+        }
+      }
+    },
+    {
+      "type": "session_update",
+      "msg": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "sess_cursor_err_1",
+          "update": {
+            "sessionUpdate": "tool_call_update",
+            "toolCallId": "tool_cursor_shell",
+            "status": "failed",
+            "output": { "exit_code": 1 }
+          }
+        }
+      }
+    },
+    {
+      "type": "prompt_response",
+      "msg": {
+        "jsonrpc": "2.0",
+        "id": 31,
+        "error": { "code": 401, "message": "authentication required" }
+      }
+    }
+  ]
+}
+

@@ -21,7 +21,7 @@ test("workbench: rename task keeps focus and persists", async ({ page, request }
 
   await firstRow.hover();
   await firstRow.locator(".wb-task-menu-trigger").click();
-  await page.locator(".wb-menu.wb-task-menu").getByRole("button", { name: "Rename Task" }).click();
+  await page.locator(".wb-menu.wb-task-menu").getByRole("menuitem", { name: "Rename Task" }).click();
 
   const renameInput = firstRow.locator("input.wb-task-rename");
   await expect(renameInput).toBeFocused();
@@ -60,7 +60,7 @@ test("workbench: rename task keeps focus and persists", async ({ page, request }
   const refreshedFirstRow = page.locator(".wb-task-row").nth(0);
   await refreshedFirstRow.hover();
   await refreshedFirstRow.locator(".wb-task-menu-trigger").click();
-  await page.locator(".wb-menu.wb-task-menu").getByRole("button", { name: "Rename Task" }).click();
+  await page.locator(".wb-menu.wb-task-menu").getByRole("menuitem", { name: "Rename Task" }).click();
   const renameInput2 = refreshedFirstRow.locator("input.wb-task-rename");
   await expect(renameInput2).toBeFocused();
   await renameInput2.fill(renamedTitle2);

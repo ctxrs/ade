@@ -2,6 +2,18 @@ pub mod store;
 
 pub use store::{Store, WorktreeBootstrapResultUpdate};
 
+#[cfg(feature = "fault_injection")]
+pub mod fault_injection;
+
+#[cfg(not(feature = "fault_injection"))]
+pub mod fault_injection {
+    pub fn clear_failpoints() {}
+    pub fn set_failpoint(_point: &'static str, _times: u32) {}
+    pub fn maybe_fail(_point: &'static str) -> anyhow::Result<()> {
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::Store;
@@ -121,6 +133,8 @@ mod tests {
                     "fake".into(),
                     "implementer".into(),
                     None,
+                    None,
+                    None,
                 )
                 .await
                 .unwrap();
@@ -232,6 +246,8 @@ mod tests {
                 "fake".into(),
                 "fake-model".into(),
                 "implementer".into(),
+                None,
+                None,
                 None,
             )
             .await
