@@ -1748,10 +1748,7 @@ fn tool_err(e: anyhow::Error) -> Value {
 }
 
 fn bearer_token() -> Option<String> {
-    ctx_env_opt("MCP_TOKEN")
-        .or_else(|| ctx_env_opt("DESKTOP_TOKEN"))
-        .or_else(|| ctx_env_opt("DAEMON_TOKEN"))
-        .or_else(|| ctx_env_opt("AUTH_TOKEN"))
+    ctx_env_opt("AUTH_TOKEN")
 }
 
 async fn daemon_get_json(client: &reqwest::Client, daemon_url: &str, path: &str) -> Result<Value> {

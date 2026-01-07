@@ -37,7 +37,6 @@ type RecentEntry =
       user?: string | null;
       remote_port: number;
       start_remote?: boolean;
-      auth_token?: string | null;
       remote_data_dir?: string | null;
       updated_at_ms: number;
     };
@@ -214,7 +213,6 @@ export default function LauncherPage() {
   const [sshUser, setSshUser] = useState("");
   const [sshRemotePort, setSshRemotePort] = useState(4399);
   const [sshStartRemote, setSshStartRemote] = useState(true);
-  const [sshToken, setSshToken] = useState("");
   const [sshDataDir, setSshDataDir] = useState("~/.ctx");
 
   const onConnectSsh = async (e: React.FormEvent) => {
@@ -227,7 +225,6 @@ export default function LauncherPage() {
         user: sshUser.trim() || null,
         remote_port: sshRemotePort,
         start_remote: sshStartRemote,
-        auth_token: sshToken.trim() || null,
         remote_data_dir: sshDataDir.trim() || null,
       });
       setConnection(info);
@@ -239,7 +236,6 @@ export default function LauncherPage() {
         user: sshUser.trim() || null,
         remote_port: sshRemotePort,
         start_remote: sshStartRemote,
-        auth_token: String(info.token ?? sshToken).trim() || null,
         remote_data_dir: sshDataDir.trim() || null,
         updated_at_ms: Date.now(),
       });
@@ -264,12 +260,11 @@ export default function LauncherPage() {
         user: r.user ?? null,
         remote_port: r.remote_port,
         start_remote: Boolean(r.start_remote),
-        auth_token: r.auth_token ?? null,
         remote_data_dir: r.remote_data_dir ?? null,
       });
       setConnection(info);
       applyConnection(info);
-      upsertRecent({ ...r, auth_token: String(info.token ?? r.auth_token ?? "").trim() || null, updated_at_ms: Date.now() });
+      upsertRecent({ ...r, updated_at_ms: Date.now() });
       navigate("/workspaces", { replace: true });
     } catch (e: any) {
       setError(e?.message ?? String(e));
@@ -440,10 +435,6 @@ export default function LauncherPage() {
           <label>
             <div className="muted">Remote data dir</div>
             <input value={sshDataDir} onChange={(e) => setSshDataDir(e.target.value)} />
-          </label>
-          <label style={{ gridColumn: "1 / span 2" }}>
-            <div className="muted">Auth token (optional)</div>
-            <input value={sshToken} onChange={(e) => setSshToken(e.target.value)} placeholder="(leave empty to auto-generate when starting remote)" />
           </label>
         </div>
 

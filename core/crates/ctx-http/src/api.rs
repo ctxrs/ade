@@ -443,11 +443,6 @@ struct MobileAuthContext {
     profile_id: ConnectionProfileId,
 }
 
-#[derive(Clone, Copy)]
-struct McpAuthContext {
-    session_id: SessionId,
-}
-
 #[derive(Debug, Deserialize)]
 struct CreateMobileConnectionProfileReq {
     label: String,
@@ -3701,7 +3696,9 @@ async fn auth_middleware(
     if path.starts_with("/api/mobile/secure") || path == "/api/mobile/pair" {
         return Ok(next.run(req).await);
     }
-    let is_mcp_path = path.starts_with("/api/mcp/");
+    if state.auth_token.is_none() {
+        return Ok(next.run(req).await);
+    }
     if req.extensions().get::<MobileAuthContext>().is_some() {
         return Ok(next.run(req).await);
     }
@@ -3726,48 +3723,17 @@ async fn auth_middleware(
         });
     }
 
-    match state.auth_token.clone() {
-        Some(expected) => {
-            if token.as_deref() == Some(expected.as_str()) {
-                return Ok(next.run(req).await);
-            }
-            if is_mcp_path {
-                if let Some(token_value) = token.as_deref() {
-                    if let Some(session_id) = state.lookup_mcp_token(token_value).await {
-                        req.extensions_mut().insert(McpAuthContext { session_id });
-                        return Ok(next.run(req).await);
-                    }
-                }
-            }
-            if let Some(token_value) = token {
-                if let Some(profile_id) = verify_mobile_api_token(&state, &token_value).await? {
-                    req.extensions_mut()
-                        .insert(MobileAuthContext { profile_id });
-                    return Ok(next.run(req).await);
-                }
-            }
-            Err(StatusCode::UNAUTHORIZED)
-        }
-        None => {
-            if is_mcp_path {
-                if let Some(token_value) = token.as_deref() {
-                    if let Some(session_id) = state.lookup_mcp_token(token_value).await {
-                        req.extensions_mut().insert(McpAuthContext { session_id });
-                        return Ok(next.run(req).await);
-                    }
-                }
-            }
-            if let Some(token_value) = token {
-                if let Some(profile_id) = verify_mobile_api_token(&state, &token_value).await? {
-                    req.extensions_mut()
-                        .insert(MobileAuthContext { profile_id });
-                    return Ok(next.run(req).await);
-                }
-                return Err(StatusCode::UNAUTHORIZED);
-            }
-            Ok(next.run(req).await)
+    if token.as_deref() == state.auth_token.as_deref() {
+        return Ok(next.run(req).await);
+    }
+    if let Some(token_value) = token {
+        if let Some(profile_id) = verify_mobile_api_token(&state, &token_value).await? {
+            req.extensions_mut()
+                .insert(MobileAuthContext { profile_id });
+            return Ok(next.run(req).await);
         }
     }
+    Err(StatusCode::UNAUTHORIZED)
 }
 
 async fn list_mobile_connection_profiles(
@@ -9838,15 +9804,8 @@ async fn enqueue_subagent_prompt(
 async fn mcp_agent_init(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
-    mcp_auth: Option<Extension<McpAuthContext>>,
     Json(req): Json<AgentInitReq>,
 ) -> Result<Json<AgentInitResp>, (StatusCode, Json<ApiErrorResp>)> {
-    let auth = mcp_auth.ok_or((
-        StatusCode::UNAUTHORIZED,
-        Json(ApiErrorResp {
-            error: "mcp token required".to_string(),
-        }),
-    ))?;
     let parent_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| {
         (
             StatusCode::BAD_REQUEST,
@@ -9855,14 +9814,6 @@ async fn mcp_agent_init(
             }),
         )
     })?);
-    if auth.session_id != parent_id {
-        return Err((
-            StatusCode::FORBIDDEN,
-            Json(ApiErrorResp {
-                error: "mcp token does not match parent session".to_string(),
-            }),
-        ));
-    }
 
     if req.agents.is_empty() {
         return Err((
@@ -10134,15 +10085,8 @@ async fn mcp_agent_init(
 async fn mcp_agent_reply(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
-    mcp_auth: Option<Extension<McpAuthContext>>,
     Json(req): Json<AgentReplyReq>,
 ) -> Result<Json<AgentReplyResp>, (StatusCode, Json<ApiErrorResp>)> {
-    let auth = mcp_auth.ok_or((
-        StatusCode::UNAUTHORIZED,
-        Json(ApiErrorResp {
-            error: "mcp token required".to_string(),
-        }),
-    ))?;
     let parent_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| {
         (
             StatusCode::BAD_REQUEST,
@@ -10151,14 +10095,6 @@ async fn mcp_agent_reply(
             }),
         )
     })?);
-    if auth.session_id != parent_id {
-        return Err((
-            StatusCode::FORBIDDEN,
-            Json(ApiErrorResp {
-                error: "mcp token does not match parent session".to_string(),
-            }),
-        ));
-    }
 
     let parent = state
         .store
@@ -10460,11 +10396,6 @@ async fn authenticate_session(
         provider_env.insert("CTX_PROVIDER_SESSION_REF".to_string(), provider_ref);
     }
     provider_env.insert("CTX_SESSION_ID".to_string(), session.id.0.to_string());
-    let mcp_token = uuid::Uuid::new_v4().to_string();
-    state
-        .register_mcp_token(session.id, mcp_token.clone())
-        .await;
-    provider_env.insert("CTX_MCP_TOKEN".to_string(), mcp_token);
     if let Ok(v) = std::env::var("CTX_MCP_COMMAND") {
         provider_env.insert("CTX_MCP_COMMAND".to_string(), v);
     }

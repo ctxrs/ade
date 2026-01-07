@@ -11,7 +11,6 @@ export type SshConnectReq = {
   user?: string | null;
   remote_port?: number | null;
   start_remote?: boolean;
-  auth_token?: string | null;
   remote_data_dir?: string | null;
 };
 

@@ -360,9 +360,6 @@ fn build_acp_client_config(env: &HashMap<String, String>) -> AcpClientConfig {
     if let Some(token) = env.get("CTX_AUTH_TOKEN") {
         mcp_env.insert("CTX_AUTH_TOKEN".to_string(), token.clone());
     }
-    if let Some(token) = env.get("CTX_MCP_TOKEN") {
-        mcp_env.insert("CTX_MCP_TOKEN".to_string(), token.clone());
-    }
     if let Some(session_id) = env.get("CTX_SESSION_ID") {
         mcp_env.insert("CTX_SESSION_ID".to_string(), session_id.clone());
     }
