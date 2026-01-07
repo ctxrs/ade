@@ -2256,6 +2256,7 @@ impl Store {
             if row.session.track_id != track_id {
                 continue;
             }
+            let is_subagent = row.session.relationship.as_deref() == Some("sub_agent");
             summary.sessions.push(SessionCatchupSummary {
                 session: row.session.clone(),
                 last_message_at: row.last_message_at,
@@ -2264,6 +2265,10 @@ impl Store {
                 activity: row.activity.clone(),
                 unread: None,
             });
+
+            if is_subagent {
+                continue;
+            }
 
             let rank = if matches!(row.session.status, SessionStatus::Active) {
                 0
@@ -2363,6 +2368,7 @@ impl Store {
                 HashMap::new();
 
             for row in session_rows {
+                let is_subagent = row.session.relationship.as_deref() == Some("sub_agent");
                 let summary = SessionCatchupSummary {
                     session: row.session.clone(),
                     last_message_at: row.last_message_at,
@@ -2376,6 +2382,10 @@ impl Store {
                     summaries[*task_idx].tracks[*track_pos]
                         .sessions
                         .push(summary);
+                }
+
+                if is_subagent {
+                    continue;
                 }
 
                 let rank = if matches!(row.session.status, SessionStatus::Active) {

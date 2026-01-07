@@ -69,14 +69,18 @@ export function WorkbenchScreen({ navigation }: Props): React.JSX.Element {
   const selectedSessionId = useMemo(() => {
     if (!selectedTrack) return null;
     const sessions = selectedTrack.sessions ?? [];
+    const mainSessions = sessions.filter((s) => s.session.relationship !== "sub_agent");
+    const candidates = mainSessions.length > 0 ? mainSessions : sessions;
     if (selection.sessionId && sessions.some((s) => idToString(s.session.id) === selection.sessionId)) {
       return selection.sessionId;
     }
     const primary = idToString(selectedTrack.primary_session_id ?? "");
     if (primary && sessions.some((s) => idToString(s.session.id) === primary)) return primary;
-    const running = sessions.find((s) => s.session.status === "active" || s.session.status === "running");
+    const running = candidates.find((s) => s.session.status === "active" || s.session.status === "running");
     if (running) return idToString(running.session.id);
-    const newest = [...sessions].sort((a, b) => String(b.session.created_at ?? "").localeCompare(String(a.session.created_at ?? "")))[0];
+    const newest = [...candidates].sort((a, b) =>
+      String(b.session.created_at ?? "").localeCompare(String(a.session.created_at ?? "")),
+    )[0];
     return newest ? idToString(newest.session.id) : null;
   }, [selectedTrack, selection.sessionId]);
 

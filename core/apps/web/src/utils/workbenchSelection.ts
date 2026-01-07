@@ -6,15 +6,18 @@ export function pickPreferredSession(
 ): any | null {
   const list = sessions ?? [];
   if (!Array.isArray(list) || list.length === 0) return null;
+  const isSubagent = (s: any) => s?.relationship === "sub_agent";
+  const nonSubagents = list.filter((s) => !isSubagent(s));
+  const candidates = nonSubagents.length > 0 ? nonSubagents : list;
   if (preferredSessionId) {
-    const preferred = list.find((s) => idToString((s as any)?.id) === preferredSessionId);
+    const preferred = candidates.find((s) => idToString((s as any)?.id) === preferredSessionId);
     if (preferred) return preferred;
   }
-  for (let i = list.length - 1; i >= 0; i--) {
-    const s = list[i];
+  for (let i = candidates.length - 1; i >= 0; i--) {
+    const s = candidates[i];
     if (s?.status === "active") return s;
   }
-  return list[list.length - 1] ?? null;
+  return candidates[candidates.length - 1] ?? null;
 }
 
 export function pickPreferredSessionId(
