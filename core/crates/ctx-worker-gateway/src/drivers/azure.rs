@@ -52,6 +52,16 @@ struct AzureWorkerState {
     public_ip_name: Option<String>,
 }
 
+struct CreateVmParams<'a> {
+    worker_id: &'a str,
+    vm_name: &'a str,
+    nic_name: &'a str,
+    disk_name: &'a str,
+    spec: &'a StartWorkerRequest,
+    base_commit_sha: &'a str,
+    gateway_url: &'a str,
+}
+
 impl AzureDriver {
     pub async fn new(config: AzureConfig, auth_token: Option<String>) -> Result<Self> {
         Ok(Self {
@@ -309,26 +319,17 @@ impl AzureDriver {
         self.wait_resource(&url).await
     }
 
-    async fn create_vm(
-        &self,
-        worker_id: &str,
-        vm_name: &str,
-        nic_name: &str,
-        disk_name: &str,
-        spec: &StartWorkerRequest,
-        base_commit_sha: &str,
-        gateway_url: &str,
-    ) -> Result<()> {
+    async fn create_vm(&self, params: CreateVmParams<'_>) -> Result<()> {
         let device_by_id = "/dev/disk/azure/scsi1/lun0".to_string();
         let bootstrap = BootstrapSpec {
-            worker_id,
-            gateway_url,
+            worker_id: params.worker_id,
+            gateway_url: params.gateway_url,
             gateway_token: self.auth_token.as_deref(),
-            base_commit: base_commit_sha,
-            diff_debounce_ms: spec.diff_debounce_ms.unwrap_or(1500),
-            repo: &spec.repo,
-            provider_id: spec.provider_id.as_deref(),
-            env: &spec.env,
+            base_commit: params.base_commit_sha,
+            diff_debounce_ms: params.spec.diff_debounce_ms.unwrap_or(1500),
+            repo: &params.spec.repo,
+            provider_id: params.spec.provider_id.as_deref(),
+            env: &params.spec.env,
             shim_url: &self.config.worker_shim_url,
             workdir: &self.config.workdir,
             mount_path: &self.config.mount_path,
@@ -340,7 +341,7 @@ impl AzureDriver {
             "{}/resourceGroups/{}/providers/Microsoft.Compute/virtualMachines/{}?api-version=2023-07-01",
             self.api_base(),
             self.rg(),
-            vm_name
+            params.vm_name
         );
         let body = json!({
             "location": self.config.location.clone(),
@@ -355,14 +356,14 @@ impl AzureDriver {
                         "lun": 0,
                         "createOption": "Attach",
                         "managedDisk": {
-                            "id": self.disk_id(disk_name)
-                        }
-                    }]
-                },
-                "osProfile": {
-                    "computerName": vm_name,
-                    "adminUsername": self.config.admin_username.clone(),
-                    "customData": custom_data_b64,
+                        "id": self.disk_id(params.disk_name)
+                    }
+                }]
+            },
+            "osProfile": {
+                "computerName": params.vm_name,
+                "adminUsername": self.config.admin_username.clone(),
+                "customData": custom_data_b64,
                     "linuxConfiguration": {
                         "disablePasswordAuthentication": true,
                         "ssh": {
@@ -378,7 +379,7 @@ impl AzureDriver {
                 },
                 "networkProfile": {
                     "networkInterfaces": [{
-                        "id": self.nic_id(nic_name),
+                        "id": self.nic_id(params.nic_name),
                         "properties": { "primary": true }
                     }]
                 }
@@ -433,15 +434,15 @@ impl WorkerDriver for AzureDriver {
         self.create_nic(&nic_name, public_ip_name.as_deref())
             .await?;
         self.create_disk(&disk_name, None).await?;
-        self.create_vm(
+        self.create_vm(CreateVmParams {
             worker_id,
-            &vm_name,
-            &nic_name,
-            &disk_name,
+            vm_name: &vm_name,
+            nic_name: &nic_name,
+            disk_name: &disk_name,
             spec,
             base_commit_sha,
             gateway_url,
-        )
+        })
         .await?;
 
         let public_ip = if let Some(name) = public_ip_name.as_ref() {
@@ -617,15 +618,15 @@ impl WorkerDriver for AzureDriver {
         }
         self.create_nic(&nic_name, public_ip_name.as_deref())
             .await?;
-        self.create_vm(
+        self.create_vm(CreateVmParams {
             worker_id,
-            &vm_name,
-            &nic_name,
-            &disk_name,
+            vm_name: &vm_name,
+            nic_name: &nic_name,
+            disk_name: &disk_name,
             spec,
             base_commit_sha,
             gateway_url,
-        )
+        })
         .await?;
 
         let public_ip = if let Some(name) = public_ip_name.as_ref() {

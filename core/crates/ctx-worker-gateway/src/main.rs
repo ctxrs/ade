@@ -1119,20 +1119,20 @@ async fn handle_daemon_socket(state: AppState, worker_id: String, socket: WebSoc
     let (tx, mut rx) = mpsc::unbounded_channel::<RelayMessage>();
 
     let mut session_id: Option<String> = None;
-    if let Some(Ok(msg)) = receiver.next().await {
-        if let Message::Text(text) = msg {
-            if let Ok(relay_msg) = serde_json::from_str::<RelayMessage>(&text) {
-                if let RelayMessage::Init {
-                    session_id: sid, ..
-                } = &relay_msg
-                {
-                    session_id = Some(sid.clone());
-                    let mut relay_guard = relay.lock().await;
-                    relay_guard.sessions.insert(sid.clone(), tx.clone());
-                    if let Some(worker_tx) = relay_guard.worker_tx.as_ref() {
-                        let _ = worker_tx.send(relay_msg);
-                    }
-                }
+    if let Some(Ok(Message::Text(text))) = receiver.next().await {
+        let relay_msg = match serde_json::from_str::<RelayMessage>(&text) {
+            Ok(msg) => msg,
+            Err(_) => return,
+        };
+        if let RelayMessage::Init {
+            session_id: sid, ..
+        } = &relay_msg
+        {
+            session_id = Some(sid.clone());
+            let mut relay_guard = relay.lock().await;
+            relay_guard.sessions.insert(sid.clone(), tx.clone());
+            if let Some(worker_tx) = relay_guard.worker_tx.as_ref() {
+                let _ = worker_tx.send(relay_msg);
             }
         }
     }
