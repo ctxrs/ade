@@ -20,7 +20,6 @@ export type UsePinnedScrollManagerArgs = {
   stickToBottomRef: MutableRefObject<boolean>;
   setStickToBottom: (next: boolean) => void;
   setAtBottom: (next: boolean) => void;
-  setHasNewActivity: (next: boolean) => void;
 
   latestAnchorIdRef: MutableRefObject<string | null>;
   liveScrollTopRef: MutableRefObject<number | null>;
@@ -62,7 +61,6 @@ export function usePinnedScrollManager(args: UsePinnedScrollManagerArgs): UsePin
     stickToBottomRef,
     setStickToBottom,
     setAtBottom,
-    setHasNewActivity,
     latestAnchorIdRef,
     liveScrollTopRef,
     userScrollIntentRef,
@@ -103,7 +101,6 @@ export function usePinnedScrollManager(args: UsePinnedScrollManagerArgs): UsePin
     if (sentinelMeasuredRef.current) {
       const visible = sentinelVisibleRef.current;
       setAtBottom(visible);
-      if (visible) setHasNewActivity(false);
       return visible;
     }
     const node = scrollerRef.current;
@@ -111,9 +108,8 @@ export function usePinnedScrollManager(args: UsePinnedScrollManagerArgs): UsePin
     const remaining = node.scrollHeight - (node.scrollTop + node.clientHeight);
     const nearBottom = remaining <= bottomThresholdPx;
     setAtBottom(nearBottom);
-    if (nearBottom) setHasNewActivity(false);
     return nearBottom;
-  }, [bottomThresholdPx, scrollerRef, sentinelMeasuredRef, sentinelVisibleRef, setAtBottom, setHasNewActivity]);
+  }, [bottomThresholdPx, scrollerRef, sentinelMeasuredRef, sentinelVisibleRef, setAtBottom]);
 
   const scheduleAutoScroll = useCallback(() => {
     if (itemsLength === 0) return;
@@ -156,7 +152,6 @@ export function usePinnedScrollManager(args: UsePinnedScrollManagerArgs): UsePin
           return;
         }
         setAtBottom(nearBottom);
-        if (nearBottom) setHasNewActivity(false);
         if (nearBottom) autoScrollAttemptRef.current = 0;
       });
     });
@@ -169,7 +164,6 @@ export function usePinnedScrollManager(args: UsePinnedScrollManagerArgs): UsePin
     scrollerRef,
     scrollToBottomNow,
     setAtBottom,
-    setHasNewActivity,
     stickToBottomRef,
   ]);
 
@@ -207,7 +201,6 @@ export function usePinnedScrollManager(args: UsePinnedScrollManagerArgs): UsePin
         sentinelVisibleRef.current = visible;
         setAtBottom(visible);
         if (visible) {
-          setHasNewActivity(false);
           autoScrollAttemptRef.current = 0;
           return;
         }
@@ -254,7 +247,6 @@ export function usePinnedScrollManager(args: UsePinnedScrollManagerArgs): UsePin
     sentinelMeasuredRef,
     sentinelVisibleRef,
     setAtBottom,
-    setHasNewActivity,
     setStickToBottom,
     stickToBottomRef,
     userIntentWindowMs,
