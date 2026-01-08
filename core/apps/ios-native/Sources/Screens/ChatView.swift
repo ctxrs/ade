@@ -24,29 +24,34 @@ struct ChatView: View {
     }
 
     private var messageList: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(spacing: 14) {
-                    ForEach(viewModel.messages) { message in
-                        MessageRow(message: message)
-                            .id(message.id)
+        GeometryReader { geometry in
+            let horizontalPadding: CGFloat = 14
+            let availableWidth = max(0, geometry.size.width - (horizontalPadding * 2))
+            let maxBubbleWidth = min(360, availableWidth * 0.78)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(spacing: 12) {
+                        ForEach(viewModel.messages) { message in
+                            MessageRow(message: message, maxBubbleWidth: maxBubbleWidth)
+                                .id(message.id)
+                        }
+                        if viewModel.isAssistantTyping {
+                            TypingIndicatorRow(maxBubbleWidth: maxBubbleWidth)
+                                .id("typing-indicator")
+                        }
                     }
-                    if viewModel.isAssistantTyping {
-                        TypingIndicatorRow()
-                            .id("typing-indicator")
-                    }
+                    .padding(.horizontal, horizontalPadding)
+                    .padding(.vertical, 16)
                 }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 20)
-            }
-            .onAppear {
-                scrollToBottom(proxy: proxy, animated: false)
-            }
-            .onChange(of: viewModel.messages.count) { _ in
-                scrollToBottom(proxy: proxy, animated: true)
-            }
-            .onChange(of: viewModel.isAssistantTyping) { _ in
-                scrollToBottom(proxy: proxy, animated: true)
+                .onAppear {
+                    scrollToBottom(proxy: proxy, animated: false)
+                }
+                .onChange(of: viewModel.messages.count) { _ in
+                    scrollToBottom(proxy: proxy, animated: true)
+                }
+                .onChange(of: viewModel.isAssistantTyping) { _ in
+                    scrollToBottom(proxy: proxy, animated: true)
+                }
             }
         }
     }
@@ -78,14 +83,15 @@ struct ChatView: View {
 
 struct MessageRow: View {
     let message: ChatMessage
+    let maxBubbleWidth: CGFloat
 
     var body: some View {
         HStack {
             if message.role == .assistant {
                 bubble
-                Spacer(minLength: 40)
+                Spacer(minLength: 0)
             } else {
-                Spacer(minLength: 40)
+                Spacer(minLength: 0)
                 bubble
             }
         }
@@ -93,17 +99,17 @@ struct MessageRow: View {
 
     private var bubble: some View {
         Text(message.text)
-            .font(.system(size: 16))
+            .font(.system(size: 16, weight: .regular))
             .foregroundColor(.ctxTextPrimary)
-            .lineSpacing(3)
-            .padding(.vertical, 10)
-            .padding(.horizontal, 14)
-            .background(bubbleColor, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .lineSpacing(4)
+            .padding(.vertical, 11)
+            .padding(.horizontal, 15)
+            .background(bubbleColor, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
             .overlay(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
                     .stroke(Color.white.opacity(0.06), lineWidth: 1)
             )
-            .frame(maxWidth: 300, alignment: message.role == .assistant ? .leading : .trailing)
+            .frame(maxWidth: maxBubbleWidth, alignment: message.role == .assistant ? .leading : .trailing)
     }
 
     private var bubbleColor: Color {
@@ -112,17 +118,20 @@ struct MessageRow: View {
 }
 
 struct TypingIndicatorRow: View {
+    let maxBubbleWidth: CGFloat
+
     var body: some View {
         HStack {
             TypingIndicatorView()
-                .padding(.vertical, 10)
-                .padding(.horizontal, 14)
-                .background(Color.ctxBubbleAssistant, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .padding(.vertical, 11)
+                .padding(.horizontal, 15)
+                .background(Color.ctxBubbleAssistant, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    RoundedRectangle(cornerRadius: 20, style: .continuous)
                         .stroke(Color.white.opacity(0.06), lineWidth: 1)
                 )
-            Spacer(minLength: 40)
+                .frame(maxWidth: maxBubbleWidth, alignment: .leading)
+            Spacer(minLength: 0)
         }
     }
 }
@@ -158,7 +167,7 @@ struct ComposerBar: View {
     var onSend: () -> Void
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
             ComposerIconButton(systemName: "plus", isPrimary: false, isEnabled: true) {
             }
 
@@ -173,25 +182,30 @@ struct ComposerBar: View {
                     .tint(.ctxAccent)
             }
             .font(.system(size: 16))
-            .padding(.vertical, 10)
+            .padding(.vertical, 9)
             .padding(.horizontal, 14)
+            .padding(.trailing, 42)
             .background(.ultraThinMaterial, in: Capsule())
             .overlay(
                 Capsule()
                     .stroke(Color.white.opacity(0.08), lineWidth: 1)
             )
-            .frame(maxWidth: .infinity)
-
-            HStack(spacing: 8) {
-                ComposerIconButton(systemName: "mic.fill", isPrimary: false, isEnabled: true) {
-                }
-                ComposerIconButton(systemName: "paperplane.fill", isPrimary: true, isEnabled: isSendEnabled) {
-                    onSend()
+            .overlay(alignment: .trailing) {
+                if !isSendEnabled {
+                    ComposerIconButton(systemName: "mic.fill", isPrimary: false, isEnabled: true) {
+                    }
+                    .padding(.trailing, 6)
+                } else {
+                    ComposerIconButton(systemName: "paperplane.fill", isPrimary: true, isEnabled: isSendEnabled) {
+                        onSend()
+                    }
+                    .padding(.trailing, 6)
                 }
             }
+            .frame(maxWidth: .infinity)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
         .background(.ultraThinMaterial)
     }
 }
