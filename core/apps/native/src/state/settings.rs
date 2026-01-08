@@ -460,6 +460,16 @@ impl SettingsState {
                 }
             };
 
+            if let Ok(events) = client.list_install_events(&install_id).await {
+                if let Some(event) = events.last() {
+                    this.update(cx, |view, cx| {
+                        view.update_install_event(&provider_id, event);
+                        cx.notify();
+                    })
+                    .ok();
+                }
+            }
+
             loop {
                 match client.get_install(&install_id).await {
                     Ok(info) => {
@@ -508,10 +518,25 @@ impl SettingsState {
         session.state = info.state;
         session.error = info.error;
         if let Some(event) = info.last_event.as_ref() {
-            session.pct = install_progress_pct(event);
-            session.last_stage = Some(event.stage.clone());
-            session.last_message = Some(event.message.clone());
+            self.update_install_event(provider_id, event);
         }
+    }
+
+    fn update_install_event(&mut self, provider_id: &str, event: &InstallProgressEvent) {
+        let session = self
+            .installs
+            .entry(provider_id.to_string())
+            .or_insert(InstallSession {
+                install_id: event.install_id.clone(),
+                state: InstallStateKind::Running,
+                pct: None,
+                last_stage: None,
+                last_message: None,
+                error: None,
+            });
+        session.pct = install_progress_pct(event);
+        session.last_stage = Some(event.stage.clone());
+        session.last_message = Some(event.message.clone());
     }
 
     fn maybe_probe_providers(&mut self, cx: &mut Context<Self>) {

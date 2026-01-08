@@ -1,4 +1,4 @@
-use gpui::{ClickEvent, Context, div, prelude::*, px};
+use gpui::{ClickEvent, Context, Rgba, div, prelude::*, px};
 
 use crate::theme::ThemeColors;
 
@@ -6,6 +6,9 @@ use super::super::icons::{Icon, IconName};
 use super::super::state::diff_review::{
     DiffFile, DiffLineKind, DiffPatchAction, DiffReviewState,
 };
+
+const MONO_FONT_FAMILY: &str =
+    "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, \"Liberation Mono\", \"Courier New\", monospace";
 
 pub(super) struct DiffReviewView<'a> {
     pub(super) colors: ThemeColors,
@@ -303,7 +306,7 @@ impl<'a> DiffReviewView<'a> {
                         .text_color(self.colors.muted)
                         .child("Binary or metadata-only diff.")
                 } else {
-                    render_diff_lines(file, self.colors)
+                    render_inline_diff(file, self.state, self.colors, cx)
                 };
 
                 div()
@@ -402,19 +405,162 @@ fn file_summary(file: &DiffFile, colors: ThemeColors) -> impl IntoElement {
     }
 }
 
-fn render_diff_lines(file: &DiffFile, colors: ThemeColors) -> impl IntoElement {
-    let mut lines = div().flex().flex_col().gap_1();
-    for line in &file.render_lines {
-        let prefix = match line.kind {
-            DiffLineKind::Add => "+",
-            DiffLineKind::Del => "-",
-            DiffLineKind::Context => " ",
-        };
-        let text = format!("{prefix}{}", line.text);
-        let color = diff_line_color(line.kind, colors);
-        lines = lines.child(div().text_sm().text_color(color).child(text));
+fn render_inline_diff(
+    file: &DiffFile,
+    state: &DiffReviewState,
+    colors: ThemeColors,
+    cx: &mut Context<DiffReviewState>,
+) -> impl IntoElement {
+    if file.hunks.is_empty() {
+        return div()
+            .text_sm()
+            .text_color(colors.muted)
+            .child("No hunks to display.");
     }
-    lines
+
+    let mut hunks = div().flex().flex_col().gap_2();
+    let can_apply = state.track_id.is_some() && state.busy_key.is_none();
+
+    for hunk in &file.hunks {
+        let hunk_busy = state.busy_key.as_deref() == Some(hunk.key.as_str());
+        let hunk_patch = file.hunk_patch_text(hunk);
+
+        let actions = if hunk_busy {
+            div()
+                .text_sm()
+                .text_color(colors.muted)
+                .child("Applying...")
+        } else {
+            let keep_key = hunk.key.clone();
+            let keep_patch = hunk_patch.clone();
+            let keep_message = format!("Kept hunk in {}.", file.file_path.as_str());
+            let on_keep = cx.listener(move |view, _: &ClickEvent, _window, cx| {
+                view.apply_hunk_patch(
+                    keep_key.clone(),
+                    DiffPatchAction::Accept,
+                    keep_patch.clone(),
+                    keep_message.clone(),
+                    cx,
+                );
+            });
+
+            let undo_key = hunk.key.clone();
+            let undo_patch = hunk_patch.clone();
+            let undo_message = format!("Undid hunk in {}.", file.file_path.as_str());
+            let on_undo = cx.listener(move |view, _: &ClickEvent, _window, cx| {
+                view.apply_hunk_patch(
+                    undo_key.clone(),
+                    DiffPatchAction::Reject,
+                    undo_patch.clone(),
+                    undo_message.clone(),
+                    cx,
+                );
+            });
+
+            let mut undo_button = div()
+                .px_2()
+                .py_1()
+                .text_sm()
+                .border_1()
+                .border_color(colors.border)
+                .rounded_sm()
+                .child("Undo");
+            let mut keep_button = div()
+                .px_2()
+                .py_1()
+                .text_sm()
+                .border_1()
+                .border_color(colors.border)
+                .rounded_sm()
+                .child("Keep");
+
+            if can_apply {
+                undo_button = undo_button
+                    .text_color(colors.error)
+                    .cursor_pointer()
+                    .active(|this| this.opacity(0.85))
+                    .on_click(on_undo);
+                keep_button = keep_button
+                    .text_color(colors.success)
+                    .cursor_pointer()
+                    .active(|this| this.opacity(0.85))
+                    .on_click(on_keep);
+            } else {
+                undo_button = undo_button.text_color(colors.muted);
+                keep_button = keep_button.text_color(colors.muted);
+            }
+
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(undo_button)
+                .child(keep_button)
+        };
+
+        let header = div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .px_2()
+            .py_1()
+            .bg(colors.panel_2)
+            .child(
+                div()
+                    .text_sm()
+                    .font_family(MONO_FONT_FAMILY)
+                    .text_color(colors.muted)
+                    .child(hunk.header_line.as_str()),
+            )
+            .child(div().flex_1())
+            .child(actions);
+
+        let mut lines = div()
+            .flex()
+            .flex_col()
+            .gap_0()
+            .px_1()
+            .py_1()
+            .text_sm()
+            .font_family(MONO_FONT_FAMILY)
+            .whitespace_nowrap()
+            .overflow_x_scroll()
+            .w_full();
+
+        for line in &hunk.lines {
+            let (kind, content, prefix, is_note) = diff_line_parts(line);
+            let color = if is_note {
+                colors.muted
+            } else {
+                diff_line_color(kind, colors)
+            };
+            let mut row = div()
+                .text_color(color)
+                .whitespace_nowrap()
+                .child(format!("{prefix}{content}"));
+            if !is_note {
+                if let Some(bg) = diff_line_background(kind, colors) {
+                    row = row.bg(bg);
+                }
+            }
+            lines = lines.child(row);
+        }
+
+        hunks = hunks.child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .border_1()
+                .border_color(colors.border)
+                .rounded_sm()
+                .bg(colors.panel)
+                .child(header)
+                .child(lines),
+        );
+    }
+
+    hunks
 }
 
 fn diff_line_color(kind: DiffLineKind, colors: ThemeColors) -> gpui::Rgba {
@@ -422,5 +568,34 @@ fn diff_line_color(kind: DiffLineKind, colors: ThemeColors) -> gpui::Rgba {
         DiffLineKind::Add => colors.success,
         DiffLineKind::Del => colors.error,
         DiffLineKind::Context => colors.text,
+    }
+}
+
+fn diff_line_background(kind: DiffLineKind, colors: ThemeColors) -> Option<Rgba> {
+    let alpha = 0.12;
+    match kind {
+        DiffLineKind::Add => Some(blend_tint(colors.panel, colors.success, alpha)),
+        DiffLineKind::Del => Some(blend_tint(colors.panel, colors.error, alpha)),
+        DiffLineKind::Context => None,
+    }
+}
+
+fn blend_tint(base: Rgba, tint: Rgba, alpha: f32) -> Rgba {
+    base.blend(Rgba {
+        r: tint.r,
+        g: tint.g,
+        b: tint.b,
+        a: alpha,
+    })
+}
+
+fn diff_line_parts(line: &str) -> (DiffLineKind, &str, char, bool) {
+    let mut chars = line.chars();
+    match chars.next() {
+        Some('+') => (DiffLineKind::Add, &line[1..], '+', false),
+        Some('-') => (DiffLineKind::Del, &line[1..], '-', false),
+        Some(' ') => (DiffLineKind::Context, &line[1..], ' ', false),
+        Some('\\') => (DiffLineKind::Context, line, ' ', true),
+        Some(_) | None => (DiffLineKind::Context, line, ' ', false),
     }
 }

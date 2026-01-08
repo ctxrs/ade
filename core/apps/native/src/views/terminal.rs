@@ -1,4 +1,4 @@
-use gpui::{div, prelude::*, px, Window};
+use gpui::{CursorStyle, div, prelude::*, px, Window};
 
 use ctx_core::models::TerminalStatus;
 
@@ -264,6 +264,59 @@ impl Render for TerminalPanelState {
         } else {
             self.stream_output.as_str()
         };
+        let input_placeholder = if selected_terminal.is_some() {
+            "Type input and press Enter..."
+        } else {
+            "Select a terminal to send input."
+        };
+        let (input_text, input_is_placeholder) = if self.input.text().is_empty() {
+            (format!("|{input_placeholder}"), true)
+        } else {
+            let mut cursor = self.input.cursor().min(self.input.text().len());
+            while cursor > 0 && !self.input.text().is_char_boundary(cursor) {
+                cursor -= 1;
+            }
+            let mut display = String::with_capacity(self.input.text().len() + 1);
+            display.push_str(&self.input.text()[..cursor]);
+            display.push('|');
+            display.push_str(&self.input.text()[cursor..]);
+            (display, false)
+        };
+        let input_color = if input_is_placeholder {
+            colors.muted
+        } else {
+            colors.text
+        };
+        let input_empty = self.input.text().is_empty();
+        let can_send_input = selected_terminal.is_some() && !input_empty;
+        let input_field = div()
+            .flex_1()
+            .text_sm()
+            .text_color(input_color)
+            .cursor(CursorStyle::IBeam)
+            .track_focus(&self.input_focus)
+            .on_click(cx.listener(TerminalPanelState::focus_input))
+            .on_key_down(cx.listener(TerminalPanelState::on_input_key_down))
+            .child(input_text);
+        let mut send_button = div()
+            .px_2()
+            .py_1()
+            .text_sm()
+            .border_1()
+            .border_color(colors.border)
+            .rounded_sm()
+            .child("Send");
+        if can_send_input {
+            send_button = send_button
+                .bg(colors.panel)
+                .cursor_pointer()
+                .active(|this| this.opacity(0.85))
+                .on_click(cx.listener(TerminalPanelState::on_send_input_click));
+        } else {
+            send_button = send_button
+                .bg(colors.panel_2)
+                .text_color(colors.muted);
+        }
 
         div()
             .id("terminal-panel")
@@ -368,6 +421,35 @@ impl Render for TerminalPanelState {
                             .bg(colors.panel)
                             .p_2()
                             .child(output_text),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(colors.muted)
+                            .child("Input"),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .border_1()
+                                    .border_color(colors.border)
+                                    .rounded_sm()
+                                    .bg(colors.panel)
+                                    .p_2()
+                                    .child(input_field),
+                            )
+                            .child(send_button),
                     ),
             )
     }

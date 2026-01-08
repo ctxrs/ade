@@ -46,6 +46,17 @@ impl DiffFile {
         patch.push('\n');
         patch
     }
+
+    pub(crate) fn hunk_patch_text(&self, hunk: &DiffHunk) -> String {
+        let mut lines =
+            Vec::with_capacity(self.header_lines.len() + hunk.lines.len() + 1);
+        lines.extend(self.header_lines.iter().cloned());
+        lines.push(hunk.header_line.clone());
+        lines.extend(hunk.lines.iter().cloned());
+        let mut patch = lines.join("\n");
+        patch.push('\n');
+        patch
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -160,6 +171,17 @@ impl DiffReviewState {
         cx: &mut Context<Self>,
     ) {
         self.apply_patch(file_key, action, patch, status_message, cx);
+    }
+
+    pub(crate) fn apply_hunk_patch(
+        &mut self,
+        hunk_key: String,
+        action: DiffPatchAction,
+        patch: String,
+        status_message: String,
+        cx: &mut Context<Self>,
+    ) {
+        self.apply_patch(hunk_key, action, patch, status_message, cx);
     }
 
     pub(crate) fn apply_all_patch(

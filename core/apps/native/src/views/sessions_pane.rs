@@ -133,14 +133,10 @@ impl<'a> SessionsPaneView<'a> {
                     self.colors.border
                 };
                 let session_id = session.id.clone();
-                let stream_url = build_stream_url(session);
                 let label = web_session_label(session);
                 let on_click = cx.listener(move |_, _: &ClickEvent, _window, cx| {
                     if let Ok(mut state) = web_sessions_state().lock() {
                         state.selected_id = Some(session_id.clone());
-                    }
-                    if let Some(url) = stream_url.as_ref() {
-                        cx.open_url(url);
                     }
                     cx.notify();
                 });
@@ -170,17 +166,93 @@ impl<'a> SessionsPaneView<'a> {
             })
         };
 
-        let web_stream_block = if let Some(stream_url) = selected_web_stream {
-            div()
+        let web_stream_section = if let Some(session) = selected_web_session {
+            let viewer_message = if selected_web_stream.is_some() {
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .text_sm()
+                    .text_color(self.colors.muted)
+                    .child("Embedded web stream viewer is not available in GPUI yet.")
+                    .child("Next steps: add a WebView component or render stream frames as images.")
+            } else {
+                div()
+                    .text_sm()
+                    .text_color(self.colors.muted)
+                    .child("Stream unavailable.")
+            };
+
+            let viewer = div()
+                .border_1()
+                .border_color(self.colors.border)
+                .rounded_sm()
+                .bg(self.colors.panel_2)
+                .p_2()
+                .h(px(220.0))
+                .child(viewer_message);
+
+            let mut details = div().flex().flex_col().gap_1();
+            details = details.child(
+                div()
+                    .text_sm()
+                    .text_color(self.colors.muted)
+                    .child(format!("Status: {}", session.status)),
+            );
+            if let Some(stream_url) = selected_web_stream.as_ref() {
+                details = details.child(
+                    div()
+                        .text_sm()
+                        .text_color(self.colors.muted)
+                        .child(format!("Stream URL: {stream_url}")),
+                );
+            } else {
+                details = details.child(
+                    div()
+                        .text_sm()
+                        .text_color(self.colors.muted)
+                        .child("Stream unavailable."),
+                );
+            }
+
+            let mut open_button = div()
+                .px_2()
+                .py_1()
                 .text_sm()
-                .text_color(self.colors.muted)
-                .child(format!("Stream URL: {stream_url}"))
-                .child("Click a session to open the stream in your browser.")
-        } else if selected_web_session.is_some() {
+                .border_1()
+                .border_color(self.colors.border)
+                .rounded_sm()
+                .child("Open in browser");
+            if let Some(stream_url) = selected_web_stream.as_ref() {
+                let open_url = stream_url.clone();
+                let on_open = cx.listener(move |_, _: &ClickEvent, _window, cx| {
+                    cx.open_url(&open_url);
+                });
+                open_button = open_button
+                    .bg(self.colors.panel)
+                    .cursor_pointer()
+                    .active(|this| this.opacity(0.85))
+                    .on_click(on_open);
+            } else {
+                open_button = open_button
+                    .bg(self.colors.panel_2)
+                    .text_color(self.colors.muted);
+            }
+
+            details = details.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(open_button),
+            );
+
             div()
-                .text_sm()
-                .text_color(self.colors.muted)
-                .child("Stream unavailable for this session.")
+                .flex()
+                .flex_col()
+                .gap_2()
+                .child(viewer)
+                .child(details)
         } else {
             div()
         };
@@ -235,7 +307,7 @@ impl<'a> SessionsPaneView<'a> {
             .child(div().h(px(6.0)))
             .child(web_list)
             .child(div().h(px(6.0)))
-            .child(web_stream_block)
+            .child(web_stream_section)
             .child(if let Some(error) = web_error {
                 div()
                     .text_sm()
@@ -331,22 +403,39 @@ fn maybe_refresh_web_sessions(cx: &mut Context<ShellView>) {
 }
 
 fn web_session_label(session: &WebSessionInfo) -> String {
-    let trimmed = session
-        .url
-        .trim()
-        .trim_start_matches("http://")
-        .trim_start_matches("https://")
-        .trim_end_matches('/');
-    let label = if trimmed.is_empty() {
-        session.id.as_str()
+    let label = web_session_label_from_url(&session.url)
+        .unwrap_or_else(|| session.id.chars().take(8).collect());
+    let label_len = label.chars().count();
+    if label_len > 32 {
+        let truncated: String = label.chars().take(28).collect();
+        format!("{truncated}...")
     } else {
-        trimmed
-    };
-    if label.len() > 32 {
-        format!("{}...", &label[..28])
-    } else {
-        label.to_string()
+        label
     }
+}
+
+fn web_session_label_from_url(url: &str) -> Option<String> {
+    let trimmed = url.trim();
+    let without_scheme = trimmed
+        .strip_prefix("http://")
+        .or_else(|| trimmed.strip_prefix("https://"))?;
+    if without_scheme.is_empty() {
+        return None;
+    }
+    let without_fragment = without_scheme.split('#').next().unwrap_or(without_scheme);
+    let without_query = without_fragment.split('?').next().unwrap_or(without_fragment);
+    let (host, path) = if let Some((host, rest)) = without_query.split_once('/') {
+        let mut path = String::from("/");
+        path.push_str(rest);
+        (host, path)
+    } else {
+        (without_query, String::new())
+    };
+    if host.is_empty() {
+        return None;
+    }
+    let path = if path == "/" { String::new() } else { path };
+    Some(format!("{host}{path}"))
 }
 
 fn build_stream_url(session: &WebSessionInfo) -> Option<String> {

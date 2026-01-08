@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
-use gpui::{ClickEvent, Context, Window};
+use gpui::{ClickEvent, Context, FocusHandle, KeyDownEvent, Window};
 use gpui_tokio::Tokio;
 use tokio::sync::{mpsc, watch};
 use tokio_tungstenite::{connect_async, tungstenite::Message as WsMessage};
@@ -9,6 +9,7 @@ use tokio_tungstenite::{connect_async, tungstenite::Message as WsMessage};
 use ctx_core::ids::{SessionId, TaskId, TerminalId, TrackId, WorktreeId, WorkspaceId};
 use ctx_core::models::TerminalSession;
 
+use super::ComposerState;
 use crate::theme::ThemeColors;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -93,12 +94,15 @@ pub(crate) struct TerminalPanelState {
     pub(crate) stream_terminal_id: Option<TerminalId>,
     pub(crate) stream_output: String,
     pub(crate) stream_stop_tx: Option<watch::Sender<bool>>,
+    pub(crate) stream_input_tx: Option<mpsc::UnboundedSender<String>>,
     pub(crate) stream_generation: u64,
     pub(crate) last_error: Option<String>,
+    pub(crate) input: ComposerState,
+    pub(crate) input_focus: FocusHandle,
 }
 
 impl TerminalPanelState {
-    pub(crate) fn new(colors: ThemeColors) -> Self {
+    pub(crate) fn new(colors: ThemeColors, input_focus: FocusHandle) -> Self {
         Self {
             colors,
             scope: TerminalScope::Workspace,
@@ -110,8 +114,11 @@ impl TerminalPanelState {
             stream_terminal_id: None,
             stream_output: String::new(),
             stream_stop_tx: None,
+            stream_input_tx: None,
             stream_generation: 0,
             last_error: None,
+            input: ComposerState::new(),
+            input_focus,
         }
     }
 
@@ -148,6 +155,7 @@ impl TerminalPanelState {
 
     pub(crate) fn select_terminal(&mut self, terminal_id: TerminalId, cx: &mut Context<Self>) {
         self.selected_terminal_id = Some(terminal_id);
+        self.input.clear();
         self.start_terminal_stream(terminal_id, false, cx);
     }
 
@@ -361,6 +369,152 @@ impl TerminalPanelState {
         self.start_terminal_stream(terminal_id, true, cx);
     }
 
+    pub(crate) fn focus_input(
+        &mut self,
+        _: &ClickEvent,
+        window: &mut Window,
+        _: &mut Context<Self>,
+    ) {
+        self.input_focus.focus(window);
+    }
+
+    pub(crate) fn on_input_key_down(
+        &mut self,
+        event: &KeyDownEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let modifiers = event.keystroke.modifiers;
+
+        if modifiers.control && !modifiers.platform {
+            match event.keystroke.key.as_str() {
+                "c" => {
+                    self.send_input("\u{3}".to_string(), cx);
+                    return;
+                }
+                "d" => {
+                    self.send_input("\u{4}".to_string(), cx);
+                    return;
+                }
+                _ => {}
+            }
+        }
+
+        match event.keystroke.key.as_str() {
+            "enter" => {
+                self.send_buffered_input(cx);
+            }
+            "backspace" => {
+                if self.input.delete_backward() {
+                    cx.notify();
+                }
+            }
+            "delete" => {
+                if self.input.delete_forward() {
+                    cx.notify();
+                }
+            }
+            "tab" => {
+                self.input.insert_text("\t");
+                cx.notify();
+            }
+            "left" => {
+                self.input.move_left(modifiers.shift);
+                cx.notify();
+            }
+            "right" => {
+                self.input.move_right(modifiers.shift);
+                cx.notify();
+            }
+            "home" => {
+                self.input.move_home(modifiers.shift);
+                cx.notify();
+            }
+            "end" => {
+                self.input.move_end(modifiers.shift);
+                cx.notify();
+            }
+            "up" => {
+                if !modifiers.shift
+                    && !modifiers.alt
+                    && !modifiers.control
+                    && !modifiers.platform
+                    && !modifiers.function
+                    && self.input.history_prev()
+                {
+                    cx.notify();
+                }
+            }
+            "down" => {
+                if !modifiers.shift
+                    && !modifiers.alt
+                    && !modifiers.control
+                    && !modifiers.platform
+                    && !modifiers.function
+                    && self.input.history_next()
+                {
+                    cx.notify();
+                }
+            }
+            _ => {
+                if modifiers.control || modifiers.alt || modifiers.platform || modifiers.function {
+                    return;
+                }
+                if let Some(text) = event.keystroke.key_char.as_ref() {
+                    if text != "\n" && text != "\r" {
+                        self.input.insert_text(text);
+                        cx.notify();
+                    }
+                }
+            }
+        }
+    }
+
+    pub(crate) fn on_send_input_click(
+        &mut self,
+        _: &ClickEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.send_buffered_input(cx);
+    }
+
+    pub(crate) fn send_input(&mut self, data: String, cx: &mut Context<Self>) {
+        if data.is_empty() {
+            return;
+        }
+        if self.selected_terminal_id.is_none() {
+            self.last_error = Some("Select a terminal before sending input.".to_string());
+            cx.notify();
+            return;
+        }
+        let Some(input_tx) = self.stream_input_tx.as_ref() else {
+            self.last_error = Some("Terminal input is unavailable. Reconnect and try again.".to_string());
+            cx.notify();
+            return;
+        };
+        if input_tx.send(data).is_err() {
+            self.last_error = Some("Terminal input channel closed. Reconnect and try again.".to_string());
+        } else {
+            self.last_error = None;
+        }
+        cx.notify();
+    }
+
+    fn send_buffered_input(&mut self, cx: &mut Context<Self>) {
+        let input = self.input.text().to_string();
+        if input.is_empty() {
+            self.send_input("\r".to_string(), cx);
+            self.input.clear();
+            cx.notify();
+            return;
+        }
+        self.input.push_history(input.clone());
+        self.send_input(format!("{input}\r"), cx);
+        self.input.clear();
+        cx.notify();
+    }
+
     pub(crate) fn scope_terminals(&self) -> Vec<&TerminalSession> {
         match (self.scope, self.context.task_id) {
             (TerminalScope::Task, Some(task_id)) => self
@@ -425,16 +579,18 @@ impl TerminalPanelState {
         };
 
         let (stop_tx, stop_rx) = watch::channel(false);
+        let (input_tx, input_rx) = mpsc::unbounded_channel();
         let (update_tx, mut update_rx) = mpsc::unbounded_channel();
 
         self.stream_generation = self.stream_generation.wrapping_add(1);
         let generation = self.stream_generation;
         self.stream_stop_tx = Some(stop_tx);
+        self.stream_input_tx = Some(input_tx);
         self.stream_state = TerminalStreamState::Connecting;
         cx.notify();
 
         let stream_task = Tokio::spawn_result(cx, async move {
-            run_terminal_stream(url, stop_rx, update_tx).await
+            run_terminal_stream(url, stop_rx, input_rx, update_tx).await
         });
 
         cx.spawn(|_, _| async move {
@@ -488,6 +644,7 @@ impl TerminalPanelState {
         if let Some(stop_tx) = self.stream_stop_tx.take() {
             let _ = stop_tx.send(true);
         }
+        self.stream_input_tx = None;
     }
 
     fn clear_stream(&mut self, cx: &mut Context<Self>) {
@@ -518,6 +675,7 @@ enum TerminalStreamUpdate {
 async fn run_terminal_stream(
     ws_url: String,
     mut stop_rx: watch::Receiver<bool>,
+    mut input_rx: mpsc::UnboundedReceiver<String>,
     update_tx: mpsc::UnboundedSender<TerminalStreamUpdate>,
 ) -> anyhow::Result<()> {
     let mut backoff = Duration::from_secs(1);
@@ -560,6 +718,13 @@ async fn run_terminal_stream(
                 _ = stop_rx.changed() => {
                     let _ = update_tx.send(TerminalStreamUpdate::Status(TerminalStreamState::Idle));
                     return Ok(());
+                }
+                input = input_rx.recv() => {
+                    if let Some(data) = input {
+                        if write.send(WsMessage::Text(data)).await.is_err() {
+                            break;
+                        }
+                    }
                 }
                 msg = read.next() => {
                     match msg {

@@ -116,7 +116,8 @@ pub fn run(options: AppOptions) {
                 let base_url = base_url.clone();
                 cx.new(|cx| {
                     let diff_review_state = cx.new(|_| DiffReviewState::new());
-                    let terminal_panel_state = cx.new(|_| TerminalPanelState::new(colors));
+                    let terminal_panel_state =
+                        cx.new(|cx| TerminalPanelState::new(colors, cx.focus_handle()));
                     let settings_state = cx.new(|_| SettingsState::new(colors));
                     let mut view = ShellView {
                         colors,
