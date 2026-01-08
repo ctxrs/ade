@@ -94,7 +94,7 @@ impl SettingsState {
             Ok(workspaces)
         });
 
-        cx.spawn(|this, cx| async move {
+        cx.spawn(async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
             let result = task.await;
             this.update(cx, |view, cx| {
                 view.workspaces_loading = false;
@@ -149,7 +149,7 @@ impl SettingsState {
             Ok(providers)
         });
 
-        cx.spawn(|this, cx| async move {
+        cx.spawn(async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
             let result = task.await;
             this.update(cx, |view, cx| {
                 view.providers_loading = false;
@@ -182,7 +182,7 @@ impl SettingsState {
             Ok(settings)
         });
 
-        cx.spawn(|this, cx| async move {
+        cx.spawn(async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
             let result = task.await;
             this.update(cx, |view, cx| {
                 view.settings_loading = false;
@@ -238,21 +238,24 @@ impl SettingsState {
         self.opts_busy.insert(provider_id.clone(), true);
         cx.notify();
 
+        let provider_id_for_task = provider_id.clone();
         let task = Tokio::spawn_result(cx, async move {
             let client = Client::from_env()?;
             let options = client
-                .get_provider_options(workspace_id, &provider_id)
+                .get_provider_options(workspace_id, &provider_id_for_task)
                 .await?;
             Ok(options)
         });
 
-        cx.spawn(|this, cx| async move {
+        let provider_id_for_update = provider_id.clone();
+        cx.spawn(async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
             let result = task.await;
             this.update(cx, |view, cx| {
-                view.opts_busy.remove(&provider_id);
+                view.opts_busy.remove(&provider_id_for_update);
                 match result {
                     Ok(options) => {
-                        view.provider_options.insert(provider_id.clone(), options);
+                        view.provider_options
+                            .insert(provider_id_for_update.clone(), options);
                     }
                     Err(err) => {
                         view.provider_error = Some(err.to_string());
@@ -277,22 +280,24 @@ impl SettingsState {
         self.provider_error = None;
         cx.notify();
 
+        let provider_id_for_task = provider_id.clone();
         let task = Tokio::spawn_result(cx, async move {
             let client = Client::from_env()?;
             client
-                .authenticate_provider_for_workspace(workspace_id, &provider_id, None)
+                .authenticate_provider_for_workspace(workspace_id, &provider_id_for_task, None)
                 .await?;
             Ok(())
         });
 
-        cx.spawn(|this, cx| async move {
+        let provider_id_for_update = provider_id.clone();
+        cx.spawn(async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
             let result = task.await;
             this.update(cx, |view, cx| {
-                view.auth_busy.remove(&provider_id);
+                view.auth_busy.remove(&provider_id_for_update);
                 if let Err(err) = result {
                     view.provider_error = Some(err.to_string());
                 }
-                view.ensure_provider_options(provider_id.clone(), true, cx);
+                view.ensure_provider_options(provider_id_for_update.clone(), true, cx);
                 cx.notify();
             })
             .ok();
@@ -312,22 +317,24 @@ impl SettingsState {
         self.provider_error = None;
         cx.notify();
 
+        let provider_id_for_task = provider_id.clone();
         let task = Tokio::spawn_result(cx, async move {
             let client = Client::from_env()?;
             client
-                .verify_provider_for_workspace(workspace_id, &provider_id)
+                .verify_provider_for_workspace(workspace_id, &provider_id_for_task)
                 .await?;
             Ok(())
         });
 
-        cx.spawn(|this, cx| async move {
+        let provider_id_for_update = provider_id.clone();
+        cx.spawn(async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
             let result = task.await;
             this.update(cx, |view, cx| {
-                view.verify_busy.remove(&provider_id);
+                view.verify_busy.remove(&provider_id_for_update);
                 if let Err(err) = result {
                     view.provider_error = Some(err.to_string());
                 }
-                view.ensure_provider_options(provider_id.clone(), true, cx);
+                view.ensure_provider_options(provider_id_for_update.clone(), true, cx);
                 cx.notify();
             })
             .ok();
@@ -350,7 +357,7 @@ impl SettingsState {
             Ok(resp)
         });
 
-        cx.spawn(|this, cx| async move {
+        cx.spawn(async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
             let result = task.await;
             this.update(cx, |view, cx| {
                 view.install_busy = None;
@@ -384,7 +391,7 @@ impl SettingsState {
             Ok(resp)
         });
 
-        cx.spawn(|this, cx| async move {
+        cx.spawn(async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
             let result = task.await;
             this.update(cx, |view, cx| {
                 view.install_busy = None;
@@ -406,26 +413,28 @@ impl SettingsState {
     }
 
     fn attach_running_installs(&mut self, cx: &mut Context<Self>) {
-        for provider in &self.providers {
-            let running = provider
-                .details
-                .get("install_running")
-                .map(|value| value == "true")
-                .unwrap_or(false);
-            if !running {
-                continue;
-            }
-            let Some(install_id) = provider.details.get("install_id") else {
-                continue;
-            };
-            if self.installs.contains_key(&provider.provider_id) {
-                continue;
-            }
-            self.attach_install(
-                provider.provider_id.clone(),
-                install_id.to_string(),
-                cx,
-            );
+        let installs = self
+            .providers
+            .iter()
+            .filter_map(|provider| {
+                let running = provider
+                    .details
+                    .get("install_running")
+                    .map(|value| value == "true")
+                    .unwrap_or(false);
+                if !running {
+                    return None;
+                }
+                let install_id = provider.details.get("install_id")?;
+                if self.installs.contains_key(&provider.provider_id) {
+                    return None;
+                }
+                Some((provider.provider_id.clone(), install_id.to_string()))
+            })
+            .collect::<Vec<_>>();
+
+        for (provider_id, install_id) in installs {
+            self.attach_install(provider_id, install_id, cx);
         }
     }
 
@@ -446,7 +455,7 @@ impl SettingsState {
             });
         cx.notify();
 
-        cx.spawn(|this, cx| async move {
+        cx.spawn(async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
             let client = match Client::from_env() {
                 Ok(client) => client,
                 Err(err) => {
@@ -543,8 +552,13 @@ impl SettingsState {
         if self.selected_workspace.is_none() {
             return;
         }
-        for provider in &self.providers {
-            self.ensure_provider_options(provider.provider_id.clone(), false, cx);
+        let provider_ids = self
+            .providers
+            .iter()
+            .map(|provider| provider.provider_id.clone())
+            .collect::<Vec<_>>();
+        for provider_id in provider_ids {
+            self.ensure_provider_options(provider_id, false, cx);
         }
     }
 
