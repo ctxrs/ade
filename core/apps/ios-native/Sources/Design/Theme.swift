@@ -5,6 +5,8 @@ extension Color {
     static let ctxBackgroundDeep = Color(red: 0.02, green: 0.03, blue: 0.05)
     static let ctxSurface = Color(red: 0.09, green: 0.10, blue: 0.13)
     static let ctxSurfaceRaised = Color(red: 0.14, green: 0.15, blue: 0.19)
+    static let ctxBubbleAssistant = Color(red: 0.12, green: 0.13, blue: 0.18)
+    static let ctxBubbleUser = Color(red: 0.18, green: 0.31, blue: 0.52)
     static let ctxTextPrimary = Color(red: 0.95, green: 0.96, blue: 0.98)
     static let ctxTextSecondary = Color(red: 0.65, green: 0.68, blue: 0.74)
     static let ctxTextMuted = Color(red: 0.50, green: 0.53, blue: 0.60)
