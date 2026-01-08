@@ -19,7 +19,7 @@ import { Virtuoso, VirtuosoHandle, type IndexLocationWithAlign, type StateSnapsh
 import {
   deleteMessage,
   DictationSettings,
-  getDaemonBaseUrl,
+  resolveDaemonWsBaseUrl,
   blobUrl,
   Message,
   MessageAttachment,
@@ -1103,12 +1103,7 @@ export function SessionView({
         return null;
       }
     })();
-    const base = getDaemonBaseUrl();
-    const wsBase = base
-      ? base.startsWith("https://")
-        ? base.replace(/^https:\/\//, "wss://")
-        : base.replace(/^http:\/\//, "ws://")
-      : `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}`;
+    const wsBase = resolveDaemonWsBaseUrl();
     const qs = token ? `?token=${encodeURIComponent(token)}` : "";
     const ws = new WebSocket(`${wsBase}/api/dictation/livekit/stream${qs}`);
     ws.binaryType = "arraybuffer";

@@ -15,7 +15,7 @@ import type { TerminalSession } from "@ctx/types";
 import {
   createWorkspaceTerminal,
   deleteTerminal,
-  getDaemonBaseUrl,
+  resolveDaemonWsBaseUrl,
   idToString,
   listWorkspaceTerminals,
   type CreateTerminalRequest,
@@ -226,10 +226,7 @@ function removeTerminalFromLayout(node: TerminalLayoutNode | null, terminalId: s
 }
 
 function buildTerminalWsUrl(terminalId: string): string {
-  const base = getDaemonBaseUrl();
-  const wsBase = base
-    ? base.replace(/^https:\/\//, "wss://").replace(/^http:\/\//, "ws://")
-    : `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}`;
+  const wsBase = resolveDaemonWsBaseUrl();
   return `${wsBase}/api/terminals/${terminalId}/stream`;
 }
 
