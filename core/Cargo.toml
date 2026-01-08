@@ -2,6 +2,7 @@
 members = [
   "crates/ctx-docs-mirror",
   "crates/ctx-core",
+  "crates/ctx-client",
   "crates/ctx-store",
   "crates/ctx-fs",
   "crates/ctx-events",

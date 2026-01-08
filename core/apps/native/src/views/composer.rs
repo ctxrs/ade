@@ -1,0 +1,377 @@
+use gpui::{Context, CursorStyle, FocusHandle, div, prelude::*, px};
+
+use ctx_core::models::MessageAttachment;
+
+use crate::theme::ThemeColors;
+
+use super::super::icons::{Icon, IconName};
+use super::super::state::ShellView;
+
+fn attachment_label(att: &MessageAttachment) -> String {
+    match att {
+        MessageAttachment::Image { name, mime_type, .. }
+        | MessageAttachment::ImageRef { name, mime_type, .. } => name
+            .as_deref()
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| mime_type.clone()),
+    }
+}
+
+pub(super) struct ComposerView<'a> {
+    pub(super) colors: ThemeColors,
+    pub(super) composer_text: &'a str,
+    pub(super) composer_cursor: usize,
+    pub(super) can_send: bool,
+    pub(super) focus_handle: &'a FocusHandle,
+    pub(super) composer_attachment_text: &'a str,
+    pub(super) composer_attachment_cursor: usize,
+    pub(super) composer_attachments: &'a [MessageAttachment],
+    pub(super) provider_options: &'a [String],
+    pub(super) model_options: &'a [String],
+    pub(super) selected_provider: Option<&'a str>,
+    pub(super) selected_model: Option<&'a str>,
+    pub(super) provider_menu_open: bool,
+    pub(super) model_menu_open: bool,
+    pub(super) composer_notice: Option<&'a str>,
+    pub(super) attachment_focus: &'a FocusHandle,
+}
+
+impl<'a> ComposerView<'a> {
+    pub(super) fn render(&self, cx: &mut Context<ShellView>) -> impl IntoElement {
+        let placeholder_text = "Type a message...";
+        let (input_text, is_placeholder) = if self.composer_text.is_empty() {
+            (format!("|{placeholder_text}"), true)
+        } else {
+            let mut cursor = self.composer_cursor.min(self.composer_text.len());
+            while cursor > 0 && !self.composer_text.is_char_boundary(cursor) {
+                cursor -= 1;
+            }
+            let mut display = String::with_capacity(self.composer_text.len() + 1);
+            display.push_str(&self.composer_text[..cursor]);
+            display.push('|');
+            display.push_str(&self.composer_text[cursor..]);
+            (display, false)
+        };
+        let input_color = if is_placeholder {
+            self.colors.muted
+        } else {
+            self.colors.text
+        };
+
+        let input = div()
+            .flex_1()
+            .text_sm()
+            .text_color(input_color)
+            .cursor(CursorStyle::IBeam)
+            .track_focus(self.focus_handle)
+            .on_click(cx.listener(ShellView::focus_composer))
+            .on_key_down(cx.listener(ShellView::on_composer_key_down))
+            .child(input_text);
+
+        let send_color = if self.can_send {
+            self.colors.text
+        } else {
+            self.colors.muted
+        };
+        let send_label = div()
+            .flex()
+            .items_center()
+            .gap_1()
+            .child(Icon::new(IconName::Send, 14.0, send_color))
+            .child("Send");
+
+        let mut send_button = div()
+            .px_3()
+            .py_1()
+            .text_sm()
+            .border_1()
+            .border_color(self.colors.border)
+            .rounded_sm()
+            .child(send_label);
+
+        if self.can_send {
+            send_button = send_button
+                .bg(self.colors.panel)
+                .cursor_pointer()
+                .active(|this| this.opacity(0.85))
+                .on_click(cx.listener(ShellView::on_send_click));
+        } else {
+            send_button = send_button
+                .bg(self.colors.panel_2)
+                .text_color(self.colors.muted);
+        }
+
+        let attachment_placeholder = "Attachment path (image)";
+        let (attachment_text, attachment_is_placeholder) =
+            if self.composer_attachment_text.is_empty() {
+                (format!("|{attachment_placeholder}"), true)
+            } else {
+                let mut cursor = self
+                    .composer_attachment_cursor
+                    .min(self.composer_attachment_text.len());
+                while cursor > 0 && !self.composer_attachment_text.is_char_boundary(cursor) {
+                    cursor -= 1;
+                }
+                let mut display =
+                    String::with_capacity(self.composer_attachment_text.len() + 1);
+                display.push_str(&self.composer_attachment_text[..cursor]);
+                display.push('|');
+                display.push_str(&self.composer_attachment_text[cursor..]);
+                (display, false)
+            };
+        let attachment_color = if attachment_is_placeholder {
+            self.colors.muted
+        } else {
+            self.colors.text
+        };
+        let attachment_input = div()
+            .flex_1()
+            .text_sm()
+            .text_color(attachment_color)
+            .cursor(CursorStyle::IBeam)
+            .track_focus(self.attachment_focus)
+            .on_click(cx.listener(ShellView::focus_composer_attachment))
+            .on_key_down(cx.listener(ShellView::on_composer_attachment_key_down))
+            .child(attachment_text);
+
+        let mut add_attachment_button = div()
+            .px_2()
+            .py_1()
+            .text_sm()
+            .border_1()
+            .border_color(self.colors.border)
+            .rounded_sm()
+            .child("Add");
+        add_attachment_button = add_attachment_button
+            .bg(self.colors.panel)
+            .cursor_pointer()
+            .active(|this| this.opacity(0.85))
+            .on_click(cx.listener(ShellView::on_add_attachment_click));
+
+        let provider_label = self.selected_provider.unwrap_or("Provider");
+        let model_label = self.selected_model.unwrap_or("Model");
+
+        let provider_menu = if self.provider_menu_open {
+            let list = if self.provider_options.is_empty() {
+                div()
+                    .text_sm()
+                    .text_color(self.colors.muted)
+                    .child("No providers")
+            } else {
+                self.provider_options.iter().fold(
+                    div().flex().flex_col().gap_1(),
+                    |list, provider| {
+                        let is_selected = self.selected_provider == Some(provider.as_str());
+                        let provider_id = provider.clone();
+                        let on_click =
+                            cx.listener(move |view, _: &ClickEvent, _window, cx| {
+                                view.select_composer_provider(provider_id.clone(), cx);
+                            });
+                        list.child(
+                            div()
+                                .px_2()
+                                .py_1()
+                                .border_1()
+                                .border_color(self.colors.border)
+                                .rounded_sm()
+                                .bg(if is_selected {
+                                    self.colors.panel
+                                } else {
+                                    self.colors.panel_2
+                                })
+                                .text_sm()
+                                .child(provider.as_str())
+                                .on_click(on_click),
+                        )
+                    },
+                )
+            };
+            div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .p_2()
+                .border_1()
+                .border_color(self.colors.border)
+                .rounded_sm()
+                .bg(self.colors.panel_2)
+                .child(list)
+        } else {
+            div()
+        };
+
+        let model_menu = if self.model_menu_open {
+            let list = if self.model_options.is_empty() {
+                div()
+                    .text_sm()
+                    .text_color(self.colors.muted)
+                    .child("No models")
+            } else {
+                self.model_options.iter().fold(
+                    div().flex().flex_col().gap_1(),
+                    |list, model| {
+                        let is_selected = self.selected_model == Some(model.as_str());
+                        let model_id = model.clone();
+                        let on_click =
+                            cx.listener(move |view, _: &ClickEvent, _window, cx| {
+                                view.select_composer_model(model_id.clone(), cx);
+                            });
+                        list.child(
+                            div()
+                                .px_2()
+                                .py_1()
+                                .border_1()
+                                .border_color(self.colors.border)
+                                .rounded_sm()
+                                .bg(if is_selected {
+                                    self.colors.panel
+                                } else {
+                                    self.colors.panel_2
+                                })
+                                .text_sm()
+                                .child(model.as_str())
+                                .on_click(on_click),
+                        )
+                    },
+                )
+            };
+            div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .p_2()
+                .border_1()
+                .border_color(self.colors.border)
+                .rounded_sm()
+                .bg(self.colors.panel_2)
+                .child(list)
+        } else {
+            div()
+        };
+
+        let provider_control = div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .child(
+                div()
+                    .px_2()
+                    .py_1()
+                    .text_sm()
+                    .border_1()
+                    .border_color(self.colors.border)
+                    .rounded_sm()
+                    .bg(self.colors.panel_2)
+                    .cursor_pointer()
+                    .active(|this| this.opacity(0.85))
+                    .on_click(cx.listener(ShellView::toggle_composer_provider_menu))
+                    .child(format!("Provider: {provider_label} v")),
+            )
+            .child(provider_menu);
+
+        let model_control = div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .child(
+                div()
+                    .px_2()
+                    .py_1()
+                    .text_sm()
+                    .border_1()
+                    .border_color(self.colors.border)
+                    .rounded_sm()
+                    .bg(self.colors.panel_2)
+                    .cursor_pointer()
+                    .active(|this| this.opacity(0.85))
+                    .on_click(cx.listener(ShellView::toggle_composer_model_menu))
+                    .child(format!("Model: {model_label} v")),
+            )
+            .child(model_menu);
+
+        let mut attachments_block = div().flex().flex_col().gap_1();
+        if let Some(notice) = self.composer_notice {
+            attachments_block = attachments_block.child(
+                div()
+                    .text_sm()
+                    .text_color(self.colors.warning)
+                    .child(notice),
+            );
+        }
+        if !self.composer_attachments.is_empty() {
+            let list = self.composer_attachments.iter().enumerate().fold(
+                div().flex().flex_col().gap_1(),
+                |list, (index, attachment)| {
+                    let label = attachment_label(attachment);
+                    let on_remove =
+                        cx.listener(move |view, _: &ClickEvent, _window, cx| {
+                            view.remove_composer_attachment(index, cx);
+                        });
+                    list.child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .px_2()
+                            .py_1()
+                            .border_1()
+                            .border_color(self.colors.border)
+                            .rounded_sm()
+                            .bg(self.colors.panel_2)
+                            .text_sm()
+                            .child(label)
+                            .child(
+                                div()
+                                    .px_1()
+                                    .py_0()
+                                    .text_sm()
+                                    .text_color(self.colors.muted)
+                                    .cursor_pointer()
+                                    .on_click(on_remove)
+                                    .child("Remove"),
+                            ),
+                    )
+                },
+            );
+            attachments_block = attachments_block.child(list);
+        }
+        attachments_block = attachments_block.child(
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(attachment_input)
+                .child(add_attachment_button),
+        );
+
+        let composer_row = div()
+            .flex()
+            .flex_row()
+            .items_end()
+            .gap_2()
+            .border_1()
+            .border_color(self.colors.border)
+            .rounded_sm()
+            .px_2()
+            .py_2()
+            .bg(self.colors.panel_2)
+            .child(input)
+            .child(send_button);
+
+        div()
+            .id("composer")
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(
+                div()
+                    .flex()
+                    .items_start()
+                    .gap_2()
+                    .child(provider_control)
+                    .child(model_control),
+            )
+            .child(attachments_block)
+            .child(composer_row)
+    }
+}

@@ -14,6 +14,12 @@ importers:
 
   .:
     devDependencies:
+      pixelmatch:
+        specifier: ^7.1.0
+        version: 7.1.0
+      pngjs:
+        specifier: ^7.0.0
+        version: 7.0.0
       turbo:
         specifier: ^2.3.0
         version: 2.7.2
