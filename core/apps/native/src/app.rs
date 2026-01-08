@@ -7,6 +7,8 @@ use gpui::{
 
 use crate::theme::{ThemeColors, ThemeTokens};
 
+#[path = "icons.rs"]
+mod icons;
 #[path = "workspace_summary.rs"]
 mod workspace_summary;
 #[path = "models.rs"]
@@ -16,6 +18,7 @@ mod state;
 #[path = "views/mod.rs"]
 mod views;
 
+use self::icons::{Icon, IconAssets, IconName};
 use self::models::{MessageItem, SessionInfo};
 use self::state::{ArtifactPreviewState, ComposerState, DataLoadState, ShellView, StreamStatus};
 use self::views::{SessionView, SidebarView};
@@ -44,7 +47,9 @@ pub fn run() {
             eprintln!("ctx-native: daemon config failed: {err}");
             "unknown".to_string()
         });
-    Application::new().run(|cx: &mut App| {
+    Application::new()
+        .with_assets(IconAssets::new())
+        .run(|cx: &mut App| {
         gpui_tokio::init(cx);
         let bounds = Bounds::centered(None, size(px(1200.0), px(800.0)), cx);
         cx.open_window(
@@ -103,7 +108,17 @@ pub fn run() {
 
 impl Render for ShellView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let toggle_label = if self.is_dark { "Light" } else { "Dark" };
+        let toggle_text = if self.is_dark { "Light" } else { "Dark" };
+        let toggle_label = div()
+            .flex()
+            .items_center()
+            .gap_1()
+            .child(Icon::new(
+                IconName::Settings,
+                12.0,
+                self.colors.muted,
+            ))
+            .child(toggle_text);
         div()
             .id("app-shell")
             .size_full()
