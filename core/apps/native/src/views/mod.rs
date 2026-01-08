@@ -595,19 +595,28 @@ impl<'a> ArtifactsView<'a> {
 struct ComposerView<'a> {
     colors: ThemeColors,
     composer_text: &'a str,
+    composer_cursor: usize,
     can_send: bool,
     focus_handle: &'a FocusHandle,
 }
 
 impl<'a> ComposerView<'a> {
     fn render(&self, cx: &mut Context<ShellView>) -> impl IntoElement {
-        let placeholder = self.composer_text.is_empty();
-        let input_text = if placeholder {
-            "Type a message..."
+        let placeholder_text = "Type a message...";
+        let (input_text, is_placeholder) = if self.composer_text.is_empty() {
+            (format!("|{placeholder_text}"), true)
         } else {
-            self.composer_text
+            let mut cursor = self.composer_cursor.min(self.composer_text.len());
+            while cursor > 0 && !self.composer_text.is_char_boundary(cursor) {
+                cursor -= 1;
+            }
+            let mut display = String::with_capacity(self.composer_text.len() + 1);
+            display.push_str(&self.composer_text[..cursor]);
+            display.push('|');
+            display.push_str(&self.composer_text[cursor..]);
+            (display, false)
         };
-        let input_color = if placeholder {
+        let input_color = if is_placeholder {
             self.colors.muted
         } else {
             self.colors.text
@@ -648,7 +657,7 @@ impl<'a> ComposerView<'a> {
             .id("composer")
             .flex()
             .flex_row()
-            .items_center()
+            .items_end()
             .gap_2()
             .border_1()
             .border_color(self.colors.border)
@@ -677,6 +686,7 @@ pub(super) struct SessionView<'a> {
     pub(super) selected_artifact: Option<usize>,
     pub(super) data_state: &'a DataLoadState,
     pub(super) composer_text: &'a str,
+    pub(super) composer_cursor: usize,
     pub(super) composer_focus: &'a FocusHandle,
 }
 
@@ -866,6 +876,7 @@ impl<'a> SessionView<'a> {
                 ComposerView {
                     colors: self.colors,
                     composer_text: self.composer_text,
+                    composer_cursor: self.composer_cursor,
                     can_send,
                     focus_handle: self.composer_focus,
                 }
