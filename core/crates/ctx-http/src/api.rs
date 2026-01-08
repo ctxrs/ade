@@ -9646,7 +9646,18 @@ async fn set_session_mode(
     Ok(StatusCode::OK)
 }
 
-const MAX_SUBAGENTS_PER_CALL: usize = 5;
+const DEFAULT_MAX_SUBAGENTS_PER_CALL: usize = 10;
+
+fn resolve_max_subagents_per_call(settings: &user_settings::Settings) -> usize {
+    let configured = settings
+        .subagents
+        .as_ref()
+        .and_then(|s| s.max_per_call)
+        .filter(|value| *value > 0);
+    configured
+        .map(|value| value as usize)
+        .unwrap_or(DEFAULT_MAX_SUBAGENTS_PER_CALL)
+}
 const DEFAULT_REASONING_EFFORT: &str = "medium";
 const KNOWN_EFFORT_IDS: [&str; 6] = ["none", "minimal", "low", "medium", "high", "xhigh"];
 
@@ -10309,11 +10320,13 @@ async fn mcp_agent_init(
             }),
         ));
     }
-    if req.agents.len() > MAX_SUBAGENTS_PER_CALL {
+    let settings = user_settings::load_settings(&state.data_root).await;
+    let max_subagents = resolve_max_subagents_per_call(&settings);
+    if req.agents.len() > max_subagents {
         return Err((
             StatusCode::BAD_REQUEST,
             Json(ApiErrorResp {
-                error: format!("max {MAX_SUBAGENTS_PER_CALL} subagents per call"),
+                error: format!("max {max_subagents} subagents per call"),
             }),
         ));
     }

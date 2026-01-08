@@ -101,7 +101,7 @@ async fn main() -> Result<()> {
                         {
                             "name": "agent_init",
                             "title": "Init Subagents",
-                            "description": "Spawns one or more subagents (max 5) for the current session and waits for their responses.",
+                            "description": "Spawns one or more subagents (max configurable, default 10) for the current session and waits for their responses.",
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {

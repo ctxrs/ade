@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -152,9 +152,25 @@ impl ResourceSampler {
         daemon_pid: u32,
         providers: &[ProviderProcessInfo],
     ) -> ResourceProcesses {
+        let mut task_pids = HashSet::new();
+        for (pid, process) in self.system.processes() {
+            if let Some(tasks) = process.tasks() {
+                for task_pid in tasks {
+                    if task_pid != pid {
+                        task_pids.insert(*task_pid);
+                    }
+                }
+            }
+        }
         let mut children: HashMap<Pid, Vec<Pid>> = HashMap::new();
         for (pid, process) in self.system.processes() {
+            if task_pids.contains(pid) {
+                continue;
+            }
             if let Some(parent) = process.parent() {
+                if task_pids.contains(&parent) {
+                    continue;
+                }
                 children.entry(parent).or_default().push(*pid);
             }
         }

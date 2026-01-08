@@ -16,6 +16,8 @@ pub struct Settings {
     pub resource_governance: Option<ResourceGovernanceSettings>,
     #[serde(default)]
     pub provider_guard: Option<ProviderGuardSettings>,
+    #[serde(default)]
+    pub subagents: Option<SubagentSettings>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -103,6 +105,12 @@ pub struct ProviderGuardSettings {
     pub grace_period_ms: Option<u64>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SubagentSettings {
+    #[serde(default)]
+    pub max_per_call: Option<u32>,
+}
+
 impl Default for ResourceGovernanceSettings {
     fn default() -> Self {
         Self {
@@ -161,6 +169,8 @@ pub struct PublicSettings {
     pub resource_governance: Option<PublicResourceGovernanceSettings>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provider_guard: Option<PublicProviderGuardSettings>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subagents: Option<PublicSubagentSettings>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -250,6 +260,12 @@ pub struct PublicProviderGuardSettings {
     pub grace_period_ms: Option<u64>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct PublicSubagentSettings {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_per_call: Option<u32>,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct UpdateSettingsReq {
     #[serde(default)]
@@ -262,6 +278,8 @@ pub struct UpdateSettingsReq {
     pub resource_governance: Option<UpdateResourceGovernanceSettingsReq>,
     #[serde(default)]
     pub provider_guard: Option<UpdateProviderGuardSettingsReq>,
+    #[serde(default)]
+    pub subagents: Option<UpdateSubagentSettingsReq>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -320,6 +338,12 @@ pub struct UpdateProviderGuardSettingsReq {
     pub interval_ms: Option<u64>,
     #[serde(default)]
     pub grace_period_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct UpdateSubagentSettingsReq {
+    #[serde(default)]
+    pub max_per_call: Option<u32>,
 }
 
 fn settings_path(data_root: &Path) -> PathBuf {
@@ -467,12 +491,16 @@ pub fn to_public(settings: &Settings) -> PublicSettings {
             interval_ms: g.interval_ms,
             grace_period_ms: g.grace_period_ms,
         });
+    let subagents = settings.subagents.as_ref().map(|s| PublicSubagentSettings {
+        max_per_call: s.max_per_call,
+    });
     PublicSettings {
         dictation,
         telemetry,
         title_generation,
         resource_governance,
         provider_guard,
+        subagents,
     }
 }
 
@@ -535,6 +563,11 @@ pub fn apply_update(mut current: Settings, req: UpdateSettingsReq) -> Settings {
         next.interval_ms = g.interval_ms;
         next.grace_period_ms = g.grace_period_ms;
         current.provider_guard = Some(next);
+    }
+    if let Some(s) = req.subagents {
+        let mut next = current.subagents.unwrap_or_default();
+        next.max_per_call = s.max_per_call;
+        current.subagents = Some(next);
     }
     current
 }

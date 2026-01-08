@@ -42,6 +42,7 @@ import { Check, Copy } from "lucide-react";
 import { AskUserQuestionModal } from "../components/AskUserQuestionModal";
 import { type SlashCommandDescriptor } from "../state/useComposerAutocomplete";
 import { HARNESS_CATALOG } from "../utils/harnessCatalog";
+import { useSettingsSnapshot, useSettingsStore } from "../state/settingsStore";
 import {
   WorkbenchComposer as UnifiedWorkbenchComposer,
   type ContextWindowInfo,
@@ -430,6 +431,17 @@ function formatElapsedMs(ms: number): string {
   return `${seconds}s`;
 }
 
+function formatMemoryMb(value?: number | null): string {
+  if (!Number.isFinite(value)) return "—";
+  const mb = value as number;
+  const gb = mb / 1024;
+  if (gb >= 1) {
+    const precision = gb >= 10 ? 0 : 1;
+    return `${gb.toFixed(precision)} GB`;
+  }
+  return `${Math.round(mb)} MB`;
+}
+
 function humanTurnStatus(status: SessionTurn["status"]): string {
   switch (status) {
     case "completed":
@@ -600,6 +612,10 @@ export function SessionView({
   const restoreRetryRef = useRef(0);
   const pendingScrollToBottomRef = useRef(false);
   const [nowMs, setNowMs] = useState(() => Date.now());
+  const settingsStore = useSettingsStore();
+  const settingsSnapshot = useSettingsSnapshot();
+  const [providerGuardActionError, setProviderGuardActionError] = useState<string | null>(null);
+  const [providerGuardActionBusy, setProviderGuardActionBusy] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -978,15 +994,29 @@ export function SessionView({
     () => deriveSessionError(turns, events),
     [turnsKey, eventsKey],
   );
+  const providerGuardNotice = useMemo(
+    () => deriveProviderGuardNotice(events),
+    [eventsKey],
+  );
+  const providerGuardCountdownTarget = providerGuardNotice?.killAtMs ?? null;
+  const needsNowMs = hasActiveTurn || (providerGuardCountdownTarget != null && providerGuardCountdownTarget > Date.now());
 
   useEffect(() => {
-    if (!hasActiveTurn) return;
+    if (!needsNowMs) return;
     setNowMs(Date.now());
     const timer = window.setInterval(() => {
       setNowMs(Date.now());
     }, 1000);
     return () => window.clearInterval(timer);
-  }, [hasActiveTurn]);
+  }, [needsNowMs]);
+
+  const providerGuardNoticeKey = providerGuardNotice
+    ? `${providerGuardNotice.kind}:${providerGuardNotice.stage}:${providerGuardNotice.pid ?? ""}:${providerGuardNotice.killAtMs ?? ""}`
+    : "";
+
+  useEffect(() => {
+    setProviderGuardActionError(null);
+  }, [providerGuardNoticeKey]);
 
   const askUserQuestion = useMemo(() => {
     const answered = new Set<string>();
@@ -1010,6 +1040,57 @@ export function SessionView({
     }
     return null;
   }, [eventsKey, optimisticAskAnswered]);
+
+  const applyProviderGuardSettings = useCallback(
+    async (opts: {
+      enabled?: boolean;
+      mode?: "auto" | "custom";
+      memoryHighMb?: number | null;
+      memoryMaxMb?: number | null;
+    }) => {
+      setProviderGuardActionError(null);
+      setProviderGuardActionBusy(true);
+      try {
+        const current = settingsSnapshot.settings ?? (await getSettings());
+        const guard = current.provider_guard ?? { enabled: true, mode: "auto" };
+        const nextGuard = {
+          enabled: opts.enabled ?? guard.enabled ?? true,
+          mode: opts.mode ?? guard.mode ?? "auto",
+          memory_high_mb: opts.memoryHighMb ?? guard.memory_high_mb ?? null,
+          memory_max_mb: opts.memoryMaxMb ?? guard.memory_max_mb ?? null,
+          interval_ms: guard.interval_ms ?? null,
+          grace_period_ms: guard.grace_period_ms ?? null,
+        };
+        await settingsStore.update({ provider_guard: nextGuard });
+      } catch (e: any) {
+        setProviderGuardActionError(e?.message ?? String(e));
+      } finally {
+        setProviderGuardActionBusy(false);
+      }
+    },
+    [settingsSnapshot.settings, settingsStore],
+  );
+
+  const raiseProviderGuardLimit = useCallback(async () => {
+    const totalMb = providerGuardNotice?.systemTotalMb;
+    if (!totalMb || !Number.isFinite(totalMb)) {
+      setProviderGuardActionError("System memory total is unavailable.");
+      return;
+    }
+    const maxMb = Math.max(1024, Math.floor(totalMb * 0.9));
+    let highMb = Math.floor(totalMb * 0.85);
+    if (highMb > maxMb) highMb = maxMb;
+    await applyProviderGuardSettings({
+      enabled: true,
+      mode: "custom",
+      memoryHighMb: highMb,
+      memoryMaxMb: maxMb,
+    });
+  }, [applyProviderGuardSettings, providerGuardNotice?.systemTotalMb]);
+
+  const disableProviderGuard = useCallback(async () => {
+    await applyProviderGuardSettings({ enabled: false });
+  }, [applyProviderGuardSettings]);
 
   const stopDictation = useCallback(async (opts?: { awaitFinal?: boolean }): Promise<string> => {
     const awaitFinal = opts?.awaitFinal === true;
@@ -1477,6 +1558,40 @@ export function SessionView({
   ]);
 
   const authUi = useMemo(() => deriveAuthUi(events), [eventsKey]);
+  const providerGuardMemoryLimitMb =
+    providerGuardNotice?.stage === "high" ? providerGuardNotice?.limitHighMb : providerGuardNotice?.limitMaxMb;
+  const providerGuardCountdownMs =
+    providerGuardNotice?.killAtMs != null ? providerGuardNotice.killAtMs - nowMs : null;
+  const providerGuardCountdownText =
+    providerGuardNotice?.kind === "provider_guard_warning" &&
+    providerGuardNotice?.stage === "max" &&
+    providerGuardNotice?.killAtMs != null
+      ? providerGuardCountdownMs != null && providerGuardCountdownMs > 0
+        ? `Kill in ${formatElapsedMs(providerGuardCountdownMs)} unless memory drops.`
+        : "Kill imminent unless memory drops."
+      : null;
+  const providerGuardHeading =
+    providerGuardNotice?.kind === "provider_guard_kill"
+      ? "Provider guard kill"
+      : providerGuardNotice?.stage === "max"
+        ? "Provider memory limit"
+        : "Provider memory warning";
+  const providerGuardMessage =
+    providerGuardNotice?.message ??
+    (providerGuardNotice?.kind === "provider_guard_kill"
+      ? "Provider process killed after exceeding memory limits."
+      : "Provider memory is above the guard threshold.");
+  const providerGuardLimitLabel =
+    providerGuardNotice?.stage === "high"
+      ? "high limit"
+      : providerGuardNotice?.stage === "max"
+        ? "max limit"
+        : "limit";
+  const providerGuardProviderLabel = providerGuardNotice?.provider ?? session?.provider_id ?? undefined;
+  const providerGuardPidLabel =
+    providerGuardNotice?.pid != null ? `PID ${Math.round(providerGuardNotice.pid)}` : null;
+  const canRaiseProviderGuard =
+    providerGuardNotice?.systemTotalMb != null && Number.isFinite(providerGuardNotice.systemTotalMb);
 
   useEffect(() => {
     if (authMethodId) return;
@@ -2053,6 +2168,55 @@ export function SessionView({
             </div>
             <div className="error" style={{ whiteSpace: "pre-wrap" }}>
               {sessionError.message}
+            </div>
+          </div>
+        )}
+        {providerGuardNotice && (
+          <div className="banner" role="alert">
+            <div className="row" style={{ justifyContent: "space-between" }}>
+              <strong>{providerGuardHeading}</strong>
+              {providerGuardProviderLabel ? <span className="muted">{providerGuardProviderLabel}</span> : null}
+            </div>
+            <div
+              className={providerGuardNotice.kind === "provider_guard_kill" ? "error" : "muted"}
+              style={{ whiteSpace: "pre-wrap" }}
+            >
+              {providerGuardMessage}
+            </div>
+            <div className="row" style={{ flexWrap: "wrap", gap: 12 }}>
+              {providerGuardNotice.memoryMb != null ? (
+                <span className="muted">
+                  Memory {formatMemoryMb(providerGuardNotice.memoryMb)}
+                  {providerGuardMemoryLimitMb != null
+                    ? ` / ${formatMemoryMb(providerGuardMemoryLimitMb)} (${providerGuardLimitLabel})`
+                    : ""}
+                </span>
+              ) : null}
+              {providerGuardNotice.systemUsedMb != null && providerGuardNotice.systemTotalMb != null ? (
+                <span className="muted">
+                  System {formatMemoryMb(providerGuardNotice.systemUsedMb)} / {formatMemoryMb(providerGuardNotice.systemTotalMb)}
+                </span>
+              ) : null}
+              {providerGuardPidLabel ? <span className="muted">{providerGuardPidLabel}</span> : null}
+            </div>
+            {providerGuardCountdownText && <div className="muted">{providerGuardCountdownText}</div>}
+            <div className="row" style={{ flexWrap: "wrap", gap: 8 }}>
+              <button
+                type="button"
+                disabled={providerGuardActionBusy || !canRaiseProviderGuard}
+                onClick={raiseProviderGuardLimit}
+                title={!canRaiseProviderGuard ? "System memory total is unavailable." : undefined}
+              >
+                Raise limit to 90%
+              </button>
+              <button
+                type="button"
+                disabled={providerGuardActionBusy}
+                onClick={disableProviderGuard}
+              >
+                Disable guard
+              </button>
+              {providerGuardActionError && <span className="error">{providerGuardActionError}</span>}
             </div>
           </div>
         )}
@@ -4816,6 +4980,21 @@ function mergeEvents(prev: SessionEvent[], incoming: SessionEvent[]): SessionEve
 
 type AuthMethodOption = { id: string; name: string };
 type SessionErrorInfo = { message: string; provider?: string };
+type ProviderGuardNotice = {
+  kind: "provider_guard_warning" | "provider_guard_kill";
+  stage: string;
+  provider?: string;
+  message?: string;
+  pid?: number;
+  memoryMb?: number | null;
+  limitHighMb?: number | null;
+  limitMaxMb?: number | null;
+  systemTotalMb?: number | null;
+  systemUsedMb?: number | null;
+  gracePeriodMs?: number | null;
+  killAtMs?: number | null;
+  createdAtMs?: number | null;
+};
 
 type AuthUi = {
   status: "unknown" | "required" | "failed" | "authenticated";
@@ -4883,6 +5062,32 @@ function deriveAuthUi(events: SessionEvent[]): AuthUi {
   }
 
   return { status, provider, message, methods };
+}
+
+function deriveProviderGuardNotice(events: SessionEvent[]): ProviderGuardNotice | null {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const ev = events[i];
+    if (ev.event_type !== "notice") continue;
+    const payload = ev.payload_json ?? {};
+    const kind = String(payload.kind ?? "").trim();
+    if (kind !== "provider_guard_warning" && kind !== "provider_guard_kill") continue;
+    return {
+      kind,
+      stage: String(payload.stage ?? "").trim(),
+      provider: typeof payload.provider === "string" ? payload.provider : undefined,
+      message: typeof payload.message === "string" ? payload.message : undefined,
+      pid: coerceNumber(payload.pid) ?? undefined,
+      memoryMb: coerceNumber(payload.memory_mb),
+      limitHighMb: coerceNumber(payload.limit_high_mb),
+      limitMaxMb: coerceNumber(payload.limit_max_mb),
+      systemTotalMb: coerceNumber(payload.system_total_mb),
+      systemUsedMb: coerceNumber(payload.system_used_mb),
+      gracePeriodMs: coerceNumber(payload.grace_period_ms),
+      killAtMs: coerceNumber(payload.kill_at_ms),
+      createdAtMs: parseIsoMs(ev.created_at),
+    };
+  }
+  return null;
 }
 
 function readNonEmptyString(value: unknown): string | null {

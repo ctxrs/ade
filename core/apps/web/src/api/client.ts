@@ -212,6 +212,19 @@ export type ResourceGovernanceSettings = {
   status?: ResourceGovernanceStatus | null;
 };
 
+export type ProviderGuardSettings = {
+  enabled: boolean;
+  mode: "auto" | "custom";
+  memory_high_mb?: number | null;
+  memory_max_mb?: number | null;
+  interval_ms?: number | null;
+  grace_period_ms?: number | null;
+};
+
+export type SubagentSettings = {
+  max_per_call?: number | null;
+};
+
 export type TitleGenerationSettings = {
   base_url: string;
   api_key: string;
@@ -224,6 +237,8 @@ export type Settings = {
   telemetry?: TelemetrySettings | null;
   title_generation?: TitleGenerationSettings | null;
   resource_governance?: ResourceGovernanceSettings | null;
+  provider_guard?: ProviderGuardSettings | null;
+  subagents?: SubagentSettings | null;
 };
 
 export type WebSessionViewport = {

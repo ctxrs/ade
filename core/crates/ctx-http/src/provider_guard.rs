@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
 use serde_json::json;
@@ -72,10 +72,7 @@ pub fn compute_effective_limits(
     }
 
     let interval_ms = settings.interval_ms.unwrap_or(DEFAULT_INTERVAL_MS).max(100);
-    let grace_ms = settings
-        .grace_period_ms
-        .unwrap_or(DEFAULT_GRACE_PERIOD_MS)
-        .max(0);
+    let grace_ms = settings.grace_period_ms.unwrap_or(DEFAULT_GRACE_PERIOD_MS);
 
     Some(ProviderGuardLimits {
         memory_high_mb: memory_high_mb as u32,
@@ -152,19 +149,21 @@ async fn guard_once(
     over_max: &mut HashMap<u32, OverLimitState>,
 ) -> Result<()> {
     let provider_processes = list_provider_processes(state).await;
-    let processes = {
+    let (system, processes) = {
         let mut sampler = state.resource_sampler.lock().await;
-        let (_system, _disks, _cache_age_ms) = sampler.system_snapshot();
-        sampler.processes_snapshot(std::process::id(), &provider_processes)
+        let (system, _disks, _cache_age_ms) = sampler.system_snapshot();
+        let processes = sampler.processes_snapshot(std::process::id(), &provider_processes);
+        (system, processes)
     };
 
-    handle_limits(state, limits, &processes, warned_high, over_max).await?;
+    handle_limits(state, limits, &system, &processes, warned_high, over_max).await?;
     Ok(())
 }
 
 async fn handle_limits(
     state: &Arc<AppState>,
     limits: &ProviderGuardLimits,
+    system: &SystemSnapshot,
     processes: &ResourceProcesses,
     warned_high: &mut HashSet<u32>,
     over_max: &mut HashMap<u32, OverLimitState>,
@@ -180,12 +179,23 @@ async fn handle_limits(
         if proc.memory_bytes >= high_bytes && !warned_high.contains(&pid) {
             warned_high.insert(pid);
             log_guard_event(state, proc, "over_high", limits, proc.memory_bytes).await;
+            notify_sessions(
+                state,
+                proc,
+                limits,
+                system,
+                "provider_guard_warning",
+                "high",
+                None,
+            )
+            .await;
         } else if proc.memory_bytes < high_bytes {
             warned_high.remove(&pid);
         }
 
         if proc.memory_bytes >= max_bytes {
             let now = Instant::now();
+            let is_new = !over_max.contains_key(&pid);
             let entry = over_max.entry(pid).or_insert_with(|| OverLimitState {
                 first_seen: now,
                 last_seen: now,
@@ -194,8 +204,24 @@ async fn handle_limits(
             entry.last_seen = now;
             entry.last_memory_bytes = proc.memory_bytes;
 
+            if is_new {
+                log_guard_event(state, proc, "over_max", limits, proc.memory_bytes).await;
+                let kill_at_ms =
+                    unix_ms_now().saturating_add(limits.grace_period.as_millis() as u64);
+                notify_sessions(
+                    state,
+                    proc,
+                    limits,
+                    system,
+                    "provider_guard_warning",
+                    "max",
+                    Some(kill_at_ms),
+                )
+                .await;
+            }
+
             if now.duration_since(entry.first_seen) >= limits.grace_period {
-                kill_provider_process(state, proc, limits).await;
+                kill_provider_process(state, proc, limits, system).await;
                 over_max.remove(&pid);
             }
         } else {
@@ -250,9 +276,19 @@ async fn kill_provider_process(
     state: &Arc<AppState>,
     proc: &ResourceProcess,
     limits: &ProviderGuardLimits,
+    system: &SystemSnapshot,
 ) {
     log_guard_event(state, proc, "kill", limits, proc.memory_bytes).await;
-    notify_sessions(state, proc, limits).await;
+    notify_sessions(
+        state,
+        proc,
+        limits,
+        system,
+        "provider_guard_kill",
+        "kill",
+        None,
+    )
+    .await;
 
     let mut pids = Vec::new();
     pids.push(proc.pid);
@@ -273,6 +309,10 @@ async fn notify_sessions(
     state: &Arc<AppState>,
     proc: &ResourceProcess,
     limits: &ProviderGuardLimits,
+    system: &SystemSnapshot,
+    kind: &str,
+    stage: &str,
+    kill_at_ms: Option<u64>,
 ) {
     let session_ids = state.list_running_sessions().await;
     for session_id in session_ids {
@@ -285,12 +325,21 @@ async fn notify_sessions(
         }
         let payload = json!({
             "provider": proc.label,
-            "kind": "provider_guard_kill",
+            "kind": kind,
+            "stage": stage,
             "pid": proc.pid,
             "memory_mb": bytes_to_mb(proc.memory_bytes),
+            "system_total_mb": bytes_to_mb(system.memory_total_bytes),
+            "system_used_mb": bytes_to_mb(system.memory_used_bytes),
             "limit_high_mb": limits.memory_high_mb,
             "limit_max_mb": limits.memory_max_mb,
-            "message": "Provider process killed after exceeding memory limits.",
+            "grace_period_ms": limits.grace_period.as_millis() as u64,
+            "kill_at_ms": kill_at_ms,
+            "message": match kind {
+                "provider_guard_warning" => "Provider memory is above the guard threshold.",
+                "provider_guard_kill" => "Provider process killed after exceeding memory limits.",
+                _ => "Provider guard notice.",
+            },
         });
         match state
             .store
@@ -341,4 +390,11 @@ fn mb_to_bytes(value: u32) -> u64 {
 
 fn bytes_to_mb(value: u64) -> u64 {
     value / (1024 * 1024)
+}
+
+fn unix_ms_now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
 }

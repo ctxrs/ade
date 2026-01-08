@@ -236,6 +236,8 @@ pub struct PublicSettings {
     pub title_generation: Option<PublicTitleGenerationSettings>,
     #[serde(default)]
     pub resource_governance: Option<PublicResourceGovernanceSettings>,
+    #[serde(default)]
+    pub subagents: Option<PublicSubagentSettings>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -267,6 +269,12 @@ pub struct PublicTitleGenerationSettings {
     pub api_key: String,
     pub model: String,
     pub use_json: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PublicSubagentSettings {
+    #[serde(default)]
+    pub max_per_call: Option<u32>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
