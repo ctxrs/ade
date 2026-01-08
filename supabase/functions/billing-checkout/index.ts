@@ -71,6 +71,13 @@ function buildReturnUrl(
   return url.toString();
 }
 
+function appendQueryParam(url: string, key: string, value: string): string {
+  const [base, hash] = url.split("#", 2);
+  const sep = base.includes("?") ? "&" : "?";
+  const next = `${base}${sep}${key}=${value}`;
+  return hash ? `${next}#${hash}` : next;
+}
+
 function asBearerToken(req: Request): string {
   const authHeader = req.headers.get("authorization") ?? "";
   return authHeader.toLowerCase().startsWith("bearer ") ? authHeader.slice(7).trim() : "";
@@ -147,6 +154,8 @@ serve(async (req) => {
   }
 
   const priceId = interval === "year" ? priceYearly : priceMonthly;
+  const baseSuccessUrl = buildReturnUrl("checkout_success", origin, returnPath);
+  const successUrl = appendQueryParam(baseSuccessUrl, "session_id", "{CHECKOUT_SESSION_ID}");
   const session = await stripe.checkout.sessions.create({
     mode: "subscription",
     customer: stripeCustomerId,
@@ -156,7 +165,7 @@ serve(async (req) => {
     subscription_data: {
       metadata: { supabase_user_id: userId },
     },
-    success_url: buildReturnUrl("checkout_success", origin, returnPath),
+    success_url: successUrl,
     cancel_url: buildReturnUrl("checkout_cancel", origin, returnPath),
     metadata: { supabase_user_id: userId, plan_type: "pro", billing_interval: interval },
   });

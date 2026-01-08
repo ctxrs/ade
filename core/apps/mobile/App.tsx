@@ -99,7 +99,14 @@ function RootNavigator(): React.JSX.Element {
       }}
     >
       {!config ? (
-        <Stack.Screen name="Connection" component={ConnectionScreen} options={{ headerShown: false }} />
+        <>
+          <Stack.Screen name="Connection" component={ConnectionScreen} options={{ headerShown: false }} />
+          <Stack.Screen
+            name="QrScanner"
+            component={QrScannerScreen}
+            options={{ presentation: "fullScreenModal", title: "Scan QR" }}
+          />
+        </>
       ) : (
         <>
           <Stack.Screen name="Workbench" component={WorkbenchScreen} options={{ headerShown: false }} />
@@ -131,7 +138,11 @@ function RootNavigator(): React.JSX.Element {
           <Stack.Screen name="Diagnostics" component={DiagnosticsScreen} />
           <Stack.Screen name="Settings" component={SettingsScreen} />
           <Stack.Screen name="Connection" component={ConnectionScreen} options={{ presentation: "modal" }} />
-          <Stack.Screen name="QrScanner" component={QrScannerScreen} options={{ presentation: "fullScreenModal", title: "Scan QR" }} />
+          <Stack.Screen
+            name="QrScanner"
+            component={QrScannerScreen}
+            options={{ presentation: "fullScreenModal", title: "Scan QR" }}
+          />
         </>
       )}
     </Stack.Navigator>

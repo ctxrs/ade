@@ -1,6 +1,12 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2.49.1";
 import { corsHeaders } from "../_shared/cors.ts";
+import {
+  ensureBillingProfile,
+  type EventMeta,
+  stripeId,
+  syncSubscriptionFromStripe,
+} from "../_shared/billing.ts";
 import { getStripe } from "../_shared/stripe.ts";
 
 async function sha256Hex(data: Uint8Array): Promise<string> {
@@ -28,129 +34,6 @@ function requiredEnv(name: string): string {
   const v = Deno.env.get(name) ?? "";
   if (!v) throw new Error(`Missing ${name}`);
   return v;
-}
-
-function planTypeForPriceId(priceId: string): "pro" | "free_local" {
-  const monthly = Deno.env.get("STRIPE_PRICE_ID_MONTHLY") ?? "";
-  const yearly = Deno.env.get("STRIPE_PRICE_ID_YEARLY") ?? "";
-  if (priceId === monthly || priceId === yearly) return "pro";
-  return "free_local";
-}
-
-function stripeId(obj: any): string {
-  if (!obj) return "";
-  if (typeof obj === "string") return obj;
-  if (typeof obj === "object" && obj.id) return String(obj.id);
-  return "";
-}
-
-type EventMeta = {
-  id: string;
-  created: number;
-};
-
-async function ensureBillingProfile(
-  supabase: ReturnType<typeof createClient>,
-  userId: string,
-  stripeCustomerId: string,
-) {
-  if (!userId || !stripeCustomerId) return;
-  await supabase
-    .from("billing_profile")
-    .upsert(
-      { user_id: userId, stripe_customer_id: stripeCustomerId, updated_at: new Date().toISOString() },
-      { onConflict: "user_id" },
-    );
-}
-
-async function resolveUserIdForCustomer(
-  supabase: ReturnType<typeof createClient>,
-  stripeCustomerId: string,
-  fallbackUserId?: string,
-): Promise<string> {
-  if (!stripeCustomerId) return "";
-  const { data: profile } = await supabase
-    .from("billing_profile")
-    .select("user_id")
-    .eq("stripe_customer_id", stripeCustomerId)
-    .maybeSingle();
-
-  const userId = profile?.user_id ? String(profile.user_id) : "";
-  if (userId) return userId;
-  if (fallbackUserId) {
-    await ensureBillingProfile(supabase, fallbackUserId, stripeCustomerId);
-    return fallbackUserId;
-  }
-  return "";
-}
-
-async function shouldUpdateEventMeta(
-  supabase: ReturnType<typeof createClient>,
-  stripeSubscriptionId: string,
-  eventCreatedMs: number,
-): Promise<boolean> {
-  const { data } = await supabase
-    .from("billing_subscription")
-    .select("stripe_last_event_created")
-    .eq("stripe_subscription_id", stripeSubscriptionId)
-    .maybeSingle();
-  const last = data?.stripe_last_event_created
-    ? Date.parse(String(data.stripe_last_event_created))
-    : NaN;
-  if (!Number.isFinite(last)) return true;
-  return eventCreatedMs >= last;
-}
-
-async function syncSubscriptionFromStripe(
-  supabase: ReturnType<typeof createClient>,
-  stripe: ReturnType<typeof getStripe>,
-  stripeSubscriptionId: string,
-  eventMeta?: EventMeta,
-  fallbackUserId?: string,
-) {
-  if (!stripeSubscriptionId) return;
-
-  const sub = await stripe.subscriptions.retrieve(stripeSubscriptionId);
-  const stripeCustomerId = stripeId(sub.customer);
-  if (!stripeCustomerId) return;
-
-  const metadataUserId = String((sub as any)?.metadata?.supabase_user_id ?? "").trim();
-  const userId = await resolveUserIdForCustomer(
-    supabase,
-    stripeCustomerId,
-    metadataUserId || fallbackUserId,
-  );
-  if (!userId) return;
-
-  const priceId = String(sub.items?.data?.[0]?.price?.id ?? "").trim() || null;
-  const planType = priceId ? planTypeForPriceId(priceId) : "free_local";
-  const status = String(sub.status ?? "unknown");
-  const cancelAtPeriodEnd = Boolean(sub.cancel_at_period_end ?? false);
-  const currentPeriodEnd =
-    typeof sub.current_period_end === "number"
-      ? new Date(sub.current_period_end * 1000).toISOString()
-      : null;
-
-  const update: Record<string, unknown> = {
-    user_id: userId,
-    plan_type: planType,
-    status,
-    stripe_subscription_id: stripeSubscriptionId,
-    stripe_price_id: priceId,
-    current_period_end: currentPeriodEnd,
-    cancel_at_period_end: cancelAtPeriodEnd,
-    updated_at: new Date().toISOString(),
-  };
-
-  if (eventMeta?.id && Number.isFinite(eventMeta.created)) {
-    const eventCreatedMs = eventMeta.created * 1000;
-    if (await shouldUpdateEventMeta(supabase, stripeSubscriptionId, eventCreatedMs)) {
-      update.stripe_last_event_id = eventMeta.id;
-      update.stripe_last_event_created = new Date(eventCreatedMs).toISOString();
-    }
-  }
-
-  await supabase.from("billing_subscription").upsert(update, { onConflict: "user_id" });
 }
 
 serve(async (req) => {

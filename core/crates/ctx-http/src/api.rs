@@ -1,8 +1,9 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path as StdPath, PathBuf};
+use std::process::Stdio;
 use std::sync::Arc;
 
-use anyhow::Context;
+use anyhow::{bail, Context};
 use axum::body::{Body, Bytes};
 use axum::extract::ws::{Message as WsMessage, WebSocket, WebSocketUpgrade};
 use axum::extract::{Extension, MatchedPath, Multipart, Path, Query, State};
@@ -36,8 +37,7 @@ use ctx_core::ids::*;
 use ctx_core::models::*;
 use ctx_fs::git::{assert_git_repo, list_tracked_files, list_untracked_files, rev_parse_head};
 use ctx_fs::worktrees::{
-    create_worktree, diff_worktree_summary, ensure_worktree_attached, managed_worktree_path,
-    prune_worktrees, remove_worktree,
+    create_worktree, diff_worktree_summary, managed_worktree_path,
 };
 use ctx_store::store::MobileDeviceUpsert;
 
@@ -6918,6 +6918,149 @@ fn managed_worktree_root(
     } else {
         None
     }
+}
+
+async fn remove_worktree(
+    workspace_root: impl AsRef<StdPath>,
+    worktree_path: impl AsRef<StdPath>,
+) -> anyhow::Result<()> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(workspace_root.as_ref())
+        .arg("worktree")
+        .arg("remove")
+        .arg("--force")
+        .arg(worktree_path.as_ref())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .await
+        .context("running git worktree remove")?;
+    if !output.status.success() {
+        bail!(
+            "git worktree remove failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    if tokio::fs::metadata(worktree_path.as_ref()).await.is_ok() {
+        tokio::fs::remove_dir_all(worktree_path.as_ref())
+            .await
+            .context("removing worktree dir")?;
+    }
+    Ok(())
+}
+
+async fn prune_worktrees(workspace_root: impl AsRef<StdPath>) -> anyhow::Result<()> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(workspace_root.as_ref())
+        .arg("worktree")
+        .arg("prune")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .await
+        .context("running git worktree prune")?;
+    if !output.status.success() {
+        bail!(
+            "git worktree prune failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    Ok(())
+}
+
+async fn ensure_worktree_attached(
+    workspace_root: impl AsRef<StdPath>,
+    worktree_path: impl AsRef<StdPath>,
+    base_commit_sha: &str,
+    branch_name: &str,
+) -> anyhow::Result<()> {
+    let worktree_path = worktree_path.as_ref();
+    if let Some(parent) = worktree_path.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .context("creating worktree parent dir")?;
+    }
+
+    if tokio::fs::metadata(worktree_path).await.is_ok() {
+        if is_git_worktree(worktree_path).await.unwrap_or(false) {
+            return Ok(());
+        }
+        tokio::fs::remove_dir_all(worktree_path)
+            .await
+            .context("removing stale worktree dir")?;
+    }
+
+    let mut cmd = Command::new("git");
+    cmd.arg("-C")
+        .arg(workspace_root.as_ref())
+        .arg("worktree")
+        .arg("add")
+        .arg(worktree_path);
+    if branch_exists(workspace_root, branch_name).await? {
+        cmd.arg(branch_name);
+    } else {
+        cmd.arg("-b").arg(branch_name).arg(base_commit_sha);
+    }
+    let output = cmd
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .await
+        .context("running git worktree add")?;
+    if !output.status.success() {
+        bail!(
+            "git worktree add failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    Ok(())
+}
+
+async fn branch_exists(
+    workspace_root: impl AsRef<StdPath>,
+    branch_name: &str,
+) -> anyhow::Result<bool> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(workspace_root.as_ref())
+        .arg("show-ref")
+        .arg("--verify")
+        .arg("--quiet")
+        .arg(format!("refs/heads/{branch_name}"))
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .output()
+        .await
+        .context("running git show-ref --verify")?;
+    if output.status.success() {
+        return Ok(true);
+    }
+    if output.status.code() == Some(1) {
+        return Ok(false);
+    }
+    bail!(
+        "git show-ref failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    )
+}
+
+async fn is_git_worktree(worktree_path: impl AsRef<StdPath>) -> anyhow::Result<bool> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(worktree_path.as_ref())
+        .arg("rev-parse")
+        .arg("--is-inside-work-tree")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .await
+        .context("running git rev-parse --is-inside-work-tree")?;
+    if !output.status.success() {
+        return Ok(false);
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim() == "true")
 }
 
 async fn archive_task(

@@ -290,14 +290,16 @@ export default function SettingsPage() {
   const billingReturnPath = useMemo(() => {
     const params = new URLSearchParams(location.search);
     params.delete("checkout");
+    params.delete("session_id");
     const search = params.toString();
     return `${location.pathname}${search ? `?${search}` : ""}#billing`;
   }, [location.pathname, location.search]);
 
   const clearCheckoutStatus = useCallback(() => {
     const params = new URLSearchParams(location.search);
-    if (!params.has("checkout")) return;
+    if (!params.has("checkout") && !params.has("session_id")) return;
     params.delete("checkout");
+    params.delete("session_id");
     const search = params.toString();
     navigate(
       {
@@ -527,6 +529,10 @@ export default function SettingsPage() {
     () => new URLSearchParams(location.search).get("checkout"),
     [location.search],
   );
+  const checkoutSessionId = useMemo(
+    () => new URLSearchParams(location.search).get("session_id"),
+    [location.search],
+  );
 
   const isPaidPlan = useCallback((snapshot: EntitlementsSnapshot | null) => {
     return Boolean(snapshot?.plan_type && snapshot.plan_type !== "free_local");
@@ -542,10 +548,25 @@ export default function SettingsPage() {
     let cancelled = false;
     let attempt = 0;
     const maxAttempts = 6;
+    let syncStarted = false;
+
+    const syncCheckout = async () => {
+      if (syncStarted) return;
+      syncStarted = true;
+      try {
+        const res = await supabase.functions.invoke("billing-sync", {
+          body: checkoutSessionId ? { checkout_session_id: checkoutSessionId } : {},
+        });
+        if (res.error) throw res.error;
+      } catch (e: any) {
+        setBillingError(e?.message ?? String(e));
+      }
+    };
 
     const poll = async () => {
       if (cancelled || attempt >= maxAttempts) return;
       attempt += 1;
+      await syncCheckout();
       window.localStorage.removeItem(ENTITLEMENTS_CACHE_KEY);
       const next = await refreshEntitlements({ force: true, silent: true });
       if (next && isPaidPlan(next)) {
@@ -561,7 +582,14 @@ export default function SettingsPage() {
     return () => {
       cancelled = true;
     };
-  }, [clearCheckoutStatus, checkoutStatus, isPaidPlan, refreshEntitlements, supabase]);
+  }, [
+    checkoutSessionId,
+    checkoutStatus,
+    clearCheckoutStatus,
+    isPaidPlan,
+    refreshEntitlements,
+    supabase,
+  ]);
 
   useEffect(() => {
     if (active !== "mobile_access") return;

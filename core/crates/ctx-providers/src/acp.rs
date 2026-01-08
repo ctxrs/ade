@@ -1,4 +1,6 @@
 use std::collections::{HashMap, HashSet};
+#[cfg(unix)]
+use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
 use std::sync::{
     atomic::{AtomicBool, AtomicU64, Ordering},
@@ -1339,15 +1341,25 @@ async fn stdout_pump(
                 }
             }
             Ok(None) => {
+                let status_note = describe_exit_status(&process).await;
+                log_acp_line(
+                    &process,
+                    "meta",
+                    &format!("agent stdout closed (exit status: {status_note})"),
+                );
                 let message = shutdown_message(&process, "agent stdout closed");
-                log_acp_line(&process, "meta", &message);
                 fail_pending(&process, &message).await;
                 process.router.broadcast_shutdown(message).await;
                 break;
             }
             Err(e) => {
+                let status_note = describe_exit_status(&process).await;
+                log_acp_line(
+                    &process,
+                    "meta",
+                    &format!("agent stdout read error (exit status: {status_note}): {e}"),
+                );
                 let message = shutdown_message(&process, &format!("agent stdout read error: {e}"));
-                log_acp_line(&process, "meta", &message);
                 fail_pending(&process, &message).await;
                 process.router.broadcast_shutdown(message).await;
                 break;
@@ -1497,6 +1509,26 @@ fn shutdown_message(process: &AcpProcess, base: &str) -> String {
         Some(path) => format!("{base} (see {})", path.display()),
         None => base.to_string(),
     }
+}
+
+async fn describe_exit_status(process: &AcpProcess) -> String {
+    let mut child = process.child.lock().await;
+    match child.try_wait() {
+        Ok(Some(status)) => format_exit_status(&status),
+        Ok(None) => "still running".to_string(),
+        Err(err) => format!("unavailable: {err}"),
+    }
+}
+
+fn format_exit_status(status: &std::process::ExitStatus) -> String {
+    if let Some(code) = status.code() {
+        return format!("exit code {code}");
+    }
+    #[cfg(unix)]
+    if let Some(signal) = status.signal() {
+        return format!("signal {signal}");
+    }
+    "unknown".to_string()
 }
 
 fn normalize_session_model_id(model_id: Option<&str>) -> Option<String> {
