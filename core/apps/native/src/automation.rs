@@ -1,6 +1,6 @@
 use std::net::SocketAddr;
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use axum::{
@@ -9,7 +9,11 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use gpui::{App, Context, Window, WindowHandle};
+use gpui::{
+    App, Bounds, Context, DevicePixels, Pixels, ScreenCaptureFrame, Window, WindowHandle, point,
+    size,
+};
+use image::{ColorType, ImageFormat};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio::sync::{mpsc, oneshot, watch};
@@ -320,23 +324,25 @@ async fn run_command_loop(
 ) {
     while let Some(request) = command_rx.recv().await {
         let command = request.command;
-        let response = window
-            .update(cx, |view, window, cx| match command {
-                AutomationCommand::Focus { target } => {
+        let response = match command {
+            AutomationCommand::Focus { target } => window
+                .update(cx, |view, window, cx| {
                     apply_focus_target(view, window, cx, target);
                     Ok(json!({ "target": target.as_str() }))
-                }
-                AutomationCommand::Screenshot { path } => {
-                    capture_window_stub(view, window, cx, &path)
-                        .map(|path| json!({ "path": path.to_string_lossy() }))
-                }
-                AutomationCommand::Exit => {
+                })
+                .map_err(|err| err.to_string())
+                .and_then(|result| result),
+            AutomationCommand::Screenshot { path } => capture_window(cx, &window, path)
+                .await
+                .map(|path| json!({ "path": path.to_string_lossy() })),
+            AutomationCommand::Exit => window
+                .update(cx, |_, _, cx| {
                     cx.quit();
                     Ok(json!({ "quitting": true }))
-                }
-            })
-            .map_err(|err| err.to_string())
-            .and_then(|result| result);
+                })
+                .map_err(|err| err.to_string())
+                .and_then(|result| result),
+        };
 
         let _ = request.respond_to.send(response);
     }
@@ -378,19 +384,408 @@ fn apply_focus_target(
     cx.notify();
 }
 
-fn capture_window_stub(
-    _view: &mut ShellView,
-    _window: &mut Window,
-    cx: &mut Context<ShellView>,
-    path: &Path,
+#[derive(Clone, Copy)]
+struct CaptureInfo {
+    window_bounds: Bounds<Pixels>,
+    display_bounds: Bounds<Pixels>,
+    scale_factor: f32,
+    display_id: Option<u64>,
+}
+
+async fn capture_window(
+    cx: &mut gpui::AsyncApp,
+    window: &WindowHandle<ShellView>,
+    path: PathBuf,
 ) -> Result<PathBuf, String> {
-    if !cx.is_screen_capture_supported() {
-        return Err(
-            "TODO: GPUI window capture is not available on this platform".to_string(),
-        );
+    let supported = cx
+        .update(|app| app.is_screen_capture_supported())
+        .map_err(|err| err.to_string())?;
+    if !supported {
+        return Err("GPUI screen capture is not available on this platform".to_string());
     }
-    Err(format!(
-        "TODO: GPUI window capture for {:?} is not wired yet",
-        path
-    ))
+
+    let info = window
+        .update(cx, |_, window, cx| {
+            let window_bounds = window.bounds();
+            let scale_factor = window.scale_factor();
+            let display = window.display().or_else(|| cx.primary_display());
+            let display_bounds = display
+                .as_ref()
+                .map(|display| display.bounds())
+                .unwrap_or(window_bounds);
+            let display_id = display.map(|display| u64::from(u32::from(display.id())));
+            CaptureInfo {
+                window_bounds,
+                display_bounds,
+                scale_factor,
+                display_id,
+            }
+        })
+        .map_err(|err| err.to_string())?;
+
+    let sources_rx = cx
+        .update(|app| app.screen_capture_sources())
+        .map_err(|err| err.to_string())?;
+    let sources = timeout(Duration::from_secs(5), sources_rx)
+        .await
+        .map_err(|_| "timeout waiting for screen capture sources".to_string())?
+        .map_err(|err| err.to_string())?;
+    if sources.is_empty() {
+        return Err("no screen capture sources available".to_string());
+    }
+
+    let mut selected = None;
+    if let Some(display_id) = info.display_id {
+        for source in &sources {
+            if let Ok(metadata) = source.metadata() {
+                if metadata.id == display_id {
+                    selected = Some(source.clone());
+                    break;
+                }
+            }
+        }
+    }
+    if selected.is_none() {
+        for source in &sources {
+            if let Ok(metadata) = source.metadata() {
+                if metadata.is_main.unwrap_or(false) {
+                    selected = Some(source.clone());
+                    break;
+                }
+            }
+        }
+    }
+    let source = selected.unwrap_or_else(|| sources[0].clone());
+
+    let (frame_tx, frame_rx) = oneshot::channel();
+    let frame_tx = Arc::new(Mutex::new(Some(frame_tx)));
+    let stream_rx = source.stream(
+        cx.foreground_executor(),
+        Box::new(move |frame| {
+            if let Ok(mut slot) = frame_tx.lock() {
+                if let Some(tx) = slot.take() {
+                    let _ = tx.send(frame);
+                }
+            }
+        }),
+    );
+    let _stream = timeout(Duration::from_secs(5), stream_rx)
+        .await
+        .map_err(|_| "timeout starting screen capture stream".to_string())?
+        .map_err(|err| err.to_string())?;
+    let frame = timeout(Duration::from_secs(5), frame_rx)
+        .await
+        .map_err(|_| "timeout waiting for screen capture frame".to_string())?
+        .map_err(|_| "screen capture stream closed".to_string())?;
+
+    let rgba_frame = frame_to_rgba(frame)?;
+    let crop = compute_crop(info, rgba_frame.width, rgba_frame.height)?;
+    let cropped = crop_rgba(&rgba_frame, crop)?;
+
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|err| format!("failed to create screenshot dir: {err}"))?;
+    }
+
+    image::save_buffer_with_format(
+        &path,
+        &cropped.data,
+        cropped.width,
+        cropped.height,
+        ColorType::Rgba8,
+        ImageFormat::Png,
+    )
+    .map_err(|err| format!("failed to write screenshot: {err}"))?;
+
+    Ok(path)
+}
+
+#[derive(Clone, Copy)]
+struct CropRect {
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+}
+
+#[derive(Clone)]
+struct RgbaFrame {
+    width: u32,
+    height: u32,
+    data: Vec<u8>,
+}
+
+fn compute_crop(info: CaptureInfo, frame_width: u32, frame_height: u32) -> Result<CropRect, String> {
+    let window_device = bounds_to_device(info.window_bounds, info.scale_factor);
+    let display_device = bounds_to_device(info.display_bounds, info.scale_factor);
+
+    let x = window_device.origin.x.0 - display_device.origin.x.0;
+    let y = window_device.origin.y.0 - display_device.origin.y.0;
+    let width = window_device.size.width.0;
+    let height = window_device.size.height.0;
+
+    let frame_width = frame_width as i32;
+    let frame_height = frame_height as i32;
+    if frame_width <= 0 || frame_height <= 0 {
+        return Err("screen capture returned an empty frame".to_string());
+    }
+
+    let mut crop_x = x.max(0);
+    let mut crop_y = y.max(0);
+    let mut crop_w = width;
+    let mut crop_h = height;
+    if crop_x >= frame_width || crop_y >= frame_height {
+        return Err("window bounds are outside the capture frame".to_string());
+    }
+    if crop_x + crop_w > frame_width {
+        crop_w = frame_width - crop_x;
+    }
+    if crop_y + crop_h > frame_height {
+        crop_h = frame_height - crop_y;
+    }
+    if crop_w <= 0 || crop_h <= 0 {
+        return Err("window bounds produce an empty capture region".to_string());
+    }
+
+    Ok(CropRect {
+        x: crop_x,
+        y: crop_y,
+        width: crop_w,
+        height: crop_h,
+    })
+}
+
+fn bounds_to_device(bounds: Bounds<Pixels>, scale_factor: f32) -> Bounds<DevicePixels> {
+    let scaled = bounds.scale(scale_factor);
+    Bounds::new(
+        point(DevicePixels::from(scaled.origin.x), DevicePixels::from(scaled.origin.y)),
+        size(
+            DevicePixels::from(scaled.size.width),
+            DevicePixels::from(scaled.size.height),
+        ),
+    )
+}
+
+fn crop_rgba(frame: &RgbaFrame, crop: CropRect) -> Result<RgbaFrame, String> {
+    let width = crop.width as u32;
+    let height = crop.height as u32;
+    let frame_width = frame.width as i32;
+    if width == 0 || height == 0 {
+        return Err("crop size is empty".to_string());
+    }
+    let mut data = Vec::with_capacity((width * height * 4) as usize);
+    for row in 0..crop.height {
+        let src_row = crop.y + row;
+        let src_start = ((src_row * frame_width + crop.x) * 4) as usize;
+        let src_end = src_start + (crop.width * 4) as usize;
+        data.extend_from_slice(&frame.data[src_start..src_end]);
+    }
+    Ok(RgbaFrame { width, height, data })
+}
+
+#[cfg(target_os = "macos")]
+fn frame_to_rgba(frame: ScreenCaptureFrame) -> Result<RgbaFrame, String> {
+    use core_foundation::base::TCFType;
+    use core_video::{pixel_buffer::CVPixelBuffer, r#return::kCVReturnSuccess};
+
+    let pixel_buffer = unsafe {
+        CVPixelBuffer::wrap_under_get_rule(frame.0.as_concrete_TypeRef() as _)
+    };
+    unsafe {
+        if pixel_buffer.lock_base_address(0) != kCVReturnSuccess {
+            return Err("failed to lock screen capture buffer".to_string());
+        }
+        let width = pixel_buffer.get_width() as u32;
+        let height = pixel_buffer.get_height() as u32;
+        let bytes_per_row = pixel_buffer.get_bytes_per_row() as usize;
+        let base = pixel_buffer.get_base_address();
+        if base.is_null() {
+            let _ = pixel_buffer.unlock_base_address(0);
+            return Err("screen capture buffer is null".to_string());
+        }
+        let raw_len = bytes_per_row * height as usize;
+        let raw = std::slice::from_raw_parts(base as *const u8, raw_len);
+        let mut data = Vec::with_capacity((width * height * 4) as usize);
+        for row in 0..height as usize {
+            let start = row * bytes_per_row;
+            let end = start + (width as usize * 4);
+            for px in raw[start..end].chunks_exact(4) {
+                data.push(px[2]);
+                data.push(px[1]);
+                data.push(px[0]);
+                data.push(px[3]);
+            }
+        }
+        if pixel_buffer.unlock_base_address(0) != kCVReturnSuccess {
+            return Err("failed to unlock screen capture buffer".to_string());
+        }
+        Ok(RgbaFrame { width, height, data })
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn frame_to_rgba(frame: ScreenCaptureFrame) -> Result<RgbaFrame, String> {
+    use scap::frame::Frame;
+
+    match frame.0 {
+        Frame::BGRA(frame) => Ok(RgbaFrame {
+            width: frame.width as u32,
+            height: frame.height as u32,
+            data: convert_bgra(&frame.data),
+        }),
+        Frame::BGRx(frame) => Ok(RgbaFrame {
+            width: frame.width as u32,
+            height: frame.height as u32,
+            data: convert_bgrx(&frame.data),
+        }),
+        Frame::XBGR(frame) => Ok(RgbaFrame {
+            width: frame.width as u32,
+            height: frame.height as u32,
+            data: convert_xbgr(&frame.data),
+        }),
+        Frame::RGBx(frame) => Ok(RgbaFrame {
+            width: frame.width as u32,
+            height: frame.height as u32,
+            data: convert_rgbx(&frame.data),
+        }),
+        Frame::RGB(frame) => Ok(RgbaFrame {
+            width: frame.width as u32,
+            height: frame.height as u32,
+            data: convert_rgb(&frame.data),
+        }),
+        Frame::BGR0(frame) => Ok(RgbaFrame {
+            width: frame.width as u32,
+            height: frame.height as u32,
+            data: convert_bgr0(&frame.data, frame.width, frame.height),
+        }),
+        Frame::YUVFrame(frame) => Ok(RgbaFrame {
+            width: frame.width as u32,
+            height: frame.height as u32,
+            data: convert_nv12(&frame),
+        }),
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn convert_bgra(data: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(data.len());
+    for px in data.chunks_exact(4) {
+        out.push(px[2]);
+        out.push(px[1]);
+        out.push(px[0]);
+        out.push(px[3]);
+    }
+    out
+}
+
+#[cfg(not(target_os = "macos"))]
+fn convert_bgrx(data: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(data.len());
+    for px in data.chunks_exact(4) {
+        out.push(px[2]);
+        out.push(px[1]);
+        out.push(px[0]);
+        out.push(255);
+    }
+    out
+}
+
+#[cfg(not(target_os = "macos"))]
+fn convert_xbgr(data: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(data.len());
+    for px in data.chunks_exact(4) {
+        out.push(px[3]);
+        out.push(px[2]);
+        out.push(px[1]);
+        out.push(255);
+    }
+    out
+}
+
+#[cfg(not(target_os = "macos"))]
+fn convert_rgbx(data: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(data.len());
+    for px in data.chunks_exact(4) {
+        out.push(px[0]);
+        out.push(px[1]);
+        out.push(px[2]);
+        out.push(255);
+    }
+    out
+}
+
+#[cfg(not(target_os = "macos"))]
+fn convert_rgb(data: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity((data.len() / 3) * 4);
+    for px in data.chunks_exact(3) {
+        out.push(px[0]);
+        out.push(px[1]);
+        out.push(px[2]);
+        out.push(255);
+    }
+    out
+}
+
+#[cfg(not(target_os = "macos"))]
+fn convert_bgr0(data: &[u8], width: i32, height: i32) -> Vec<u8> {
+    let expected = (width * height * 4) as usize;
+    if data.len() == expected {
+        return convert_bgrx(data);
+    }
+    let mut out = Vec::with_capacity((data.len() / 3) * 4);
+    for px in data.chunks_exact(3) {
+        out.push(px[2]);
+        out.push(px[1]);
+        out.push(px[0]);
+        out.push(255);
+    }
+    out
+}
+
+#[cfg(not(target_os = "macos"))]
+fn convert_nv12(frame: &scap::frame::YUVFrame) -> Vec<u8> {
+    let width = frame.width.max(0) as usize;
+    let height = frame.height.max(0) as usize;
+    let mut out = vec![0; width * height * 4];
+    let y_stride = frame.luminance_stride.max(0) as usize;
+    let uv_stride = frame.chrominance_stride.max(0) as usize;
+    for y in 0..height {
+        let y_row = y * y_stride;
+        let uv_row = (y / 2) * uv_stride;
+        for x in 0..width {
+            let y_val = frame.luminance_bytes[y_row + x] as i32;
+            let uv_index = uv_row + (x / 2) * 2;
+            let u_val = frame.chrominance_bytes[uv_index] as i32;
+            let v_val = frame.chrominance_bytes[uv_index + 1] as i32;
+            let (r, g, b) = yuv_to_rgb(y_val, u_val, v_val);
+            let idx = (y * width + x) * 4;
+            out[idx] = r;
+            out[idx + 1] = g;
+            out[idx + 2] = b;
+            out[idx + 3] = 255;
+        }
+    }
+    out
+}
+
+#[cfg(not(target_os = "macos"))]
+fn yuv_to_rgb(y: i32, u: i32, v: i32) -> (u8, u8, u8) {
+    let c = y - 16;
+    let d = u - 128;
+    let e = v - 128;
+    let r = (298 * c + 409 * e + 128) >> 8;
+    let g = (298 * c - 100 * d - 208 * e + 128) >> 8;
+    let b = (298 * c + 516 * d + 128) >> 8;
+    (clamp_rgb(r), clamp_rgb(g), clamp_rgb(b))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn clamp_rgb(value: i32) -> u8 {
+    if value < 0 {
+        0
+    } else if value > 255 {
+        255
+    } else {
+        value as u8
+    }
 }
