@@ -194,6 +194,10 @@ impl ShellView {
             .get(&session_id)
             .map(session_info_from_summary)
             .unwrap_or_else(SessionInfo::placeholder);
+        if let Some(summary) = self.session_summary_map.get(&session_id) {
+            self.composer_provider_id = Some(summary.session.provider_id.clone());
+            self.composer_model_id = Some(summary.session.model_id.clone());
+        }
         self.replace_messages(vec![MessageItem::new(
             "assistant",
             "Loading session messages...",
@@ -202,6 +206,7 @@ impl ShellView {
         self.artifact_preview = ArtifactPreviewState::None;
         self.session_events.clear();
         self.selected_artifact = None;
+        self.resyncing_session = None;
         cx.notify();
         self.load_session_details(session_id, cx);
     }
@@ -258,6 +263,10 @@ impl ShellView {
                                     .map(session_info_from_summary)
                             })
                             .unwrap_or_else(SessionInfo::placeholder);
+                        if let Some(head) = data.session_head.as_ref() {
+                            view.composer_provider_id = Some(head.session.provider_id.clone());
+                            view.composer_model_id = Some(head.session.model_id.clone());
+                        }
                         if let Some(index) = view.selected_session {
                             if let Some(summary) = view.sessions.get_mut(index) {
                                 if summary.session_id == data.session_id {
@@ -290,6 +299,9 @@ impl ShellView {
                             Some(0)
                         };
                         view.load_artifact_preview(cx);
+                        if view.resyncing_session == Some(session_id) {
+                            view.resyncing_session = None;
+                        }
                     }
                     Err(_) => {
                         view.replace_messages(vec![MessageItem::new(
@@ -300,6 +312,9 @@ impl ShellView {
                         view.artifacts.clear();
                         view.selected_artifact = None;
                         view.artifact_preview = ArtifactPreviewState::None;
+                        if view.resyncing_session == Some(session_id) {
+                            view.resyncing_session = None;
+                        }
                         if let Some(summary) = view.session_summary_map.get(&session_id) {
                             view.session = session_info_from_summary(summary);
                         }

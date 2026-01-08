@@ -1,7 +1,12 @@
+use std::collections::BTreeSet;
 use std::ops::Range;
+use std::path::{Path, PathBuf};
 
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use gpui::{ClickEvent, ClipboardItem, Context, KeyDownEvent, Window};
 use gpui_tokio::Tokio;
+
+use ctx_core::models::MessageAttachment;
 
 use super::ShellView;
 use super::super::models::MessageItem;
@@ -354,6 +359,251 @@ impl ShellView {
         }
     }
 
+    pub(crate) fn focus_composer_attachment(
+        &mut self,
+        _: &ClickEvent,
+        window: &mut Window,
+        _: &mut Context<Self>,
+    ) {
+        self.composer_attachment_focus.focus(window);
+    }
+
+    pub(crate) fn on_composer_attachment_key_down(
+        &mut self,
+        event: &KeyDownEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let modifiers = event.keystroke.modifiers;
+        let has_command = modifiers.control || modifiers.platform;
+
+        if has_command {
+            match event.keystroke.key.as_str() {
+                "enter" => {
+                    self.add_attachment_from_input(cx);
+                    return;
+                }
+                "c" => {
+                    self.copy_attachment_input(cx);
+                    return;
+                }
+                "x" => {
+                    self.cut_attachment_input(cx);
+                    return;
+                }
+                "v" => {
+                    self.paste_attachment_input(cx);
+                    return;
+                }
+                "a" => {
+                    self.composer_attachment_input.select_all();
+                    cx.notify();
+                    return;
+                }
+                _ => {}
+            }
+        }
+
+        match event.keystroke.key.as_str() {
+            "enter" => {
+                self.add_attachment_from_input(cx);
+            }
+            "backspace" => {
+                if self.composer_attachment_input.delete_backward() {
+                    cx.notify();
+                }
+            }
+            "delete" => {
+                if self.composer_attachment_input.delete_forward() {
+                    cx.notify();
+                }
+            }
+            "left" => {
+                self.composer_attachment_input.move_left(modifiers.shift);
+                cx.notify();
+            }
+            "right" => {
+                self.composer_attachment_input.move_right(modifiers.shift);
+                cx.notify();
+            }
+            "home" => {
+                self.composer_attachment_input.move_home(modifiers.shift);
+                cx.notify();
+            }
+            "end" => {
+                self.composer_attachment_input.move_end(modifiers.shift);
+                cx.notify();
+            }
+            _ => {
+                if modifiers.control || modifiers.alt || modifiers.platform || modifiers.function {
+                    return;
+                }
+                if let Some(text) = event.keystroke.key_char.as_ref() {
+                    if text != "\n" && text != "\r" && text != "\t" {
+                        self.composer_attachment_input.insert_text(text);
+                        cx.notify();
+                    }
+                }
+            }
+        }
+    }
+
+    pub(crate) fn on_add_attachment_click(
+        &mut self,
+        _: &ClickEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.add_attachment_from_input(cx);
+    }
+
+    pub(crate) fn remove_composer_attachment(&mut self, index: usize, cx: &mut Context<Self>) {
+        if index >= self.composer_attachments.len() {
+            return;
+        }
+        self.composer_attachments.remove(index);
+        cx.notify();
+    }
+
+    pub(crate) fn toggle_composer_provider_menu(
+        &mut self,
+        _: &ClickEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.composer_provider_menu_open = !self.composer_provider_menu_open;
+        if self.composer_provider_menu_open {
+            self.composer_model_menu_open = false;
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn toggle_composer_model_menu(
+        &mut self,
+        _: &ClickEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.composer_model_menu_open = !self.composer_model_menu_open;
+        if self.composer_model_menu_open {
+            self.composer_provider_menu_open = false;
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn select_composer_provider(&mut self, provider_id: String, cx: &mut Context<Self>) {
+        self.composer_provider_id = Some(provider_id.clone());
+        self.composer_provider_menu_open = false;
+        self.composer_model_menu_open = false;
+        let models = self.model_ids_for_provider(&provider_id);
+        if !models.is_empty()
+            && self
+                .composer_model_id
+                .as_ref()
+                .map(|id| !models.contains(id))
+                .unwrap_or(true)
+        {
+            self.composer_model_id = Some(models[0].clone());
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn select_composer_model(&mut self, model_id: String, cx: &mut Context<Self>) {
+        self.composer_model_id = Some(model_id.clone());
+        self.composer_model_menu_open = false;
+        cx.notify();
+
+        let Some(session_id) = self.selected_session_id() else {
+            return;
+        };
+        let model_id_for_task = model_id.clone();
+        let task = Tokio::spawn_result(cx, async move {
+            let config = ctx_client::resolve_daemon_config()?;
+            let client = ctx_client::Client::new(config)?;
+            client
+                .set_session_model(session_id, &model_id_for_task)
+                .await?;
+            Ok(session_id)
+        });
+
+        cx.spawn(|this, cx| async move {
+            let result = task.await;
+            this.update(cx, |view, cx| {
+                match result {
+                    Ok(session_id) => view.load_session_details(session_id, cx),
+                    Err(_) => {
+                        view.messages.push(MessageItem::new(
+                            "assistant",
+                            "Unable to update session model.",
+                        ));
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    pub(crate) fn composer_provider_options(&self) -> Vec<String> {
+        self.providers
+            .iter()
+            .map(|provider| provider.name.clone())
+            .collect()
+    }
+
+    pub(crate) fn composer_model_options(&self) -> Vec<String> {
+        let Some(provider_id) = self.composer_provider_id.as_deref() else {
+            return Vec::new();
+        };
+        let mut models = self.model_ids_for_provider(provider_id);
+        if let Some(current) = self.composer_model_id.as_ref() {
+            if !models.contains(current) {
+                models.insert(0, current.clone());
+            }
+        }
+        models
+    }
+
+    pub(super) fn sync_composer_defaults(&mut self) {
+        let default_provider = self
+            .composer_provider_id
+            .clone()
+            .filter(|id| self.providers.iter().any(|provider| provider.name == *id))
+            .or_else(|| {
+                self.session_summary_map
+                    .values()
+                    .next()
+                    .map(|summary| summary.session.provider_id.clone())
+            })
+            .or_else(|| self.providers.first().map(|provider| provider.name.clone()));
+        self.composer_provider_id = default_provider;
+
+        let Some(provider_id) = self.composer_provider_id.clone() else {
+            self.composer_model_id = None;
+            return;
+        };
+        let models = self.model_ids_for_provider(&provider_id);
+        if models.is_empty() {
+            if self.composer_model_id.is_none() {
+                if let Some(summary) = self
+                    .session_summary_map
+                    .values()
+                    .find(|summary| summary.session.provider_id == provider_id)
+                {
+                    self.composer_model_id = Some(summary.session.model_id.clone());
+                }
+            }
+        } else if self
+            .composer_model_id
+            .as_ref()
+            .map(|id| !models.contains(id))
+            .unwrap_or(true)
+        {
+            self.composer_model_id = Some(models[0].clone());
+        }
+    }
+
     pub(crate) fn on_send_click(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
         self.send_composer_message(cx);
     }
@@ -363,10 +613,11 @@ impl ShellView {
             return;
         };
         let content = self.composer.text().trim().to_string();
-        if content.is_empty() {
+        if content.is_empty() && self.composer_attachments.is_empty() {
             return;
         }
         let history_entry = content.clone();
+        let attachments = self.composer_attachments.clone();
 
         let task = Tokio::spawn_result(cx, async move {
             let config = ctx_client::resolve_daemon_config()?;
@@ -374,7 +625,7 @@ impl ShellView {
             let request = ctx_client::PostMessageRequest {
                 content,
                 delivery: None,
-                attachments: Vec::new(),
+                attachments,
             };
             client.post_message(session_id, &request).await?;
             Ok(session_id)
@@ -387,6 +638,9 @@ impl ShellView {
                     Ok(session_id) => {
                         view.composer.push_history(history_entry);
                         view.composer.clear();
+                        view.composer_attachments.clear();
+                        view.composer_attachment_input.clear();
+                        view.composer_notice = None;
                         view.load_session_details(session_id, cx);
                     }
                     Err(_) => {
@@ -449,5 +703,130 @@ impl ShellView {
                 cx.notify();
             }
         }
+    }
+
+    fn copy_attachment_input(&mut self, cx: &mut Context<Self>) {
+        let selection = self.composer_attachment_input.selection_range();
+        let text = if selection.is_empty() {
+            self.composer_attachment_input.text().to_string()
+        } else {
+            self.composer_attachment_input
+                .text()
+                .get(selection)
+                .unwrap_or_default()
+                .to_string()
+        };
+        if !text.is_empty() {
+            cx.write_to_clipboard(ClipboardItem::new_string(text));
+        }
+    }
+
+    fn cut_attachment_input(&mut self, cx: &mut Context<Self>) {
+        let selection = self.composer_attachment_input.selection_range();
+        let text = if selection.is_empty() {
+            self.composer_attachment_input.text().to_string()
+        } else {
+            self.composer_attachment_input
+                .text()
+                .get(selection.clone())
+                .unwrap_or_default()
+                .to_string()
+        };
+        if text.is_empty() {
+            return;
+        }
+        cx.write_to_clipboard(ClipboardItem::new_string(text));
+        if selection.is_empty() {
+            self.composer_attachment_input.clear();
+        } else {
+            self.composer_attachment_input.delete_backward();
+        }
+        cx.notify();
+    }
+
+    fn paste_attachment_input(&mut self, cx: &mut Context<Self>) {
+        if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
+            if !text.is_empty() {
+                self.composer_attachment_input.insert_text(&text);
+                cx.notify();
+            }
+        }
+    }
+
+    fn add_attachment_from_input(&mut self, cx: &mut Context<Self>) {
+        let raw = self.composer_attachment_input.text().trim().to_string();
+        if raw.is_empty() {
+            return;
+        }
+        let path = PathBuf::from(raw.clone());
+        let display_name = path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .map(|value| value.to_string())
+            .unwrap_or(raw);
+        let mime_type = guess_mime_type(&path);
+        if !mime_type.starts_with("image/") {
+            self.composer_notice = Some("Only image attachments are supported for now.".to_string());
+            cx.notify();
+            return;
+        }
+
+        self.composer_notice = None;
+        let task = Tokio::spawn_result(cx, async move {
+            let bytes = tokio::fs::read(&path).await?;
+            let data_base64 = STANDARD.encode(&bytes);
+            Ok((data_base64, mime_type.to_string(), display_name))
+        });
+
+        cx.spawn(|this, cx| async move {
+            let result = task.await;
+            this.update(cx, |view, cx| {
+                match result {
+                    Ok((data_base64, mime_type, name)) => {
+                        view.composer_attachments.push(MessageAttachment::Image {
+                            mime_type,
+                            data_base64,
+                            name: Some(name),
+                        });
+                        view.composer_attachment_input.clear();
+                        view.composer_notice = None;
+                    }
+                    Err(err) => {
+                        view.composer_notice = Some(format!("Attachment failed: {err}"));
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn model_ids_for_provider(&self, provider_id: &str) -> Vec<String> {
+        let mut seen = BTreeSet::new();
+        for summary in self.session_summary_map.values() {
+            if summary.session.provider_id == provider_id {
+                seen.insert(summary.session.model_id.clone());
+            }
+        }
+        seen.into_iter().collect()
+    }
+}
+
+fn guess_mime_type(path: &Path) -> &'static str {
+    let ext = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    match ext.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "bmp" => "image/bmp",
+        "svg" => "image/svg+xml",
+        "tif" | "tiff" => "image/tiff",
+        _ => "application/octet-stream",
     }
 }

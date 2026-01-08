@@ -67,6 +67,10 @@ pub fn run() {
                         workspaces: Vec::new(),
                         selected_workspace: None,
                         providers: Vec::new(),
+                        composer_provider_id: None,
+                        composer_model_id: None,
+                        composer_provider_menu_open: false,
+                        composer_model_menu_open: false,
                         catchup_active_total: None,
                         catchup_archived_total: None,
                         tasks: Vec::new(),
@@ -87,11 +91,16 @@ pub fn run() {
                         data_state: DataLoadState::Loading,
                         composer: ComposerState::new(),
                         composer_focus: cx.focus_handle(),
+                        composer_attachments: Vec::new(),
+                        composer_attachment_input: ComposerState::new(),
+                        composer_attachment_focus: cx.focus_handle(),
+                        composer_notice: None,
                         message_list_state: ListState::new(1, ListAlignment::Bottom, px(160.0)),
                         message_list_len: 1,
                         message_auto_follow: true,
                         new_message_count: 0,
                         stream_status: StreamStatus::Idle,
+                        resyncing_session: None,
                         stream_subscribe_tx: None,
                         stream_stop_tx: None,
                         message_list_handler_set: false,
@@ -119,6 +128,16 @@ impl Render for ShellView {
                 self.colors.muted,
             ))
             .child(toggle_text);
+        let resyncing = self
+            .resyncing_session
+            .and_then(|resync_id| {
+                self.selected_session
+                    .and_then(|index| self.sessions.get(index))
+                    .map(|summary| summary.session_id == resync_id)
+            })
+            .unwrap_or(false);
+        let provider_options = self.composer_provider_options();
+        let model_options = self.composer_model_options();
         div()
             .id("app-shell")
             .size_full()
@@ -199,8 +218,20 @@ impl Render for ShellView {
                             data_state: &self.data_state,
                             composer_text: self.composer.text(),
                             composer_cursor: self.composer.cursor(),
+                            composer_attachment_text: self.composer_attachment_input.text(),
+                            composer_attachment_cursor: self.composer_attachment_input.cursor(),
+                            composer_attachments: &self.composer_attachments,
+                            provider_options,
+                            model_options,
+                            selected_provider: self.composer_provider_id.clone(),
+                            selected_model: self.composer_model_id.clone(),
+                            provider_menu_open: self.composer_provider_menu_open,
+                            model_menu_open: self.composer_model_menu_open,
+                            composer_notice: self.composer_notice.clone(),
+                            composer_attachment_focus: &self.composer_attachment_focus,
                             composer_focus: &self.composer_focus,
                             stream_status: &self.stream_status,
+                            resyncing,
                         }
                         .render(cx),
                     ),

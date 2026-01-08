@@ -7,7 +7,9 @@ use ctx_core::ids::ArtifactId;
 use ctx_core::models::Artifact;
 
 use super::ShellView;
-use super::super::models::{is_image_artifact, is_text_artifact};
+use super::super::models::{
+    is_absolute_path, is_diff_artifact, is_image_artifact, is_text_artifact,
+};
 
 const TEXT_PREVIEW_LINE_LIMIT: usize = 20;
 const TEXT_PREVIEW_BYTE_LIMIT: u64 = 64 * 1024;
@@ -16,6 +18,7 @@ const TEXT_PREVIEW_BYTE_LIMIT: u64 = 64 * 1024;
 pub(crate) struct TextArtifactPreview {
     pub(crate) lines: Vec<String>,
     pub(crate) truncated: bool,
+    pub(crate) is_diff: bool,
 }
 
 #[derive(Clone)]
@@ -79,6 +82,7 @@ impl ShellView {
 
     fn fetch_text_preview(&mut self, artifact: Artifact, cx: &mut Context<Self>) {
         let artifact_id = artifact.id;
+        let is_diff_hint = is_diff_artifact(&artifact);
         self.artifact_preview = ArtifactPreviewState::Loading { artifact_id };
         let task = Tokio::spawn_result(cx, async move {
             let config = ctx_client::resolve_daemon_config()?;
@@ -100,7 +104,7 @@ impl ShellView {
                 }
                 match result {
                     Ok(bytes) => {
-                        let preview = build_text_preview(&bytes);
+                        let preview = build_text_preview(&bytes, is_diff_hint);
                         view.artifact_preview = ArtifactPreviewState::Text {
                             artifact_id,
                             preview,
@@ -175,6 +179,15 @@ impl ShellView {
         }
     }
 
+    pub(crate) fn open_artifact_in_app(&mut self, artifact: Artifact, cx: &mut Context<Self>) {
+        if artifact.missing.unwrap_or(false) {
+            return;
+        }
+        if let Some(url) = ctx_open_url_from_path(&artifact.absolute_path) {
+            cx.open_url(&url);
+        }
+    }
+
     pub(crate) fn download_artifact(&mut self, artifact: Artifact, cx: &mut Context<Self>) {
         if artifact.missing.unwrap_or(false) {
             return;
@@ -194,7 +207,7 @@ impl ShellView {
     }
 }
 
-fn build_text_preview(bytes: &[u8]) -> TextArtifactPreview {
+fn build_text_preview(bytes: &[u8], is_diff_hint: bool) -> TextArtifactPreview {
     let content = String::from_utf8_lossy(bytes);
     let mut lines = Vec::new();
     for line in content.lines().take(TEXT_PREVIEW_LINE_LIMIT + 1) {
@@ -207,7 +220,26 @@ fn build_text_preview(bytes: &[u8]) -> TextArtifactPreview {
     if bytes.len() as u64 >= TEXT_PREVIEW_BYTE_LIMIT {
         truncated = true;
     }
-    TextArtifactPreview { lines, truncated }
+    let is_diff = is_diff_hint || looks_like_diff(&lines);
+    TextArtifactPreview {
+        lines,
+        truncated,
+        is_diff,
+    }
+}
+
+fn looks_like_diff(lines: &[String]) -> bool {
+    for line in lines.iter().take(8) {
+        if line.starts_with("diff --git ")
+            || line.starts_with("--- ")
+            || line.starts_with("+++ ")
+            || line.starts_with("@@ ")
+            || line.starts_with("index ")
+        {
+            return true;
+        }
+    }
+    false
 }
 
 fn image_format_for_artifact(artifact: &Artifact) -> Option<ImageFormat> {
@@ -247,6 +279,13 @@ fn file_url_from_path(path: &str) -> Option<String> {
     Some(format!("{prefix}{}", encode_url_path(&normalized)))
 }
 
+fn ctx_open_url_from_path(path: &str) -> Option<String> {
+    if !is_absolute_path(path) {
+        return None;
+    }
+    Some(format!("ctx://open?path={}", encode_url_component(path)))
+}
+
 fn encode_url_path(path: &str) -> String {
     let mut out = String::with_capacity(path.len());
     for ch in path.bytes() {
@@ -262,6 +301,23 @@ fn encode_url_path(path: &str) -> String {
             b'}' => out.push_str("%7D"),
             b'|' => out.push_str("%7C"),
             _ => out.push(ch as char),
+        }
+    }
+    out
+}
+
+fn encode_url_component(value: &str) -> String {
+    let mut out = String::new();
+    for ch in value.bytes() {
+        match ch {
+            b'A'..=b'Z'
+            | b'a'..=b'z'
+            | b'0'..=b'9'
+            | b'-'
+            | b'.'
+            | b'_'
+            | b'~' => out.push(ch as char),
+            _ => out.push_str(&format!("%{:02X}", ch)),
         }
     }
     out

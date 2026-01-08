@@ -11,7 +11,8 @@ use tokio::sync::watch;
 
 use ctx_core::ids::{SessionId, WorkspaceId};
 use ctx_core::models::{
-    Artifact, SessionCatchupSummary, SessionEvent, WorkspaceCatchupClientMessage,
+    Artifact, MessageAttachment, SessionCatchupSummary, SessionEvent,
+    WorkspaceCatchupClientMessage,
 };
 
 use crate::theme::ThemeColors;
@@ -31,6 +32,10 @@ pub(crate) struct ShellView {
     pub(crate) workspaces: Vec<WorkspaceItem>,
     pub(crate) selected_workspace: Option<WorkspaceId>,
     pub(crate) providers: Vec<ProviderItem>,
+    pub(crate) composer_provider_id: Option<String>,
+    pub(crate) composer_model_id: Option<String>,
+    pub(crate) composer_provider_menu_open: bool,
+    pub(crate) composer_model_menu_open: bool,
     pub(crate) catchup_active_total: Option<i64>,
     pub(crate) catchup_archived_total: Option<i64>,
     pub(crate) tasks: Vec<TaskSummaryItem>,
@@ -47,11 +52,16 @@ pub(crate) struct ShellView {
     pub(crate) data_state: DataLoadState,
     pub(crate) composer: ComposerState,
     pub(crate) composer_focus: FocusHandle,
+    pub(crate) composer_attachments: Vec<MessageAttachment>,
+    pub(crate) composer_attachment_input: ComposerState,
+    pub(crate) composer_attachment_focus: FocusHandle,
+    pub(crate) composer_notice: Option<String>,
     pub(crate) message_list_state: ListState,
     pub(crate) message_list_len: usize,
     pub(crate) message_auto_follow: bool,
     pub(crate) new_message_count: usize,
     pub(crate) stream_status: StreamStatus,
+    pub(crate) resyncing_session: Option<SessionId>,
     pub(crate) stream_subscribe_tx: Option<watch::Sender<WorkspaceCatchupClientMessage>>,
     pub(crate) stream_stop_tx: Option<watch::Sender<bool>>,
     pub(crate) session_last_event_seq: HashMap<SessionId, i64>,

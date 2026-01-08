@@ -1,11 +1,12 @@
 use gpui::{ClickEvent, Context, FocusHandle, ListState, div, prelude::*, px};
 use ctx_core::ids::WorkspaceId;
-use ctx_core::models::{Artifact, SessionEvent};
+use ctx_core::models::{Artifact, MessageAttachment, SessionEvent};
 
 use crate::theme::ThemeColors;
 
 use super::artifacts::ArtifactsView;
 use super::composer::ComposerView;
+use super::diagnostics::DiagnosticsPanelView;
 use super::messages::{EventsView, MessagesView};
 use super::super::icons::{Icon, IconName};
 use super::super::models::{MessageItem, SessionInfo};
@@ -100,8 +101,20 @@ pub(super) struct SessionView<'a> {
     pub(super) data_state: &'a DataLoadState,
     pub(super) composer_text: &'a str,
     pub(super) composer_cursor: usize,
+    pub(super) composer_attachment_text: &'a str,
+    pub(super) composer_attachment_cursor: usize,
+    pub(super) composer_attachments: &'a [MessageAttachment],
+    pub(super) provider_options: Vec<String>,
+    pub(super) model_options: Vec<String>,
+    pub(super) selected_provider: Option<String>,
+    pub(super) selected_model: Option<String>,
+    pub(super) provider_menu_open: bool,
+    pub(super) model_menu_open: bool,
+    pub(super) composer_notice: Option<String>,
+    pub(super) composer_attachment_focus: &'a FocusHandle,
     pub(super) composer_focus: &'a FocusHandle,
     pub(super) stream_status: &'a StreamStatus,
+    pub(super) resyncing: bool,
 }
 
 impl<'a> SessionView<'a> {
@@ -157,7 +170,8 @@ impl<'a> SessionView<'a> {
             .selected_session
             .and_then(|index| self.sessions.get(index))
             .is_some();
-        let can_send = has_session && !self.composer_text.trim().is_empty();
+        let can_send = has_session
+            && (!self.composer_text.trim().is_empty() || !self.composer_attachments.is_empty());
         let interrupt_color = if has_session {
             self.colors.text
         } else {
@@ -236,6 +250,9 @@ impl<'a> SessionView<'a> {
         if let Some(detail) = self.stream_status.detail() {
             stream_block = stream_block.child(detail);
         }
+        if self.resyncing {
+            stream_block = stream_block.child("Resyncing session data...");
+        }
         div()
             .id("session-view")
             .flex()
@@ -300,6 +317,17 @@ impl<'a> SessionView<'a> {
             )
             .child(div().h(px(16.0)))
             .child(
+                DiagnosticsPanelView {
+                    colors: self.colors,
+                    frame_time_ms: None,
+                    message_count: self.messages.len(),
+                    event_count: self.session_events.len(),
+                    memory_mb: None,
+                }
+                .render(),
+            )
+            .child(div().h(px(16.0)))
+            .child(
                 EventsView {
                     colors: self.colors,
                     events: self.session_events,
@@ -334,6 +362,17 @@ impl<'a> SessionView<'a> {
                     composer_cursor: self.composer_cursor,
                     can_send,
                     focus_handle: self.composer_focus,
+                    composer_attachment_text: self.composer_attachment_text,
+                    composer_attachment_cursor: self.composer_attachment_cursor,
+                    composer_attachments: self.composer_attachments,
+                    provider_options: &self.provider_options,
+                    model_options: &self.model_options,
+                    selected_provider: self.selected_provider.as_deref(),
+                    selected_model: self.selected_model.as_deref(),
+                    provider_menu_open: self.provider_menu_open,
+                    model_menu_open: self.model_menu_open,
+                    composer_notice: self.composer_notice.as_deref(),
+                    attachment_focus: self.composer_attachment_focus,
                 }
                 .render(cx),
             )

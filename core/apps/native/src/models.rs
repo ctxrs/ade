@@ -117,10 +117,12 @@ pub(crate) fn artifact_label(artifact: &Artifact) -> String {
 }
 
 fn artifact_extension(artifact: &Artifact) -> Option<String> {
-    if artifact.absolute_path.is_empty() {
-        return None;
-    }
-    Path::new(&artifact.absolute_path)
+    let path = if !artifact.absolute_path.is_empty() {
+        Some(artifact.absolute_path.as_str())
+    } else {
+        artifact.name.as_deref()
+    }?;
+    Path::new(path)
         .extension()
         .and_then(|ext| ext.to_str())
         .map(|ext| ext.to_ascii_lowercase())
@@ -140,14 +142,60 @@ pub(crate) fn is_image_artifact(artifact: &Artifact) -> bool {
     )
 }
 
+pub(crate) fn is_video_artifact(artifact: &Artifact) -> bool {
+    let mime = artifact.mime_type.trim().to_ascii_lowercase();
+    if mime.starts_with("video/") {
+        return true;
+    }
+    if matches!(mime.as_str(), "application/mp4" | "application/quicktime") {
+        return true;
+    }
+    matches!(
+        artifact_extension(artifact).as_deref(),
+        Some("mp4") | Some("webm") | Some("mov") | Some("m4v")
+    )
+}
+
+pub(crate) fn is_pdf_artifact(artifact: &Artifact) -> bool {
+    let mime = artifact.mime_type.trim().to_ascii_lowercase();
+    if matches!(mime.as_str(), "application/pdf" | "application/x-pdf") {
+        return true;
+    }
+    matches!(artifact_extension(artifact).as_deref(), Some("pdf"))
+}
+
+pub(crate) fn is_diff_artifact(artifact: &Artifact) -> bool {
+    let mime = artifact.mime_type.trim().to_ascii_lowercase();
+    if matches!(
+        mime.as_str(),
+        "text/diff"
+            | "text/x-diff"
+            | "text/x-patch"
+            | "application/diff"
+            | "application/x-diff"
+            | "application/x-patch"
+    ) {
+        return true;
+    }
+    matches!(
+        artifact_extension(artifact).as_deref(),
+        Some("diff") | Some("patch")
+    )
+}
+
 pub(crate) fn is_text_artifact(artifact: &Artifact) -> bool {
     let mime = artifact.mime_type.trim().to_ascii_lowercase();
     if mime.starts_with("text/") {
         return true;
     }
+    if mime.ends_with("+json") || mime.ends_with("+xml") || mime.ends_with("+yaml") {
+        return true;
+    }
     if matches!(
         mime.as_str(),
         "application/json"
+            | "application/ndjson"
+            | "application/x-ndjson"
             | "application/xml"
             | "application/yaml"
             | "application/x-yaml"
@@ -158,6 +206,12 @@ pub(crate) fn is_text_artifact(artifact: &Artifact) -> bool {
             | "application/x-sh"
             | "application/x-shellscript"
             | "application/csv"
+            | "text/x-diff"
+            | "text/x-patch"
+            | "text/diff"
+            | "application/diff"
+            | "application/x-diff"
+            | "application/x-patch"
     ) {
         return true;
     }
@@ -190,7 +244,22 @@ pub(crate) fn is_text_artifact(artifact: &Artifact) -> bool {
             | Some("bash")
             | Some("zsh")
             | Some("sql")
+            | Some("diff")
+            | Some("patch")
     )
+}
+
+pub(crate) fn is_absolute_path(path: &str) -> bool {
+    if path.is_empty() {
+        return false;
+    }
+    if path.starts_with('/') {
+        return true;
+    }
+    if path.len() >= 2 && path.as_bytes()[1] == b':' {
+        return true;
+    }
+    false
 }
 
 pub(crate) fn session_info_from_head(head: &SessionHead) -> SessionInfo {

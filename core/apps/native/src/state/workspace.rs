@@ -103,6 +103,7 @@ impl ShellView {
                     Ok(data) => {
                         view.workspaces = data.workspaces;
                         view.providers = data.providers;
+                        view.sync_composer_defaults();
                         if let Some(selected) = view.selected_workspace {
                             if !view.workspaces.iter().any(|ws| ws.id == selected) {
                                 view.selected_workspace = None;
@@ -238,6 +239,7 @@ impl ShellView {
                             .map(session_info_from_head)
                             .or_else(|| data.session_summaries.first().map(session_info_from_summary))
                             .unwrap_or_else(SessionInfo::placeholder);
+                        view.sync_composer_defaults();
                         let mut messages = build_message_items(
                             data.session_head.as_ref(),
                             data.session_history.as_ref(),
@@ -288,8 +290,14 @@ impl ShellView {
         self.artifact_preview = ArtifactPreviewState::None;
         self.session_events.clear();
         self.selected_artifact = None;
+        self.composer_attachments.clear();
+        self.composer_attachment_input.clear();
+        self.composer_notice = None;
+        self.composer_provider_menu_open = false;
+        self.composer_model_menu_open = false;
         self.session_summary_map.clear();
         self.session_last_event_seq.clear();
+        self.resyncing_session = None;
         self.session = SessionInfo::placeholder();
         self.catchup_active_total = None;
         self.catchup_archived_total = None;

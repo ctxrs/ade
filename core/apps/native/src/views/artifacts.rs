@@ -4,7 +4,10 @@ use ctx_core::models::Artifact;
 use crate::theme::ThemeColors;
 
 use super::super::icons::{Icon, IconName};
-use super::super::models::{artifact_label, is_image_artifact, is_text_artifact};
+use super::super::models::{
+    artifact_label, is_absolute_path, is_image_artifact, is_pdf_artifact, is_text_artifact,
+    is_video_artifact,
+};
 use super::super::state::{ArtifactPreviewState, ShellView};
 
 pub(super) struct ArtifactsView<'a> {
@@ -76,6 +79,8 @@ impl<'a> ArtifactsView<'a> {
             let is_missing = artifact.missing.unwrap_or(false);
             let is_image = is_image_artifact(artifact);
             let is_text = is_text_artifact(artifact);
+            let is_video = is_video_artifact(artifact);
+            let is_pdf = is_pdf_artifact(artifact);
 
             let preview_content = if is_missing {
                 div()
@@ -141,7 +146,11 @@ impl<'a> ArtifactsView<'a> {
                         } else {
                             let mut lines = div().flex().flex_col().gap_1().text_sm();
                             for line in &preview.lines {
-                                lines = lines.child(line.clone());
+                                let mut row = div().child(line.clone());
+                                if preview.is_diff {
+                                    row = row.text_color(diff_line_color(line, self.colors));
+                                }
+                                lines = lines.child(row);
                             }
                             if preview.truncated {
                                 lines = lines.child(
@@ -174,6 +183,16 @@ impl<'a> ArtifactsView<'a> {
                         .text_color(self.colors.muted)
                         .child("Preview unavailable."),
                 }
+            } else if is_video {
+                div()
+                    .text_sm()
+                    .text_color(self.colors.muted)
+                    .child("Video preview unavailable. Use Open to play.")
+            } else if is_pdf {
+                div()
+                    .text_sm()
+                    .text_color(self.colors.muted)
+                    .child("PDF preview unavailable. Use Open to view.")
             } else {
                 div()
                     .text_sm()
@@ -195,68 +214,92 @@ impl<'a> ArtifactsView<'a> {
                         .child(preview_content),
                 );
 
-            if is_text {
-                let can_open = !is_missing;
-                let can_download = !is_missing;
-                let open_artifact = artifact.clone();
-                let download_artifact = artifact.clone();
-                let on_open = cx.listener(move |view, _: &ClickEvent, _window, cx| {
-                    view.open_artifact(open_artifact.clone(), cx);
-                });
-                let on_download = cx.listener(move |view, _: &ClickEvent, _window, cx| {
-                    view.download_artifact(download_artifact.clone(), cx);
-                });
+            let can_open = !is_missing;
+            let can_open_in_app = !is_missing && is_absolute_path(&artifact.absolute_path);
+            let can_download = !is_missing;
+            let open_artifact = artifact.clone();
+            let open_in_app_artifact = artifact.clone();
+            let download_artifact = artifact.clone();
+            let on_open = cx.listener(move |view, _: &ClickEvent, _window, cx| {
+                view.open_artifact(open_artifact.clone(), cx);
+            });
+            let on_open_in_app = cx.listener(move |view, _: &ClickEvent, _window, cx| {
+                view.open_artifact_in_app(open_in_app_artifact.clone(), cx);
+            });
+            let on_download = cx.listener(move |view, _: &ClickEvent, _window, cx| {
+                view.download_artifact(download_artifact.clone(), cx);
+            });
 
-                let mut open_button = div()
-                    .px_2()
-                    .py_1()
-                    .text_sm()
-                    .border_1()
-                    .border_color(self.colors.border)
-                    .rounded_sm()
-                    .child("Open");
-                if can_open {
-                    open_button = open_button
-                        .bg(self.colors.panel)
-                        .cursor_pointer()
-                        .active(|this| this.opacity(0.85))
-                        .on_click(on_open);
-                } else {
-                    open_button = open_button
-                        .bg(self.colors.panel_2)
-                        .text_color(self.colors.muted);
-                }
-
-                let mut download_button = div()
-                    .px_2()
-                    .py_1()
-                    .text_sm()
-                    .border_1()
-                    .border_color(self.colors.border)
-                    .rounded_sm()
-                    .child("Download");
-                if can_download {
-                    download_button = download_button
-                        .bg(self.colors.panel)
-                        .cursor_pointer()
-                        .active(|this| this.opacity(0.85))
-                        .on_click(on_download);
-                } else {
-                    download_button = download_button
-                        .bg(self.colors.panel_2)
-                        .text_color(self.colors.muted);
-                }
-
-                detail = detail.child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .gap_2()
-                        .items_center()
-                        .child(open_button)
-                        .child(download_button),
-                );
+            let mut open_button = div()
+                .px_2()
+                .py_1()
+                .text_sm()
+                .border_1()
+                .border_color(self.colors.border)
+                .rounded_sm()
+                .child("Open");
+            if can_open {
+                open_button = open_button
+                    .bg(self.colors.panel)
+                    .cursor_pointer()
+                    .active(|this| this.opacity(0.85))
+                    .on_click(on_open);
+            } else {
+                open_button = open_button
+                    .bg(self.colors.panel_2)
+                    .text_color(self.colors.muted);
             }
+
+            let mut open_in_app_button = div()
+                .px_2()
+                .py_1()
+                .text_sm()
+                .border_1()
+                .border_color(self.colors.border)
+                .rounded_sm()
+                .child("Open in app");
+            if can_open_in_app {
+                open_in_app_button = open_in_app_button
+                    .bg(self.colors.panel)
+                    .cursor_pointer()
+                    .active(|this| this.opacity(0.85))
+                    .on_click(on_open_in_app);
+            } else {
+                open_in_app_button = open_in_app_button
+                    .bg(self.colors.panel_2)
+                    .text_color(self.colors.muted);
+            }
+
+            let mut download_button = div()
+                .px_2()
+                .py_1()
+                .text_sm()
+                .border_1()
+                .border_color(self.colors.border)
+                .rounded_sm()
+                .child("Download");
+            if can_download {
+                download_button = download_button
+                    .bg(self.colors.panel)
+                    .cursor_pointer()
+                    .active(|this| this.opacity(0.85))
+                    .on_click(on_download);
+            } else {
+                download_button = download_button
+                    .bg(self.colors.panel_2)
+                    .text_color(self.colors.muted);
+            }
+
+            detail = detail.child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .gap_2()
+                    .items_center()
+                    .child(open_button)
+                    .child(open_in_app_button)
+                    .child(download_button),
+            );
 
             let mut meta = div()
                 .flex()
@@ -345,4 +388,24 @@ impl<'a> ArtifactsView<'a> {
                     ),
             )
     }
+}
+
+fn diff_line_color(line: &str, colors: ThemeColors) -> gpui::Rgba {
+    if line.starts_with("diff --git ")
+        || line.starts_with("index ")
+        || line.starts_with("--- ")
+        || line.starts_with("+++ ")
+    {
+        return colors.muted;
+    }
+    if line.starts_with("@@") {
+        return colors.accent;
+    }
+    if line.starts_with('+') {
+        return colors.success;
+    }
+    if line.starts_with('-') {
+        return colors.error;
+    }
+    colors.text
 }

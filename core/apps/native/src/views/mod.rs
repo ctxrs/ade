@@ -1,5 +1,6 @@
 mod artifacts;
 mod composer;
+mod diagnostics;
 mod messages;
 mod session;
 mod sidebar;

@@ -229,6 +229,7 @@ impl ShellView {
     fn handle_session_gap(&mut self, session_id: SessionId, after_seq: i64, cx: &mut Context<Self>) {
         self.update_session_last_event_seq(session_id, after_seq);
         if self.is_session_selected(session_id) {
+            self.resyncing_session = Some(session_id);
             self.load_session_details(session_id, cx);
         }
     }
