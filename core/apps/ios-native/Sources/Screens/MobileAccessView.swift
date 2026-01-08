@@ -191,6 +191,14 @@ struct MobileAccessView: View {
         .onChange(of: connection.isConnected) { _ in
             Task { await refreshStatus() }
         }
+        .onChange(of: supabaseToken) { newValue in
+            let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            hasSupabaseToken = !trimmed.isEmpty
+            if trimmed.isEmpty {
+                entitlements = nil
+                entitlementsError = nil
+            }
+        }
     }
 
     private var entitlementLabel: String {

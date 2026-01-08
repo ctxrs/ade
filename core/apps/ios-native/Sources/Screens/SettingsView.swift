@@ -152,13 +152,9 @@ struct SettingsView: View {
         .navigationTitle("Settings")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.visible, for: .navigationBar)
-        .task {
-            await refreshAll()
-        }
         .onAppear {
             Task {
-                await refreshMobileStatus()
-                await refreshEntitlements()
+                await refreshAll()
             }
         }
         .onChange(of: connection.isConnected) { _ in
