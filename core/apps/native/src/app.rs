@@ -17,7 +17,7 @@ mod state;
 mod views;
 
 use self::models::{MessageItem, SessionInfo};
-use self::state::{DataLoadState, ShellView};
+use self::state::{ArtifactPreviewState, DataLoadState, ShellView};
 use self::views::{SessionView, SidebarView};
 
 fn load_theme_colors(is_dark: bool) -> ThemeColors {
@@ -75,6 +75,7 @@ pub fn run() {
                         artifacts: Vec::new(),
                         session_events: Vec::new(),
                         selected_artifact: None,
+                        artifact_preview: ArtifactPreviewState::None,
                         session_summary_map: HashMap::new(),
                         session: SessionInfo::placeholder(),
                         data_state: DataLoadState::Loading,
@@ -168,6 +169,7 @@ impl Render for ShellView {
                             session_events: &self.session_events,
                             artifacts: &self.artifacts,
                             selected_artifact: self.selected_artifact,
+                            artifact_preview: &self.artifact_preview,
                             data_state: &self.data_state,
                             composer_text: self.composer_text.as_str(),
                             composer_focus: &self.composer_focus,

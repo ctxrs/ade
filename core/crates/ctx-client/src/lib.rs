@@ -5,12 +5,12 @@ use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
 use directories::BaseDirs;
-use reqwest::Method;
+use reqwest::{header, Method};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use url::Url;
 
-use ctx_core::ids::{SessionId, TaskId, TrackId, WorkspaceId};
+use ctx_core::ids::{ArtifactId, SessionId, TaskId, TrackId, WorkspaceId};
 use ctx_core::models::{
     Artifact, Message, MessageAttachment, MessageDelivery, Session, SessionEventsPage, SessionHead,
     SessionHistoryPage, SessionTurnTool, Task, Track, TrackDiffSummaryResponse, Workspace,
@@ -522,6 +522,41 @@ impl Client {
     pub async fn list_session_artifacts(&self, session_id: SessionId) -> Result<Vec<Artifact>> {
         let path = format!("/api/sessions/{}/artifacts", session_id.0);
         self.request_json(Method::GET, &path, None::<&()>).await
+    }
+
+    pub async fn get_artifact_bytes(
+        &self,
+        artifact_id: ArtifactId,
+        range: Option<(u64, u64)>,
+    ) -> Result<Vec<u8>> {
+        let path = format!("/api/artifacts/{}", artifact_id.0);
+        let url = self.url_for(&path)?;
+        let mut req = self.http.request(Method::GET, url);
+        if let Some(token) = &self.auth_token {
+            req = req.bearer_auth(token);
+        }
+        if let Some((start, end)) = range {
+            let value = format!("bytes={start}-{end}");
+            req = req.header(header::RANGE, value);
+        }
+        let resp = req.send().await.context("sending request")?;
+        let status = resp.status();
+        if !status.is_success() {
+            let text = resp.text().await.context("reading response body")?;
+            let snippet = text.trim();
+            let msg = if snippet.is_empty() {
+                format!("request failed with status {}", status.as_u16())
+            } else {
+                format!(
+                    "request failed with status {}: {}",
+                    status.as_u16(),
+                    snippet
+                )
+            };
+            return Err(anyhow!(msg));
+        }
+        let bytes = resp.bytes().await.context("reading response body")?;
+        Ok(bytes.to_vec())
     }
 
     pub async fn track_diff(&self, track_id: TrackId) -> Result<TrackDiffSummaryResponse> {
