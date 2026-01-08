@@ -81,6 +81,22 @@ struct ChatView: View {
     }
 }
 
+struct ChatDetailView: View {
+    @EnvironmentObject private var connection: ConnectionStore
+    let session: SessionSummary
+    @StateObject private var viewModel = ChatViewModel()
+
+    var body: some View {
+        ChatView(viewModel: viewModel, showsBackground: true)
+            .onAppear {
+                viewModel.setClient(connection.apiClient)
+                viewModel.selectSession(session.id)
+            }
+            .navigationTitle(session.title)
+            .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
 struct MessageRow: View {
     let message: ChatMessage
     let maxBubbleWidth: CGFloat
@@ -281,8 +297,18 @@ final class ChatViewModel: ObservableObject {
     func setClient(_ client: DaemonAPIClient?) {
         self.client = client
         if client != nil {
+            messages = []
+            isAssistantTyping = false
+            errorMessage = nil
+        }
+        if client != nil {
             Task { await refreshMessages() }
         }
+    }
+
+    func selectSession(_ sessionId: String?) {
+        self.sessionId = sessionId
+        Task { await refreshMessages() }
     }
 
     func startPolling() {

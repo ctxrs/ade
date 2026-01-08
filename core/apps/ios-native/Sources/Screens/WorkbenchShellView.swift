@@ -505,13 +505,18 @@ private struct SessionListView: View {
         } else {
             VStack(spacing: 12) {
                 ForEach(sessions) { session in
-                    WorkbenchNavRowView(
-                        title: session.title,
-                        subtitle: "\(session.agentRole) / \(session.providerId) / \(session.modelId)",
-                        status: session.status.capitalized,
-                        icon: "bubble.left.and.bubble.right",
-                        showsChevron: false
-                    )
+                    NavigationLink {
+                        ChatDetailView(session: session)
+                    } label: {
+                        WorkbenchNavRowView(
+                            title: session.title,
+                            subtitle: "\(session.agentRole) / \(session.providerId) / \(session.modelId)",
+                            status: session.status.capitalized,
+                            icon: "bubble.left.and.bubble.right",
+                            showsChevron: true
+                        )
+                    }
+                    .buttonStyle(.plain)
                 }
             }
         }
