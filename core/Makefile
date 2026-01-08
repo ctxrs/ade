@@ -67,15 +67,27 @@ dev-preflight:
 		if netstat -ltn 2>/dev/null | awk '{print $$4}' | grep -q ":$$port$$"; then port_in_use=1; fi; \
 	fi; \
 	lock_path="$$data_dir/daemon.lock"; \
-	lock_exists=0; \
-	if [ -e "$$lock_path" ]; then lock_exists=1; fi; \
-	if [ "$$port_in_use" = "1" ] || [ "$$lock_exists" = "1" ]; then \
+	lock_active=0; \
+	lock_pid=""; \
+	if [ -e "$$lock_path" ]; then \
+		lock_pid="$$(tr -d '[:space:]' < "$$lock_path" 2>/dev/null || true)"; \
+		if echo "$$lock_pid" | grep -Eq '^[0-9]+$$'; then \
+			if ps -p "$$lock_pid" >/dev/null 2>&1; then \
+				cmd="$$(ps -p "$$lock_pid" -o command= 2>/dev/null || true)"; \
+				if echo "$$cmd" | grep -q 'ctx .*serve'; then lock_active=1; fi; \
+			fi; \
+		fi; \
+		if [ "$$lock_active" != "1" ] && [ "$$port_in_use" = "0" ]; then \
+			rm -f "$$lock_path"; \
+		fi; \
+	fi; \
+	if [ "$$port_in_use" = "1" ] || [ "$$lock_active" = "1" ]; then \
 		echo "error: ctx daemon preflight failed." >&2; \
 		if [ "$$port_in_use" = "1" ]; then \
 			echo "  Port $$port is already in use." >&2; \
 		fi; \
-		if [ "$$lock_exists" = "1" ]; then \
-			echo "  Data dir appears in use: $$data_dir (found daemon.lock)." >&2; \
+		if [ "$$lock_active" = "1" ]; then \
+			echo "  Data dir appears in use: $$data_dir (daemon pid $$lock_pid)." >&2; \
 		fi; \
 		echo "hint: run another daemon with a different port + data dir:" >&2; \
 		echo "  CTX_DAEMON_PORT=4401 CTX_DATA_DIR=/tmp/ctx-dev-4401 make dev" >&2; \

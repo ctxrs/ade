@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::fs::OpenOptions;
 use std::io::ErrorKind;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -47,7 +48,7 @@ use crate::workspace_catchup::WorkspaceCatchupHub;
 
 fn acquire_daemon_lock(data_root: &Path) -> Result<std::fs::File> {
     let path = data_root.join("daemon.lock");
-    let file = OpenOptions::new()
+    let mut file = OpenOptions::new()
         .create(true)
         .read(true)
         .write(true)
@@ -56,7 +57,12 @@ fn acquire_daemon_lock(data_root: &Path) -> Result<std::fs::File> {
         .with_context(|| format!("opening daemon lockfile {}", path.display()))?;
 
     match file.try_lock_exclusive() {
-        Ok(()) => Ok(file),
+        Ok(()) => {
+            let _ = file.set_len(0);
+            let _ = writeln!(file, "{}", std::process::id());
+            let _ = file.sync_all();
+            Ok(file)
+        }
         Err(e) if e.kind() == ErrorKind::WouldBlock => {
             anyhow::bail!("ctx daemon already running (lockfile {})", path.display())
         }
