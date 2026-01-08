@@ -618,6 +618,7 @@ struct SessionSummary: Codable, Sendable, Identifiable {
     let taskId: String?
     let workspaceId: String?
     let worktreeId: String?
+    let relationship: String?
     let providerId: String
     let modelId: String
     let title: String
@@ -680,6 +681,7 @@ extension SessionSummary {
             taskId: session.taskId.stringValue,
             workspaceId: session.workspaceId.stringValue,
             worktreeId: session.worktreeId.stringValue,
+            relationship: session.relationship,
             providerId: session.providerId,
             modelId: session.modelId,
             title: session.title,

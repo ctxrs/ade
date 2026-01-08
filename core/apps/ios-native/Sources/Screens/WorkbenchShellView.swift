@@ -406,6 +406,7 @@ private struct TaskListView: View {
         errorMessage = nil
         do {
             tasks = try await client.listTasks(workspaceId: workspace.id)
+            workbenchSelection.resolveTaskSelection(from: tasks)
         } catch {
             errorMessage = "Failed to load tasks."
             tasks = []
@@ -486,6 +487,7 @@ private struct TrackListView: View {
         errorMessage = nil
         do {
             tracks = try await client.listTracks(taskId: task.id)
+            workbenchSelection.resolveTrackSelection(taskId: task.id, tracks: tracks)
         } catch {
             errorMessage = "Failed to load tracks."
             tracks = []
@@ -566,6 +568,7 @@ private struct SessionListView: View {
         errorMessage = nil
         do {
             sessions = try await client.listSessions(forTrack: track.id)
+            workbenchSelection.resolveSessionSelection(taskId: track.taskId, trackId: track.id, sessions: sessions)
         } catch {
             errorMessage = "Failed to load sessions."
             sessions = []
