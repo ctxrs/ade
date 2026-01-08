@@ -3,7 +3,7 @@ import SwiftUI
 struct RootView: View {
     var body: some View {
         NavigationStack {
-            ConnectionView()
+            ChatView()
                 .navigationBarHidden(true)
         }
         .preferredColorScheme(.dark)
