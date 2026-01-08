@@ -70,6 +70,29 @@ fn session_detail_text(session: &Session) -> String {
     )
 }
 
+pub(crate) fn session_event_type_label(event_type: &SessionEventType) -> &'static str {
+    match event_type {
+        SessionEventType::Init => "init",
+        SessionEventType::UserMessage => "user_message",
+        SessionEventType::InputQueued => "input_queued",
+        SessionEventType::AuthRequired => "auth_required",
+        SessionEventType::Notice => "notice",
+        SessionEventType::AssistantChunk => "assistant_chunk",
+        SessionEventType::ThoughtChunk => "thought_chunk",
+        SessionEventType::AssistantComplete => "assistant_complete",
+        SessionEventType::AssistantMessageInserted => "assistant_message_inserted",
+        SessionEventType::ToolCall => "tool_call",
+        SessionEventType::ToolCallUpdate => "tool_call_update",
+        SessionEventType::ToolResult => "tool_result",
+        SessionEventType::Plan => "plan",
+        SessionEventType::ArtifactsSet => "artifacts_set",
+        SessionEventType::Done => "done",
+        SessionEventType::InterruptRequested => "interrupt_requested",
+        SessionEventType::TurnInterrupted => "turn_interrupted",
+        SessionEventType::Error => "error",
+    }
+}
+
 pub(crate) fn artifact_label(artifact: Artifact) -> String {
     if let Some(name) = artifact.name.as_ref() {
         return name.clone();

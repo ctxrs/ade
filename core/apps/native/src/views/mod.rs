@@ -1,8 +1,9 @@
 use gpui::{ClickEvent, Context, CursorStyle, FocusHandle, div, prelude::*, px};
+use ctx_core::models::SessionEvent;
 
 use crate::theme::ThemeColors;
 
-use super::models::{MessageItem, SessionInfo};
+use super::models::{session_event_type_label, MessageItem, SessionInfo};
 use super::state::{DataLoadState, ShellView};
 use super::workspace_summary::{SessionSummaryItem, TaskSummaryItem, TaskSummaryStatus};
 
@@ -202,6 +203,73 @@ impl<'a> MessagesView<'a> {
     }
 }
 
+struct EventsView<'a> {
+    colors: ThemeColors,
+    events: &'a [SessionEvent],
+}
+
+impl<'a> EventsView<'a> {
+    fn render(&self) -> impl IntoElement {
+        let list = if self.events.is_empty() {
+            div()
+                .text_sm()
+                .text_color(self.colors.muted)
+                .child("No events yet.")
+        } else {
+            self.events
+                .iter()
+                .fold(div().flex().flex_col().gap_2(), |list, event| {
+                    let left = div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child(
+                            div()
+                                .text_color(self.colors.muted)
+                                .child(format!("#{}", event.seq)),
+                        )
+                        .child(session_event_type_label(&event.event_type));
+                    list.child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .px_2()
+                            .py_1()
+                            .border_1()
+                            .border_color(self.colors.border)
+                            .rounded_sm()
+                            .bg(self.colors.panel_2)
+                            .text_sm()
+                            .child(left)
+                            .child(
+                                div()
+                                    .text_color(self.colors.muted)
+                                    .child(event.created_at.to_rfc3339()),
+                            ),
+                    )
+                })
+        };
+
+        div()
+            .id("events")
+            .flex()
+            .flex_col()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .text_sm()
+                    .text_color(self.colors.muted)
+                    .child("Events")
+                    .child(format!("{}", self.events.len())),
+            )
+            .child(div().h(px(8.0)))
+            .child(list)
+    }
+}
+
 struct ArtifactsView<'a> {
     colors: ThemeColors,
     artifacts: &'a [String],
@@ -322,6 +390,7 @@ pub(super) struct SessionView<'a> {
     pub(super) sessions: &'a [SessionSummaryItem],
     pub(super) selected_session: Option<usize>,
     pub(super) messages: &'a [MessageItem],
+    pub(super) session_events: &'a [SessionEvent],
     pub(super) artifacts: &'a [String],
     pub(super) data_state: &'a DataLoadState,
     pub(super) composer_text: &'a str,
@@ -376,6 +445,48 @@ impl<'a> SessionView<'a> {
             .and_then(|index| self.sessions.get(index))
             .is_some();
         let can_send = has_session && !self.composer_text.trim().is_empty();
+        let mut interrupt_button = div()
+            .px_2()
+            .py_1()
+            .text_sm()
+            .border_1()
+            .border_color(self.colors.border)
+            .rounded_sm()
+            .child("Interrupt");
+
+        if has_session {
+            interrupt_button = interrupt_button
+                .bg(self.colors.panel)
+                .cursor_pointer()
+                .active(|this| this.opacity(0.85))
+                .on_click(cx.listener(ShellView::on_interrupt_click));
+        } else {
+            interrupt_button = interrupt_button
+                .bg(self.colors.panel_2)
+                .text_color(self.colors.muted);
+        }
+
+        let mut cancel_button = div()
+            .px_2()
+            .py_1()
+            .text_sm()
+            .border_1()
+            .border_color(self.colors.border)
+            .rounded_sm()
+            .child("Cancel");
+
+        if has_session {
+            cancel_button = cancel_button
+                .bg(self.colors.panel)
+                .text_color(self.colors.warning)
+                .cursor_pointer()
+                .active(|this| this.opacity(0.85))
+                .on_click(cx.listener(ShellView::on_cancel_click));
+        } else {
+            cancel_button = cancel_button
+                .bg(self.colors.panel_2)
+                .text_color(self.colors.muted);
+        }
         div()
             .id("session-view")
             .flex()
@@ -396,14 +507,22 @@ impl<'a> SessionView<'a> {
                     )
                     .child(
                         div()
-                            .px_2()
-                            .py_1()
-                            .text_sm()
-                            .bg(self.colors.panel_2)
-                            .border_1()
-                            .border_color(self.colors.border)
-                            .rounded_sm()
-                            .child(self.session.status.as_str()),
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .px_2()
+                                    .py_1()
+                                    .text_sm()
+                                    .bg(self.colors.panel_2)
+                                    .border_1()
+                                    .border_color(self.colors.border)
+                                    .rounded_sm()
+                                    .child(self.session.status.as_str()),
+                            )
+                            .child(interrupt_button)
+                            .child(cancel_button),
                     ),
             )
             .child(div().h(px(12.0)))
@@ -429,6 +548,14 @@ impl<'a> SessionView<'a> {
                     .child(self.session.detail.as_str())
                     .child(div().h(px(8.0)))
                     .child("Session stream placeholder"),
+            )
+            .child(div().h(px(16.0)))
+            .child(
+                EventsView {
+                    colors: self.colors,
+                    events: self.session_events,
+                }
+                .render(),
             )
             .child(div().h(px(16.0)))
             .child(

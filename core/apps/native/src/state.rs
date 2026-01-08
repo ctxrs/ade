@@ -4,7 +4,7 @@ use gpui::{ClickEvent, Context, FocusHandle, KeyDownEvent, Window};
 use gpui_tokio::Tokio;
 
 use ctx_core::ids::SessionId;
-use ctx_core::models::{SessionCatchupSummary, SessionHead, SessionHistoryPage};
+use ctx_core::models::{SessionCatchupSummary, SessionEvent, SessionHead, SessionHistoryPage};
 
 use crate::theme::ThemeColors;
 
@@ -37,13 +37,30 @@ struct LoadedData {
     session_summary_map: HashMap<SessionId, SessionCatchupSummary>,
     session_head: Option<SessionHead>,
     session_history: Option<SessionHistoryPage>,
+    session_events: Vec<SessionEvent>,
 }
 
 struct SessionLoadResult {
     session_id: SessionId,
     session_head: Option<SessionHead>,
     session_history: Option<SessionHistoryPage>,
+    session_events: Vec<SessionEvent>,
     artifacts: Vec<String>,
+}
+
+#[derive(Clone, Copy)]
+enum SessionControlAction {
+    Interrupt,
+    Cancel,
+}
+
+impl SessionControlAction {
+    fn failure_message(self) -> &'static str {
+        match self {
+            SessionControlAction::Interrupt => "Unable to interrupt session.",
+            SessionControlAction::Cancel => "Unable to cancel session.",
+        }
+    }
 }
 
 pub(crate) enum DataLoadState {
@@ -62,6 +79,7 @@ pub(crate) struct ShellView {
     pub(crate) selected_session: Option<usize>,
     pub(crate) messages: Vec<MessageItem>,
     pub(crate) artifacts: Vec<String>,
+    pub(crate) session_events: Vec<SessionEvent>,
     pub(crate) session_summary_map: HashMap<SessionId, SessionCatchupSummary>,
     pub(crate) session: SessionInfo,
     pub(crate) data_state: DataLoadState,
@@ -118,6 +136,24 @@ impl ShellView {
         self.send_composer_message(cx);
     }
 
+    pub(crate) fn on_interrupt_click(
+        &mut self,
+        _: &ClickEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.request_session_control(SessionControlAction::Interrupt, cx);
+    }
+
+    pub(crate) fn on_cancel_click(
+        &mut self,
+        _: &ClickEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.request_session_control(SessionControlAction::Cancel, cx);
+    }
+
     fn send_composer_message(&mut self, cx: &mut Context<Self>) {
         let Some(session_id) = self.selected_session_id() else {
             return;
@@ -161,6 +197,44 @@ impl ShellView {
         .detach();
     }
 
+    fn request_session_control(
+        &mut self,
+        action: SessionControlAction,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(session_id) = self.selected_session_id() else {
+            return;
+        };
+
+        let task = Tokio::spawn_result(cx, async move {
+            let config = ctx_client::resolve_daemon_config()?;
+            let client = ctx_client::Client::new(config)?;
+            match action {
+                SessionControlAction::Interrupt => client.interrupt_session(session_id).await?,
+                SessionControlAction::Cancel => client.cancel_session(session_id).await?,
+            }
+            Ok(session_id)
+        });
+
+        cx.spawn(|this, cx| async move {
+            let result = task.await;
+            this.update(cx, |view, cx| {
+                match result {
+                    Ok(session_id) => {
+                        view.load_session_details(session_id, cx);
+                    }
+                    Err(_) => {
+                        view.messages
+                            .push(MessageItem::new("assistant", action.failure_message()));
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     fn selected_session_id(&self) -> Option<SessionId> {
         self.selected_session
             .and_then(|index| self.sessions.get(index))
@@ -183,6 +257,7 @@ impl ShellView {
             "Loading session messages...",
         )];
         self.artifacts.clear();
+        self.session_events.clear();
         cx.notify();
         self.load_session_details(session_id, cx);
     }
@@ -199,6 +274,12 @@ impl ShellView {
                 .get_session_history(session_id, None, Some(60))
                 .await
                 .ok();
+            let session_events = client
+                .get_session_events(session_id, None, None, Some(40))
+                .await
+                .ok()
+                .map(|page| page.events)
+                .unwrap_or_default();
             let artifacts = client
                 .list_session_artifacts(session_id)
                 .await
@@ -215,6 +296,7 @@ impl ShellView {
                 session_id,
                 session_head,
                 session_history,
+                session_events,
                 artifacts,
             })
         });
@@ -237,6 +319,14 @@ impl ShellView {
                                     .map(session_info_from_summary)
                             })
                             .unwrap_or_else(SessionInfo::placeholder);
+                        if let Some(index) = view.selected_session {
+                            if let Some(summary) = view.sessions.get_mut(index) {
+                                if summary.session_id == data.session_id {
+                                    summary.status = view.session.status.clone();
+                                    summary.title = view.session.title.clone();
+                                }
+                            }
+                        }
                         let mut messages = build_message_items(
                             data.session_head.as_ref(),
                             data.session_history.as_ref(),
@@ -248,6 +338,7 @@ impl ShellView {
                             ));
                         }
                         view.messages = messages;
+                        view.session_events = data.session_events;
                         view.artifacts = data.artifacts;
                     }
                     Err(_) => {
@@ -255,6 +346,7 @@ impl ShellView {
                             "assistant",
                             "Unable to load session details.",
                         )];
+                        view.session_events.clear();
                         view.artifacts.clear();
                         if let Some(summary) = view.session_summary_map.get(&session_id) {
                             view.session = session_info_from_summary(summary);
@@ -297,6 +389,7 @@ impl ShellView {
             let mut session_summary_map = HashMap::new();
             let mut session_head = None;
             let mut session_history = None;
+            let mut session_events = Vec::new();
             let mut artifacts = Vec::new();
 
             if let Some(workspace) = workspaces.first() {
@@ -334,6 +427,12 @@ impl ShellView {
                         .get_session_history(session_id, None, Some(60))
                         .await
                         .ok();
+                    session_events = client
+                        .get_session_events(session_id, None, None, Some(40))
+                        .await
+                        .ok()
+                        .map(|page| page.events)
+                        .unwrap_or_default();
                     artifacts = client
                         .list_session_artifacts(session_id)
                         .await
@@ -363,6 +462,7 @@ impl ShellView {
                 session_summary_map,
                 session_head,
                 session_history,
+                session_events,
             })
         });
 
@@ -393,6 +493,7 @@ impl ShellView {
                             ));
                         }
                         view.messages = messages;
+                        view.session_events = data.session_events;
                         view.artifacts = data.app_data.artifact_names.clone();
                         view.data_state = DataLoadState::Loaded(data.app_data);
                     }
@@ -403,6 +504,7 @@ impl ShellView {
                             "assistant",
                             "Unable to load workspace data.",
                         )];
+                        view.session_events.clear();
                         view.artifacts.clear();
                         view.data_state = DataLoadState::Error(err.to_string());
                     }
