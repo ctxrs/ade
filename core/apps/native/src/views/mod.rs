@@ -1,4 +1,4 @@
-use gpui::{ClickEvent, Context, CursorStyle, FocusHandle, div, prelude::*, px};
+use gpui::{ClickEvent, Context, CursorStyle, FocusHandle, ListState, div, list, prelude::*, px};
 use ctx_core::models::SessionEvent;
 
 use ctx_core::ids::WorkspaceId;
@@ -8,7 +8,7 @@ use ctx_core::models::Artifact;
 use crate::theme::ThemeColors;
 
 use super::models::{artifact_label, session_event_type_label, MessageItem, SessionInfo};
-use super::state::{DataLoadState, ProviderItem, ShellView, WorkspaceItem};
+use super::state::{DataLoadState, ProviderItem, ShellView, StreamStatus, WorkspaceItem};
 use super::workspace_summary::{SessionSummaryItem, TaskSummaryItem, TaskSummaryStatus};
 
 pub(super) struct WorkspaceListView<'a> {
@@ -329,35 +329,61 @@ impl<'a> SessionListView<'a> {
 struct MessagesView<'a> {
     colors: ThemeColors,
     messages: &'a [MessageItem],
+    message_list_state: &'a ListState,
+    new_message_count: usize,
 }
 
 impl<'a> MessagesView<'a> {
-    fn render(&self) -> impl IntoElement {
-        let list = self
-            .messages
-            .iter()
-            .fold(div().flex().flex_col().gap_2(), |list, message| {
-                list.child(
+    fn render(&self, cx: &mut Context<ShellView>) -> impl IntoElement {
+        let messages = self.messages.to_vec();
+        let colors = self.colors;
+        let list = list(self.message_list_state.clone(), move |index, _window, _cx| {
+            let Some(message) = messages.get(index) else {
+                return div().into_any_element();
+            };
+            div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .px_2()
+                .py_2()
+                .border_1()
+                .border_color(colors.border)
+                .rounded_sm()
+                .bg(colors.panel)
+                .text_sm()
+                .child(
                     div()
-                        .flex()
-                        .flex_col()
-                        .gap_1()
-                        .px_2()
-                        .py_2()
-                        .border_1()
-                        .border_color(self.colors.border)
-                        .rounded_sm()
-                        .bg(self.colors.panel_2)
                         .text_sm()
-                        .child(
-                            div()
-                                .text_sm()
-                                .text_color(self.colors.muted)
-                                .child(message.role.as_str()),
-                        )
-                        .child(message.content.as_str()),
+                        .text_color(colors.muted)
+                        .child(message.role.as_str()),
                 )
-            });
+                .child(message.content.as_str())
+                .into_any_element()
+        });
+
+        let indicator = if self.new_message_count > 0 {
+            let label = if self.new_message_count == 1 {
+                "1 new message".to_string()
+            } else {
+                format!("{} new messages", self.new_message_count)
+            };
+            div()
+                .px_2()
+                .py_1()
+                .text_sm()
+                .border_1()
+                .border_color(self.colors.border_strong)
+                .rounded_sm()
+                .bg(self.colors.panel)
+                .text_color(self.colors.accent)
+                .cursor_pointer()
+                .active(|this| this.opacity(0.85))
+                .child(label)
+                .on_click(cx.listener(ShellView::on_new_messages_click))
+        } else {
+            div()
+        };
 
         div()
             .id("message-list")
@@ -370,10 +396,19 @@ impl<'a> MessagesView<'a> {
                     .justify_between()
                     .text_sm()
                     .text_color(self.colors.muted)
-                    .child("Messages"),
+                    .child("Messages")
+                    .child(indicator),
             )
             .child(div().h(px(8.0)))
-            .child(list)
+            .child(
+                div()
+                    .border_1()
+                    .border_color(self.colors.border)
+                    .rounded_sm()
+                    .bg(self.colors.panel_2)
+                    .p_2()
+                    .child(list.h(px(220.0)).w_full()),
+            )
     }
 }
 
@@ -672,12 +707,15 @@ pub(super) struct SessionView<'a> {
     pub(super) sessions: &'a [SessionSummaryItem],
     pub(super) selected_session: Option<usize>,
     pub(super) messages: &'a [MessageItem],
+    pub(super) message_list_state: &'a ListState,
+    pub(super) new_message_count: usize,
     pub(super) session_events: &'a [SessionEvent],
     pub(super) artifacts: &'a [Artifact],
     pub(super) selected_artifact: Option<usize>,
     pub(super) data_state: &'a DataLoadState,
     pub(super) composer_text: &'a str,
     pub(super) composer_focus: &'a FocusHandle,
+    pub(super) stream_status: &'a StreamStatus,
 }
 
 impl<'a> SessionView<'a> {
@@ -774,6 +812,16 @@ impl<'a> SessionView<'a> {
                 .bg(self.colors.panel_2)
                 .text_color(self.colors.muted);
         }
+        let mut stream_block = div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .text_sm()
+            .text_color(self.colors.muted)
+            .child(format!("Stream: {}", self.stream_status.label()));
+        if let Some(detail) = self.stream_status.detail() {
+            stream_block = stream_block.child(detail);
+        }
         div()
             .id("session-view")
             .flex()
@@ -834,7 +882,7 @@ impl<'a> SessionView<'a> {
                     .text_color(self.colors.muted)
                     .child(self.session.detail.as_str())
                     .child(div().h(px(8.0)))
-                    .child("Session stream placeholder"),
+                    .child(stream_block),
             )
             .child(div().h(px(16.0)))
             .child(
@@ -849,8 +897,10 @@ impl<'a> SessionView<'a> {
                 MessagesView {
                     colors: self.colors,
                     messages: self.messages,
+                    message_list_state: self.message_list_state,
+                    new_message_count: self.new_message_count,
                 }
-                .render(),
+                .render(cx),
             )
             .child(div().h(px(16.0)))
             .child(

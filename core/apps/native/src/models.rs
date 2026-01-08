@@ -42,7 +42,7 @@ fn message_role_label(role: &MessageRole) -> &'static str {
     }
 }
 
-fn message_item_from_model(message: &Message) -> MessageItem {
+pub(crate) fn message_item_from_model(message: &Message) -> MessageItem {
     MessageItem::new(message_role_label(&message.role), message.content.clone())
 }
 

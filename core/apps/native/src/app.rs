@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use gpui::{
-    App, Application, Bounds, Context, Window, WindowBounds, WindowOptions, div, prelude::*, px,
-    size,
+    App, Application, Bounds, Context, ListAlignment, ListState, Window, WindowBounds,
+    WindowOptions, div, prelude::*, px, size,
 };
 
 use crate::theme::{ThemeColors, ThemeTokens};
@@ -17,7 +17,7 @@ mod state;
 mod views;
 
 use self::models::{MessageItem, SessionInfo};
-use self::state::{DataLoadState, ShellView};
+use self::state::{DataLoadState, ShellView, StreamStatus};
 use self::views::{SessionView, SidebarView};
 
 fn load_theme_colors(is_dark: bool) -> ThemeColors {
@@ -76,10 +76,19 @@ pub fn run() {
                         session_events: Vec::new(),
                         selected_artifact: None,
                         session_summary_map: HashMap::new(),
+                        session_last_event_seq: HashMap::new(),
                         session: SessionInfo::placeholder(),
                         data_state: DataLoadState::Loading,
                         composer_text: String::new(),
                         composer_focus: cx.focus_handle(),
+                        message_list_state: ListState::new(1, ListAlignment::Bottom, px(160.0)),
+                        message_list_len: 1,
+                        message_auto_follow: true,
+                        new_message_count: 0,
+                        stream_status: StreamStatus::Idle,
+                        stream_subscribe_tx: None,
+                        stream_stop_tx: None,
+                        message_list_handler_set: false,
                     };
                     view.start_data_load(cx);
                     view
@@ -165,12 +174,15 @@ impl Render for ShellView {
                             sessions: &self.sessions,
                             selected_session: self.selected_session,
                             messages: &self.messages,
+                            message_list_state: &self.message_list_state,
+                            new_message_count: self.new_message_count,
                             session_events: &self.session_events,
                             artifacts: &self.artifacts,
                             selected_artifact: self.selected_artifact,
                             data_state: &self.data_state,
                             composer_text: self.composer_text.as_str(),
                             composer_focus: &self.composer_focus,
+                            stream_status: &self.stream_status,
                         }
                         .render(cx),
                     ),

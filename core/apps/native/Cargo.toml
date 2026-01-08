@@ -8,9 +8,9 @@ license = "Apache-2.0"
 anyhow = "1"
 ctx-client = { path = "../../crates/ctx-client" }
 ctx-core = { path = "../../crates/ctx-core" }
+futures-util = "0.3"
 gpui = "0.2.2"
 gpui_tokio = "0.1.0"
-tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
-
-[dev-dependencies]
-serde_json = { workspace = true }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
