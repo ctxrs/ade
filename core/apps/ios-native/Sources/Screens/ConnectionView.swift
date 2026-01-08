@@ -7,6 +7,7 @@ struct ConnectionView: View {
     @State private var rememberDevice = true
     @State private var isConnecting = false
     @State private var shouldNavigate = false
+    @State private var isShowingScanner = false
 
     var body: some View {
         ZStack {
@@ -72,6 +73,7 @@ struct ConnectionView: View {
                             .disabled(isConnecting)
 
                             Button {
+                                isShowingScanner = true
                             } label: {
                                 HStack {
                                     Image(systemName: "qrcode.viewfinder")
@@ -110,10 +112,24 @@ struct ConnectionView: View {
                 shouldNavigate = true
             }
         }
+        .onChange(of: connection.baseURLText) { baseURL in
+            daemonURL = baseURL
+        }
+        .onChange(of: connection.tokenText) { token in
+            accessToken = token
+        }
         .background(
             NavigationLink("", destination: WorkbenchShellView(), isActive: $shouldNavigate)
                 .opacity(0)
         )
+        .fullScreenCover(isPresented: $isShowingScanner) {
+            QRCodeScannerView { result in
+                daemonURL = result.baseURL
+                accessToken = result.token
+                connection.baseURLText = result.baseURL
+                connection.tokenText = result.token
+            }
+        }
         .toolbar(.hidden, for: .navigationBar)
     }
 }
