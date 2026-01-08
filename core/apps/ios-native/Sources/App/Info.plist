@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleDisplayName</key>
+  <string>ctx</string>
+  <key>CFBundleIdentifier</key>
+  <string>rs.ctx.mobile</string>
+  <key>CFBundleShortVersionString</key>
+  <string>0.1.0</string>
+  <key>CFBundleVersion</key>
+  <string>1</string>
+  <key>UILaunchScreen</key>
+  <dict>
+    <key>UILaunchScreen</key>
+    <dict/>
+  </dict>
+  <key>UIUserInterfaceStyle</key>
+  <string>Dark</string>
+  <key>UISupportedInterfaceOrientations</key>
+  <array>
+    <string>UIInterfaceOrientationPortrait</string>
+  </array>
+  <key>UISupportedInterfaceOrientations~ipad</key>
+  <array>
+    <string>UIInterfaceOrientationPortrait</string>
+  </array>
+  <key>NSCameraUsageDescription</key>
+  <string>Scan QR codes to connect the device.</string>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Send voice messages.</string>
+  <key>NSPhotoLibraryUsageDescription</key>
+  <string>Attach images.</string>
+  <key>NSPhotoLibraryAddUsageDescription</key>
+  <string>Save images.</string>
+</dict>
+</plist>
