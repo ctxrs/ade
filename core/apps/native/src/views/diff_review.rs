@@ -1,4 +1,4 @@
-use gpui::{ClickEvent, Context, ElementId, Rgba, div, prelude::*, px};
+use gpui::{ClickEvent, Context, Rgba, div, prelude::*, px};
 
 use crate::theme::ThemeColors;
 

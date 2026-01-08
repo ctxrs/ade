@@ -1,5 +1,4 @@
 use gpui::{Context, FocusHandle, ListState, div, prelude::*, px, Entity};
-use ctx_core::ids::WorkspaceId;
 use ctx_core::models::{Artifact, MessageAttachment, SessionEvent};
 
 use crate::theme::ThemeColors;
@@ -13,17 +12,12 @@ use super::super::icons::{Icon, IconName};
 use super::super::models::{MessageItem, SessionInfo};
 use super::super::state::{
     ArtifactPreviewState, DataLoadState, DiffReviewState, ShellView, StreamStatus,
-    TerminalPanelState, WorkspaceItem,
+    TerminalPanelState,
 };
-use super::super::workspace_summary::{SessionSummaryItem, TaskSummaryItem};
+use super::super::workspace_summary::SessionSummaryItem;
 
 pub(crate) struct SessionView<'a> {
     pub(super) colors: ThemeColors,
-    pub(super) workspaces: &'a [WorkspaceItem],
-    pub(super) selected_workspace: Option<WorkspaceId>,
-    pub(super) catchup_active_total: Option<i64>,
-    pub(super) catchup_archived_total: Option<i64>,
-    pub(super) tasks: &'a [TaskSummaryItem],
     pub(super) session: &'a SessionInfo,
     pub(super) sessions: &'a [SessionSummaryItem],
     pub(super) selected_session: Option<usize>,

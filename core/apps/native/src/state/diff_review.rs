@@ -11,12 +11,6 @@ pub(crate) enum DiffLineKind {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct DiffRenderLine {
-    pub(crate) text: String,
-    pub(crate) kind: DiffLineKind,
-}
-
-#[derive(Clone, Debug)]
 pub(crate) struct DiffHunk {
     pub(crate) key: String,
     pub(crate) header_line: String,
@@ -26,8 +20,6 @@ pub(crate) struct DiffHunk {
 #[derive(Clone, Debug)]
 pub(crate) struct DiffFile {
     pub(crate) key: String,
-    pub(crate) old_path: String,
-    pub(crate) new_path: String,
     pub(crate) file_path: String,
     pub(crate) section_lines: Vec<String>,
     pub(crate) header_lines: Vec<String>,
@@ -37,7 +29,6 @@ pub(crate) struct DiffFile {
     pub(crate) is_binary: bool,
     pub(crate) added_lines: usize,
     pub(crate) deleted_lines: usize,
-    pub(crate) render_lines: Vec<DiffRenderLine>,
 }
 
 impl DiffFile {
@@ -389,7 +380,7 @@ fn finalize_file(raw: RawDiffFile) -> DiffFile {
 
     let mut added_lines = 0;
     let mut deleted_lines = 0;
-    let mut render_lines = Vec::new();
+    let mut has_render_lines = false;
 
     for hunk in &raw.hunks {
         for line in &hunk.lines {
@@ -401,26 +392,17 @@ fn finalize_file(raw: RawDiffFile) -> DiffFile {
                 '+' => {
                     if !line.starts_with("+++") {
                         added_lines += 1;
-                        render_lines.push(DiffRenderLine {
-                            text: line[1..].to_string(),
-                            kind: DiffLineKind::Add,
-                        });
+                        has_render_lines = true;
                     }
                 }
                 '-' => {
                     if !line.starts_with("---") {
                         deleted_lines += 1;
-                        render_lines.push(DiffRenderLine {
-                            text: line[1..].to_string(),
-                            kind: DiffLineKind::Del,
-                        });
+                        has_render_lines = true;
                     }
                 }
                 ' ' => {
-                    render_lines.push(DiffRenderLine {
-                        text: line[1..].to_string(),
-                        kind: DiffLineKind::Context,
-                    });
+                    has_render_lines = true;
                 }
                 _ => {}
             }
@@ -429,17 +411,14 @@ fn finalize_file(raw: RawDiffFile) -> DiffFile {
 
     DiffFile {
         key: raw.key,
-        old_path: raw.old_path,
-        new_path: raw.new_path,
         file_path,
         section_lines: raw.section_lines,
         header_lines: raw.header_lines,
         hunks: raw.hunks,
         is_new,
         is_deleted,
-        is_binary: is_binary || render_lines.is_empty(),
+        is_binary: is_binary || !has_render_lines,
         added_lines,
         deleted_lines,
-        render_lines,
     }
 }

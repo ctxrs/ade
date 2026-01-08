@@ -48,11 +48,6 @@ impl<'a> RouterView<'a> {
     fn render_workbench(&self, cx: &mut Context<ShellView>) -> impl IntoElement {
         SessionView {
             colors: self.shell.colors,
-            workspaces: &self.shell.workspaces,
-            selected_workspace: self.shell.selected_workspace,
-            catchup_active_total: self.shell.catchup_active_total,
-            catchup_archived_total: self.shell.catchup_archived_total,
-            tasks: &self.shell.tasks,
             session: &self.shell.session,
             sessions: &self.shell.sessions,
             selected_session: self.shell.selected_session,

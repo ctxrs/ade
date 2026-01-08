@@ -10,6 +10,7 @@ mod automation {
 
     use crate::app::ShellView;
 
+    #[allow(dead_code)]
     #[derive(Clone, Debug, Default)]
     pub struct AutomationConfig {
         pub addr: Option<SocketAddr>,

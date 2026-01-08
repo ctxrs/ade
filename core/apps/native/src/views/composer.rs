@@ -1,4 +1,4 @@
-use gpui::{ClickEvent, Context, CursorStyle, ElementId, FocusHandle, div, prelude::*, px};
+use gpui::{ClickEvent, Context, CursorStyle, ElementId, FocusHandle, div, prelude::*};
 
 use ctx_core::models::MessageAttachment;
 

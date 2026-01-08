@@ -12,11 +12,13 @@ pub struct ThemeTokens {
     pub border_strong: String,
     pub text: String,
     pub muted: String,
+    #[allow(dead_code)]
     pub shadow: String,
     pub accent: String,
     pub success: String,
     pub warning: String,
     pub error: String,
+    #[allow(dead_code)]
     pub mono: String,
 }
 
