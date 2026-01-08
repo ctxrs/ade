@@ -724,6 +724,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "ctx-client"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "ctx-core",
+ "ctx-providers",
+ "directories",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "url",
+]
+
+[[package]]
 name = "ctx-core"
 version = "0.1.0"
 dependencies = [

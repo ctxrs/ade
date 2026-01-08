@@ -1,0 +1,16 @@
+[package]
+name = "ctx-native"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+
+[dependencies]
+anyhow = "1"
+ctx-client = { path = "../../crates/ctx-client" }
+ctx-core = { path = "../../crates/ctx-core" }
+gpui = "0.2.2"
+gpui_tokio = "0.1.0"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+
+[dev-dependencies]
+serde_json = { workspace = true }
