@@ -1,10 +1,187 @@
 use gpui::{ClickEvent, Context, CursorStyle, FocusHandle, div, prelude::*, px};
 
+use ctx_core::ids::WorkspaceId;
+
 use crate::theme::ThemeColors;
 
 use super::models::{MessageItem, SessionInfo};
-use super::state::{DataLoadState, ShellView};
+use super::state::{DataLoadState, ProviderItem, ShellView, WorkspaceItem};
 use super::workspace_summary::{SessionSummaryItem, TaskSummaryItem, TaskSummaryStatus};
+
+pub(super) struct WorkspaceListView<'a> {
+    pub(super) colors: ThemeColors,
+    pub(super) workspaces: &'a [WorkspaceItem],
+    pub(super) selected_workspace: Option<WorkspaceId>,
+}
+
+impl<'a> WorkspaceListView<'a> {
+    pub(super) fn render(&self, cx: &mut Context<ShellView>) -> impl IntoElement {
+        let list = if self.workspaces.is_empty() {
+            div()
+                .text_sm()
+                .text_color(self.colors.muted)
+                .child("No workspaces yet.")
+        } else {
+            self.workspaces
+                .iter()
+                .enumerate()
+                .fold(div().flex().flex_col().gap_2(), |list, (index, workspace)| {
+                    let is_selected = self.selected_workspace == Some(workspace.id);
+                    let item_bg = if is_selected {
+                        self.colors.panel
+                    } else {
+                        self.colors.panel_2
+                    };
+                    let item_border = if is_selected {
+                        self.colors.border_strong
+                    } else {
+                        self.colors.border
+                    };
+                    let on_click = cx.listener(move |view, _: &ClickEvent, _window, cx| {
+                        view.select_workspace(index, cx);
+                    });
+                    list.child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .px_2()
+                            .py_1()
+                            .border_1()
+                            .border_color(item_border)
+                            .rounded_sm()
+                            .bg(item_bg)
+                            .text_sm()
+                            .child(workspace.name.as_str())
+                            .cursor_pointer()
+                            .on_click(on_click),
+                    )
+                })
+        };
+
+        div()
+            .id("workspace-list")
+            .flex()
+            .flex_col()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .text_sm()
+                    .text_color(self.colors.muted)
+                    .child("Workspaces")
+                    .child(format!("{}", self.workspaces.len())),
+            )
+            .child(div().h(px(8.0)))
+            .child(list)
+    }
+}
+
+pub(super) struct ProviderListView<'a> {
+    pub(super) colors: ThemeColors,
+    pub(super) providers: &'a [ProviderItem],
+}
+
+impl<'a> ProviderListView<'a> {
+    pub(super) fn render(&self) -> impl IntoElement {
+        let list = if self.providers.is_empty() {
+            div()
+                .text_sm()
+                .text_color(self.colors.muted)
+                .child("No providers detected.")
+        } else {
+            self.providers
+                .iter()
+                .fold(div().flex().flex_col().gap_2(), |list, provider| {
+                    list.child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .px_2()
+                            .py_1()
+                            .border_1()
+                            .border_color(self.colors.border)
+                            .rounded_sm()
+                            .bg(self.colors.panel_2)
+                            .text_sm()
+                            .child(provider.name.as_str())
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(self.colors.muted)
+                                    .child(provider.status.as_str()),
+                            ),
+                    )
+                })
+        };
+
+        div()
+            .id("provider-list")
+            .flex()
+            .flex_col()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .text_sm()
+                    .text_color(self.colors.muted)
+                    .child("Providers")
+                    .child(format!("{}", self.providers.len())),
+            )
+            .child(div().h(px(8.0)))
+            .child(list)
+    }
+}
+
+pub(super) struct SidebarView<'a> {
+    pub(super) colors: ThemeColors,
+    pub(super) workspaces: &'a [WorkspaceItem],
+    pub(super) selected_workspace: Option<WorkspaceId>,
+    pub(super) providers: &'a [ProviderItem],
+    pub(super) tasks: &'a [TaskSummaryItem],
+    pub(super) selected_task: Option<usize>,
+}
+
+impl<'a> SidebarView<'a> {
+    pub(super) fn render(&self, cx: &mut Context<ShellView>) -> impl IntoElement {
+        div()
+            .id("sidebar")
+            .flex()
+            .flex_col()
+            .w(px(260.0))
+            .bg(self.colors.panel_2)
+            .border_r_1()
+            .border_color(self.colors.border)
+            .p_3()
+            .gap_2()
+            .child(
+                WorkspaceListView {
+                    colors: self.colors,
+                    workspaces: self.workspaces,
+                    selected_workspace: self.selected_workspace,
+                }
+                .render(cx),
+            )
+            .child(
+                ProviderListView {
+                    colors: self.colors,
+                    providers: self.providers,
+                }
+                .render(),
+            )
+            .child(
+                TaskListView {
+                    colors: self.colors,
+                    tasks: self.tasks,
+                    selected_task: self.selected_task,
+                }
+                .render(),
+            )
+    }
+}
 
 pub(super) struct TaskListView<'a> {
     pub(super) colors: ThemeColors,
@@ -65,11 +242,6 @@ impl<'a> TaskListView<'a> {
             .id("task-list")
             .flex()
             .flex_col()
-            .w(px(220.0))
-            .bg(self.colors.panel_2)
-            .border_r_1()
-            .border_color(self.colors.border)
-            .p_3()
             .child(
                 div()
                     .flex()
@@ -318,6 +490,11 @@ impl<'a> ComposerView<'a> {
 
 pub(super) struct SessionView<'a> {
     pub(super) colors: ThemeColors,
+    pub(super) workspaces: &'a [WorkspaceItem],
+    pub(super) selected_workspace: Option<WorkspaceId>,
+    pub(super) catchup_active_total: Option<i64>,
+    pub(super) catchup_archived_total: Option<i64>,
+    pub(super) tasks: &'a [TaskSummaryItem],
     pub(super) session: &'a SessionInfo,
     pub(super) sessions: &'a [SessionSummaryItem],
     pub(super) selected_session: Option<usize>,
@@ -339,29 +516,33 @@ impl<'a> SessionView<'a> {
                 data_block = data_block.child("Workspace data unavailable");
                 data_block = data_block.child(format!("Error: {err}"));
             }
-            DataLoadState::Loaded(data) => {
-                data_block = data_block.child(format!("Workspaces: {}", data.workspace_count));
-                if data.workspace_names.is_empty() {
+            DataLoadState::Loaded => {
+                data_block = data_block.child(format!("Workspaces: {}", self.workspaces.len()));
+                if self.workspaces.is_empty() {
                     data_block = data_block.child("Workspace list: none");
                 } else {
                     data_block = data_block.child("Workspace list:");
-                    for name in &data.workspace_names {
-                        data_block = data_block.child(format!("- {name}"));
+                    for workspace in self.workspaces {
+                        data_block = data_block.child(format!("- {}", workspace.name));
                     }
                 }
-                let selected = data.selected_workspace.as_deref().unwrap_or("None");
+                let selected = self
+                    .selected_workspace
+                    .and_then(|id| self.workspaces.iter().find(|ws| ws.id == id))
+                    .map(|ws| ws.name.as_str())
+                    .unwrap_or("None");
                 data_block = data_block.child(format!("Selected workspace: {selected}"));
-                if let Some(active_total) = data.catchup_active_total {
+                if let Some(active_total) = self.catchup_active_total {
                     data_block = data_block.child(format!("Active tasks (total): {active_total}"));
                 }
-                if let Some(archived_total) = data.catchup_archived_total {
+                if let Some(archived_total) = self.catchup_archived_total {
                     data_block = data_block.child(format!("Archived tasks (total): {archived_total}"));
                 }
-                if data.catchup_tasks.is_empty() {
+                if self.tasks.is_empty() {
                     data_block = data_block.child("Catchup tasks: none");
                 } else {
                     data_block = data_block.child("Catchup tasks:");
-                    for task in &data.catchup_tasks {
+                    for task in self.tasks {
                         data_block = data_block.child(format!(
                             "- {} ({})",
                             task.title,
