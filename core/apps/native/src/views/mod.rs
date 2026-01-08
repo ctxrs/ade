@@ -1,14 +1,19 @@
-use gpui::{ClickEvent, Context, CursorStyle, FocusHandle, ListState, div, list, prelude::*, px};
-use ctx_core::models::SessionEvent;
-
+use gpui::{
+    ClickEvent, Context, CursorStyle, FocusHandle, ListState, ObjectFit, div, img, list,
+    prelude::*, px,
+};
 use ctx_core::ids::WorkspaceId;
-
-use ctx_core::models::Artifact;
+use ctx_core::models::{Artifact, SessionEvent};
 
 use crate::theme::ThemeColors;
 
-use super::models::{artifact_label, session_event_type_label, MessageItem, SessionInfo};
-use super::state::{DataLoadState, ProviderItem, ShellView, StreamStatus, WorkspaceItem};
+use super::models::{
+    artifact_label, is_image_artifact, is_text_artifact, session_event_type_label, MessageItem,
+    SessionInfo,
+};
+use super::state::{
+    ArtifactPreviewState, DataLoadState, ProviderItem, ShellView, StreamStatus, WorkspaceItem,
+};
 use super::workspace_summary::{SessionSummaryItem, TaskSummaryItem, TaskSummaryStatus};
 
 pub(super) struct WorkspaceListView<'a> {
@@ -483,6 +488,7 @@ struct ArtifactsView<'a> {
     colors: ThemeColors,
     artifacts: &'a [Artifact],
     selected_artifact: Option<usize>,
+    artifact_preview: &'a ArtifactPreviewState,
 }
 
 impl<'a> ArtifactsView<'a> {
@@ -539,20 +545,120 @@ impl<'a> ArtifactsView<'a> {
                 artifact.mime_type.as_str()
             };
             let created_at = artifact.created_at.to_rfc3339();
-            let mut meta = div()
-                .flex()
-                .flex_col()
-                .gap_1()
-                .text_sm()
-                .text_color(self.colors.muted)
-                .child(format!("Id: {}", artifact.id.0))
-                .child(format!("Type: {}", mime_type))
-                .child(format!("Name: {}", name))
-                .child(format!("Path: {}", path));
-            if !created_at.is_empty() {
-                meta = meta.child(format!("Created: {}", created_at));
-            }
-            div()
+            let bytes = if artifact.bytes > 0 {
+                format!("{} bytes", artifact.bytes)
+            } else {
+                "0 bytes".to_string()
+            };
+            let is_missing = artifact.missing.unwrap_or(false);
+            let is_image = is_image_artifact(artifact);
+            let is_text = is_text_artifact(artifact);
+
+            let preview_content = if is_missing {
+                div()
+                    .text_sm()
+                    .text_color(self.colors.muted)
+                    .child("Missing on disk.")
+            } else if is_image {
+                match self.artifact_preview {
+                    ArtifactPreviewState::Image { artifact_id, image }
+                        if *artifact_id == artifact.id =>
+                    {
+                        let colors = self.colors;
+                        div()
+                            .h(px(220.0))
+                            .w_full()
+                            .child(
+                                img(image.clone())
+                                    .w_full()
+                                    .h_full()
+                                    .object_fit(ObjectFit::Contain)
+                                    .with_loading(move || {
+                                        div().text_sm().text_color(colors.muted).child(
+                                            "Loading image preview...",
+                                        )
+                                    })
+                                    .with_fallback(move || {
+                                        div().text_sm().text_color(colors.muted).child(
+                                            "Image preview unavailable.",
+                                        )
+                                    }),
+                            )
+                    }
+                    ArtifactPreviewState::Loading { artifact_id }
+                        if *artifact_id == artifact.id =>
+                    {
+                        div()
+                            .text_sm()
+                            .text_color(self.colors.muted)
+                            .child("Loading image preview...")
+                    }
+                    ArtifactPreviewState::Error {
+                        artifact_id,
+                        message,
+                    } if *artifact_id == artifact.id => div()
+                        .text_sm()
+                        .text_color(self.colors.error)
+                        .child(format!("Image preview unavailable: {message}")),
+                    _ => div()
+                        .text_sm()
+                        .text_color(self.colors.muted)
+                        .child("Image preview unavailable."),
+                }
+            } else if is_text {
+                match self.artifact_preview {
+                    ArtifactPreviewState::Text { artifact_id, preview }
+                        if *artifact_id == artifact.id =>
+                    {
+                        if preview.lines.is_empty() {
+                            div()
+                                .text_sm()
+                                .text_color(self.colors.muted)
+                                .child("Empty file.")
+                        } else {
+                            let mut lines = div().flex().flex_col().gap_1().text_sm();
+                            for line in &preview.lines {
+                                lines = lines.child(line.clone());
+                            }
+                            if preview.truncated {
+                                lines = lines.child(
+                                    div()
+                                        .text_sm()
+                                        .text_color(self.colors.muted)
+                                        .child("Preview truncated."),
+                                );
+                            }
+                            lines
+                        }
+                    }
+                    ArtifactPreviewState::Loading { artifact_id }
+                        if *artifact_id == artifact.id =>
+                    {
+                        div()
+                            .text_sm()
+                            .text_color(self.colors.muted)
+                            .child("Loading preview...")
+                    }
+                    ArtifactPreviewState::Error {
+                        artifact_id,
+                        message,
+                    } if *artifact_id == artifact.id => div()
+                        .text_sm()
+                        .text_color(self.colors.error)
+                        .child(format!("Preview unavailable: {message}")),
+                    _ => div()
+                        .text_sm()
+                        .text_color(self.colors.muted)
+                        .child("Preview unavailable."),
+                }
+            } else {
+                div()
+                    .text_sm()
+                    .text_color(self.colors.muted)
+                    .child("No preview available for this artifact type.")
+            };
+
+            let mut detail = div()
                 .flex()
                 .flex_col()
                 .gap_2()
@@ -562,11 +668,91 @@ impl<'a> ArtifactsView<'a> {
                         .border_color(self.colors.border)
                         .rounded_sm()
                         .p_3()
-                        .text_sm()
-                        .text_color(self.colors.muted)
-                        .child("Preview not yet available"),
-                )
-                .child(meta)
+                        .bg(self.colors.panel)
+                        .child(preview_content),
+                );
+
+            if is_text {
+                let can_open = !is_missing;
+                let can_download = !is_missing;
+                let open_artifact = artifact.clone();
+                let download_artifact = artifact.clone();
+                let on_open = cx.listener(move |view, _: &ClickEvent, _window, cx| {
+                    view.open_artifact(open_artifact.clone(), cx);
+                });
+                let on_download = cx.listener(move |view, _: &ClickEvent, _window, cx| {
+                    view.download_artifact(download_artifact.clone(), cx);
+                });
+
+                let mut open_button = div()
+                    .px_2()
+                    .py_1()
+                    .text_sm()
+                    .border_1()
+                    .border_color(self.colors.border)
+                    .rounded_sm()
+                    .child("Open");
+                if can_open {
+                    open_button = open_button
+                        .bg(self.colors.panel)
+                        .cursor_pointer()
+                        .active(|this| this.opacity(0.85))
+                        .on_click(on_open);
+                } else {
+                    open_button = open_button
+                        .bg(self.colors.panel_2)
+                        .text_color(self.colors.muted);
+                }
+
+                let mut download_button = div()
+                    .px_2()
+                    .py_1()
+                    .text_sm()
+                    .border_1()
+                    .border_color(self.colors.border)
+                    .rounded_sm()
+                    .child("Download");
+                if can_download {
+                    download_button = download_button
+                        .bg(self.colors.panel)
+                        .cursor_pointer()
+                        .active(|this| this.opacity(0.85))
+                        .on_click(on_download);
+                } else {
+                    download_button = download_button
+                        .bg(self.colors.panel_2)
+                        .text_color(self.colors.muted);
+                }
+
+                detail = detail.child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .gap_2()
+                        .items_center()
+                        .child(open_button)
+                        .child(download_button),
+                );
+            }
+
+            let mut meta = div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .text_sm()
+                .text_color(self.colors.muted)
+                .child(format!("Id: {}", artifact.id.0))
+                .child(format!("Type: {}", mime_type))
+                .child(format!("Name: {}", name))
+                .child(format!("Path: {}", path))
+                .child(format!("Size: {}", bytes));
+            if !created_at.is_empty() {
+                meta = meta.child(format!("Created: {}", created_at));
+            }
+            if is_missing {
+                meta = meta.child("Status: Missing on disk");
+            }
+            detail.child(meta)
         } else {
             div()
                 .flex()
@@ -721,6 +907,7 @@ pub(super) struct SessionView<'a> {
     pub(super) session_events: &'a [SessionEvent],
     pub(super) artifacts: &'a [Artifact],
     pub(super) selected_artifact: Option<usize>,
+    pub(super) artifact_preview: &'a ArtifactPreviewState,
     pub(super) data_state: &'a DataLoadState,
     pub(super) composer_text: &'a str,
     pub(super) composer_cursor: usize,
@@ -918,6 +1105,7 @@ impl<'a> SessionView<'a> {
                     colors: self.colors,
                     artifacts: self.artifacts,
                     selected_artifact: self.selected_artifact,
+                    artifact_preview: self.artifact_preview,
                 }
                 .render(cx),
             )

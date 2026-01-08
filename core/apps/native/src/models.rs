@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use ctx_core::models::{
     Artifact, Message, MessageRole, Session, SessionCatchupSummary, SessionEventType, SessionHead,
     SessionHistoryPage, SessionStatus,
@@ -112,6 +114,83 @@ pub(crate) fn artifact_label(artifact: &Artifact) -> String {
         }
     }
     format!("artifact-{}", artifact.id.0)
+}
+
+fn artifact_extension(artifact: &Artifact) -> Option<String> {
+    if artifact.absolute_path.is_empty() {
+        return None;
+    }
+    Path::new(&artifact.absolute_path)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.to_ascii_lowercase())
+}
+
+pub(crate) fn is_image_artifact(artifact: &Artifact) -> bool {
+    let mime = artifact.mime_type.trim().to_ascii_lowercase();
+    if matches!(
+        mime.as_str(),
+        "image/png" | "image/jpeg" | "image/jpg" | "image/gif"
+    ) {
+        return true;
+    }
+    matches!(
+        artifact_extension(artifact).as_deref(),
+        Some("png") | Some("jpg") | Some("jpeg") | Some("gif")
+    )
+}
+
+pub(crate) fn is_text_artifact(artifact: &Artifact) -> bool {
+    let mime = artifact.mime_type.trim().to_ascii_lowercase();
+    if mime.starts_with("text/") {
+        return true;
+    }
+    if matches!(
+        mime.as_str(),
+        "application/json"
+            | "application/xml"
+            | "application/yaml"
+            | "application/x-yaml"
+            | "application/toml"
+            | "application/javascript"
+            | "application/x-javascript"
+            | "application/typescript"
+            | "application/x-sh"
+            | "application/x-shellscript"
+            | "application/csv"
+    ) {
+        return true;
+    }
+
+    matches!(
+        artifact_extension(artifact).as_deref(),
+        Some("txt")
+            | Some("md")
+            | Some("json")
+            | Some("yaml")
+            | Some("yml")
+            | Some("toml")
+            | Some("rs")
+            | Some("js")
+            | Some("ts")
+            | Some("tsx")
+            | Some("jsx")
+            | Some("html")
+            | Some("css")
+            | Some("csv")
+            | Some("log")
+            | Some("py")
+            | Some("go")
+            | Some("java")
+            | Some("c")
+            | Some("cpp")
+            | Some("h")
+            | Some("hpp")
+            | Some("sh")
+            | Some("bash")
+            | Some("zsh")
+            | Some("sql")
+    )
 }
 
 pub(crate) fn session_info_from_head(head: &SessionHead) -> SessionInfo {
