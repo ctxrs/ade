@@ -1,3 +1,4 @@
+import AVKit
 import Foundation
 import PhotosUI
 import SwiftUI
@@ -393,6 +394,56 @@ struct AttachmentPreview: View {
     }
 }
 
+private let artifactVideoExtensions: Set<String> = ["mp4", "mov", "webm", "m4v"]
+
+private func artifactFileExtension(_ path: String) -> String {
+    let filename = path.split(whereSeparator: { $0 == "/" || $0 == "\\" }).last.map(String.init) ?? ""
+    let parts = filename.split(separator: ".")
+    guard parts.count > 1, let ext = parts.last else { return "" }
+    return ext.lowercased()
+}
+
+private func isVideoArtifact(_ artifact: Artifact) -> Bool {
+    let mime = artifact.mimeType.lowercased()
+    if mime.hasPrefix("video/") { return true }
+    let ext = artifactFileExtension(artifact.absolutePath)
+    return artifactVideoExtensions.contains(ext)
+}
+
+private func isImageArtifact(_ artifact: Artifact) -> Bool {
+    let mime = artifact.mimeType.lowercased()
+    return mime.hasPrefix("image/")
+}
+
+private func artifactDisplayName(_ artifact: Artifact) -> String {
+    let name = (artifact.name ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    if !name.isEmpty { return name }
+    let parts = artifact.absolutePath.split(whereSeparator: { $0 == "/" || $0 == "\\" })
+    if let last = parts.last { return String(last) }
+    return "artifact"
+}
+
+private func formatBytes(_ bytes: Int) -> String {
+    guard bytes > 0 else { return "0 B" }
+    let units = ["B", "KB", "MB", "GB"]
+    var value = Double(bytes)
+    var idx = 0
+    while value >= 1024 && idx < units.count - 1 {
+        value /= 1024
+        idx += 1
+    }
+    let formatter = value >= 10 || idx == 0 ? "%.0f" : "%.1f"
+    return String(format: formatter, value) + " " + units[idx]
+}
+
+private func artifactMetaText(_ artifact: Artifact) -> String {
+    if artifact.missing == true {
+        return "Missing"
+    }
+    let mime = artifact.mimeType.isEmpty ? "application/octet-stream" : artifact.mimeType
+    return "\(mime) · \(formatBytes(artifact.bytes))"
+}
+
 struct ArtifactsListView: View {
     @Environment(\.dismiss) private var dismiss
     let artifacts: [Artifact]
@@ -417,7 +468,12 @@ struct ArtifactsListView: View {
                             .foregroundColor(.ctxTextMuted)
                     } else {
                         ForEach(artifacts) { artifact in
-                            ArtifactRow(artifact: artifact, assetContext: assetContext)
+                            NavigationLink {
+                                ArtifactDetailView(artifact: artifact, assetContext: assetContext)
+                            } label: {
+                                ArtifactRow(artifact: artifact, assetContext: assetContext)
+                            }
+                            .buttonStyle(.plain)
                         }
                     }
                 }
@@ -430,6 +486,102 @@ struct ArtifactsListView: View {
                     Button("Done") { dismiss() }
                 }
             }
+        }
+    }
+}
+
+struct ArtifactDetailView: View {
+    let artifact: Artifact
+    let assetContext: DaemonAssetContext
+
+    var body: some View {
+        ScrollView(showsIndicators: false) {
+            VStack(alignment: .leading, spacing: 16) {
+                ArtifactDetailMedia(artifact: artifact, assetContext: assetContext)
+                    .frame(maxWidth: .infinity)
+                    .frame(minHeight: 220)
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(artifactDisplayName(artifact))
+                        .font(.headline)
+                        .foregroundColor(.ctxTextPrimary)
+                    Text(artifactMetaText(artifact))
+                        .font(.caption)
+                        .foregroundColor(.ctxTextMuted)
+                }
+            }
+            .padding(16)
+        }
+        .background(Color.ctxBackground.ignoresSafeArea())
+        .navigationTitle(artifactDisplayName(artifact))
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+struct ArtifactDetailMedia: View {
+    let artifact: Artifact
+    let assetContext: DaemonAssetContext
+    @State private var player: AVPlayer?
+
+    var body: some View {
+        ZStack {
+            if artifact.missing == true {
+                missingView
+            } else if isVideoArtifact(artifact),
+                      let url = assetContext.artifactURL(artifact.id.stringValue) {
+                VideoPlayer(player: player)
+                    .onAppear {
+                        if player == nil {
+                            player = AVPlayer(url: url)
+                        }
+                    }
+                    .onDisappear {
+                        player?.pause()
+                        player = nil
+                    }
+                    .aspectRatio(16 / 9, contentMode: .fit)
+            } else if isImageArtifact(artifact),
+                      let url = assetContext.artifactURL(artifact.id.stringValue) {
+                AsyncImage(url: url) { phase in
+                    switch phase {
+                    case .success(let image):
+                        image
+                            .resizable()
+                            .scaledToFit()
+                    case .failure:
+                        placeholder
+                    default:
+                        loading
+                    }
+                }
+                .padding(12)
+            } else {
+                placeholder
+            }
+        }
+        .background(Color.ctxSurfaceRaised)
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+
+    private var loading: some View {
+        ProgressView()
+            .tint(.ctxAccent)
+    }
+
+    private var placeholder: some View {
+        ZStack {
+            Color.ctxSurfaceRaised
+            Image(systemName: "doc")
+                .foregroundColor(.ctxTextMuted)
+        }
+    }
+
+    private var missingView: some View {
+        ZStack {
+            Color.ctxSurfaceRaised
+            Text("Missing")
+                .font(.caption2)
+                .foregroundColor(.ctxTextMuted)
         }
     }
 }
@@ -458,39 +610,18 @@ struct ArtifactRow: View {
         }
         .padding(12)
         .background(Color.ctxSurface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(Color.white.opacity(0.06), lineWidth: 1)
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(Color.white.opacity(0.06), lineWidth: 1)
         )
     }
 
     private var displayName: String {
-        let name = (artifact.name ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        if !name.isEmpty { return name }
-        let parts = artifact.absolutePath.split(whereSeparator: { $0 == "/" || $0 == "\\" })
-        if let last = parts.last { return String(last) }
-        return "artifact"
+        artifactDisplayName(artifact)
     }
 
     private var metaText: String {
-        if artifact.missing == true {
-            return "Missing"
-        }
-        let mime = artifact.mimeType.isEmpty ? "application/octet-stream" : artifact.mimeType
-        return "\(mime) · \(formatBytes(artifact.bytes))"
-    }
-
-    private func formatBytes(_ bytes: Int) -> String {
-        guard bytes > 0 else { return "0 B" }
-        let units = ["B", "KB", "MB", "GB"]
-        var value = Double(bytes)
-        var idx = 0
-        while value >= 1024 && idx < units.count - 1 {
-            value /= 1024
-            idx += 1
-        }
-        let formatter = value >= 10 || idx == 0 ? "%.0f" : "%.1f"
-        return String(format: formatter, value) + " " + units[idx]
+        artifactMetaText(artifact)
     }
 }
 
@@ -502,6 +633,8 @@ struct ArtifactPreview: View {
         ZStack {
             if artifact.missing == true {
                 missingView
+            } else if isVideo {
+                videoPreview
             } else if isImage, let url = assetContext.artifactURL(artifact.id.stringValue) {
                 AsyncImage(url: url) { phase in
                     switch phase {
@@ -524,7 +657,11 @@ struct ArtifactPreview: View {
     }
 
     private var isImage: Bool {
-        artifact.mimeType.lowercased().hasPrefix("image/")
+        isImageArtifact(artifact)
+    }
+
+    private var isVideo: Bool {
+        isVideoArtifact(artifact)
     }
 
     private var loading: some View {
@@ -536,6 +673,14 @@ struct ArtifactPreview: View {
         ZStack {
             Color.ctxSurfaceRaised
             Image(systemName: "doc")
+                .foregroundColor(.ctxTextMuted)
+        }
+    }
+
+    private var videoPreview: some View {
+        ZStack {
+            Color.ctxSurfaceRaised
+            Image(systemName: "play.rectangle.fill")
                 .foregroundColor(.ctxTextMuted)
         }
     }
