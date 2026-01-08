@@ -278,7 +278,7 @@ const isLoopbackHost = (host: string): boolean => {
   return normalized === "localhost" || normalized === "::1" || normalized.startsWith("127.");
 };
 
-const resolveDaemonBaseUrl = (): string | null => {
+export const resolveDaemonBaseUrl = (): string | null => {
   const base = getDaemonBaseUrl();
   if (!base) return null;
   if (typeof window === "undefined") return base;
@@ -292,6 +292,21 @@ const resolveDaemonBaseUrl = (): string | null => {
     return base;
   }
   return base;
+};
+
+const normalizeWsBaseUrl = (base: string): string => {
+  const trimmed = base.replace(/\/+$/, "");
+  if (trimmed.startsWith("ws://") || trimmed.startsWith("wss://")) return trimmed;
+  if (trimmed.startsWith("https://")) return trimmed.replace(/^https:\/\//, "wss://");
+  if (trimmed.startsWith("http://")) return trimmed.replace(/^http:\/\//, "ws://");
+  return trimmed;
+};
+
+export const resolveDaemonWsBaseUrl = (): string => {
+  const base = resolveDaemonBaseUrl();
+  if (base) return normalizeWsBaseUrl(base);
+  if (typeof window === "undefined") return "";
+  return `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}`;
 };
 
 export const setDaemonBaseUrl = (baseUrl: string | null, persist?: boolean) => {

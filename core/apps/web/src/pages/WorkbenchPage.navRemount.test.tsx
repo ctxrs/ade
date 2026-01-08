@@ -105,6 +105,7 @@ vi.mock("../api/client", () => ({
   createTrack: vi.fn(async () => ({})),
   deleteTask: vi.fn(async () => ({})),
   getDaemonBaseUrl: vi.fn(() => ""),
+  resolveDaemonWsBaseUrl: vi.fn(() => "ws://localhost:4399"),
   getInstall: vi.fn(async () => ({})),
   getProviderOptions: vi.fn(async () => ({})),
   getSettings: vi.fn(async () => ({ dictation: { enabled: false } })),
