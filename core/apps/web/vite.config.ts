@@ -26,6 +26,7 @@ const httpsHosts = String(process.env.CTX_DEV_HTTPS_HOSTS ?? "")
   .filter(Boolean);
 
 export default defineConfig(({ command }) => {
+  const isTest = process.env.VITEST === "true" || process.env.NODE_ENV === "test";
   const auth = command === "serve" ? loadDaemonAuth() : null;
   const daemonUrl =
     process.env.CTX_DAEMON_URL ?? auth?.daemon_url ?? "http://127.0.0.1:4399";
@@ -59,7 +60,7 @@ export default defineConfig(({ command }) => {
   return {
     plugins: [
       react(),
-      ...(useHttps
+      ...(command === "serve" && useHttps && !isTest
         ? [mkcert(httpsHosts.length > 0 ? { hosts: httpsHosts } : undefined)]
         : []),
     ],
