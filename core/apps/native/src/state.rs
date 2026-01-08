@@ -4,13 +4,13 @@ use gpui::{ClickEvent, Context, FocusHandle, KeyDownEvent, Window};
 use gpui_tokio::Tokio;
 
 use ctx_core::ids::SessionId;
-use ctx_core::models::{SessionCatchupSummary, SessionHead, SessionHistoryPage};
+use ctx_core::models::{Artifact, SessionCatchupSummary, SessionHead, SessionHistoryPage};
 
 use crate::theme::ThemeColors;
 
 use super::models::{
-    artifact_label, build_message_items, session_info_from_head, session_info_from_summary,
-    MessageItem, SessionInfo,
+    build_message_items, session_info_from_head, session_info_from_summary, MessageItem,
+    SessionInfo,
 };
 use super::workspace_summary::{
     catchup_counts,
@@ -28,7 +28,7 @@ pub(crate) struct AppData {
     pub(crate) catchup_archived_total: Option<i64>,
     pub(crate) catchup_tasks: Vec<TaskSummaryItem>,
     pub(crate) catchup_sessions: Vec<SessionSummaryItem>,
-    pub(crate) artifact_names: Vec<String>,
+    pub(crate) artifacts: Vec<Artifact>,
 }
 
 struct LoadedData {
@@ -43,7 +43,7 @@ struct SessionLoadResult {
     session_id: SessionId,
     session_head: Option<SessionHead>,
     session_history: Option<SessionHistoryPage>,
-    artifacts: Vec<String>,
+    artifacts: Vec<Artifact>,
 }
 
 pub(crate) enum DataLoadState {
@@ -61,7 +61,8 @@ pub(crate) struct ShellView {
     pub(crate) sessions: Vec<SessionSummaryItem>,
     pub(crate) selected_session: Option<usize>,
     pub(crate) messages: Vec<MessageItem>,
-    pub(crate) artifacts: Vec<String>,
+    pub(crate) artifacts: Vec<Artifact>,
+    pub(crate) selected_artifact: Option<usize>,
     pub(crate) session_summary_map: HashMap<SessionId, SessionCatchupSummary>,
     pub(crate) session: SessionInfo,
     pub(crate) data_state: DataLoadState,
@@ -183,8 +184,17 @@ impl ShellView {
             "Loading session messages...",
         )];
         self.artifacts.clear();
+        self.selected_artifact = None;
         cx.notify();
         self.load_session_details(session_id, cx);
+    }
+
+    pub(crate) fn select_artifact(&mut self, index: usize, cx: &mut Context<Self>) {
+        if index >= self.artifacts.len() {
+            return;
+        }
+        self.selected_artifact = Some(index);
+        cx.notify();
     }
 
     fn load_session_details(&mut self, session_id: SessionId, cx: &mut Context<Self>) {
@@ -203,12 +213,7 @@ impl ShellView {
                 .list_session_artifacts(session_id)
                 .await
                 .ok()
-                .map(|items| {
-                    items
-                        .into_iter()
-                        .map(artifact_label)
-                        .collect::<Vec<_>>()
-                })
+                .map(|items| items.into_iter().collect::<Vec<_>>())
                 .unwrap_or_default();
 
             Ok(SessionLoadResult {
@@ -249,6 +254,11 @@ impl ShellView {
                         }
                         view.messages = messages;
                         view.artifacts = data.artifacts;
+                        view.selected_artifact = if view.artifacts.is_empty() {
+                            None
+                        } else {
+                            Some(0)
+                        };
                     }
                     Err(_) => {
                         view.messages = vec![MessageItem::new(
@@ -256,6 +266,7 @@ impl ShellView {
                             "Unable to load session details.",
                         )];
                         view.artifacts.clear();
+                        view.selected_artifact = None;
                         if let Some(summary) = view.session_summary_map.get(&session_id) {
                             view.session = session_info_from_summary(summary);
                         }
@@ -338,12 +349,7 @@ impl ShellView {
                         .list_session_artifacts(session_id)
                         .await
                         .ok()
-                        .map(|items| {
-                            items
-                                .into_iter()
-                                .map(artifact_label)
-                                .collect::<Vec<_>>()
-                        })
+                        .map(|items| items.into_iter().collect::<Vec<_>>())
                         .unwrap_or_default();
                 }
             }
@@ -357,7 +363,7 @@ impl ShellView {
                     catchup_archived_total,
                     catchup_tasks,
                     catchup_sessions,
-                    artifact_names: artifacts,
+                    artifacts,
                 },
                 session_summaries,
                 session_summary_map,
@@ -393,7 +399,12 @@ impl ShellView {
                             ));
                         }
                         view.messages = messages;
-                        view.artifacts = data.app_data.artifact_names.clone();
+                        view.artifacts = data.app_data.artifacts.clone();
+                        view.selected_artifact = if view.artifacts.is_empty() {
+                            None
+                        } else {
+                            Some(0)
+                        };
                         view.data_state = DataLoadState::Loaded(data.app_data);
                     }
                     Err(err) => {
@@ -404,6 +415,7 @@ impl ShellView {
                             "Unable to load workspace data.",
                         )];
                         view.artifacts.clear();
+                        view.selected_artifact = None;
                         view.data_state = DataLoadState::Error(err.to_string());
                     }
                 }

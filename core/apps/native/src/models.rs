@@ -70,12 +70,19 @@ fn session_detail_text(session: &Session) -> String {
     )
 }
 
-pub(crate) fn artifact_label(artifact: Artifact) -> String {
+pub(crate) fn artifact_label(artifact: &Artifact) -> String {
     if let Some(name) = artifact.name.as_ref() {
-        return name.clone();
+        let trimmed = name.trim();
+        if !trimmed.is_empty() {
+            return trimmed.to_string();
+        }
     }
     if !artifact.absolute_path.is_empty() {
-        if let Some(last) = artifact.absolute_path.split('/').last() {
+        if let Some(last) = artifact
+            .absolute_path
+            .rsplit(|ch| ch == '/' || ch == '\\')
+            .next()
+        {
             if !last.is_empty() {
                 return last.to_string();
             }

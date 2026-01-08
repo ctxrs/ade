@@ -1,8 +1,10 @@
 use gpui::{ClickEvent, Context, CursorStyle, FocusHandle, div, prelude::*, px};
 
+use ctx_core::models::Artifact;
+
 use crate::theme::ThemeColors;
 
-use super::models::{MessageItem, SessionInfo};
+use super::models::{artifact_label, MessageItem, SessionInfo};
 use super::state::{DataLoadState, ShellView};
 use super::workspace_summary::{SessionSummaryItem, TaskSummaryItem, TaskSummaryStatus};
 
@@ -204,15 +206,32 @@ impl<'a> MessagesView<'a> {
 
 struct ArtifactsView<'a> {
     colors: ThemeColors,
-    artifacts: &'a [String],
+    artifacts: &'a [Artifact],
+    selected_artifact: Option<usize>,
 }
 
 impl<'a> ArtifactsView<'a> {
-    fn render(&self) -> impl IntoElement {
+    fn render(&self, cx: &mut Context<ShellView>) -> impl IntoElement {
         let list = self
             .artifacts
             .iter()
-            .fold(div().flex().flex_col().gap_2(), |list, artifact| {
+            .enumerate()
+            .fold(div().flex().flex_col().gap_2(), |list, (index, artifact)| {
+                let is_selected = self.selected_artifact == Some(index);
+                let item_bg = if is_selected {
+                    self.colors.panel
+                } else {
+                    self.colors.panel_2
+                };
+                let item_border = if is_selected {
+                    self.colors.border_strong
+                } else {
+                    self.colors.border
+                };
+                let label = artifact_label(artifact);
+                let on_click = cx.listener(move |view, _: &ClickEvent, _window, cx| {
+                    view.select_artifact(index, cx);
+                });
                 list.child(
                     div()
                         .flex()
@@ -220,13 +239,68 @@ impl<'a> ArtifactsView<'a> {
                         .px_2()
                         .py_1()
                         .border_1()
-                        .border_color(self.colors.border)
+                        .border_color(item_border)
                         .rounded_sm()
-                        .bg(self.colors.panel_2)
+                        .bg(item_bg)
                         .text_sm()
-                        .child(artifact.as_str()),
+                        .child(label)
+                        .on_click(on_click),
                 )
             });
+
+        let detail = if let Some(artifact) = self
+            .selected_artifact
+            .and_then(|index| self.artifacts.get(index))
+        {
+            let name = artifact.name.as_deref().unwrap_or("N/A");
+            let path = if artifact.absolute_path.is_empty() {
+                "N/A"
+            } else {
+                artifact.absolute_path.as_str()
+            };
+            let mime_type = if artifact.mime_type.is_empty() {
+                "unknown"
+            } else {
+                artifact.mime_type.as_str()
+            };
+            let created_at = artifact.created_at.to_rfc3339();
+            let mut meta = div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .text_sm()
+                .text_color(self.colors.muted)
+                .child(format!("Id: {}", artifact.id.0))
+                .child(format!("Type: {}", mime_type))
+                .child(format!("Name: {}", name))
+                .child(format!("Path: {}", path));
+            if !created_at.is_empty() {
+                meta = meta.child(format!("Created: {}", created_at));
+            }
+            div()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .child(
+                    div()
+                        .border_1()
+                        .border_color(self.colors.border)
+                        .rounded_sm()
+                        .p_3()
+                        .text_sm()
+                        .text_color(self.colors.muted)
+                        .child("Preview not yet available"),
+                )
+                .child(meta)
+        } else {
+            div()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .text_sm()
+                .text_color(self.colors.muted)
+                .child("Select an artifact to view details.")
+        };
 
         div()
             .id("artifacts")
@@ -243,7 +317,38 @@ impl<'a> ArtifactsView<'a> {
                     .child(format!("{}", self.artifacts.len())),
             )
             .child(div().h(px(8.0)))
-            .child(list)
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .gap_3()
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .w(px(220.0))
+                            .child(if self.artifacts.is_empty() {
+                                div()
+                                    .text_sm()
+                                    .text_color(self.colors.muted)
+                                    .child("No artifacts yet.")
+                            } else {
+                                list
+                            }),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .flex_1()
+                            .border_1()
+                            .border_color(self.colors.border)
+                            .rounded_sm()
+                            .p_3()
+                            .bg(self.colors.panel_2)
+                            .child(detail),
+                    ),
+            )
     }
 }
 
@@ -322,7 +427,8 @@ pub(super) struct SessionView<'a> {
     pub(super) sessions: &'a [SessionSummaryItem],
     pub(super) selected_session: Option<usize>,
     pub(super) messages: &'a [MessageItem],
-    pub(super) artifacts: &'a [String],
+    pub(super) artifacts: &'a [Artifact],
+    pub(super) selected_artifact: Option<usize>,
     pub(super) data_state: &'a DataLoadState,
     pub(super) composer_text: &'a str,
     pub(super) composer_focus: &'a FocusHandle,
@@ -443,8 +549,9 @@ impl<'a> SessionView<'a> {
                 ArtifactsView {
                     colors: self.colors,
                     artifacts: self.artifacts,
+                    selected_artifact: self.selected_artifact,
                 }
-                .render(),
+                .render(cx),
             )
             .child(div().h(px(16.0)))
             .child(
