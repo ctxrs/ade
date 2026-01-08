@@ -3,6 +3,8 @@ use std::collections::{HashMap, HashSet};
 use std::os::unix::process::CommandExt;
 #[cfg(unix)]
 use std::os::unix::process::ExitStatusExt;
+#[cfg(target_os = "windows")]
+use std::os::windows::io::FromRawHandle;
 use std::path::{Path, PathBuf};
 use std::sync::{
     atomic::{AtomicBool, AtomicU64, Ordering},
