@@ -5,6 +5,7 @@ struct ChatView: View {
     @ObservedObject var viewModel: ChatViewModel
     var showsBackground: Bool = true
     @State private var composerText = ""
+    @FocusState private var isComposerFocused: Bool
 
     var body: some View {
         ZStack {
@@ -13,10 +14,11 @@ struct ChatView: View {
             }
             messageList
         }
-        .safeAreaInset(edge: .bottom) {
+        .safeAreaInset(edge: .bottom, spacing: 0) {
             ComposerBar(
                 text: $composerText,
                 isSendEnabled: !composerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                isFocused: $isComposerFocused,
                 onSend: sendMessage
             )
         }
@@ -26,7 +28,7 @@ struct ChatView: View {
 
     private var messageList: some View {
         GeometryReader { geometry in
-            let horizontalPadding: CGFloat = 14
+            let horizontalPadding: CGFloat = 16
             let availableWidth = max(0, geometry.size.width - (horizontalPadding * 2))
             let maxBubbleWidth = min(360, availableWidth * 0.78)
             ScrollViewReader { proxy in
@@ -42,8 +44,10 @@ struct ChatView: View {
                         }
                     }
                     .padding(.horizontal, horizontalPadding)
-                    .padding(.vertical, 16)
+                    .padding(.top, 16)
+                    .padding(.bottom, 12)
                 }
+                .scrollDismissesKeyboard(.interactively)
                 .onAppear {
                     scrollToBottom(proxy: proxy, animated: false)
                 }
@@ -51,6 +55,10 @@ struct ChatView: View {
                     scrollToBottom(proxy: proxy, animated: true)
                 }
                 .onChange(of: viewModel.isAssistantTyping) { _ in
+                    scrollToBottom(proxy: proxy, animated: true)
+                }
+                .onChange(of: isComposerFocused) { focused in
+                    guard focused else { return }
                     scrollToBottom(proxy: proxy, animated: true)
                 }
             }
@@ -181,12 +189,12 @@ struct TypingIndicatorView: View {
 struct ComposerBar: View {
     @Binding var text: String
     var isSendEnabled: Bool
+    var isFocused: FocusState<Bool>.Binding
     var onSend: () -> Void
 
     var body: some View {
-        HStack(spacing: 10) {
-            ComposerIconButton(systemName: "plus", isPrimary: false, isEnabled: true) {
-            }
+        HStack(alignment: .bottom, spacing: 10) {
+            ComposerIconButton(systemName: "plus", isPrimary: false, isEnabled: true) {}
 
             ZStack(alignment: .leading) {
                 if text.isEmpty {
@@ -197,21 +205,21 @@ struct ComposerBar: View {
                     .lineLimit(1...4)
                     .foregroundColor(.ctxTextPrimary)
                     .tint(.ctxAccent)
+                    .focused(isFocused)
             }
             .font(.system(size: 16))
-            .padding(.vertical, 9)
+            .padding(.vertical, 10)
             .padding(.horizontal, 14)
-            .padding(.trailing, 42)
-            .background(.ultraThinMaterial, in: Capsule())
+            .padding(.trailing, 46)
+            .background(Color.ctxSurface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
             .overlay(
-                Capsule()
-                    .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .stroke(Color.ctxLine, lineWidth: 1)
             )
             .overlay(alignment: .trailing) {
                 if !isSendEnabled {
-                    ComposerIconButton(systemName: "mic.fill", isPrimary: false, isEnabled: true) {
-                    }
-                    .padding(.trailing, 6)
+                    ComposerIconButton(systemName: "mic.fill", isPrimary: false, isEnabled: true) {}
+                        .padding(.trailing, 6)
                 } else {
                     ComposerIconButton(systemName: "paperplane.fill", isPrimary: true, isEnabled: isSendEnabled) {
                         onSend()
@@ -221,9 +229,15 @@ struct ComposerBar: View {
             }
             .frame(maxWidth: .infinity)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.horizontal, 16)
+        .padding(.top, 10)
+        .padding(.bottom, 10)
         .background(.ultraThinMaterial)
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(Color.ctxLine)
+                .frame(height: 1)
+        }
     }
 }
 
