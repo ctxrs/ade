@@ -1062,9 +1062,9 @@ final class ChatViewModel: ObservableObject {
         return nil
     }
 
-    private func primeStreamCursor() async {
+    private func primeStreamCursor(force: Bool = false) async {
         guard let client, let sessionId else { return }
-        if lastEventSeq != nil, workspaceId != nil { return }
+        if !force, lastEventSeq != nil, workspaceId != nil { return }
         if let head = try? await client.getSessionHead(sessionId: sessionId, limit: 1, includeEvents: false) {
             lastEventSeq = head.lastEventSeq
             workspaceId = workspaceId ?? head.session.workspaceId.stringValue
@@ -1142,7 +1142,7 @@ final class ChatViewModel: ObservableObject {
 
     private func openStream(workspaceId: String) async throws -> URLSessionWebSocketTask {
         guard let client else { throw DaemonStreamError.invalidURL }
-        await primeStreamCursor()
+        await primeStreamCursor(force: true)
         let baseURL = await client.daemonBaseURL()
         let token = await client.authToken()
         let socket = try streamClient.connectWorkspaceStream(baseURL: baseURL, workspaceId: workspaceId, token: token)
@@ -1223,7 +1223,11 @@ final class ChatViewModel: ObservableObject {
         case .sessionGap(_, _, let sessionId, let afterSeq, _):
             if sessionId.stringValue == currentSessionId {
                 lastEventSeq = afterSeq
-                Task { _ = await refreshMessages() }
+                Task {
+                    await primeStreamCursor(force: true)
+                    _ = await refreshMessages()
+                    await refreshArtifacts()
+                }
             }
         default:
             break
