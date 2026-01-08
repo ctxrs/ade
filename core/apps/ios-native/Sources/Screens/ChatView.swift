@@ -62,10 +62,6 @@ struct ChatView: View {
                             )
                                 .id(message.id)
                         }
-                        if viewModel.isAssistantTyping {
-                            TypingIndicatorRow(maxBubbleWidth: maxBubbleWidth)
-                                .id("typing-indicator")
-                        }
                     }
                     .padding(.horizontal, horizontalPadding)
                     .padding(.top, 16)
@@ -76,9 +72,6 @@ struct ChatView: View {
                     scrollToBottom(proxy: proxy, animated: false)
                 }
                 .onChange(of: viewModel.messages.count) { _ in
-                    scrollToBottom(proxy: proxy, animated: true)
-                }
-                .onChange(of: viewModel.isAssistantTyping) { _ in
                     scrollToBottom(proxy: proxy, animated: true)
                 }
                 .onChange(of: isComposerFocused) { focused in
@@ -134,13 +127,7 @@ struct ChatView: View {
     }
 
     private func scrollToBottom(proxy: ScrollViewProxy, animated: Bool) {
-        let target: AnyHashable?
-        if viewModel.isAssistantTyping {
-            target = "typing-indicator"
-        } else {
-            target = viewModel.messages.last?.id
-        }
-        guard let target else { return }
+        guard let target = viewModel.messages.last?.id else { return }
         if animated {
             withAnimation(.easeOut(duration: 0.2)) {
                 proxy.scrollTo(target, anchor: .bottom)
@@ -550,50 +537,6 @@ struct ArtifactPreview: View {
     }
 }
 
-struct TypingIndicatorRow: View {
-    let maxBubbleWidth: CGFloat
-
-    var body: some View {
-        HStack {
-            TypingIndicatorView()
-                .padding(.vertical, 11)
-                .padding(.horizontal, 15)
-                .background(Color.ctxBubbleAssistant, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 20, style: .continuous)
-                        .stroke(Color.white.opacity(0.06), lineWidth: 1)
-                )
-                .frame(maxWidth: maxBubbleWidth, alignment: .leading)
-            Spacer(minLength: 0)
-        }
-    }
-}
-
-struct TypingIndicatorView: View {
-    @State private var animate = false
-
-    var body: some View {
-        HStack(spacing: 6) {
-            ForEach(0..<3) { index in
-                Circle()
-                    .fill(Color.ctxTextSecondary)
-                    .frame(width: 6, height: 6)
-                    .scaleEffect(animate ? 1 : 0.6)
-                    .opacity(animate ? 1 : 0.4)
-                    .animation(
-                        .easeInOut(duration: 0.8)
-                            .repeatForever()
-                            .delay(Double(index) * 0.2),
-                        value: animate
-                    )
-            }
-        }
-        .onAppear {
-            animate = true
-        }
-    }
-}
-
 struct ComposerBar: View {
     @Binding var text: String
     @Binding var selectedPhotos: [PhotosPickerItem]
@@ -706,7 +649,6 @@ struct ChatMessage: Identifiable {
 @MainActor
 final class ChatViewModel: ObservableObject {
     @Published var messages: [ChatMessage] = []
-    @Published var isAssistantTyping = false
     @Published var errorMessage: String?
     @Published var artifacts: [Artifact] = []
     @Published var isArtifactsLoading = false
@@ -754,7 +696,6 @@ final class ChatViewModel: ObservableObject {
         self.workspaceId = initialWorkspaceId
         if client == nil {
             messages = Self.sampleMessages
-            isAssistantTyping = true
         }
     }
 
@@ -766,7 +707,6 @@ final class ChatViewModel: ObservableObject {
         self.client = client
         if client != nil {
             messages = []
-            isAssistantTyping = false
             pendingAssistantResponse = false
             errorMessage = nil
             artifacts = []
@@ -787,8 +727,7 @@ final class ChatViewModel: ObservableObject {
             workspaceId = nil
             lastEventSeq = nil
             messages = Self.sampleMessages
-            isAssistantTyping = true
-            pendingAssistantResponse = true
+            pendingAssistantResponse = false
             artifacts = []
             artifactsError = nil
             isArtifactsLoading = false
@@ -814,7 +753,6 @@ final class ChatViewModel: ObservableObject {
         self.workspaceId = workspaceId
         lastEventSeq = nil
         pendingAssistantResponse = false
-        isAssistantTyping = false
         artifacts = []
         artifactsError = nil
         Task {
@@ -847,7 +785,6 @@ final class ChatViewModel: ObservableObject {
         let local = ChatMessage(id: UUID(), role: .user, text: text, attachments: attachments)
         messages.append(local)
         pendingAssistantResponse = true
-        isAssistantTyping = true
 
         Task {
             guard let client else { return }
@@ -884,7 +821,9 @@ final class ChatViewModel: ObservableObject {
                 )
             }
             messages = nextMessages
-            updateTypingIndicator(with: nextMessages)
+            if pendingAssistantResponse, nextMessages.last?.role == .assistant {
+                pendingAssistantResponse = false
+            }
             errorMessage = nil
             if refreshPending {
                 refreshPending = false
@@ -984,21 +923,6 @@ final class ChatViewModel: ObservableObject {
         if let head = try? await client.getSessionHead(sessionId: sessionId, limit: 1, includeEvents: false) {
             lastEventSeq = head.lastEventSeq
             workspaceId = workspaceId ?? head.session.workspaceId.stringValue
-        }
-    }
-
-    private func updateTypingIndicator(with messages: [ChatMessage]) {
-        if pendingAssistantResponse, messages.last?.role == .assistant {
-            pendingAssistantResponse = false
-        }
-        if pendingAssistantResponse {
-            if let lastRole = messages.last?.role {
-                isAssistantTyping = lastRole != .assistant
-            } else {
-                isAssistantTyping = true
-            }
-        } else {
-            isAssistantTyping = false
         }
     }
 
@@ -1177,7 +1101,7 @@ final class ChatViewModel: ObservableObject {
         ChatMessage(
             id: UUID(),
             role: .assistant,
-            text: "Great. I will set up message bubbles, typing states, and a composer that feels like ChatGPT.",
+            text: "Great. I will set up message bubbles and a composer that feels like ChatGPT.",
             attachments: []
         ),
     ]
