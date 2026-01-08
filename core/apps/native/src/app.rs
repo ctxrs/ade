@@ -13,7 +13,7 @@ mod icons;
 mod workspace_summary;
 #[path = "models.rs"]
 mod models;
-#[path = "state.rs"]
+#[path = "state/mod.rs"]
 mod state;
 #[path = "views/mod.rs"]
 mod views;
