@@ -93,7 +93,17 @@ struct ChatView: View {
 struct ChatDetailView: View {
     @EnvironmentObject private var connection: ConnectionStore
     let session: SessionSummary
-    @StateObject private var viewModel = ChatViewModel()
+    @StateObject private var viewModel: ChatViewModel
+
+    init(session: SessionSummary) {
+        self.session = session
+        _viewModel = StateObject(
+            wrappedValue: ChatViewModel(
+                initialSessionId: session.id,
+                initialWorkspaceId: session.workspaceId
+            )
+        )
+    }
 
     var body: some View {
         ChatView(viewModel: viewModel, showsBackground: true)
@@ -329,8 +339,10 @@ final class ChatViewModel: ObservableObject {
     private var pendingAssistantResponse = false
     private var consecutivePollFailures = 0
 
-    init(client: DaemonAPIClient? = nil) {
+    init(client: DaemonAPIClient? = nil, initialSessionId: String? = nil, initialWorkspaceId: String? = nil) {
         self.client = client
+        self.sessionId = initialSessionId
+        self.workspaceId = initialWorkspaceId
         if client == nil {
             messages = Self.sampleMessages
             isAssistantTyping = true
@@ -344,7 +356,6 @@ final class ChatViewModel: ObservableObject {
             isAssistantTyping = false
             pendingAssistantResponse = false
             errorMessage = nil
-            workspaceId = nil
             lastEventSeq = nil
             if pollTask != nil {
                 startStream()
@@ -455,6 +466,9 @@ final class ChatViewModel: ObservableObject {
                 _ = await resolveWorkspaceId()
             }
             return sessionId
+        }
+        if workspaceId != nil {
+            return nil
         }
         guard let client else { return nil }
         do {

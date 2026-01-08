@@ -2,9 +2,10 @@ import SwiftUI
 
 struct WorkbenchShellView: View {
     @EnvironmentObject private var connection: ConnectionStore
+    @EnvironmentObject private var workspaceSelection: WorkspaceSelectionStore
+    @EnvironmentObject private var workbenchSelection: WorkbenchSelectionStore
     @State private var isDrawerOpen = false
     @State private var workspaces: [WorkspaceSummary] = []
-    @State private var selectedWorkspace: WorkspaceSummary?
     @State private var isLoadingWorkspaces = false
     @State private var workspaceError: String?
 
@@ -45,7 +46,8 @@ struct WorkbenchShellView: View {
                     onClose: { isDrawerOpen = false },
                     onRefresh: { Task { await loadWorkspaces() } },
                     onSelectWorkspace: { workspace in
-                        selectedWorkspace = workspace
+                        workspaceSelection.setWorkspace(workspace, daemonKey: connection.baseURLText)
+                        workbenchSelection.setContext(daemonKey: connection.baseURLText, workspaceId: workspace.id)
                         isDrawerOpen = false
                     }
                 )
@@ -69,30 +71,49 @@ struct WorkbenchShellView: View {
         return url.lastPathComponent.isEmpty ? workspace.rootPath : url.lastPathComponent
     }
 
+    private var selectedWorkspace: WorkspaceSummary? {
+        if let selectedId = workspaceSelection.workspaceId,
+           let workspace = workspaces.first(where: { $0.id == selectedId }) {
+            return workspace
+        }
+        return workspaces.first
+    }
+
     @MainActor
     private func loadWorkspaces() async {
         guard let client = connection.apiClient else {
             workspaces = []
-            selectedWorkspace = nil
+            workspaceError = nil
+            workbenchSelection.setContext(daemonKey: nil, workspaceId: nil)
             return
         }
         isLoadingWorkspaces = true
         workspaceError = nil
         do {
+            let daemonKey = connection.baseURLText
+            workspaceSelection.load(daemonKey: daemonKey)
             let items = try await client.listWorkspaces()
             workspaces = items
-            if let selected = selectedWorkspace,
-               let refreshed = items.first(where: { $0.id == selected.id }) {
-                selectedWorkspace = refreshed
+            let resolved = resolveWorkspaceSelection(from: items)
+            if let resolved {
+                workspaceSelection.setWorkspace(resolved, daemonKey: daemonKey)
             } else {
-                selectedWorkspace = items.first
+                workspaceSelection.clear(daemonKey: daemonKey)
             }
+            workbenchSelection.setContext(daemonKey: daemonKey, workspaceId: resolved?.id)
         } catch {
             workspaces = []
-            selectedWorkspace = nil
             workspaceError = "Failed to load workspaces."
         }
         isLoadingWorkspaces = false
+    }
+
+    private func resolveWorkspaceSelection(from items: [WorkspaceSummary]) -> WorkspaceSummary? {
+        if let selectedId = workspaceSelection.workspaceId,
+           let match = items.first(where: { $0.id == selectedId }) {
+            return match
+        }
+        return items.first
     }
 }
 
@@ -320,6 +341,7 @@ private struct WorkbenchNavigationFlowView: View {
 
 private struct TaskListView: View {
     @EnvironmentObject private var connection: ConnectionStore
+    @EnvironmentObject private var workbenchSelection: WorkbenchSelectionStore
     let workspace: WorkspaceSummary
     @State private var tasks: [TaskSummary] = []
     @State private var isLoading = false
@@ -363,10 +385,14 @@ private struct TaskListView: View {
                             subtitle: task.description ?? "Status: \(task.status)",
                             status: task.status.capitalized,
                             icon: "list.bullet.rectangle",
-                            showsChevron: true
+                            showsChevron: true,
+                            isSelected: workbenchSelection.taskId == task.id
                         )
                     }
                     .buttonStyle(.plain)
+                    .simultaneousGesture(TapGesture().onEnded {
+                        workbenchSelection.setSelection(taskId: task.id, trackId: nil, sessionId: nil)
+                    })
                 }
             }
         }
@@ -389,6 +415,7 @@ private struct TaskListView: View {
 
 private struct TrackListView: View {
     @EnvironmentObject private var connection: ConnectionStore
+    @EnvironmentObject private var workbenchSelection: WorkbenchSelectionStore
     @Environment(\.dismiss) private var dismiss
     let task: TaskSummary
     @State private var tracks: [TrackSummary] = []
@@ -438,10 +465,14 @@ private struct TrackListView: View {
                             subtitle: "Worktree \(track.worktreeId.prefix(8))",
                             status: track.status.capitalized,
                             icon: "point.topleft.down.curvedto.point.bottomright.up",
-                            showsChevron: true
+                            showsChevron: true,
+                            isSelected: workbenchSelection.trackId == track.id
                         )
                     }
                     .buttonStyle(.plain)
+                    .simultaneousGesture(TapGesture().onEnded {
+                        workbenchSelection.setSelection(taskId: task.id, trackId: track.id, sessionId: nil)
+                    })
                 }
             }
         }
@@ -464,6 +495,7 @@ private struct TrackListView: View {
 
 private struct SessionListView: View {
     @EnvironmentObject private var connection: ConnectionStore
+    @EnvironmentObject private var workbenchSelection: WorkbenchSelectionStore
     @Environment(\.dismiss) private var dismiss
     let track: TrackSummary
     @State private var sessions: [SessionSummary] = []
@@ -513,10 +545,14 @@ private struct SessionListView: View {
                             subtitle: "\(session.agentRole) / \(session.providerId) / \(session.modelId)",
                             status: session.status.capitalized,
                             icon: "bubble.left.and.bubble.right",
-                            showsChevron: true
+                            showsChevron: true,
+                            isSelected: workbenchSelection.sessionId == session.id
                         )
                     }
                     .buttonStyle(.plain)
+                    .simultaneousGesture(TapGesture().onEnded {
+                        workbenchSelection.setSelection(taskId: track.taskId, trackId: track.id, sessionId: session.id)
+                    })
                 }
             }
         }
@@ -578,6 +614,7 @@ private struct WorkbenchNavRowView: View {
     let status: String?
     let icon: String
     let showsChevron: Bool
+    let isSelected: Bool = false
 
     var body: some View {
         HStack(spacing: 12) {
@@ -601,6 +638,10 @@ private struct WorkbenchNavRowView: View {
             if let status {
                 GlassPill(text: status, tint: .ctxAccent)
             }
+            if isSelected {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundColor(.ctxAccent)
+            }
             if showsChevron {
                 Image(systemName: "chevron.right")
                     .foregroundColor(.ctxTextSecondary)
@@ -608,10 +649,13 @@ private struct WorkbenchNavRowView: View {
             }
         }
         .padding(12)
-        .background(Color.ctxSurface.opacity(0.6), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .background(
+            Color.ctxSurface.opacity(isSelected ? 0.75 : 0.6),
+            in: RoundedRectangle(cornerRadius: 16, style: .continuous)
+        )
         .overlay(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(Color.ctxLine, lineWidth: 1)
+                .stroke(isSelected ? Color.ctxAccent.opacity(0.6) : Color.ctxLine, lineWidth: 1)
         )
     }
 }
@@ -703,4 +747,6 @@ private struct WorkbenchEmptyStateView: View {
 #Preview {
     WorkbenchShellView()
         .environmentObject(ConnectionStore())
+        .environmentObject(WorkspaceSelectionStore())
+        .environmentObject(WorkbenchSelectionStore())
 }

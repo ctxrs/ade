@@ -13,4 +13,6 @@ struct RootView: View {
 #Preview {
     RootView()
         .environmentObject(ConnectionStore())
+        .environmentObject(WorkspaceSelectionStore())
+        .environmentObject(WorkbenchSelectionStore())
 }
