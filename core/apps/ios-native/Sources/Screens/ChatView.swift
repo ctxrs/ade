@@ -25,7 +25,9 @@ struct ChatView: View {
 
     private var messageList: some View {
         GeometryReader { geometry in
-            let maxBubbleWidth = min(360, geometry.size.width * 0.78)
+            let horizontalPadding: CGFloat = 14
+            let availableWidth = max(0, geometry.size.width - (horizontalPadding * 2))
+            let maxBubbleWidth = min(360, availableWidth * 0.78)
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(spacing: 12) {
@@ -38,7 +40,7 @@ struct ChatView: View {
                                 .id("typing-indicator")
                         }
                     }
-                    .padding(.horizontal, 14)
+                    .padding(.horizontal, horizontalPadding)
                     .padding(.vertical, 16)
                 }
                 .onAppear {
@@ -189,7 +191,7 @@ struct ComposerBar: View {
                     .stroke(Color.white.opacity(0.08), lineWidth: 1)
             )
             .overlay(alignment: .trailing) {
-                if text.isEmpty {
+                if !isSendEnabled {
                     ComposerIconButton(systemName: "mic.fill", isPrimary: false, isEnabled: true) {
                     }
                     .padding(.trailing, 6)
@@ -219,7 +221,7 @@ struct ComposerIconButton: View {
             Image(systemName: systemName)
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundColor(foregroundColor)
-                .frame(width: 32, height: 32)
+                .frame(width: 36, height: 36)
                 .background(backgroundView)
                 .overlay(
                     Circle()
