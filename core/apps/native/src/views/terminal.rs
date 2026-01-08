@@ -34,13 +34,19 @@ impl Render for TerminalPanelState {
         };
         let stream_text = match &self.stream_state {
             TerminalStreamState::Idle => "Stream: Idle".to_string(),
-            TerminalStreamState::Stubbed => "Stream: Stubbed".to_string(),
+            TerminalStreamState::Connecting => "Stream: Connecting".to_string(),
+            TerminalStreamState::Connected => "Stream: Connected".to_string(),
+            TerminalStreamState::Reconnecting { .. } => "Stream: Reconnecting".to_string(),
             TerminalStreamState::Error(message) => format!("Stream error: {message}"),
         };
         let stream_detail = self
             .stream_url
             .as_ref()
             .map(|url| format!("Stream URL: {url}"));
+        let stream_hint = self
+            .stream_state
+            .detail()
+            .map(|detail| format!("Stream detail: {detail}"));
 
         let mut refresh_button = div()
             .px_2()
@@ -285,6 +291,11 @@ impl Render for TerminalPanelState {
             } else {
                 div()
             })
+            .child(if let Some(detail) = stream_hint {
+                div().text_sm().text_color(colors.muted).child(detail)
+            } else {
+                div()
+            })
             .child(
                 if let Some(error) = &self.last_error {
                     div()
@@ -313,9 +324,29 @@ impl Render for TerminalPanelState {
             .child(div().h(px(8.0)))
             .child(
                 div()
-                    .text_sm()
-                    .text_color(colors.muted)
-                    .child("Streaming UI is a stub; wire xterm + websocket to render output."),
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(colors.muted)
+                            .child("Output"),
+                    )
+                    .child(
+                        div()
+                            .text_sm()
+                            .border_1()
+                            .border_color(colors.border)
+                            .rounded_sm()
+                            .bg(colors.panel)
+                            .p_2()
+                            .child(if self.stream_output.is_empty() {
+                                "No output yet."
+                            } else {
+                                self.stream_output.as_str()
+                            }),
+                    ),
             )
     }
 }

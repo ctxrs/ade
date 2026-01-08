@@ -4,7 +4,7 @@ use ctx_core::ids::WorkspaceId;
 use crate::theme::ThemeColors;
 
 use super::super::icons::{Icon, IconName};
-use super::super::state::{ProviderItem, ShellView, WorkspaceItem};
+use super::super::state::{ProviderItem, ShellRoute, ShellView, WorkspaceItem};
 use super::super::workspace_summary::{TaskSummaryItem, TaskSummaryStatus};
 
 pub(super) struct WorkspaceListView<'a> {
@@ -148,6 +148,7 @@ impl<'a> ProviderListView<'a> {
 
 pub(super) struct SidebarView<'a> {
     pub(super) colors: ThemeColors,
+    pub(super) current_route: ShellRoute,
     pub(super) workspaces: &'a [WorkspaceItem],
     pub(super) selected_workspace: Option<WorkspaceId>,
     pub(super) providers: &'a [ProviderItem],
@@ -155,9 +156,76 @@ pub(super) struct SidebarView<'a> {
     pub(super) selected_task: Option<usize>,
 }
 
+pub(super) struct NavigationListView {
+    pub(super) colors: ThemeColors,
+    pub(super) current_route: ShellRoute,
+}
+
+impl NavigationListView {
+    pub(super) fn render(&self, cx: &mut Context<ShellView>) -> impl IntoElement {
+        let routes = [
+            (ShellRoute::Workbench, "Workbench"),
+            (ShellRoute::Workspaces, "Workspaces"),
+            (ShellRoute::Settings, "Settings"),
+            (ShellRoute::Providers, "Providers"),
+            (ShellRoute::Diagnostics, "Diagnostics"),
+            (ShellRoute::AppSettings, "App Settings"),
+        ];
+
+        let list = routes.iter().fold(div().flex().flex_col().gap_1(), |list, (route, label)| {
+            let active = self.current_route == *route;
+            let item_bg = if active {
+                self.colors.panel
+            } else {
+                self.colors.panel_2
+            };
+            let item_border = if active {
+                self.colors.border_strong
+            } else {
+                self.colors.border
+            };
+            let next_route = *route;
+            let on_click = cx.listener(move |view, _: &ClickEvent, _window, cx| {
+                view.set_route(next_route, cx);
+            });
+            list.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .px_2()
+                    .py_1()
+                    .border_1()
+                    .border_color(item_border)
+                    .rounded_sm()
+                    .bg(item_bg)
+                    .text_sm()
+                    .child(*label)
+                    .cursor_pointer()
+                    .on_click(on_click),
+            )
+        });
+
+        div()
+            .id("navigation-list")
+            .flex()
+            .flex_col()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .text_sm()
+                    .text_color(self.colors.muted)
+                    .child("Navigation"),
+            )
+            .child(div().h(px(8.0)))
+            .child(list)
+    }
+}
+
 impl<'a> SidebarView<'a> {
     pub(super) fn render(&self, cx: &mut Context<ShellView>) -> impl IntoElement {
-        div()
+        let mut root = div()
             .id("sidebar")
             .flex()
             .flex_col()
@@ -168,28 +236,41 @@ impl<'a> SidebarView<'a> {
             .p_3()
             .gap_2()
             .child(
-                WorkspaceListView {
+                NavigationListView {
                     colors: self.colors,
-                    workspaces: self.workspaces,
-                    selected_workspace: self.selected_workspace,
+                    current_route: self.current_route,
                 }
                 .render(cx),
-            )
-            .child(
-                ProviderListView {
-                    colors: self.colors,
-                    providers: self.providers,
-                }
-                .render(),
-            )
-            .child(
-                TaskListView {
-                    colors: self.colors,
-                    tasks: self.tasks,
-                    selected_task: self.selected_task,
-                }
-                .render(),
-            )
+            );
+
+        if self.current_route == ShellRoute::Workbench {
+            root = root
+                .child(
+                    WorkspaceListView {
+                        colors: self.colors,
+                        workspaces: self.workspaces,
+                        selected_workspace: self.selected_workspace,
+                    }
+                    .render(cx),
+                )
+                .child(
+                    ProviderListView {
+                        colors: self.colors,
+                        providers: self.providers,
+                    }
+                    .render(),
+                )
+                .child(
+                    TaskListView {
+                        colors: self.colors,
+                        tasks: self.tasks,
+                        selected_task: self.selected_task,
+                    }
+                    .render(),
+                );
+        }
+
+        root
     }
 }
 

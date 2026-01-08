@@ -1,5 +1,10 @@
+use std::time::Duration;
+
+use futures_util::{SinkExt, StreamExt};
 use gpui::{ClickEvent, Context, Window};
 use gpui_tokio::Tokio;
+use tokio::sync::{mpsc, watch};
+use tokio_tungstenite::{connect_async, tungstenite::Message as WsMessage};
 
 use ctx_core::ids::{SessionId, TaskId, TerminalId, TrackId, WorktreeId, WorkspaceId};
 use ctx_core::models::TerminalSession;
@@ -41,7 +46,9 @@ pub(crate) enum TerminalLoadState {
 #[derive(Clone, Debug)]
 pub(crate) enum TerminalStreamState {
     Idle,
-    Stubbed,
+    Connecting,
+    Connected,
+    Reconnecting { reason: Option<String> },
     Error(String),
 }
 
@@ -49,8 +56,17 @@ impl TerminalStreamState {
     pub(crate) fn label(&self) -> &'static str {
         match self {
             TerminalStreamState::Idle => "Idle",
-            TerminalStreamState::Stubbed => "Stubbed",
+            TerminalStreamState::Connecting => "Connecting",
+            TerminalStreamState::Connected => "Connected",
+            TerminalStreamState::Reconnecting { .. } => "Reconnecting",
             TerminalStreamState::Error(_) => "Error",
+        }
+    }
+
+    pub(crate) fn detail(&self) -> Option<&str> {
+        match self {
+            TerminalStreamState::Reconnecting { reason } => reason.as_deref(),
+            _ => None,
         }
     }
 }
@@ -76,6 +92,9 @@ pub(crate) struct TerminalPanelState {
     pub(crate) stream_state: TerminalStreamState,
     pub(crate) stream_terminal_id: Option<TerminalId>,
     pub(crate) stream_url: Option<String>,
+    pub(crate) stream_output: String,
+    pub(crate) stream_stop_tx: Option<watch::Sender<bool>>,
+    pub(crate) stream_generation: u64,
     pub(crate) last_error: Option<String>,
 }
 
@@ -91,6 +110,9 @@ impl TerminalPanelState {
             stream_state: TerminalStreamState::Idle,
             stream_terminal_id: None,
             stream_url: None,
+            stream_output: String::new(),
+            stream_stop_tx: None,
+            stream_generation: 0,
             last_error: None,
         }
     }
@@ -105,10 +127,10 @@ impl TerminalPanelState {
             self.terminals.clear();
             self.selected_terminal_id = None;
             self.load_state = TerminalLoadState::Idle;
-            self.clear_stream();
+            self.clear_stream(cx);
             self.load_terminals(cx);
         } else {
-            self.reconcile_selection();
+            self.reconcile_selection(cx);
             cx.notify();
         }
     }
@@ -121,15 +143,14 @@ impl TerminalPanelState {
         }
         if self.scope != scope {
             self.scope = scope;
-            self.reconcile_selection();
+            self.reconcile_selection(cx);
             cx.notify();
         }
     }
 
     pub(crate) fn select_terminal(&mut self, terminal_id: TerminalId, cx: &mut Context<Self>) {
         self.selected_terminal_id = Some(terminal_id);
-        self.prepare_stream_stub(terminal_id);
-        cx.notify();
+        self.start_terminal_stream(terminal_id, cx);
     }
 
     pub(crate) fn load_terminals(&mut self, cx: &mut Context<Self>) {
@@ -162,7 +183,7 @@ impl TerminalPanelState {
                         view.terminals = terminals;
                         view.load_state = TerminalLoadState::Loaded;
                         view.last_error = None;
-                        view.reconcile_selection();
+                        view.reconcile_selection(cx);
                     }
                     Err(err) => {
                         view.load_state =
@@ -242,14 +263,14 @@ impl TerminalPanelState {
                     Ok(terminal) => {
                         view.terminals.push(terminal.clone());
                         view.selected_terminal_id = Some(terminal.id);
-                        view.prepare_stream_stub(terminal.id);
+                        view.start_terminal_stream(terminal.id, cx);
                         view.last_error = None;
                     }
                     Err(err) => {
                         view.last_error = Some(err.to_string());
                     }
                 }
-                view.reconcile_selection();
+                view.reconcile_selection(cx);
                 cx.notify();
             })
             .ok();
@@ -275,9 +296,9 @@ impl TerminalPanelState {
                             view.selected_terminal_id = None;
                         }
                         if view.stream_terminal_id == Some(terminal_id) {
-                            view.clear_stream();
+                            view.clear_stream(cx);
                         }
-                        view.reconcile_selection();
+                        view.reconcile_selection(cx);
                         view.last_error = None;
                     }
                     Err(err) => {
@@ -339,7 +360,7 @@ impl TerminalPanelState {
         }
     }
 
-    fn reconcile_selection(&mut self) {
+    fn reconcile_selection(&mut self, cx: &mut Context<Self>) {
         let scope_terminals = self.scope_terminals();
         if let Some(selected) = self.selected_terminal_id {
             if scope_terminals
@@ -347,7 +368,7 @@ impl TerminalPanelState {
                 .any(|terminal| terminal.id == selected)
             {
                 if self.stream_terminal_id != Some(selected) {
-                    self.prepare_stream_stub(selected);
+                    self.start_terminal_stream(selected, cx);
                 }
                 return;
             }
@@ -356,34 +377,109 @@ impl TerminalPanelState {
         self.selected_terminal_id = scope_terminals.first().map(|terminal| terminal.id);
         if self.selected_terminal_id != previous_selection {
             if let Some(terminal_id) = self.selected_terminal_id {
-                self.prepare_stream_stub(terminal_id);
+                self.start_terminal_stream(terminal_id, cx);
             } else {
-                self.clear_stream();
+                self.clear_stream(cx);
             }
         }
     }
 
-    fn prepare_stream_stub(&mut self, terminal_id: TerminalId) {
+    fn start_terminal_stream(&mut self, terminal_id: TerminalId, cx: &mut Context<Self>) {
+        if self.stream_terminal_id == Some(terminal_id)
+            && !matches!(self.stream_state, TerminalStreamState::Error(_))
+        {
+            return;
+        }
+        self.stop_terminal_stream();
         self.stream_terminal_id = Some(terminal_id);
+        self.stream_output.clear();
         let stream_url = ctx_client::resolve_daemon_config()
             .and_then(ctx_client::Client::new)
             .and_then(|client| client.terminal_stream_url(terminal_id));
-        match stream_url {
-            Ok(url) => {
-                self.stream_state = TerminalStreamState::Stubbed;
-                self.stream_url = Some(url);
-            }
+        let url = match stream_url {
+            Ok(url) => url,
             Err(err) => {
                 self.stream_state = TerminalStreamState::Error(err.to_string());
                 self.stream_url = None;
+                cx.notify();
+                return;
             }
+        };
+
+        let (stop_tx, stop_rx) = watch::channel(false);
+        let (update_tx, mut update_rx) = mpsc::unbounded_channel();
+
+        self.stream_generation = self.stream_generation.wrapping_add(1);
+        let generation = self.stream_generation;
+        self.stream_stop_tx = Some(stop_tx);
+        self.stream_state = TerminalStreamState::Connecting;
+        self.stream_url = Some(url.clone());
+        cx.notify();
+
+        let stream_task = Tokio::spawn_result(cx, async move {
+            run_terminal_stream(url, stop_rx, update_tx).await
+        });
+
+        cx.spawn(|_, _| async move {
+            let _ = stream_task.await;
+        })
+        .detach();
+
+        cx.spawn(|this, cx| async move {
+            while let Some(update) = update_rx.recv().await {
+                let _ = this.update(cx, |view, cx| {
+                    view.handle_stream_update(update, generation, cx);
+                });
+            }
+        })
+        .detach();
+    }
+
+    fn handle_stream_update(
+        &mut self,
+        update: TerminalStreamUpdate,
+        generation: u64,
+        cx: &mut Context<Self>,
+    ) {
+        if generation != self.stream_generation {
+            return;
+        }
+        match update {
+            TerminalStreamUpdate::Status(status) => {
+                self.stream_state = status;
+            }
+            TerminalStreamUpdate::Output(chunk) => {
+                self.append_stream_output(&chunk);
+            }
+        }
+        cx.notify();
+    }
+
+    fn append_stream_output(&mut self, chunk: &str) {
+        const MAX_STREAM_OUTPUT: usize = 20_000;
+        if chunk.is_empty() {
+            return;
+        }
+        self.stream_output.push_str(chunk);
+        if self.stream_output.len() > MAX_STREAM_OUTPUT {
+            let overflow = self.stream_output.len() - MAX_STREAM_OUTPUT;
+            self.stream_output.drain(0..overflow);
         }
     }
 
-    fn clear_stream(&mut self) {
+    fn stop_terminal_stream(&mut self) {
+        if let Some(stop_tx) = self.stream_stop_tx.take() {
+            let _ = stop_tx.send(true);
+        }
+    }
+
+    fn clear_stream(&mut self, cx: &mut Context<Self>) {
+        self.stop_terminal_stream();
         self.stream_terminal_id = None;
         self.stream_state = TerminalStreamState::Idle;
         self.stream_url = None;
+        self.stream_output.clear();
+        cx.notify();
     }
 }
 
@@ -396,4 +492,96 @@ fn clean_opt_string(value: Option<String>) -> Option<String> {
             Some(trimmed.to_string())
         }
     })
+}
+
+enum TerminalStreamUpdate {
+    Status(TerminalStreamState),
+    Output(String),
+}
+
+async fn run_terminal_stream(
+    ws_url: String,
+    mut stop_rx: watch::Receiver<bool>,
+    update_tx: mpsc::UnboundedSender<TerminalStreamUpdate>,
+) -> anyhow::Result<()> {
+    let mut backoff = Duration::from_secs(1);
+    loop {
+        if *stop_rx.borrow() {
+            let _ = update_tx.send(TerminalStreamUpdate::Status(TerminalStreamState::Idle));
+            return Ok(());
+        }
+
+        if update_tx
+            .send(TerminalStreamUpdate::Status(TerminalStreamState::Connecting))
+            .is_err()
+        {
+            return Ok(());
+        }
+
+        let (socket, _) = match connect_async(&ws_url).await {
+            Ok(connection) => connection,
+            Err(err) => {
+                let _ = update_tx.send(TerminalStreamUpdate::Status(
+                    TerminalStreamState::Reconnecting {
+                        reason: Some(err.to_string()),
+                    },
+                ));
+                tokio::time::sleep(backoff).await;
+                backoff = (backoff + backoff).min(Duration::from_secs(10));
+                continue;
+            }
+        };
+
+        backoff = Duration::from_secs(1);
+        let (mut write, mut read) = socket.split();
+
+        let _ = update_tx.send(TerminalStreamUpdate::Status(
+            TerminalStreamState::Connected,
+        ));
+
+        loop {
+            tokio::select! {
+                _ = stop_rx.changed() => {
+                    let _ = update_tx.send(TerminalStreamUpdate::Status(TerminalStreamState::Idle));
+                    return Ok(());
+                }
+                msg = read.next() => {
+                    match msg {
+                        Some(Ok(frame)) => {
+                            match frame {
+                                WsMessage::Ping(payload) => {
+                                    let _ = write.send(WsMessage::Pong(payload)).await;
+                                }
+                                WsMessage::Close(_) => break,
+                                _ => {
+                                    if let Some(text) = parse_terminal_stream_output(frame) {
+                                        if update_tx.send(TerminalStreamUpdate::Output(text)).is_err() {
+                                            return Ok(());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        Some(Err(_)) | None => break,
+                    }
+                }
+            }
+        }
+
+        let _ = update_tx.send(TerminalStreamUpdate::Status(
+            TerminalStreamState::Reconnecting {
+                reason: Some("stream disconnected".to_string()),
+            },
+        ));
+        tokio::time::sleep(backoff).await;
+        backoff = (backoff + backoff).min(Duration::from_secs(10));
+    }
+}
+
+fn parse_terminal_stream_output(message: WsMessage) -> Option<String> {
+    match message {
+        WsMessage::Text(text) => Some(text),
+        WsMessage::Binary(bytes) => Some(String::from_utf8_lossy(&bytes).to_string()),
+        _ => None,
+    }
 }

@@ -139,6 +139,33 @@ pub struct SetSessionModelRequest {
     pub model_id: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WebSessionViewport {
+    pub width: u32,
+    pub height: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WebSessionInfo {
+    pub id: String,
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worktree_id: Option<String>,
+    pub status: String,
+    pub created_at: String,
+    pub updated_at: String,
+    pub last_activity: String,
+    pub url: String,
+    pub viewport: WebSessionViewport,
+    pub fps: u32,
+    pub viewers: u32,
+    pub stream_path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stream_url: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct SetSessionModeRequest {
     pub mode_id: String,
@@ -566,6 +593,11 @@ impl Client {
 
     pub async fn list_workspaces(&self) -> Result<Vec<Workspace>> {
         self.request_json(Method::GET, "/api/workspaces", None::<&()>)
+            .await
+    }
+
+    pub async fn list_web_sessions(&self) -> Result<Vec<WebSessionInfo>> {
+        self.request_json(Method::GET, "/api/sessions/web", None::<&()>)
             .await
     }
 

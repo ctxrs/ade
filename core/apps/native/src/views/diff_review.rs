@@ -2,6 +2,7 @@ use gpui::{ClickEvent, Context, div, prelude::*, px};
 
 use crate::theme::ThemeColors;
 
+use super::super::icons::{Icon, IconName};
 use super::super::state::diff_review::{
     DiffFile, DiffLineKind, DiffPatchAction, DiffReviewState,
 };
@@ -58,9 +59,26 @@ impl<'a> DiffReviewView<'a> {
             .items_center()
             .justify_between()
             .text_sm()
-            .text_color(self.colors.muted)
-            .child("Diff review")
-            .child(format!("{}", self.state.files.len()));
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .child(Icon::new(IconName::Diff, 12.0, self.colors.muted))
+                    .child(div().text_color(self.colors.text).child("Diff review")),
+            )
+            .child(
+                div()
+                    .px_1()
+                    .py_0()
+                    .text_sm()
+                    .border_1()
+                    .border_color(self.colors.border)
+                    .rounded_sm()
+                    .bg(self.colors.panel)
+                    .text_color(self.colors.muted)
+                    .child(format!("{}", self.state.files.len())),
+            );
 
         let list = if self.state.files.is_empty() {
             div()

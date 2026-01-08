@@ -27,14 +27,26 @@ use super::workspace_summary::{SessionSummaryItem, TaskSummaryItem};
 pub(crate) use artifacts::ArtifactPreviewState;
 pub(crate) use composer::ComposerState;
 pub(crate) use diff_review::DiffReviewState;
+pub(crate) use settings::SettingsState;
 pub(crate) use stream::StreamStatus;
 pub(crate) use terminal::{TerminalContext, TerminalPanelState};
 pub(crate) use workspace::{DataLoadState, ProviderItem, WorkspaceItem};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ShellRoute {
+    Workbench,
+    Workspaces,
+    Settings,
+    Providers,
+    Diagnostics,
+    AppSettings,
+}
 
 pub(crate) struct ShellView {
     pub(crate) colors: ThemeColors,
     pub(crate) base_url: String,
     pub(crate) is_dark: bool,
+    pub(crate) route: ShellRoute,
     pub(crate) workspaces: Vec<WorkspaceItem>,
     pub(crate) selected_workspace: Option<WorkspaceId>,
     pub(crate) providers: Vec<ProviderItem>,
@@ -78,6 +90,7 @@ pub(crate) struct ShellView {
     pub(crate) show_terminal_panel: bool,
     pub(crate) diff_review_state: Entity<DiffReviewState>,
     pub(crate) terminal_panel_state: Entity<TerminalPanelState>,
+    pub(crate) settings_state: Entity<SettingsState>,
     pub(crate) aux_workspace_id: Option<WorkspaceId>,
     pub(crate) aux_session_id: Option<SessionId>,
 }
@@ -91,6 +104,23 @@ impl ShellView {
             state.colors = colors;
             cx.notify();
         });
+        cx.update_entity(&self.settings_state, |state, cx| {
+            state.colors = colors;
+            cx.notify();
+        });
+        cx.notify();
+    }
+
+    pub(crate) fn set_route(&mut self, route: ShellRoute, cx: &mut Context<Self>) {
+        if self.route == route {
+            return;
+        }
+        self.route = route;
+        if matches!(route, ShellRoute::Settings | ShellRoute::Providers) {
+            cx.update_entity(&self.settings_state, |state, cx| {
+                state.start_load(cx);
+            });
+        }
         cx.notify();
     }
 

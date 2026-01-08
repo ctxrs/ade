@@ -135,43 +135,45 @@ impl<'a> SessionView<'a> {
                 .bg(self.colors.panel_2)
                 .text_color(self.colors.muted);
         }
-        let pane_toggle = |label: &str, active: bool, on_click| {
-            let mut button = div()
-                .px_2()
-                .py_1()
-                .text_sm()
+        let pane_toggle = |icon: IconName, active: bool, on_click| {
+            let (bg, color) = if active {
+                (self.colors.panel, self.colors.text)
+            } else {
+                (self.colors.panel_2, self.colors.muted)
+            };
+            div()
+                .w(px(28.0))
+                .h(px(28.0))
+                .flex()
+                .items_center()
+                .justify_center()
                 .border_1()
                 .border_color(self.colors.border)
                 .rounded_sm()
-                .child(label);
-            if active {
-                button = button.bg(self.colors.panel).text_color(self.colors.text);
-            } else {
-                button = button.bg(self.colors.panel_2).text_color(self.colors.muted);
-            }
-            button
+                .bg(bg)
+                .child(Icon::new(icon, 14.0, color))
                 .cursor_pointer()
                 .active(|this| this.opacity(0.85))
                 .on_click(on_click)
         };
 
         let sessions_toggle = pane_toggle(
-            "Sessions",
+            IconName::Sessions,
             self.show_sessions_pane,
             cx.listener(ShellView::toggle_sessions_pane),
         );
         let diff_toggle = pane_toggle(
-            "Diff",
+            IconName::Diff,
             self.show_diff_pane,
             cx.listener(ShellView::toggle_diff_pane),
         );
         let artifacts_toggle = pane_toggle(
-            "Artifacts",
+            IconName::Image,
             self.show_artifacts_pane,
             cx.listener(ShellView::toggle_artifacts_pane),
         );
         let terminal_toggle = pane_toggle(
-            "Terminal",
+            IconName::Terminal,
             self.show_terminal_panel,
             cx.listener(ShellView::toggle_terminal_panel),
         );
@@ -203,10 +205,16 @@ impl<'a> SessionView<'a> {
                     .flex()
                     .items_center()
                     .gap_2()
-                    .child(sessions_toggle)
-                    .child(diff_toggle)
-                    .child(artifacts_toggle)
-                    .child(terminal_toggle)
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_1()
+                            .child(artifacts_toggle)
+                            .child(diff_toggle)
+                            .child(sessions_toggle)
+                            .child(terminal_toggle),
+                    )
                     .child(interrupt_button)
                     .child(cancel_button),
             );
@@ -308,17 +316,28 @@ impl<'a> SessionView<'a> {
 
         let show_right_pane =
             self.show_sessions_pane || self.show_diff_pane || self.show_artifacts_pane;
-        let mut content_row = div().flex().flex_row().gap_3().flex_1().child(center_column);
+        let mut content_row = div().flex().flex_row().gap_2().flex_1().child(center_column);
 
         if show_right_pane {
+            let right_pane_handle = div()
+                .w(px(12.0))
+                .flex()
+                .items_center()
+                .justify_center()
+                .flex_none()
+                .child(
+                    div()
+                        .w(px(2.0))
+                        .h(px(48.0))
+                        .rounded_sm()
+                        .bg(self.colors.border),
+                );
             let mut right_pane = div()
                 .flex()
                 .flex_col()
                 .gap_3()
                 .w(px(320.0))
-                .pl_3()
-                .border_l_1()
-                .border_color(self.colors.border);
+                .pl_1();
 
             if self.show_sessions_pane {
                 right_pane = right_pane.child(
@@ -395,7 +414,7 @@ impl<'a> SessionView<'a> {
                 );
             }
 
-            content_row = content_row.child(right_pane);
+            content_row = content_row.child(right_pane_handle).child(right_pane);
         }
 
         let mut root = div()
@@ -409,7 +428,20 @@ impl<'a> SessionView<'a> {
 
         if self.show_terminal_panel {
             root = root
-                .child(div().h(px(12.0)))
+                .child(
+                    div()
+                        .h(px(12.0))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child(
+                            div()
+                                .w(px(48.0))
+                                .h(px(2.0))
+                                .rounded_sm()
+                                .bg(self.colors.border),
+                        ),
+                )
                 .child(
                     div()
                         .id("terminal-pane")

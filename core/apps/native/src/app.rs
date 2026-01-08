@@ -1,10 +1,12 @@
 use std::collections::HashMap;
+use std::str::FromStr;
 
 use gpui::{
     App, Application, Bounds, Context, ListAlignment, ListState, Window, WindowBounds,
     WindowOptions, div, prelude::*, px, size,
 };
 
+use crate::automation;
 use crate::theme::{ThemeColors, ThemeTokens};
 
 #[path = "icons.rs"]
@@ -21,10 +23,54 @@ mod views;
 use self::icons::{Icon, IconAssets, IconName};
 use self::models::{MessageItem, SessionInfo};
 use self::state::{
-    ArtifactPreviewState, ComposerState, DataLoadState, DiffReviewState, ShellView, StreamStatus,
-    TerminalPanelState,
+    ArtifactPreviewState, ComposerState, DataLoadState, DiffReviewState, SettingsState,
+    ShellRoute, ShellView, StreamStatus, TerminalPanelState,
 };
-use self::views::{SessionView, SidebarView};
+use self::views::RouterView;
+
+pub(crate) use self::state::ShellView;
+
+#[derive(Clone, Debug)]
+pub struct AppOptions {
+    pub window_size: Option<WindowSize>,
+    pub automation: automation::AutomationConfig,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct WindowSize {
+    pub width: f32,
+    pub height: f32,
+}
+
+impl Default for WindowSize {
+    fn default() -> Self {
+        Self {
+            width: 1200.0,
+            height: 800.0,
+        }
+    }
+}
+
+impl FromStr for WindowSize {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        let (width, height) = value
+            .split_once('x')
+            .or_else(|| value.split_once('X'))
+            .ok_or_else(|| "window size must be WIDTHxHEIGHT".to_string())?;
+        let width = width
+            .parse::<f32>()
+            .map_err(|_| "window width must be a number".to_string())?;
+        let height = height
+            .parse::<f32>()
+            .map_err(|_| "window height must be a number".to_string())?;
+        if width <= 0.0 || height <= 0.0 {
+            return Err("window size must be positive".to_string());
+        }
+        Ok(Self { width, height })
+    }
+}
 
 fn load_theme_colors(is_dark: bool) -> ThemeColors {
     let tokens = if is_dark {
@@ -41,7 +87,7 @@ fn load_theme_colors(is_dark: bool) -> ThemeColors {
     })
 }
 
-pub fn run() {
+pub fn run(options: AppOptions) {
     let is_dark = true;
     let colors = load_theme_colors(is_dark);
     let base_url = ctx_client::resolve_daemon_config()
@@ -52,10 +98,16 @@ pub fn run() {
         });
     Application::new()
         .with_assets(IconAssets::new())
-        .run(|cx: &mut App| {
+        .run(move |cx: &mut App| {
         gpui_tokio::init(cx);
-        let bounds = Bounds::centered(None, size(px(1200.0), px(800.0)), cx);
-        cx.open_window(
+        let window_size = options.window_size.unwrap_or_default();
+        let bounds = Bounds::centered(
+            None,
+            size(px(window_size.width), px(window_size.height)),
+            cx,
+        );
+        let window = cx
+            .open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 ..Default::default()
@@ -65,10 +117,12 @@ pub fn run() {
                 cx.new(|cx| {
                     let diff_review_state = cx.new(|_| DiffReviewState::new());
                     let terminal_panel_state = cx.new(|_| TerminalPanelState::new(colors));
+                    let settings_state = cx.new(|_| SettingsState::new(colors));
                     let mut view = ShellView {
                         colors,
                         base_url,
                         is_dark,
+                        route: ShellRoute::Workbench,
                         workspaces: Vec::new(),
                         selected_workspace: None,
                         providers: Vec::new(),
@@ -115,6 +169,7 @@ pub fn run() {
                         show_terminal_panel: false,
                         diff_review_state,
                         terminal_panel_state,
+                        settings_state,
                         aux_workspace_id: None,
                         aux_session_id: None,
                     };
@@ -124,6 +179,7 @@ pub fn run() {
             },
         )
         .unwrap();
+        automation::start(cx, window, options.automation.clone());
         cx.activate(true);
     });
 }
@@ -214,57 +270,11 @@ impl Render for ShellView {
                     .flex_row()
                     .flex_1()
                     .child(
-                        SidebarView {
-                            colors: self.colors,
-                            workspaces: &self.workspaces,
-                            selected_workspace: self.selected_workspace,
-                            providers: &self.providers,
-                            tasks: &self.tasks,
-                            selected_task: self.selected_task,
-                        }
-                        .render(cx),
-                    )
-                    .child(
-                        SessionView {
-                            colors: self.colors,
-                            workspaces: &self.workspaces,
-                            selected_workspace: self.selected_workspace,
-                            catchup_active_total: self.catchup_active_total,
-                            catchup_archived_total: self.catchup_archived_total,
-                            tasks: &self.tasks,
-                            session: &self.session,
-                            sessions: &self.sessions,
-                            selected_session: self.selected_session,
-                            messages: &self.messages,
-                            message_list_state: &self.message_list_state,
-                            new_message_count: self.new_message_count,
-                            session_events: &self.session_events,
-                            artifacts: &self.artifacts,
-                            selected_artifact: self.selected_artifact,
-                            artifact_preview: &self.artifact_preview,
-                            data_state: &self.data_state,
-                            composer_text: self.composer.text(),
-                            composer_cursor: self.composer.cursor(),
-                            composer_attachment_text: self.composer_attachment_input.text(),
-                            composer_attachment_cursor: self.composer_attachment_input.cursor(),
-                            composer_attachments: &self.composer_attachments,
+                        RouterView {
+                            shell: self,
                             provider_options,
                             model_options,
-                            selected_provider: self.composer_provider_id.clone(),
-                            selected_model: self.composer_model_id.clone(),
-                            provider_menu_open: self.composer_provider_menu_open,
-                            model_menu_open: self.composer_model_menu_open,
-                            composer_notice: self.composer_notice.clone(),
-                            composer_attachment_focus: &self.composer_attachment_focus,
-                            composer_focus: &self.composer_focus,
-                            stream_status: &self.stream_status,
                             resyncing,
-                            show_sessions_pane: self.show_sessions_pane,
-                            show_diff_pane: self.show_diff_pane,
-                            show_artifacts_pane: self.show_artifacts_pane,
-                            show_terminal_panel: self.show_terminal_panel,
-                            diff_review_state: self.diff_review_state.clone(),
-                            terminal_panel_state: self.terminal_panel_state.clone(),
                         }
                         .render(cx),
                     ),

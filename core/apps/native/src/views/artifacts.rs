@@ -339,20 +339,26 @@ impl<'a> ArtifactsView<'a> {
                     .items_center()
                     .justify_between()
                     .text_sm()
-                    .text_color(self.colors.muted)
                     .child(
                         div()
                             .flex()
                             .items_center()
                             .gap_1()
-                            .child(Icon::new(
-                                IconName::Artifact,
-                                12.0,
-                                self.colors.muted,
-                            ))
-                            .child("Artifacts"),
+                            .child(Icon::new(IconName::Image, 12.0, self.colors.muted))
+                            .child(div().text_color(self.colors.text).child("Artifacts")),
                     )
-                    .child(format!("{}", self.artifacts.len())),
+                    .child(
+                        div()
+                            .px_1()
+                            .py_0()
+                            .text_sm()
+                            .border_1()
+                            .border_color(self.colors.border)
+                            .rounded_sm()
+                            .bg(self.colors.panel)
+                            .text_color(self.colors.muted)
+                            .child(format!("{}", self.artifacts.len())),
+                    ),
             )
             .child(div().h(px(8.0)))
             .child(
