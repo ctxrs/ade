@@ -5,8 +5,6 @@ use gpui::{
     size,
 };
 
-use ctx_core::ids::SessionId;
-
 use crate::theme::{ThemeColors, ThemeTokens};
 
 #[path = "workspace_summary.rs"]
@@ -20,8 +18,7 @@ mod views;
 
 use self::models::{MessageItem, SessionInfo};
 use self::state::{DataLoadState, ShellView};
-use self::views::{SessionView, TaskListView};
-use self::workspace_summary::{SessionSummaryItem, TaskSummaryItem, TaskSummaryStatus};
+use self::views::{SessionView, SidebarView};
 
 fn load_theme_colors(is_dark: bool) -> ThemeColors {
     let tokens = if is_dark {
@@ -62,38 +59,19 @@ pub fn run() {
                         colors,
                         base_url,
                         is_dark,
-                        tasks: vec![
-                            TaskSummaryItem {
-                                title: "Bootstrap Workbench".to_string(),
-                                status: TaskSummaryStatus::Running,
-                            },
-                            TaskSummaryItem {
-                                title: "Hook up session stream".to_string(),
-                                status: TaskSummaryStatus::Pending,
-                            },
-                            TaskSummaryItem {
-                                title: "Polish layout".to_string(),
-                                status: TaskSummaryStatus::Pending,
-                            },
-                        ],
-                        selected_task: Some(0),
-                        sessions: vec![
-                            SessionSummaryItem {
-                                session_id: SessionId::new(),
-                                title: "Primary".to_string(),
-                                status: "Active".to_string(),
-                            },
-                            SessionSummaryItem {
-                                session_id: SessionId::new(),
-                                title: "Review".to_string(),
-                                status: "Idle".to_string(),
-                            },
-                        ],
-                        selected_session: Some(0),
-                        messages: vec![
-                            MessageItem::new("assistant", "Welcome to ctx-native."),
-                            MessageItem::new("user", "Send a message to get started."),
-                        ],
+                        workspaces: Vec::new(),
+                        selected_workspace: None,
+                        providers: Vec::new(),
+                        catchup_active_total: None,
+                        catchup_archived_total: None,
+                        tasks: Vec::new(),
+                        selected_task: None,
+                        sessions: Vec::new(),
+                        selected_session: None,
+                        messages: vec![MessageItem::new(
+                            "assistant",
+                            "Loading workspace data...",
+                        )],
                         artifacts: Vec::new(),
                         session_events: Vec::new(),
                         selected_artifact: None,
@@ -165,16 +143,24 @@ impl Render for ShellView {
                     .flex_row()
                     .flex_1()
                     .child(
-                        TaskListView {
+                        SidebarView {
                             colors: self.colors,
+                            workspaces: &self.workspaces,
+                            selected_workspace: self.selected_workspace,
+                            providers: &self.providers,
                             tasks: &self.tasks,
                             selected_task: self.selected_task,
                         }
-                        .render(),
+                        .render(cx),
                     )
                     .child(
                         SessionView {
                             colors: self.colors,
+                            workspaces: &self.workspaces,
+                            selected_workspace: self.selected_workspace,
+                            catchup_active_total: self.catchup_active_total,
+                            catchup_archived_total: self.catchup_archived_total,
+                            tasks: &self.tasks,
                             session: &self.session,
                             sessions: &self.sessions,
                             selected_session: self.selected_session,
