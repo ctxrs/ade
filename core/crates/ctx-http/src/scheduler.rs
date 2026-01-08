@@ -920,7 +920,7 @@ pub async fn reconcile_turn_terminal_state(
 
     let events = state
         .store
-        .list_session_events_for_turn(session_id, turn_id)
+        .list_session_events_for_turn(session_id, turn_id, false)
         .await?;
     if let Some(event) = events.iter().rev().find(|ev| {
         matches!(

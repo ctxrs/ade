@@ -674,6 +674,8 @@ pub struct SessionEvent {
     pub turn_id: Option<TurnId>,
     pub event_type: SessionEventType,
     pub payload_json: serde_json::Value,
+    #[serde(default)]
+    pub transient: bool,
     pub created_at: DateTime<Utc>,
 }
 

@@ -384,6 +384,7 @@ export type SessionEvent = {
   turn_id?: { 0: string } | string | null;
   event_type: string;
   payload_json: any;
+  transient?: boolean;
   created_at: string;
 };
 

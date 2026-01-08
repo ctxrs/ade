@@ -3009,7 +3009,7 @@ impl Store {
         let activity = derive_activity_from_status(last_status, has_running_turn);
         let events = if include_events {
             let mut events = self
-                .list_session_events_tail_by_seq(session_id, EVENT_HEAD_LIMIT)
+                .list_session_events_tail_by_seq(session_id, EVENT_HEAD_LIMIT, false)
                 .await?;
             events.sort_by(|a, b| a.seq.cmp(&b.seq));
             events
@@ -3128,7 +3128,7 @@ impl Store {
         }
 
         let events = self
-            .list_session_events_for_turn(session_id, turn_id)
+            .list_session_events_for_turn(session_id, turn_id, false)
             .await?;
         let tools = build_turn_tools_from_events(session_id, turn_id, &events);
         for tool in &tools {
@@ -3356,6 +3356,7 @@ impl Store {
         payload_json: serde_json::Value,
     ) -> Result<SessionEvent> {
         crate::fault_injection::maybe_fail("ctx_store.append_session_event")?;
+        let transient = is_transient_session_event(&event_type, &payload_json);
         let mut event = SessionEvent {
             seq: 0,
             id: SessionEventId::new(),
@@ -3364,11 +3365,12 @@ impl Store {
             turn_id,
             event_type,
             payload_json: payload_json.clone(),
+            transient,
             created_at: Utc::now(),
         };
         let seq: i64 = sqlx::query_scalar(
-            r#"INSERT INTO session_events (id, session_id, run_id, turn_id, event_type, payload_json, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?)
+            r#"INSERT INTO session_events (id, session_id, run_id, turn_id, event_type, payload_json, transient, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                RETURNING seq"#,
         )
         .bind(event.id.0.to_string())
@@ -3377,6 +3379,7 @@ impl Store {
         .bind(event.turn_id.map(|t| t.0.to_string()))
         .bind(session_event_type_to_str(&event.event_type))
         .bind(payload_json.to_string())
+        .bind(if transient { 1 } else { 0 })
         .bind(event.created_at.to_rfc3339())
         .fetch_one(&self.pool)
         .await?;
@@ -3390,7 +3393,7 @@ impl Store {
     }
 
     pub async fn list_session_events(&self, session_id: SessionId) -> Result<Vec<SessionEvent>> {
-        self.list_session_events_page_by_seq(session_id, None, None)
+        self.list_session_events_page_by_seq(session_id, None, None, false)
             .await
     }
 
@@ -3413,58 +3416,68 @@ impl Store {
         session_id: SessionId,
         after_seq: Option<i64>,
         limit: Option<u32>,
+        include_transient: bool,
     ) -> Result<Vec<SessionEvent>> {
         crate::fault_injection::maybe_fail("ctx_store.list_session_events_page_by_seq")?;
         let session_id_str = session_id.0.to_string();
         let limit_i64 = limit.map(|n| n as i64);
+        let include_transient = if include_transient { 1 } else { 0 };
         let rows = if let Some(after_seq) = after_seq {
             if let Some(limit) = limit_i64 {
                 sqlx::query(
-                    r#"SELECT seq, id, session_id, run_id, turn_id, event_type, payload_json, created_at
+                    r#"SELECT seq, id, session_id, run_id, turn_id, event_type, payload_json, transient, created_at
                        FROM session_events
                        WHERE session_id = ?
+                         AND (? = 1 OR transient = 0)
                          AND seq > ?
                        ORDER BY seq ASC
                        LIMIT ?"#,
                 )
                 .bind(&session_id_str)
+                .bind(include_transient)
                 .bind(after_seq)
                 .bind(limit)
                 .fetch_all(&self.pool)
                 .await?
             } else {
                 sqlx::query(
-                    r#"SELECT seq, id, session_id, run_id, turn_id, event_type, payload_json, created_at
+                    r#"SELECT seq, id, session_id, run_id, turn_id, event_type, payload_json, transient, created_at
                        FROM session_events
                        WHERE session_id = ?
+                         AND (? = 1 OR transient = 0)
                          AND seq > ?
                        ORDER BY seq ASC"#,
                 )
                 .bind(&session_id_str)
+                .bind(include_transient)
                 .bind(after_seq)
                 .fetch_all(&self.pool)
                 .await?
             }
         } else if let Some(limit) = limit_i64 {
             sqlx::query(
-                r#"SELECT seq, id, session_id, run_id, turn_id, event_type, payload_json, created_at
+                r#"SELECT seq, id, session_id, run_id, turn_id, event_type, payload_json, transient, created_at
                    FROM session_events
                    WHERE session_id = ?
+                     AND (? = 1 OR transient = 0)
                    ORDER BY seq ASC
                    LIMIT ?"#,
             )
             .bind(&session_id_str)
+            .bind(include_transient)
             .bind(limit)
             .fetch_all(&self.pool)
             .await?
         } else {
             sqlx::query(
-                r#"SELECT seq, id, session_id, run_id, turn_id, event_type, payload_json, created_at
+                r#"SELECT seq, id, session_id, run_id, turn_id, event_type, payload_json, transient, created_at
                    FROM session_events
                    WHERE session_id = ?
+                     AND (? = 1 OR transient = 0)
                    ORDER BY seq ASC"#,
             )
             .bind(&session_id_str)
+            .bind(include_transient)
             .fetch_all(&self.pool)
             .await?
         };
@@ -3478,6 +3491,7 @@ impl Store {
             let turn_id: Option<String> = r.try_get("turn_id")?;
             let created_at: String = r.try_get("created_at")?;
             let payload_json: String = r.try_get("payload_json")?;
+            let transient: i64 = r.try_get("transient")?;
             out.push(SessionEvent {
                 seq,
                 id: SessionEventId(uuid::Uuid::parse_str(&id)?),
@@ -3495,6 +3509,7 @@ impl Store {
                 ),
                 payload_json: serde_json::from_str(&payload_json)
                     .context("parsing payload_json")?,
+                transient: transient != 0,
                 created_at: parse_dt(&created_at)?,
             });
         }
@@ -3505,15 +3520,18 @@ impl Store {
         &self,
         session_id: SessionId,
         turn_id: TurnId,
+        include_transient: bool,
     ) -> Result<Vec<SessionEvent>> {
+        let include_transient = if include_transient { 1 } else { 0 };
         let rows = sqlx::query(
-            r#"SELECT seq, id, session_id, run_id, turn_id, event_type, payload_json, created_at
+            r#"SELECT seq, id, session_id, run_id, turn_id, event_type, payload_json, transient, created_at
                FROM session_events
-               WHERE session_id = ? AND turn_id = ?
+               WHERE session_id = ? AND turn_id = ? AND (? = 1 OR transient = 0)
                ORDER BY seq ASC"#,
         )
         .bind(session_id.0.to_string())
         .bind(turn_id.0.to_string())
+        .bind(include_transient)
         .fetch_all(&self.pool)
         .await?;
 
@@ -3525,6 +3543,7 @@ impl Store {
             let run_id: Option<String> = r.try_get("run_id")?;
             let turn_id: Option<String> = r.try_get("turn_id")?;
             let payload_json: String = r.try_get("payload_json")?;
+            let transient: i64 = r.try_get("transient")?;
             out.push(SessionEvent {
                 seq: r.try_get("seq")?,
                 id: SessionEventId(uuid::Uuid::parse_str(&id)?),
@@ -3542,6 +3561,7 @@ impl Store {
                 ),
                 payload_json: serde_json::from_str(&payload_json)
                     .context("parsing session event payload")?,
+                transient: transient != 0,
                 created_at: parse_dt(&created_at)?,
             });
         }
@@ -3554,7 +3574,7 @@ impl Store {
         run_id: RunId,
     ) -> Result<Option<SessionEvent>> {
         let row = sqlx::query(
-            r#"SELECT seq, id, session_id, run_id, turn_id, event_type, payload_json, created_at
+            r#"SELECT seq, id, session_id, run_id, turn_id, event_type, payload_json, transient, created_at
                FROM session_events
                WHERE session_id = ? AND run_id = ? AND event_type IN ('done', 'error', 'turn_interrupted')
                ORDER BY seq DESC
@@ -3572,6 +3592,7 @@ impl Store {
             let turn_id: Option<String> = r.try_get("turn_id").ok()?;
             let created_at: String = r.try_get("created_at").ok()?;
             let payload_json: String = r.try_get("payload_json").ok()?;
+            let transient: i64 = r.try_get("transient").ok()?;
             Some(SessionEvent {
                 seq: r.try_get("seq").ok()?,
                 id: SessionEventId(uuid::Uuid::parse_str(&id).ok()?),
@@ -3588,6 +3609,7 @@ impl Store {
                     r.try_get::<String, _>("event_type").ok()?.as_str(),
                 ),
                 payload_json: serde_json::from_str(&payload_json).ok()?,
+                transient: transient != 0,
                 created_at: parse_dt(&created_at).ok()?,
             })
         }))
@@ -3626,16 +3648,20 @@ impl Store {
         &self,
         session_id: SessionId,
         limit: u32,
+        include_transient: bool,
     ) -> Result<Vec<SessionEvent>> {
         let session_id_str = session_id.0.to_string();
+        let include_transient = if include_transient { 1 } else { 0 };
         let rows = sqlx::query(
-            r#"SELECT seq, id, session_id, run_id, turn_id, event_type, payload_json, created_at
+            r#"SELECT seq, id, session_id, run_id, turn_id, event_type, payload_json, transient, created_at
                FROM session_events
                WHERE session_id = ?
+                 AND (? = 1 OR transient = 0)
                ORDER BY seq DESC
                LIMIT ?"#,
         )
         .bind(session_id_str)
+        .bind(include_transient)
         .bind(limit as i64)
         .fetch_all(&self.pool)
         .await?;
@@ -3649,6 +3675,7 @@ impl Store {
             let turn_id: Option<String> = r.try_get("turn_id")?;
             let created_at: String = r.try_get("created_at")?;
             let payload_json: String = r.try_get("payload_json")?;
+            let transient: i64 = r.try_get("transient")?;
             out.push(SessionEvent {
                 seq,
                 id: SessionEventId(uuid::Uuid::parse_str(&id)?),
@@ -3666,6 +3693,7 @@ impl Store {
                 ),
                 payload_json: serde_json::from_str(&payload_json)
                     .context("parsing payload_json")?,
+                transient: transient != 0,
                 created_at: parse_dt(&created_at)?,
             });
         }
@@ -4300,6 +4328,48 @@ fn parse_session_event_type(value: &str) -> SessionEventType {
         "error" => SessionEventType::Error,
         _ => SessionEventType::Error,
     }
+}
+
+fn is_transient_session_event(
+    event_type: &SessionEventType,
+    payload_json: &serde_json::Value,
+) -> bool {
+    if matches!(event_type, SessionEventType::AuthRequired) {
+        return true;
+    }
+    if !matches!(event_type, SessionEventType::Notice) {
+        return false;
+    }
+
+    if let Some(kind) = payload_json.get("kind").and_then(|v| v.as_str()) {
+        if matches!(
+            kind,
+            "provider_guard_warning"
+                | "provider_guard_kill"
+                | "title_generated"
+                | "auth_started"
+                | "auth_finished"
+                | "auth_failed"
+                | "auth_required"
+        ) {
+            return true;
+        }
+    }
+
+    let update = payload_json
+        .get("acp_update")
+        .or_else(|| payload_json.get("acpUpdate"));
+    if let Some(update) = update {
+        if let Some(session_update) = update
+            .get("sessionUpdate")
+            .or_else(|| update.get("session_update"))
+            .and_then(|v| v.as_str())
+        {
+            return session_update == "available_commands_update";
+        }
+    }
+
+    false
 }
 
 fn build_artifact_from_row(r: sqlx::sqlite::SqliteRow) -> Result<Artifact> {

@@ -7967,6 +7967,7 @@ struct SessionEventsQuery {
     after_seq: Option<i64>,
     limit: Option<u32>,
     tail: Option<u32>,
+    include_transient: Option<String>,
 }
 
 async fn get_session_events(
@@ -7979,12 +7980,14 @@ async fn get_session_events(
 
     let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
     let limit = q.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
+    let include_transient = parse_boolish_flag(q.include_transient.as_deref(), "include_transient")
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
 
     let (events, has_more, next_cursor) = if let Some(tail) = q.tail {
         let tail = tail.clamp(1, MAX_LIMIT);
         let mut rows = state
             .store
-            .list_session_events_tail_by_seq(session_id, tail + 1)
+            .list_session_events_tail_by_seq(session_id, tail + 1, include_transient)
             .await
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
         let has_more = rows.len() as u32 > tail;
@@ -7996,7 +7999,12 @@ async fn get_session_events(
     } else {
         let mut rows = state
             .store
-            .list_session_events_page_by_seq(session_id, q.after_seq, Some(limit + 1))
+            .list_session_events_page_by_seq(
+                session_id,
+                q.after_seq,
+                Some(limit + 1),
+                include_transient,
+            )
             .await
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
         let has_more = rows.len() as u32 > limit;
@@ -8351,7 +8359,7 @@ async fn replay_session_events_secure(
         match crate::fault_injection::maybe_fail("ctx_http.replay_session_events_secure.list") {
             Ok(()) => state
                 .store
-                .list_session_events_page_by_seq(session_id, Some(last_sent), Some(limit))
+                .list_session_events_page_by_seq(session_id, Some(last_sent), Some(limit), false)
                 .await
                 .map_err(|_| ())?,
             Err(_) => {
@@ -8497,7 +8505,7 @@ async fn replay_session_events(
     let events = match crate::fault_injection::maybe_fail("ctx_http.replay_session_events.list") {
         Ok(()) => match state
             .store
-            .list_session_events_page_by_seq(session_id, Some(last_sent), Some(limit))
+            .list_session_events_page_by_seq(session_id, Some(last_sent), Some(limit), false)
             .await
         {
             Ok(events) => events,
