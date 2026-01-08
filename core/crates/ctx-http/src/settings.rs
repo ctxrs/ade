@@ -456,14 +456,17 @@ pub fn to_public(settings: &Settings) -> PublicSettings {
                 effective: None,
                 status: None,
             });
-    let provider_guard = settings.provider_guard.as_ref().map(|g| PublicProviderGuardSettings {
-        enabled: g.enabled,
-        mode: g.mode.clone(),
-        memory_high_mb: g.memory_high_mb,
-        memory_max_mb: g.memory_max_mb,
-        interval_ms: g.interval_ms,
-        grace_period_ms: g.grace_period_ms,
-    });
+    let provider_guard = settings
+        .provider_guard
+        .as_ref()
+        .map(|g| PublicProviderGuardSettings {
+            enabled: g.enabled,
+            mode: g.mode.clone(),
+            memory_high_mb: g.memory_high_mb,
+            memory_max_mb: g.memory_max_mb,
+            interval_ms: g.interval_ms,
+            grace_period_ms: g.grace_period_ms,
+        });
     PublicSettings {
         dictation,
         telemetry,

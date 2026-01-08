@@ -36,9 +36,7 @@ use url::Url;
 use ctx_core::ids::*;
 use ctx_core::models::*;
 use ctx_fs::git::{assert_git_repo, list_tracked_files, list_untracked_files, rev_parse_head};
-use ctx_fs::worktrees::{
-    create_worktree, diff_worktree_summary, managed_worktree_path,
-};
+use ctx_fs::worktrees::{create_worktree, diff_worktree_summary, managed_worktree_path};
 use ctx_store::store::MobileDeviceUpsert;
 
 use crate::attachments;
