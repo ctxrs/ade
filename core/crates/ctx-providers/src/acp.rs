@@ -48,6 +48,13 @@ pub struct AcpAgentConfig {
     pub args: Vec<String>,
 }
 
+#[cfg(target_os = "linux")]
+const SYSTEMD_TIMEOUT: Duration = Duration::from_secs(3);
+#[cfg(target_os = "linux")]
+const ACP_MEMORY_MAX_FRACTION: f64 = 0.9;
+#[cfg(target_os = "linux")]
+const ACP_MEMORY_MIN_MB: u64 = 256;
+
 #[derive(Debug, Default)]
 struct StreamState {
     assistant_buf: String,
@@ -554,6 +561,17 @@ impl AcpProcess {
                 agent.provider_id, agent.command
             )
         })?;
+
+        #[cfg(target_os = "linux")]
+        if let Some(pid) = child.id() {
+            if let Err(err) = attach_acp_scope(&agent.provider_id, pid).await {
+                tracing::warn!(
+                    provider_id = %agent.provider_id,
+                    pid,
+                    "failed to attach ACP process to systemd scope: {err:#}"
+                );
+            }
+        }
 
         if let Some(tx) = log_tx.as_ref() {
             let pid = child.id().unwrap_or(0);
@@ -1204,6 +1222,108 @@ impl AcpProcess {
         let mut child = self.child.lock().await;
         Ok(child.try_wait()?.is_none())
     }
+}
+
+#[cfg(target_os = "linux")]
+fn sanitize_unit_component(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    for ch in input.chars() {
+        if ch.is_ascii_alphanumeric() || ch == '-' {
+            out.push(ch);
+        } else {
+            out.push('-');
+        }
+    }
+    let trimmed = out.trim_matches('-');
+    if trimmed.is_empty() {
+        "unknown".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn acp_scope_unit(provider_id: &str, pid: u32) -> String {
+    let name = sanitize_unit_component(provider_id);
+    format!("ctx-acp-{}-{}", name, pid)
+}
+
+#[cfg(target_os = "linux")]
+fn acp_memory_max_mb() -> Option<u64> {
+    let meminfo = std::fs::read_to_string("/proc/meminfo").ok()?;
+    for line in meminfo.lines() {
+        if let Some(rest) = line.strip_prefix("MemTotal:") {
+            let kb_str = rest.split_whitespace().next()?;
+            let kb: u64 = kb_str.parse().ok()?;
+            let total_mb = kb / 1024;
+            if total_mb == 0 {
+                return None;
+            }
+            let mut max_mb = ((total_mb as f64) * ACP_MEMORY_MAX_FRACTION).round() as u64;
+            max_mb = max_mb.max(ACP_MEMORY_MIN_MB).min(total_mb);
+            return Some(max_mb);
+        }
+    }
+    None
+}
+
+#[cfg(target_os = "linux")]
+async fn run_command(cmd: &mut Command, label: &str) -> Result<()> {
+    let output = timeout(SYSTEMD_TIMEOUT, cmd.output())
+        .await
+        .context("command timed out")?
+        .with_context(|| format!("running {label}"))?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    anyhow::bail!(
+        "{label} failed ({}): {}{}",
+        output.status,
+        stderr,
+        if stdout.trim().is_empty() {
+            String::new()
+        } else {
+            format!(" ({stdout})")
+        }
+    );
+}
+
+#[cfg(target_os = "linux")]
+async fn systemd_run_supports_pid() -> bool {
+    let mut cmd = Command::new("systemd-run");
+    cmd.arg("--help");
+    let output = timeout(SYSTEMD_TIMEOUT, cmd.output()).await;
+    let Ok(Ok(output)) = output else {
+        return false;
+    };
+    if !output.status.success() {
+        return false;
+    }
+    let help = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    )
+    .to_lowercase();
+    help.contains("--pid")
+}
+
+#[cfg(target_os = "linux")]
+async fn attach_acp_scope(provider_id: &str, pid: u32) -> Result<()> {
+    if !systemd_run_supports_pid().await {
+        anyhow::bail!("systemd-run lacks --pid; ACP scope isolation unavailable");
+    }
+
+    let unit = acp_scope_unit(provider_id, pid);
+    let mut cmd = Command::new("systemd-run");
+    cmd.arg("--user").arg("--scope").arg("--unit").arg(unit);
+    if let Some(max_mb) = acp_memory_max_mb() {
+        cmd.arg("--property").arg(format!("MemoryMax={}M", max_mb));
+    }
+    cmd.arg("--pid").arg(pid.to_string());
+    run_command(&mut cmd, "systemd-run").await
 }
 
 impl Drop for AcpProcess {
