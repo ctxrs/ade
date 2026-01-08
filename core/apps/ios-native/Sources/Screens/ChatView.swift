@@ -21,7 +21,7 @@ struct ChatView: View {
             messageList
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            VStack(spacing: 0) {
+            VStack(spacing: 10) {
                 if !pendingAttachments.isEmpty {
                     ComposerAttachmentsRow(
                         attachments: pendingAttachments,
@@ -38,6 +38,10 @@ struct ChatView: View {
                     onSend: sendMessage
                 )
             }
+            .padding(.horizontal, CtxChatStyle.composerOuterPadding)
+            .padding(.top, 8)
+            .padding(.bottom, 8)
+            .background(Color.ctxBackground.ignoresSafeArea(edges: .bottom))
         }
         .onAppear { viewModel.startPolling() }
         .onDisappear { viewModel.stopPolling() }
@@ -48,13 +52,13 @@ struct ChatView: View {
 
     private var messageList: some View {
         GeometryReader { geometry in
-            let horizontalPadding: CGFloat = 16
+            let horizontalPadding = CtxChatStyle.horizontalPadding
             let availableWidth = max(0, geometry.size.width - (horizontalPadding * 2))
-            let maxBubbleWidth = min(360, availableWidth * 0.78)
+            let maxBubbleWidth = min(CtxChatStyle.userBubbleMaxWidth, availableWidth * CtxChatStyle.userBubbleWidthFraction)
             let assetContext = viewModel.assetContext
             ScrollViewReader { proxy in
                 ScrollView {
-                    LazyVStack(spacing: 12) {
+                    LazyVStack(spacing: CtxChatStyle.messageSpacing) {
                         ForEach(viewModel.messages) { message in
                             MessageRow(
                                 message: message,
@@ -65,14 +69,14 @@ struct ChatView: View {
                         }
                     }
                     .padding(.horizontal, horizontalPadding)
-                    .padding(.top, 16)
-                    .padding(.bottom, 12)
+                    .padding(.top, CtxChatStyle.messageTopPadding)
+                    .padding(.bottom, CtxChatStyle.messageBottomPadding)
                 }
                 .scrollDismissesKeyboard(.interactively)
                 .onAppear {
                     scrollToBottom(proxy: proxy, animated: false)
                 }
-                .onChange(of: viewModel.messages.count) { _ in
+                .onChange(of: viewModel.messages.last.map { ($0.id, $0.text) }) { _ in
                     scrollToBottom(proxy: proxy, animated: true)
                 }
                 .onChange(of: isComposerFocused) { focused in
@@ -192,21 +196,21 @@ struct MessageRow: View {
         HStack {
             if message.role == .assistant {
                 bubble
-                Spacer(minLength: 0)
             } else {
                 Spacer(minLength: 0)
                 bubble
             }
         }
+        .frame(maxWidth: .infinity, alignment: message.role == .assistant ? .leading : .trailing)
     }
 
     private var bubble: some View {
         VStack(alignment: .leading, spacing: 8) {
             if !message.text.isEmpty {
                 Text(message.text)
-                    .font(.system(size: 16, weight: .regular))
+                    .font(CtxChatStyle.bodyFont)
                     .foregroundColor(.ctxTextPrimary)
-                    .lineSpacing(4)
+                    .lineSpacing(CtxChatStyle.bodyLineSpacing)
             }
             if !message.attachments.isEmpty {
                 AttachmentStrip(
@@ -215,18 +219,29 @@ struct MessageRow: View {
                 )
             }
         }
-        .padding(.vertical, 11)
-        .padding(.horizontal, 15)
-        .background(bubbleColor, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .stroke(Color.white.opacity(0.06), lineWidth: 1)
-        )
-        .frame(maxWidth: maxBubbleWidth, alignment: message.role == .assistant ? .leading : .trailing)
+        .modifier(MessageBubbleStyle(role: message.role, maxBubbleWidth: maxBubbleWidth))
     }
+}
 
-    private var bubbleColor: Color {
-        message.role == .assistant ? .ctxBubbleAssistant : .ctxBubbleUser
+private struct MessageBubbleStyle: ViewModifier {
+    let role: ChatMessage.Role
+    let maxBubbleWidth: CGFloat
+
+    func body(content: Content) -> some View {
+        switch role {
+        case .assistant:
+            content
+                .padding(.vertical, 2)
+        case .user:
+            content
+                .padding(.vertical, CtxChatStyle.userBubbleVerticalPadding)
+                .padding(.horizontal, CtxChatStyle.userBubbleHorizontalPadding)
+                .background(
+                    Color.ctxBubbleUser,
+                    in: RoundedRectangle(cornerRadius: CtxChatStyle.userBubbleCornerRadius, style: .continuous)
+                )
+                .frame(maxWidth: maxBubbleWidth, alignment: .trailing)
+        }
     }
 }
 
@@ -289,14 +304,8 @@ struct ComposerAttachmentsRow: View {
                     }
                 }
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
-        }
-        .background(.ultraThinMaterial)
-        .overlay(alignment: .top) {
-            Rectangle()
-                .fill(Color.ctxLine)
-                .frame(height: 1)
+            .padding(.horizontal, 4)
+            .padding(.vertical, 2)
         }
     }
 }
@@ -690,91 +699,78 @@ struct ComposerBar: View {
     var onSend: () -> Void
 
     var body: some View {
-        HStack(alignment: .bottom, spacing: 10) {
-            PhotosPicker(selection: $selectedPhotos, matching: .images) {
-                ComposerIconButton(systemName: "plus", isPrimary: false, isEnabled: true) {}
-            }
-
-            ZStack(alignment: .leading) {
+        VStack(spacing: 12) {
+            ZStack(alignment: .topLeading) {
                 if text.isEmpty {
-                    Text("Message")
-                        .foregroundColor(.ctxTextSecondary)
+                    Text("Ask anything")
+                        .font(CtxChatStyle.bodyFont)
+                        .foregroundColor(.ctxTextMuted)
+                        .padding(.top, 2)
                 }
                 TextField("", text: $text, axis: .vertical)
-                    .lineLimit(1...4)
+                    .lineLimit(1...6)
+                    .font(CtxChatStyle.bodyFont)
                     .foregroundColor(.ctxTextPrimary)
                     .tint(.ctxAccent)
                     .focused(isFocused)
             }
-            .font(.system(size: 16))
-            .padding(.vertical, 10)
-            .padding(.horizontal, 14)
-            .padding(.trailing, 46)
-            .background(Color.ctxSurface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .stroke(Color.ctxLine, lineWidth: 1)
-            )
-            .overlay(alignment: .trailing) {
-                if !isSendEnabled {
-                    ComposerIconButton(systemName: "mic.fill", isPrimary: false, isEnabled: true) {}
-                        .padding(.trailing, 6)
-                } else {
-                    ComposerIconButton(systemName: "paperplane.fill", isPrimary: true, isEnabled: isSendEnabled) {
+
+            HStack(spacing: 14) {
+                PhotosPicker(selection: $selectedPhotos, matching: .images) {
+                    ComposerToolIcon(systemName: "plus")
+                }
+
+                Spacer(minLength: 0)
+
+                if isSendEnabled {
+                    ComposerCircleButton(systemName: "arrow.up") {
                         onSend()
                     }
-                    .padding(.trailing, 6)
+                } else {
+                    Button {} label: {
+                        ComposerToolIcon(systemName: "mic")
+                    }
                 }
             }
-            .frame(maxWidth: .infinity)
         }
-        .padding(.horizontal, 16)
-        .padding(.top, 10)
-        .padding(.bottom, 10)
-        .background(.ultraThinMaterial)
-        .overlay(alignment: .top) {
-            Rectangle()
-                .fill(Color.ctxLine)
-                .frame(height: 1)
-        }
+        .padding(.horizontal, CtxChatStyle.composerInnerHorizontalPadding)
+        .padding(.vertical, CtxChatStyle.composerInnerVerticalPadding)
+        .background(
+            Color.ctxSurfaceRaised,
+            in: RoundedRectangle(cornerRadius: CtxChatStyle.composerCornerRadius, style: .continuous)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: CtxChatStyle.composerCornerRadius, style: .continuous)
+                .stroke(Color.ctxLine, lineWidth: 1)
+        )
     }
 }
 
-struct ComposerIconButton: View {
+struct ComposerToolIcon: View {
     let systemName: String
-    let isPrimary: Bool
-    let isEnabled: Bool
+
+    var body: some View {
+        Image(systemName: systemName)
+            .font(.system(size: 20, weight: .semibold))
+            .foregroundColor(.ctxTextPrimary)
+            .frame(width: CtxChatStyle.composerToolSize, height: CtxChatStyle.composerToolSize)
+            .contentShape(Rectangle())
+    }
+}
+
+struct ComposerCircleButton: View {
+    let systemName: String
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
             Image(systemName: systemName)
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundColor(foregroundColor)
-                .frame(width: 36, height: 36)
-                .background(backgroundView)
-                .overlay(
-                    Circle()
-                        .stroke(Color.white.opacity(isPrimary ? 0 : 0.08), lineWidth: 1)
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundColor(.white)
+                .frame(width: CtxChatStyle.composerPrimarySize, height: CtxChatStyle.composerPrimarySize)
+                .background(
+                    Circle().fill(Color.ctxAccent)
                 )
-        }
-        .disabled(!isEnabled)
-        .opacity(isEnabled ? 1 : 0.45)
-    }
-
-    private var foregroundColor: Color {
-        if isPrimary && isEnabled {
-            return .white
-        }
-        return .ctxTextPrimary
-    }
-
-    @ViewBuilder
-    private var backgroundView: some View {
-        if isPrimary && isEnabled {
-            Circle().fill(Color.ctxAccent)
-        } else {
-            Circle().fill(.thinMaterial)
         }
     }
 }
@@ -800,6 +796,13 @@ final class ChatViewModel: ObservableObject {
     @Published var artifactsError: String?
     @Published private(set) var assetBaseURL: URL?
     @Published private(set) var assetToken: String?
+
+    private struct StreamingAssistantState {
+        let turnId: String
+        let messageId: UUID
+        var text: String
+        var isActive: Bool
+    }
 
     private enum RefreshResult {
         case success
@@ -833,6 +836,7 @@ final class ChatViewModel: ObservableObject {
     private var artifactsRefreshInFlight = false
     private var artifactsRefreshPending = false
     private var pendingAssistantResponse = false
+    private var streamingAssistantState: StreamingAssistantState?
     private var consecutivePollFailures = 0
 
     init(client: DaemonAPIClient? = nil, initialSessionId: String? = nil, initialWorkspaceId: String? = nil) {
@@ -853,6 +857,7 @@ final class ChatViewModel: ObservableObject {
         if client != nil {
             messages = []
             pendingAssistantResponse = false
+            streamingAssistantState = nil
             errorMessage = nil
             artifacts = []
             artifactsError = nil
@@ -873,6 +878,7 @@ final class ChatViewModel: ObservableObject {
             lastEventSeq = nil
             messages = Self.sampleMessages
             pendingAssistantResponse = false
+            streamingAssistantState = nil
             artifacts = []
             artifactsError = nil
             isArtifactsLoading = false
@@ -898,6 +904,7 @@ final class ChatViewModel: ObservableObject {
         self.workspaceId = workspaceId
         lastEventSeq = nil
         pendingAssistantResponse = false
+        streamingAssistantState = nil
         artifacts = []
         artifactsError = nil
         Task {
@@ -928,7 +935,7 @@ final class ChatViewModel: ObservableObject {
 
     func send(_ text: String, attachments: [MessageAttachment]) {
         let local = ChatMessage(id: UUID(), role: .user, text: text, attachments: attachments)
-        messages.append(local)
+        appendMessage(local)
         pendingAssistantResponse = true
 
         Task {
@@ -965,9 +972,10 @@ final class ChatViewModel: ObservableObject {
                     attachments: summary.attachments ?? []
                 )
             }
-            messages = nextMessages
+            messages = applyStreamingAssistantState(to: nextMessages)
             if pendingAssistantResponse, nextMessages.last?.role == .assistant {
                 pendingAssistantResponse = false
+                streamingAssistantState = nil
             }
             errorMessage = nil
             if refreshPending {
@@ -1013,6 +1021,60 @@ final class ChatViewModel: ObservableObject {
                 Task { await refreshArtifacts() }
             }
         }
+    }
+
+    private func appendMessage(_ message: ChatMessage) {
+        var next = messages
+        next.append(message)
+        messages = next
+    }
+
+    private func applyStreamingAssistantState(to base: [ChatMessage]) -> [ChatMessage] {
+        guard let state = streamingAssistantState, !state.text.isEmpty else { return base }
+        var next = base
+
+        if let last = next.last, last.role == .assistant {
+            if last.text == state.text {
+                return next
+            }
+            if state.text.count >= last.text.count || state.isActive {
+                next[next.count - 1] = ChatMessage(id: last.id, role: .assistant, text: state.text, attachments: last.attachments)
+            }
+            return next
+        }
+
+        next.append(ChatMessage(id: state.messageId, role: .assistant, text: state.text, attachments: []))
+        return next
+    }
+
+    private func applyTurnDelta(_ turn: SessionTurn) {
+        let turnId = turn.turnId.stringValue
+        let isActive = turn.status == .queued || turn.status == .running
+        if isActive {
+            pendingAssistantResponse = true
+        }
+
+        guard let assistantPartial = turn.assistantPartial, !assistantPartial.isEmpty else {
+            if !isActive, streamingAssistantState?.turnId == turnId {
+                streamingAssistantState?.isActive = false
+            }
+            return
+        }
+
+        if streamingAssistantState?.turnId != turnId {
+            let stableId = UUID(uuidString: turnId) ?? UUID()
+            streamingAssistantState = StreamingAssistantState(
+                turnId: turnId,
+                messageId: stableId,
+                text: assistantPartial,
+                isActive: isActive
+            )
+        } else {
+            streamingAssistantState?.text = assistantPartial
+            streamingAssistantState?.isActive = isActive
+        }
+
+        messages = applyStreamingAssistantState(to: messages)
     }
 
     private func resolveSessionId() async -> String? {
@@ -1204,10 +1266,21 @@ final class ChatViewModel: ObservableObject {
             let eventSessionId = delta.sessionId.stringValue
             if eventSessionId == currentSessionId {
                 lastEventSeq = delta.lastEventSeq
+                if let turn = delta.turn {
+                    applyTurnDelta(turn)
+                }
                 if delta.event?.eventType == "artifacts_set" {
                     Task { await refreshArtifacts() }
                 }
-                Task { _ = await refreshMessages() }
+                if let message = delta.message {
+                    if message.role == .assistant {
+                        pendingAssistantResponse = false
+                        streamingAssistantState = nil
+                    }
+                    Task { _ = await refreshMessages() }
+                } else if let turn = delta.turn, turn.status != .queued, turn.status != .running {
+                    Task { _ = await refreshMessages() }
+                }
             }
         case .sessionSummary(_, _, let summary):
             let eventSessionId = summary.session.id.stringValue
@@ -1223,6 +1296,7 @@ final class ChatViewModel: ObservableObject {
         case .sessionGap(_, _, let sessionId, let afterSeq, _):
             if sessionId.stringValue == currentSessionId {
                 lastEventSeq = afterSeq
+                streamingAssistantState = nil
                 Task {
                     await primeStreamCursor(force: true)
                     _ = await refreshMessages()

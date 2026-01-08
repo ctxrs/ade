@@ -4,8 +4,8 @@ struct RootView: View {
     var body: some View {
         NavigationStack {
             ConnectionView()
-                .navigationBarHidden(true)
         }
+        .toolbar(.hidden, for: .navigationBar)
         .preferredColorScheme(.dark)
     }
 }

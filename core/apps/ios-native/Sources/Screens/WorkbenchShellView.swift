@@ -12,7 +12,6 @@ struct WorkbenchShellView: View {
     var body: some View {
         GeometryReader { proxy in
             let drawerWidth = min(320, proxy.size.width * 0.78)
-            let topInset = proxy.safeAreaInsets.top
             let workspaceName = selectedWorkspace?.name ?? "Workspace"
             let workspaceDetail = selectedWorkspace.map(workspaceDetailText) ?? "Select in drawer"
 
@@ -20,14 +19,21 @@ struct WorkbenchShellView: View {
                 CtxBackgroundView()
 
                 WorkbenchHomeView(
-                    isDrawerOpen: $isDrawerOpen,
-                    workspaceName: workspaceName,
-                    workspaceDetail: workspaceDetail,
                     selectedWorkspace: selectedWorkspace,
                     isLoadingWorkspaces: isLoadingWorkspaces,
-                    workspaceError: workspaceError,
-                    topInset: topInset
+                    workspaceError: workspaceError
                 )
+                .safeAreaInset(edge: .top, spacing: 0) {
+                    WorkbenchTopBar(
+                        workspaceName: workspaceName,
+                        workspaceDetail: workspaceDetail,
+                        onMenuTap: { isDrawerOpen = true },
+                        onWorkspaceTap: { isDrawerOpen = true }
+                    )
+                    .padding(.horizontal, 20)
+                    .padding(.top, 8)
+                    .padding(.bottom, 8)
+                }
                 .blur(radius: isDrawerOpen ? 8 : 0)
                 .overlay {
                     if isDrawerOpen {
@@ -118,25 +124,12 @@ struct WorkbenchShellView: View {
 }
 
 private struct WorkbenchHomeView: View {
-    @Binding var isDrawerOpen: Bool
-    let workspaceName: String
-    let workspaceDetail: String
     let selectedWorkspace: WorkspaceSummary?
     let isLoadingWorkspaces: Bool
     let workspaceError: String?
-    let topInset: CGFloat
 
     var body: some View {
         VStack(spacing: 0) {
-            WorkbenchTopBar(
-                workspaceName: workspaceName,
-                workspaceDetail: workspaceDetail,
-                onMenuTap: { isDrawerOpen = true },
-                onWorkspaceTap: { isDrawerOpen = true }
-            )
-            .padding(.horizontal, 20)
-            .padding(.top, topInset + 8)
-
             WorkbenchNavigationFlowView(
                 selectedWorkspace: selectedWorkspace,
                 isLoadingWorkspaces: isLoadingWorkspaces,
@@ -268,6 +261,9 @@ private struct WorkbenchDrawerView: View {
             }
             .padding(20)
         }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            Color.clear.frame(height: 12)
+        }
         .frame(width: drawerWidth)
         .frame(maxHeight: .infinity, alignment: .top)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
@@ -276,7 +272,6 @@ private struct WorkbenchDrawerView: View {
                 .stroke(Color.ctxGlassStroke, lineWidth: 0.8)
         )
         .shadow(color: Color.ctxShadow, radius: 24, x: 0, y: 12)
-        .padding(.top, 12)
         .padding(.bottom, 24)
         .padding(.leading, 12)
     }

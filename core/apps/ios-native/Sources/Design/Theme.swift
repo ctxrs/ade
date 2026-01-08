@@ -18,3 +18,27 @@ extension Color {
     static let ctxGlassStroke = Color.white.opacity(0.14)
     static let ctxShadow = Color.black.opacity(0.2)
 }
+
+enum CtxChatStyle {
+    static let horizontalPadding: CGFloat = 16
+    static let messageSpacing: CGFloat = 14
+    static let messageTopPadding: CGFloat = 10
+    static let messageBottomPadding: CGFloat = 8
+
+    static let bodyFont: Font = .system(size: 16, weight: .regular)
+    static let bodyLineSpacing: CGFloat = 3
+
+    static let userBubbleCornerRadius: CGFloat = 22
+    static let userBubbleWidthFraction: CGFloat = 0.74
+    static let userBubbleMaxWidth: CGFloat = 320
+    static let userBubbleVerticalPadding: CGFloat = 10
+    static let userBubbleHorizontalPadding: CGFloat = 14
+
+    static let composerCornerRadius: CGFloat = 28
+    static let composerOuterPadding: CGFloat = 12
+    static let composerInnerHorizontalPadding: CGFloat = 16
+    static let composerInnerVerticalPadding: CGFloat = 14
+
+    static let composerToolSize: CGFloat = 36
+    static let composerPrimarySize: CGFloat = 40
+}
