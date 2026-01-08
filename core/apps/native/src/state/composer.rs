@@ -3,7 +3,7 @@ use std::ops::Range;
 use std::path::{Path, PathBuf};
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
-use gpui::{ClickEvent, ClipboardItem, Context, KeyDownEvent, Window};
+use gpui::{AsyncApp, ClickEvent, ClipboardItem, Context, KeyDownEvent, WeakEntity, Window};
 use gpui_tokio::Tokio;
 
 use ctx_core::models::MessageAttachment;
@@ -250,9 +250,9 @@ impl ShellView {
         &mut self,
         _: &ClickEvent,
         window: &mut Window,
-        _: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) {
-        self.composer_focus.focus(window);
+        self.composer_focus.focus(window, cx);
     }
 
     pub(crate) fn on_composer_key_down(
@@ -363,9 +363,9 @@ impl ShellView {
         &mut self,
         _: &ClickEvent,
         window: &mut Window,
-        _: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) {
-        self.composer_attachment_focus.focus(window);
+        self.composer_attachment_focus.focus(window, cx);
     }
 
     pub(crate) fn on_composer_attachment_key_down(
@@ -526,21 +526,24 @@ impl ShellView {
             Ok(session_id)
         });
 
-        cx.spawn(|this, cx| async move {
-            let result = task.await;
-            this.update(cx, |view, cx| {
-                match result {
-                    Ok(session_id) => view.load_session_details(session_id, cx),
-                    Err(_) => {
-                        view.messages.push(MessageItem::new(
-                            "assistant",
-                            "Unable to update session model.",
-                        ));
+        cx.spawn(move |this: WeakEntity<ShellView>, cx: &mut AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                let result = task.await;
+                this.update(&mut cx, |view, cx| {
+                    match result {
+                        Ok(session_id) => view.load_session_details(session_id, cx),
+                        Err(_) => {
+                            view.messages.push(MessageItem::new(
+                                "assistant",
+                                "Unable to update session model.",
+                            ));
+                        }
                     }
-                }
-                cx.notify();
-            })
-            .ok();
+                    cx.notify();
+                })
+                .ok();
+            }
         })
         .detach();
     }
@@ -631,28 +634,31 @@ impl ShellView {
             Ok(session_id)
         });
 
-        cx.spawn(|this, cx| async move {
-            let result = task.await;
-            this.update(cx, |view, cx| {
-                match result {
-                    Ok(session_id) => {
-                        view.composer.push_history(history_entry);
-                        view.composer.clear();
-                        view.composer_attachments.clear();
-                        view.composer_attachment_input.clear();
-                        view.composer_notice = None;
-                        view.load_session_details(session_id, cx);
+        cx.spawn(move |this: WeakEntity<ShellView>, cx: &mut AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                let result = task.await;
+                this.update(&mut cx, |view, cx| {
+                    match result {
+                        Ok(session_id) => {
+                            view.composer.push_history(history_entry);
+                            view.composer.clear();
+                            view.composer_attachments.clear();
+                            view.composer_attachment_input.clear();
+                            view.composer_notice = None;
+                            view.load_session_details(session_id, cx);
+                        }
+                        Err(_) => {
+                            view.push_message(MessageItem::new(
+                                "assistant",
+                                "Unable to send message.",
+                            ));
+                        }
                     }
-                    Err(_) => {
-                        view.push_message(MessageItem::new(
-                            "assistant",
-                            "Unable to send message.",
-                        ));
-                    }
-                }
-                cx.notify();
-            })
-            .ok();
+                    cx.notify();
+                })
+                .ok();
+            }
         })
         .detach();
     }
@@ -778,26 +784,29 @@ impl ShellView {
             Ok((data_base64, mime_type.to_string(), display_name))
         });
 
-        cx.spawn(|this, cx| async move {
-            let result = task.await;
-            this.update(cx, |view, cx| {
-                match result {
-                    Ok((data_base64, mime_type, name)) => {
-                        view.composer_attachments.push(MessageAttachment::Image {
-                            mime_type,
-                            data_base64,
-                            name: Some(name),
-                        });
-                        view.composer_attachment_input.clear();
-                        view.composer_notice = None;
+        cx.spawn(move |this: WeakEntity<ShellView>, cx: &mut AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                let result = task.await;
+                this.update(&mut cx, |view, cx| {
+                    match result {
+                        Ok((data_base64, mime_type, name)) => {
+                            view.composer_attachments.push(MessageAttachment::Image {
+                                mime_type,
+                                data_base64,
+                                name: Some(name),
+                            });
+                            view.composer_attachment_input.clear();
+                            view.composer_notice = None;
+                        }
+                        Err(err) => {
+                            view.composer_notice = Some(format!("Attachment failed: {err}"));
+                        }
                     }
-                    Err(err) => {
-                        view.composer_notice = Some(format!("Attachment failed: {err}"));
-                    }
-                }
-                cx.notify();
-            })
-            .ok();
+                    cx.notify();
+                })
+                .ok();
+            }
         })
         .detach();
     }

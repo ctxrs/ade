@@ -1,4 +1,4 @@
-use gpui::{ClickEvent, Context, ListOffset, Window, px};
+use gpui::{AsyncApp, ClickEvent, Context, ListOffset, WeakEntity, Window, px};
 use gpui_tokio::Tokio;
 
 use ctx_core::ids::SessionId;
@@ -85,20 +85,26 @@ impl ShellView {
             Ok(session_id)
         });
 
-        cx.spawn(|this, cx| async move {
-            let result = task.await;
-            this.update(cx, |view, cx| {
-                match result {
-                    Ok(session_id) => {
-                        view.load_session_details(session_id, cx);
+        cx.spawn(move |this: WeakEntity<ShellView>, cx: &mut AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                let result = task.await;
+                this.update(&mut cx, |view, cx| {
+                    match result {
+                        Ok(session_id) => {
+                            view.load_session_details(session_id, cx);
+                        }
+                        Err(_) => {
+                            view.push_message(MessageItem::new(
+                                "assistant",
+                                action.failure_message(),
+                            ));
+                        }
                     }
-                    Err(_) => {
-                        view.push_message(MessageItem::new("assistant", action.failure_message()));
-                    }
-                }
-                cx.notify();
-            })
-            .ok();
+                    cx.notify();
+                })
+                .ok();
+            }
         })
         .detach();
     }
@@ -245,12 +251,14 @@ impl ShellView {
             })
         });
 
-        cx.spawn(|this, cx| async move {
-            let result = task.await;
-            this.update(cx, |view, cx| {
-                if !view.is_session_selected(session_id) {
-                    return;
-                }
+        cx.spawn(move |this: WeakEntity<ShellView>, cx: &mut AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                let result = task.await;
+                this.update(&mut cx, |view, cx| {
+                    if !view.is_session_selected(session_id) {
+                        return;
+                    }
                 match result {
                     Ok(data) => {
                         view.session = data
@@ -320,9 +328,10 @@ impl ShellView {
                         }
                     }
                 }
-                cx.notify();
-            })
-            .ok();
+                    cx.notify();
+                })
+                .ok();
+            }
         })
         .detach();
     }

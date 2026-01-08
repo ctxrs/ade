@@ -202,12 +202,12 @@ impl Render for ShellView {
         let workspace_label = self
             .selected_workspace
             .and_then(|id| self.workspaces.iter().find(|ws| ws.id == id))
-            .map(|ws| ws.name.as_str())
-            .unwrap_or("No workspace");
+            .map(|ws| ws.name.clone())
+            .unwrap_or_else(|| "No workspace".to_string());
         let task_label = self
             .selected_task
             .and_then(|index| self.tasks.get(index))
-            .map(|task| task.title.as_str());
+            .map(|task| task.title.clone());
         let mut title_label = div()
             .flex()
             .items_center()

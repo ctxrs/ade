@@ -1,4 +1,4 @@
-use gpui::Context;
+use gpui::{AsyncApp, Context, WeakEntity};
 use gpui_tokio::Tokio;
 
 use ctx_core::ids::TrackId;
@@ -140,24 +140,27 @@ impl DiffReviewState {
             client.get_track_diff(track_id).await
         });
 
-        cx.spawn(|this, cx| async move {
-            let result = task.await;
-            this.update(cx, |view, cx| {
-                if view.track_id != Some(track_id) {
-                    return;
-                }
-                view.busy_key = None;
-                match result {
-                    Ok(diff) => {
-                        view.set_diff(diff);
+        cx.spawn(move |this: WeakEntity<DiffReviewState>, cx: &mut AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                let result = task.await;
+                this.update(&mut cx, |view, cx| {
+                    if view.track_id != Some(track_id) {
+                        return;
                     }
-                    Err(err) => {
-                        view.error = Some(err.to_string());
+                    view.busy_key = None;
+                    match result {
+                        Ok(diff) => {
+                            view.set_diff(diff);
+                        }
+                        Err(err) => {
+                            view.error = Some(err.to_string());
+                        }
                     }
-                }
-                cx.notify();
-            })
-            .ok();
+                    cx.notify();
+                })
+                .ok();
+            }
         })
         .detach();
     }
@@ -249,25 +252,28 @@ impl DiffReviewState {
                 .await
         });
 
-        cx.spawn(|this, cx| async move {
-            let result = task.await;
-            this.update(cx, |view, cx| {
-                if view.track_id != Some(track_id) {
-                    return;
-                }
-                view.busy_key = None;
-                match result {
-                    Ok(diff) => {
-                        view.set_diff(diff);
-                        view.status = Some(status_message);
+        cx.spawn(move |this: WeakEntity<DiffReviewState>, cx: &mut AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                let result = task.await;
+                this.update(&mut cx, |view, cx| {
+                    if view.track_id != Some(track_id) {
+                        return;
                     }
-                    Err(err) => {
-                        view.error = Some(err.to_string());
+                    view.busy_key = None;
+                    match result {
+                        Ok(diff) => {
+                            view.set_diff(diff);
+                            view.status = Some(status_message);
+                        }
+                        Err(err) => {
+                            view.error = Some(err.to_string());
+                        }
                     }
-                }
-                cx.notify();
-            })
-            .ok();
+                    cx.notify();
+                })
+                .ok();
+            }
         })
         .detach();
     }

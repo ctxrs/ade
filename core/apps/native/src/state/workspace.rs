@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use gpui::Context;
+use gpui::{AsyncApp, Context, WeakEntity};
 use gpui_tokio::Tokio;
 
 use ctx_core::ids::{SessionId, WorkspaceId};
@@ -96,42 +96,45 @@ impl ShellView {
             })
         });
 
-        cx.spawn(|this, cx| async move {
-            let result = task.await;
-            this.update(cx, |view, cx| {
-                match result {
-                    Ok(data) => {
-                        view.workspaces = data.workspaces;
-                        view.providers = data.providers;
-                        view.sync_composer_defaults();
-                        if let Some(selected) = view.selected_workspace {
-                            if !view.workspaces.iter().any(|ws| ws.id == selected) {
-                                view.selected_workspace = None;
+        cx.spawn(move |this: WeakEntity<ShellView>, cx: &mut AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                let result = task.await;
+                this.update(&mut cx, |view, cx| {
+                    match result {
+                        Ok(data) => {
+                            view.workspaces = data.workspaces;
+                            view.providers = data.providers;
+                            view.sync_composer_defaults();
+                            if let Some(selected) = view.selected_workspace {
+                                if !view.workspaces.iter().any(|ws| ws.id == selected) {
+                                    view.selected_workspace = None;
+                                }
+                            }
+                            if view.selected_workspace.is_none() {
+                                view.selected_workspace =
+                                    view.workspaces.first().map(|workspace| workspace.id);
+                            }
+                            if let Some(workspace_id) = view.selected_workspace {
+                                view.load_workspace(workspace_id, cx);
+                            } else {
+                                view.reset_workspace_view("No workspaces yet.");
+                                view.data_state = DataLoadState::Loaded;
+                                cx.notify();
                             }
                         }
-                        if view.selected_workspace.is_none() {
-                            view.selected_workspace =
-                                view.workspaces.first().map(|workspace| workspace.id);
-                        }
-                        if let Some(workspace_id) = view.selected_workspace {
-                            view.load_workspace(workspace_id, cx);
-                        } else {
-                            view.reset_workspace_view("No workspaces yet.");
-                            view.data_state = DataLoadState::Loaded;
+                        Err(err) => {
+                            view.workspaces.clear();
+                            view.providers.clear();
+                            view.selected_workspace = None;
+                            view.reset_workspace_view("Unable to load workspace list.");
+                            view.data_state = DataLoadState::Error(err.to_string());
                             cx.notify();
                         }
                     }
-                    Err(err) => {
-                        view.workspaces.clear();
-                        view.providers.clear();
-                        view.selected_workspace = None;
-                        view.reset_workspace_view("Unable to load workspace list.");
-                        view.data_state = DataLoadState::Error(err.to_string());
-                        cx.notify();
-                    }
-                }
-            })
-            .ok();
+                })
+                .ok();
+            }
         })
         .detach();
     }
@@ -211,9 +214,11 @@ impl ShellView {
             })
         });
 
-        cx.spawn(|this, cx| async move {
-            let result = task.await;
-            this.update(cx, |view, cx| {
+        cx.spawn(move |this: WeakEntity<ShellView>, cx: &mut AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                let result = task.await;
+                this.update(&mut cx, |view, cx| {
                 if view.selected_workspace != Some(workspace_id) {
                     return;
                 }
@@ -273,9 +278,10 @@ impl ShellView {
                         view.stream_status = StreamStatus::Idle;
                     }
                 }
-                cx.notify();
-            })
-            .ok();
+                    cx.notify();
+                })
+                .ok();
+            }
         })
         .detach();
     }

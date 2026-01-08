@@ -301,6 +301,7 @@ impl<'a> ComposerView<'a> {
 
         let mut attachments_block = div().flex().flex_col().gap_1();
         if let Some(notice) = self.composer_notice {
+            let notice = notice.to_string();
             attachments_block = attachments_block.child(
                 div()
                     .text_sm()

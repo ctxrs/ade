@@ -8,10 +8,10 @@ use super::sidebar::SidebarView;
 use super::super::state::{ShellRoute, ShellView};
 
 pub(crate) struct RouterView<'a> {
-    pub(super) shell: &'a ShellView,
-    pub(super) provider_options: Vec<String>,
-    pub(super) model_options: Vec<String>,
-    pub(super) resyncing: bool,
+    pub(crate) shell: &'a ShellView,
+    pub(crate) provider_options: Vec<String>,
+    pub(crate) model_options: Vec<String>,
+    pub(crate) resyncing: bool,
 }
 
 impl<'a> RouterView<'a> {

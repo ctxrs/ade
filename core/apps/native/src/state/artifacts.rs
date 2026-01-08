@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use gpui::{Context, Image, ImageFormat};
+use gpui::{AsyncApp, Context, Image, ImageFormat, WeakEntity};
 use gpui_tokio::Tokio;
 
 use ctx_core::ids::ArtifactId;
@@ -96,30 +96,33 @@ impl ShellView {
             Ok(bytes)
         });
 
-        cx.spawn(|this, cx| async move {
-            let result = task.await;
-            this.update(cx, |view, cx| {
-                if view.selected_artifact_id() != Some(artifact_id) {
-                    return;
-                }
-                match result {
-                    Ok(bytes) => {
-                        let preview = build_text_preview(&bytes, is_diff_hint);
-                        view.artifact_preview = ArtifactPreviewState::Text {
-                            artifact_id,
-                            preview,
-                        };
+        cx.spawn(move |this: WeakEntity<ShellView>, cx: &mut AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                let result = task.await;
+                this.update(&mut cx, |view, cx| {
+                    if view.selected_artifact_id() != Some(artifact_id) {
+                        return;
                     }
-                    Err(err) => {
-                        view.artifact_preview = ArtifactPreviewState::Error {
-                            artifact_id,
-                            message: err.to_string(),
-                        };
+                    match result {
+                        Ok(bytes) => {
+                            let preview = build_text_preview(&bytes, is_diff_hint);
+                            view.artifact_preview = ArtifactPreviewState::Text {
+                                artifact_id,
+                                preview,
+                            };
+                        }
+                        Err(err) => {
+                            view.artifact_preview = ArtifactPreviewState::Error {
+                                artifact_id,
+                                message: err.to_string(),
+                            };
+                        }
                     }
-                }
-                cx.notify();
-            })
-            .ok();
+                    cx.notify();
+                })
+                .ok();
+            }
         })
         .detach();
     }
@@ -141,27 +144,30 @@ impl ShellView {
             Ok(bytes)
         });
 
-        cx.spawn(|this, cx| async move {
-            let result = task.await;
-            this.update(cx, |view, cx| {
-                if view.selected_artifact_id() != Some(artifact_id) {
-                    return;
-                }
-                match result {
-                    Ok(bytes) => {
-                        let image = Arc::new(Image::from_bytes(format, bytes));
-                        view.artifact_preview = ArtifactPreviewState::Image { artifact_id, image };
+        cx.spawn(move |this: WeakEntity<ShellView>, cx: &mut AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                let result = task.await;
+                this.update(&mut cx, |view, cx| {
+                    if view.selected_artifact_id() != Some(artifact_id) {
+                        return;
                     }
-                    Err(err) => {
-                        view.artifact_preview = ArtifactPreviewState::Error {
-                            artifact_id,
-                            message: err.to_string(),
-                        };
+                    match result {
+                        Ok(bytes) => {
+                            let image = Arc::new(Image::from_bytes(format, bytes));
+                            view.artifact_preview = ArtifactPreviewState::Image { artifact_id, image };
+                        }
+                        Err(err) => {
+                            view.artifact_preview = ArtifactPreviewState::Error {
+                                artifact_id,
+                                message: err.to_string(),
+                            };
+                        }
                     }
-                }
-                cx.notify();
-            })
-            .ok();
+                    cx.notify();
+                })
+                .ok();
+            }
         })
         .detach();
     }

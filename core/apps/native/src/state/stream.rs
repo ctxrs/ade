@@ -2,10 +2,13 @@ use std::time::Duration;
 
 use anyhow::Result;
 use futures_util::{SinkExt, StreamExt};
-use gpui::Context;
+use gpui::{AsyncApp, Context, WeakEntity};
 use gpui_tokio::Tokio;
 use tokio::sync::{mpsc, watch};
-use tokio_tungstenite::{connect_async, tungstenite::Message as WsMessage};
+use tokio_tungstenite::{
+    connect_async,
+    tungstenite::{Message as WsMessage, Utf8Bytes},
+};
 
 use ctx_core::ids::{SessionId, WorkspaceId};
 use ctx_core::models::{
@@ -105,16 +108,19 @@ impl ShellView {
             run_workspace_stream(ws_url, stop_rx, subscribe_rx, update_tx).await
         });
 
-        cx.spawn(|_, _| async move {
+        cx.spawn(move |_: WeakEntity<ShellView>, _: &mut AsyncApp| async move {
             let _ = stream_task.await;
         })
         .detach();
 
-        cx.spawn(|this, cx| async move {
-            while let Some(update) = update_rx.recv().await {
-                let _ = this.update(cx, |view, cx| {
-                    view.handle_stream_update(update, cx);
-                });
+        cx.spawn(move |this: WeakEntity<ShellView>, cx: &mut AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                while let Some(update) = update_rx.recv().await {
+                    let _ = this.update(&mut cx, |view, cx| {
+                        view.handle_stream_update(update, cx);
+                    });
+                }
             }
         })
         .detach();
@@ -341,7 +347,6 @@ async fn run_workspace_stream(
                             }
                         }
                         Some(Err(_)) | None => break,
-                        Some(Ok(_)) => {}
                     }
                 }
             }
@@ -357,8 +362,8 @@ async fn run_workspace_stream(
 
 fn parse_workspace_stream_event(message: WsMessage) -> Option<WorkspaceCatchupEvent> {
     let text = match message {
-        WsMessage::Text(text) => text,
-        WsMessage::Binary(bytes) => String::from_utf8(bytes).ok()?,
+        WsMessage::Text(text) => text.to_string(),
+        WsMessage::Binary(bytes) => String::from_utf8(bytes.to_vec()).ok()?,
         _ => return None,
     };
     serde_json::from_str::<WorkspaceCatchupEvent>(&text).ok()
@@ -373,6 +378,6 @@ where
     S::Error: std::error::Error + Send + Sync + 'static,
 {
     let payload = serde_json::to_string(message)?;
-    sink.send(WsMessage::Text(payload)).await?;
+    sink.send(WsMessage::Text(Utf8Bytes::from(payload))).await?;
     Ok(())
 }
