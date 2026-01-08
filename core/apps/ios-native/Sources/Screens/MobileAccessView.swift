@@ -6,6 +6,10 @@ struct MobileAccessView: View {
     @State private var status: MobileAccessStatus?
     @State private var lastEnableResponse: EnableMobileAccessResponse?
     @State private var supabaseToken = ""
+    @State private var entitlements: EntitlementsSnapshot?
+    @State private var entitlementsLoading = false
+    @State private var entitlementsError: String?
+    @State private var hasSupabaseToken = false
     @State private var isLoadingStatus = false
     @State private var isWorking = false
     @State private var errorMessage: String?
@@ -40,6 +44,12 @@ struct MobileAccessView: View {
                                 }
                             }
 
+                            StatusPillRow(
+                                title: "Entitlement",
+                                value: entitlementLabel,
+                                tint: entitlementTint
+                            )
+
                             if let status {
                                 StatusPillRow(
                                     title: "Mobile access",
@@ -51,8 +61,8 @@ struct MobileAccessView: View {
                                     value: status.tunnelState.rawValue.capitalized,
                                     tint: tint(for: status.tunnelState)
                                 )
-                                StatusValueRow(title: "Public URL", value: status.publicBaseUrl ?? "—")
-                                StatusValueRow(title: "Tunnel ID", value: status.tunnelId ?? "—")
+                                StatusValueRow(title: "Public URL", value: status.publicBaseUrl ?? "-")
+                                StatusValueRow(title: "Tunnel ID", value: status.tunnelId ?? "-")
                                 if let lastError = status.lastError, !lastError.isEmpty {
                                     Text(lastError)
                                         .font(.footnote)
@@ -72,6 +82,20 @@ struct MobileAccessView: View {
                                 Text(errorMessage)
                                     .font(.footnote)
                                     .foregroundColor(.ctxError)
+                            }
+
+                            if entitlementsLoading {
+                                Text("Loading entitlements...")
+                                    .font(.footnote)
+                                    .foregroundColor(.ctxTextMuted)
+                            } else if let entitlementsError {
+                                Text(entitlementsError)
+                                    .font(.footnote)
+                                    .foregroundColor(.ctxError)
+                            } else if !hasSupabaseToken {
+                                Text("Supabase token required to check entitlements.")
+                                    .font(.footnote)
+                                    .foregroundColor(.ctxTextMuted)
                             }
 
                             Button {
@@ -161,11 +185,32 @@ struct MobileAccessView: View {
         .toolbar(.visible, for: .navigationBar)
         .task {
             await loadSupabaseToken()
+            await refreshEntitlements()
             await refreshStatus()
         }
         .onChange(of: connection.isConnected) { _ in
             Task { await refreshStatus() }
         }
+    }
+
+    private var entitlementLabel: String {
+        if entitlementsLoading {
+            return "Loading"
+        }
+        if let entitlements {
+            return entitlements.isFeatureEnabled("remote_mobile_access") ? "Pro enabled" : "Pro required"
+        }
+        return hasSupabaseToken ? "Unknown" : "Sign in required"
+    }
+
+    private var entitlementTint: Color {
+        if entitlementsLoading {
+            return .ctxAccent
+        }
+        if let entitlements {
+            return entitlements.isFeatureEnabled("remote_mobile_access") ? .ctxAccent : .ctxWarning
+        }
+        return .ctxTextMuted
     }
 
     @MainActor
@@ -199,6 +244,7 @@ struct MobileAccessView: View {
             status = response.status
             lastEnableResponse = response
             didCopyPayload = false
+            await refreshEntitlements()
         } catch {
             errorMessage = describeError(error, fallback: "Failed to enable mobile access.")
         }
@@ -219,6 +265,7 @@ struct MobileAccessView: View {
             try await client.disableMobileAccess(supabaseToken: token)
             lastEnableResponse = nil
             await refreshStatus()
+            await refreshEntitlements()
         } catch {
             errorMessage = describeError(error, fallback: "Failed to disable mobile access.")
         }
@@ -230,10 +277,32 @@ struct MobileAccessView: View {
         do {
             if let stored = try await supabaseTokenStore.loadToken() {
                 supabaseToken = stored
+                hasSupabaseToken = !stored.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             }
         } catch {
             tokenMessage = "Failed to load Supabase token."
         }
+    }
+
+    @MainActor
+    private func refreshEntitlements() async {
+        entitlementsError = nil
+        let trimmed = supabaseToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            hasSupabaseToken = false
+            entitlements = nil
+            entitlementsLoading = false
+            return
+        }
+        hasSupabaseToken = true
+        entitlementsLoading = true
+        do {
+            entitlements = try await SupabaseEntitlementsClient.fetchEntitlements(token: trimmed)
+        } catch {
+            entitlements = nil
+            entitlementsError = "Unable to load entitlements."
+        }
+        entitlementsLoading = false
     }
 
     @MainActor

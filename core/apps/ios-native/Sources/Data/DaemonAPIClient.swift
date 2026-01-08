@@ -175,6 +175,14 @@ actor DaemonAPIClient {
         try await request("/api/providers")
     }
 
+    func getSettings() async throws -> PublicSettings {
+        try await request("/api/settings")
+    }
+
+    func updateSettings(_ update: SettingsUpdate) async throws -> PublicSettings {
+        try await request("/api/settings", method: .post, body: update)
+    }
+
     func getDiagnostics() async throws -> Diagnostics {
         try await request("/api/diagnostics")
     }

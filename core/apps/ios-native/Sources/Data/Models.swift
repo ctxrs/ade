@@ -479,6 +479,99 @@ struct EnableMobileAccessResponse: Codable, Sendable {
     let pairingExpiresAt: String
 }
 
+struct EntitlementsSnapshot: Codable, Sendable {
+    enum PlanType: String, Codable, Sendable {
+        case freeLocal = "free_local"
+        case pro
+        case team
+        case enterprise
+    }
+
+    let planType: PlanType
+    let features: [String: String]
+    let expiresAt: String?
+    let graceExpiresAt: String?
+
+    func isFeatureEnabled(_ key: String) -> Bool {
+        features[key] == "enabled"
+    }
+}
+
+struct PublicSettings: Codable, Sendable {
+    let dictation: DictationSettings?
+    let telemetry: TelemetrySettings?
+    let titleGeneration: TitleGenerationSettings?
+    let resourceGovernance: ResourceGovernanceSettings?
+    let providerGuard: ProviderGuardSettings?
+}
+
+struct DictationSettings: Codable, Sendable {
+    let enabled: Bool
+    let provider: String
+    let livekit: LiveKitDictationSettings?
+}
+
+struct LiveKitDictationSettings: Codable, Sendable {
+    let baseUrl: String
+    let apiKey: String
+    let apiSecretSet: Bool?
+    let model: String
+    let language: String
+}
+
+struct TelemetrySettings: Codable, Sendable {
+    let enabled: Bool
+    let endpoint: String
+}
+
+struct TitleGenerationSettings: Codable, Sendable {
+    let baseUrl: String
+    let apiKey: String
+    let model: String
+    let useJson: Bool
+}
+
+struct ResourceGovernanceSettings: Codable, Sendable {
+    let enabled: Bool
+    let mode: String
+    let cpuQuotaPct: Int?
+    let memoryHighMb: Int?
+    let memoryMaxMb: Int?
+    let effective: ResourceGovernanceLimits?
+    let status: ResourceGovernanceStatus?
+}
+
+struct ResourceGovernanceLimits: Codable, Sendable {
+    let cpuQuotaPct: Int
+    let memoryHighMb: Int
+    let memoryMaxMb: Int
+}
+
+struct ResourceGovernanceStatus: Codable, Sendable {
+    let state: String
+    let canApplyNow: Bool
+    let requiresRestart: Bool
+    let message: String?
+}
+
+struct ProviderGuardSettings: Codable, Sendable {
+    let enabled: Bool
+    let mode: String
+    let memoryHighMb: Int?
+    let memoryMaxMb: Int?
+    let intervalMs: Int?
+    let gracePeriodMs: Int?
+}
+
+struct SettingsUpdate: Encodable, Sendable {
+    let telemetry: TelemetrySettingsUpdate?
+}
+
+struct TelemetrySettingsUpdate: Encodable, Sendable {
+    let enabled: Bool
+    let endpoint: String
+}
+
 struct WorkspaceSummary: Codable, Sendable, Identifiable {
     let id: String
     let name: String

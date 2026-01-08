@@ -2,12 +2,34 @@ import SwiftUI
 
 struct SettingsView: View {
     @EnvironmentObject private var connection: ConnectionStore
-    @State private var notificationsEnabled = true
-    @State private var hapticsEnabled = true
-    @State private var analyticsEnabled = false
+    let selectedWorkspace: WorkspaceSummary?
+
+    @State private var settings: PublicSettings?
+    @State private var isLoadingSettings = false
+    @State private var settingsError: String?
+    @State private var telemetryEnabled = true
+    @State private var telemetryReady = false
+    @State private var telemetrySaving = false
+
     @State private var mobileStatus: MobileAccessStatus?
     @State private var isLoadingMobileStatus = false
     @State private var mobileStatusError: String?
+
+    @State private var entitlements: EntitlementsSnapshot?
+    @State private var entitlementsLoading = false
+    @State private var entitlementsError: String?
+    @State private var hasSupabaseToken = false
+    @State private var supabaseEmail: String?
+
+    @State private var providers: [ProviderStatus] = []
+    @State private var isLoadingProviders = false
+    @State private var providersError: String?
+
+    private let supabaseTokenStore = KeychainTokenStore(service: "rs.ctx.mobile", account: "supabaseToken")
+
+    init(selectedWorkspace: WorkspaceSummary? = nil) {
+        self.selectedWorkspace = selectedWorkspace
+    }
 
     var body: some View {
         ZStack {
@@ -23,25 +45,49 @@ struct SettingsView: View {
                             Text("Account")
                                 .font(.headline)
                                 .foregroundColor(.ctxTextPrimary)
-                            SettingsRowView(title: "User", value: "codex@ctx.local")
-                            SettingsRowView(title: "Workspace", value: "Atlas")
-                            SettingsRowView(title: "Plan", value: "Local-first")
+                            SettingsRowView(title: "User", value: userLabel)
+                            SettingsRowView(title: "Workspace", value: workspaceLabel)
+                            SettingsRowView(title: "Plan", value: planLabel)
                         }
+                    }
+
+                    if entitlementsLoading {
+                        Text("Loading entitlements...")
+                            .font(.caption)
+                            .foregroundColor(.ctxTextMuted)
+                    } else if let entitlementsError {
+                        Text(entitlementsError)
+                            .font(.caption)
+                            .foregroundColor(.ctxError)
+                    } else if !hasSupabaseToken {
+                        Text("Add a Supabase token to load entitlements.")
+                            .font(.caption)
+                            .foregroundColor(.ctxTextMuted)
                     }
 
                     GlassPanel {
                         VStack(alignment: .leading, spacing: 16) {
-                            Text("Preferences")
+                            Text("Daemon Settings")
                                 .font(.headline)
                                 .foregroundColor(.ctxTextPrimary)
-                            Toggle("Push notifications", isOn: $notificationsEnabled)
+                            Toggle("Usage analytics", isOn: telemetryBinding)
                                 .tint(.ctxAccent)
-                            Toggle("Haptics", isOn: $hapticsEnabled)
-                                .tint(.ctxAccent)
-                            Toggle("Share anonymous analytics", isOn: $analyticsEnabled)
-                                .tint(.ctxAccent)
+                                .disabled(!telemetryReady || telemetrySaving)
+                            SettingsRowView(title: "Dictation", value: dictationLabel)
+                            SettingsRowView(title: "Title generation", value: titleGenerationLabel)
+                            SettingsRowView(title: "Resource limits", value: resourceGovernanceLabel)
                         }
                         .foregroundColor(.ctxTextSecondary)
+                    }
+
+                    if isLoadingSettings {
+                        Text("Loading daemon settings...")
+                            .font(.caption)
+                            .foregroundColor(.ctxTextMuted)
+                    } else if let settingsError {
+                        Text(settingsError)
+                            .font(.caption)
+                            .foregroundColor(.ctxError)
                     }
 
                     GlassPanel {
@@ -55,8 +101,10 @@ struct SettingsView: View {
                                 SettingsNavigationRowView(
                                     title: "Mobile Access",
                                     subtitle: "Manage remote tunnel access",
-                                    status: mobileStatusLabel,
-                                    statusTint: mobileStatusTint
+                                    statusPills: [
+                                        StatusPill(text: mobileEntitlementLabel, tint: mobileEntitlementTint),
+                                        StatusPill(text: mobileStatusLabel, tint: mobileStatusTint),
+                                    ]
                                 )
                             }
                             .buttonStyle(.plain)
@@ -78,9 +126,22 @@ struct SettingsView: View {
                             Text("Providers")
                                 .font(.headline)
                                 .foregroundColor(.ctxTextPrimary)
-                            ProviderRowView(name: "Codex", detail: "GPT-5 • Connected")
-                            ProviderRowView(name: "Claude", detail: "Idle")
-                            ProviderRowView(name: "Gemini", detail: "Not configured")
+                            if isLoadingProviders {
+                                ProgressView()
+                                    .tint(.ctxAccent)
+                            } else if let providersError {
+                                Text(providersError)
+                                    .font(.caption)
+                                    .foregroundColor(.ctxError)
+                            } else if providers.isEmpty {
+                                Text("No providers detected.")
+                                    .font(.caption)
+                                    .foregroundColor(.ctxTextMuted)
+                            } else {
+                                ForEach(providers, id: \.providerId) { provider in
+                                    ProviderRowView(provider: provider)
+                                }
+                            }
                         }
                     }
                 }
@@ -92,11 +153,86 @@ struct SettingsView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.visible, for: .navigationBar)
         .task {
-            await refreshMobileStatus()
+            await refreshAll()
+        }
+        .onAppear {
+            Task {
+                await refreshMobileStatus()
+                await refreshEntitlements()
+            }
         }
         .onChange(of: connection.isConnected) { _ in
-            Task { await refreshMobileStatus() }
+            Task { await refreshAll() }
         }
+    }
+
+    private var userLabel: String {
+        if let email = supabaseEmail, !email.isEmpty {
+            return email
+        }
+        return hasSupabaseToken ? "Signed in" : "Not signed in"
+    }
+
+    private var workspaceLabel: String {
+        selectedWorkspace?.name ?? "No workspace"
+    }
+
+    private var planLabel: String {
+        if entitlementsLoading {
+            return "Loading"
+        }
+        if let entitlements {
+            return planLabel(for: entitlements.planType)
+        }
+        return hasSupabaseToken ? "Unknown" : "Sign in required"
+    }
+
+    private var dictationLabel: String {
+        guard let dictation = settings?.dictation else {
+            return settingsFallbackLabel
+        }
+        if !dictation.enabled {
+            return "Disabled"
+        }
+        let provider = dictation.provider
+            .replacingOccurrences(of: "_", with: " ")
+            .capitalized
+        return provider.isEmpty ? "Enabled" : "Enabled - \(provider)"
+    }
+
+    private var titleGenerationLabel: String {
+        guard let titleGeneration = settings?.titleGeneration else {
+            return settingsFallbackLabel
+        }
+        if titleGeneration.apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "Missing API key"
+        }
+        return titleGeneration.model.isEmpty ? "Configured" : "Configured - \(titleGeneration.model)"
+    }
+
+    private var resourceGovernanceLabel: String {
+        guard let resourceGovernance = settings?.resourceGovernance else {
+            return settingsFallbackLabel
+        }
+        if !resourceGovernance.enabled {
+            return "Disabled"
+        }
+        let mode = resourceGovernance.mode.capitalized
+        if let state = resourceGovernance.status?.state {
+            let formatted = state.replacingOccurrences(of: "_", with: " ").capitalized
+            return "\(mode) - \(formatted)"
+        }
+        return mode.isEmpty ? "Enabled" : mode
+    }
+
+    private var settingsFallbackLabel: String {
+        if connection.apiClient == nil {
+            return "Disconnected"
+        }
+        if isLoadingSettings {
+            return "Loading"
+        }
+        return "Unavailable"
     }
 
     private var mobileStatusLabel: String {
@@ -122,6 +258,118 @@ struct SettingsView: View {
         return .ctxTextMuted
     }
 
+    private var mobileEntitlementLabel: String {
+        if entitlementsLoading {
+            return "Loading"
+        }
+        if let entitlements {
+            return entitlements.isFeatureEnabled("remote_mobile_access") ? "Pro enabled" : "Pro required"
+        }
+        return hasSupabaseToken ? "Unknown" : "Sign in required"
+    }
+
+    private var mobileEntitlementTint: Color {
+        if entitlementsLoading {
+            return .ctxAccent
+        }
+        if let entitlements {
+            return entitlements.isFeatureEnabled("remote_mobile_access") ? .ctxAccent : .ctxWarning
+        }
+        return .ctxTextMuted
+    }
+
+    private func planLabel(for plan: EntitlementsSnapshot.PlanType) -> String {
+        switch plan {
+        case .freeLocal:
+            return "Free/Local"
+        case .pro:
+            return "Pro"
+        case .team:
+            return "Team"
+        case .enterprise:
+            return "Enterprise"
+        }
+    }
+
+    private var telemetryBinding: Binding<Bool> {
+        Binding(
+            get: { telemetryEnabled },
+            set: { newValue in
+                telemetryEnabled = newValue
+                guard telemetryReady, !telemetrySaving, !isLoadingSettings else { return }
+                Task { await updateTelemetry(enabled: newValue) }
+            }
+        )
+    }
+
+    @MainActor
+    private func refreshAll() async {
+        await refreshSettings()
+        await refreshProviders()
+        await refreshMobileStatus()
+        await refreshEntitlements()
+    }
+
+    @MainActor
+    private func refreshSettings() async {
+        guard let client = connection.apiClient else {
+            settings = nil
+            settingsError = nil
+            telemetryReady = false
+            return
+        }
+        isLoadingSettings = true
+        settingsError = nil
+        do {
+            let next = try await client.getSettings()
+            settings = next
+            telemetryEnabled = next.telemetry?.enabled ?? true
+            telemetryReady = true
+        } catch {
+            settings = nil
+            telemetryReady = false
+            settingsError = "Unable to load settings."
+        }
+        isLoadingSettings = false
+    }
+
+    @MainActor
+    @MainActor
+    private func updateTelemetry(enabled: Bool) async {
+        guard let client = connection.apiClient else { return }
+        guard let telemetry = settings?.telemetry else { return }
+        settingsError = nil
+        telemetrySaving = true
+        let update = SettingsUpdate(telemetry: TelemetrySettingsUpdate(enabled: enabled, endpoint: telemetry.endpoint))
+        do {
+            let next = try await client.updateSettings(update)
+            settings = next
+            telemetryEnabled = next.telemetry?.enabled ?? enabled
+        } catch {
+            settingsError = "Unable to update telemetry settings."
+            telemetryEnabled = settings?.telemetry?.enabled ?? enabled
+        }
+        telemetrySaving = false
+    }
+
+    @MainActor
+    private func refreshProviders() async {
+        guard let client = connection.apiClient else {
+            providers = []
+            providersError = nil
+            return
+        }
+        isLoadingProviders = true
+        providersError = nil
+        do {
+            providers = try await client.listProviders()
+        } catch {
+            providers = []
+            providersError = "Unable to load providers."
+        }
+        isLoadingProviders = false
+    }
+
     @MainActor
     private func refreshMobileStatus() async {
         guard let client = connection.apiClient else {
@@ -138,6 +386,48 @@ struct SettingsView: View {
         }
         isLoadingMobileStatus = false
     }
+
+    @MainActor
+    private func refreshEntitlements() async {
+        entitlementsError = nil
+        let token: String?
+        do {
+            token = try await supabaseTokenStore.loadToken()
+        } catch {
+            hasSupabaseToken = false
+            entitlements = nil
+            supabaseEmail = nil
+            entitlementsError = "Failed to load Supabase token."
+            entitlementsLoading = false
+            return
+        }
+        guard let token else {
+            hasSupabaseToken = false
+            entitlements = nil
+            supabaseEmail = nil
+            entitlementsLoading = false
+            return
+        }
+        let trimmed = token.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            hasSupabaseToken = false
+            entitlements = nil
+            supabaseEmail = nil
+            entitlementsLoading = false
+            return
+        }
+        hasSupabaseToken = true
+        let tokenInfo = SupabaseEntitlementsClient.tokenInfo(from: trimmed)
+        supabaseEmail = tokenInfo?.email
+        entitlementsLoading = true
+        do {
+            entitlements = try await SupabaseEntitlementsClient.fetchEntitlements(token: trimmed)
+        } catch {
+            entitlements = nil
+            entitlementsError = "Unable to load entitlements."
+        }
+        entitlementsLoading = false
+    }
 }
 
 private struct SettingsRowView: View {
@@ -151,6 +441,7 @@ private struct SettingsRowView: View {
             Spacer()
             Text(value)
                 .foregroundColor(.ctxTextPrimary)
+                .multilineTextAlignment(.trailing)
         }
         .font(.subheadline)
         .padding(12)
@@ -163,25 +454,22 @@ private struct SettingsRowView: View {
 }
 
 private struct ProviderRowView: View {
-    let name: String
-    let detail: String
+    let provider: ProviderStatus
 
     var body: some View {
         HStack(spacing: 12) {
             Image(systemName: "bolt.circle")
                 .foregroundColor(.ctxAccent)
             VStack(alignment: .leading, spacing: 4) {
-                Text(name)
+                Text(displayName)
                     .font(.subheadline.weight(.semibold))
                     .foregroundColor(.ctxTextPrimary)
-                Text(detail)
+                Text(detailText)
                     .font(.caption)
                     .foregroundColor(.ctxTextMuted)
             }
             Spacer()
-            Image(systemName: "chevron.right")
-                .foregroundColor(.ctxTextSecondary)
-                .font(.caption)
+            GlassPill(text: healthLabel, tint: healthTint)
         }
         .padding(12)
         .background(Color.ctxSurface.opacity(0.6), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
@@ -190,13 +478,49 @@ private struct ProviderRowView: View {
                 .stroke(Color.ctxLine, lineWidth: 1)
         )
     }
+
+    private var displayName: String {
+        provider.providerId.replacingOccurrences(of: "_", with: " ").capitalized
+    }
+
+    private var detailText: String {
+        if provider.installed == false {
+            return "Not installed"
+        }
+        if let version = provider.version, !version.isEmpty {
+            return version
+        }
+        if let path = provider.detectedPath, !path.isEmpty {
+            return path
+        }
+        return "Installed"
+    }
+
+    private var healthLabel: String {
+        provider.health.replacingOccurrences(of: "_", with: " ").capitalized
+    }
+
+    private var healthTint: Color {
+        let health = provider.health.lowercased()
+        if health == "ok" || health == "healthy" {
+            return .ctxAccent
+        }
+        if health == "warning" || health == "unsupported version" || health == "unsupported_version" || health == "degraded" {
+            return .ctxWarning
+        }
+        return .ctxError
+    }
+}
+
+private struct StatusPill {
+    let text: String
+    let tint: Color
 }
 
 private struct SettingsNavigationRowView: View {
     let title: String
     let subtitle: String
-    let status: String
-    let statusTint: Color
+    let statusPills: [StatusPill]
 
     var body: some View {
         HStack(spacing: 12) {
@@ -211,7 +535,12 @@ private struct SettingsNavigationRowView: View {
                     .foregroundColor(.ctxTextMuted)
             }
             Spacer()
-            GlassPill(text: status, tint: statusTint)
+            HStack(spacing: 6) {
+                ForEach(statusPills.indices, id: \.self) { index in
+                    let pill = statusPills[index]
+                    GlassPill(text: pill.text, tint: pill.tint)
+                }
+            }
             Image(systemName: "chevron.right")
                 .foregroundColor(.ctxTextSecondary)
                 .font(.caption)
