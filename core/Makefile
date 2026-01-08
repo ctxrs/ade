@@ -1,4 +1,4 @@
-.PHONY: test dev web supabase-local supabase-functions
+.PHONY: test dev web supabase-local supabase-functions dev-preflight
 
 CARGO_TARGET_DIR ?= $(HOME)/.cache/cargo/ctx-monorepo
 CTX_MCP_COMMAND ?= $(CARGO_TARGET_DIR)/debug/ctx-mcp
@@ -7,6 +7,7 @@ CTX_DAEMON_BIND ?= 127.0.0.1:$(CTX_DAEMON_PORT)
 CTX_DATA_DIR ?=
 CTX_DAEMON_UNIT ?= ctx-daemon-$(CTX_DAEMON_PORT)
 CTX_DAEMON_STOP ?= 0
+CTX_DAEMON_DATA_DIR ?= $(if $(CTX_DATA_DIR),$(CTX_DATA_DIR),$(HOME)/.ctx)
 SUPABASE_LOCAL ?= 1
 SUPABASE_FUNCTIONS ?= 1
 SUPABASE_FUNCTIONS_BG ?= 1
@@ -33,7 +34,7 @@ ifeq ($(SUPABASE_FUNCTIONS),1)
 	@../scripts/supabase_local_functions.sh $(if $(filter 1,$(SUPABASE_FUNCTIONS_BG)),--background,)
 endif
 
-dev: supabase-local supabase-functions
+dev: dev-preflight supabase-local supabase-functions
 	cargo build -p ctx-mcp
 ifeq ($(shell uname -s),Linux)
 	@if command -v systemd-run >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then \
@@ -50,6 +51,37 @@ ifeq ($(shell uname -s),Linux)
 else
 	CTX_MCP_COMMAND=$(CTX_MCP_COMMAND) cargo run -p ctx-http --bin ctx -- serve --bind $(CTX_DAEMON_BIND) $(if $(CTX_DATA_DIR),--data-dir $(CTX_DATA_DIR),)
 endif
+
+dev-preflight:
+	@if [ "$(CTX_DAEMON_STOP)" = "1" ]; then \
+		exit 0; \
+	fi; \
+	port="$(CTX_DAEMON_PORT)"; \
+	data_dir="$(CTX_DAEMON_DATA_DIR)"; \
+	port_in_use=0; \
+	if command -v lsof >/dev/null 2>&1; then \
+		if lsof -nP -iTCP:"$$port" -sTCP:LISTEN >/dev/null 2>&1; then port_in_use=1; fi; \
+	elif command -v ss >/dev/null 2>&1; then \
+		if ss -ltn "sport = :$$port" | tail -n +2 | grep -q .; then port_in_use=1; fi; \
+	elif command -v netstat >/dev/null 2>&1; then \
+		if netstat -ltn 2>/dev/null | awk '{print $$4}' | grep -q ":$$port$$"; then port_in_use=1; fi; \
+	fi; \
+	lock_path="$$data_dir/daemon.lock"; \
+	lock_exists=0; \
+	if [ -e "$$lock_path" ]; then lock_exists=1; fi; \
+	if [ "$$port_in_use" = "1" ] || [ "$$lock_exists" = "1" ]; then \
+		echo "error: ctx daemon preflight failed." >&2; \
+		if [ "$$port_in_use" = "1" ]; then \
+			echo "  Port $$port is already in use." >&2; \
+		fi; \
+		if [ "$$lock_exists" = "1" ]; then \
+			echo "  Data dir appears in use: $$data_dir (found daemon.lock)." >&2; \
+		fi; \
+		echo "hint: run another daemon with a different port + data dir:" >&2; \
+		echo "  CTX_DAEMON_PORT=4401 CTX_DATA_DIR=/tmp/ctx-dev-4401 make dev" >&2; \
+		echo "hint: or set CTX_DAEMON_STOP=1 to stop the existing daemon first." >&2; \
+		exit 1; \
+	fi
 
 web: supabase-local supabase-functions
 ifeq ($(SUPABASE_PROD),1)
