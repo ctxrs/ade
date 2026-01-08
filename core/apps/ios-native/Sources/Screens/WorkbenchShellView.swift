@@ -39,6 +39,7 @@ struct WorkbenchShellView: View {
 
                 WorkbenchDrawerView(
                     workspaces: workspaces,
+                    selectedWorkspace: selectedWorkspace,
                     selectedWorkspaceId: selectedWorkspace?.id,
                     isLoadingWorkspaces: isLoadingWorkspaces,
                     workspaceError: workspaceError,
@@ -180,6 +181,7 @@ private struct WorkbenchTopBar: View {
 
 private struct WorkbenchDrawerView: View {
     let workspaces: [WorkspaceSummary]
+    let selectedWorkspace: WorkspaceSummary?
     let selectedWorkspaceId: String?
     let isLoadingWorkspaces: Bool
     let workspaceError: String?
@@ -246,7 +248,7 @@ private struct WorkbenchDrawerView: View {
                         .font(.caption.weight(.semibold))
                         .foregroundColor(.ctxTextMuted)
                     NavigationLink {
-                        SettingsView()
+                        SettingsView(selectedWorkspace: selectedWorkspace)
                     } label: {
                         DrawerLinkRowView(title: "Settings", icon: "gearshape")
                     }
