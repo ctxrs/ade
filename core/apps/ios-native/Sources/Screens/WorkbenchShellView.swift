@@ -23,6 +23,8 @@ struct WorkbenchShellView: View {
                     workspaceName: workspaceName,
                     workspaceDetail: workspaceDetail,
                     selectedWorkspace: selectedWorkspace,
+                    isLoadingWorkspaces: isLoadingWorkspaces,
+                    workspaceError: workspaceError,
                     topInset: topInset
                 )
                 .blur(radius: isDrawerOpen ? 8 : 0)
@@ -99,6 +101,8 @@ private struct WorkbenchHomeView: View {
     let workspaceName: String
     let workspaceDetail: String
     let selectedWorkspace: WorkspaceSummary?
+    let isLoadingWorkspaces: Bool
+    let workspaceError: String?
     let topInset: CGFloat
 
     var body: some View {
@@ -112,7 +116,11 @@ private struct WorkbenchHomeView: View {
             .padding(.horizontal, 20)
             .padding(.top, topInset + 8)
 
-            WorkbenchNavigationFlowView(selectedWorkspace: selectedWorkspace)
+            WorkbenchNavigationFlowView(
+                selectedWorkspace: selectedWorkspace,
+                isLoadingWorkspaces: isLoadingWorkspaces,
+                workspaceError: workspaceError
+            )
                 .padding(.top, 8)
         }
     }
@@ -161,83 +169,83 @@ private struct WorkbenchDrawerView: View {
     let onSelectWorkspace: (WorkspaceSummary) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            HStack {
-                Text("ctx")
-                    .font(.title2.weight(.semibold))
-                    .foregroundColor(.ctxTextPrimary)
-                Spacer()
-                Button(action: onClose) {
-                    Image(systemName: "xmark")
-                        .font(.headline)
-                }
-                .foregroundColor(.ctxTextSecondary)
-            }
-
-            VStack(alignment: .leading, spacing: 12) {
+        ScrollView(showsIndicators: false) {
+            VStack(alignment: .leading, spacing: 20) {
                 HStack {
-                    Text("Workspaces")
+                    Text("ctx")
+                        .font(.title2.weight(.semibold))
+                        .foregroundColor(.ctxTextPrimary)
+                    Spacer()
+                    Button(action: onClose) {
+                        Image(systemName: "xmark")
+                            .font(.headline)
+                    }
+                    .foregroundColor(.ctxTextSecondary)
+                }
+
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        Text("Workspaces")
+                            .font(.caption.weight(.semibold))
+                            .foregroundColor(.ctxTextMuted)
+                        Spacer()
+                        Button(action: onRefresh) {
+                            Image(systemName: "arrow.clockwise")
+                                .foregroundColor(.ctxTextSecondary)
+                                .font(.caption)
+                        }
+                    }
+                    if isLoadingWorkspaces {
+                        ProgressView()
+                            .tint(.ctxAccent)
+                    } else if let workspaceError {
+                        Text(workspaceError)
+                            .font(.caption)
+                            .foregroundColor(.ctxError)
+                    } else if workspaces.isEmpty {
+                        Text("No workspaces connected yet.")
+                            .font(.caption)
+                            .foregroundColor(.ctxTextMuted)
+                    } else {
+                        ForEach(workspaces) { workspace in
+                            Button {
+                                onSelectWorkspace(workspace)
+                            } label: {
+                                DrawerWorkspaceRowView(
+                                    workspace: workspace,
+                                    isSelected: workspace.id == selectedWorkspaceId
+                                )
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Shortcuts")
                         .font(.caption.weight(.semibold))
                         .foregroundColor(.ctxTextMuted)
+                    NavigationLink {
+                        SettingsView()
+                    } label: {
+                        DrawerLinkRowView(title: "Settings", icon: "gearshape")
+                    }
+                    NavigationLink {
+                        DiagnosticsView()
+                    } label: {
+                        DrawerLinkRowView(title: "Diagnostics", icon: "waveform.path.ecg")
+                    }
+                }
+
+                HStack(spacing: 12) {
+                    GlassPill(text: "Daemon healthy", tint: .ctxAccent)
                     Spacer()
-                    Button(action: onRefresh) {
-                        Image(systemName: "arrow.clockwise")
-                            .foregroundColor(.ctxTextSecondary)
-                            .font(.caption)
-                    }
-                }
-                if isLoadingWorkspaces {
-                    ProgressView()
-                        .tint(.ctxAccent)
-                } else if let workspaceError {
-                    Text(workspaceError)
-                        .font(.caption)
-                        .foregroundColor(.ctxError)
-                } else if workspaces.isEmpty {
-                    Text("No workspaces connected yet.")
-                        .font(.caption)
-                        .foregroundColor(.ctxTextMuted)
-                } else {
-                    ForEach(workspaces) { workspace in
-                        Button {
-                            onSelectWorkspace(workspace)
-                        } label: {
-                            DrawerWorkspaceRowView(
-                                workspace: workspace,
-                                isSelected: workspace.id == selectedWorkspaceId
-                            )
-                        }
-                        .buttonStyle(.plain)
-                    }
+                    Image(systemName: "antenna.radiowaves.left.and.right")
+                        .foregroundColor(.ctxTextSecondary)
                 }
             }
-
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Shortcuts")
-                    .font(.caption.weight(.semibold))
-                    .foregroundColor(.ctxTextMuted)
-                NavigationLink {
-                    SettingsView()
-                } label: {
-                    DrawerLinkRowView(title: "Settings", icon: "gearshape")
-                }
-                NavigationLink {
-                    DiagnosticsView()
-                } label: {
-                    DrawerLinkRowView(title: "Diagnostics", icon: "waveform.path.ecg")
-                }
-            }
-
-            Spacer()
-
-            HStack(spacing: 12) {
-                GlassPill(text: "Daemon healthy", tint: .ctxAccent)
-                Spacer()
-                Image(systemName: "antenna.radiowaves.left.and.right")
-                    .foregroundColor(.ctxTextSecondary)
-            }
+            .padding(20)
         }
-        .padding(20)
         .frame(width: drawerWidth)
         .frame(maxHeight: .infinity, alignment: .top)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
@@ -279,9 +287,23 @@ private struct DrawerLinkRowView: View {
 
 private struct WorkbenchNavigationFlowView: View {
     let selectedWorkspace: WorkspaceSummary?
+    let isLoadingWorkspaces: Bool
+    let workspaceError: String?
 
     var body: some View {
-        if let workspace = selectedWorkspace {
+        if isLoadingWorkspaces {
+            VStack(spacing: 12) {
+                ProgressView()
+                    .tint(.ctxAccent)
+                Text("Loading workspaces...")
+                    .font(.footnote)
+                    .foregroundColor(.ctxTextMuted)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if let workspaceError {
+            WorkbenchInfoCard(text: workspaceError, tint: .ctxError)
+                .padding(.horizontal, 20)
+        } else if let workspace = selectedWorkspace {
             NavigationStack {
                 TaskListView(workspace: workspace)
             }
@@ -314,6 +336,10 @@ private struct TaskListView: View {
         }
         .task(id: workspace.id) {
             await loadTasks()
+        }
+        .onChange(of: connection.isConnected) { connected in
+            guard connected else { return }
+            Task { await loadTasks() }
         }
     }
 
@@ -386,6 +412,10 @@ private struct TrackListView: View {
         .task(id: task.id) {
             await loadTracks()
         }
+        .onChange(of: connection.isConnected) { connected in
+            guard connected else { return }
+            Task { await loadTracks() }
+        }
     }
 
     @ViewBuilder
@@ -456,6 +486,10 @@ private struct SessionListView: View {
         }
         .task(id: track.id) {
             await loadSessions()
+        }
+        .onChange(of: connection.isConnected) { connected in
+            guard connected else { return }
+            Task { await loadSessions() }
         }
     }
 
