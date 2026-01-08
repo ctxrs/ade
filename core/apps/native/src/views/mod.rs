@@ -7,6 +7,7 @@ use ctx_core::models::Artifact;
 
 use crate::theme::ThemeColors;
 
+use super::icons::{Icon, IconName};
 use super::models::{artifact_label, session_event_type_label, MessageItem, SessionInfo};
 use super::state::{DataLoadState, ProviderItem, ShellView, WorkspaceItem};
 use super::workspace_summary::{SessionSummaryItem, TaskSummaryItem, TaskSummaryStatus};
@@ -73,7 +74,18 @@ impl<'a> WorkspaceListView<'a> {
                     .justify_between()
                     .text_sm()
                     .text_color(self.colors.muted)
-                    .child("Workspaces")
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_1()
+                            .child(Icon::new(
+                                IconName::Refresh,
+                                12.0,
+                                self.colors.muted,
+                            ))
+                            .child("Workspaces"),
+                    )
                     .child(format!("{}", self.workspaces.len())),
             )
             .child(div().h(px(8.0)))
@@ -553,7 +565,18 @@ impl<'a> ArtifactsView<'a> {
                     .justify_between()
                     .text_sm()
                     .text_color(self.colors.muted)
-                    .child("Artifacts")
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_1()
+                            .child(Icon::new(
+                                IconName::Artifact,
+                                12.0,
+                                self.colors.muted,
+                            ))
+                            .child("Artifacts"),
+                    )
                     .child(format!("{}", self.artifacts.len())),
             )
             .child(div().h(px(8.0)))
@@ -623,6 +646,18 @@ impl<'a> ComposerView<'a> {
             .on_key_down(cx.listener(ShellView::on_composer_key_down))
             .child(input_text);
 
+        let send_color = if self.can_send {
+            self.colors.text
+        } else {
+            self.colors.muted
+        };
+        let send_label = div()
+            .flex()
+            .items_center()
+            .gap_1()
+            .child(Icon::new(IconName::Send, 14.0, send_color))
+            .child("Send");
+
         let mut send_button = div()
             .px_3()
             .py_1()
@@ -630,7 +665,7 @@ impl<'a> ComposerView<'a> {
             .border_1()
             .border_color(self.colors.border)
             .rounded_sm()
-            .child("Send");
+            .child(send_label);
 
         if self.can_send {
             send_button = send_button
@@ -732,6 +767,21 @@ impl<'a> SessionView<'a> {
             .and_then(|index| self.sessions.get(index))
             .is_some();
         let can_send = has_session && !self.composer_text.trim().is_empty();
+        let interrupt_color = if has_session {
+            self.colors.text
+        } else {
+            self.colors.muted
+        };
+        let interrupt_label = div()
+            .flex()
+            .items_center()
+            .gap_1()
+            .child(Icon::new(
+                IconName::Interrupt,
+                12.0,
+                interrupt_color,
+            ))
+            .child("Interrupt");
         let mut interrupt_button = div()
             .px_2()
             .py_1()
@@ -739,7 +789,7 @@ impl<'a> SessionView<'a> {
             .border_1()
             .border_color(self.colors.border)
             .rounded_sm()
-            .child("Interrupt");
+            .child(interrupt_label);
 
         if has_session {
             interrupt_button = interrupt_button
@@ -753,6 +803,17 @@ impl<'a> SessionView<'a> {
                 .text_color(self.colors.muted);
         }
 
+        let cancel_color = if has_session {
+            self.colors.warning
+        } else {
+            self.colors.muted
+        };
+        let cancel_label = div()
+            .flex()
+            .items_center()
+            .gap_1()
+            .child(Icon::new(IconName::Cancel, 12.0, cancel_color))
+            .child("Cancel");
         let mut cancel_button = div()
             .px_2()
             .py_1()
@@ -760,7 +821,7 @@ impl<'a> SessionView<'a> {
             .border_1()
             .border_color(self.colors.border)
             .rounded_sm()
-            .child("Cancel");
+            .child(cancel_label);
 
         if has_session {
             cancel_button = cancel_button
