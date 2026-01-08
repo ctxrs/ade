@@ -1,4 +1,6 @@
 use std::collections::{HashMap, HashSet};
+#[cfg(target_os = "macos")]
+use std::os::unix::process::CommandExt;
 #[cfg(unix)]
 use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
@@ -17,6 +19,20 @@ use tokio::sync::{mpsc, oneshot, Mutex, RwLock};
 use tokio::time::timeout;
 
 use ctx_core::models::SessionEventType;
+#[cfg(target_os = "windows")]
+use windows_sys::Win32::Foundation::CloseHandle;
+#[cfg(target_os = "windows")]
+use windows_sys::Win32::System::JobObjects::{
+    AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+    SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+    JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, JOB_OBJECT_LIMIT_PROCESS_MEMORY,
+};
+#[cfg(target_os = "windows")]
+use windows_sys::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
+#[cfg(target_os = "windows")]
+use windows_sys::Win32::System::Threading::{
+    OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SET_QUOTA, PROCESS_TERMINATE,
+};
 
 use crate::ask_user_question::{
     AskUserQuestionAnswer, AskUserQuestionBroker, AskUserQuestionOutcome,
@@ -48,12 +64,11 @@ pub struct AcpAgentConfig {
     pub args: Vec<String>,
 }
 
+const ACP_MEMORY_MAX_FRACTION: f64 = 0.9;
+const ACP_MEMORY_MIN_MB: u64 = 256;
+
 #[cfg(target_os = "linux")]
 const SYSTEMD_TIMEOUT: Duration = Duration::from_secs(3);
-#[cfg(target_os = "linux")]
-const ACP_MEMORY_MAX_FRACTION: f64 = 0.9;
-#[cfg(target_os = "linux")]
-const ACP_MEMORY_MIN_MB: u64 = 256;
 
 #[derive(Debug, Default)]
 struct StreamState {
@@ -449,6 +464,8 @@ impl AcpSessionPool {
 struct AcpProcess {
     agent: AcpAgentConfig,
     child: Mutex<Child>,
+    #[cfg(target_os = "windows")]
+    job: Option<std::os::windows::io::OwnedHandle>,
     write_tx: mpsc::UnboundedSender<String>,
     log_path: Option<PathBuf>,
     log_tx: Option<mpsc::UnboundedSender<String>>,
@@ -555,12 +572,38 @@ impl AcpProcess {
             cmd.env(k, v);
         }
 
+        #[cfg(target_os = "macos")]
+        if let Some(max_bytes) = acp_memory_max_bytes_macos() {
+            cmd.pre_exec(move || {
+                let limit = libc::rlimit {
+                    rlim_cur: max_bytes as libc::rlim_t,
+                    rlim_max: max_bytes as libc::rlim_t,
+                };
+                unsafe {
+                    libc::setrlimit(libc::RLIMIT_AS, &limit);
+                }
+                Ok(())
+            });
+        }
+
         let mut child = cmd.spawn().with_context(|| {
             format!(
                 "spawning ACP agent {} ({})",
                 agent.provider_id, agent.command
             )
         })?;
+
+        #[cfg(target_os = "windows")]
+        let job = match attach_acp_job(&agent.provider_id, child.id().unwrap_or(0)) {
+            Ok(handle) => handle,
+            Err(err) => {
+                tracing::warn!(
+                    provider_id = %agent.provider_id,
+                    "failed to attach ACP process to job object: {err:#}"
+                );
+                None
+            }
+        };
 
         #[cfg(target_os = "linux")]
         if let Some(pid) = child.id() {
@@ -605,6 +648,8 @@ impl AcpProcess {
         let process = Arc::new(Self {
             agent,
             child: Mutex::new(child),
+            #[cfg(target_os = "windows")]
+            job,
             write_tx,
             log_path,
             log_tx,
@@ -1224,6 +1269,29 @@ impl AcpProcess {
     }
 }
 
+#[cfg(target_os = "macos")]
+fn acp_memory_max_bytes_macos() -> Option<u64> {
+    let mut value: u64 = 0;
+    let mut size = std::mem::size_of::<u64>();
+    let name = std::ffi::CString::new("hw.memsize").ok()?;
+    let res = unsafe {
+        libc::sysctlbyname(
+            name.as_ptr(),
+            &mut value as *mut _ as *mut libc::c_void,
+            &mut size,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if res != 0 || value == 0 {
+        return None;
+    }
+    let mut max_bytes = ((value as f64) * ACP_MEMORY_MAX_FRACTION).round() as u64;
+    let min_bytes = ACP_MEMORY_MIN_MB * 1024 * 1024;
+    max_bytes = max_bytes.max(min_bytes).min(value);
+    Some(max_bytes)
+}
+
 #[cfg(target_os = "linux")]
 fn sanitize_unit_component(input: &str) -> String {
     let mut out = String::with_capacity(input.len());
@@ -1265,6 +1333,81 @@ fn acp_memory_max_mb() -> Option<u64> {
         }
     }
     None
+}
+
+#[cfg(target_os = "windows")]
+fn acp_memory_max_bytes_windows() -> Option<u64> {
+    let mut status: MEMORYSTATUSEX = unsafe { std::mem::zeroed() };
+    status.dwLength = std::mem::size_of::<MEMORYSTATUSEX>() as u32;
+    let ok = unsafe { GlobalMemoryStatusEx(&mut status) };
+    if ok == 0 || status.ullTotalPhys == 0 {
+        return None;
+    }
+    let total = status.ullTotalPhys;
+    let mut max_bytes = ((total as f64) * ACP_MEMORY_MAX_FRACTION).round() as u64;
+    let min_bytes = ACP_MEMORY_MIN_MB * 1024 * 1024;
+    max_bytes = max_bytes.max(min_bytes).min(total);
+    Some(max_bytes)
+}
+
+#[cfg(target_os = "windows")]
+fn attach_acp_job(
+    provider_id: &str,
+    pid: u32,
+) -> Result<Option<std::os::windows::io::OwnedHandle>> {
+    let Some(max_bytes) = acp_memory_max_bytes_windows() else {
+        return Ok(None);
+    };
+
+    let job = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
+    if job == 0 {
+        anyhow::bail!("CreateJobObjectW failed");
+    }
+
+    let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
+    info.BasicLimitInformation.LimitFlags =
+        JOB_OBJECT_LIMIT_PROCESS_MEMORY | JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    info.ProcessMemoryLimit = max_bytes as usize;
+    let set_ok = unsafe {
+        SetInformationJobObject(
+            job,
+            JobObjectExtendedLimitInformation,
+            &mut info as *mut _ as *mut _,
+            std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+        )
+    };
+    if set_ok == 0 {
+        unsafe { CloseHandle(job) };
+        anyhow::bail!("SetInformationJobObject failed");
+    }
+
+    let process = unsafe {
+        OpenProcess(
+            PROCESS_SET_QUOTA | PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION,
+            0,
+            pid,
+        )
+    };
+    if process == 0 {
+        unsafe { CloseHandle(job) };
+        anyhow::bail!("OpenProcess failed for pid {pid}");
+    }
+
+    let assign_ok = unsafe { AssignProcessToJobObject(job, process) };
+    unsafe { CloseHandle(process) };
+    if assign_ok == 0 {
+        unsafe { CloseHandle(job) };
+        anyhow::bail!("AssignProcessToJobObject failed");
+    }
+
+    let owned = unsafe { std::os::windows::io::OwnedHandle::from_raw_handle(job as *mut _) };
+    tracing::debug!(
+        provider_id = %provider_id,
+        pid,
+        max_bytes,
+        "attached ACP process to job object"
+    );
+    Ok(Some(owned))
 }
 
 #[cfg(target_os = "linux")]

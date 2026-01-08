@@ -21,5 +21,11 @@ base64 = "0.22"
 tempfile = "3"
 rand = "0.8"
 
+[target.'cfg(target_os = "macos")'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_JobObjects", "Win32_System_SystemInformation", "Win32_System_Threading"] }
+
 [features]
 fuzz_tests = []
