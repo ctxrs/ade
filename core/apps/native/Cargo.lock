@@ -1520,12 +1520,14 @@ dependencies = [
  "chrono",
  "ctx-core",
  "ctx-events",
+ "libc",
  "serde",
  "serde_json",
  "tokio",
  "tracing",
  "uuid",
  "which 7.0.3",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
