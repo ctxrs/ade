@@ -160,7 +160,8 @@ pub(crate) fn merge_turn_tool_groups(groups: &mut Vec<TurnToolGroup>, turn_tools
 }
 
 pub(crate) fn tool_status_tone(status: &str) -> ToolStatusTone {
-    match normalize_tool_status(status, None).as_str() {
+    let normalized = normalize_tool_status(status, None);
+    match normalized.as_str() {
         "pending" => ToolStatusTone::Pending,
         "in_progress" => ToolStatusTone::Running,
         "completed" => ToolStatusTone::Success,
@@ -493,7 +494,8 @@ fn extract_tool_output_text(update: &Value) -> Option<String> {
 }
 
 fn normalize_tool_status(status: &str, event_type: Option<&SessionEventType>) -> String {
-    let normalized = match status.trim().to_ascii_lowercase().as_str() {
+    let lowercased = status.trim().to_ascii_lowercase();
+    let normalized = match lowercased.as_str() {
         "inprogress" | "in_progress" | "running" => "in_progress",
         "pending" | "queued" => "pending",
         "completed" | "complete" | "ok" | "succeeded" => "completed",

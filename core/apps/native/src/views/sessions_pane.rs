@@ -381,7 +381,7 @@ fn maybe_refresh_web_sessions(cx: &mut Context<ShellView>) {
         Ok(sessions)
     });
 
-    cx.spawn(|this, cx| async move {
+    cx.spawn::<_, ()>(|this: gpui::WeakEntity<ShellView>, cx: &mut gpui::AsyncApp| async move {
         let result = task.await;
         if let Ok(mut state) = web_sessions_state().lock() {
             state.loading = false;

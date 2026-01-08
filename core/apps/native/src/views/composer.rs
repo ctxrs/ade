@@ -305,7 +305,7 @@ impl<'a> ComposerView<'a> {
                 div()
                     .text_sm()
                     .text_color(self.colors.warning)
-                    .child(notice),
+                    .child(notice.to_string()),
             );
         }
         if !self.composer_attachments.is_empty() {
