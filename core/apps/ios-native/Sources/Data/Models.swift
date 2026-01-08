@@ -457,6 +457,28 @@ struct MobileDeviceRegistration: Codable, Sendable {
     let lastSeenAt: String
 }
 
+enum MobileTunnelState: String, Codable, Sendable {
+    case idle
+    case running
+    case error
+}
+
+struct MobileAccessStatus: Codable, Sendable {
+    let enabled: Bool
+    let tunnelId: String?
+    let publicBaseUrl: String?
+    let relayBaseUrl: String?
+    let daemonPublicKey: String?
+    let tunnelState: MobileTunnelState
+    let lastError: String?
+}
+
+struct EnableMobileAccessResponse: Codable, Sendable {
+    let status: MobileAccessStatus
+    let qrPayload: JSONValue
+    let pairingExpiresAt: String
+}
+
 struct WorkspaceSummary: Codable, Sendable, Identifiable {
     let id: String
     let name: String
