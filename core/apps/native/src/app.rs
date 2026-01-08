@@ -20,7 +20,10 @@ mod views;
 
 use self::icons::{Icon, IconAssets, IconName};
 use self::models::{MessageItem, SessionInfo};
-use self::state::{ArtifactPreviewState, ComposerState, DataLoadState, ShellView, StreamStatus};
+use self::state::{
+    ArtifactPreviewState, ComposerState, DataLoadState, DiffReviewState, ShellView, StreamStatus,
+    TerminalPanelState,
+};
 use self::views::{SessionView, SidebarView};
 
 fn load_theme_colors(is_dark: bool) -> ThemeColors {
@@ -60,6 +63,8 @@ pub fn run() {
             |_, cx| {
                 let base_url = base_url.clone();
                 cx.new(|cx| {
+                    let diff_review_state = cx.new(|_| DiffReviewState::new());
+                    let terminal_panel_state = cx.new(|_| TerminalPanelState::new(colors));
                     let mut view = ShellView {
                         colors,
                         base_url,
@@ -104,6 +109,14 @@ pub fn run() {
                         stream_subscribe_tx: None,
                         stream_stop_tx: None,
                         message_list_handler_set: false,
+                        show_sessions_pane: false,
+                        show_diff_pane: false,
+                        show_artifacts_pane: false,
+                        show_terminal_panel: false,
+                        diff_review_state,
+                        terminal_panel_state,
+                        aux_workspace_id: None,
+                        aux_session_id: None,
                     };
                     view.start_data_load(cx);
                     view
@@ -117,17 +130,8 @@ pub fn run() {
 
 impl Render for ShellView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let toggle_text = if self.is_dark { "Light" } else { "Dark" };
-        let toggle_label = div()
-            .flex()
-            .items_center()
-            .gap_1()
-            .child(Icon::new(
-                IconName::Settings,
-                12.0,
-                self.colors.muted,
-            ))
-            .child(toggle_text);
+        self.sync_auxiliary_panes(cx);
+        let toggle_label = Icon::new(IconName::Settings, 12.0, self.colors.muted);
         let resyncing = self
             .resyncing_session
             .and_then(|resync_id| {
@@ -138,6 +142,29 @@ impl Render for ShellView {
             .unwrap_or(false);
         let provider_options = self.composer_provider_options();
         let model_options = self.composer_model_options();
+        let workspace_label = self
+            .selected_workspace
+            .and_then(|id| self.workspaces.iter().find(|ws| ws.id == id))
+            .map(|ws| ws.name.as_str())
+            .unwrap_or("No workspace");
+        let task_label = self
+            .selected_task
+            .and_then(|index| self.tasks.get(index))
+            .map(|task| task.title.as_str());
+        let mut title_label = div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .text_sm()
+            .child(workspace_label);
+        if let Some(task_label) = task_label {
+            title_label = title_label.child(
+                div()
+                    .text_sm()
+                    .text_color(self.colors.muted)
+                    .child(task_label),
+            );
+        }
         div()
             .id("app-shell")
             .size_full()
@@ -161,7 +188,7 @@ impl Render for ShellView {
                             .items_center()
                             .justify_between()
                             .w_full()
-                            .child(format!("ctx-native · {base_url}", base_url = self.base_url))
+                            .child(title_label)
                             .child(
                                 div()
                                     .id("theme-toggle")
@@ -232,6 +259,12 @@ impl Render for ShellView {
                             composer_focus: &self.composer_focus,
                             stream_status: &self.stream_status,
                             resyncing,
+                            show_sessions_pane: self.show_sessions_pane,
+                            show_diff_pane: self.show_diff_pane,
+                            show_artifacts_pane: self.show_artifacts_pane,
+                            show_terminal_panel: self.show_terminal_panel,
+                            diff_review_state: self.diff_review_state.clone(),
+                            terminal_panel_state: self.terminal_panel_state.clone(),
                         }
                         .render(cx),
                     ),

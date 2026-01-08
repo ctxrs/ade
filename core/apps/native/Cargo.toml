@@ -7,8 +7,10 @@ license = "Apache-2.0"
 [dependencies]
 anyhow = "1"
 base64 = "0.22"
+chrono = { version = "0.4", features = ["serde"] }
 ctx-client = { path = "../../crates/ctx-client" }
 ctx-core = { path = "../../crates/ctx-core" }
+ctx-providers = { path = "../../crates/ctx-providers" }
 futures-util = "0.3"
 gpui = "0.2.2"
 gpui_tokio = "0.1.0"

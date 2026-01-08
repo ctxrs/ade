@@ -8,13 +8,14 @@ use directories::BaseDirs;
 use reqwest::{header, Method};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use url::Url;
 
-use ctx_core::ids::{ArtifactId, SessionId, TaskId, TrackId, WorkspaceId};
+use ctx_core::ids::{ArtifactId, SessionId, TaskId, TerminalId, TrackId, WorkspaceId, WorktreeId};
 use ctx_core::models::{
     Artifact, Message, MessageAttachment, MessageDelivery, Session, SessionEventsPage, SessionHead,
-    SessionHistoryPage, SessionTurnTool, Task, Track, TrackDiffSummaryResponse, Workspace,
-    WorkspaceCatchupCursor, WorkspaceCatchupSnapshot,
+    SessionHistoryPage, SessionTurnTool, Task, TerminalSession, Track, TrackDiffSummaryResponse,
+    Workspace, WorkspaceCatchupCursor, WorkspaceCatchupSnapshot,
 };
 use ctx_providers::adapters::ProviderStatus;
 
@@ -109,6 +110,22 @@ pub struct CreateSessionRequest {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct CreateTerminalRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task_id: Option<TaskId>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub track_id: Option<TrackId>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<SessionId>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub worktree_id: Option<WorktreeId>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub shell: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct PostMessageRequest {
     pub content: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -134,6 +151,12 @@ pub struct AuthenticateSessionRequest {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct AuthenticateProviderRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub method_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct AskUserQuestionRequest {
     pub tool_call_id: String,
     pub outcome: AskUserQuestionOutcome,
@@ -146,6 +169,17 @@ pub struct AskUserQuestionRequest {
 pub enum AskUserQuestionOutcome {
     Submitted,
     Cancelled,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct TrackDiffApplyRequest {
+    action: String,
+    patch: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct TrackDiffResponse {
+    diff: String,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -163,6 +197,202 @@ pub struct SessionWithEnv {
     pub session: Session,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub env_target: Option<EnvTarget>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PublicSettings {
+    #[serde(default)]
+    pub dictation: Option<PublicDictationSettings>,
+    #[serde(default)]
+    pub telemetry: Option<PublicTelemetrySettings>,
+    #[serde(default)]
+    pub title_generation: Option<PublicTitleGenerationSettings>,
+    #[serde(default)]
+    pub resource_governance: Option<PublicResourceGovernanceSettings>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PublicDictationSettings {
+    pub enabled: bool,
+    pub provider: DictationProvider,
+    #[serde(default)]
+    pub livekit: Option<PublicLiveKitDictationSettings>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PublicLiveKitDictationSettings {
+    pub base_url: String,
+    pub api_key: String,
+    pub api_secret_set: bool,
+    pub model: String,
+    pub language: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PublicTelemetrySettings {
+    pub enabled: bool,
+    pub endpoint: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PublicTitleGenerationSettings {
+    pub base_url: String,
+    pub api_key: String,
+    pub model: String,
+    pub use_json: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DictationProvider {
+    Disabled,
+    #[serde(rename = "livekit_inference")]
+    LiveKitInference,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResourceGovernanceMode {
+    Auto,
+    Custom,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResourceGovernanceStatusState {
+    Disabled,
+    Applied,
+    Pending,
+    Unsupported,
+    Error,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PublicResourceGovernanceStatus {
+    pub state: ResourceGovernanceStatusState,
+    pub can_apply_now: bool,
+    pub requires_restart: bool,
+    #[serde(default)]
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PublicResourceGovernanceLimits {
+    pub cpu_quota_pct: u32,
+    pub memory_high_mb: u32,
+    pub memory_max_mb: u32,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PublicResourceGovernanceSettings {
+    pub enabled: bool,
+    pub mode: ResourceGovernanceMode,
+    #[serde(default)]
+    pub cpu_quota_pct: Option<u32>,
+    #[serde(default)]
+    pub memory_high_mb: Option<u32>,
+    #[serde(default)]
+    pub memory_max_mb: Option<u32>,
+    #[serde(default)]
+    pub effective: Option<PublicResourceGovernanceLimits>,
+    #[serde(default)]
+    pub status: Option<PublicResourceGovernanceStatus>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ProviderOptions {
+    pub provider_id: String,
+    pub workspace_id: String,
+    #[serde(default)]
+    pub installed: Option<bool>,
+    #[serde(default)]
+    pub probe_ok: Option<bool>,
+    #[serde(default)]
+    pub probe_error: Option<String>,
+    #[serde(default)]
+    pub supports_load: bool,
+    #[serde(default)]
+    pub auth_required: bool,
+    #[serde(default)]
+    pub auth_methods: Option<Value>,
+    #[serde(default)]
+    pub modes: Option<Value>,
+    #[serde(default)]
+    pub models: Option<Value>,
+    #[serde(default)]
+    pub acp_error: Option<Value>,
+    #[serde(default)]
+    pub verify: Option<ProviderAuthCheck>,
+    #[serde(default)]
+    pub probed_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ProviderAuthCheck {
+    pub provider_id: String,
+    pub workspace_id: String,
+    pub status: String,
+    #[serde(default)]
+    pub auth_required: Option<bool>,
+    #[serde(default)]
+    pub auth_methods: Option<Value>,
+    #[serde(default)]
+    pub acp_error: Option<Value>,
+    #[serde(default)]
+    pub checked_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InstallStartResponse {
+    pub provider_id: String,
+    pub install_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InstallEventLevel {
+    Info,
+    Warning,
+    Error,
+    Success,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InstallProgressEvent {
+    pub install_id: String,
+    pub provider_id: String,
+    pub at: String,
+    pub stage: String,
+    pub message: String,
+    pub level: InstallEventLevel,
+    #[serde(default)]
+    pub bytes: Option<u64>,
+    #[serde(default)]
+    pub total_bytes: Option<u64>,
+    #[serde(default)]
+    pub attempt: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InstallStateKind {
+    Running,
+    Succeeded,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InstallInfo {
+    pub install_id: String,
+    pub provider_id: String,
+    pub state: InstallStateKind,
+    pub started_at: String,
+    #[serde(default)]
+    pub finished_at: Option<String>,
+    #[serde(default)]
+    pub error: Option<String>,
+    #[serde(default)]
+    pub last_event: Option<InstallProgressEvent>,
 }
 
 fn normalize_base_url(value: &str) -> Result<String> {
@@ -417,6 +647,49 @@ impl Client {
         Ok(url.to_string())
     }
 
+    pub fn terminal_stream_url(&self, terminal_id: TerminalId) -> Result<String> {
+        let mut url = Url::parse(&self.base_url)
+            .with_context(|| format!("invalid base url: {}", self.base_url))?;
+        let scheme = match url.scheme() {
+            "http" => "ws",
+            "https" => "wss",
+            other => return Err(anyhow!("unsupported base url scheme: {}", other)),
+        };
+        url.set_scheme(scheme)
+            .map_err(|_| anyhow!("failed to set websocket scheme"))?;
+        let prefix = url.path().trim_end_matches('/');
+        let path = if prefix.is_empty() {
+            format!("/api/terminals/{}/stream", terminal_id.0)
+        } else {
+            format!("{}/api/terminals/{}/stream", prefix, terminal_id.0)
+        };
+        url.set_path(&path);
+        url.set_query(None);
+        Ok(url.to_string())
+    }
+
+    pub async fn list_workspace_terminals(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> Result<Vec<TerminalSession>> {
+        let path = format!("/api/workspaces/{}/terminals", workspace_id.0);
+        self.request_json(Method::GET, &path, None::<&()>).await
+    }
+
+    pub async fn create_workspace_terminal(
+        &self,
+        workspace_id: WorkspaceId,
+        req: &CreateTerminalRequest,
+    ) -> Result<TerminalSession> {
+        let path = format!("/api/workspaces/{}/terminals", workspace_id.0);
+        self.request_json(Method::POST, &path, Some(req)).await
+    }
+
+    pub async fn delete_terminal(&self, terminal_id: TerminalId) -> Result<()> {
+        let path = format!("/api/terminals/{}", terminal_id.0);
+        self.request_empty(Method::DELETE, &path, None::<&()>).await
+    }
+
     pub async fn create_track(&self, task_id: TaskId, req: &CreateTrackRequest) -> Result<Track> {
         let path = format!("/api/tasks/{}/tracks", task_id.0);
         self.request_json(Method::POST, &path, Some(req)).await
@@ -564,9 +837,95 @@ impl Client {
         self.request_json(Method::GET, &path, None::<&()>).await
     }
 
+    pub async fn get_track_diff(&self, track_id: TrackId) -> Result<String> {
+        let path = format!("/api/tracks/{}/diff", track_id.0);
+        let resp: TrackDiffResponse = self.request_json(Method::GET, &path, None::<&()>).await?;
+        Ok(resp.diff)
+    }
+
+    pub async fn apply_track_diff_patch(
+        &self,
+        track_id: TrackId,
+        action: &str,
+        patch: &str,
+    ) -> Result<String> {
+        let path = format!("/api/tracks/{}/diff/apply", track_id.0);
+        let req = TrackDiffApplyRequest {
+            action: action.to_string(),
+            patch: patch.to_string(),
+        };
+        let resp: TrackDiffResponse = self.request_json(Method::POST, &path, Some(&req)).await?;
+        Ok(resp.diff)
+    }
+
     pub async fn list_providers(&self) -> Result<Vec<ProviderStatus>> {
         self.request_json(Method::GET, "/api/providers", None::<&()>)
             .await
+    }
+
+    pub async fn get_settings(&self) -> Result<PublicSettings> {
+        self.request_json(Method::GET, "/api/settings", None::<&()>)
+            .await
+    }
+
+    pub async fn get_provider_options(
+        &self,
+        workspace_id: WorkspaceId,
+        provider_id: &str,
+    ) -> Result<ProviderOptions> {
+        let path = format!(
+            "/api/workspaces/{}/providers/{}/options",
+            workspace_id.0, provider_id
+        );
+        self.request_json(Method::GET, &path, None::<&()>).await
+    }
+
+    pub async fn authenticate_provider_for_workspace(
+        &self,
+        workspace_id: WorkspaceId,
+        provider_id: &str,
+        method_id: Option<&str>,
+    ) -> Result<ProviderAuthCheck> {
+        let path = format!(
+            "/api/workspaces/{}/providers/{}/authenticate",
+            workspace_id.0, provider_id
+        );
+        let req = AuthenticateProviderRequest {
+            method_id: method_id.map(|value| value.to_string()),
+        };
+        self.request_json(Method::POST, &path, Some(&req)).await
+    }
+
+    pub async fn verify_provider_for_workspace(
+        &self,
+        workspace_id: WorkspaceId,
+        provider_id: &str,
+    ) -> Result<ProviderAuthCheck> {
+        let path = format!(
+            "/api/workspaces/{}/providers/{}/verify",
+            workspace_id.0, provider_id
+        );
+        self.request_json(Method::POST, &path, None::<&()>).await
+    }
+
+    pub async fn install_provider(&self, provider_id: &str) -> Result<InstallStartResponse> {
+        let path = format!("/api/providers/{}/install", provider_id);
+        self.request_json(Method::POST, &path, None::<&()>).await
+    }
+
+    pub async fn install_all_providers(&self) -> Result<Vec<InstallStartResponse>> {
+        self.request_json(Method::POST, "/api/providers/install_all", None::<&()>)
+            .await
+    }
+
+    pub async fn get_install(&self, install_id: &str) -> Result<InstallInfo> {
+        let path = format!("/api/providers/install/{}", install_id);
+        self.request_json(Method::GET, &path, None::<&()>).await
+    }
+
+    pub async fn list_install_events(&self, install_id: &str) -> Result<Vec<InstallProgressEvent>> {
+        let path = format!("/api/providers/install/{}/events", install_id);
+        self.request_json(Method::GET, &path, None::<&()>).await
     }
 
     pub async fn cancel_session(&self, session_id: SessionId) -> Result<()> {

@@ -1,12 +1,16 @@
 mod artifacts;
 mod composer;
+mod diff_review;
 mod session;
+mod settings;
 mod stream;
+mod terminal;
+mod turn_tools;
 mod workspace;
 
 use std::collections::HashMap;
 
-use gpui::{ClickEvent, Context, FocusHandle, ListState, Window};
+use gpui::{ClickEvent, Context, FocusHandle, ListState, Window, Entity};
 use tokio::sync::watch;
 
 use ctx_core::ids::{SessionId, WorkspaceId};
@@ -22,7 +26,9 @@ use super::workspace_summary::{SessionSummaryItem, TaskSummaryItem};
 
 pub(crate) use artifacts::ArtifactPreviewState;
 pub(crate) use composer::ComposerState;
+pub(crate) use diff_review::DiffReviewState;
 pub(crate) use stream::StreamStatus;
+pub(crate) use terminal::{TerminalContext, TerminalPanelState};
 pub(crate) use workspace::{DataLoadState, ProviderItem, WorkspaceItem};
 
 pub(crate) struct ShellView {
@@ -66,12 +72,106 @@ pub(crate) struct ShellView {
     pub(crate) stream_stop_tx: Option<watch::Sender<bool>>,
     pub(crate) session_last_event_seq: HashMap<SessionId, i64>,
     pub(crate) message_list_handler_set: bool,
+    pub(crate) show_sessions_pane: bool,
+    pub(crate) show_diff_pane: bool,
+    pub(crate) show_artifacts_pane: bool,
+    pub(crate) show_terminal_panel: bool,
+    pub(crate) diff_review_state: Entity<DiffReviewState>,
+    pub(crate) terminal_panel_state: Entity<TerminalPanelState>,
+    pub(crate) aux_workspace_id: Option<WorkspaceId>,
+    pub(crate) aux_session_id: Option<SessionId>,
 }
 
 impl ShellView {
     pub(crate) fn toggle_theme(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
         self.is_dark = !self.is_dark;
         self.colors = super::load_theme_colors(self.is_dark);
+        let colors = self.colors;
+        cx.update_entity(&self.terminal_panel_state, |state, cx| {
+            state.colors = colors;
+            cx.notify();
+        });
         cx.notify();
+    }
+
+    pub(crate) fn toggle_sessions_pane(
+        &mut self,
+        _: &ClickEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.show_sessions_pane = !self.show_sessions_pane;
+        cx.notify();
+    }
+
+    pub(crate) fn toggle_diff_pane(
+        &mut self,
+        _: &ClickEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.show_diff_pane = !self.show_diff_pane;
+        cx.notify();
+    }
+
+    pub(crate) fn toggle_artifacts_pane(
+        &mut self,
+        _: &ClickEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.show_artifacts_pane = !self.show_artifacts_pane;
+        cx.notify();
+    }
+
+    pub(crate) fn toggle_terminal_panel(
+        &mut self,
+        _: &ClickEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.show_terminal_panel = !self.show_terminal_panel;
+        cx.notify();
+    }
+
+    pub(crate) fn sync_auxiliary_panes(&mut self, cx: &mut Context<Self>) {
+        let selected_session_id = self
+            .selected_session
+            .and_then(|index| self.sessions.get(index))
+            .map(|summary| summary.session_id);
+        if self.aux_workspace_id == self.selected_workspace
+            && self.aux_session_id == selected_session_id
+        {
+            return;
+        }
+
+        self.aux_workspace_id = self.selected_workspace;
+        self.aux_session_id = selected_session_id;
+
+        let (task_id, track_id, worktree_id) = selected_session_id
+            .and_then(|session_id| self.session_summary_map.get(&session_id))
+            .map(|summary| {
+                (
+                    Some(summary.session.task_id),
+                    Some(summary.session.track_id),
+                    Some(summary.session.worktree_id),
+                )
+            })
+            .unwrap_or((None, None, None));
+
+        let terminal_context = TerminalContext {
+            workspace_id: self.selected_workspace,
+            task_id,
+            track_id,
+            session_id: selected_session_id,
+            worktree_id,
+        };
+
+        cx.update_entity(&self.terminal_panel_state, |state, cx| {
+            state.set_context(terminal_context, cx);
+        });
+        cx.update_entity(&self.diff_review_state, |state, cx| {
+            state.set_track_id(track_id, cx);
+        });
     }
 }
