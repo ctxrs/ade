@@ -1,3 +1,4 @@
+import Foundation
 import SwiftUI
 
 struct ChatView: View {
@@ -90,7 +91,7 @@ struct ChatDetailView: View {
         ChatView(viewModel: viewModel, showsBackground: true)
             .onAppear {
                 viewModel.setClient(connection.apiClient)
-                viewModel.selectSession(session.id)
+                viewModel.selectSession(session.id, workspaceId: session.workspaceId)
             }
             .navigationTitle(session.title)
             .navigationBarTitleDisplayMode(.inline)
@@ -282,9 +283,37 @@ final class ChatViewModel: ObservableObject {
     @Published var isAssistantTyping = false
     @Published var errorMessage: String?
 
+    private enum RefreshResult {
+        case success
+        case skipped
+        case failed
+    }
+
+    private let streamClient = DaemonStreamClient()
+    private let streamEncoder: JSONEncoder = {
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        return encoder
+    }()
+    private let streamDecoder: JSONDecoder = {
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return decoder
+    }()
+
     private var client: DaemonAPIClient?
     private var sessionId: String?
+    private var workspaceId: String?
+    private var lastEventSeq: Int?
     private var pollTask: Task<Void, Never>?
+    private var streamTask: Task<Void, Never>?
+    private var streamSocket: URLSessionWebSocketTask?
+    private var isStreamConnected = false
+    private var streamReconnectDelay: TimeInterval = 1
+    private var refreshInFlight = false
+    private var refreshPending = false
+    private var pendingAssistantResponse = false
+    private var consecutivePollFailures = 0
 
     init(client: DaemonAPIClient? = nil) {
         self.client = client
@@ -299,24 +328,46 @@ final class ChatViewModel: ObservableObject {
         if client != nil {
             messages = []
             isAssistantTyping = false
+            pendingAssistantResponse = false
             errorMessage = nil
-        }
-        if client != nil {
-            Task { await refreshMessages() }
+            workspaceId = nil
+            lastEventSeq = nil
+            if pollTask != nil {
+                startStream()
+            }
+            Task { _ = await refreshMessages() }
+        } else {
+            stopStream()
+            sessionId = nil
+            workspaceId = nil
+            lastEventSeq = nil
+            messages = Self.sampleMessages
+            isAssistantTyping = true
+            pendingAssistantResponse = true
         }
     }
 
-    func selectSession(_ sessionId: String?) {
+    func selectSession(_ sessionId: String?, workspaceId: String? = nil) {
         self.sessionId = sessionId
-        Task { await refreshMessages() }
+        self.workspaceId = workspaceId
+        lastEventSeq = nil
+        pendingAssistantResponse = false
+        isAssistantTyping = false
+        Task {
+            await primeStreamCursor()
+            _ = await refreshMessages()
+            await sendStreamSubscriptionIfNeeded()
+        }
     }
 
     func startPolling() {
         guard pollTask == nil else { return }
+        startStream()
         pollTask = Task {
             while !Task.isCancelled {
-                await refreshMessages()
-                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                let result = await refreshMessages()
+                let delay = nextPollDelay(for: result)
+                try? await Task.sleep(nanoseconds: delay)
             }
         }
     }
@@ -324,11 +375,13 @@ final class ChatViewModel: ObservableObject {
     func stopPolling() {
         pollTask?.cancel()
         pollTask = nil
+        stopStream()
     }
 
     func send(_ text: String) {
         let local = ChatMessage(id: UUID(), role: .user, text: text)
         messages.append(local)
+        pendingAssistantResponse = true
         isAssistantTyping = true
 
         Task {
@@ -337,38 +390,63 @@ final class ChatViewModel: ObservableObject {
             guard let resolved else { return }
             do {
                 _ = try await client.postMessage(sessionId: resolved, content: text, delivery: .immediate, attachments: nil)
-                await refreshMessages()
+                _ = await refreshMessages()
             } catch {
+                pendingAssistantResponse = false
                 errorMessage = "Failed to send message."
             }
         }
     }
 
-    private func refreshMessages() async {
-        guard let client else { return }
+    private func refreshMessages() async -> RefreshResult {
+        guard let client else { return .skipped }
+        if refreshInFlight {
+            refreshPending = true
+            return .skipped
+        }
+        refreshInFlight = true
+        defer { refreshInFlight = false }
         let resolved = await resolveSessionId()
-        guard let resolved else { return }
+        guard let resolved else { return .skipped }
         do {
             let items = try await client.listMessages(sessionId: resolved)
-            messages = items.map { summary in
+            let nextMessages = items.map { summary in
                 ChatMessage(
                     id: UUID(uuidString: summary.id) ?? UUID(),
                     role: summary.role == .user ? .user : .assistant,
                     text: summary.content
                 )
             }
-            isAssistantTyping = false
+            messages = nextMessages
+            updateTypingIndicator(with: nextMessages)
+            errorMessage = nil
+            if refreshPending {
+                refreshPending = false
+                Task { _ = await refreshMessages() }
+            }
+            return .success
         } catch {
             errorMessage = "Failed to load messages."
+            if refreshPending {
+                refreshPending = false
+                Task { _ = await refreshMessages() }
+            }
+            return .failed
         }
     }
 
     private func resolveSessionId() async -> String? {
-        if let sessionId { return sessionId }
+        if let sessionId {
+            if workspaceId == nil {
+                _ = await resolveWorkspaceId()
+            }
+            return sessionId
+        }
         guard let client else { return nil }
         do {
             let workspaces = try await client.listWorkspaces()
             guard let workspace = workspaces.first else { return nil }
+            workspaceId = workspace.id
             let tasks = try await client.listTasks(workspaceId: workspace.id)
             guard let task = tasks.first else { return nil }
             let tracks = try await client.listTracks(taskId: task.id)
@@ -379,6 +457,202 @@ final class ChatViewModel: ObservableObject {
             return session.id
         } catch {
             return nil
+        }
+    }
+
+    private func resolveWorkspaceId() async -> String? {
+        if let workspaceId { return workspaceId }
+        guard let client else { return nil }
+        if let sessionId {
+            if let head = try? await client.getSessionHead(sessionId: sessionId, limit: 1, includeEvents: false) {
+                let resolved = head.session.workspaceId.stringValue
+                workspaceId = resolved
+                lastEventSeq = head.lastEventSeq
+                return resolved
+            }
+        }
+        if let workspaces = try? await client.listWorkspaces(),
+           let workspace = workspaces.first {
+            workspaceId = workspace.id
+            return workspace.id
+        }
+        return nil
+    }
+
+    private func primeStreamCursor() async {
+        guard let client, let sessionId else { return }
+        if lastEventSeq != nil, workspaceId != nil { return }
+        if let head = try? await client.getSessionHead(sessionId: sessionId, limit: 1, includeEvents: false) {
+            lastEventSeq = head.lastEventSeq
+            workspaceId = workspaceId ?? head.session.workspaceId.stringValue
+        }
+    }
+
+    private func updateTypingIndicator(with messages: [ChatMessage]) {
+        if pendingAssistantResponse, messages.last?.role == .assistant {
+            pendingAssistantResponse = false
+        }
+        if pendingAssistantResponse {
+            if let lastRole = messages.last?.role {
+                isAssistantTyping = lastRole != .assistant
+            } else {
+                isAssistantTyping = true
+            }
+        } else {
+            isAssistantTyping = false
+        }
+    }
+
+    private func nextPollDelay(for result: RefreshResult) -> UInt64 {
+        let baseDelay: TimeInterval
+        if pendingAssistantResponse {
+            baseDelay = 1.2
+        } else if isStreamConnected {
+            baseDelay = 10
+        } else {
+            baseDelay = 4
+        }
+
+        switch result {
+        case .failed:
+            consecutivePollFailures += 1
+        case .success, .skipped:
+            consecutivePollFailures = 0
+        }
+
+        let backoff = min(baseDelay * pow(1.6, Double(consecutivePollFailures)), 20)
+        let jitter = Double.random(in: 0...0.3)
+        let delay = max(0.5, backoff + jitter)
+        return UInt64(delay * 1_000_000_000)
+    }
+
+    private func startStream() {
+        guard streamTask == nil else { return }
+        streamTask = Task {
+            await streamLoop()
+        }
+    }
+
+    private func stopStream() {
+        streamTask?.cancel()
+        streamTask = nil
+        if let streamSocket {
+            streamClient.disconnect(streamSocket)
+        }
+        streamSocket = nil
+        isStreamConnected = false
+        streamReconnectDelay = 1
+    }
+
+    private func streamLoop() async {
+        while !Task.isCancelled {
+            guard client != nil else {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                continue
+            }
+            guard let workspaceId = await resolveWorkspaceId() else {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                continue
+            }
+            do {
+                let socket = try await openStream(workspaceId: workspaceId)
+                await listenToStream(socket)
+                if let streamSocket {
+                    streamClient.disconnect(streamSocket)
+                }
+                streamSocket = nil
+                isStreamConnected = false
+            } catch {
+                isStreamConnected = false
+            }
+            if Task.isCancelled { break }
+            let delay = min(streamReconnectDelay, 15)
+            streamReconnectDelay = min(streamReconnectDelay * 2, 15)
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+        }
+    }
+
+    private func openStream(workspaceId: String) async throws -> URLSessionWebSocketTask {
+        guard let client else { throw DaemonStreamError.invalidURL }
+        await primeStreamCursor()
+        let baseURL = await client.daemonBaseURL()
+        let token = await client.authToken()
+        let socket = try streamClient.connectWorkspaceStream(baseURL: baseURL, workspaceId: workspaceId, token: token)
+        streamSocket = socket
+        streamReconnectDelay = 1
+        await sendStreamSubscriptionIfNeeded()
+        isStreamConnected = true
+        return socket
+    }
+
+    private func listenToStream(_ socket: URLSessionWebSocketTask) async {
+        while !Task.isCancelled {
+            do {
+                let message = try await streamClient.receive(from: socket)
+                await handleStreamMessage(message)
+            } catch {
+                break
+            }
+        }
+    }
+
+    private func sendStreamSubscriptionIfNeeded() async {
+        guard let socket = streamSocket else { return }
+        guard let sessionId else { return }
+        await primeStreamCursor()
+        let subscription = WorkspaceCatchupSessionSubscription(
+            sessionId: CtxID(sessionId),
+            afterSeq: lastEventSeq
+        )
+        let message = WorkspaceCatchupClientMessage(
+            type: "subscribe",
+            sessionIds: nil,
+            sessions: [subscription]
+        )
+        guard let payload = try? streamEncoder.encode(message),
+              let text = String(data: payload, encoding: .utf8) else { return }
+        try? await streamClient.send(.string(text), via: socket)
+    }
+
+    private func handleStreamMessage(_ message: URLSessionWebSocketTask.Message) async {
+        let data: Data?
+        switch message {
+        case .data(let payload):
+            data = payload
+        case .string(let text):
+            data = text.data(using: .utf8)
+        @unknown default:
+            data = nil
+        }
+        guard let data else { return }
+        guard let event = try? streamDecoder.decode(WorkspaceCatchupEvent.self, from: data) else { return }
+        handleStreamEvent(event)
+    }
+
+    private func handleStreamEvent(_ event: WorkspaceCatchupEvent) {
+        guard let currentSessionId = sessionId else { return }
+        switch event {
+        case .sessionHeadDelta(_, _, let delta):
+            let eventSessionId = delta.sessionId.stringValue
+            if eventSessionId == currentSessionId {
+                lastEventSeq = delta.lastEventSeq
+                Task { _ = await refreshMessages() }
+            }
+        case .sessionSummary(_, _, let summary):
+            let eventSessionId = summary.session.id.stringValue
+            if eventSessionId == currentSessionId {
+                if let lastEventSeq = summary.lastEventSeq {
+                    self.lastEventSeq = lastEventSeq
+                }
+                Task { _ = await refreshMessages() }
+            }
+        case .sessionGap(_, _, let sessionId, let afterSeq, _):
+            if sessionId.stringValue == currentSessionId {
+                lastEventSeq = afterSeq
+                Task { _ = await refreshMessages() }
+            }
+        default:
+            break
         }
     }
 

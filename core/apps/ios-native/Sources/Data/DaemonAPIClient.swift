@@ -82,6 +82,21 @@ actor DaemonAPIClient {
         self.decoder = decoder
     }
 
+    func daemonBaseURL() -> URL {
+        baseURL
+    }
+
+    func authToken() async -> String? {
+        if let tokenCache {
+            return tokenCache
+        }
+        if let token = try? await tokenStore.loadToken() {
+            tokenCache = token
+            return token
+        }
+        return nil
+    }
+
     func loadToken() async throws -> String? {
         let token = try await tokenStore.loadToken()
         tokenCache = token
