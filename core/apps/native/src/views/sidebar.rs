@@ -1,4 +1,4 @@
-use gpui::{ClickEvent, Context, div, prelude::*, px};
+use gpui::{ClickEvent, Context, ElementId, div, prelude::*, px};
 use ctx_core::ids::WorkspaceId;
 
 use crate::theme::ThemeColors;
@@ -51,8 +51,9 @@ impl<'a> WorkspaceListView<'a> {
                             .rounded_sm()
                             .bg(item_bg)
                             .text_sm()
-                            .child(workspace.name.as_str())
+                            .child(workspace.name.clone())
                             .cursor_pointer()
+                            .id(ElementId::named_usize("sidebar-workspace", index))
                             .on_click(on_click),
                     )
                 })
@@ -116,12 +117,12 @@ impl<'a> ProviderListView<'a> {
                             .rounded_sm()
                             .bg(self.colors.panel_2)
                             .text_sm()
-                            .child(provider.name.as_str())
+                            .child(provider.name.clone())
                             .child(
                                 div()
                                     .text_sm()
                                     .text_color(self.colors.muted)
-                                    .child(provider.status.as_str()),
+                                    .child(provider.status.clone()),
                             ),
                     )
                 })
@@ -146,7 +147,7 @@ impl<'a> ProviderListView<'a> {
     }
 }
 
-pub(super) struct SidebarView<'a> {
+pub(crate) struct SidebarView<'a> {
     pub(super) colors: ThemeColors,
     pub(super) current_route: ShellRoute,
     pub(super) workspaces: &'a [WorkspaceItem],
@@ -172,7 +173,10 @@ impl NavigationListView {
             (ShellRoute::AppSettings, "App Settings"),
         ];
 
-        let list = routes.iter().fold(div().flex().flex_col().gap_1(), |list, (route, label)| {
+        let list = routes
+            .iter()
+            .enumerate()
+            .fold(div().flex().flex_col().gap_1(), |list, (index, (route, label))| {
             let active = self.current_route == *route;
             let item_bg = if active {
                 self.colors.panel
@@ -201,6 +205,7 @@ impl NavigationListView {
                     .text_sm()
                     .child(*label)
                     .cursor_pointer()
+                    .id(ElementId::named_usize("nav-route", index))
                     .on_click(on_click),
             )
         });
@@ -317,7 +322,7 @@ impl<'a> TaskListView<'a> {
                         .rounded_sm()
                         .bg(item_bg)
                         .text_sm()
-                        .child(task.title.as_str())
+                        .child(task.title.clone())
                         .child(
                             div()
                                 .px_2()

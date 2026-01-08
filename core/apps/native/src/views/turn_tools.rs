@@ -72,8 +72,9 @@ impl<'a> TurnToolsView<'a> {
                 .tools
                 .iter()
                 .fold(div().flex().flex_col().gap_2(), |list, tool| {
-                    list.child(self.render_tool(tool)).into_any_element()
+                    list.child(self.render_tool(tool))
                 })
+                .into_any_element()
         };
 
         div()

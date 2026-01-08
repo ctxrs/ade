@@ -1,7 +1,7 @@
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use gpui::{ClickEvent, Context, div, prelude::*, px};
+use gpui::{ClickEvent, Context, ElementId, div, prelude::*, px};
 use gpui_tokio::Tokio;
 
 use crate::theme::ThemeColors;
@@ -14,7 +14,7 @@ use super::super::workspace_summary::SessionSummaryItem;
 
 const WEB_SESSIONS_REFRESH: Duration = Duration::from_secs(10);
 
-pub(super) struct SessionsPaneView<'a> {
+pub(crate) struct SessionsPaneView<'a> {
     pub(super) colors: ThemeColors,
     pub(super) sessions: &'a [SessionSummaryItem],
     pub(super) selected_session: Option<usize>,
@@ -68,15 +68,17 @@ impl<'a> SessionsPaneView<'a> {
                             .rounded_sm()
                             .bg(item_bg)
                             .text_sm()
-                            .child(session.title.as_str())
+                            .child(session.title.clone())
                             .child(
                                 div()
                                     .px_2()
                                     .py_0()
                                     .text_sm()
                                     .text_color(self.colors.muted)
-                                    .child(session.status.as_str()),
+                                    .child(session.status.clone()),
                             )
+                            .cursor_pointer()
+                            .id(ElementId::named_usize("session-item", index))
                             .on_click(on_click),
                     )
                 })
@@ -90,7 +92,7 @@ impl<'a> SessionsPaneView<'a> {
             .text_color(self.colors.muted)
             .child(format!("Stream: {}", self.stream_status.label()));
         if let Some(detail) = self.stream_status.detail() {
-            stream_block = stream_block.child(detail);
+            stream_block = stream_block.child(detail.to_string());
         }
         if self.resyncing {
             stream_block = stream_block.child("Resyncing session data...");
@@ -118,7 +120,10 @@ impl<'a> SessionsPaneView<'a> {
                 .text_color(self.colors.muted)
                 .child(message)
         } else {
-            web_sessions.iter().fold(div().flex().flex_col().gap_2(), |list, session| {
+            web_sessions
+                .iter()
+                .enumerate()
+                .fold(div().flex().flex_col().gap_2(), |list, (index, session)| {
                 let is_selected = selected_web_session
                     .map(|selected| selected.id == session.id)
                     .unwrap_or(false);
@@ -159,8 +164,10 @@ impl<'a> SessionsPaneView<'a> {
                                 .py_0()
                                 .text_sm()
                                 .text_color(self.colors.muted)
-                                .child(session.status.as_str()),
+                                .child(session.status.clone()),
                         )
+                        .cursor_pointer()
+                        .id(ElementId::named_usize("web-session", index))
                         .on_click(on_click),
                 )
             })
@@ -222,7 +229,8 @@ impl<'a> SessionsPaneView<'a> {
                 .border_1()
                 .border_color(self.colors.border)
                 .rounded_sm()
-                .child("Open in browser");
+                .child("Open in browser")
+                .id("web-stream-open");
             if let Some(stream_url) = selected_web_stream.as_ref() {
                 let open_url = stream_url.clone();
                 let on_open = cx.listener(move |_, _: &ClickEvent, _window, cx| {
@@ -231,7 +239,7 @@ impl<'a> SessionsPaneView<'a> {
                 open_button = open_button
                     .bg(self.colors.panel)
                     .cursor_pointer()
-                    .active(|this| this.opacity(0.85))
+                    .active(|style| style.opacity(0.85))
                     .on_click(on_open);
             } else {
                 open_button = open_button

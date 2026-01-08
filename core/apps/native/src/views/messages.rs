@@ -36,9 +36,9 @@ impl<'a> MessagesView<'a> {
                     div()
                         .text_sm()
                         .text_color(colors.muted)
-                        .child(message.role.as_str()),
+                        .child(message.role.clone()),
                 )
-                .child(message.content.as_str())
+                .child(message.content.clone())
                 .into_any_element()
         });
 
@@ -57,12 +57,14 @@ impl<'a> MessagesView<'a> {
                 .rounded_sm()
                 .bg(self.colors.panel)
                 .text_color(self.colors.accent)
-                .cursor_pointer()
-                .active(|this| this.opacity(0.85))
                 .child(label)
+                .cursor_pointer()
+                .id("new-messages-indicator")
+                .active(|style| style.opacity(0.85))
                 .on_click(cx.listener(ShellView::on_new_messages_click))
+                .into_any_element()
         } else {
-            div()
+            div().into_any_element()
         };
 
         div()

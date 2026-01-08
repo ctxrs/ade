@@ -1,4 +1,4 @@
-use gpui::{ClickEvent, Context, div, prelude::*};
+use gpui::{ClickEvent, Context, ElementId, div, prelude::*};
 
 use crate::theme::ThemeColors;
 
@@ -7,7 +7,7 @@ use super::session::SessionView;
 use super::sidebar::SidebarView;
 use super::super::state::{ShellRoute, ShellView};
 
-pub(super) struct RouterView<'a> {
+pub(crate) struct RouterView<'a> {
     pub(super) shell: &'a ShellView,
     pub(super) provider_options: Vec<String>,
     pub(super) model_options: Vec<String>,
@@ -15,34 +15,33 @@ pub(super) struct RouterView<'a> {
 }
 
 impl<'a> RouterView<'a> {
-    pub(super) fn render(&self, cx: &mut Context<ShellView>) -> impl IntoElement {
-        match self.shell.route {
-            ShellRoute::Workbench => self.render_shell(cx, self.render_workbench(cx)),
-            ShellRoute::Settings => self.render_shell(cx, self.render_settings(cx)),
-            ShellRoute::Providers => self.render_shell(cx, self.render_settings(cx)),
-            ShellRoute::Diagnostics => self.render_shell(cx, self.render_diagnostics(cx)),
-            ShellRoute::AppSettings => self.render_shell(cx, self.render_app_settings(cx)),
-            ShellRoute::Workspaces => self.render_shell(cx, self.render_workspaces(cx)),
+    pub(crate) fn render(&self, cx: &mut Context<ShellView>) -> impl IntoElement {
+        let sidebar = SidebarView {
+            colors: self.shell.colors,
+            current_route: self.shell.route,
+            workspaces: &self.shell.workspaces,
+            selected_workspace: self.shell.selected_workspace,
+            providers: &self.shell.providers,
+            tasks: &self.shell.tasks,
+            selected_task: self.shell.selected_task,
         }
-    }
+        .render(cx)
+        .into_any_element();
 
-    fn render_shell<E: IntoElement>(&self, cx: &mut Context<ShellView>, main: E) -> gpui::Div {
+        let main = match self.shell.route {
+            ShellRoute::Workbench => self.render_workbench(cx).into_any_element(),
+            ShellRoute::Settings => self.render_settings(cx).into_any_element(),
+            ShellRoute::Providers => self.render_settings(cx).into_any_element(),
+            ShellRoute::Diagnostics => self.render_diagnostics(cx).into_any_element(),
+            ShellRoute::AppSettings => self.render_app_settings(cx).into_any_element(),
+            ShellRoute::Workspaces => self.render_workspaces(cx).into_any_element(),
+        };
+
         div()
             .flex()
             .flex_row()
             .flex_1()
-            .child(
-                SidebarView {
-                    colors: self.shell.colors,
-                    current_route: self.shell.route,
-                    workspaces: &self.shell.workspaces,
-                    selected_workspace: self.shell.selected_workspace,
-                    providers: &self.shell.providers,
-                    tasks: &self.shell.tasks,
-                    selected_task: self.shell.selected_task,
-                }
-                .render(cx),
-            )
+            .child(sidebar)
             .child(main)
     }
 
@@ -105,7 +104,8 @@ impl<'a> RouterView<'a> {
         let refresh_button = self
             .action_button(colors, "Refresh")
             .cursor_pointer()
-            .active(|this| this.opacity(0.85))
+            .id("workspaces-refresh")
+            .active(|style| style.opacity(0.85))
             .on_click(cx.listener(|view, _: &ClickEvent, _window, cx| {
                 view.start_data_load(cx);
             }));
@@ -154,8 +154,9 @@ impl<'a> RouterView<'a> {
                             .rounded_sm()
                             .bg(item_bg)
                             .text_sm()
-                            .child(workspace.name.as_str())
+                            .child(workspace.name.clone())
                             .cursor_pointer()
+                            .id(ElementId::named_usize("workspace", index))
                             .on_click(on_click),
                     )
                 })
@@ -211,7 +212,8 @@ impl<'a> RouterView<'a> {
         let workspaces_button = self
             .action_button(colors, "Go to workspaces")
             .cursor_pointer()
-            .active(|this| this.opacity(0.85))
+            .id("app-settings-go-workspaces")
+            .active(|style| style.opacity(0.85))
             .on_click(cx.listener(|view, _: &ClickEvent, _window, cx| {
                 view.set_route(ShellRoute::Workspaces, cx);
             }));
@@ -219,7 +221,8 @@ impl<'a> RouterView<'a> {
         let settings_button = self
             .action_button(colors, "Daemon settings")
             .cursor_pointer()
-            .active(|this| this.opacity(0.85))
+            .id("app-settings-daemon-settings")
+            .active(|style| style.opacity(0.85))
             .on_click(cx.listener(|view, _: &ClickEvent, _window, cx| {
                 view.set_route(ShellRoute::Settings, cx);
             }));
@@ -282,7 +285,7 @@ impl<'a> RouterView<'a> {
                 div()
                     .text_sm()
                     .text_color(colors.muted)
-                    .child(title),
+                    .child(title.to_string()),
             )
             .child(body)
     }
@@ -296,6 +299,6 @@ impl<'a> RouterView<'a> {
             .border_color(colors.border)
             .rounded_sm()
             .bg(colors.panel)
-            .child(label)
+            .child(label.to_string())
     }
 }

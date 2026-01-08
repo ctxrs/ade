@@ -77,12 +77,13 @@ impl Render for TerminalPanelState {
             .border_1()
             .border_color(colors.border)
             .rounded_sm()
-            .child("Refresh");
+            .child("Refresh")
+            .id("terminal-refresh");
         if can_create {
             refresh_button = refresh_button
                 .bg(colors.panel)
                 .cursor_pointer()
-                .active(|this| this.opacity(0.85))
+                .active(|style| style.opacity(0.85))
                 .on_click(cx.listener(TerminalPanelState::on_refresh_click));
         } else {
             refresh_button = refresh_button
@@ -97,12 +98,13 @@ impl Render for TerminalPanelState {
             .border_1()
             .border_color(colors.border)
             .rounded_sm()
-            .child("New");
+            .child("New")
+            .id("terminal-new");
         if can_create {
             create_button = create_button
                 .bg(colors.panel)
                 .cursor_pointer()
-                .active(|this| this.opacity(0.85))
+                .active(|style| style.opacity(0.85))
                 .on_click(cx.listener(TerminalPanelState::on_create_terminal_click));
         } else {
             create_button = create_button
@@ -117,12 +119,13 @@ impl Render for TerminalPanelState {
             .border_1()
             .border_color(colors.border)
             .rounded_sm()
-            .child("Reconnect");
+            .child("Reconnect")
+            .id("terminal-reconnect");
         if can_reconnect {
             reconnect_button = reconnect_button
                 .bg(colors.panel)
                 .cursor_pointer()
-                .active(|this| this.opacity(0.85))
+                .active(|style| style.opacity(0.85))
                 .on_click(cx.listener(TerminalPanelState::on_reconnect_click));
         } else {
             reconnect_button = reconnect_button
@@ -137,7 +140,8 @@ impl Render for TerminalPanelState {
             .border_1()
             .border_color(colors.border)
             .rounded_sm()
-            .child(TerminalScope::Task.label());
+            .child(TerminalScope::Task.label())
+            .id("terminal-scope-task");
         if task_scope_disabled {
             task_scope_button = task_scope_button.bg(colors.panel_2).text_color(colors.muted);
         } else if self.scope == TerminalScope::Task {
@@ -145,14 +149,14 @@ impl Render for TerminalPanelState {
                 .bg(colors.panel)
                 .text_color(colors.text)
                 .cursor_pointer()
-                .active(|this| this.opacity(0.85))
+                .active(|style| style.opacity(0.85))
                 .on_click(cx.listener(TerminalPanelState::on_scope_task_click));
         } else {
             task_scope_button = task_scope_button
                 .bg(colors.panel_2)
                 .text_color(colors.muted)
                 .cursor_pointer()
-                .active(|this| this.opacity(0.85))
+                .active(|style| style.opacity(0.85))
                 .on_click(cx.listener(TerminalPanelState::on_scope_task_click));
         }
 
@@ -163,20 +167,21 @@ impl Render for TerminalPanelState {
             .border_1()
             .border_color(colors.border)
             .rounded_sm()
-            .child(TerminalScope::Workspace.label());
+            .child(TerminalScope::Workspace.label())
+            .id("terminal-scope-workspace");
         if self.scope == TerminalScope::Workspace {
             workspace_scope_button = workspace_scope_button
                 .bg(colors.panel)
                 .text_color(colors.text)
                 .cursor_pointer()
-                .active(|this| this.opacity(0.85))
+                .active(|style| style.opacity(0.85))
                 .on_click(cx.listener(TerminalPanelState::on_scope_workspace_click));
         } else {
             workspace_scope_button = workspace_scope_button
                 .bg(colors.panel_2)
                 .text_color(colors.muted)
                 .cursor_pointer()
-                .active(|this| this.opacity(0.85))
+                .active(|style| style.opacity(0.85))
                 .on_click(cx.listener(TerminalPanelState::on_scope_workspace_click));
         }
 
@@ -196,6 +201,7 @@ impl Render for TerminalPanelState {
                     TerminalStatus::Exited => colors.muted,
                 };
                 let terminal_id = terminal.id;
+                let terminal_key = format!("{terminal_id:?}");
                 let select_click = cx.listener(move |view, _, _, cx| {
                     view.select_terminal(terminal_id, cx);
                 });
@@ -213,10 +219,11 @@ impl Render for TerminalPanelState {
                     .gap_2()
                     .flex_1()
                     .cursor_pointer()
-                    .active(|this| this.opacity(0.85))
+                    .id(format!("terminal-select-{terminal_key}"))
+                    .active(|style| style.opacity(0.85))
                     .on_click(select_click)
                     .child(indicator)
-                    .child(div().text_sm().child(terminal.title.as_str()))
+                    .child(div().text_sm().child(terminal.title.clone()))
                     .child(
                         div()
                             .text_sm()
@@ -233,7 +240,8 @@ impl Render for TerminalPanelState {
                     .bg(colors.panel)
                     .text_color(colors.muted)
                     .cursor_pointer()
-                    .active(|this| this.opacity(0.85))
+                    .id(format!("terminal-delete-{terminal_key}"))
+                    .active(|style| style.opacity(0.85))
                     .on_click(delete_click)
                     .child("x");
                 list.child(
@@ -258,11 +266,11 @@ impl Render for TerminalPanelState {
         };
 
         let output_text = if selected_terminal.is_none() {
-            "Select a terminal to view output."
+            "Select a terminal to view output.".to_string()
         } else if self.stream_output.is_empty() {
-            "No output yet."
+            "No output yet.".to_string()
         } else {
-            self.stream_output.as_str()
+            self.stream_output.clone()
         };
         let input_placeholder = if selected_terminal.is_some() {
             "Type input and press Enter..."
@@ -295,6 +303,7 @@ impl Render for TerminalPanelState {
             .text_color(input_color)
             .cursor(CursorStyle::IBeam)
             .track_focus(&self.input_focus)
+            .id("terminal-input")
             .on_click(cx.listener(TerminalPanelState::focus_input))
             .on_key_down(cx.listener(TerminalPanelState::on_input_key_down))
             .child(input_text);
@@ -305,12 +314,13 @@ impl Render for TerminalPanelState {
             .border_1()
             .border_color(colors.border)
             .rounded_sm()
-            .child("Send");
+            .child("Send")
+            .id("terminal-send");
         if can_send_input {
             send_button = send_button
                 .bg(colors.panel)
                 .cursor_pointer()
-                .active(|this| this.opacity(0.85))
+                .active(|style| style.opacity(0.85))
                 .on_click(cx.listener(TerminalPanelState::on_send_input_click));
         } else {
             send_button = send_button
@@ -372,7 +382,7 @@ impl Render for TerminalPanelState {
                 div()
                     .text_sm()
                     .text_color(colors.error)
-                    .child(error.as_str())
+                    .child(error.clone())
             } else {
                 div()
             })

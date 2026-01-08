@@ -24,7 +24,7 @@ use self::icons::{Icon, IconAssets, IconName};
 use self::models::{MessageItem, SessionInfo};
 use self::state::{
     ArtifactPreviewState, ComposerState, DataLoadState, DiffReviewState, SettingsState,
-    ShellRoute, ShellView, StreamStatus, TerminalPanelState,
+    ShellRoute, StreamStatus, TerminalPanelState,
 };
 use self::views::RouterView;
 

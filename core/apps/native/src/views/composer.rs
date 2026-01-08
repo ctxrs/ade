@@ -1,4 +1,4 @@
-use gpui::{Context, CursorStyle, FocusHandle, div, prelude::*, px};
+use gpui::{ClickEvent, Context, CursorStyle, ElementId, FocusHandle, div, prelude::*, px};
 
 use ctx_core::models::MessageAttachment;
 
@@ -64,6 +64,7 @@ impl<'a> ComposerView<'a> {
             .text_color(input_color)
             .cursor(CursorStyle::IBeam)
             .track_focus(self.focus_handle)
+            .id("composer-input")
             .on_click(cx.listener(ShellView::focus_composer))
             .on_key_down(cx.listener(ShellView::on_composer_key_down))
             .child(input_text);
@@ -87,13 +88,14 @@ impl<'a> ComposerView<'a> {
             .border_1()
             .border_color(self.colors.border)
             .rounded_sm()
-            .child(send_label);
+            .child(send_label)
+            .id("composer-send");
 
         if self.can_send {
             send_button = send_button
                 .bg(self.colors.panel)
                 .cursor_pointer()
-                .active(|this| this.opacity(0.85))
+                .active(|style| style.opacity(0.85))
                 .on_click(cx.listener(ShellView::on_send_click));
         } else {
             send_button = send_button
@@ -130,6 +132,7 @@ impl<'a> ComposerView<'a> {
             .text_color(attachment_color)
             .cursor(CursorStyle::IBeam)
             .track_focus(self.attachment_focus)
+            .id("composer-attachment-input")
             .on_click(cx.listener(ShellView::focus_composer_attachment))
             .on_key_down(cx.listener(ShellView::on_composer_attachment_key_down))
             .child(attachment_text);
@@ -141,11 +144,12 @@ impl<'a> ComposerView<'a> {
             .border_1()
             .border_color(self.colors.border)
             .rounded_sm()
-            .child("Add");
+            .child("Add")
+            .id("composer-add-attachment");
         add_attachment_button = add_attachment_button
             .bg(self.colors.panel)
             .cursor_pointer()
-            .active(|this| this.opacity(0.85))
+            .active(|style| style.opacity(0.85))
             .on_click(cx.listener(ShellView::on_add_attachment_click));
 
         let provider_label = self.selected_provider.unwrap_or("Provider");
@@ -158,9 +162,9 @@ impl<'a> ComposerView<'a> {
                     .text_color(self.colors.muted)
                     .child("No providers")
             } else {
-                self.provider_options.iter().fold(
+                self.provider_options.iter().enumerate().fold(
                     div().flex().flex_col().gap_1(),
-                    |list, provider| {
+                    |list, (index, provider)| {
                         let is_selected = self.selected_provider == Some(provider.as_str());
                         let provider_id = provider.clone();
                         let on_click =
@@ -180,7 +184,9 @@ impl<'a> ComposerView<'a> {
                                     self.colors.panel_2
                                 })
                                 .text_sm()
-                                .child(provider.as_str())
+                                .child(provider.clone())
+                                .cursor_pointer()
+                                .id(ElementId::named_usize("composer-provider", index))
                                 .on_click(on_click),
                         )
                     },
@@ -207,9 +213,9 @@ impl<'a> ComposerView<'a> {
                     .text_color(self.colors.muted)
                     .child("No models")
             } else {
-                self.model_options.iter().fold(
+                self.model_options.iter().enumerate().fold(
                     div().flex().flex_col().gap_1(),
-                    |list, model| {
+                    |list, (index, model)| {
                         let is_selected = self.selected_model == Some(model.as_str());
                         let model_id = model.clone();
                         let on_click =
@@ -229,7 +235,9 @@ impl<'a> ComposerView<'a> {
                                     self.colors.panel_2
                                 })
                                 .text_sm()
-                                .child(model.as_str())
+                                .child(model.clone())
+                                .cursor_pointer()
+                                .id(ElementId::named_usize("composer-model", index))
                                 .on_click(on_click),
                         )
                     },
@@ -262,10 +270,11 @@ impl<'a> ComposerView<'a> {
                     .border_color(self.colors.border)
                     .rounded_sm()
                     .bg(self.colors.panel_2)
+                    .child(format!("Provider: {provider_label} v"))
                     .cursor_pointer()
-                    .active(|this| this.opacity(0.85))
+                    .id("composer-provider-toggle")
+                    .active(|style| style.opacity(0.85))
                     .on_click(cx.listener(ShellView::toggle_composer_provider_menu))
-                    .child(format!("Provider: {provider_label} v")),
             )
             .child(provider_menu);
 
@@ -282,10 +291,11 @@ impl<'a> ComposerView<'a> {
                     .border_color(self.colors.border)
                     .rounded_sm()
                     .bg(self.colors.panel_2)
+                    .child(format!("Model: {model_label} v"))
                     .cursor_pointer()
-                    .active(|this| this.opacity(0.85))
+                    .id("composer-model-toggle")
+                    .active(|style| style.opacity(0.85))
                     .on_click(cx.listener(ShellView::toggle_composer_model_menu))
-                    .child(format!("Model: {model_label} v")),
             )
             .child(model_menu);
 
@@ -326,9 +336,10 @@ impl<'a> ComposerView<'a> {
                                     .py_0()
                                     .text_sm()
                                     .text_color(self.colors.muted)
+                                    .child("Remove")
                                     .cursor_pointer()
+                                    .id(ElementId::named_usize("composer-attachment-remove", index))
                                     .on_click(on_remove)
-                                    .child("Remove"),
                             ),
                     )
                 },

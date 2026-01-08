@@ -17,7 +17,7 @@ use super::super::state::{
 };
 use super::super::workspace_summary::{SessionSummaryItem, TaskSummaryItem};
 
-pub(super) struct SessionView<'a> {
+pub(crate) struct SessionView<'a> {
     pub(super) colors: ThemeColors,
     pub(super) workspaces: &'a [WorkspaceItem],
     pub(super) selected_workspace: Option<WorkspaceId>,
@@ -89,13 +89,14 @@ impl<'a> SessionView<'a> {
             .border_1()
             .border_color(self.colors.border)
             .rounded_sm()
-            .child(interrupt_label);
+            .child(interrupt_label)
+            .id("session-interrupt");
 
         if has_session {
             interrupt_button = interrupt_button
                 .bg(self.colors.panel)
                 .cursor_pointer()
-                .active(|this| this.opacity(0.85))
+                .active(|style| style.opacity(0.85))
                 .on_click(cx.listener(ShellView::on_interrupt_click));
         } else {
             interrupt_button = interrupt_button
@@ -121,22 +122,23 @@ impl<'a> SessionView<'a> {
             .border_1()
             .border_color(self.colors.border)
             .rounded_sm()
-            .child(cancel_label);
+            .child(cancel_label)
+            .id("session-cancel");
 
         if has_session {
             cancel_button = cancel_button
                 .bg(self.colors.panel)
                 .text_color(self.colors.warning)
                 .cursor_pointer()
-                .active(|this| this.opacity(0.85))
+                .active(|style| style.opacity(0.85))
                 .on_click(cx.listener(ShellView::on_cancel_click));
         } else {
             cancel_button = cancel_button
                 .bg(self.colors.panel_2)
                 .text_color(self.colors.muted);
         }
-        let pane_toggle = |icon: IconName, active: bool, on_click| {
-            let (bg, color) = if active {
+        let sessions_toggle = {
+            let (bg, color) = if self.show_sessions_pane {
                 (self.colors.panel, self.colors.text)
             } else {
                 (self.colors.panel_2, self.colors.muted)
@@ -151,32 +153,81 @@ impl<'a> SessionView<'a> {
                 .border_color(self.colors.border)
                 .rounded_sm()
                 .bg(bg)
-                .child(Icon::new(icon, 14.0, color))
+                .child(Icon::new(IconName::Sessions, 14.0, color))
                 .cursor_pointer()
-                .active(|this| this.opacity(0.85))
-                .on_click(on_click)
+                .id("pane-toggle-sessions")
+                .active(|style| style.opacity(0.85))
+                .on_click(cx.listener(ShellView::toggle_sessions_pane))
         };
 
-        let sessions_toggle = pane_toggle(
-            IconName::Sessions,
-            self.show_sessions_pane,
-            cx.listener(ShellView::toggle_sessions_pane),
-        );
-        let diff_toggle = pane_toggle(
-            IconName::Diff,
-            self.show_diff_pane,
-            cx.listener(ShellView::toggle_diff_pane),
-        );
-        let artifacts_toggle = pane_toggle(
-            IconName::Image,
-            self.show_artifacts_pane,
-            cx.listener(ShellView::toggle_artifacts_pane),
-        );
-        let terminal_toggle = pane_toggle(
-            IconName::Terminal,
-            self.show_terminal_panel,
-            cx.listener(ShellView::toggle_terminal_panel),
-        );
+        let diff_toggle = {
+            let (bg, color) = if self.show_diff_pane {
+                (self.colors.panel, self.colors.text)
+            } else {
+                (self.colors.panel_2, self.colors.muted)
+            };
+            div()
+                .w(px(28.0))
+                .h(px(28.0))
+                .flex()
+                .items_center()
+                .justify_center()
+                .border_1()
+                .border_color(self.colors.border)
+                .rounded_sm()
+                .bg(bg)
+                .child(Icon::new(IconName::Diff, 14.0, color))
+                .cursor_pointer()
+                .id("pane-toggle-diff")
+                .active(|style| style.opacity(0.85))
+                .on_click(cx.listener(ShellView::toggle_diff_pane))
+        };
+
+        let artifacts_toggle = {
+            let (bg, color) = if self.show_artifacts_pane {
+                (self.colors.panel, self.colors.text)
+            } else {
+                (self.colors.panel_2, self.colors.muted)
+            };
+            div()
+                .w(px(28.0))
+                .h(px(28.0))
+                .flex()
+                .items_center()
+                .justify_center()
+                .border_1()
+                .border_color(self.colors.border)
+                .rounded_sm()
+                .bg(bg)
+                .child(Icon::new(IconName::Image, 14.0, color))
+                .cursor_pointer()
+                .id("pane-toggle-artifacts")
+                .active(|style| style.opacity(0.85))
+                .on_click(cx.listener(ShellView::toggle_artifacts_pane))
+        };
+
+        let terminal_toggle = {
+            let (bg, color) = if self.show_terminal_panel {
+                (self.colors.panel, self.colors.text)
+            } else {
+                (self.colors.panel_2, self.colors.muted)
+            };
+            div()
+                .w(px(28.0))
+                .h(px(28.0))
+                .flex()
+                .items_center()
+                .justify_center()
+                .border_1()
+                .border_color(self.colors.border)
+                .rounded_sm()
+                .bg(bg)
+                .child(Icon::new(IconName::Terminal, 14.0, color))
+                .cursor_pointer()
+                .id("pane-toggle-terminal")
+                .active(|style| style.opacity(0.85))
+                .on_click(cx.listener(ShellView::toggle_terminal_panel))
+        };
 
         let status_pill = div()
             .px_2()
@@ -186,7 +237,7 @@ impl<'a> SessionView<'a> {
             .border_1()
             .border_color(self.colors.border)
             .rounded_sm()
-            .child(self.session.status.as_str());
+            .child(self.session.status.clone());
 
         let header_row = div()
             .flex()
@@ -197,7 +248,7 @@ impl<'a> SessionView<'a> {
                     .flex()
                     .items_center()
                     .gap_2()
-                    .child(div().text_lg().child(self.session.title.as_str()))
+                    .child(div().text_lg().child(self.session.title.clone()))
                     .child(status_pill),
             )
             .child(
@@ -228,7 +279,7 @@ impl<'a> SessionView<'a> {
                 div()
                     .text_sm()
                     .text_color(self.colors.muted)
-                    .child(self.session.detail.as_str()),
+                    .child(self.session.detail.clone()),
             );
 
         let notice_block = match self.data_state {

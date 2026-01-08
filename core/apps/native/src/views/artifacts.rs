@@ -1,4 +1,4 @@
-use gpui::{ClickEvent, Context, ObjectFit, div, img, prelude::*, px};
+use gpui::{ClickEvent, Context, ElementId, ObjectFit, div, img, prelude::*, px};
 use ctx_core::models::Artifact;
 
 use crate::theme::ThemeColors;
@@ -54,6 +54,8 @@ impl<'a> ArtifactsView<'a> {
                         .bg(item_bg)
                         .text_sm()
                         .child(label)
+                        .cursor_pointer()
+                        .id(ElementId::named_usize("artifact", index))
                         .on_click(on_click),
                 )
             });
@@ -106,14 +108,18 @@ impl<'a> ArtifactsView<'a> {
                                     .h_full()
                                     .object_fit(ObjectFit::Contain)
                                     .with_loading(move || {
-                                        div().text_sm().text_color(colors.muted).child(
-                                            "Loading image preview...",
-                                        )
+                                        div()
+                                            .text_sm()
+                                            .text_color(colors.muted)
+                                            .child("Loading image preview...")
+                                            .into_any_element()
                                     })
                                     .with_fallback(move || {
-                                        div().text_sm().text_color(colors.muted).child(
-                                            "Image preview unavailable.",
-                                        )
+                                        div()
+                                            .text_sm()
+                                            .text_color(colors.muted)
+                                            .child("Image preview unavailable.")
+                                            .into_any_element()
                                     }),
                             )
                     }
@@ -156,6 +162,7 @@ impl<'a> ArtifactsView<'a> {
                                 .font_family(MONO_FONT_FAMILY)
                                 .text_color(self.colors.text)
                                 .whitespace_nowrap()
+                                .id("artifact-preview-lines")
                                 .overflow_x_scroll()
                                 .overflow_y_scroll()
                                 .h(preview_height)
@@ -267,12 +274,13 @@ impl<'a> ArtifactsView<'a> {
                 .border_1()
                 .border_color(self.colors.border)
                 .rounded_sm()
-                .child("Open");
+                .child("Open")
+                .id("artifact-open");
             if can_open {
                 open_button = open_button
                     .bg(self.colors.panel)
                     .cursor_pointer()
-                    .active(|this| this.opacity(0.85))
+                    .active(|style| style.opacity(0.85))
                     .on_click(on_open);
             } else {
                 open_button = open_button
@@ -287,12 +295,13 @@ impl<'a> ArtifactsView<'a> {
                 .border_1()
                 .border_color(self.colors.border)
                 .rounded_sm()
-                .child("Open in app");
+                .child("Open in app")
+                .id("artifact-open-in-app");
             if can_open_in_app {
                 open_in_app_button = open_in_app_button
                     .bg(self.colors.panel)
                     .cursor_pointer()
-                    .active(|this| this.opacity(0.85))
+                    .active(|style| style.opacity(0.85))
                     .on_click(on_open_in_app);
             } else {
                 open_in_app_button = open_in_app_button
@@ -307,12 +316,13 @@ impl<'a> ArtifactsView<'a> {
                 .border_1()
                 .border_color(self.colors.border)
                 .rounded_sm()
-                .child("Download");
+                .child("Download")
+                .id("artifact-download");
             if can_download {
                 download_button = download_button
                     .bg(self.colors.panel)
                     .cursor_pointer()
-                    .active(|this| this.opacity(0.85))
+                    .active(|style| style.opacity(0.85))
                     .on_click(on_download);
             } else {
                 download_button = download_button

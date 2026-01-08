@@ -1,4 +1,24 @@
+#[cfg(feature = "automation")]
 mod automation;
+
+#[cfg(not(feature = "automation"))]
+mod automation {
+    use std::net::SocketAddr;
+    use std::path::PathBuf;
+
+    use gpui::{App, WindowHandle};
+
+    use crate::app::ShellView;
+
+    #[derive(Clone, Debug, Default)]
+    pub struct AutomationConfig {
+        pub addr: Option<SocketAddr>,
+        pub screenshot_dir: Option<PathBuf>,
+        pub fixture: Option<String>,
+    }
+
+    pub fn start(_app: &mut App, _window: WindowHandle<ShellView>, _config: AutomationConfig) {}
+}
 mod app;
 mod theme;
 

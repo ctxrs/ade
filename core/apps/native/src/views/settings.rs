@@ -1,10 +1,10 @@
-use gpui::{ClickEvent, Context, Render, Window, div, prelude::*};
+use gpui::{ClickEvent, Context, ElementId, Render, Window, div, prelude::*};
 
 use ctx_client::InstallStateKind;
 use ctx_providers::adapters::ProviderHealth;
 
 use crate::theme::ThemeColors;
-use crate::state::settings::SettingsState;
+use super::super::state::SettingsState;
 
 enum StatusTone {
     Good,
@@ -30,7 +30,7 @@ fn status_pill(colors: ThemeColors, label: &str, tone: StatusTone) -> impl IntoE
         .rounded_sm()
         .bg(colors.panel)
         .text_color(text_color)
-        .child(label)
+        .child(label.to_string())
 }
 
 fn button_base<E: IntoElement>(colors: ThemeColors, label: E) -> gpui::Div {
@@ -58,7 +58,7 @@ fn section_card<E: IntoElement>(colors: ThemeColors, title: &str, body: E) -> im
             div()
                 .text_sm()
                 .text_color(colors.muted)
-                .child(title),
+                .child(title.to_string()),
         )
         .child(body)
 }
@@ -77,9 +77,9 @@ fn error_banner(colors: ThemeColors, title: &str, message: &str) -> impl IntoEle
             div()
                 .text_sm()
                 .text_color(colors.error)
-                .child(title),
+                .child(title.to_string()),
         )
-        .child(div().text_sm().text_color(colors.text).child(message))
+        .child(div().text_sm().text_color(colors.text).child(message.to_string()))
 }
 
 impl Render for SettingsState {
@@ -93,18 +93,22 @@ impl Render for SettingsState {
             "Refreshing..."
         };
 
-        let mut refresh_button = button_base(colors, refresh_label);
-        if refresh_enabled {
-            refresh_button = refresh_button
+        let refresh_button = if refresh_enabled {
+            button_base(colors, refresh_label)
                 .bg(colors.panel)
                 .cursor_pointer()
-                .active(|this| this.opacity(0.85))
+                .id("settings-refresh")
+                .active(|style| style.opacity(0.85))
                 .on_click(cx.listener(|view, _: &ClickEvent, _window, cx| {
                     view.start_load(cx);
-                }));
+                }))
+                .into_any_element()
         } else {
-            refresh_button = refresh_button.bg(colors.panel_2).text_color(colors.muted);
-        }
+            button_base(colors, refresh_label)
+                .bg(colors.panel_2)
+                .text_color(colors.muted)
+                .into_any_element()
+        };
 
         let header = div()
             .flex()
@@ -132,9 +136,9 @@ impl Render for SettingsState {
                             .child(
                                 div()
                                     .text_color(colors.muted)
-                                    .child(row.label.as_str()),
+                                    .child(row.label.clone()),
                             )
-                            .child(row.value.as_str()),
+                            .child(row.value.clone()),
                     )
                 },
             )
@@ -182,7 +186,9 @@ impl Render for SettingsState {
                             .rounded_sm()
                             .bg(item_bg)
                             .text_sm()
-                            .child(workspace.name.as_str())
+                            .child(workspace.name.clone())
+                            .cursor_pointer()
+                            .id(ElementId::named_usize("settings-workspace", index))
                             .on_click(on_click),
                     )
                 })
@@ -194,18 +200,22 @@ impl Render for SettingsState {
             "Install all"
         };
         let install_all_enabled = self.install_busy.is_none();
-        let mut install_all_button = button_base(colors, install_all_label);
-        if install_all_enabled {
-            install_all_button = install_all_button
+        let install_all_button = if install_all_enabled {
+            button_base(colors, install_all_label)
                 .bg(colors.panel)
                 .cursor_pointer()
-                .active(|this| this.opacity(0.85))
+                .id("settings-install-all")
+                .active(|style| style.opacity(0.85))
                 .on_click(cx.listener(|view, _: &ClickEvent, _window, cx| {
                     view.install_all_providers(cx);
-                }));
+                }))
+                .into_any_element()
         } else {
-            install_all_button = install_all_button.bg(colors.panel_2).text_color(colors.muted);
-        }
+            button_base(colors, install_all_label)
+                .bg(colors.panel_2)
+                .text_color(colors.muted)
+                .into_any_element()
+        };
 
         let provider_controls = section_card(
             colors,
@@ -360,23 +370,25 @@ impl Render for SettingsState {
                     let mut action_row =
                         div().flex().items_center().justify_end().gap_1();
                     if !installed_ok {
-                        let mut install_button =
-                            button_base(colors, install_label.as_str());
-                        if install_supported && !install_busy {
+                        let install_button = if install_supported && !install_busy {
                             let install_provider_id = provider_id.clone();
                             let on_click =
                                 cx.listener(move |view, _: &ClickEvent, _window, cx| {
                                     view.install_provider(install_provider_id.clone(), cx);
                                 });
-                            install_button = install_button
+                            button_base(colors, install_label.clone())
                                 .bg(colors.panel)
                                 .cursor_pointer()
-                                .active(|this| this.opacity(0.85))
-                                .on_click(on_click);
+                                .id(format!("settings-install-{provider_id}"))
+                                .active(|style| style.opacity(0.85))
+                                .on_click(on_click)
+                                .into_any_element()
                         } else {
-                            install_button =
-                                install_button.bg(colors.panel_2).text_color(colors.muted);
-                        }
+                            button_base(colors, install_label.clone())
+                                .bg(colors.panel_2)
+                                .text_color(colors.muted)
+                                .into_any_element()
+                        };
                         action_row = action_row.child(install_button);
                     } else {
                         if needs_auth {
@@ -390,23 +402,25 @@ impl Render for SettingsState {
                             } else {
                                 "Authenticate"
                             };
-                            let mut auth_button =
-                                button_base(colors, auth_label);
-                            if any_workspace && !auth_busy {
+                            let auth_button = if any_workspace && !auth_busy {
                                 let auth_provider_id = provider_id.clone();
                                 let on_click =
                                     cx.listener(move |view, _: &ClickEvent, _window, cx| {
                                         view.authenticate_provider(auth_provider_id.clone(), cx);
                                     });
-                                auth_button = auth_button
+                                button_base(colors, auth_label)
                                     .bg(colors.panel)
                                     .cursor_pointer()
-                                    .active(|this| this.opacity(0.85))
-                                    .on_click(on_click);
+                                    .id(format!("settings-auth-{provider_id}"))
+                                    .active(|style| style.opacity(0.85))
+                                    .on_click(on_click)
+                                    .into_any_element()
                             } else {
-                                auth_button =
-                                    auth_button.bg(colors.panel_2).text_color(colors.muted);
-                            }
+                                button_base(colors, auth_label)
+                                    .bg(colors.panel_2)
+                                    .text_color(colors.muted)
+                                    .into_any_element()
+                            };
                             action_row = action_row.child(auth_button);
                         }
                         if show_verify {
@@ -420,24 +434,25 @@ impl Render for SettingsState {
                             } else {
                                 "Verify"
                             };
-                            let mut verify_button =
-                                button_base(colors, verify_label);
-                            if any_workspace && !verify_busy {
+                            let verify_button = if any_workspace && !verify_busy {
                                 let verify_provider_id = provider_id.clone();
                                 let on_click =
                                     cx.listener(move |view, _: &ClickEvent, _window, cx| {
                                         view.verify_provider(verify_provider_id.clone(), cx);
                                     });
-                                verify_button = verify_button
+                                button_base(colors, verify_label)
                                     .bg(colors.panel)
                                     .cursor_pointer()
-                                    .active(|this| this.opacity(0.85))
-                                    .on_click(on_click);
+                                    .id(format!("settings-verify-{provider_id}"))
+                                    .active(|style| style.opacity(0.85))
+                                    .on_click(on_click)
+                                    .into_any_element()
                             } else {
-                                verify_button = verify_button
+                                button_base(colors, verify_label)
                                     .bg(colors.panel_2)
-                                    .text_color(colors.muted);
-                            }
+                                    .text_color(colors.muted)
+                                    .into_any_element()
+                            };
                             action_row = action_row.child(verify_button);
                         }
 
@@ -451,22 +466,25 @@ impl Render for SettingsState {
                         } else {
                             "Check"
                         };
-                        let mut check_button = button_base(colors, check_label);
-                        if any_workspace && !opts_busy {
+                        let check_button = if any_workspace && !opts_busy {
                             let check_provider_id = provider_id.clone();
                             let on_click =
                                 cx.listener(move |view, _: &ClickEvent, _window, cx| {
                                     view.ensure_provider_options(check_provider_id.clone(), true, cx);
                                 });
-                            check_button = check_button
+                            button_base(colors, check_label)
                                 .bg(colors.panel)
                                 .cursor_pointer()
-                                .active(|this| this.opacity(0.85))
-                                .on_click(on_click);
+                                .id(format!("settings-check-{provider_id}"))
+                                .active(|style| style.opacity(0.85))
+                                .on_click(on_click)
+                                .into_any_element()
                         } else {
-                            check_button =
-                                check_button.bg(colors.panel_2).text_color(colors.muted);
-                        }
+                            button_base(colors, check_label)
+                                .bg(colors.panel_2)
+                                .text_color(colors.muted)
+                                .into_any_element()
+                        };
                         action_row = action_row.child(check_button);
                     }
 
@@ -511,7 +529,7 @@ impl Render for SettingsState {
                                 div()
                                     .text_sm()
                                     .text_color(colors.muted)
-                                    .child(line.as_str()),
+                                    .child(line.clone()),
                             )
                         },
                     );
@@ -520,7 +538,7 @@ impl Render for SettingsState {
                         .flex()
                         .items_center()
                         .gap_2()
-                        .child(provider.provider_id.as_str());
+                        .child(provider.provider_id.clone());
                     if let Some(pill) = status_badge {
                         title_row = title_row.child(pill);
                     }

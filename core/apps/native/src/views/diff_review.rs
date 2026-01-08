@@ -1,4 +1,4 @@
-use gpui::{ClickEvent, Context, Rgba, div, prelude::*, px};
+use gpui::{ClickEvent, Context, ElementId, Rgba, div, prelude::*, px};
 
 use crate::theme::ThemeColors;
 
@@ -102,7 +102,8 @@ impl<'a> DiffReviewView<'a> {
                 .border_1()
                 .border_color(self.colors.border)
                 .rounded_sm()
-                .child("Reject");
+                .child("Reject")
+                .id("diff-reject-all");
             let mut approve_button = div()
                 .px_2()
                 .py_1()
@@ -110,18 +111,19 @@ impl<'a> DiffReviewView<'a> {
                 .border_1()
                 .border_color(self.colors.border)
                 .rounded_sm()
-                .child("Approve");
+                .child("Approve")
+                .id("diff-approve-all");
 
             if can_apply_all {
                 reject_button = reject_button
                     .text_color(self.colors.error)
                     .cursor_pointer()
-                    .active(|this| this.opacity(0.85))
+                    .active(|style| style.opacity(0.85))
                     .on_click(on_reject);
                 approve_button = approve_button
                     .text_color(self.colors.success)
                     .cursor_pointer()
-                    .active(|this| this.opacity(0.85))
+                    .active(|style| style.opacity(0.85))
                     .on_click(on_approve);
             } else {
                 reject_button = reject_button.text_color(self.colors.muted);
@@ -201,9 +203,11 @@ impl<'a> DiffReviewView<'a> {
                             .rounded_sm()
                             .bg(item_bg)
                             .text_sm()
-                            .child(file.file_path.as_str())
+                            .child(file.file_path.clone())
                             .child(div().flex_1())
                             .child(file_summary(file, self.colors))
+                            .cursor_pointer()
+                            .id(format!("diff-file-{}", file.key))
                             .on_click(on_select),
                     )
                 },
@@ -256,7 +260,8 @@ impl<'a> DiffReviewView<'a> {
                         .border_1()
                         .border_color(self.colors.border)
                         .rounded_sm()
-                        .child("Undo");
+                        .child("Undo")
+                        .id(format!("diff-file-undo-{}", file.key));
                     let mut keep_button = div()
                         .px_2()
                         .py_1()
@@ -264,18 +269,19 @@ impl<'a> DiffReviewView<'a> {
                         .border_1()
                         .border_color(self.colors.border)
                         .rounded_sm()
-                        .child("Keep");
+                        .child("Keep")
+                        .id(format!("diff-file-keep-{}", file.key));
 
                     if can_apply {
                         undo_button = undo_button
                             .text_color(self.colors.error)
                             .cursor_pointer()
-                            .active(|this| this.opacity(0.85))
+                            .active(|style| style.opacity(0.85))
                             .on_click(on_undo);
                         keep_button = keep_button
                             .text_color(self.colors.success)
                             .cursor_pointer()
-                            .active(|this| this.opacity(0.85))
+                            .active(|style| style.opacity(0.85))
                             .on_click(on_keep);
                     } else {
                         undo_button = undo_button.text_color(self.colors.muted);
@@ -295,7 +301,7 @@ impl<'a> DiffReviewView<'a> {
                     .flex()
                     .items_center()
                     .gap_2()
-                    .child(div().text_sm().child(file.file_path.as_str()))
+                    .child(div().text_sm().child(file.file_path.clone()))
                     .child(summary)
                     .child(div().flex_1())
                     .child(actions);
@@ -305,8 +311,9 @@ impl<'a> DiffReviewView<'a> {
                         .text_sm()
                         .text_color(self.colors.muted)
                         .child("Binary or metadata-only diff.")
+                        .into_any_element()
                 } else {
-                    render_inline_diff(file, self.state, self.colors, cx)
+                    render_inline_diff(file, self.state, self.colors, cx).into_any_element()
                 };
 
                 div()
@@ -425,12 +432,12 @@ fn render_inline_diff(
         let hunk_busy = state.busy_key.as_deref() == Some(hunk.key.as_str());
         let hunk_patch = file.hunk_patch_text(hunk);
 
-        let actions = if hunk_busy {
-            div()
-                .text_sm()
-                .text_color(colors.muted)
-                .child("Applying...")
-        } else {
+            let actions = if hunk_busy {
+                div()
+                    .text_sm()
+                    .text_color(colors.muted)
+                    .child("Applying...")
+            } else {
             let keep_key = hunk.key.clone();
             let keep_patch = hunk_patch.clone();
             let keep_message = format!("Kept hunk in {}.", file.file_path.as_str());
@@ -464,7 +471,8 @@ fn render_inline_diff(
                 .border_1()
                 .border_color(colors.border)
                 .rounded_sm()
-                .child("Undo");
+                .child("Undo")
+                .id(format!("diff-hunk-undo-{}", hunk.key));
             let mut keep_button = div()
                 .px_2()
                 .py_1()
@@ -472,18 +480,19 @@ fn render_inline_diff(
                 .border_1()
                 .border_color(colors.border)
                 .rounded_sm()
-                .child("Keep");
+                .child("Keep")
+                .id(format!("diff-hunk-keep-{}", hunk.key));
 
             if can_apply {
                 undo_button = undo_button
                     .text_color(colors.error)
                     .cursor_pointer()
-                    .active(|this| this.opacity(0.85))
+                    .active(|style| style.opacity(0.85))
                     .on_click(on_undo);
                 keep_button = keep_button
                     .text_color(colors.success)
                     .cursor_pointer()
-                    .active(|this| this.opacity(0.85))
+                    .active(|style| style.opacity(0.85))
                     .on_click(on_keep);
             } else {
                 undo_button = undo_button.text_color(colors.muted);
@@ -510,7 +519,7 @@ fn render_inline_diff(
                     .text_sm()
                     .font_family(MONO_FONT_FAMILY)
                     .text_color(colors.muted)
-                    .child(hunk.header_line.as_str()),
+                    .child(hunk.header_line.clone()),
             )
             .child(div().flex_1())
             .child(actions);
@@ -524,6 +533,7 @@ fn render_inline_diff(
             .text_sm()
             .font_family(MONO_FONT_FAMILY)
             .whitespace_nowrap()
+            .id(format!("diff-hunk-lines-{}", hunk.key))
             .overflow_x_scroll()
             .w_full();
 

@@ -1,15 +1,16 @@
-mod artifacts;
-mod composer;
-mod diff_review;
-mod session;
-mod settings;
-mod stream;
-mod terminal;
-mod turn_tools;
-mod workspace;
+pub(super) mod artifacts;
+pub(super) mod composer;
+pub(super) mod diff_review;
+pub(super) mod session;
+pub(super) mod settings;
+pub(super) mod stream;
+pub(super) mod terminal;
+pub(super) mod turn_tools;
+pub(super) mod workspace;
 
 use std::collections::HashMap;
 
+use gpui::AppContext as _;
 use gpui::{ClickEvent, Context, FocusHandle, ListState, Window, Entity};
 use tokio::sync::watch;
 
