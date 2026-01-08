@@ -2,6 +2,11 @@
 
 CARGO_TARGET_DIR ?= $(HOME)/.cache/cargo/ctx-monorepo
 CTX_MCP_COMMAND ?= $(CARGO_TARGET_DIR)/debug/ctx-mcp
+CTX_DAEMON_PORT ?= 4399
+CTX_DAEMON_BIND ?= 127.0.0.1:$(CTX_DAEMON_PORT)
+CTX_DATA_DIR ?=
+CTX_DAEMON_UNIT ?= ctx-daemon-$(CTX_DAEMON_PORT)
+CTX_DAEMON_STOP ?= 0
 SUPABASE_LOCAL ?= 1
 SUPABASE_FUNCTIONS ?= 1
 SUPABASE_FUNCTIONS_BG ?= 1
@@ -32,16 +37,18 @@ dev: supabase-local supabase-functions
 	cargo build -p ctx-mcp
 ifeq ($(shell uname -s),Linux)
 	@if command -v systemd-run >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then \
-		systemctl --user stop ctx-daemon.scope >/dev/null 2>&1 || true; \
-		systemctl --user reset-failed ctx-daemon.scope >/dev/null 2>&1 || true; \
-		systemd-run --user --scope --unit ctx-daemon --same-dir --collect \
+		if [ "$(CTX_DAEMON_STOP)" = "1" ]; then \
+			systemctl --user stop $(CTX_DAEMON_UNIT).scope >/dev/null 2>&1 || true; \
+			systemctl --user reset-failed $(CTX_DAEMON_UNIT).scope >/dev/null 2>&1 || true; \
+		fi; \
+		systemd-run --user --scope --unit $(CTX_DAEMON_UNIT) --same-dir --collect \
 			--setenv CTX_MCP_COMMAND=$(CTX_MCP_COMMAND) \
-			cargo run -p ctx-http --bin ctx -- serve; \
+			cargo run -p ctx-http --bin ctx -- serve --bind $(CTX_DAEMON_BIND) $(if $(CTX_DATA_DIR),--data-dir $(CTX_DATA_DIR),); \
 	else \
-		CTX_MCP_COMMAND=$(CTX_MCP_COMMAND) cargo run -p ctx-http --bin ctx -- serve; \
+		CTX_MCP_COMMAND=$(CTX_MCP_COMMAND) cargo run -p ctx-http --bin ctx -- serve --bind $(CTX_DAEMON_BIND) $(if $(CTX_DATA_DIR),--data-dir $(CTX_DATA_DIR),); \
 	fi
 else
-	CTX_MCP_COMMAND=$(CTX_MCP_COMMAND) cargo run -p ctx-http --bin ctx -- serve
+	CTX_MCP_COMMAND=$(CTX_MCP_COMMAND) cargo run -p ctx-http --bin ctx -- serve --bind $(CTX_DAEMON_BIND) $(if $(CTX_DATA_DIR),--data-dir $(CTX_DATA_DIR),)
 endif
 
 web: supabase-local supabase-functions
