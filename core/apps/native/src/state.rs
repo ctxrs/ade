@@ -4,13 +4,13 @@ use gpui::{ClickEvent, Context, FocusHandle, KeyDownEvent, Window};
 use gpui_tokio::Tokio;
 
 use ctx_core::ids::{SessionId, WorkspaceId};
-use ctx_core::models::{SessionCatchupSummary, SessionEvent, SessionHead, SessionHistoryPage};
+use ctx_core::models::{Artifact, SessionCatchupSummary, SessionEvent, SessionHead, SessionHistoryPage};
 
 use crate::theme::ThemeColors;
 
 use super::models::{
-    artifact_label, build_message_items, session_info_from_head, session_info_from_summary,
-    MessageItem, SessionInfo,
+    build_message_items, session_info_from_head, session_info_from_summary, MessageItem,
+    SessionInfo,
 };
 use super::workspace_summary::{
     catchup_counts,
@@ -42,7 +42,7 @@ struct WorkspaceLoadResult {
     catchup_archived_total: Option<i64>,
     catchup_tasks: Vec<TaskSummaryItem>,
     catchup_sessions: Vec<SessionSummaryItem>,
-    artifact_names: Vec<String>,
+    artifacts: Vec<Artifact>,
     session_summaries: Vec<SessionCatchupSummary>,
     session_summary_map: HashMap<SessionId, SessionCatchupSummary>,
     session_head: Option<SessionHead>,
@@ -55,7 +55,7 @@ struct SessionLoadResult {
     session_head: Option<SessionHead>,
     session_history: Option<SessionHistoryPage>,
     session_events: Vec<SessionEvent>,
-    artifacts: Vec<String>,
+    artifacts: Vec<Artifact>,
 }
 
 #[derive(Clone, Copy)]
@@ -93,7 +93,8 @@ pub(crate) struct ShellView {
     pub(crate) sessions: Vec<SessionSummaryItem>,
     pub(crate) selected_session: Option<usize>,
     pub(crate) messages: Vec<MessageItem>,
-    pub(crate) artifacts: Vec<String>,
+    pub(crate) artifacts: Vec<Artifact>,
+    pub(crate) selected_artifact: Option<usize>,
     pub(crate) session_events: Vec<SessionEvent>,
     pub(crate) session_summary_map: HashMap<SessionId, SessionCatchupSummary>,
     pub(crate) session: SessionInfo,
@@ -273,9 +274,17 @@ impl ShellView {
         )];
         self.artifacts.clear();
         self.session_events.clear();
-        self.session_events.clear();
+        self.selected_artifact = None;
         cx.notify();
         self.load_session_details(session_id, cx);
+    }
+
+    pub(crate) fn select_artifact(&mut self, index: usize, cx: &mut Context<Self>) {
+        if index >= self.artifacts.len() {
+            return;
+        }
+        self.selected_artifact = Some(index);
+        cx.notify();
     }
 
     fn load_session_details(&mut self, session_id: SessionId, cx: &mut Context<Self>) {
@@ -300,12 +309,7 @@ impl ShellView {
                 .list_session_artifacts(session_id)
                 .await
                 .ok()
-                .map(|items| {
-                    items
-                        .into_iter()
-                        .map(artifact_label)
-                        .collect::<Vec<_>>()
-                })
+                .map(|items| items.into_iter().collect::<Vec<_>>())
                 .unwrap_or_default();
 
             Ok(SessionLoadResult {
@@ -356,6 +360,11 @@ impl ShellView {
                         view.messages = messages;
                         view.session_events = data.session_events;
                         view.artifacts = data.artifacts;
+                        view.selected_artifact = if view.artifacts.is_empty() {
+                            None
+                        } else {
+                            Some(0)
+                        };
                     }
                     Err(_) => {
                         view.messages = vec![MessageItem::new(
@@ -364,6 +373,7 @@ impl ShellView {
                         )];
                         view.session_events.clear();
                         view.artifacts.clear();
+                        view.selected_artifact = None;
                         if let Some(summary) = view.session_summary_map.get(&session_id) {
                             view.session = session_info_from_summary(summary);
                         }
@@ -390,6 +400,8 @@ impl ShellView {
         self.selected_session = None;
         self.messages = vec![MessageItem::new("assistant", message)];
         self.artifacts.clear();
+        self.session_events.clear();
+        self.selected_artifact = None;
         self.session_summary_map.clear();
         self.session = SessionInfo::placeholder();
         self.catchup_active_total = None;
@@ -512,7 +524,7 @@ impl ShellView {
             let mut session_history = None;
             let mut session_events = Vec::new();
             let mut artifacts = Vec::new();
-            if let Some(session_id) {
+            if let Some(session_id) = first_session_id {
                 session_head = client
                     .get_session_head(session_id, Some(40), Some(false))
                     .await
@@ -531,14 +543,8 @@ impl ShellView {
                     .list_session_artifacts(session_id)
                     .await
                     .ok()
-                    .map(|items| {
-                        items
-                            .into_iter()
-                            .map(artifact_label)
-                            .collect::<Vec<_>>()
-                    })
+                    .map(|items| items.into_iter().collect::<Vec<_>>())
                     .unwrap_or_default();
-            }
             }
 
             Ok(WorkspaceLoadResult {
@@ -546,7 +552,7 @@ impl ShellView {
                 catchup_archived_total,
                 catchup_tasks,
                 catchup_sessions,
-                artifact_names: artifacts,
+                artifacts,
                 session_summaries,
                 session_summary_map,
                 session_head,
@@ -589,7 +595,12 @@ impl ShellView {
                         }
                         view.messages = messages;
                         view.session_events = data.session_events;
-                        view.artifacts = data.artifact_names;
+                        view.artifacts = data.artifacts;
+                        view.selected_artifact = if view.artifacts.is_empty() {
+                            None
+                        } else {
+                            Some(0)
+                        };
                         view.data_state = DataLoadState::Loaded;
                     }
                     Err(err) => {
