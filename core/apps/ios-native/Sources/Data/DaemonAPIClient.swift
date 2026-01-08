@@ -167,6 +167,10 @@ actor DaemonAPIClient {
         return items.map(MessageSummary.init)
     }
 
+    func listSessionArtifacts(sessionId: String) async throws -> [Artifact] {
+        try await request("/api/sessions/\(sessionId)/artifacts")
+    }
+
     func fetchTrackDiff(trackId: String) async throws -> TrackDiffResponse {
         try await request("/api/tracks/\(trackId)/diff")
     }
