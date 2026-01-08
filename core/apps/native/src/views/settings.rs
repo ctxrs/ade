@@ -142,12 +142,6 @@ impl Render for SettingsState {
 
         let summary_card = section_card(colors, "Settings summary", summary_list);
 
-        let selected_workspace_name = self
-            .selected_workspace
-            .and_then(|id| self.workspaces.iter().find(|ws| ws.id == id))
-            .map(|ws| ws.name.as_str())
-            .unwrap_or("None");
-
         let workspace_list = if self.workspaces_loading {
             div()
                 .text_sm()
@@ -199,8 +193,7 @@ impl Render for SettingsState {
         } else {
             "Install all"
         };
-        let install_all_enabled =
-            self.install_busy.is_none() && !self.providers.is_empty() && !self.providers_loading;
+        let install_all_enabled = self.install_busy.is_none();
         let mut install_all_button = button_base(colors, install_all_label);
         if install_all_enabled {
             install_all_button = install_all_button
@@ -214,15 +207,9 @@ impl Render for SettingsState {
             install_all_button = install_all_button.bg(colors.panel_2).text_color(colors.muted);
         }
 
-        let workspace_hint = if self.selected_workspace.is_some() {
-            format!("Selected workspace: {}", selected_workspace_name)
-        } else {
-            "Select a workspace to enable auth and verify.".to_string()
-        };
-
         let provider_controls = section_card(
             colors,
-            "Harness setup",
+            "Agent harnesses",
             div()
                 .flex()
                 .flex_col()
@@ -232,29 +219,43 @@ impl Render for SettingsState {
                         .flex()
                         .items_center()
                         .justify_between()
-                        .text_sm()
-                        .child("Install supported harnesses")
+                        .gap_2()
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap_0()
+                                .child(div().text_sm().child("Install all"))
+                                .child(
+                                    div()
+                                        .text_sm()
+                                        .text_color(colors.muted)
+                                        .child("Installs supported harnesses to ~/.ctx/providers/agent-servers."),
+                                ),
+                        )
                         .child(install_all_button),
                 )
                 .child(
                     div()
                         .flex()
-                        .flex_col()
-                        .gap_1()
+                        .items_start()
+                        .justify_between()
+                        .gap_2()
                         .child(
                             div()
-                                .text_sm()
-                                .text_color(colors.muted)
-                                .child("Workspace for checks"),
+                                .flex()
+                                .flex_col()
+                                .gap_0()
+                                .child(div().text_sm().child("Workspace"))
+                                .child(
+                                    div()
+                                        .text_sm()
+                                        .text_color(colors.muted)
+                                        .child("Used for authenticate/verify checks."),
+                                ),
                         )
                         .child(workspace_list),
                 )
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(colors.muted)
-                        .child(workspace_hint),
-                ),
         );
 
         let any_workspace = self.selected_workspace.is_some();
@@ -275,12 +276,12 @@ impl Render for SettingsState {
             div()
                 .text_sm()
                 .text_color(colors.muted)
-                .child("Loading providers...")
+                .child("Loading harnesses...")
         } else if visible_providers.is_empty() {
             div()
                 .text_sm()
                 .text_color(colors.muted)
-                .child("No providers detected.")
+                .child("No harnesses.")
         } else {
             visible_providers.iter().fold(
                 div().flex().flex_col().gap_2(),
@@ -337,7 +338,7 @@ impl Render for SettingsState {
                         .unwrap_or("");
                     let needs_auth = opts.map(|options| options.auth_required).unwrap_or(false)
                         || verify_status == "auth_required";
-                    let show_verify = !needs_auth && !verify_status.is_empty() && verify_status != "ok";
+                    let show_verify = !needs_auth && verify_status != "ok";
                     let status_badge = if opts.is_none()
                         && self.opts_busy.get(&provider_id).copied().unwrap_or(false)
                     {
@@ -471,7 +472,7 @@ impl Render for SettingsState {
 
                     let mut detail_lines = vec![detail_line];
                     if !install_supported {
-                        detail_lines.push("Install not supported".to_string());
+                        detail_lines.push("Install not supported yet".to_string());
                     }
                     if let Some(session) = install_session {
                         match session.state {
@@ -550,7 +551,7 @@ impl Render for SettingsState {
             )
         };
 
-        let provider_card = section_card(colors, "Providers", provider_list);
+        let provider_card = section_card(colors, "Harnesses", provider_list);
 
         let mut errors = div().flex().flex_col().gap_1();
         if let Some(message) = self.workspace_error.as_ref() {

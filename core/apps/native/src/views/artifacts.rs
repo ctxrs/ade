@@ -17,6 +17,9 @@ pub(super) struct ArtifactsView<'a> {
     pub(super) artifact_preview: &'a ArtifactPreviewState,
 }
 
+const PREVIEW_HEIGHT: f32 = 220.0;
+const MONO_FONT_FAMILY: &str = "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, \"Liberation Mono\", \"Courier New\", monospace";
+
 impl<'a> ArtifactsView<'a> {
     pub(super) fn render(&self, cx: &mut Context<ShellView>) -> impl IntoElement {
         let list = self
@@ -81,6 +84,7 @@ impl<'a> ArtifactsView<'a> {
             let is_text = is_text_artifact(artifact);
             let is_video = is_video_artifact(artifact);
             let is_pdf = is_pdf_artifact(artifact);
+            let preview_height = px(PREVIEW_HEIGHT);
 
             let preview_content = if is_missing {
                 div()
@@ -94,7 +98,7 @@ impl<'a> ArtifactsView<'a> {
                     {
                         let colors = self.colors;
                         div()
-                            .h(px(220.0))
+                            .h(preview_height)
                             .w_full()
                             .child(
                                 img(image.clone())
@@ -144,7 +148,18 @@ impl<'a> ArtifactsView<'a> {
                                 .text_color(self.colors.muted)
                                 .child("Empty file.")
                         } else {
-                            let mut lines = div().flex().flex_col().gap_1().text_sm();
+                            let mut lines = div()
+                                .flex()
+                                .flex_col()
+                                .gap_1()
+                                .text_sm()
+                                .font_family(MONO_FONT_FAMILY)
+                                .text_color(self.colors.text)
+                                .whitespace_nowrap()
+                                .overflow_x_scroll()
+                                .overflow_y_scroll()
+                                .h(preview_height)
+                                .w_full();
                             for line in &preview.lines {
                                 let mut row = div().child(line.clone());
                                 if preview.is_diff {
@@ -152,17 +167,18 @@ impl<'a> ArtifactsView<'a> {
                                 }
                                 lines = lines.child(row);
                             }
+                            let mut body = div().flex().flex_col().gap_1().child(lines);
                             if preview.truncated {
-                                lines = lines.child(
+                                body = body.child(
                                     div()
                                         .text_sm()
                                         .text_color(self.colors.muted)
                                         .child("Preview truncated."),
                                 );
                             }
-                            lines
+                            body
                         }
-                    }
+                    },
                     ArtifactPreviewState::Loading { artifact_id }
                         if *artifact_id == artifact.id =>
                     {
@@ -170,7 +186,7 @@ impl<'a> ArtifactsView<'a> {
                             .text_sm()
                             .text_color(self.colors.muted)
                             .child("Loading preview...")
-                    }
+                    },
                     ArtifactPreviewState::Error {
                         artifact_id,
                         message,
@@ -183,21 +199,35 @@ impl<'a> ArtifactsView<'a> {
                         .text_color(self.colors.muted)
                         .child("Preview unavailable."),
                 }
-            } else if is_video {
-                div()
-                    .text_sm()
-                    .text_color(self.colors.muted)
-                    .child("Video preview unavailable. Use Open to play.")
-            } else if is_pdf {
-                div()
-                    .text_sm()
-                    .text_color(self.colors.muted)
-                    .child("PDF preview unavailable. Use Open to view.")
             } else {
+                let fallback_message = if is_video {
+                    "Video preview unavailable. Use Open to play."
+                } else if is_pdf {
+                    "PDF preview unavailable. Use Open to view."
+                } else {
+                    "No preview available for this artifact type."
+                };
+                let fallback_meta = preview_metadata_block(
+                    name,
+                    path,
+                    mime_type,
+                    &bytes,
+                    &created_at,
+                    self.colors,
+                );
                 div()
-                    .text_sm()
-                    .text_color(self.colors.muted)
-                    .child("No preview available for this artifact type.")
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .h(preview_height)
+                    .w_full()
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(self.colors.muted)
+                            .child(fallback_message),
+                    )
+                    .child(fallback_meta)
             };
 
             let mut detail = div()
@@ -394,6 +424,34 @@ impl<'a> ArtifactsView<'a> {
                     ),
             )
     }
+}
+
+fn preview_metadata_block(
+    name: &str,
+    path: &str,
+    mime_type: &str,
+    bytes: &str,
+    created_at: &str,
+    colors: ThemeColors,
+) -> gpui::Div {
+    let mut meta = div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .text_sm()
+        .text_color(colors.muted)
+        .child(format!("Type: {mime_type}"))
+        .child(format!("Size: {bytes}"));
+    if name != "N/A" {
+        meta = meta.child(format!("Name: {name}"));
+    }
+    if path != "N/A" {
+        meta = meta.child(format!("Path: {path}"));
+    }
+    if !created_at.is_empty() {
+        meta = meta.child(format!("Created: {created_at}"));
+    }
+    meta
 }
 
 fn diff_line_color(line: &str, colors: ThemeColors) -> gpui::Rgba {

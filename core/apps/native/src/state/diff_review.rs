@@ -70,6 +70,7 @@ pub(crate) struct DiffReviewState {
     pub(crate) files: Vec<DiffFile>,
     pub(crate) active_file_key: Option<String>,
     pub(crate) busy_key: Option<String>,
+    pub(crate) status: Option<String>,
     pub(crate) error: Option<String>,
 }
 
@@ -81,6 +82,7 @@ impl DiffReviewState {
             files: Vec::new(),
             active_file_key: None,
             busy_key: None,
+            status: None,
             error: None,
         }
     }
@@ -117,6 +119,7 @@ impl DiffReviewState {
             return;
         };
         self.busy_key = Some("diff:load".to_string());
+        self.status = None;
         self.error = None;
         cx.notify();
 
@@ -153,6 +156,55 @@ impl DiffReviewState {
         file_key: String,
         action: DiffPatchAction,
         patch: String,
+        status_message: String,
+        cx: &mut Context<Self>,
+    ) {
+        self.apply_patch(file_key, action, patch, status_message, cx);
+    }
+
+    pub(crate) fn apply_all_patch(
+        &mut self,
+        action: DiffPatchAction,
+        status_message: String,
+        cx: &mut Context<Self>,
+    ) {
+        if self.diff.trim().is_empty() {
+            return;
+        }
+        let patch = self.diff.clone();
+        self.apply_patch(
+            format!("diff:apply:{}", action.as_str()),
+            action,
+            patch,
+            status_message,
+            cx,
+        );
+    }
+
+    fn reset_state(&mut self) {
+        self.diff.clear();
+        self.files.clear();
+        self.active_file_key = None;
+        self.busy_key = None;
+        self.status = None;
+        self.error = None;
+    }
+
+    fn ensure_active_file(&mut self) {
+        if let Some(active) = &self.active_file_key {
+            if self.files.iter().any(|file| &file.key == active) {
+                return;
+            }
+        }
+        self.active_file_key = self.files.first().map(|file| file.key.clone());
+    }
+
+    fn apply_patch(
+        &mut self,
+        busy_key: String,
+        action: DiffPatchAction,
+        patch: String,
+        status_message: String,
         cx: &mut Context<Self>,
     ) {
         let Some(track_id) = self.track_id else {
@@ -161,7 +213,8 @@ impl DiffReviewState {
         if self.busy_key.is_some() {
             return;
         }
-        self.busy_key = Some(file_key.clone());
+        self.busy_key = Some(busy_key);
+        self.status = None;
         self.error = None;
         cx.notify();
 
@@ -184,6 +237,7 @@ impl DiffReviewState {
                 match result {
                     Ok(diff) => {
                         view.set_diff(diff);
+                        view.status = Some(status_message);
                     }
                     Err(err) => {
                         view.error = Some(err.to_string());
@@ -194,23 +248,6 @@ impl DiffReviewState {
             .ok();
         })
         .detach();
-    }
-
-    fn reset_state(&mut self) {
-        self.diff.clear();
-        self.files.clear();
-        self.active_file_key = None;
-        self.busy_key = None;
-        self.error = None;
-    }
-
-    fn ensure_active_file(&mut self) {
-        if let Some(active) = &self.active_file_key {
-            if self.files.iter().any(|file| &file.key == active) {
-                return;
-            }
-        }
-        self.active_file_key = self.files.first().map(|file| file.key.clone());
     }
 }
 

@@ -33,6 +33,21 @@ impl<'a> DiffReviewView<'a> {
             );
         }
 
+        if let Some(status) = &self.state.status {
+            root = root.child(
+                div()
+                    .px_2()
+                    .py_1()
+                    .border_1()
+                    .border_color(self.colors.success)
+                    .rounded_sm()
+                    .bg(self.colors.panel_2)
+                    .text_sm()
+                    .text_color(self.colors.success)
+                    .child(status.clone()),
+            );
+        }
+
         if is_loading {
             root = root.child(
                 div()
@@ -54,6 +69,70 @@ impl<'a> DiffReviewView<'a> {
             );
         }
 
+        let can_apply_all = self.state.track_id.is_some() && self.state.busy_key.is_none();
+        let apply_all_busy = self
+            .state
+            .busy_key
+            .as_deref()
+            .map(|key| key.starts_with("diff:apply:"))
+            .unwrap_or(false);
+
+        let apply_all_actions = if apply_all_busy {
+            div()
+                .text_sm()
+                .text_color(self.colors.muted)
+                .child("Applying...")
+        } else {
+            let approve_message = "Approved all changes.".to_string();
+            let on_approve = cx.listener(move |view, _: &ClickEvent, _window, cx| {
+                view.apply_all_patch(DiffPatchAction::Accept, approve_message.clone(), cx);
+            });
+            let reject_message = "Rejected all changes.".to_string();
+            let on_reject = cx.listener(move |view, _: &ClickEvent, _window, cx| {
+                view.apply_all_patch(DiffPatchAction::Reject, reject_message.clone(), cx);
+            });
+
+            let mut reject_button = div()
+                .px_2()
+                .py_1()
+                .text_sm()
+                .border_1()
+                .border_color(self.colors.border)
+                .rounded_sm()
+                .child("Reject");
+            let mut approve_button = div()
+                .px_2()
+                .py_1()
+                .text_sm()
+                .border_1()
+                .border_color(self.colors.border)
+                .rounded_sm()
+                .child("Approve");
+
+            if can_apply_all {
+                reject_button = reject_button
+                    .text_color(self.colors.error)
+                    .cursor_pointer()
+                    .active(|this| this.opacity(0.85))
+                    .on_click(on_reject);
+                approve_button = approve_button
+                    .text_color(self.colors.success)
+                    .cursor_pointer()
+                    .active(|this| this.opacity(0.85))
+                    .on_click(on_approve);
+            } else {
+                reject_button = reject_button.text_color(self.colors.muted);
+                approve_button = approve_button.text_color(self.colors.muted);
+            }
+
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(approve_button)
+                .child(reject_button)
+        };
+
         let header = div()
             .flex()
             .items_center()
@@ -65,20 +144,21 @@ impl<'a> DiffReviewView<'a> {
                     .items_center()
                     .gap_1()
                     .child(Icon::new(IconName::Diff, 12.0, self.colors.muted))
-                    .child(div().text_color(self.colors.text).child("Diff review")),
+                    .child(div().text_color(self.colors.text).child("All changes"))
+                    .child(
+                        div()
+                            .px_1()
+                            .py_0()
+                            .text_sm()
+                            .border_1()
+                            .border_color(self.colors.border)
+                            .rounded_sm()
+                            .bg(self.colors.panel)
+                            .text_color(self.colors.muted)
+                            .child(format!("{}", self.state.files.len())),
+                    ),
             )
-            .child(
-                div()
-                    .px_1()
-                    .py_0()
-                    .text_sm()
-                    .border_1()
-                    .border_color(self.colors.border)
-                    .rounded_sm()
-                    .bg(self.colors.panel)
-                    .text_color(self.colors.muted)
-                    .child(format!("{}", self.state.files.len())),
-            );
+            .child(apply_all_actions);
 
         let list = if self.state.files.is_empty() {
             div()
@@ -141,21 +221,27 @@ impl<'a> DiffReviewView<'a> {
                 } else {
                     let keep_key = file.key.clone();
                     let keep_patch = patch.clone();
+                    let keep_message =
+                        format!("Kept changes in {}.", file.file_path.as_str());
                     let on_keep = cx.listener(move |view, _: &ClickEvent, _window, cx| {
                         view.apply_file_patch(
                             keep_key.clone(),
                             DiffPatchAction::Accept,
                             keep_patch.clone(),
+                            keep_message.clone(),
                             cx,
                         );
                     });
                     let undo_key = file.key.clone();
                     let undo_patch = patch.clone();
+                    let undo_message =
+                        format!("Undid changes in {}.", file.file_path.as_str());
                     let on_undo = cx.listener(move |view, _: &ClickEvent, _window, cx| {
                         view.apply_file_patch(
                             undo_key.clone(),
                             DiffPatchAction::Reject,
                             undo_patch.clone(),
+                            undo_message.clone(),
                             cx,
                         );
                     });

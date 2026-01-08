@@ -247,6 +247,7 @@ fn image_format_for_artifact(artifact: &Artifact) -> Option<ImageFormat> {
     match mime.as_str() {
         "image/png" => return Some(ImageFormat::Png),
         "image/jpeg" | "image/jpg" => return Some(ImageFormat::Jpeg),
+        "image/webp" => return Some(ImageFormat::Webp),
         "image/gif" => return Some(ImageFormat::Gif),
         _ => {}
     }
@@ -259,6 +260,7 @@ fn image_format_for_artifact(artifact: &Artifact) -> Option<ImageFormat> {
     match extension.as_str() {
         "png" => Some(ImageFormat::Png),
         "jpg" | "jpeg" => Some(ImageFormat::Jpeg),
+        "webp" => Some(ImageFormat::Webp),
         "gif" => Some(ImageFormat::Gif),
         _ => None,
     }

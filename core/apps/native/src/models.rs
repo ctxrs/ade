@@ -132,13 +132,13 @@ pub(crate) fn is_image_artifact(artifact: &Artifact) -> bool {
     let mime = artifact.mime_type.trim().to_ascii_lowercase();
     if matches!(
         mime.as_str(),
-        "image/png" | "image/jpeg" | "image/jpg" | "image/gif"
+        "image/png" | "image/jpeg" | "image/jpg" | "image/gif" | "image/webp"
     ) {
         return true;
     }
     matches!(
         artifact_extension(artifact).as_deref(),
-        Some("png") | Some("jpg") | Some("jpeg") | Some("gif")
+        Some("png") | Some("jpg") | Some("jpeg") | Some("gif") | Some("webp")
     )
 }
 

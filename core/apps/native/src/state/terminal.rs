@@ -91,7 +91,6 @@ pub(crate) struct TerminalPanelState {
     pub(crate) load_state: TerminalLoadState,
     pub(crate) stream_state: TerminalStreamState,
     pub(crate) stream_terminal_id: Option<TerminalId>,
-    pub(crate) stream_url: Option<String>,
     pub(crate) stream_output: String,
     pub(crate) stream_stop_tx: Option<watch::Sender<bool>>,
     pub(crate) stream_generation: u64,
@@ -109,7 +108,6 @@ impl TerminalPanelState {
             load_state: TerminalLoadState::Idle,
             stream_state: TerminalStreamState::Idle,
             stream_terminal_id: None,
-            stream_url: None,
             stream_output: String::new(),
             stream_stop_tx: None,
             stream_generation: 0,
@@ -150,7 +148,7 @@ impl TerminalPanelState {
 
     pub(crate) fn select_terminal(&mut self, terminal_id: TerminalId, cx: &mut Context<Self>) {
         self.selected_terminal_id = Some(terminal_id);
-        self.start_terminal_stream(terminal_id, cx);
+        self.start_terminal_stream(terminal_id, false, cx);
     }
 
     pub(crate) fn load_terminals(&mut self, cx: &mut Context<Self>) {
@@ -263,7 +261,7 @@ impl TerminalPanelState {
                     Ok(terminal) => {
                         view.terminals.push(terminal.clone());
                         view.selected_terminal_id = Some(terminal.id);
-                        view.start_terminal_stream(terminal.id, cx);
+                        view.start_terminal_stream(terminal.id, false, cx);
                         view.last_error = None;
                     }
                     Err(err) => {
@@ -348,6 +346,21 @@ impl TerminalPanelState {
         self.set_scope(TerminalScope::Workspace, cx);
     }
 
+    pub(crate) fn on_reconnect_click(
+        &mut self,
+        _: &ClickEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(terminal_id) = self.selected_terminal_id else {
+            self.last_error = Some("Select a terminal to reconnect.".to_string());
+            cx.notify();
+            return;
+        };
+        self.last_error = None;
+        self.start_terminal_stream(terminal_id, true, cx);
+    }
+
     pub(crate) fn scope_terminals(&self) -> Vec<&TerminalSession> {
         match (self.scope, self.context.task_id) {
             (TerminalScope::Task, Some(task_id)) => self
@@ -368,7 +381,7 @@ impl TerminalPanelState {
                 .any(|terminal| terminal.id == selected)
             {
                 if self.stream_terminal_id != Some(selected) {
-                    self.start_terminal_stream(selected, cx);
+                    self.start_terminal_stream(selected, false, cx);
                 }
                 return;
             }
@@ -377,15 +390,21 @@ impl TerminalPanelState {
         self.selected_terminal_id = scope_terminals.first().map(|terminal| terminal.id);
         if self.selected_terminal_id != previous_selection {
             if let Some(terminal_id) = self.selected_terminal_id {
-                self.start_terminal_stream(terminal_id, cx);
+                self.start_terminal_stream(terminal_id, false, cx);
             } else {
                 self.clear_stream(cx);
             }
         }
     }
 
-    fn start_terminal_stream(&mut self, terminal_id: TerminalId, cx: &mut Context<Self>) {
-        if self.stream_terminal_id == Some(terminal_id)
+    fn start_terminal_stream(
+        &mut self,
+        terminal_id: TerminalId,
+        force: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if !force
+            && self.stream_terminal_id == Some(terminal_id)
             && !matches!(self.stream_state, TerminalStreamState::Error(_))
         {
             return;
@@ -400,7 +419,6 @@ impl TerminalPanelState {
             Ok(url) => url,
             Err(err) => {
                 self.stream_state = TerminalStreamState::Error(err.to_string());
-                self.stream_url = None;
                 cx.notify();
                 return;
             }
@@ -413,7 +431,6 @@ impl TerminalPanelState {
         let generation = self.stream_generation;
         self.stream_stop_tx = Some(stop_tx);
         self.stream_state = TerminalStreamState::Connecting;
-        self.stream_url = Some(url.clone());
         cx.notify();
 
         let stream_task = Tokio::spawn_result(cx, async move {
@@ -477,7 +494,6 @@ impl TerminalPanelState {
         self.stop_terminal_stream();
         self.stream_terminal_id = None;
         self.stream_state = TerminalStreamState::Idle;
-        self.stream_url = None;
         self.stream_output.clear();
         cx.notify();
     }
