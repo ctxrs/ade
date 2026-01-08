@@ -178,29 +178,35 @@ impl TerminalPanelState {
             Ok(terminals)
         });
 
-        cx.spawn(|this, cx| async move {
-            let result = task.await;
-            this.update(cx, |view, cx| {
-                if view.context.workspace_id != Some(workspace_id) {
-                    return;
+        cx.spawn(
+            move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
+                let mut cx = cx.clone();
+                async move {
+                    let result = task.await;
+                    this.update(&mut cx, |view, cx| {
+                        if view.context.workspace_id != Some(workspace_id) {
+                            return;
+                        }
+                        match result {
+                            Ok(terminals) => {
+                                view.terminals = terminals;
+                                view.load_state = TerminalLoadState::Loaded;
+                                view.last_error = None;
+                                view.reconcile_selection(cx);
+                            }
+                            Err(err) => {
+                                view.load_state = TerminalLoadState::Error(
+                                    "Unable to load terminals.".to_string(),
+                                );
+                                view.last_error = Some(err.to_string());
+                            }
+                        }
+                        cx.notify();
+                    })
+                    .ok();
                 }
-                match result {
-                    Ok(terminals) => {
-                        view.terminals = terminals;
-                        view.load_state = TerminalLoadState::Loaded;
-                        view.last_error = None;
-                        view.reconcile_selection(cx);
-                    }
-                    Err(err) => {
-                        view.load_state =
-                            TerminalLoadState::Error("Unable to load terminals.".to_string());
-                        view.last_error = Some(err.to_string());
-                    }
-                }
-                cx.notify();
-            })
-            .ok();
-        })
+            },
+        )
         .detach();
     }
 
@@ -259,28 +265,33 @@ impl TerminalPanelState {
             Ok(terminal)
         });
 
-        cx.spawn(|this, cx| async move {
-            let result = task.await;
-            this.update(cx, |view, cx| {
-                if view.context.workspace_id != Some(workspace_id) {
-                    return;
+        cx.spawn(
+            move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
+                let mut cx = cx.clone();
+                async move {
+                    let result = task.await;
+                    this.update(&mut cx, |view, cx| {
+                        if view.context.workspace_id != Some(workspace_id) {
+                            return;
+                        }
+                        match result {
+                            Ok(terminal) => {
+                                view.terminals.push(terminal.clone());
+                                view.selected_terminal_id = Some(terminal.id);
+                                view.start_terminal_stream(terminal.id, false, cx);
+                                view.last_error = None;
+                            }
+                            Err(err) => {
+                                view.last_error = Some(err.to_string());
+                            }
+                        }
+                        view.reconcile_selection(cx);
+                        cx.notify();
+                    })
+                    .ok();
                 }
-                match result {
-                    Ok(terminal) => {
-                        view.terminals.push(terminal.clone());
-                        view.selected_terminal_id = Some(terminal.id);
-                        view.start_terminal_stream(terminal.id, false, cx);
-                        view.last_error = None;
-                    }
-                    Err(err) => {
-                        view.last_error = Some(err.to_string());
-                    }
-                }
-                view.reconcile_selection(cx);
-                cx.notify();
-            })
-            .ok();
-        })
+            },
+        )
         .detach();
     }
 
@@ -292,29 +303,34 @@ impl TerminalPanelState {
             Ok(terminal_id)
         });
 
-        cx.spawn(|this, cx| async move {
-            let result = task.await;
-            this.update(cx, |view, cx| {
-                match result {
-                    Ok(terminal_id) => {
-                        view.terminals.retain(|terminal| terminal.id != terminal_id);
-                        if view.selected_terminal_id == Some(terminal_id) {
-                            view.selected_terminal_id = None;
+        cx.spawn(
+            move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
+                let mut cx = cx.clone();
+                async move {
+                    let result = task.await;
+                    this.update(&mut cx, |view, cx| {
+                        match result {
+                            Ok(terminal_id) => {
+                                view.terminals.retain(|terminal| terminal.id != terminal_id);
+                                if view.selected_terminal_id == Some(terminal_id) {
+                                    view.selected_terminal_id = None;
+                                }
+                                if view.stream_terminal_id == Some(terminal_id) {
+                                    view.clear_stream(cx);
+                                }
+                                view.reconcile_selection(cx);
+                                view.last_error = None;
+                            }
+                            Err(err) => {
+                                view.last_error = Some(err.to_string());
+                            }
                         }
-                        if view.stream_terminal_id == Some(terminal_id) {
-                            view.clear_stream(cx);
-                        }
-                        view.reconcile_selection(cx);
-                        view.last_error = None;
-                    }
-                    Err(err) => {
-                        view.last_error = Some(err.to_string());
-                    }
+                        cx.notify();
+                    })
+                    .ok();
                 }
-                cx.notify();
-            })
-            .ok();
-        })
+            },
+        )
         .detach();
     }
 
@@ -373,9 +389,9 @@ impl TerminalPanelState {
         &mut self,
         _: &ClickEvent,
         window: &mut Window,
-        _: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) {
-        self.input_focus.focus(window);
+        self.input_focus.focus(window, cx);
     }
 
     pub(crate) fn on_input_key_down(
@@ -593,18 +609,25 @@ impl TerminalPanelState {
             run_terminal_stream(url, stop_rx, input_rx, update_tx).await
         });
 
-        cx.spawn(|_, _| async move {
+        cx.spawn(
+            move |_: gpui::WeakEntity<Self>, _: &mut gpui::AsyncApp| async move {
             let _ = stream_task.await;
-        })
+        },
+        )
         .detach();
 
-        cx.spawn(|this, cx| async move {
-            while let Some(update) = update_rx.recv().await {
-                let _ = this.update(cx, |view, cx| {
-                    view.handle_stream_update(update, generation, cx);
-                });
-            }
-        })
+        cx.spawn(
+            move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
+                let mut cx = cx.clone();
+                async move {
+                    while let Some(update) = update_rx.recv().await {
+                        let _ = this.update(&mut cx, |view, cx| {
+                            view.handle_stream_update(update, generation, cx);
+                        });
+                    }
+                }
+            },
+        )
         .detach();
     }
 
@@ -721,7 +744,7 @@ async fn run_terminal_stream(
                 }
                 input = input_rx.recv() => {
                     if let Some(data) = input {
-                        if write.send(WsMessage::Text(data)).await.is_err() {
+                        if write.send(WsMessage::Text(data.into())).await.is_err() {
                             break;
                         }
                     }
@@ -761,7 +784,7 @@ async fn run_terminal_stream(
 
 fn parse_terminal_stream_output(message: WsMessage) -> Option<String> {
     match message {
-        WsMessage::Text(text) => Some(text),
+        WsMessage::Text(text) => Some(text.to_string()),
         WsMessage::Binary(bytes) => Some(String::from_utf8_lossy(&bytes).to_string()),
         _ => None,
     }
