@@ -95,6 +95,21 @@ struct Message: Codable, Sendable, Identifiable {
     let createdAt: String
 }
 
+struct Artifact: Codable, Sendable, Identifiable {
+    let id: CtxID
+    let sessionId: CtxID
+    let trackId: CtxID
+    let taskId: CtxID
+    let workspaceId: CtxID
+    let worktreeId: CtxID
+    let name: String?
+    let absolutePath: String
+    let mimeType: String
+    let bytes: Int
+    let createdAt: String
+    let missing: Bool?
+}
+
 struct MessageAttachment: Codable, Sendable {
     enum Kind: String, Codable, Sendable {
         case image
@@ -522,6 +537,7 @@ struct MessageSummary: Codable, Sendable, Identifiable {
     let sessionId: String
     let role: MessageRole
     let content: String
+    let attachments: [MessageAttachment]?
     let delivery: MessageDelivery
     let createdAt: String
 }
@@ -587,6 +603,7 @@ extension MessageSummary {
             sessionId: message.sessionId.stringValue,
             role: message.role,
             content: message.content,
+            attachments: message.attachments,
             delivery: message.delivery,
             createdAt: message.createdAt
         )

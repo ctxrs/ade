@@ -1,10 +1,15 @@
 import Foundation
+import PhotosUI
 import SwiftUI
+import UniformTypeIdentifiers
+import UIKit
 
 struct ChatView: View {
     @ObservedObject var viewModel: ChatViewModel
     var showsBackground: Bool = true
     @State private var composerText = ""
+    @State private var pendingAttachments: [MessageAttachment] = []
+    @State private var selectedPhotos: [PhotosPickerItem] = []
     @FocusState private var isComposerFocused: Bool
 
     var body: some View {
@@ -15,15 +20,29 @@ struct ChatView: View {
             messageList
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            ComposerBar(
-                text: $composerText,
-                isSendEnabled: !composerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                isFocused: $isComposerFocused,
-                onSend: sendMessage
-            )
+            VStack(spacing: 0) {
+                if !pendingAttachments.isEmpty {
+                    ComposerAttachmentsRow(
+                        attachments: pendingAttachments,
+                        onRemove: { index in
+                            pendingAttachments.remove(at: index)
+                        }
+                    )
+                }
+                ComposerBar(
+                    text: $composerText,
+                    selectedPhotos: $selectedPhotos,
+                    isSendEnabled: isSendEnabled,
+                    isFocused: $isComposerFocused,
+                    onSend: sendMessage
+                )
+            }
         }
         .onAppear { viewModel.startPolling() }
         .onDisappear { viewModel.stopPolling() }
+        .onChange(of: selectedPhotos) { newItems in
+            Task { await loadAttachments(from: newItems) }
+        }
     }
 
     private var messageList: some View {
@@ -31,11 +50,16 @@ struct ChatView: View {
             let horizontalPadding: CGFloat = 16
             let availableWidth = max(0, geometry.size.width - (horizontalPadding * 2))
             let maxBubbleWidth = min(360, availableWidth * 0.78)
+            let assetContext = viewModel.assetContext
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(spacing: 12) {
                         ForEach(viewModel.messages) { message in
-                            MessageRow(message: message, maxBubbleWidth: maxBubbleWidth)
+                            MessageRow(
+                                message: message,
+                                maxBubbleWidth: maxBubbleWidth,
+                                assetContext: assetContext
+                            )
                                 .id(message.id)
                         }
                         if viewModel.isAssistantTyping {
@@ -65,11 +89,48 @@ struct ChatView: View {
         }
     }
 
+    private var isSendEnabled: Bool {
+        !composerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !pendingAttachments.isEmpty
+    }
+
     private func sendMessage() {
         let trimmed = composerText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        viewModel.send(trimmed)
+        guard !trimmed.isEmpty || !pendingAttachments.isEmpty else { return }
+        viewModel.send(trimmed, attachments: pendingAttachments)
         composerText = ""
+        pendingAttachments = []
+    }
+
+    @MainActor
+    private func loadAttachments(from items: [PhotosPickerItem]) async {
+        guard !items.isEmpty else { return }
+        var nextAttachments: [MessageAttachment] = []
+        for item in items {
+            guard let data = try? await item.loadTransferable(type: Data.self) else { continue }
+            let contentType = item.supportedContentTypes.first
+            let mimeType = contentType?.preferredMIMEType ?? "image/*"
+            let fileExtension = contentType?.preferredFilenameExtension
+            let name = suggestedAttachmentName(extension: fileExtension)
+            nextAttachments.append(
+                MessageAttachment(
+                    kind: .image,
+                    mimeType: mimeType,
+                    dataBase64: data.base64EncodedString(),
+                    blobId: nil,
+                    name: name
+                )
+            )
+        }
+        if !nextAttachments.isEmpty {
+            pendingAttachments.append(contentsOf: nextAttachments)
+        }
+        selectedPhotos = []
+    }
+
+    private func suggestedAttachmentName(extension fileExtension: String?) -> String? {
+        let suffix = (fileExtension?.isEmpty == false) ? ".\(fileExtension ?? "")" : ""
+        let shortId = String(UUID().uuidString.prefix(8))
+        return "photo-\(shortId)\(suffix)"
     }
 
     private func scrollToBottom(proxy: ScrollViewProxy, animated: Bool) {
@@ -94,6 +155,7 @@ struct ChatDetailView: View {
     @EnvironmentObject private var connection: ConnectionStore
     let session: SessionSummary
     @StateObject private var viewModel: ChatViewModel
+    @State private var isArtifactsPresented = false
 
     init(session: SessionSummary) {
         self.session = session
@@ -113,12 +175,30 @@ struct ChatDetailView: View {
             }
             .navigationTitle(session.title)
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button {
+                        isArtifactsPresented = true
+                    } label: {
+                        Image(systemName: "photo.stack")
+                    }
+                }
+            }
+            .sheet(isPresented: $isArtifactsPresented) {
+                ArtifactsListView(
+                    artifacts: viewModel.artifacts,
+                    assetContext: viewModel.assetContext,
+                    isLoading: viewModel.isArtifactsLoading,
+                    errorMessage: viewModel.artifactsError
+                )
+            }
     }
 }
 
 struct MessageRow: View {
     let message: ChatMessage
     let maxBubbleWidth: CGFloat
+    let assetContext: DaemonAssetContext
 
     var body: some View {
         HStack {
@@ -133,22 +213,340 @@ struct MessageRow: View {
     }
 
     private var bubble: some View {
-        Text(message.text)
-            .font(.system(size: 16, weight: .regular))
-            .foregroundColor(.ctxTextPrimary)
-            .lineSpacing(4)
-            .padding(.vertical, 11)
-            .padding(.horizontal, 15)
-            .background(bubbleColor, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .stroke(Color.white.opacity(0.06), lineWidth: 1)
-            )
-            .frame(maxWidth: maxBubbleWidth, alignment: message.role == .assistant ? .leading : .trailing)
+        VStack(alignment: .leading, spacing: 8) {
+            if !message.text.isEmpty {
+                Text(message.text)
+                    .font(.system(size: 16, weight: .regular))
+                    .foregroundColor(.ctxTextPrimary)
+                    .lineSpacing(4)
+            }
+            if !message.attachments.isEmpty {
+                AttachmentStrip(
+                    attachments: message.attachments,
+                    assetContext: assetContext
+                )
+            }
+        }
+        .padding(.vertical, 11)
+        .padding(.horizontal, 15)
+        .background(bubbleColor, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .stroke(Color.white.opacity(0.06), lineWidth: 1)
+        )
+        .frame(maxWidth: maxBubbleWidth, alignment: message.role == .assistant ? .leading : .trailing)
     }
 
     private var bubbleColor: Color {
         message.role == .assistant ? .ctxBubbleAssistant : .ctxBubbleUser
+    }
+}
+
+struct DaemonAssetContext {
+    let baseURL: URL?
+    let token: String?
+
+    func blobURL(_ blobId: String) -> URL? {
+        let escaped = blobId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? blobId
+        return url(path: "/api/blobs/\(escaped)")
+    }
+
+    func artifactURL(_ artifactId: String) -> URL? {
+        let escaped = artifactId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? artifactId
+        return url(path: "/api/artifacts/\(escaped)")
+    }
+
+    private func url(path: String) -> URL? {
+        guard let baseURL else { return nil }
+        let normalizedPath = path.hasPrefix("/") ? path : "/\(path)"
+        guard let base = URL(string: normalizedPath, relativeTo: baseURL),
+              var components = URLComponents(url: base, resolvingAgainstBaseURL: true) else {
+            return nil
+        }
+        if let token, !token.isEmpty {
+            var queryItems = components.queryItems ?? []
+            queryItems.append(URLQueryItem(name: "token", value: token))
+            components.queryItems = queryItems
+        }
+        return components.url
+    }
+}
+
+struct ComposerAttachmentsRow: View {
+    let attachments: [MessageAttachment]
+    let onRemove: (Int) -> Void
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 10) {
+                ForEach(Array(attachments.enumerated()), id: \.offset) { index, attachment in
+                    ZStack(alignment: .topTrailing) {
+                        AttachmentPreview(
+                            attachment: attachment,
+                            assetContext: DaemonAssetContext(baseURL: nil, token: nil)
+                        )
+                        .frame(width: 72, height: 72)
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+                        Button {
+                            onRemove(index)
+                        } label: {
+                            Image(systemName: "xmark")
+                                .font(.caption2.weight(.bold))
+                                .foregroundColor(.white)
+                                .padding(5)
+                                .background(Color.black.opacity(0.6), in: Circle())
+                        }
+                        .padding(4)
+                    }
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+        }
+        .background(.ultraThinMaterial)
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(Color.ctxLine)
+                .frame(height: 1)
+        }
+    }
+}
+
+struct AttachmentStrip: View {
+    let attachments: [MessageAttachment]
+    let assetContext: DaemonAssetContext
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 10) {
+                ForEach(Array(attachments.enumerated()), id: \.offset) { _, attachment in
+                    AttachmentPreview(attachment: attachment, assetContext: assetContext)
+                        .frame(width: 140, height: 140)
+                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                }
+            }
+        }
+    }
+}
+
+struct AttachmentPreview: View {
+    let attachment: MessageAttachment
+    let assetContext: DaemonAssetContext
+    @State private var inlineImage: UIImage?
+
+    var body: some View {
+        ZStack {
+            if let inlineImage {
+                Image(uiImage: inlineImage)
+                    .resizable()
+                    .scaledToFill()
+            } else if attachment.kind == .imageRef,
+                      let blobId = attachment.blobId,
+                      let url = assetContext.blobURL(blobId) {
+                AsyncImage(url: url) { phase in
+                    switch phase {
+                    case .success(let image):
+                        image
+                            .resizable()
+                            .scaledToFill()
+                    case .failure:
+                        placeholder
+                    default:
+                        loading
+                    }
+                }
+            } else {
+                placeholder
+            }
+        }
+        .background(Color.ctxSurfaceRaised)
+        .clipped()
+        .task(id: attachmentTaskKey) {
+            guard attachment.kind == .image,
+                  let base64 = attachment.dataBase64,
+                  let data = Data(base64Encoded: base64),
+                  let image = UIImage(data: data) else {
+                inlineImage = nil
+                return
+            }
+            inlineImage = image
+        }
+    }
+
+    private var loading: some View {
+        ProgressView()
+            .tint(.ctxAccent)
+    }
+
+    private var attachmentTaskKey: String {
+        let payload = attachment.dataBase64 ?? attachment.blobId ?? ""
+        return "\(attachment.kind.rawValue)-\(payload)"
+    }
+
+    private var placeholder: some View {
+        ZStack {
+            Color.ctxSurfaceRaised
+            Image(systemName: "photo")
+                .foregroundColor(.ctxTextMuted)
+        }
+    }
+}
+
+struct ArtifactsListView: View {
+    @Environment(\.dismiss) private var dismiss
+    let artifacts: [Artifact]
+    let assetContext: DaemonAssetContext
+    let isLoading: Bool
+    let errorMessage: String?
+
+    var body: some View {
+        NavigationStack {
+            ScrollView(showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 14) {
+                    if isLoading {
+                        ProgressView()
+                            .tint(.ctxAccent)
+                    } else if let errorMessage {
+                        Text(errorMessage)
+                            .font(.caption)
+                            .foregroundColor(.ctxError)
+                    } else if artifacts.isEmpty {
+                        Text("No artifacts yet.")
+                            .font(.caption)
+                            .foregroundColor(.ctxTextMuted)
+                    } else {
+                        ForEach(artifacts) { artifact in
+                            ArtifactRow(artifact: artifact, assetContext: assetContext)
+                        }
+                    }
+                }
+                .padding(16)
+            }
+            .background(Color.ctxBackground.ignoresSafeArea())
+            .navigationTitle("Artifacts")
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+    }
+}
+
+struct ArtifactRow: View {
+    let artifact: Artifact
+    let assetContext: DaemonAssetContext
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            ArtifactPreview(artifact: artifact, assetContext: assetContext)
+                .frame(width: 72, height: 72)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text(displayName)
+                    .font(.headline)
+                    .foregroundColor(.ctxTextPrimary)
+                    .lineLimit(1)
+                Text(metaText)
+                    .font(.caption)
+                    .foregroundColor(.ctxTextMuted)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(12)
+        .background(Color.ctxSurface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(Color.white.opacity(0.06), lineWidth: 1)
+        )
+    }
+
+    private var displayName: String {
+        let name = (artifact.name ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if !name.isEmpty { return name }
+        let parts = artifact.absolutePath.split(whereSeparator: { $0 == "/" || $0 == "\\" })
+        if let last = parts.last { return String(last) }
+        return "artifact"
+    }
+
+    private var metaText: String {
+        if artifact.missing == true {
+            return "Missing"
+        }
+        let mime = artifact.mimeType.isEmpty ? "application/octet-stream" : artifact.mimeType
+        return "\(mime) · \(formatBytes(artifact.bytes))"
+    }
+
+    private func formatBytes(_ bytes: Int) -> String {
+        guard bytes > 0 else { return "0 B" }
+        let units = ["B", "KB", "MB", "GB"]
+        var value = Double(bytes)
+        var idx = 0
+        while value >= 1024 && idx < units.count - 1 {
+            value /= 1024
+            idx += 1
+        }
+        let formatter = value >= 10 || idx == 0 ? "%.0f" : "%.1f"
+        return String(format: formatter, value) + " " + units[idx]
+    }
+}
+
+struct ArtifactPreview: View {
+    let artifact: Artifact
+    let assetContext: DaemonAssetContext
+
+    var body: some View {
+        ZStack {
+            if artifact.missing == true {
+                missingView
+            } else if isImage, let url = assetContext.artifactURL(artifact.id.stringValue) {
+                AsyncImage(url: url) { phase in
+                    switch phase {
+                    case .success(let image):
+                        image
+                            .resizable()
+                            .scaledToFill()
+                    case .failure:
+                        placeholder
+                    default:
+                        loading
+                    }
+                }
+            } else {
+                placeholder
+            }
+        }
+        .background(Color.ctxSurfaceRaised)
+        .clipped()
+    }
+
+    private var isImage: Bool {
+        artifact.mimeType.lowercased().hasPrefix("image/")
+    }
+
+    private var loading: some View {
+        ProgressView()
+            .tint(.ctxAccent)
+    }
+
+    private var placeholder: some View {
+        ZStack {
+            Color.ctxSurfaceRaised
+            Image(systemName: "doc")
+                .foregroundColor(.ctxTextMuted)
+        }
+    }
+
+    private var missingView: some View {
+        ZStack {
+            Color.ctxSurfaceRaised
+            Text("Missing")
+                .font(.caption2)
+                .foregroundColor(.ctxTextMuted)
+        }
     }
 }
 
@@ -198,13 +596,16 @@ struct TypingIndicatorView: View {
 
 struct ComposerBar: View {
     @Binding var text: String
+    @Binding var selectedPhotos: [PhotosPickerItem]
     var isSendEnabled: Bool
     var isFocused: FocusState<Bool>.Binding
     var onSend: () -> Void
 
     var body: some View {
         HStack(alignment: .bottom, spacing: 10) {
-            ComposerIconButton(systemName: "plus", isPrimary: false, isEnabled: true) {}
+            PhotosPicker(selection: $selectedPhotos, matching: .images) {
+                ComposerIconButton(systemName: "plus", isPrimary: false, isEnabled: true) {}
+            }
 
             ZStack(alignment: .leading) {
                 if text.isEmpty {
@@ -290,7 +691,7 @@ struct ComposerIconButton: View {
     }
 }
 
-struct ChatMessage: Identifiable, Equatable {
+struct ChatMessage: Identifiable {
     enum Role {
         case assistant
         case user
@@ -299,6 +700,7 @@ struct ChatMessage: Identifiable, Equatable {
     let id: UUID
     let role: Role
     let text: String
+    let attachments: [MessageAttachment]
 }
 
 @MainActor
@@ -306,6 +708,11 @@ final class ChatViewModel: ObservableObject {
     @Published var messages: [ChatMessage] = []
     @Published var isAssistantTyping = false
     @Published var errorMessage: String?
+    @Published var artifacts: [Artifact] = []
+    @Published var isArtifactsLoading = false
+    @Published var artifactsError: String?
+    @Published private(set) var assetBaseURL: URL?
+    @Published private(set) var assetToken: String?
 
     private enum RefreshResult {
         case success
@@ -336,6 +743,8 @@ final class ChatViewModel: ObservableObject {
     private var streamReconnectDelay: TimeInterval = 1
     private var refreshInFlight = false
     private var refreshPending = false
+    private var artifactsRefreshInFlight = false
+    private var artifactsRefreshPending = false
     private var pendingAssistantResponse = false
     private var consecutivePollFailures = 0
 
@@ -349,6 +758,10 @@ final class ChatViewModel: ObservableObject {
         }
     }
 
+    var assetContext: DaemonAssetContext {
+        DaemonAssetContext(baseURL: assetBaseURL, token: assetToken)
+    }
+
     func setClient(_ client: DaemonAPIClient?) {
         self.client = client
         if client != nil {
@@ -356,11 +769,18 @@ final class ChatViewModel: ObservableObject {
             isAssistantTyping = false
             pendingAssistantResponse = false
             errorMessage = nil
+            artifacts = []
+            artifactsError = nil
+            isArtifactsLoading = false
             lastEventSeq = nil
+            refreshAssetContext()
             if pollTask != nil {
                 startStream()
             }
-            Task { _ = await refreshMessages() }
+            Task {
+                _ = await refreshMessages()
+                await refreshArtifacts()
+            }
         } else {
             stopStream()
             sessionId = nil
@@ -369,6 +789,23 @@ final class ChatViewModel: ObservableObject {
             messages = Self.sampleMessages
             isAssistantTyping = true
             pendingAssistantResponse = true
+            artifacts = []
+            artifactsError = nil
+            isArtifactsLoading = false
+            assetBaseURL = nil
+            assetToken = nil
+        }
+    }
+
+    private func refreshAssetContext() {
+        guard let client else {
+            assetBaseURL = nil
+            assetToken = nil
+            return
+        }
+        Task { @MainActor in
+            assetBaseURL = await client.daemonBaseURL()
+            assetToken = await client.authToken()
         }
     }
 
@@ -378,9 +815,12 @@ final class ChatViewModel: ObservableObject {
         lastEventSeq = nil
         pendingAssistantResponse = false
         isAssistantTyping = false
+        artifacts = []
+        artifactsError = nil
         Task {
             await primeStreamCursor()
             _ = await refreshMessages()
+            await refreshArtifacts()
             await sendStreamSubscriptionIfNeeded()
         }
     }
@@ -403,8 +843,8 @@ final class ChatViewModel: ObservableObject {
         stopStream()
     }
 
-    func send(_ text: String) {
-        let local = ChatMessage(id: UUID(), role: .user, text: text)
+    func send(_ text: String, attachments: [MessageAttachment]) {
+        let local = ChatMessage(id: UUID(), role: .user, text: text, attachments: attachments)
         messages.append(local)
         pendingAssistantResponse = true
         isAssistantTyping = true
@@ -414,7 +854,7 @@ final class ChatViewModel: ObservableObject {
             let resolved = await resolveSessionId()
             guard let resolved else { return }
             do {
-                _ = try await client.postMessage(sessionId: resolved, content: text, delivery: .immediate, attachments: nil)
+                _ = try await client.postMessage(sessionId: resolved, content: text, delivery: .immediate, attachments: attachments)
                 _ = await refreshMessages()
             } catch {
                 pendingAssistantResponse = false
@@ -439,7 +879,8 @@ final class ChatViewModel: ObservableObject {
                 ChatMessage(
                     id: UUID(uuidString: summary.id) ?? UUID(),
                     role: summary.role == .user ? .user : .assistant,
-                    text: summary.content
+                    text: summary.content,
+                    attachments: summary.attachments ?? []
                 )
             }
             messages = nextMessages
@@ -457,6 +898,36 @@ final class ChatViewModel: ObservableObject {
                 Task { _ = await refreshMessages() }
             }
             return .failed
+        }
+    }
+
+    private func refreshArtifacts() async {
+        guard let client else { return }
+        if artifactsRefreshInFlight {
+            artifactsRefreshPending = true
+            return
+        }
+        artifactsRefreshInFlight = true
+        isArtifactsLoading = true
+        defer {
+            artifactsRefreshInFlight = false
+            isArtifactsLoading = false
+        }
+        let resolved = await resolveSessionId()
+        guard let resolved else { return }
+        do {
+            artifacts = try await client.listSessionArtifacts(sessionId: resolved)
+            artifactsError = nil
+            if artifactsRefreshPending {
+                artifactsRefreshPending = false
+                Task { await refreshArtifacts() }
+            }
+        } catch {
+            artifactsError = "Failed to load artifacts."
+            if artifactsRefreshPending {
+                artifactsRefreshPending = false
+                Task { await refreshArtifacts() }
+            }
         }
     }
 
@@ -664,6 +1135,9 @@ final class ChatViewModel: ObservableObject {
             let eventSessionId = delta.sessionId.stringValue
             if eventSessionId == currentSessionId {
                 lastEventSeq = delta.lastEventSeq
+                if delta.event?.eventType == "artifacts_set" {
+                    Task { await refreshArtifacts() }
+                }
                 Task { _ = await refreshMessages() }
             }
         case .sessionSummary(_, _, let summary):
@@ -672,7 +1146,10 @@ final class ChatViewModel: ObservableObject {
                 if let lastEventSeq = summary.lastEventSeq {
                     self.lastEventSeq = lastEventSeq
                 }
-                Task { _ = await refreshMessages() }
+                Task {
+                    _ = await refreshMessages()
+                    await refreshArtifacts()
+                }
             }
         case .sessionGap(_, _, let sessionId, let afterSeq, _):
             if sessionId.stringValue == currentSessionId {
@@ -688,17 +1165,20 @@ final class ChatViewModel: ObservableObject {
         ChatMessage(
             id: UUID(),
             role: .assistant,
-            text: "Welcome to ctx. What would you like to build today?"
+            text: "Welcome to ctx. What would you like to build today?",
+            attachments: []
         ),
         ChatMessage(
             id: UUID(),
             role: .user,
-            text: "A native chat screen with SwiftUI components."
+            text: "A native chat screen with SwiftUI components.",
+            attachments: []
         ),
         ChatMessage(
             id: UUID(),
             role: .assistant,
-            text: "Great. I will set up message bubbles, typing states, and a composer that feels like ChatGPT."
+            text: "Great. I will set up message bubbles, typing states, and a composer that feels like ChatGPT.",
+            attachments: []
         ),
     ]
 }
