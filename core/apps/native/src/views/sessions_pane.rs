@@ -381,31 +381,36 @@ fn maybe_refresh_web_sessions(cx: &mut Context<ShellView>) {
         Ok(sessions)
     });
 
-    cx.spawn::<_, ()>(|this: gpui::WeakEntity<ShellView>, cx: &mut gpui::AsyncApp| async move {
-        let result = task.await;
-        if let Ok(mut state) = web_sessions_state().lock() {
-            state.loading = false;
-            state.last_fetch = Some(Instant::now());
-            match result {
-                Ok(sessions) => {
-                    state.sessions = sessions;
-                    state.last_error = None;
-                    if let Some(selected) = state.selected_id.as_ref() {
-                        if !state.sessions.iter().any(|session| &session.id == selected) {
-                            state.selected_id = state.sessions.first().map(|session| session.id.clone());
+    cx.spawn(|this: gpui::WeakEntity<ShellView>, cx: &mut gpui::AsyncApp| {
+        let mut cx = cx.clone();
+        async move {
+            let result = task.await;
+            if let Ok(mut state) = web_sessions_state().lock() {
+                state.loading = false;
+                state.last_fetch = Some(Instant::now());
+                match result {
+                    Ok(sessions) => {
+                        state.sessions = sessions;
+                        state.last_error = None;
+                        if let Some(selected) = state.selected_id.as_ref() {
+                            if !state.sessions.iter().any(|session| &session.id == selected) {
+                                state.selected_id =
+                                    state.sessions.first().map(|session| session.id.clone());
+                            }
+                        } else {
+                            state.selected_id =
+                                state.sessions.first().map(|session| session.id.clone());
                         }
-                    } else {
-                        state.selected_id = state.sessions.first().map(|session| session.id.clone());
+                    }
+                    Err(err) => {
+                        state.last_error = Some(err.to_string());
                     }
                 }
-                Err(err) => {
-                    state.last_error = Some(err.to_string());
-                }
             }
+            let _ = this.update(&mut cx, |_, cx| {
+                cx.notify();
+            });
         }
-        let _ = this.update(cx, |_, cx| {
-            cx.notify();
-        });
     })
     .detach();
 }
