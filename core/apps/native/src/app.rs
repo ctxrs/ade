@@ -17,7 +17,7 @@ mod state;
 mod views;
 
 use self::models::{MessageItem, SessionInfo};
-use self::state::{DataLoadState, ShellView, StreamStatus};
+use self::state::{ComposerState, DataLoadState, ShellView, StreamStatus};
 use self::views::{SessionView, SidebarView};
 
 fn load_theme_colors(is_dark: bool) -> ThemeColors {
@@ -79,7 +79,7 @@ pub fn run() {
                         session_last_event_seq: HashMap::new(),
                         session: SessionInfo::placeholder(),
                         data_state: DataLoadState::Loading,
-                        composer_text: String::new(),
+                        composer: ComposerState::new(),
                         composer_focus: cx.focus_handle(),
                         message_list_state: ListState::new(1, ListAlignment::Bottom, px(160.0)),
                         message_list_len: 1,
@@ -180,7 +180,8 @@ impl Render for ShellView {
                             artifacts: &self.artifacts,
                             selected_artifact: self.selected_artifact,
                             data_state: &self.data_state,
-                            composer_text: self.composer_text.as_str(),
+                            composer_text: self.composer.text(),
+                            composer_cursor: self.composer.cursor(),
                             composer_focus: &self.composer_focus,
                             stream_status: &self.stream_status,
                         }
