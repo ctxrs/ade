@@ -53,6 +53,7 @@ use crate::installer;
 use crate::installs::{InstallId, InstallInfo, InstallProgressEvent};
 use crate::logs;
 use crate::perf_telemetry::{PerfMetric, PerfMetricKind};
+use crate::provider_guard;
 use crate::resource_governance;
 use crate::resource_utilization;
 use crate::scheduler::SchedulerCommand;
@@ -876,6 +877,9 @@ async fn update_settings(
         .await;
     if let Err(err) = resource_governance::apply_settings(&state, &next).await {
         tracing::warn!("failed to apply resource governance settings: {err:#}");
+    }
+    if let Err(err) = provider_guard::apply_settings(&state, &next).await {
+        tracing::warn!("failed to apply provider guard settings: {err:#}");
     }
     let mut public = user_settings::to_public(&next);
     public.resource_governance = resource_governance::build_public_settings(&state, &next).await;

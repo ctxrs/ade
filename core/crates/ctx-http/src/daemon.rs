@@ -34,6 +34,7 @@ use crate::installer;
 use crate::installs::{InstallId, InstallProgressEvent, InstallState, InstallStateKind};
 use crate::mobile_tunnel::MobileTunnelManager;
 use crate::perf_telemetry::PerfTelemetry;
+use crate::provider_guard;
 use crate::resource_governance::{self, ResourceGovernanceRuntime};
 use crate::resource_telemetry;
 use crate::resource_utilization::ResourceSampler;
@@ -145,6 +146,7 @@ pub struct AppState {
     pub telemetry: Telemetry,
     pub perf_telemetry: PerfTelemetry,
     pub resource_governance: Mutex<ResourceGovernanceRuntime>,
+    pub provider_guard: Mutex<provider_guard::ProviderGuardRuntime>,
     pub resource_sampler: Mutex<ResourceSampler>,
     pub workspace_catchup: WorkspaceCatchupHub,
     pub terminals: TerminalManager,
@@ -281,6 +283,7 @@ impl AppState {
             telemetry,
             perf_telemetry,
             resource_governance: Mutex::new(ResourceGovernanceRuntime::default()),
+            provider_guard: Mutex::new(provider_guard::ProviderGuardRuntime::default()),
             resource_sampler: Mutex::new(ResourceSampler::new()),
             workspace_catchup,
             terminals: TerminalManager::default(),
@@ -1080,8 +1083,12 @@ pub async fn serve(bind: String, data_dir: Option<String>) -> Result<()> {
     if let Err(err) = resource_governance::apply_settings(&state, &settings).await {
         tracing::warn!("failed to apply resource governance settings: {err:#}");
     }
+    if let Err(err) = provider_guard::apply_settings(&state, &settings).await {
+        tracing::warn!("failed to apply provider guard settings: {err:#}");
+    }
 
     resource_telemetry::spawn_resource_telemetry(state.clone());
+    provider_guard::spawn_provider_guard(state.clone());
 
     // Reconnect managed mobile access tunnel on daemon start when enabled.
     {

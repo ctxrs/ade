@@ -14,6 +14,8 @@ pub struct Settings {
     pub title_generation: Option<TitleGenerationSettings>,
     #[serde(default)]
     pub resource_governance: Option<ResourceGovernanceSettings>,
+    #[serde(default)]
+    pub provider_guard: Option<ProviderGuardSettings>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -87,6 +89,20 @@ pub struct ResourceGovernanceSettings {
     pub memory_max_mb: Option<u32>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderGuardSettings {
+    pub enabled: bool,
+    pub mode: ResourceGovernanceMode,
+    #[serde(default)]
+    pub memory_high_mb: Option<u32>,
+    #[serde(default)]
+    pub memory_max_mb: Option<u32>,
+    #[serde(default)]
+    pub interval_ms: Option<u64>,
+    #[serde(default)]
+    pub grace_period_ms: Option<u64>,
+}
+
 impl Default for ResourceGovernanceSettings {
     fn default() -> Self {
         Self {
@@ -95,6 +111,19 @@ impl Default for ResourceGovernanceSettings {
             cpu_quota_pct: None,
             memory_high_mb: None,
             memory_max_mb: None,
+        }
+    }
+}
+
+impl Default for ProviderGuardSettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            mode: ResourceGovernanceMode::Auto,
+            memory_high_mb: None,
+            memory_max_mb: None,
+            interval_ms: None,
+            grace_period_ms: None,
         }
     }
 }
@@ -130,6 +159,8 @@ pub struct PublicSettings {
     pub title_generation: Option<PublicTitleGenerationSettings>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resource_governance: Option<PublicResourceGovernanceSettings>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider_guard: Option<PublicProviderGuardSettings>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -205,6 +236,20 @@ pub struct PublicResourceGovernanceSettings {
     pub status: Option<PublicResourceGovernanceStatus>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct PublicProviderGuardSettings {
+    pub enabled: bool,
+    pub mode: ResourceGovernanceMode,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory_high_mb: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory_max_mb: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub interval_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub grace_period_ms: Option<u64>,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct UpdateSettingsReq {
     #[serde(default)]
@@ -215,6 +260,8 @@ pub struct UpdateSettingsReq {
     pub title_generation: Option<UpdateTitleGenerationSettingsReq>,
     #[serde(default)]
     pub resource_governance: Option<UpdateResourceGovernanceSettingsReq>,
+    #[serde(default)]
+    pub provider_guard: Option<UpdateProviderGuardSettingsReq>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -261,6 +308,20 @@ pub struct UpdateResourceGovernanceSettingsReq {
     pub memory_max_mb: Option<u32>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct UpdateProviderGuardSettingsReq {
+    pub enabled: bool,
+    pub mode: ResourceGovernanceMode,
+    #[serde(default)]
+    pub memory_high_mb: Option<u32>,
+    #[serde(default)]
+    pub memory_max_mb: Option<u32>,
+    #[serde(default)]
+    pub interval_ms: Option<u64>,
+    #[serde(default)]
+    pub grace_period_ms: Option<u64>,
+}
+
 fn settings_path(data_root: &Path) -> PathBuf {
     data_root.join(SETTINGS_FILE_NAME)
 }
@@ -273,6 +334,9 @@ pub async fn load_settings(data_root: &Path) -> Settings {
     };
     if settings.resource_governance.is_none() {
         settings.resource_governance = Some(ResourceGovernanceSettings::default());
+    }
+    if settings.provider_guard.is_none() {
+        settings.provider_guard = Some(ProviderGuardSettings::default());
     }
 
     // Environment overrides (optional) for easy local bring-up.
@@ -392,11 +456,20 @@ pub fn to_public(settings: &Settings) -> PublicSettings {
                 effective: None,
                 status: None,
             });
+    let provider_guard = settings.provider_guard.as_ref().map(|g| PublicProviderGuardSettings {
+        enabled: g.enabled,
+        mode: g.mode.clone(),
+        memory_high_mb: g.memory_high_mb,
+        memory_max_mb: g.memory_max_mb,
+        interval_ms: g.interval_ms,
+        grace_period_ms: g.grace_period_ms,
+    });
     PublicSettings {
         dictation,
         telemetry,
         title_generation,
         resource_governance,
+        provider_guard,
     }
 }
 
@@ -449,6 +522,16 @@ pub fn apply_update(mut current: Settings, req: UpdateSettingsReq) -> Settings {
         next.memory_high_mb = r.memory_high_mb;
         next.memory_max_mb = r.memory_max_mb;
         current.resource_governance = Some(next);
+    }
+    if let Some(g) = req.provider_guard {
+        let mut next = current.provider_guard.unwrap_or_default();
+        next.enabled = g.enabled;
+        next.mode = g.mode;
+        next.memory_high_mb = g.memory_high_mb;
+        next.memory_max_mb = g.memory_max_mb;
+        next.interval_ms = g.interval_ms;
+        next.grace_period_ms = g.grace_period_ms;
+        current.provider_guard = Some(next);
     }
     current
 }
