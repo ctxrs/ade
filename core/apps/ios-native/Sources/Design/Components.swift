@@ -9,12 +9,6 @@ struct CtxBackgroundView: View {
                 endPoint: .bottomTrailing
             )
             RadialGradient(
-                colors: [Color.ctxAccentMuted.opacity(0.45), Color.clear],
-                center: .topLeading,
-                startRadius: 40,
-                endRadius: 360
-            )
-            RadialGradient(
                 colors: [Color.ctxSurfaceRaised.opacity(0.6), Color.clear],
                 center: .bottomTrailing,
                 startRadius: 40,

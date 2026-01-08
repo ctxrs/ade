@@ -1,9 +1,12 @@
 import SwiftUI
 
 struct ConnectionView: View {
-    @State private var daemonURL = "https://localhost:8080"
+    @EnvironmentObject private var connection: ConnectionStore
+    @State private var daemonURL = ""
     @State private var accessToken = ""
     @State private var rememberDevice = true
+    @State private var isConnecting = false
+    @State private var shouldNavigate = false
 
     var body: some View {
         ZStack {
@@ -41,16 +44,32 @@ struct ConnectionView: View {
                             }
                             .tint(.ctxAccent)
 
-                            NavigationLink {
-                                WorkbenchShellView()
+                            if let error = connection.lastError {
+                                Text(error)
+                                    .font(.footnote)
+                                    .foregroundColor(.ctxError)
+                            }
+
+                            Button {
+                                Task {
+                                    isConnecting = true
+                                    connection.baseURLText = daemonURL
+                                    connection.tokenText = accessToken
+                                    await connection.connect()
+                                    isConnecting = false
+                                    if connection.isConnected {
+                                        shouldNavigate = true
+                                    }
+                                }
                             } label: {
                                 HStack {
-                                    Text("Connect to ctx")
+                                    Text(isConnecting ? "Connecting..." : "Connect to ctx")
                                     Spacer()
                                     Image(systemName: "arrow.right.circle.fill")
                                 }
                             }
                             .buttonStyle(CtxPrimaryButtonStyle())
+                            .disabled(isConnecting)
 
                             Button {
                             } label: {
@@ -81,6 +100,20 @@ struct ConnectionView: View {
                 .padding(.bottom, 40)
             }
         }
+        .onAppear {
+            if daemonURL.isEmpty {
+                daemonURL = connection.baseURLText
+            }
+        }
+        .onChange(of: connection.isConnected) { connected in
+            if connected {
+                shouldNavigate = true
+            }
+        }
+        .background(
+            NavigationLink("", destination: WorkbenchShellView(), isActive: $shouldNavigate)
+                .opacity(0)
+        )
         .toolbar(.hidden, for: .navigationBar)
     }
 }
@@ -124,4 +157,5 @@ private struct ConnectionRowView: View {
 
 #Preview {
     ConnectionView()
+        .environmentObject(ConnectionStore())
 }

@@ -1,12 +1,15 @@
 import SwiftUI
 
 struct ChatView: View {
-    @StateObject private var viewModel = ChatViewModel.sample()
+    @ObservedObject var viewModel: ChatViewModel
+    var showsBackground: Bool = true
     @State private var composerText = ""
 
     var body: some View {
         ZStack {
-            Color.ctxBackground.ignoresSafeArea()
+            if showsBackground {
+                Color.ctxBackground.ignoresSafeArea()
+            }
             messageList
         }
         .safeAreaInset(edge: .bottom) {
@@ -16,6 +19,8 @@ struct ChatView: View {
                 onSend: sendMessage
             )
         }
+        .onAppear { viewModel.startPolling() }
+        .onDisappear { viewModel.stopPolling() }
     }
 
     private var messageList: some View {
@@ -241,44 +246,121 @@ struct ChatMessage: Identifiable, Equatable {
     let text: String
 }
 
+@MainActor
 final class ChatViewModel: ObservableObject {
-    @Published var messages: [ChatMessage]
-    @Published var isAssistantTyping: Bool
+    @Published var messages: [ChatMessage] = []
+    @Published var isAssistantTyping = false
+    @Published var errorMessage: String?
 
-    init(messages: [ChatMessage], isAssistantTyping: Bool) {
-        self.messages = messages
-        self.isAssistantTyping = isAssistantTyping
+    private var client: DaemonAPIClient?
+    private var sessionId: String?
+    private var pollTask: Task<Void, Never>?
+
+    init(client: DaemonAPIClient? = nil) {
+        self.client = client
+        if client == nil {
+            messages = Self.sampleMessages
+            isAssistantTyping = true
+        }
+    }
+
+    func setClient(_ client: DaemonAPIClient?) {
+        self.client = client
+        if client != nil {
+            Task { await refreshMessages() }
+        }
+    }
+
+    func startPolling() {
+        guard pollTask == nil else { return }
+        pollTask = Task {
+            while !Task.isCancelled {
+                await refreshMessages()
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+            }
+        }
+    }
+
+    func stopPolling() {
+        pollTask?.cancel()
+        pollTask = nil
     }
 
     func send(_ text: String) {
-        messages.append(ChatMessage(id: UUID(), role: .user, text: text))
+        let local = ChatMessage(id: UUID(), role: .user, text: text)
+        messages.append(local)
         isAssistantTyping = true
+
+        Task {
+            guard let client else { return }
+            let resolved = await resolveSessionId()
+            guard let resolved else { return }
+            do {
+                _ = try await client.postMessage(sessionId: resolved, content: text, delivery: .immediate, attachments: nil)
+                await refreshMessages()
+            } catch {
+                errorMessage = "Failed to send message."
+            }
+        }
     }
 
-    static func sample() -> ChatViewModel {
-        ChatViewModel(
-            messages: [
+    private func refreshMessages() async {
+        guard let client else { return }
+        let resolved = await resolveSessionId()
+        guard let resolved else { return }
+        do {
+            let items = try await client.listMessages(sessionId: resolved)
+            messages = items.map { summary in
                 ChatMessage(
-                    id: UUID(),
-                    role: .assistant,
-                    text: "Welcome to ctx. What would you like to build today?"
-                ),
-                ChatMessage(
-                    id: UUID(),
-                    role: .user,
-                    text: "A native chat screen with SwiftUI components."
-                ),
-                ChatMessage(
-                    id: UUID(),
-                    role: .assistant,
-                    text: "Great. I will set up message bubbles, typing states, and a composer that feels like ChatGPT."
+                    id: UUID(uuidString: summary.id) ?? UUID(),
+                    role: summary.role == .user ? .user : .assistant,
+                    text: summary.content
                 )
-            ],
-            isAssistantTyping: true
-        )
+            }
+            isAssistantTyping = false
+        } catch {
+            errorMessage = "Failed to load messages."
+        }
     }
+
+    private func resolveSessionId() async -> String? {
+        if let sessionId { return sessionId }
+        guard let client else { return nil }
+        do {
+            let workspaces = try await client.listWorkspaces()
+            guard let workspace = workspaces.first else { return nil }
+            let tasks = try await client.listTasks(workspaceId: workspace.id)
+            guard let task = tasks.first else { return nil }
+            let tracks = try await client.listTracks(taskId: task.id)
+            guard let track = tracks.first else { return nil }
+            let sessions = try await client.listSessions(forTrack: track.id)
+            guard let session = sessions.first else { return nil }
+            sessionId = session.id
+            return session.id
+        } catch {
+            return nil
+        }
+    }
+
+    private static let sampleMessages: [ChatMessage] = [
+        ChatMessage(
+            id: UUID(),
+            role: .assistant,
+            text: "Welcome to ctx. What would you like to build today?"
+        ),
+        ChatMessage(
+            id: UUID(),
+            role: .user,
+            text: "A native chat screen with SwiftUI components."
+        ),
+        ChatMessage(
+            id: UUID(),
+            role: .assistant,
+            text: "Great. I will set up message bubbles, typing states, and a composer that feels like ChatGPT."
+        ),
+    ]
 }
 
 #Preview {
-    ChatView()
+    ChatView(viewModel: ChatViewModel())
 }

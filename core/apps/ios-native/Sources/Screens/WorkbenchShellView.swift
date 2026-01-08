@@ -1,15 +1,16 @@
 import SwiftUI
 
 struct WorkbenchShellView: View {
+    @EnvironmentObject private var connection: ConnectionStore
     @State private var isDrawerOpen = false
     @State private var showWorkspaceSelector = false
-    @State private var messageDraft = ""
     @State private var workspaceName = "Atlas"
     @State private var workspaceDetail = "ios-native-ui"
 
     var body: some View {
         GeometryReader { proxy in
             let drawerWidth = min(320, proxy.size.width * 0.78)
+            let topInset = proxy.safeAreaInsets.top
 
             ZStack(alignment: .leading) {
                 CtxBackgroundView()
@@ -17,9 +18,9 @@ struct WorkbenchShellView: View {
                 WorkbenchHomeView(
                     isDrawerOpen: $isDrawerOpen,
                     showWorkspaceSelector: $showWorkspaceSelector,
-                    messageDraft: $messageDraft,
                     workspaceName: workspaceName,
-                    workspaceDetail: workspaceDetail
+                    workspaceDetail: workspaceDetail,
+                    topInset: topInset
                 )
                 .blur(radius: isDrawerOpen ? 8 : 0)
                 .overlay {
@@ -50,14 +51,16 @@ struct WorkbenchShellView: View {
 }
 
 private struct WorkbenchHomeView: View {
+    @EnvironmentObject private var connection: ConnectionStore
+    @StateObject private var chatViewModel = ChatViewModel()
     @Binding var isDrawerOpen: Bool
     @Binding var showWorkspaceSelector: Bool
-    @Binding var messageDraft: String
     let workspaceName: String
     let workspaceDetail: String
+    let topInset: CGFloat
 
     var body: some View {
-        VStack(spacing: 18) {
+        VStack(spacing: 0) {
             WorkbenchTopBar(
                 workspaceName: workspaceName,
                 workspaceDetail: workspaceDetail,
@@ -65,73 +68,16 @@ private struct WorkbenchHomeView: View {
                 onWorkspaceTap: { showWorkspaceSelector = true }
             )
             .padding(.horizontal, 20)
-            .padding(.top, 12)
+            .padding(.top, topInset + 8)
 
-            ScrollView(showsIndicators: false) {
-                VStack(alignment: .leading, spacing: 18) {
-                    GlassPanel {
-                        VStack(alignment: .leading, spacing: 12) {
-                            HStack {
-                                Text("Active session")
-                                    .font(.headline)
-                                    .foregroundColor(.ctxTextPrimary)
-                                Spacer()
-                                GlassPill(text: "Streaming", tint: .ctxAccent)
-                            }
-                            Text("Reviewing navigation shell layout, waiting for the next instruction.")
-                                .font(.subheadline)
-                                .foregroundColor(.ctxTextSecondary)
-                            HStack(spacing: 12) {
-                                WorkbenchStatView(title: "Turns", value: "12")
-                                WorkbenchStatView(title: "Files", value: "3")
-                                WorkbenchStatView(title: "Latency", value: "210ms")
-                            }
-                        }
-                    }
-
-                    GlassPanel {
-                        VStack(alignment: .leading, spacing: 14) {
-                            Text("Quick actions")
-                                .font(.headline)
-                                .foregroundColor(.ctxTextPrimary)
-                            VStack(spacing: 10) {
-                                QuickActionRowView(
-                                    title: "Open workbench session",
-                                    subtitle: "Jump back into the last run",
-                                    icon: "sparkles"
-                                )
-                                QuickActionRowView(
-                                    title: "Review diagnostics",
-                                    subtitle: "Health checks and streaming logs",
-                                    icon: "waveform.path.ecg"
-                                )
-                                QuickActionRowView(
-                                    title: "Manage settings",
-                                    subtitle: "Providers, tokens, and privacy",
-                                    icon: "slider.horizontal.3"
-                                )
-                            }
-                        }
-                    }
-
-                    GlassPanel {
-                        VStack(alignment: .leading, spacing: 12) {
-                            Text("Recent workspaces")
-                                .font(.headline)
-                                .foregroundColor(.ctxTextPrimary)
-                            VStack(spacing: 12) {
-                                WorkspaceRowView(title: "Context Monorepo", subtitle: "worktrees/ios-native-ui", status: "Active")
-                                WorkspaceRowView(title: "Remote Devbox", subtitle: "ctx-remote-linux", status: "Sleeping")
-                            }
-                        }
-                    }
-                }
-                .padding(.horizontal, 20)
-                .padding(.bottom, 100)
-            }
+            ChatView(viewModel: chatViewModel, showsBackground: false)
+                .padding(.top, 8)
         }
-        .safeAreaInset(edge: .bottom) {
-            MessageComposerView(text: $messageDraft)
+        .onAppear {
+            chatViewModel.setClient(connection.apiClient)
+        }
+        .onChange(of: connection.isConnected) { _ in
+            chatViewModel.setClient(connection.apiClient)
         }
     }
 }
@@ -434,4 +380,5 @@ private struct MessageComposerView: View {
 
 #Preview {
     WorkbenchShellView()
+        .environmentObject(ConnectionStore())
 }
