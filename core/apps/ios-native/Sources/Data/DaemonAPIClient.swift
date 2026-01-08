@@ -53,6 +53,10 @@ actor DaemonAPIClient {
         let appVersion: String?
     }
 
+    struct MobileAccessRequest: Codable, Sendable {
+        let supabaseToken: String
+    }
+
     struct WorkspaceCatchupParams: Sendable {
         let limit: Int?
         let includeArchived: Bool?
@@ -158,6 +162,21 @@ actor DaemonAPIClient {
 
     func getDiagnostics() async throws -> Diagnostics {
         try await request("/api/diagnostics")
+    }
+
+    func getMobileAccessStatus() async throws -> MobileAccessStatus {
+        try await request("/api/mobile/access/status")
+    }
+
+    func enableMobileAccess(supabaseToken: String) async throws -> EnableMobileAccessResponse {
+        let payload = MobileAccessRequest(supabaseToken: supabaseToken)
+        return try await request("/api/mobile/access/enable", method: .post, body: payload)
+    }
+
+    func disableMobileAccess(supabaseToken: String) async throws {
+        let payload = MobileAccessRequest(supabaseToken: supabaseToken)
+        let request = try buildRequest(path: "/api/mobile/access/disable", method: .post, body: payload)
+        try await performVoid(request)
     }
 
     func registerMobileDevice(_ payload: RegisterMobileDeviceRequest) async throws -> MobileDeviceRegistration {
