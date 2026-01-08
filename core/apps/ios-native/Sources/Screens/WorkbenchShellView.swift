@@ -97,10 +97,9 @@ struct WorkbenchShellView: View {
             let resolved = resolveWorkspaceSelection(from: items)
             if let resolved {
                 workspaceSelection.setWorkspace(resolved, daemonKey: daemonKey)
-            } else {
-                workspaceSelection.clear(daemonKey: daemonKey)
             }
-            workbenchSelection.setContext(daemonKey: daemonKey, workspaceId: resolved?.id)
+            let selectionWorkspaceId = resolved?.id ?? workspaceSelection.workspaceId
+            workbenchSelection.setContext(daemonKey: daemonKey, workspaceId: selectionWorkspaceId)
         } catch {
             workspaces = []
             workspaceError = "Failed to load workspaces."
