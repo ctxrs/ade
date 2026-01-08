@@ -159,4 +159,73 @@ final class WorkbenchSelectionStore: ObservableObject {
             sessionId: normalizedSessionId
         )
     }
+
+    @discardableResult
+    func resolveTaskSelection(from tasks: [TaskSummary]) -> Bool {
+        let taskIds = tasks.compactMap { SelectionDefaults.normalizedId($0.id) }
+        guard !taskIds.isEmpty else {
+            let hadSelection = taskId != nil || trackId != nil || sessionId != nil
+            if hadSelection {
+                clearSelection()
+            }
+            return hadSelection
+        }
+        let current = taskId
+        let resolved = (current != nil && taskIds.contains(current!)) ? current : taskIds[0]
+        guard resolved != current else { return false }
+        setSelection(taskId: resolved, trackId: nil, sessionId: nil)
+        return true
+    }
+
+    @discardableResult
+    func resolveTrackSelection(taskId: String, tracks: [TrackSummary]) -> Bool {
+        guard let normalizedTaskId = SelectionDefaults.normalizedId(taskId) else { return false }
+        let trackIds = tracks.compactMap { SelectionDefaults.normalizedId($0.id) }
+        let currentTaskId = self.taskId
+        let currentTrackId = self.trackId
+        let currentSessionId = self.sessionId
+        let validTrackId = currentTrackId.flatMap { trackIds.contains($0) ? $0 : nil }
+        let resolvedTrackId = validTrackId ?? trackIds.first
+        let taskChanged = currentTaskId != normalizedTaskId
+        let trackChanged = resolvedTrackId != currentTrackId || taskChanged
+        let nextSessionId = trackChanged ? nil : currentSessionId
+        guard taskChanged || resolvedTrackId != currentTrackId || nextSessionId != currentSessionId else { return false }
+        setSelection(taskId: normalizedTaskId, trackId: resolvedTrackId, sessionId: nextSessionId)
+        return true
+    }
+
+    @discardableResult
+    func resolveSessionSelection(taskId: String, trackId: String, sessions: [SessionSummary]) -> Bool {
+        guard let normalizedTaskId = SelectionDefaults.normalizedId(taskId),
+              let normalizedTrackId = SelectionDefaults.normalizedId(trackId) else { return false }
+        let currentTaskId = self.taskId
+        let currentTrackId = self.trackId
+        let currentSessionId = self.sessionId
+        let preferredSessionId = (currentTaskId == normalizedTaskId && currentTrackId == normalizedTrackId)
+            ? currentSessionId
+            : nil
+        let resolvedSessionId = pickPreferredSessionId(from: sessions, preferredSessionId: preferredSessionId)
+        guard currentTaskId != normalizedTaskId
+            || currentTrackId != normalizedTrackId
+            || resolvedSessionId != currentSessionId else { return false }
+        setSelection(taskId: normalizedTaskId, trackId: normalizedTrackId, sessionId: resolvedSessionId)
+        return true
+    }
+
+    private func pickPreferredSessionId(from sessions: [SessionSummary], preferredSessionId: String?) -> String? {
+        let normalizedSessions: [(id: String, session: SessionSummary)] = sessions.compactMap { session in
+            guard let id = SelectionDefaults.normalizedId(session.id) else { return nil }
+            return (id: id, session: session)
+        }
+        if normalizedSessions.isEmpty { return nil }
+        let nonSubagents = normalizedSessions.filter { $0.session.relationship != "sub_agent" }
+        let candidates = nonSubagents.isEmpty ? normalizedSessions : nonSubagents
+        if let preferredSessionId, candidates.contains(where: { $0.id == preferredSessionId }) {
+            return preferredSessionId
+        }
+        if let running = candidates.first(where: { $0.session.status == "active" || $0.session.status == "running" }) {
+            return running.id
+        }
+        return candidates.last?.id
+    }
 }
