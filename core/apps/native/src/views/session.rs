@@ -113,12 +113,13 @@ impl<'a> SessionView<'a> {
             ))
             .child("Interrupt");
         let mut interrupt_button = div()
-            .px(px(metrics.spacing.md))
-            .py(px(metrics.spacing.sm))
+            // Match web pill-button-inner: 4px x 10px
+            .px(px(metrics.spacing.lg))
+            .py(px(metrics.spacing.xs))
             .text_sm()
             .border_1()
             .border_color(self.colors.border)
-            .rounded_sm()
+            .rounded_full()
             .child(interrupt_label)
             .id("session-interrupt");
 
@@ -146,12 +147,13 @@ impl<'a> SessionView<'a> {
             .child(Icon::new(IconName::Cancel, 12.0, cancel_color))
             .child("Cancel");
         let mut cancel_button = div()
-            .px(px(metrics.spacing.md))
-            .py(px(metrics.spacing.sm))
+            // Match web pill-button-inner: 4px x 10px
+            .px(px(metrics.spacing.lg))
+            .py(px(metrics.spacing.xs))
             .text_sm()
             .border_1()
             .border_color(self.colors.border)
-            .rounded_sm()
+            .rounded_full()
             .child(cancel_label)
             .id("session-cancel");
 
@@ -174,14 +176,13 @@ impl<'a> SessionView<'a> {
                 (self.colors.panel_2, self.colors.muted)
             };
             div()
-                .w(px(metrics.controls.h_md))
-                .h(px(metrics.controls.h_md))
+                // Match web .wb-icon 22x22, radius 8
+                .w(px(22.0))
+                .h(px(22.0))
                 .flex()
                 .items_center()
                 .justify_center()
-                .border_1()
-                .border_color(self.colors.border)
-                .rounded_sm()
+                .rounded_lg()
                 .bg(bg)
                 .child(Icon::new(IconName::Sessions, 14.0, color))
                 .cursor_pointer()
@@ -197,14 +198,13 @@ impl<'a> SessionView<'a> {
                 (self.colors.panel_2, self.colors.muted)
             };
             div()
-                .w(px(metrics.controls.h_md))
-                .h(px(metrics.controls.h_md))
+                // Match web .wb-icon 22x22, radius 8
+                .w(px(22.0))
+                .h(px(22.0))
                 .flex()
                 .items_center()
                 .justify_center()
-                .border_1()
-                .border_color(self.colors.border)
-                .rounded_sm()
+                .rounded_lg()
                 .bg(bg)
                 .child(Icon::new(IconName::Diff, 14.0, color))
                 .cursor_pointer()
@@ -220,14 +220,13 @@ impl<'a> SessionView<'a> {
                 (self.colors.panel_2, self.colors.muted)
             };
             div()
-                .w(px(metrics.controls.h_md))
-                .h(px(metrics.controls.h_md))
+                // Match web .wb-icon 22x22, radius 8
+                .w(px(22.0))
+                .h(px(22.0))
                 .flex()
                 .items_center()
                 .justify_center()
-                .border_1()
-                .border_color(self.colors.border)
-                .rounded_sm()
+                .rounded_lg()
                 .bg(bg)
                 .child(Icon::new(IconName::Image, 14.0, color))
                 .cursor_pointer()
@@ -243,14 +242,13 @@ impl<'a> SessionView<'a> {
                 (self.colors.panel_2, self.colors.muted)
             };
             div()
-                .w(px(metrics.controls.h_md))
-                .h(px(metrics.controls.h_md))
+                // Match web .wb-icon 22x22, radius 8
+                .w(px(22.0))
+                .h(px(22.0))
                 .flex()
                 .items_center()
                 .justify_center()
-                .border_1()
-                .border_color(self.colors.border)
-                .rounded_sm()
+                .rounded_lg()
                 .bg(bg)
                 .child(Icon::new(IconName::Terminal, 14.0, color))
                 .cursor_pointer()
@@ -260,13 +258,15 @@ impl<'a> SessionView<'a> {
         };
 
         let status_pill = div()
+            // Match web .wb-pill: 2px x 8px, muted text
             .px(px(metrics.spacing.md))
-            .py(px(metrics.spacing.xs))
+            .py(px(metrics.spacing.xxs))
             .text_sm()
             .bg(self.colors.panel)
             .border_1()
-            .border_color(self.colors.border_strong)
+            .border_color(self.colors.border)
             .rounded_full()
+            .text_color(self.colors.muted)
             .child(self.session.status.clone());
 
         let header_row = div()
@@ -277,7 +277,8 @@ impl<'a> SessionView<'a> {
                 div()
                     .flex()
                     .items_center()
-                    .gap(px(metrics.spacing.lg))
+                    // Tighten to web gap 8px between title and pill
+                    .gap(px(metrics.spacing.md))
                     .child(div().text_lg().child(self.session.title.clone()))
                     .child(status_pill),
             )

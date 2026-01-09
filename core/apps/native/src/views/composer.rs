@@ -5,6 +5,7 @@ use ctx_core::models::MessageAttachment;
 use crate::{
     automation_tree,
     theme::{ThemeColors, ThemeMetrics},
+    ui::{input as ui_input, list as ui_list, pill as ui_pill},
 };
 
 use super::super::icons::{Icon, IconName};
@@ -64,12 +65,14 @@ impl<'a> ComposerView<'a> {
             self.colors.text
         };
 
+        // Input set to 14px, min-height 28px
         let input = div()
             .flex_1()
-            .text_sm()
+            .text_lg()
             .text_color(input_color)
             .cursor(CursorStyle::IBeam)
             .track_focus(self.focus_handle)
+            .h(px(metrics.controls.h_lg))
             .on_children_prepainted(automation_tree::track_children_bounds(
                 "composer-input",
                 "textbox",
@@ -174,24 +177,11 @@ impl<'a> ComposerView<'a> {
                     |list, (index, provider)| {
                         let is_selected = self.selected_provider == Some(provider.as_str());
                         let provider_id = provider.clone();
-                        let on_click =
-                            cx.listener(move |view, _: &ClickEvent, _window, cx| {
-                                view.select_composer_provider(provider_id.clone(), cx);
-                            });
+                        let on_click = cx.listener(move |view, _: &ClickEvent, _window, cx| {
+                            view.select_composer_provider(provider_id.clone(), cx);
+                        });
                         list.child(
-                            div()
-                                .px(px(metrics.spacing.md))
-                                .py(px(metrics.spacing.sm))
-                                .border_1()
-                                .border_color(self.colors.border)
-                                .rounded_sm()
-                                .bg(if is_selected {
-                                    self.colors.panel
-                                } else {
-                                    self.colors.panel_2
-                                })
-                                .text_sm()
-                                .child(provider.clone())
+                            ui_list::row(self.colors, is_selected, ui_list::RowDensity::Regular, provider.clone())
                                 .cursor_pointer()
                                 .id(ElementId::named_usize("composer-provider", index))
                                 .on_click(on_click),
@@ -225,24 +215,11 @@ impl<'a> ComposerView<'a> {
                     |list, (index, model)| {
                         let is_selected = self.selected_model == Some(model.as_str());
                         let model_id = model.clone();
-                        let on_click =
-                            cx.listener(move |view, _: &ClickEvent, _window, cx| {
-                                view.select_composer_model(model_id.clone(), cx);
-                            });
+                        let on_click = cx.listener(move |view, _: &ClickEvent, _window, cx| {
+                            view.select_composer_model(model_id.clone(), cx);
+                        });
                         list.child(
-                            div()
-                                .px(px(metrics.spacing.md))
-                                .py(px(metrics.spacing.sm))
-                                .border_1()
-                                .border_color(self.colors.border)
-                                .rounded_sm()
-                                .bg(if is_selected {
-                                    self.colors.panel
-                                } else {
-                                    self.colors.panel_2
-                                })
-                                .text_sm()
-                                .child(model.clone())
+                            ui_list::row(self.colors, is_selected, ui_list::RowDensity::Regular, model.clone())
                                 .cursor_pointer()
                                 .id(ElementId::named_usize("composer-model", index))
                                 .on_click(on_click),
@@ -269,16 +246,9 @@ impl<'a> ComposerView<'a> {
             .flex_col()
             .gap(px(metrics.spacing.md))
             .child(
-                div()
-                    .h(px(metrics.controls.h_sm))
-                    .px(px(6.0))
-                    .text_sm()
-                    .rounded_sm()
-                    .flex()
-                    .items_center()
-                    .gap(px(metrics.spacing.sm))
-                    .text_color(self.colors.muted)
-                    .child(format!("{provider_label} ▾"))
+                ui_pill::pill(self.colors, format!("{provider_label} ▾"), ui_pill::PillTone::Neutral)
+                    .py(px(metrics.spacing.xxs))
+                    .text_color(self.colors.text)
                     .cursor_pointer()
                     .id("composer-provider-toggle")
                     .active(|style| style.opacity(0.85))
@@ -291,16 +261,9 @@ impl<'a> ComposerView<'a> {
             .flex_col()
             .gap(px(metrics.spacing.md))
             .child(
-                div()
-                    .h(px(metrics.controls.h_sm))
-                    .px(px(6.0))
-                    .text_sm()
-                    .rounded_sm()
-                    .flex()
-                    .items_center()
-                    .gap(px(metrics.spacing.sm))
-                    .text_color(self.colors.muted)
-                    .child(format!("{model_label} ▾"))
+                ui_pill::pill(self.colors, format!("{model_label} ▾"), ui_pill::PillTone::Neutral)
+                    .py(px(metrics.spacing.xxs))
+                    .text_color(self.colors.text)
                     .cursor_pointer()
                     .id("composer-model-toggle")
                     .active(|style| style.opacity(0.85))
@@ -319,7 +282,7 @@ impl<'a> ComposerView<'a> {
             );
         }
         if !self.composer_attachments.is_empty() {
-            // Render attachments as compact pill chips with inline remove
+            // Render attachments as compact pill chips with inline remove (ui::pill)
             let list = self
                 .composer_attachments
                 .iter()
@@ -330,19 +293,8 @@ impl<'a> ComposerView<'a> {
                         view.remove_composer_attachment(index, cx);
                     });
                     list.child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(metrics.spacing.sm))
-                            .px(px(metrics.spacing.md))
-                            .py(px(metrics.spacing.xs))
-                            .rounded_full()
-                            .border_1()
-                            .border_color(self.colors.border)
-                            .bg(self.colors.panel_2)
-                            .text_sm()
+                        ui_pill::pill(self.colors, div().flex().items_center().gap(px(metrics.spacing.sm)).child(label), ui_pill::PillTone::Neutral)
                             .text_color(self.colors.muted)
-                            .child(label)
                             .child(
                                 div()
                                     .px(px(metrics.spacing.xs))
@@ -367,19 +319,19 @@ impl<'a> ComposerView<'a> {
                 .child(add_attachment_button),
         );
 
-        let composer_row = div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(metrics.spacing.xl))
-            .border_1()
-            .border_color(self.colors.border)
-            .rounded_sm()
-            .px(px(metrics.spacing.xl))
-            .py(px(metrics.spacing.lg))
-            .bg(self.colors.panel_2)
-            .child(input)
-            .child(send_button);
+        // Composer row using ui::input::row; enforce 10/12 padding and 10 gap
+        let composer_row = ui_input::row(
+            self.colors,
+            div()
+                .flex()
+                .items_center()
+                .gap(px(metrics.spacing.lg))
+                .child(input)
+                .child(send_button),
+        )
+        .px(px(metrics.spacing.xl))
+        .py(px(metrics.spacing.lg))
+        .bg(self.colors.panel_2);
 
         div()
             .id("composer")
