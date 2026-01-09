@@ -84,7 +84,7 @@ impl<'a> WorkspaceListView<'a> {
                     )
                     .child(format!("{}", self.workspaces.len())),
             )
-            .child(div().h(px(10.0)))
+            .child(div().h(px(crate::theme::ThemeMetrics::default().spacing.lg)))
             .child(list)
     }
 }
@@ -142,7 +142,7 @@ impl<'a> ProviderListView<'a> {
                     .child("Agent Harnesses")
                     .child(format!("{}", self.providers.len())),
             )
-            .child(div().h(px(10.0)))
+            .child(div().h(px(crate::theme::ThemeMetrics::default().spacing.lg)))
             .child(list)
     }
 }
@@ -227,7 +227,7 @@ impl NavigationListView {
                     .text_color(self.colors.muted)
                     .child("Navigation"),
             )
-            .child(div().h(px(10.0)))
+            .child(div().h(px(crate::theme::ThemeMetrics::default().spacing.lg)))
             .child(list)
     }
 }
@@ -352,7 +352,7 @@ impl<'a> TaskListView<'a> {
                     .child("Tasks")
                     .child(format!("{}", self.tasks.len())),
             )
-            .child(div().h(px(10.0)))
+            .child(div().h(px(crate::theme::ThemeMetrics::default().spacing.lg)))
             .child(list)
     }
 }

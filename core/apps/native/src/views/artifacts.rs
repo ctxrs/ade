@@ -1,7 +1,7 @@
 use gpui::{ClickEvent, Context, ElementId, ObjectFit, div, img, prelude::*, px};
 use ctx_core::models::Artifact;
 
-use crate::theme::ThemeColors;
+use crate::theme::{ThemeColors, ThemeMetrics};
 
 use super::super::icons::{Icon, IconName};
 use super::super::models::{
@@ -22,6 +22,7 @@ const MONO_FONT_FAMILY: &str = "ui-monospace, SFMono-Regular, Menlo, Monaco, Con
 
 impl<'a> ArtifactsView<'a> {
     pub(super) fn render(&self, cx: &mut Context<ShellView>) -> impl IntoElement {
+        let metrics = ThemeMetrics::default();
         let list = self
             .artifacts
             .iter()
@@ -46,8 +47,8 @@ impl<'a> ArtifactsView<'a> {
                         div()
                             .flex()
                             .items_center()
-                            .px_3()
-                            .py_2()
+                            .px(px(metrics.spacing.xl))
+                            .py(px(metrics.spacing.md))
                             .border_1()
                             .border_color(item_border)
                             .rounded_sm()
@@ -246,7 +247,7 @@ impl<'a> ArtifactsView<'a> {
                         .border_1()
                         .border_color(self.colors.border)
                         .rounded_sm()
-                        .p_3()
+                        .p(px(metrics.spacing.xl))
                         .bg(self.colors.panel)
                         .child(preview_content),
                 );
@@ -268,8 +269,8 @@ impl<'a> ArtifactsView<'a> {
             });
 
             let mut open_button = div()
-                .px_2()
-                .py_1()
+                .px(px(metrics.spacing.md))
+                .py(px(metrics.spacing.sm))
                 .text_sm()
                 .border_1()
                 .border_color(self.colors.border)
@@ -289,8 +290,8 @@ impl<'a> ArtifactsView<'a> {
             }
 
             let mut open_in_app_button = div()
-                .px_2()
-                .py_1()
+                .px(px(metrics.spacing.md))
+                .py(px(metrics.spacing.sm))
                 .text_sm()
                 .border_1()
                 .border_color(self.colors.border)
@@ -310,8 +311,8 @@ impl<'a> ArtifactsView<'a> {
             }
 
             let mut download_button = div()
-                .px_2()
-                .py_1()
+                .px(px(metrics.spacing.md))
+                .py(px(metrics.spacing.sm))
                 .text_sm()
                 .border_1()
                 .border_color(self.colors.border)
@@ -389,8 +390,8 @@ impl<'a> ArtifactsView<'a> {
                     )
                     .child(
                         div()
-                            .px_2()
-                            .py_0()
+                            .px(px(metrics.spacing.md))
+                            .py(px(0.0))
                             .text_sm()
                             .border_1()
                             .border_color(self.colors.border)
@@ -428,7 +429,7 @@ impl<'a> ArtifactsView<'a> {
                             .border_1()
                             .border_color(self.colors.border)
                             .rounded_sm()
-                            .p_3()
+                            .p(px(metrics.spacing.xl))
                             .bg(self.colors.panel_2)
                             .child(detail),
                     ),

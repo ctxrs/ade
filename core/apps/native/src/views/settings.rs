@@ -1,9 +1,9 @@
-use gpui::{ClickEvent, Context, ElementId, Render, Window, div, prelude::*};
+use gpui::{ClickEvent, Context, ElementId, Render, Window, div, prelude::*, px};
 
 use ctx_client::InstallStateKind;
 use ctx_providers::adapters::ProviderHealth;
 
-use crate::theme::ThemeColors;
+use crate::theme::{ThemeColors, ThemeMetrics};
 use super::super::state::SettingsState;
 
 enum StatusTone {
@@ -14,6 +14,7 @@ enum StatusTone {
 }
 
 fn status_pill(colors: ThemeColors, label: &str, tone: StatusTone) -> impl IntoElement {
+    let metrics = ThemeMetrics::default();
     let text_color = match tone {
         StatusTone::Good => colors.success,
         StatusTone::Warn => colors.warning,
@@ -22,8 +23,8 @@ fn status_pill(colors: ThemeColors, label: &str, tone: StatusTone) -> impl IntoE
     };
 
     div()
-        .px_1()
-        .py_0()
+        .px(px(metrics.spacing.sm))
+        .py(px(metrics.spacing.xs))
         .text_sm()
         .border_1()
         .border_color(colors.border)
@@ -34,9 +35,10 @@ fn status_pill(colors: ThemeColors, label: &str, tone: StatusTone) -> impl IntoE
 }
 
 fn button_base<E: IntoElement>(colors: ThemeColors, label: E) -> gpui::Div {
+    let metrics = ThemeMetrics::default();
     div()
-        .px_3()
-        .py_2()
+        .px(px(metrics.spacing.xxl))
+        .py(px(metrics.spacing.lg))
         .text_sm()
         .border_1()
         .border_color(colors.border)
@@ -45,6 +47,7 @@ fn button_base<E: IntoElement>(colors: ThemeColors, label: E) -> gpui::Div {
 }
 
 fn section_card<E: IntoElement>(colors: ThemeColors, title: &str, body: E) -> impl IntoElement {
+    let metrics = ThemeMetrics::default();
     div()
         .flex()
         .flex_col()
@@ -53,7 +56,7 @@ fn section_card<E: IntoElement>(colors: ThemeColors, title: &str, body: E) -> im
         .border_color(colors.border)
         .rounded_sm()
         .bg(colors.panel_2)
-        .p_3()
+        .p(px(metrics.spacing.xxl))
         .child(
             div()
                 .text_sm()
@@ -64,6 +67,7 @@ fn section_card<E: IntoElement>(colors: ThemeColors, title: &str, body: E) -> im
 }
 
 fn error_banner(colors: ThemeColors, title: &str, message: &str) -> impl IntoElement {
+    let metrics = ThemeMetrics::default();
     div()
         .flex()
         .flex_col()
@@ -72,7 +76,7 @@ fn error_banner(colors: ThemeColors, title: &str, message: &str) -> impl IntoEle
         .border_color(colors.error)
         .rounded_sm()
         .bg(colors.panel)
-        .p_3()
+        .p(px(metrics.spacing.xxl))
         .child(
             div()
                 .text_sm()

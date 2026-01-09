@@ -21,6 +21,7 @@ fn terminal_status_text(terminal: &ctx_core::models::TerminalSession) -> String 
 impl Render for TerminalPanelState {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = self.colors;
+        let metrics = crate::theme::ThemeMetrics::default();
         let scope_terminals = self.scope_terminals();
         let selected_terminal = self
             .selected_terminal_id
@@ -61,8 +62,8 @@ impl Render for TerminalPanelState {
         });
         let status_pill = |label: String, color| {
             div()
-                .px_2()
-                .py_0()
+                .px(px(metrics.spacing.md))
+                .py(px(0.0))
                 .text_sm()
                 .border_1()
                 .border_color(colors.border)
@@ -73,8 +74,8 @@ impl Render for TerminalPanelState {
         };
 
         let mut refresh_button = div()
-            .px_2()
-            .py_1()
+            .px(px(metrics.spacing.md))
+            .py(px(metrics.spacing.sm))
             .text_sm()
             .border_1()
             .border_color(colors.border)
@@ -94,8 +95,8 @@ impl Render for TerminalPanelState {
         }
 
         let mut create_button = div()
-            .px_2()
-            .py_1()
+            .px(px(metrics.spacing.md))
+            .py(px(metrics.spacing.sm))
             .text_sm()
             .border_1()
             .border_color(colors.border)
@@ -115,8 +116,8 @@ impl Render for TerminalPanelState {
         }
 
         let mut reconnect_button = div()
-            .px_2()
-            .py_1()
+            .px(px(metrics.spacing.md))
+            .py(px(metrics.spacing.sm))
             .text_sm()
             .border_1()
             .border_color(colors.border)
@@ -136,8 +137,8 @@ impl Render for TerminalPanelState {
         }
 
         let mut task_scope_button = div()
-            .px_2()
-            .py_1()
+            .px(px(metrics.spacing.md))
+            .py(px(metrics.spacing.sm))
             .text_sm()
             .border_1()
             .border_color(colors.border)
@@ -163,8 +164,8 @@ impl Render for TerminalPanelState {
         }
 
         let mut workspace_scope_button = div()
-            .px_2()
-            .py_1()
+            .px(px(metrics.spacing.md))
+            .py(px(metrics.spacing.sm))
             .text_sm()
             .border_1()
             .border_color(colors.border)
@@ -233,8 +234,8 @@ impl Render for TerminalPanelState {
                             .child(status_text),
                     );
                 let delete_button = div()
-                    .px_1()
-                    .py_0()
+                    .px(px(metrics.spacing.xs))
+                    .py(px(0.0))
                     .text_sm()
                     .border_1()
                     .border_color(colors.border)
@@ -251,8 +252,8 @@ impl Render for TerminalPanelState {
                         .flex()
                         .items_center()
                         .gap_1()
-                        .px_2()
-                        .py_1()
+                        .px(px(metrics.spacing.md))
+                        .py(px(metrics.spacing.sm))
                         .border_1()
                         .border_color(if is_selected {
                             colors.border_strong
@@ -310,8 +311,8 @@ impl Render for TerminalPanelState {
             .on_key_down(cx.listener(TerminalPanelState::on_input_key_down))
             .child(input_text);
         let mut send_button = div()
-            .px_2()
-            .py_1()
+            .px(px(metrics.spacing.md))
+            .py(px(metrics.spacing.sm))
             .text_sm()
             .border_1()
             .border_color(colors.border)
@@ -345,7 +346,7 @@ impl Render for TerminalPanelState {
             .border_color(colors.border)
             .rounded_sm()
             .bg(colors.panel_2)
-            .p_2()
+            .p(px(metrics.spacing.md))
             .child(
                 div()
                     .flex()
@@ -359,8 +360,8 @@ impl Render for TerminalPanelState {
                             .child("Terminals")
                             .child(
                                 div()
-                                    .px_2()
-                                    .py_0()
+                                    .px(px(metrics.spacing.md))
+                                    .py(px(0.0))
                                     .text_sm()
                                     .border_1()
                                     .border_color(colors.border)
@@ -443,7 +444,7 @@ impl Render for TerminalPanelState {
                             .border_color(colors.border)
                             .rounded_sm()
                             .bg(colors.panel)
-                            .p_2()
+                            .p(px(metrics.spacing.md))
                             .child(output_text),
                     ),
             )
@@ -470,7 +471,7 @@ impl Render for TerminalPanelState {
                                     .border_color(colors.border)
                                     .rounded_sm()
                                     .bg(colors.panel)
-                                    .p_2()
+                                    .p(px(metrics.spacing.md))
                                     .child(input_field),
                             )
                             .child(send_button),

@@ -1,6 +1,6 @@
-use gpui::{div, prelude::*};
+use gpui::{div, prelude::*, px};
 
-use crate::theme::ThemeColors;
+use crate::theme::{ThemeColors, ThemeMetrics};
 
 pub(super) struct DiagnosticsPanelView {
     pub(super) colors: ThemeColors,
@@ -12,6 +12,7 @@ pub(super) struct DiagnosticsPanelView {
 
 impl DiagnosticsPanelView {
     pub(super) fn render(&self) -> impl IntoElement {
+        let metrics = ThemeMetrics::default();
         let frame_text = match self.frame_time_ms {
             Some(value) => format!("Frame: {value:.1} ms"),
             None => "Frame: -- ms".to_string(),
@@ -25,12 +26,12 @@ impl DiagnosticsPanelView {
             .id("diagnostics-panel")
             .flex()
             .flex_col()
-            .gap_2()
+            .gap(px(metrics.spacing.xl))
             .border_1()
             .border_color(self.colors.border)
             .rounded_sm()
             .bg(self.colors.panel_2)
-            .p_3()
+            .p(px(metrics.spacing.xxl))
             .child(
                 div()
                     .text_sm()

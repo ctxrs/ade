@@ -1,6 +1,6 @@
-use gpui::{ClickEvent, Context, ElementId, div, prelude::*};
+use gpui::{ClickEvent, Context, ElementId, div, prelude::*, px};
 
-use crate::theme::ThemeColors;
+use crate::theme::{ThemeColors, ThemeMetrics};
 
 use super::diagnostics::DiagnosticsPanelView;
 use super::session::SessionView;
@@ -96,8 +96,12 @@ impl<'a> RouterView<'a> {
 
     fn render_workspaces(&self, cx: &mut Context<ShellView>) -> impl IntoElement {
         let colors = self.shell.colors;
+        let metrics = ThemeMetrics::default();
         let refresh_button = self
             .action_button(colors, "Refresh")
+            .h(px(metrics.controls.h_sm))
+            .flex()
+            .items_center()
             .cursor_pointer()
             .id("workspaces-refresh")
             .active(|style| style.opacity(0.85))
@@ -162,7 +166,7 @@ impl<'a> RouterView<'a> {
             .flex_col()
             .flex_1()
             .gap_3()
-            .p_4()
+            .p(px(metrics.spacing.gutter))
             .bg(colors.panel)
             .child(header)
             .child(list)
@@ -170,6 +174,7 @@ impl<'a> RouterView<'a> {
 
     fn render_diagnostics(&self, _cx: &mut Context<ShellView>) -> impl IntoElement {
         let colors = self.shell.colors;
+        let metrics = ThemeMetrics::default();
         let panel = DiagnosticsPanelView {
             colors,
             frame_time_ms: None,
@@ -184,7 +189,7 @@ impl<'a> RouterView<'a> {
             .flex_col()
             .flex_1()
             .gap_3()
-            .p_4()
+            .p(px(metrics.spacing.gutter))
             .bg(colors.panel)
             .child(div().text_lg().child("Diagnostics"))
             .child(panel)
@@ -198,6 +203,7 @@ impl<'a> RouterView<'a> {
 
     fn render_app_settings(&self, cx: &mut Context<ShellView>) -> impl IntoElement {
         let colors = self.shell.colors;
+        let metrics = ThemeMetrics::default();
         let base_url = if self.shell.base_url == "unknown" {
             "Not connected".to_string()
         } else {
@@ -254,7 +260,7 @@ impl<'a> RouterView<'a> {
             .flex_col()
             .flex_1()
             .gap_3()
-            .p_4()
+            .p(px(metrics.spacing.gutter))
             .bg(colors.panel)
             .child(div().text_lg().child("App Settings"))
             .child(connection_card)
