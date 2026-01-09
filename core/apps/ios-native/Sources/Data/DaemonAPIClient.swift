@@ -140,18 +140,31 @@ actor DaemonAPIClient {
     }
 
     func listTasks(workspaceId: String) async throws -> [TaskSummary] {
-        let items: [Task] = try await request("/api/workspaces/\(workspaceId)/tasks")
-        return items.map(TaskSummary.init)
+        let snapshot = try await getWorkspaceCatchupSnapshot(workspaceId: workspaceId)
+        return snapshot.active.tasks.map { TaskSummary(task: $0.task) }
     }
 
-    func listTracks(taskId: String) async throws -> [TrackSummary] {
-        let items: [Track] = try await request("/api/tasks/\(taskId)/tracks")
-        return items.map(TrackSummary.init)
+    func listTracks(workspaceId: String, taskId: String) async throws -> [TrackSummary] {
+        let snapshot = try await getWorkspaceCatchupSnapshot(workspaceId: workspaceId)
+        if let taskSummary = snapshot.active.tasks.first(where: { $0.task.id.stringValue == taskId }) {
+            return taskSummary.tracks.map { TrackSummary(track: $0.track) }
+        }
+        if let archivedTask = snapshot.archived?.tasks.first(where: { $0.task.id.stringValue == taskId }) {
+            return archivedTask.tracks.map { TrackSummary(track: $0.track) }
+        }
+        return []
     }
 
-    func listSessions(forTrack trackId: String) async throws -> [SessionSummary] {
-        let items: [Session] = try await request("/api/tracks/\(trackId)/sessions")
-        return items.map(SessionSummary.init)
+    func listSessions(workspaceId: String, trackId: String) async throws -> [SessionSummary] {
+        let snapshot = try await getWorkspaceCatchupSnapshot(workspaceId: workspaceId)
+        if let sessions = findSessions(in: snapshot.active.tasks, trackId: trackId) {
+            return sessions.map { SessionSummary(session: $0.session) }
+        }
+        if let archived = snapshot.archived,
+           let sessions = findSessions(in: archived.tasks, trackId: trackId) {
+            return sessions.map { SessionSummary(session: $0.session) }
+        }
+        return []
     }
 
     func listMessages(sessionId: String) async throws -> [MessageSummary] {
@@ -340,6 +353,29 @@ actor DaemonAPIClient {
             return tokenCache
         }
         throw DaemonAPIError.missingToken
+    }
+
+    private func getWorkspaceCatchupSnapshot(workspaceId: String) async throws -> WorkspaceCatchupSnapshot {
+        let params = WorkspaceCatchupParams(
+            limit: nil,
+            includeArchived: false,
+            archivedOnly: false,
+            activeCursor: nil,
+            archivedCursor: nil
+        )
+        return try await getWorkspaceCatchup(workspaceId: workspaceId, params: params)
+    }
+
+    private func findSessions(
+        in tasks: [WorkspaceCatchupTaskSummary],
+        trackId: String
+    ) -> [SessionCatchupSummary]? {
+        for task in tasks {
+            if let track = task.tracks.first(where: { $0.track.id.stringValue == trackId }) {
+                return track.sessions
+            }
+        }
+        return nil
     }
 
     private func request<T: Decodable>(_ path: String, method: HTTPMethod = .get, queryItems: [URLQueryItem] = [], body: Encodable? = nil) async throws -> T {

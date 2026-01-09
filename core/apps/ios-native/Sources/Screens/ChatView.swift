@@ -1104,9 +1104,9 @@ final class ChatViewModel: ObservableObject {
             workspaceId = workspace.id
             let tasks = try await client.listTasks(workspaceId: workspace.id)
             guard let task = tasks.first else { return nil }
-            let tracks = try await client.listTracks(taskId: task.id)
+            let tracks = try await client.listTracks(workspaceId: workspace.id, taskId: task.id)
             guard let track = tracks.first else { return nil }
-            let sessions = try await client.listSessions(forTrack: track.id)
+            let sessions = try await client.listSessions(workspaceId: workspace.id, trackId: track.id)
             guard let session = sessions.first else { return nil }
             sessionId = session.id
             return session.id

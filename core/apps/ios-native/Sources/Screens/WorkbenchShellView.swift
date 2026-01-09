@@ -456,7 +456,7 @@ private struct TrackListView: View {
             VStack(spacing: 12) {
                 ForEach(tracks) { track in
                     NavigationLink {
-                        SessionListView(track: track)
+                        SessionListView(track: track, workspaceId: task.workspaceId)
                     } label: {
                         WorkbenchNavRowView(
                             title: track.label,
@@ -482,7 +482,7 @@ private struct TrackListView: View {
         isLoading = true
         errorMessage = nil
         do {
-            tracks = try await client.listTracks(taskId: task.id)
+            tracks = try await client.listTracks(workspaceId: task.workspaceId, taskId: task.id)
             workbenchSelection.resolveTrackSelection(taskId: task.id, tracks: tracks)
         } catch {
             errorMessage = "Failed to load tracks."
@@ -497,6 +497,7 @@ private struct SessionListView: View {
     @EnvironmentObject private var workbenchSelection: WorkbenchSelectionStore
     @Environment(\.dismiss) private var dismiss
     let track: TrackSummary
+    let workspaceId: String
     @State private var sessions: [SessionSummary] = []
     @State private var isLoading = false
     @State private var errorMessage: String?
@@ -563,7 +564,7 @@ private struct SessionListView: View {
         isLoading = true
         errorMessage = nil
         do {
-            sessions = try await client.listSessions(forTrack: track.id)
+            sessions = try await client.listSessions(workspaceId: workspaceId, trackId: track.id)
             workbenchSelection.resolveSessionSelection(taskId: track.taskId, trackId: track.id, sessions: sessions)
         } catch {
             errorMessage = "Failed to load sessions."
