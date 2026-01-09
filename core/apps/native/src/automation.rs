@@ -14,8 +14,9 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use enigo::{Button, Coordinate, Direction, Enigo, Mouse, Settings};
-use gpui::{App, Context, Keystroke, Modifiers, Window, WindowHandle, px, size};
+use gpui::{
+    App, AppContext, Context, Keystroke, Modifiers, Window, WindowHandle, px, size,
+};
 use image::{ColorType, ImageFormat};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Map, json, Value};
@@ -23,6 +24,7 @@ use tokio::sync::{mpsc, oneshot, watch};
 use tokio::time::timeout;
 
 use crate::app::ShellView;
+use crate::automation_tree;
 
 #[derive(Clone, Debug, Default)]
 pub struct AutomationConfig {
@@ -342,7 +344,6 @@ enum AutomationCommand {
     Focus { target: FocusTarget },
     Screenshot { path: PathBuf },
     Resize { width: f32, height: f32 },
-    Click { x: f32, y: f32 },
     Type { text: String },
     KeyPress { keystroke: Keystroke },
     Exit,
@@ -354,6 +355,7 @@ async fn run_command_loop(
     mut command_rx: mpsc::Receiver<AutomationRequest>,
     state: Arc<AutomationState>,
 ) {
+    let any_window = gpui::AnyWindowHandle::from(window);
     while let Some(request) = command_rx.recv().await {
         let command = request.command;
         let response = match command {
@@ -385,51 +387,26 @@ async fn run_command_loop(
                     .map_err(|err| err.to_string())
                     .and_then(|result| result)
             }
-            AutomationCommand::Click { x, y } => {
-                let mut cx = cx.clone();
-                window
-                    .update(&mut cx, |_, window, _cx| {
-                        let bounds = window.bounds();
-                        let target_x = f64::from(bounds.origin.x) + f64::from(px(x));
-                        let target_y = f64::from(bounds.origin.y) + f64::from(px(y));
-                        let mut enigo =
-                            Enigo::new(&Settings::default()).map_err(|err| err.to_string())?;
-                        enigo
-                            .move_mouse(target_x.round() as i32, target_y.round() as i32, Coordinate::Abs)
-                            .map_err(|err| err.to_string())?;
-                        enigo
-                            .button(Button::Left, Direction::Click)
-                            .map_err(|err| err.to_string())?;
-                        mark_input(&state);
-                        Ok(json!({ "x": x, "y": y }))
-                    })
-                    .map_err(|err| err.to_string())
-                    .and_then(|result| result)
-            }
             AutomationCommand::Type { text } => {
                 let mut cx = cx.clone();
-                window
-                    .update(&mut cx, |_, window, _cx| {
-                        for ch in text.chars() {
-                            let keystroke = keystroke_for_char(ch);
-                            window.dispatch_keystroke(keystroke, _cx);
-                        }
-                        mark_input(&state);
-                        Ok(json!({ "text": text, "chars": text.chars().count() }))
-                    })
-                    .map_err(|err| err.to_string())
-                    .and_then(|result| result)
+                cx.update_window(any_window, |_, window, cx| {
+                    for ch in text.chars() {
+                        let keystroke = keystroke_for_char(ch);
+                        window.dispatch_keystroke(keystroke, cx);
+                    }
+                    mark_input(&state);
+                    json!({ "text": text, "chars": text.chars().count() })
+                })
+                .map_err(|err| err.to_string())
             }
             AutomationCommand::KeyPress { keystroke } => {
                 let mut cx = cx.clone();
-                window
-                    .update(&mut cx, |_, window, _cx| {
-                        window.dispatch_keystroke(keystroke.clone(), _cx);
-                        mark_input(&state);
-                        Ok(json!({ "key": keystroke.to_string() }))
-                    })
-                    .map_err(|err| err.to_string())
-                    .and_then(|result| result)
+                cx.update_window(any_window, |_, window, cx| {
+                    window.dispatch_keystroke(keystroke.clone(), cx);
+                    mark_input(&state);
+                    json!({ "key": keystroke.to_string() })
+                })
+                .map_err(|err| err.to_string())
             }
             AutomationCommand::Exit => {
                 let mut cx = cx.clone();
@@ -876,6 +853,69 @@ async fn handle_rpc_method(
     params: Option<Value>,
 ) -> Result<Value, RpcError> {
     match method {
+        "automation.ready" => {
+            let params: ReadyQuery = parse_params(params)?;
+            let ready = wait_ready(state, params.timeout_ms.unwrap_or(30_000))
+                .await
+                .map_err(RpcError::server_error)?;
+            if ready {
+                Ok(json!({ "ready": true }))
+            } else {
+                Err(RpcError::server_error("timeout waiting for native app readiness"))
+            }
+        }
+        "automation.keyboard.press" => {
+            let params: KeyPressParams = parse_params(params)?;
+            let normalized = normalize_keystroke_input(&params.key);
+            let keystroke = Keystroke::parse(&normalized)
+                .map_err(|err| RpcError::invalid_params(err.to_string()))?;
+            dispatch_command(state, AutomationCommand::KeyPress { keystroke })
+                .await
+                .map_err(RpcError::server_error)
+        }
+        "automation.locator.visible" => {
+            let params: LocatorParams = parse_params(params)?;
+            let node = resolve_selector_node(&params.selector)
+                .ok_or_else(|| RpcError::server_error("locator not found"))?;
+            Ok(json!({ "visible": node.visible }))
+        }
+        "automation.locator.text" => {
+            let params: LocatorParams = parse_params(params)?;
+            let node = resolve_selector_node(&params.selector)
+                .ok_or_else(|| RpcError::server_error("locator not found"))?;
+            Ok(json!({ "text": node.name.unwrap_or_default() }))
+        }
+        "automation.locator.click" => {
+            let params: LocatorParams = parse_params(params)?;
+            let target = focus_target_for_selector(&params.selector)
+                .ok_or_else(|| RpcError::server_error("locator click not supported"))?;
+            dispatch_command(state, AutomationCommand::Focus { target })
+                .await
+                .map_err(RpcError::server_error)
+        }
+        "automation.locator.type" => {
+            let params: LocatorTypeParams = parse_params(params)?;
+            let target = match params.selector.kind.as_str() {
+                "id" if params.selector.value == "composer-input" || params.selector.value == "composer-send" => {
+                    FocusTarget::Composer
+                }
+                _ => {
+                    return Err(RpcError::server_error(
+                        "locator type is only supported for #composer-input",
+                    ));
+                }
+            };
+            dispatch_command(state, AutomationCommand::Focus { target })
+                .await
+                .map_err(RpcError::server_error)?;
+            dispatch_command(state, AutomationCommand::Type { text: params.text })
+                .await
+                .map_err(RpcError::server_error)
+        }
+        "automation.tree.snapshot" => {
+            serde_json::to_value(automation_tree::snapshot())
+                .map_err(|err| RpcError::server_error(err.to_string()))
+        }
         "ctx.ready" => {
             let params: ReadyQuery = parse_params(params)?;
             let ready = wait_ready(state, params.timeout_ms.unwrap_or(30_000))
@@ -914,16 +954,9 @@ async fn handle_rpc_method(
             .map_err(RpcError::server_error)
         }
         "ctx.input.click" => {
-            let params: ClickParams = parse_params(params)?;
-            dispatch_command(
-                state,
-                AutomationCommand::Click {
-                    x: params.x,
-                    y: params.y,
-                },
-            )
-            .await
-            .map_err(RpcError::server_error)
+            Err(RpcError::server_error(
+                "ctx.input.click is not supported (no in-process mouse injection yet)",
+            ))
         }
         "ctx.input.type" => {
             let params: TypeParams = parse_params(params)?;
@@ -953,6 +986,45 @@ async fn handle_rpc_method(
     }
 }
 
+#[derive(Debug, Deserialize)]
+struct Selector {
+    kind: String,
+    value: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct LocatorParams {
+    selector: Selector,
+}
+
+#[derive(Debug, Deserialize)]
+struct LocatorTypeParams {
+    selector: Selector,
+    text: String,
+}
+
+fn resolve_selector_node(selector: &Selector) -> Option<automation_tree::AutomationNode> {
+    match selector.kind.as_str() {
+        "id" => automation_tree::registry().get_by_id(&selector.value),
+        _ => None,
+    }
+}
+
+fn focus_target_for_selector(selector: &Selector) -> Option<FocusTarget> {
+    if selector.kind != "id" {
+        return None;
+    }
+    match selector.value.as_str() {
+        "app-shell" => Some(FocusTarget::Main),
+        "composer-input" | "composer-send" => Some(FocusTarget::Composer),
+        "sessions-list" => Some(FocusTarget::SessionsPane),
+        "diff-pane" => Some(FocusTarget::DiffPane),
+        "artifacts-pane" => Some(FocusTarget::ArtifactsPane),
+        "terminal-panel" => Some(FocusTarget::TerminalPanel),
+        _ => None,
+    }
+}
+
 fn parse_params<T: DeserializeOwned>(params: Option<Value>) -> Result<T, RpcError> {
     let value = match params {
         None | Some(Value::Null) => Value::Object(Map::new()),
@@ -965,12 +1037,6 @@ fn parse_params<T: DeserializeOwned>(params: Option<Value>) -> Result<T, RpcErro
 struct ResizeParams {
     width: f32,
     height: f32,
-}
-
-#[derive(Debug, Deserialize)]
-struct ClickParams {
-    x: f32,
-    y: f32,
 }
 
 #[derive(Debug, Deserialize)]
