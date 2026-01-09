@@ -6,8 +6,6 @@ enum ConnectionQRResult {
     case secure(baseURL: String, pairingToken: String, daemonPublicKey: String)
 }
 
-}
-
 struct QRCodeScannerView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var cameraAccess: CameraAccess = .unknown
