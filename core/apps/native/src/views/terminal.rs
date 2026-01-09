@@ -316,7 +316,7 @@ impl Render for TerminalPanelState {
             .text_sm()
             .border_1()
             .border_color(colors.border)
-            .rounded_sm()
+            .rounded_full()
             .child("Send")
             .id("terminal-send");
         if can_send_input {
@@ -331,14 +331,39 @@ impl Render for TerminalPanelState {
                 .text_color(colors.muted);
         }
 
-        div()
-            .on_children_prepainted(automation_tree::track_children_bounds(
-                "terminal-panel",
-                "pane",
-                Some("Terminal"),
-                Some("app-shell"),
-            ))
-            .id("terminal-panel")
+        let header = div()
+            .flex()
+            .items_center()
+            .justify_between()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child("Terminals")
+                    .child(
+                        div()
+                            .px(px(metrics.spacing.md))
+                            .py(px(0.0))
+                            .text_sm()
+                            .border_1()
+                            .border_color(colors.border)
+                            .rounded_full()
+                            .bg(colors.panel)
+                            .text_color(colors.muted)
+                            .child(format!("{}", scope_terminals.len())),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(refresh_button)
+                    .child(create_button),
+            );
+
+        let body = div()
             .flex()
             .flex_col()
             .gap_2()
@@ -347,39 +372,6 @@ impl Render for TerminalPanelState {
             .rounded_sm()
             .bg(colors.panel_2)
             .p(px(metrics.spacing.md))
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .child("Terminals")
-                            .child(
-                                div()
-                                    .px(px(metrics.spacing.md))
-                                    .py(px(0.0))
-                                    .text_sm()
-                                    .border_1()
-                                    .border_color(colors.border)
-                                    .rounded_full()
-                                    .bg(colors.panel)
-                                    .text_color(colors.muted)
-                                    .child(format!("{}", scope_terminals.len())),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .child(refresh_button)
-                            .child(create_button),
-                    ),
-            )
             .child(
                 div()
                     .flex()
@@ -476,6 +468,20 @@ impl Render for TerminalPanelState {
                             )
                             .child(send_button),
                     ),
-            )
+            );
+
+        div()
+            .on_children_prepainted(automation_tree::track_children_bounds(
+                "terminal-panel",
+                "pane",
+                Some("Terminal"),
+                Some("app-shell"),
+            ))
+            .id("terminal-panel")
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(header)
+            .child(body)
     }
 }

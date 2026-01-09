@@ -201,6 +201,8 @@ enum FocusTarget {
     Main,
     Composer,
     ComposerAttachments,
+    ComposerProviderMenu,
+    ComposerModelMenu,
     SessionsPane,
     DiffPane,
     ArtifactsPane,
@@ -213,6 +215,8 @@ impl FocusTarget {
             FocusTarget::Main => "main",
             FocusTarget::Composer => "composer",
             FocusTarget::ComposerAttachments => "composer_attachments",
+            FocusTarget::ComposerProviderMenu => "composer_provider_menu",
+            FocusTarget::ComposerModelMenu => "composer_model_menu",
             FocusTarget::SessionsPane => "sessions_pane",
             FocusTarget::DiffPane => "diff_pane",
             FocusTarget::ArtifactsPane => "artifacts_pane",
@@ -461,6 +465,16 @@ fn apply_focus_target(
         }
         FocusTarget::ComposerAttachments => {
             view.composer_attachment_focus.focus(window, cx);
+        }
+        FocusTarget::ComposerProviderMenu => {
+            view.composer_provider_menu_open = true;
+            view.composer_model_menu_open = false;
+            view.composer_focus.focus(window, cx);
+        }
+        FocusTarget::ComposerModelMenu => {
+            view.composer_model_menu_open = true;
+            view.composer_provider_menu_open = false;
+            view.composer_focus.focus(window, cx);
         }
         FocusTarget::SessionsPane => {
             view.show_sessions_pane = true;

@@ -163,6 +163,10 @@ async function main() {
     { target: "diff_pane", name: "diff-pane" },
     { target: "artifacts_pane", name: "artifacts-pane" },
     { target: "terminal_panel", name: "terminal-panel" },
+    { target: "main", name: "web-workbench-task-list" },
+    { target: "composer", name: "web-workbench-new-task" },
+    { target: "composer_provider_menu", name: "web-workbench-harness-menu" },
+    { target: "composer_model_menu", name: "web-workbench-model-menu" },
   ];
 
   let runError = null;
