@@ -335,11 +335,17 @@ impl Render for TerminalPanelState {
             .flex()
             .items_center()
             .justify_between()
+            .px(px(metrics.spacing.xl))
+            .py(px(metrics.spacing.lg))
+            .border_b_1()
+            .border_color(colors.border)
+            .bg(colors.panel)
             .child(
                 div()
                     .flex()
                     .items_center()
                     .gap_2()
+                    .text_sm()
                     .child("Terminals")
                     .child(
                         div()
@@ -350,7 +356,7 @@ impl Render for TerminalPanelState {
                             .border_color(colors.border)
                             .rounded_full()
                             .bg(colors.panel)
-                            .text_color(colors.muted)
+                            .text_color(colors.text)
                             .child(format!("{}", scope_terminals.len())),
                     ),
             )
@@ -367,11 +373,11 @@ impl Render for TerminalPanelState {
             .flex()
             .flex_col()
             .gap_2()
+            .bg(colors.panel_2)
             .border_1()
             .border_color(colors.border)
             .rounded_sm()
-            .bg(colors.panel_2)
-            .p(px(metrics.spacing.md))
+            .p(px(metrics.spacing.xl))
             .child(
                 div()
                     .flex()

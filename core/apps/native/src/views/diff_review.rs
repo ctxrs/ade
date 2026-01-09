@@ -20,7 +20,7 @@ impl<'a> DiffReviewView<'a> {
         let metrics = ThemeMetrics::default();
         let has_changes = !self.state.diff.trim().is_empty();
         let is_loading = self.state.busy_key.as_deref() == Some("diff:load");
-        let mut root = div().flex().flex_col().gap_3();
+        let mut root = div().flex().flex_col().gap_2();
 
         if let Some(error) = &self.state.error {
             root = root.child(
@@ -145,13 +145,18 @@ impl<'a> DiffReviewView<'a> {
             .flex()
             .items_center()
             .justify_between()
-            .text_lg()
+            .px(px(metrics.spacing.xl))
+            .py(px(metrics.spacing.lg))
+            .border_b_1()
+            .border_color(self.colors.border)
+            .bg(self.colors.panel)
+            .text_sm()
             .child(
                 div()
                     .flex()
                     .items_center()
                     .gap_2()
-                    .child(Icon::new(IconName::Diff, 16.0, self.colors.muted))
+                    .child(Icon::new(IconName::Diff, 14.0, self.colors.muted))
                     .child(div().text_color(self.colors.text).child("All changes"))
                     .child(
                         div()
@@ -159,10 +164,10 @@ impl<'a> DiffReviewView<'a> {
                             .py(px(metrics.spacing.xxs))
                             .text_sm()
                             .border_1()
-                            .border_color(self.colors.border_strong)
+                            .border_color(self.colors.border)
                             .rounded_full()
-                            .bg(self.colors.panel_2)
-                            .text_color(self.colors.muted)
+                            .bg(self.colors.panel)
+                            .text_color(self.colors.text)
                             .child(format!("{}", self.state.files.len())),
                     ),
             )
@@ -199,8 +204,8 @@ impl<'a> DiffReviewView<'a> {
                             .flex()
                             .items_center()
                             .gap_2()
-                            .px(px(metrics.spacing.xxl))
-                            .py(px(metrics.spacing.xl))
+                            .px(px(metrics.spacing.xl))
+                            .py(px(metrics.spacing.md))
                             .border_1()
                             .border_color(item_border)
                             .rounded_sm()
@@ -306,6 +311,11 @@ impl<'a> DiffReviewView<'a> {
                     .flex()
                     .items_center()
                     .gap_3()
+                    .px(px(metrics.spacing.xl))
+                    .py(px(metrics.spacing.md))
+                    .bg(self.colors.panel)
+                    .border_b_1()
+                    .border_color(self.colors.border)
                     .child(div().text_sm().child(file.file_path.clone()))
                     .child(summary)
                     .child(div().flex_1())
@@ -332,7 +342,7 @@ impl<'a> DiffReviewView<'a> {
                             .border_color(self.colors.border)
                             .rounded_sm()
                             .bg(self.colors.panel)
-                            .p(px(metrics.spacing.xxl))
+                            .p(px(metrics.spacing.xl))
                             .child(preview),
                     )
             } else {
@@ -358,6 +368,8 @@ impl<'a> DiffReviewView<'a> {
                         .flex()
                         .flex_col()
                         .w(px(320.0))
+                        .p(px(metrics.spacing.xl))
+                        .gap_2()
                         .child(list),
                 )
                 .child(
@@ -365,10 +377,8 @@ impl<'a> DiffReviewView<'a> {
                         .flex()
                         .flex_col()
                         .flex_1()
-                        .border_1()
+                        .border_l_1()
                         .border_color(self.colors.border)
-                        .rounded_sm()
-                        .p(px(metrics.spacing.xxl))
                         .bg(self.colors.panel_2)
                         .child(detail),
                 ),
@@ -521,7 +531,9 @@ fn render_inline_diff(
             .gap_3()
             .px(px(metrics.spacing.xl))
             .py(px(metrics.spacing.md))
-            .bg(colors.panel_2)
+            .bg(colors.panel)
+            .border_b_1()
+            .border_color(colors.border)
             .child(
                 div()
                     .text_sm()

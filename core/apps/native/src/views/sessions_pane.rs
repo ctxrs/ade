@@ -116,7 +116,7 @@ impl<'a> SessionsPaneView<'a> {
             .border_color(self.colors.border)
             .rounded_full()
             .bg(self.colors.panel)
-            .text_color(self.colors.muted)
+            .text_color(self.colors.text)
             .child(format!("{}", self.sessions.len()));
 
         let web_list = if web_sessions.is_empty() {
@@ -283,7 +283,7 @@ impl<'a> SessionsPaneView<'a> {
             .border_color(self.colors.border)
             .rounded_full()
             .bg(self.colors.panel)
-            .text_color(self.colors.muted)
+            .text_color(self.colors.text)
             .child(format!("{}", web_sessions.len()));
 
         div()
@@ -296,6 +296,11 @@ impl<'a> SessionsPaneView<'a> {
                     .flex()
                     .items_center()
                     .justify_between()
+                    .px(px(metrics.spacing.xl))
+                    .py(px(metrics.spacing.lg))
+                    .border_b_1()
+                    .border_color(self.colors.border)
+                    .bg(self.colors.panel)
                     .text_sm()
                     .child(
                         div()
@@ -314,6 +319,11 @@ impl<'a> SessionsPaneView<'a> {
                     .flex()
                     .items_center()
                     .justify_between()
+                    .px(px(metrics.spacing.xl))
+                    .py(px(metrics.spacing.md))
+                    .border_b_1()
+                    .border_color(self.colors.border)
+                    .bg(self.colors.panel)
                     .text_sm()
                     .text_color(self.colors.muted)
                     .child("Web Sessions")

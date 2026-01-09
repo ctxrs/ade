@@ -25,9 +25,9 @@ impl<'a> MessagesView<'a> {
             div()
                 .flex()
                 .flex_col()
-                .gap(px(metrics.spacing.md))
+                .gap(px(metrics.spacing.sm))
                 .px(px(metrics.spacing.xs))
-                .py(px(metrics.spacing.sm))
+                .py(px(metrics.spacing.xs))
                 .text_sm()
                 .child(
                     div()
@@ -78,12 +78,8 @@ impl<'a> MessagesView<'a> {
                     .child("Messages")
                     .child(indicator),
             )
-            .child(div().h(px(metrics.spacing.md)))
-            .child(
-                div()
-                    .p(px(metrics.spacing.md))
-                    .child(list.h(px(220.0)).w_full()),
-            )
+            .child(div().h(px(metrics.spacing.sm)))
+            .child(list.h(px(220.0)).w_full())
     }
 }
 
@@ -103,11 +99,11 @@ impl<'a> EventsView<'a> {
         } else {
             self.events
                 .iter()
-                .fold(div().flex().flex_col().gap(px(metrics.spacing.xl)), |list, event| {
+                .fold(div().flex().flex_col().gap(px(metrics.spacing.sm)), |list, event| {
                     let left = div()
                         .flex()
                         .items_center()
-                        .gap(px(metrics.spacing.xl))
+                        .gap(px(metrics.spacing.sm))
                         .child(
                             div()
                                 .text_color(self.colors.muted)
@@ -147,7 +143,7 @@ impl<'a> EventsView<'a> {
                     .child("Events")
                     .child(format!("{}", self.events.len())),
             )
-            .child(div().h(px(metrics.spacing.md)))
+            .child(div().h(px(metrics.spacing.sm)))
             .child(list)
     }
 }

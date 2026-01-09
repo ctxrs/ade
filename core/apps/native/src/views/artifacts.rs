@@ -379,6 +379,11 @@ impl<'a> ArtifactsView<'a> {
                     .flex()
                     .items_center()
                     .justify_between()
+                    .px(px(metrics.spacing.xl))
+                    .py(px(metrics.spacing.lg))
+                    .border_b_1()
+                    .border_color(self.colors.border)
+                    .bg(self.colors.panel)
                     .text_sm()
                     .child(
                         div()
@@ -397,11 +402,10 @@ impl<'a> ArtifactsView<'a> {
                             .border_color(self.colors.border)
                             .rounded_full()
                             .bg(self.colors.panel)
-                            .text_color(self.colors.muted)
+                            .text_color(self.colors.text)
                             .child(format!("{}", self.artifacts.len())),
                     ),
             )
-            .child(div().h(px(8.0)))
             .child(
                 div()
                     .flex()
@@ -412,8 +416,11 @@ impl<'a> ArtifactsView<'a> {
                             .flex()
                             .flex_col()
                             .w(px(260.0))
+                            .p(px(metrics.spacing.xl))
+                            .gap_2()
                             .child(if self.artifacts.is_empty() {
                                 div()
+                                    .p(px(metrics.spacing.xl))
                                     .text_sm()
                                     .text_color(self.colors.muted)
                                     .child("No artifacts yet.")
@@ -426,11 +433,10 @@ impl<'a> ArtifactsView<'a> {
                             .flex()
                             .flex_col()
                             .flex_1()
-                            .border_1()
+                            .border_l_1()
                             .border_color(self.colors.border)
-                            .rounded_sm()
-                            .p(px(metrics.spacing.xl))
                             .bg(self.colors.panel_2)
+                            .p(px(metrics.spacing.xl))
                             .child(detail),
                     ),
             )
