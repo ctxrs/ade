@@ -6,21 +6,55 @@ final class ConnectionStore: ObservableObject {
     @Published var tokenText: String
     @Published private(set) var isConnected: Bool = false
     @Published var lastError: String?
+    @Published private(set) var secureConfig: SecureConnectionConfig?
 
     private(set) var apiClient: DaemonAPIClient?
     private let tokenStore: KeychainTokenStore
+    private let deviceIdentityStore = DeviceIdentityStore()
 
     init(baseURLText: String = "http://127.0.0.1:4399", tokenText: String = "") {
-        self.baseURLText = baseURLText
+        let storedSecure = SecureConnectionDefaults.load()
+        self.secureConfig = storedSecure
+        self.baseURLText = storedSecure?.baseURL ?? baseURLText
         self.tokenText = tokenText
         self.tokenStore = KeychainTokenStore()
     }
 
+    func setSecureConfig(_ config: SecureConnectionConfig?) {
+        secureConfig = config
+        SecureConnectionDefaults.save(config)
+        if let config {
+            baseURLText = config.baseURL
+        }
+    }
+
     func connect() async {
         lastError = nil
-        guard let baseURL = URL(string: baseURLText) else {
+        let baseValue = secureConfig?.baseURL ?? baseURLText
+        guard let baseURL = URL(string: baseValue) else {
             lastError = "Invalid daemon URL."
             return
+        }
+
+        if tokenText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, let secureConfig {
+            guard let identity = await deviceIdentityStore.load() else {
+                lastError = "Secure identity missing. Re-scan the pairing QR code."
+                return
+            }
+            do {
+                let key = try MobileE2EE.deriveKey(
+                    deviceId: secureConfig.deviceId,
+                    deviceSecretKey: identity.secretKey,
+                    daemonPublicKey: secureConfig.daemonPublicKey
+                )
+                let context = SecureConnectionContext(deviceId: secureConfig.deviceId, key: key)
+                apiClient = DaemonAPIClient(baseURL: baseURL, tokenStore: tokenStore, secureContext: context)
+                isConnected = true
+                return
+            } catch {
+                lastError = "Failed to establish secure connection."
+                return
+            }
         }
 
         let client = DaemonAPIClient(baseURL: baseURL, tokenStore: tokenStore)

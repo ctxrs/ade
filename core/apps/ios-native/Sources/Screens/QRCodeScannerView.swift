@@ -1,9 +1,9 @@
 import AVFoundation
 import SwiftUI
 
-private struct ConnectionQRResult {
-    let baseURL: String
-    let token: String
+enum ConnectionQRResult {
+    case legacy(baseURL: String, token: String)
+    case secure(baseURL: String, pairingToken: String, daemonPublicKey: String)
 }
 
 struct QRCodeScannerView: View {
@@ -62,7 +62,7 @@ struct QRCodeScannerView: View {
                 .frame(height: 360)
                 .background(Color.ctxSurface.opacity(0.6), in: RoundedRectangle(cornerRadius: 24, style: .continuous))
 
-                Text("Point your camera at the QR code to import the daemon URL and token.")
+                Text("Point your camera at the QR code to import the daemon connection details.")
                     .font(.footnote)
                     .foregroundColor(.ctxTextMuted)
                     .multilineTextAlignment(.center)
@@ -258,7 +258,17 @@ private func parseConnectionJSON(_ payload: String) -> ConnectionJSONParseResult
     }
 
     if let type = dict["type"] as? String, type == "context_mobile_e2ee" {
-        return .unsupported("Secure pairing QR codes are not supported yet.")
+        let baseURL = stringValue(dict["base_url"], dict["baseUrl"], dict["baseURL"])
+        let pairingToken = stringValue(dict["pairing_token"], dict["pairingToken"])
+        let daemonPublicKey = stringValue(dict["daemon_public_key"], dict["daemonPublicKey"])
+        guard let baseURL, let pairingToken, let daemonPublicKey else {
+            return .unsupported("Secure pairing QR code is missing details.")
+        }
+        return .success(.secure(
+            baseURL: normalizeBaseURL(baseURL),
+            pairingToken: pairingToken,
+            daemonPublicKey: daemonPublicKey
+        ))
     }
 
     let profile = dict["connection_profile"] as? [String: Any] ?? dict
@@ -286,7 +296,7 @@ private func parseConnectionJSON(_ payload: String) -> ConnectionJSONParseResult
         return nil
     }
 
-    return .success(ConnectionQRResult(baseURL: normalizeBaseURL(baseURL), token: token))
+    return .success(.legacy(baseURL: normalizeBaseURL(baseURL), token: token))
 }
 
 private func parseConnectionURL(_ payload: String) -> ConnectionQRResult? {
@@ -310,7 +320,7 @@ private func parseConnectionURL(_ payload: String) -> ConnectionQRResult? {
         return nil
     }
 
-    return ConnectionQRResult(baseURL: normalizeBaseURL(baseURL), token: token)
+    return .legacy(baseURL: normalizeBaseURL(baseURL), token: token)
 }
 
 private func normalizeBaseURL(_ value: String) -> String {

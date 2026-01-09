@@ -1,4 +1,5 @@
 import SwiftUI
+import _Concurrency
 
 struct WorkbenchShellView: View {
     @EnvironmentObject private var connection: ConnectionStore
@@ -51,7 +52,7 @@ struct WorkbenchShellView: View {
                     workspaceError: workspaceError,
                     drawerWidth: drawerWidth,
                     onClose: { isDrawerOpen = false },
-                    onRefresh: { Task { await loadWorkspaces() } },
+                    onRefresh: { _Concurrency.Task { await loadWorkspaces() } },
                     onSelectWorkspace: { workspace in
                         workspaceSelection.setWorkspace(workspace, daemonKey: connection.baseURLText)
                         workbenchSelection.setContext(daemonKey: connection.baseURLText, workspaceId: workspace.id)
@@ -69,7 +70,7 @@ struct WorkbenchShellView: View {
         }
         .onChange(of: connection.isConnected) { connected in
             guard connected else { return }
-            Task { await loadWorkspaces() }
+            _Concurrency.Task { await loadWorkspaces() }
         }
     }
 
@@ -357,7 +358,7 @@ private struct TaskListView: View {
         }
         .onChange(of: connection.isConnected) { connected in
             guard connected else { return }
-            Task { await loadTasks() }
+            _Concurrency.Task { await loadTasks() }
         }
     }
 
@@ -438,7 +439,7 @@ private struct TrackListView: View {
         }
         .onChange(of: connection.isConnected) { connected in
             guard connected else { return }
-            Task { await loadTracks() }
+            _Concurrency.Task { await loadTracks() }
         }
     }
 
@@ -519,7 +520,7 @@ private struct SessionListView: View {
         }
         .onChange(of: connection.isConnected) { connected in
             guard connected else { return }
-            Task { await loadSessions() }
+            _Concurrency.Task { await loadSessions() }
         }
     }
 
@@ -613,7 +614,7 @@ private struct WorkbenchNavRowView: View {
     let status: String?
     let icon: String
     let showsChevron: Bool
-    let isSelected: Bool = false
+    let isSelected: Bool
 
     var body: some View {
         HStack(spacing: 12) {

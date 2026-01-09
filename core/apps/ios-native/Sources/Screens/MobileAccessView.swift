@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import _Concurrency
 
 struct MobileAccessView: View {
     @EnvironmentObject private var connection: ConnectionStore
@@ -99,7 +100,7 @@ struct MobileAccessView: View {
                             }
 
                             Button {
-                                Task { await refreshStatus() }
+                                _Concurrency.Task { await refreshStatus() }
                             } label: {
                                 HStack {
                                     Image(systemName: "arrow.clockwise")
@@ -129,7 +130,7 @@ struct MobileAccessView: View {
 
                             if status?.enabled == true {
                                 Button {
-                                    Task { await disableAccess() }
+                                    _Concurrency.Task { await disableAccess() }
                                 } label: {
                                     HStack {
                                         Text(isWorking ? "Disabling..." : "Disable Mobile Access")
@@ -141,7 +142,7 @@ struct MobileAccessView: View {
                                 .disabled(isWorking)
                             } else {
                                 Button {
-                                    Task { await enableAccess() }
+                                    _Concurrency.Task { await enableAccess() }
                                 } label: {
                                     HStack {
                                         Text(isWorking ? "Enabling..." : "Enable Mobile Access")
@@ -189,7 +190,7 @@ struct MobileAccessView: View {
             await refreshStatus()
         }
         .onChange(of: connection.isConnected) { _ in
-            Task { await refreshStatus() }
+            _Concurrency.Task { await refreshStatus() }
         }
         .onChange(of: supabaseToken) { newValue in
             let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)

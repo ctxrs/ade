@@ -5,7 +5,7 @@
   <key>CFBundleDisplayName</key>
   <string>ctx</string>
   <key>CFBundleIdentifier</key>
-  <string>rs.ctx.mobile</string>
+  <string>rs.ctx.ios</string>
   <key>CFBundleShortVersionString</key>
   <string>0.1.0</string>
   <key>CFBundleVersion</key>

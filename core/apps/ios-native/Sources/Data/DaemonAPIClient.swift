@@ -1,4 +1,5 @@
 import Foundation
+import _Concurrency
 
 enum DaemonAPIError: Error {
     case invalidURL
@@ -70,14 +71,17 @@ actor DaemonAPIClient {
     private let baseURL: URL
     private let session: URLSession
     private let tokenStore: KeychainTokenStore
+    private let secureContext: SecureConnectionContext?
+    private let secureSequenceStore = SecureSequenceStore.shared
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
     private var tokenCache: String?
 
-    init(baseURL: URL, tokenStore: KeychainTokenStore, session: URLSession = .shared) {
+    init(baseURL: URL, tokenStore: KeychainTokenStore, secureContext: SecureConnectionContext? = nil, session: URLSession = .shared) {
         self.baseURL = baseURL
         self.session = session
         self.tokenStore = tokenStore
+        self.secureContext = secureContext
         let encoder = JSONEncoder()
         encoder.keyEncodingStrategy = .convertToSnakeCase
         self.encoder = encoder
@@ -88,6 +92,10 @@ actor DaemonAPIClient {
 
     func daemonBaseURL() -> URL {
         baseURL
+    }
+
+    func secureConnectionContext() -> SecureConnectionContext? {
+        secureContext
     }
 
     func authToken() async -> String? {
@@ -335,8 +343,84 @@ actor DaemonAPIClient {
     }
 
     private func request<T: Decodable>(_ path: String, method: HTTPMethod = .get, queryItems: [URLQueryItem] = [], body: Encodable? = nil) async throws -> T {
+        if let secureContext {
+            return try await secureRequest(path, method: method, queryItems: queryItems, body: body, context: secureContext)
+        }
         let request = try buildRequest(path: path, method: method, queryItems: queryItems, body: body)
         return try await perform(request)
+    }
+
+    private func secureRequest<T: Decodable>(
+        _ path: String,
+        method: HTTPMethod,
+        queryItems: [URLQueryItem],
+        body: Encodable?,
+        context: SecureConnectionContext
+    ) async throws -> T {
+        let normalizedPath = path.hasPrefix("/") ? path : "/\(path)"
+        var components = URLComponents()
+        components.path = normalizedPath
+        if !queryItems.isEmpty {
+            components.queryItems = queryItems
+        }
+        let query = components.query?.isEmpty == false ? components.query : nil
+        let bodyData: Data?
+        if let body {
+            bodyData = try encoder.encode(AnyEncodable(body))
+        } else {
+            bodyData = nil
+        }
+        let headers = bodyData == nil ? [] : [["content-type", "application/json"]]
+        let payload = SecureRequestPayload(
+            method: method.rawValue,
+            path: normalizedPath,
+            query: query,
+            headers: headers,
+            bodyB64: bodyData?.base64EncodedString() ?? ""
+        )
+        let seq = await secureSequenceStore.next(for: context.deviceId)
+        let plaintext = try encoder.encode(payload)
+        let envelope = try MobileE2EE.encryptPayload(deviceId: context.deviceId, seq: seq, key: context.key, plaintext: plaintext)
+        let request = try buildRequest(baseURL: baseURL, path: "/api/mobile/secure", method: .post, body: envelope, token: nil)
+        let (data, response) = try await session.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw DaemonAPIError.invalidResponse
+        }
+        guard (200...299).contains(httpResponse.statusCode) else {
+            let message = String(data: data, encoding: .utf8) ?? "\(httpResponse.statusCode) \(HTTPURLResponse.localizedString(forStatusCode: httpResponse.statusCode))"
+            throw DaemonAPIError.requestFailed(statusCode: httpResponse.statusCode, message: message.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+        if data.isEmpty {
+            if T.self == EmptyResponse.self {
+                return EmptyResponse() as! T
+            }
+            throw DaemonAPIError.invalidResponse
+        }
+        let responseEnvelope = try decoder.decode(SecureEnvelope.self, from: data)
+        guard responseEnvelope.deviceId == context.deviceId else {
+            throw DaemonAPIError.invalidResponse
+        }
+        let decrypted = try MobileE2EE.decryptEnvelope(responseEnvelope, key: context.key)
+        let responsePayload = try decoder.decode(SecureResponsePayload.self, from: decrypted)
+        guard (200...299).contains(responsePayload.status) else {
+            let bodyData = try? MobileE2EE.decodeBase64(responsePayload.bodyB64)
+            let message = bodyData.flatMap { String(data: $0, encoding: .utf8) } ?? "Request failed (\(responsePayload.status))"
+            throw DaemonAPIError.requestFailed(statusCode: responsePayload.status, message: message.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+        if responsePayload.bodyB64.isEmpty {
+            if T.self == EmptyResponse.self {
+                return EmptyResponse() as! T
+            }
+            throw DaemonAPIError.invalidResponse
+        }
+        let payloadBody = try MobileE2EE.decodeBase64(responsePayload.bodyB64)
+        if payloadBody.isEmpty {
+            if T.self == EmptyResponse.self {
+                return EmptyResponse() as! T
+            }
+            throw DaemonAPIError.invalidResponse
+        }
+        return try decoder.decode(T.self, from: payloadBody)
     }
 
     private func buildRequest(path: String, method: HTTPMethod, queryItems: [URLQueryItem] = [], body: Encodable? = nil) throws -> URLRequest {

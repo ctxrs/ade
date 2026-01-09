@@ -1,4 +1,6 @@
 import SwiftUI
+import UIKit
+import _Concurrency
 
 struct ConnectionView: View {
     @EnvironmentObject private var connection: ConnectionStore
@@ -8,6 +10,8 @@ struct ConnectionView: View {
     @State private var isConnecting = false
     @State private var shouldNavigate = false
     @State private var isShowingScanner = false
+
+    private let deviceIdentityStore = DeviceIdentityStore()
 
     var body: some View {
         ZStack {
@@ -52,7 +56,7 @@ struct ConnectionView: View {
                             }
 
                             Button {
-                                Task {
+                                _Concurrency.Task {
                                     isConnecting = true
                                     connection.baseURLText = daemonURL
                                     connection.tokenText = accessToken
@@ -124,14 +128,91 @@ struct ConnectionView: View {
         )
         .fullScreenCover(isPresented: $isShowingScanner) {
             QRCodeScannerView { result in
-                daemonURL = result.baseURL
-                accessToken = result.token
-                connection.baseURLText = result.baseURL
-                connection.tokenText = result.token
+                switch result {
+                case .legacy(let baseURL, let token):
+                    daemonURL = baseURL
+                    accessToken = token
+                    connection.baseURLText = baseURL
+                    connection.tokenText = token
+                    connection.setSecureConfig(nil)
+                case .secure(let baseURL, let pairingToken, let daemonPublicKey):
+                    _Concurrency.Task {
+                        await handleSecurePairing(baseURL: baseURL, pairingToken: pairingToken, daemonPublicKey: daemonPublicKey)
+                    }
+                }
             }
         }
         .toolbar(.hidden, for: .navigationBar)
     }
+
+    @MainActor
+    private func handleSecurePairing(baseURL: String, pairingToken: String, daemonPublicKey: String) async {
+        isConnecting = true
+        connection.lastError = nil
+        defer {
+            isConnecting = false
+        }
+        guard let url = URL(string: baseURL) else {
+            connection.lastError = "Invalid daemon URL."
+            return
+        }
+        do {
+            let identity = try await deviceIdentityStore.loadOrCreate()
+            let client = DaemonAPIClient(baseURL: url, tokenStore: KeychainTokenStore())
+            let payload = DaemonAPIClient.PairMobileDeviceRequest(
+                pairingToken: pairingToken,
+                deviceId: identity.deviceId,
+                deviceLabel: UIDevice.current.name,
+                platform: UIDevice.current.systemName,
+                publicKey: identity.publicKey,
+                appVersion: appVersionString()
+            )
+            let response = try await client.pairMobileDevice(baseURL: url, payload: payload)
+            let envelope = try decodeSecureEnvelope(response)
+            guard envelope.deviceId == identity.deviceId else {
+                connection.lastError = "Pairing response device mismatch."
+                return
+            }
+            let key = try MobileE2EE.deriveKey(
+                deviceId: identity.deviceId,
+                deviceSecretKey: identity.secretKey,
+                daemonPublicKey: daemonPublicKey
+            )
+            let decrypted = try MobileE2EE.decryptEnvelope(envelope, key: key)
+            let ack = try JSONDecoder().decode(PairingAck.self, from: decrypted)
+            guard ack.paired == true else {
+                connection.lastError = "Pairing was not accepted."
+                return
+            }
+            let config = SecureConnectionConfig(baseURL: baseURL, deviceId: identity.deviceId, daemonPublicKey: daemonPublicKey)
+            connection.setSecureConfig(config)
+            connection.baseURLText = baseURL
+            connection.tokenText = ""
+            await connection.connect()
+            if connection.isConnected {
+                shouldNavigate = true
+            }
+        } catch {
+            connection.lastError = "Pairing failed."
+        }
+    }
+
+    private func decodeSecureEnvelope(_ value: JSONValue) throws -> SecureEnvelope {
+        let data = try JSONEncoder().encode(value)
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return try decoder.decode(SecureEnvelope.self, from: data)
+    }
+
+    private func appVersionString() -> String? {
+        let info = Bundle.main.infoDictionary
+        return info?["CFBundleShortVersionString"] as? String
+    }
+
+    private struct PairingAck: Decodable {
+        let paired: Bool?
+    }
+
 }
 
 private struct ConnectionRowView: View {

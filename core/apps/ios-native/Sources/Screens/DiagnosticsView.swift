@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import _Concurrency
 
 struct DiagnosticsView: View {
     @EnvironmentObject private var connection: ConnectionStore
@@ -19,7 +20,7 @@ struct DiagnosticsView: View {
 
                     HStack(spacing: 12) {
                         Button {
-                            Task { await refreshDiagnostics() }
+                            _Concurrency.Task { await refreshDiagnostics() }
                         } label: {
                             HStack {
                                 Image(systemName: "arrow.clockwise")
@@ -149,7 +150,7 @@ struct DiagnosticsView: View {
             await refreshDiagnostics()
         }
         .onChange(of: connection.isConnected) { _ in
-            Task { await refreshDiagnostics() }
+            _Concurrency.Task { await refreshDiagnostics() }
         }
     }
 
