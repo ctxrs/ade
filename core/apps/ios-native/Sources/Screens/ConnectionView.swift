@@ -156,6 +156,7 @@ struct ConnectionView: View {
             setPairingError("Invalid daemon URL.")
             return
         }
+        recordPairingError("Pairing start (baseURL: \(baseURL))", error: nil)
         do {
             let identity = try await deviceIdentityStore.loadOrCreate()
             let client = DaemonAPIClient(baseURL: url, tokenStore: KeychainTokenStore())
@@ -221,10 +222,16 @@ struct ConnectionView: View {
             return "Pairing failed: missing auth token."
         case .invalidResponse:
             return "Pairing failed: invalid response."
-        case .requestFailed(_, let message):
+        case .requestFailed(let statusCode, let message):
             let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
             let apiError = parseApiError(trimmed)
-            return apiError ?? (trimmed.isEmpty ? "Pairing failed." : trimmed)
+            if let apiError {
+                return apiError
+            }
+            if trimmed.isEmpty {
+                return "Pairing failed: HTTP \(statusCode)."
+            }
+            return trimmed
         }
     }
 
