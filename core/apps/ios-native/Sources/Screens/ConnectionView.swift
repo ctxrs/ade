@@ -153,7 +153,7 @@ struct ConnectionView: View {
             isConnecting = false
         }
         guard let url = URL(string: baseURL) else {
-            connection.lastError = "Invalid daemon URL."
+            setPairingError("Invalid daemon URL.")
             return
         }
         do {
@@ -170,7 +170,7 @@ struct ConnectionView: View {
             let response = try await client.pairMobileDevice(baseURL: url, payload: payload)
             let envelope = try decodeSecureEnvelope(response)
             guard envelope.deviceId == identity.deviceId else {
-                connection.lastError = "Pairing response device mismatch."
+                setPairingError("Pairing response device mismatch.")
                 return
             }
             let key = try MobileE2EE.deriveKey(
@@ -181,7 +181,7 @@ struct ConnectionView: View {
             let decrypted = try MobileE2EE.decryptEnvelope(envelope, key: key)
             let ack = try JSONDecoder().decode(PairingAck.self, from: decrypted)
             guard ack.paired == true else {
-                connection.lastError = "Pairing was not accepted."
+                setPairingError("Pairing was not accepted.")
                 return
             }
             let config = SecureConnectionConfig(baseURL: baseURL, deviceId: identity.deviceId, daemonPublicKey: daemonPublicKey)
@@ -193,11 +193,11 @@ struct ConnectionView: View {
                 shouldNavigate = true
             }
         } catch let error as DaemonAPIError {
-            connection.lastError = formatPairingError(error)
+            setPairingError(formatPairingError(error), error: error)
         } catch let error as MobileE2EEError {
-            connection.lastError = formatCryptoError(error)
+            setPairingError(formatCryptoError(error), error: error)
         } catch {
-            connection.lastError = error.localizedDescription.isEmpty ? "Pairing failed." : error.localizedDescription
+            setPairingError(formatUnknownError(error), error: error)
         }
     }
 
@@ -248,6 +248,44 @@ struct ConnectionView: View {
             return "Pairing failed: encryption error."
         case .decryptFailed:
             return "Pairing failed: could not decrypt response."
+        }
+    }
+
+    private func formatUnknownError(_ error: Error) -> String {
+        let localized = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !localized.isEmpty {
+            return localized
+        }
+        let fallback = String(describing: error).trimmingCharacters(in: .whitespacesAndNewlines)
+        return fallback.isEmpty ? "Pairing failed." : fallback
+    }
+
+    private func setPairingError(_ message: String, error: Error? = nil) {
+        connection.lastError = message
+        recordPairingError(message, error: error)
+    }
+
+    private func recordPairingError(_ message: String, error: Error?) {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let timestamp = formatter.string(from: Date())
+        var entry = "[\(timestamp)] \(message)"
+        if let error {
+            entry += "\nerror: \(String(describing: error))"
+        }
+        entry += "\n"
+        guard let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
+            return
+        }
+        let logURL = documents.appendingPathComponent("pairing_error.log")
+        guard let data = entry.data(using: .utf8) else { return }
+        if FileManager.default.fileExists(atPath: logURL.path),
+           let handle = try? FileHandle(forWritingTo: logURL) {
+            defer { try? handle.close() }
+            try? handle.seekToEnd()
+            try? handle.write(contentsOf: data)
+        } else {
+            try? data.write(to: logURL, options: .atomic)
         }
     }
 
