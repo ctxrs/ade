@@ -68,3 +68,10 @@ supabase/supabase/
 
 # Cloudflare Wrangler
 .wrangler/
+
+# Xcode
+*.xcodeproj/
+*.xcworkspace/
+*.xcuserstate
+*.xcuserdata/
+DerivedData/
