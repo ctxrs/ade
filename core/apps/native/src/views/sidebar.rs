@@ -1,7 +1,13 @@
 use gpui::{ClickEvent, Context, ElementId, div, prelude::*, px};
 use ctx_core::ids::WorkspaceId;
 
-use crate::theme::ThemeColors;
+use crate::theme::{ThemeColors, ThemeMetrics};
+use crate::ui::{
+    button,
+    list::{self, RowDensity},
+    pill::{self, PillTone},
+    section,
+};
 
 use super::super::icons::{Icon, IconName};
 use super::super::state::{ProviderItem, ShellRoute, ShellView, WorkspaceItem};
@@ -15,6 +21,8 @@ pub(super) struct WorkspaceListView<'a> {
 
 impl<'a> WorkspaceListView<'a> {
     pub(super) fn render(&self, cx: &mut Context<ShellView>) -> impl IntoElement {
+        let metrics = ThemeMetrics::default();
+        let _ = metrics;
         let list = if self.workspaces.is_empty() {
             div()
                 .text_sm()
@@ -24,37 +32,21 @@ impl<'a> WorkspaceListView<'a> {
             self.workspaces
                 .iter()
                 .enumerate()
-                .fold(div().flex().flex_col().gap_2(), |list, (index, workspace)| {
+                .fold(div().flex().flex_col(), |list, (index, workspace)| {
                     let is_selected = self.selected_workspace == Some(workspace.id);
-                    let item_bg = if is_selected {
-                        self.colors.panel
-                    } else {
-                        self.colors.panel_2
-                    };
-                    let item_border = if is_selected {
-                        self.colors.border_strong
-                    } else {
-                        self.colors.border
-                    };
                     let on_click = cx.listener(move |view, _: &ClickEvent, _window, cx| {
                         view.select_workspace(index, cx);
                     });
                     list.child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .px_2()
-                            .py_1()
-                            .border_1()
-                            .border_color(item_border)
-                            .rounded_sm()
-                            .bg(item_bg)
-                            .text_sm()
-                            .child(workspace.name.clone())
-                            .cursor_pointer()
-                            .id(ElementId::named_usize("sidebar-workspace", index))
-                            .on_click(on_click),
+                        list::row(
+                            self.colors,
+                            is_selected,
+                            RowDensity::Tight,
+                            workspace.name.clone(),
+                        )
+                        .cursor_pointer()
+                        .id(ElementId::named_usize("sidebar-workspace", index))
+                        .on_click(on_click),
                     )
                 })
         };
@@ -64,27 +56,18 @@ impl<'a> WorkspaceListView<'a> {
             .flex()
             .flex_col()
             .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .text_sm()
-                    .text_color(self.colors.muted)
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_1()
-                            .child(Icon::new(
-                                IconName::Refresh,
-                                12.0,
-                                self.colors.muted,
-                            ))
-                            .child("Workspaces"),
-                    )
-                    .child(format!("{}", self.workspaces.len())),
+                section::header_lr(
+                    self.colors,
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_1()
+                        .child(Icon::new(IconName::Refresh, 12.0, self.colors.muted))
+                        .child("Workspaces"),
+                    pill::count(self.colors, self.workspaces.len()),
+                ),
             )
-            .child(div().h(px(8.0)))
+            .child(div().h(px(ThemeMetrics::default().spacing.lg)))
             .child(list)
     }
 }
@@ -96,6 +79,8 @@ pub(super) struct ProviderListView<'a> {
 
 impl<'a> ProviderListView<'a> {
     pub(super) fn render(&self) -> impl IntoElement {
+        let metrics = ThemeMetrics::default();
+        let _ = metrics;
         let list = if self.providers.is_empty() {
             div()
                 .text_sm()
@@ -104,27 +89,14 @@ impl<'a> ProviderListView<'a> {
         } else {
             self.providers
                 .iter()
-                .fold(div().flex().flex_col().gap_2(), |list, provider| {
-                    list.child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .px_2()
-                            .py_1()
-                            .border_1()
-                            .border_color(self.colors.border)
-                            .rounded_sm()
-                            .bg(self.colors.panel_2)
-                            .text_sm()
-                            .child(provider.name.clone())
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .text_color(self.colors.muted)
-                                    .child(provider.status.clone()),
-                            ),
-                    )
+                .fold(div().flex().flex_col(), |list, provider| {
+                    list.child(list::row_lr(
+                        self.colors,
+                        false,
+                        RowDensity::Regular,
+                        provider.name.clone(),
+                        div().text_sm().text_color(self.colors.muted).child(provider.status.clone()),
+                    ))
                 })
         };
 
@@ -132,17 +104,12 @@ impl<'a> ProviderListView<'a> {
             .id("provider-list")
             .flex()
             .flex_col()
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .text_sm()
-                    .text_color(self.colors.muted)
-                    .child("Providers")
-                    .child(format!("{}", self.providers.len())),
-            )
-            .child(div().h(px(8.0)))
+            .child(section::header_lr(
+                self.colors,
+                div().child("Agent Harnesses"),
+                pill::count(self.colors, self.providers.len()),
+            ))
+            .child(div().h(px(crate::theme::ThemeMetrics::default().spacing.lg)))
             .child(list)
     }
 }
@@ -164,72 +131,51 @@ pub(super) struct NavigationListView {
 
 impl NavigationListView {
     pub(super) fn render(&self, cx: &mut Context<ShellView>) -> impl IntoElement {
+        let metrics = ThemeMetrics::default();
+        let _ = metrics;
+        // Order and labels aligned to web app nav copy
+        // - "Workspaces" and "Settings" prominent
+        // - "Providers" renamed to "Agent Harnesses"
+        // - "App Settings" shown as "Launcher"
         let routes = [
             (ShellRoute::Workbench, "Workbench"),
             (ShellRoute::Workspaces, "Workspaces"),
             (ShellRoute::Settings, "Settings"),
-            (ShellRoute::Providers, "Providers"),
+            (ShellRoute::Providers, "Agent Harnesses"),
             (ShellRoute::Diagnostics, "Diagnostics"),
-            (ShellRoute::AppSettings, "App Settings"),
+            (ShellRoute::AppSettings, "Launcher"),
         ];
 
         let list = routes
             .iter()
             .enumerate()
-            .fold(div().flex().flex_col().gap_1(), |list, (index, (route, label))| {
-            let active = self.current_route == *route;
-            let item_bg = if active {
-                self.colors.panel
-            } else {
-                self.colors.panel_2
-            };
-            let item_border = if active {
-                self.colors.border_strong
-            } else {
-                self.colors.border
-            };
-            let next_route = *route;
-            let on_click = cx.listener(move |view, _: &ClickEvent, _window, cx| {
-                view.set_route(next_route, cx);
+            .fold(div().flex().flex_col(), |list, (index, (route, label))| {
+                let active = self.current_route == *route;
+                let next_route = *route;
+                let on_click = cx.listener(move |view, _: &ClickEvent, _window, cx| {
+                    view.set_route(next_route, cx);
+                });
+                list.child(
+                    list::row(self.colors, active, RowDensity::Regular, *label)
+                        .cursor_pointer()
+                        .id(ElementId::named_usize("nav-route", index))
+                        .on_click(on_click),
+                )
             });
-            list.child(
-                div()
-                    .flex()
-                    .items_center()
-                    .px_2()
-                    .py_1()
-                    .border_1()
-                    .border_color(item_border)
-                    .rounded_sm()
-                    .bg(item_bg)
-                    .text_sm()
-                    .child(*label)
-                    .cursor_pointer()
-                    .id(ElementId::named_usize("nav-route", index))
-                    .on_click(on_click),
-            )
-        });
 
         div()
             .id("navigation-list")
             .flex()
             .flex_col()
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .text_sm()
-                    .text_color(self.colors.muted)
-                    .child("Navigation"),
-            )
-            .child(div().h(px(8.0)))
+            .child(section::header(self.colors, div().child("Navigation")))
+            .child(div().h(px(ThemeMetrics::default().spacing.lg)))
             .child(list)
     }
 }
 
 impl<'a> SidebarView<'a> {
     pub(super) fn render(&self, cx: &mut Context<ShellView>) -> impl IntoElement {
+        let metrics = ThemeMetrics::default();
         let mut root = div()
             .id("sidebar")
             .flex()
@@ -238,33 +184,25 @@ impl<'a> SidebarView<'a> {
             .bg(self.colors.panel_2)
             .border_r_1()
             .border_color(self.colors.border)
-            .p_3()
-            .gap_2()
-            .child(
-                NavigationListView {
-                    colors: self.colors,
-                    current_route: self.current_route,
-                }
-                .render(cx),
-            );
+            .p(px(metrics.spacing.gutter))
+            .gap_3();
 
         if self.current_route == ShellRoute::Workbench {
+            // Web Workbench sidebar shows header + task list
+            let header = div()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .child(
+                    button::primary(self.colors, "New Task")
+                        .cursor_pointer()
+                        .id("sidebar-new-task")
+                        .on_click(cx.listener(ShellView::focus_composer)),
+                )
+                .child(div().h(px(metrics.spacing.md)));
+
             root = root
-                .child(
-                    WorkspaceListView {
-                        colors: self.colors,
-                        workspaces: self.workspaces,
-                        selected_workspace: self.selected_workspace,
-                    }
-                    .render(cx),
-                )
-                .child(
-                    ProviderListView {
-                        colors: self.colors,
-                        providers: self.providers,
-                    }
-                    .render(),
-                )
+                .child(header)
                 .child(
                     TaskListView {
                         colors: self.colors,
@@ -273,6 +211,38 @@ impl<'a> SidebarView<'a> {
                     }
                     .render(),
                 );
+        } else {
+            // Non-workbench routes: show navigation menu + route-specific list.
+            root = root.child(
+                NavigationListView {
+                    colors: self.colors,
+                    current_route: self.current_route,
+                }
+                .render(cx),
+            );
+
+            match self.current_route {
+                ShellRoute::Workspaces => {
+                    root = root.child(
+                        WorkspaceListView {
+                            colors: self.colors,
+                            workspaces: self.workspaces,
+                            selected_workspace: self.selected_workspace,
+                        }
+                        .render(cx),
+                    );
+                }
+                ShellRoute::Providers => {
+                    root = root.child(
+                        ProviderListView {
+                            colors: self.colors,
+                            providers: self.providers,
+                        }
+                        .render(),
+                    );
+                }
+                _ => {}
+            }
         }
 
         root
@@ -287,50 +257,29 @@ pub(super) struct TaskListView<'a> {
 
 impl<'a> TaskListView<'a> {
     pub(super) fn render(&self) -> impl IntoElement {
+        let metrics = ThemeMetrics::default();
+        let _ = metrics;
         let list = self
             .tasks
             .iter()
             .enumerate()
             .fold(div().flex().flex_col(), |list, (index, task)| {
                 let is_selected = self.selected_task == Some(index);
-                let item_bg = if is_selected {
-                    self.colors.panel
-                } else {
-                    self.colors.panel_2
-                };
-                let item_border = if is_selected {
-                    self.colors.border_strong
-                } else {
-                    self.colors.border
-                };
-                let status_color = match task.status {
-                    TaskSummaryStatus::Pending => self.colors.muted,
-                    TaskSummaryStatus::Running => self.colors.accent,
-                    TaskSummaryStatus::Completed => self.colors.success,
-                    TaskSummaryStatus::Failed => self.colors.error,
-                    TaskSummaryStatus::Cancelled => self.colors.warning,
+                let tone = match task.status {
+                    TaskSummaryStatus::Pending => PillTone::Neutral,
+                    TaskSummaryStatus::Running => PillTone::Accent,
+                    TaskSummaryStatus::Completed => PillTone::Success,
+                    TaskSummaryStatus::Failed => PillTone::Error,
+                    TaskSummaryStatus::Cancelled => PillTone::Warning,
                 };
                 list.child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .px_2()
-                        .py_1()
-                        .border_1()
-                        .border_color(item_border)
-                        .rounded_sm()
-                        .bg(item_bg)
-                        .text_sm()
-                        .child(task.title.clone())
-                        .child(
-                            div()
-                                .px_2()
-                                .py_0()
-                                .text_sm()
-                                .text_color(status_color)
-                                .child(task.status.label()),
-                        ),
+                    list::row_lr(
+                        self.colors,
+                        is_selected,
+                        RowDensity::Tight,
+                        task.title.clone(),
+                        pill::pill(self.colors, task.status.label(), tone),
+                    ),
                 )
             });
 
@@ -338,17 +287,7 @@ impl<'a> TaskListView<'a> {
             .id("task-list")
             .flex()
             .flex_col()
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .text_sm()
-                    .text_color(self.colors.muted)
-                    .child("Tasks")
-                    .child(format!("{}", self.tasks.len())),
-            )
-            .child(div().h(px(12.0)))
+            // Web workbench shows just the list with no section header
             .child(list)
     }
 }

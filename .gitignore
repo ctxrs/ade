@@ -10,6 +10,9 @@ Thumbs.db
 # Rust
 target/
 **/target/
+target
+core/target
+core/apps/native/target
 **/*.rs.bk
 
 # Node / frontend builds
@@ -65,3 +68,10 @@ supabase/supabase/
 
 # Cloudflare Wrangler
 .wrangler/
+
+# Xcode
+*.xcodeproj/
+*.xcworkspace/
+*.xcuserstate
+*.xcuserdata/
+DerivedData/

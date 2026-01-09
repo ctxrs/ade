@@ -33,7 +33,6 @@ pub(crate) struct TerminalContext {
     pub(crate) task_id: Option<TaskId>,
     pub(crate) track_id: Option<TrackId>,
     pub(crate) session_id: Option<SessionId>,
-    pub(crate) worktree_id: Option<WorktreeId>,
 }
 
 #[derive(Clone, Debug)]
@@ -54,16 +53,6 @@ pub(crate) enum TerminalStreamState {
 }
 
 impl TerminalStreamState {
-    pub(crate) fn label(&self) -> &'static str {
-        match self {
-            TerminalStreamState::Idle => "Idle",
-            TerminalStreamState::Connecting => "Connecting",
-            TerminalStreamState::Connected => "Connected",
-            TerminalStreamState::Reconnecting { .. } => "Reconnecting",
-            TerminalStreamState::Error(_) => "Error",
-        }
-    }
-
     pub(crate) fn detail(&self) -> Option<&str> {
         match self {
             TerminalStreamState::Reconnecting { reason } => reason.as_deref(),

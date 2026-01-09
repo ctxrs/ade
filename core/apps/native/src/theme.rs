@@ -12,12 +12,92 @@ pub struct ThemeTokens {
     pub border_strong: String,
     pub text: String,
     pub muted: String,
+    #[allow(dead_code)]
     pub shadow: String,
     pub accent: String,
     pub success: String,
     pub warning: String,
     pub error: String,
+    #[allow(dead_code)]
     pub mono: String,
+}
+
+// Design metrics that mirror the web app. Kept minimal and stable.
+#[derive(Debug, Clone, Copy)]
+pub struct ThemeSpacing {
+    pub xxs: f32, // 2px
+    pub xs: f32,  // 4px
+    pub sm: f32,  // 6px
+    pub md: f32,  // 8px
+    pub lg: f32,  // 10px
+    pub xl: f32,  // 12px
+    pub xxl: f32, // 16px
+    #[allow(dead_code)]
+    pub xxxl: f32, // 20px
+    pub gutter: f32, // 24px
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ThemeRadii {
+    #[allow(dead_code)]
+    pub sm: f32,   // 4px
+    #[allow(dead_code)]
+    pub md: f32,   // 6px
+    #[allow(dead_code)]
+    pub lg: f32,   // 8px
+    #[allow(dead_code)]
+    pub xl: f32,   // 10px
+    #[allow(dead_code)]
+    pub xxl: f32,  // 12px
+    #[allow(dead_code)]
+    pub pill: f32, // 999px (fully rounded)
+}
+
+#[derive(Debug, Clone)]
+pub struct ThemeTypography {
+    #[allow(dead_code)]
+    pub ui: String,   // UI font family
+    #[allow(dead_code)]
+    pub mono: String, // Code font family
+    // Font sizes in px to match web hierarchy
+    #[allow(dead_code)]
+    pub xs: f32,   // 11px
+    #[allow(dead_code)]
+    pub sm: f32,   // 12px
+    #[allow(dead_code)]
+    pub md: f32,   // 13px (body)
+    #[allow(dead_code)]
+    pub lg: f32,   // 14px
+    #[allow(dead_code)]
+    pub xl: f32,   // 16px
+    #[allow(dead_code)]
+    pub xxl: f32,  // 18px
+    #[allow(dead_code)]
+    pub display: f32, // 22px
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ThemeControls {
+    pub h_sm: f32,   // 22px
+    #[allow(dead_code)]
+    pub h_md: f32,   // 26px
+    pub h_lg: f32,   // 28px
+    #[allow(dead_code)]
+    pub h_xl: f32,   // 30px
+    #[allow(dead_code)]
+    pub h_round: f32, // 34px (round floating controls)
+    #[allow(dead_code)]
+    pub topbar: f32, // 36px
+}
+
+#[derive(Debug, Clone)]
+pub struct ThemeMetrics {
+    pub spacing: ThemeSpacing,
+    #[allow(dead_code)]
+    pub radii: ThemeRadii,
+    #[allow(dead_code)]
+    pub type_scale: ThemeTypography,
+    pub controls: ThemeControls,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -94,6 +174,52 @@ impl ThemeTokens {
             error: get_token(&map, "error")?,
             mono: get_token(&map, "mono")?,
         })
+    }
+}
+
+impl ThemeMetrics {
+    // Default metrics chosen to match the webapp scale from styles.css
+    pub fn default() -> Self {
+        Self {
+            spacing: ThemeSpacing {
+                xxs: 2.0,
+                xs: 4.0,
+                sm: 6.0,
+                md: 8.0,
+                lg: 10.0,
+                xl: 12.0,
+                xxl: 16.0,
+                xxxl: 20.0,
+                gutter: 24.0,
+            },
+            radii: ThemeRadii {
+                sm: 4.0,
+                md: 6.0,
+                lg: 8.0,
+                xl: 10.0,
+                xxl: 12.0,
+                pill: 999.0,
+            },
+            type_scale: ThemeTypography {
+                ui: "system-ui, sans-serif".to_string(),
+                mono: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, \"Liberation Mono\", \"Courier New\", monospace".to_string(),
+                xs: 11.0,
+                sm: 12.0,
+                md: 13.0,
+                lg: 14.0,
+                xl: 16.0,
+                xxl: 18.0,
+                display: 22.0,
+            },
+            controls: ThemeControls {
+                h_sm: 22.0,
+                h_md: 26.0,
+                h_lg: 28.0,
+                h_xl: 30.0,
+                h_round: 34.0,
+                topbar: 36.0,
+            },
+        }
     }
 }
 

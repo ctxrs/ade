@@ -213,7 +213,7 @@ impl TurnToolGroupBuilder {
         }
     }
 
-    fn finish(mut self) -> TurnToolGroup {
+    fn finish(self) -> TurnToolGroup {
         let mut tools: Vec<TurnToolItem> = self.tools.into_values().collect();
         sort_tools(&mut tools);
         let summary = compute_summary(&tools);

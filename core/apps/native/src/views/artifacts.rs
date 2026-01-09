@@ -1,7 +1,7 @@
 use gpui::{ClickEvent, Context, ElementId, ObjectFit, div, img, prelude::*, px};
 use ctx_core::models::Artifact;
 
-use crate::theme::ThemeColors;
+use crate::theme::{ThemeColors, ThemeMetrics};
 
 use super::super::icons::{Icon, IconName};
 use super::super::models::{
@@ -22,6 +22,7 @@ const MONO_FONT_FAMILY: &str = "ui-monospace, SFMono-Regular, Menlo, Monaco, Con
 
 impl<'a> ArtifactsView<'a> {
     pub(super) fn render(&self, cx: &mut Context<ShellView>) -> impl IntoElement {
+        let metrics = ThemeMetrics::default();
         let list = self
             .artifacts
             .iter()
@@ -42,17 +43,17 @@ impl<'a> ArtifactsView<'a> {
                 let on_click = cx.listener(move |view, _: &ClickEvent, _window, cx| {
                     view.select_artifact(index, cx);
                 });
-                list.child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .px_2()
-                        .py_1()
-                        .border_1()
-                        .border_color(item_border)
-                        .rounded_sm()
-                        .bg(item_bg)
-                        .text_sm()
+                    list.child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .px(px(metrics.spacing.xl))
+                            .py(px(metrics.spacing.md))
+                            .border_1()
+                            .border_color(item_border)
+                            .rounded_sm()
+                            .bg(item_bg)
+                            .text_sm()
                         .child(label)
                         .cursor_pointer()
                         .id(ElementId::named_usize("artifact", index))
@@ -246,7 +247,7 @@ impl<'a> ArtifactsView<'a> {
                         .border_1()
                         .border_color(self.colors.border)
                         .rounded_sm()
-                        .p_3()
+                        .p(px(metrics.spacing.xl))
                         .bg(self.colors.panel)
                         .child(preview_content),
                 );
@@ -268,8 +269,8 @@ impl<'a> ArtifactsView<'a> {
             });
 
             let mut open_button = div()
-                .px_2()
-                .py_1()
+                .px(px(metrics.spacing.md))
+                .py(px(metrics.spacing.sm))
                 .text_sm()
                 .border_1()
                 .border_color(self.colors.border)
@@ -289,8 +290,8 @@ impl<'a> ArtifactsView<'a> {
             }
 
             let mut open_in_app_button = div()
-                .px_2()
-                .py_1()
+                .px(px(metrics.spacing.md))
+                .py(px(metrics.spacing.sm))
                 .text_sm()
                 .border_1()
                 .border_color(self.colors.border)
@@ -310,8 +311,8 @@ impl<'a> ArtifactsView<'a> {
             }
 
             let mut download_button = div()
-                .px_2()
-                .py_1()
+                .px(px(metrics.spacing.md))
+                .py(px(metrics.spacing.sm))
                 .text_sm()
                 .border_1()
                 .border_color(self.colors.border)
@@ -334,7 +335,7 @@ impl<'a> ArtifactsView<'a> {
                 div()
                     .flex()
                     .flex_row()
-                    .gap_2()
+                    .gap_3()
                     .items_center()
                     .child(open_button)
                     .child(open_in_app_button)
@@ -378,6 +379,11 @@ impl<'a> ArtifactsView<'a> {
                     .flex()
                     .items_center()
                     .justify_between()
+                    .px(px(metrics.spacing.xl))
+                    .py(px(metrics.spacing.lg))
+                    .border_b_1()
+                    .border_color(self.colors.border)
+                    .bg(self.colors.panel)
                     .text_sm()
                     .child(
                         div()
@@ -389,18 +395,17 @@ impl<'a> ArtifactsView<'a> {
                     )
                     .child(
                         div()
-                            .px_1()
-                            .py_0()
+                            .px(px(metrics.spacing.md))
+                            .py(px(0.0))
                             .text_sm()
                             .border_1()
                             .border_color(self.colors.border)
-                            .rounded_sm()
+                            .rounded_full()
                             .bg(self.colors.panel)
-                            .text_color(self.colors.muted)
+                            .text_color(self.colors.text)
                             .child(format!("{}", self.artifacts.len())),
                     ),
             )
-            .child(div().h(px(8.0)))
             .child(
                 div()
                     .flex()
@@ -410,9 +415,12 @@ impl<'a> ArtifactsView<'a> {
                         div()
                             .flex()
                             .flex_col()
-                            .w(px(220.0))
+                            .w(px(260.0))
+                            .p(px(metrics.spacing.xl))
+                            .gap_2()
                             .child(if self.artifacts.is_empty() {
                                 div()
+                                    .p(px(metrics.spacing.xl))
                                     .text_sm()
                                     .text_color(self.colors.muted)
                                     .child("No artifacts yet.")
@@ -425,11 +433,10 @@ impl<'a> ArtifactsView<'a> {
                             .flex()
                             .flex_col()
                             .flex_1()
-                            .border_1()
+                            .border_l_1()
                             .border_color(self.colors.border)
-                            .rounded_sm()
-                            .p_3()
                             .bg(self.colors.panel_2)
+                            .p(px(metrics.spacing.xl))
                             .child(detail),
                     ),
             )

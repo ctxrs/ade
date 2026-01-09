@@ -5,10 +5,10 @@ use gpui::{div, prelude::*, px};
 use ctx_core::ids::TurnId;
 use serde_json::Value;
 
-use crate::theme::ThemeColors;
+use crate::theme::{ThemeColors, ThemeMetrics};
 
 use super::super::state::turn_tools::{
-    human_tool_kind, tool_status_tone, ToolStatusTone, TurnToolGroup, TurnToolItem,
+    human_tool_kind, ToolStatusTone, TurnToolGroup, TurnToolItem,
 };
 
 pub(super) struct TurnToolsView<'a> {
@@ -18,6 +18,7 @@ pub(super) struct TurnToolsView<'a> {
 
 impl<'a> TurnToolsView<'a> {
     pub(super) fn render(&self) -> impl IntoElement {
+        let metrics = ThemeMetrics::default();
         let total_tools: usize = self.groups.iter().map(|group| group.tools.len()).sum();
         let list = if self.groups.is_empty() {
             div()
@@ -27,7 +28,7 @@ impl<'a> TurnToolsView<'a> {
         } else {
             self.groups
                 .iter()
-                .fold(div().flex().flex_col().gap_2(), |list, group| {
+                .fold(div().flex().flex_col().gap(px(metrics.spacing.xl)), |list, group| {
                     list.child(self.render_group(group))
                 })
         };
@@ -46,74 +47,76 @@ impl<'a> TurnToolsView<'a> {
                     .child("Tools")
                     .child(format!("{}", total_tools)),
             )
-            .child(div().h(px(8.0)))
+            .child(div().h(px(metrics.spacing.md)))
             .child(list)
     }
 
     fn render_group(&self, group: &TurnToolGroup) -> impl IntoElement {
-        let label = group.summary.label();
+        let metrics = ThemeMetrics::default();
+        // Match web copy and separators for summary: use " · " instead of " | "
+        let label = group.summary.label().replace(" | ", " · ");
         let turn_label = format_turn_label(group.turn_id);
         let mut time_line = format!("updated {}", group.updated_at.to_rfc3339());
         if group.updated_at != group.created_at {
             time_line = format!(
-                "started {} | {}",
+                "started {} · {}",
                 group.created_at.to_rfc3339(),
                 time_line
             );
         }
-        let tools = if group.tools.is_empty() {
+        let tools_list = if group.tools.is_empty() {
             div()
                 .text_sm()
                 .text_color(self.colors.muted)
                 .child("No tool activity.")
-                .into_any_element()
         } else {
             group
                 .tools
                 .iter()
-                .fold(div().flex().flex_col().gap_2(), |list, tool| {
-                    list.child(self.render_tool(tool))
-                })
-                .into_any_element()
+                .fold(div().flex().flex_col().gap(px(metrics.spacing.md)), |list, tool| list.child(self.render_tool(tool)))
         };
 
-        div()
+        // Header row (match web wb-event-row styling: subtle, muted, tight padding)
+        let header_row = div()
+            .flex()
+            .items_center()
+            .justify_between()
+            .px(px(metrics.spacing.xs))
+            .py(px(0.0))
+            .text_sm()
+            .text_color(self.colors.muted)
+            .child(turn_label)
+            .child(label);
+
+        // Body with bordered container similar to wb-tool-group-body
+        let body = div()
             .flex()
             .flex_col()
-            .gap_2()
+            .gap(px(metrics.spacing.xl))
             .border_1()
             .border_color(self.colors.border)
             .rounded_sm()
             .bg(self.colors.panel_2)
-            .p_2()
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .text_sm()
-                    .text_color(self.colors.muted)
-                    .child(turn_label)
-                    .child(label),
-            )
+            .p(px(metrics.spacing.md))
             .child(div().text_sm().text_color(self.colors.muted).child(time_line))
-            .child(tools)
+            .child(tools_list);
+
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(metrics.spacing.md))
+            .child(header_row)
+            .child(body)
     }
 
     fn render_tool(&self, tool: &TurnToolItem) -> impl IntoElement {
-        let status_label = format_status_label(&tool.status);
-        let status_color = status_color(self.colors, tool_status_tone(&tool.status));
+        let metrics = ThemeMetrics::default();
         let label_parts = tool_label_parts(tool);
-        let kind_label = if tool.tool_kind.trim().is_empty() {
-            "tool".to_string()
-        } else {
-            tool.tool_kind.clone()
-        };
 
         let mut time_line = format!("updated {}", tool.updated_at.to_rfc3339());
         if tool.updated_at != tool.created_at {
             time_line = format!(
-                "started {} | {}",
+                "started {} · {}",
                 tool.created_at.to_rfc3339(),
                 time_line
             );
@@ -142,69 +145,55 @@ impl<'a> TurnToolsView<'a> {
             );
         }
 
-        div()
+        // Compact event row with verb · rest like wb-tool-row
+        let event_row = div()
             .flex()
-            .flex_col()
-            .gap_1()
-            .px_2()
-            .py_2()
-            .border_1()
-            .border_color(self.colors.border)
-            .rounded_sm()
-            .bg(self.colors.panel)
+            .items_center()
+            .justify_between()
+            .px(px(metrics.spacing.xs))
+            .py(px(0.0))
+            .text_sm()
+            .text_color(self.colors.muted)
             .child(
                 div()
                     .flex()
                     .items_center()
-                    .justify_between()
-                    .text_sm()
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .child(
-                                div()
-                                    .text_color(status_color)
-                                    .child(status_label),
-                            )
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap_1()
-                                    .child(
-                                        div()
-                                            .text_color(self.colors.text)
-                                            .child(label_parts.verb.clone()),
-                                    )
-                                    .child(if label_parts.rest.is_empty() {
-                                        div().into_any_element()
-                                    } else {
-                                        div()
-                                            .text_color(self.colors.muted)
-                                            .child(label_parts.rest.clone())
-                                            .into_any_element()
-                                    }),
-                            )
-                            .child(
-                                div()
-                                    .text_color(self.colors.muted)
-                                    .child(kind_label),
-                            ),
-                    )
-                    .child(
+                    .gap(px(metrics.spacing.md))
+                    .child(div().text_color(self.colors.text).child(label_parts.verb.clone()))
+                    .child(if label_parts.rest.is_empty() {
+                        div().into_any_element()
+                    } else {
                         div()
                             .text_color(self.colors.muted)
-                            .child(tool.updated_at.to_rfc3339()),
-                    ),
-            )
+                            .child(format!(" · {}", label_parts.rest))
+                            .into_any_element()
+                    }),
+            );
+
+        // Optional details in a bordered container
+        let details_block = if has_details {
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(metrics.spacing.xl))
+                .border_1()
+                .border_color(self.colors.border)
+                .rounded_sm()
+                .bg(self.colors.panel_2)
+                .p(px(metrics.spacing.md))
+                .child(details)
+                .into_any_element()
+        } else {
+            div().into_any_element()
+        };
+
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(metrics.spacing.md))
+            .child(event_row)
             .child(div().text_sm().text_color(self.colors.muted).child(time_line))
-            .child(if has_details {
-                details.into_any_element()
-            } else {
-                div().into_any_element()
-            })
+            .child(details_block)
     }
 }
 

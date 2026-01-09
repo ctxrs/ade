@@ -1,6 +1,4 @@
 use std::collections::{HashMap, HashSet};
-#[cfg(target_os = "macos")]
-use std::os::unix::process::CommandExt;
 #[cfg(unix)]
 use std::os::unix::process::ExitStatusExt;
 #[cfg(target_os = "windows")]
@@ -576,16 +574,16 @@ impl AcpProcess {
 
         #[cfg(target_os = "macos")]
         if let Some(max_bytes) = acp_memory_max_bytes_macos() {
-            cmd.pre_exec(move || {
-                let limit = libc::rlimit {
-                    rlim_cur: max_bytes as libc::rlim_t,
-                    rlim_max: max_bytes as libc::rlim_t,
-                };
-                unsafe {
+            unsafe {
+                cmd.pre_exec(move || {
+                    let limit = libc::rlimit {
+                        rlim_cur: max_bytes as libc::rlim_t,
+                        rlim_max: max_bytes as libc::rlim_t,
+                    };
                     libc::setrlimit(libc::RLIMIT_AS, &limit);
-                }
-                Ok(())
-            });
+                    Ok(())
+                });
+            }
         }
 
         let mut child = cmd.spawn().with_context(|| {

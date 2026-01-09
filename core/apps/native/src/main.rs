@@ -1,5 +1,7 @@
 #[cfg(feature = "automation")]
 mod automation;
+mod automation_tree;
+mod app_identity;
 
 #[cfg(not(feature = "automation"))]
 mod automation {
@@ -10,6 +12,7 @@ mod automation {
 
     use crate::app::ShellView;
 
+    #[allow(dead_code)]
     #[derive(Clone, Debug, Default)]
     pub struct AutomationConfig {
         pub addr: Option<SocketAddr>,
@@ -21,6 +24,7 @@ mod automation {
 }
 mod app;
 mod theme;
+mod ui;
 
 use std::net::SocketAddr;
 use std::path::PathBuf;

@@ -5,6 +5,7 @@ pub(super) mod session;
 pub(super) mod settings;
 pub(super) mod stream;
 pub(super) mod terminal;
+#[allow(dead_code)]
 pub(super) mod turn_tools;
 pub(super) mod workspace;
 
@@ -179,23 +180,21 @@ impl ShellView {
         self.aux_workspace_id = self.selected_workspace;
         self.aux_session_id = selected_session_id;
 
-        let (task_id, track_id, worktree_id) = selected_session_id
+        let (task_id, track_id) = selected_session_id
             .and_then(|session_id| self.session_summary_map.get(&session_id))
             .map(|summary| {
                 (
                     Some(summary.session.task_id),
                     Some(summary.session.track_id),
-                    Some(summary.session.worktree_id),
                 )
             })
-            .unwrap_or((None, None, None));
+            .unwrap_or((None, None));
 
         let terminal_context = TerminalContext {
             workspace_id: self.selected_workspace,
             task_id,
             track_id,
             session_id: selected_session_id,
-            worktree_id,
         };
 
         cx.update_entity(&self.terminal_panel_state, |state, cx| {

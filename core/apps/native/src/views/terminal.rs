@@ -2,6 +2,8 @@ use gpui::{CursorStyle, div, prelude::*, px, Window};
 
 use ctx_core::models::TerminalStatus;
 
+use crate::automation_tree;
+
 use super::super::state::terminal::{
     TerminalLoadState, TerminalPanelState, TerminalScope, TerminalStreamState,
 };
@@ -19,6 +21,7 @@ fn terminal_status_text(terminal: &ctx_core::models::TerminalSession) -> String 
 impl Render for TerminalPanelState {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = self.colors;
+        let metrics = crate::theme::ThemeMetrics::default();
         let scope_terminals = self.scope_terminals();
         let selected_terminal = self
             .selected_terminal_id
@@ -59,20 +62,20 @@ impl Render for TerminalPanelState {
         });
         let status_pill = |label: String, color| {
             div()
-                .px_2()
-                .py_0()
+                .px(px(metrics.spacing.md))
+                .py(px(0.0))
                 .text_sm()
                 .border_1()
                 .border_color(colors.border)
-                .rounded_sm()
+                .rounded_full()
                 .bg(colors.panel)
                 .text_color(color)
                 .child(label)
         };
 
         let mut refresh_button = div()
-            .px_2()
-            .py_1()
+            .px(px(metrics.spacing.md))
+            .py(px(metrics.spacing.sm))
             .text_sm()
             .border_1()
             .border_color(colors.border)
@@ -92,8 +95,8 @@ impl Render for TerminalPanelState {
         }
 
         let mut create_button = div()
-            .px_2()
-            .py_1()
+            .px(px(metrics.spacing.md))
+            .py(px(metrics.spacing.sm))
             .text_sm()
             .border_1()
             .border_color(colors.border)
@@ -113,8 +116,8 @@ impl Render for TerminalPanelState {
         }
 
         let mut reconnect_button = div()
-            .px_2()
-            .py_1()
+            .px(px(metrics.spacing.md))
+            .py(px(metrics.spacing.sm))
             .text_sm()
             .border_1()
             .border_color(colors.border)
@@ -134,12 +137,12 @@ impl Render for TerminalPanelState {
         }
 
         let mut task_scope_button = div()
-            .px_2()
-            .py_1()
+            .px(px(metrics.spacing.md))
+            .py(px(metrics.spacing.sm))
             .text_sm()
             .border_1()
             .border_color(colors.border)
-            .rounded_sm()
+            .rounded_full()
             .child(TerminalScope::Task.label())
             .id("terminal-scope-task");
         if task_scope_disabled {
@@ -161,12 +164,12 @@ impl Render for TerminalPanelState {
         }
 
         let mut workspace_scope_button = div()
-            .px_2()
-            .py_1()
+            .px(px(metrics.spacing.md))
+            .py(px(metrics.spacing.sm))
             .text_sm()
             .border_1()
             .border_color(colors.border)
-            .rounded_sm()
+            .rounded_full()
             .child(TerminalScope::Workspace.label())
             .id("terminal-scope-workspace");
         if self.scope == TerminalScope::Workspace {
@@ -231,8 +234,8 @@ impl Render for TerminalPanelState {
                             .child(status_text),
                     );
                 let delete_button = div()
-                    .px_1()
-                    .py_0()
+                    .px(px(metrics.spacing.xs))
+                    .py(px(0.0))
                     .text_sm()
                     .border_1()
                     .border_color(colors.border)
@@ -249,8 +252,8 @@ impl Render for TerminalPanelState {
                         .flex()
                         .items_center()
                         .gap_1()
-                        .px_2()
-                        .py_1()
+                        .px(px(metrics.spacing.md))
+                        .py(px(metrics.spacing.sm))
                         .border_1()
                         .border_color(if is_selected {
                             colors.border_strong
@@ -308,12 +311,12 @@ impl Render for TerminalPanelState {
             .on_key_down(cx.listener(TerminalPanelState::on_input_key_down))
             .child(input_text);
         let mut send_button = div()
-            .px_2()
-            .py_1()
+            .px(px(metrics.spacing.md))
+            .py(px(metrics.spacing.sm))
             .text_sm()
             .border_1()
             .border_color(colors.border)
-            .rounded_sm()
+            .rounded_full()
             .child("Send")
             .id("terminal-send");
         if can_send_input {
@@ -328,43 +331,53 @@ impl Render for TerminalPanelState {
                 .text_color(colors.muted);
         }
 
-        div()
-            .id("terminal-panel")
+        let header = div()
             .flex()
-            .flex_col()
-            .gap_2()
-            .border_1()
+            .items_center()
+            .justify_between()
+            .px(px(metrics.spacing.xl))
+            .py(px(metrics.spacing.lg))
+            .border_b_1()
             .border_color(colors.border)
-            .rounded_sm()
-            .bg(colors.panel_2)
-            .p_2()
+            .bg(colors.panel)
             .child(
                 div()
                     .flex()
                     .items_center()
-                    .justify_between()
+                    .gap_2()
+                    .text_sm()
+                    .child("Terminals")
                     .child(
                         div()
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .child("Terminals")
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .text_color(colors.muted)
-                                    .child(format!("{}", scope_terminals.len())),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .child(refresh_button)
-                            .child(create_button),
+                            .px(px(metrics.spacing.md))
+                            .py(px(0.0))
+                            .text_sm()
+                            .border_1()
+                            .border_color(colors.border)
+                            .rounded_full()
+                            .bg(colors.panel)
+                            .text_color(colors.text)
+                            .child(format!("{}", scope_terminals.len())),
                     ),
             )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(refresh_button)
+                    .child(create_button),
+            );
+
+        let body = div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .bg(colors.panel_2)
+            .border_1()
+            .border_color(colors.border)
+            .rounded_sm()
+            .p(px(metrics.spacing.xl))
             .child(
                 div()
                     .flex()
@@ -429,7 +442,7 @@ impl Render for TerminalPanelState {
                             .border_color(colors.border)
                             .rounded_sm()
                             .bg(colors.panel)
-                            .p_2()
+                            .p(px(metrics.spacing.md))
                             .child(output_text),
                     ),
             )
@@ -456,11 +469,25 @@ impl Render for TerminalPanelState {
                                     .border_color(colors.border)
                                     .rounded_sm()
                                     .bg(colors.panel)
-                                    .p_2()
+                                    .p(px(metrics.spacing.md))
                                     .child(input_field),
                             )
                             .child(send_button),
                     ),
-            )
+            );
+
+        div()
+            .on_children_prepainted(automation_tree::track_children_bounds(
+                "terminal-panel",
+                "pane",
+                Some("Terminal"),
+                Some("app-shell"),
+            ))
+            .id("terminal-panel")
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(header)
+            .child(body)
     }
 }

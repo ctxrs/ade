@@ -18,7 +18,6 @@ use ctx_client::{
 
 #[derive(Clone)]
 pub(crate) struct InstallSession {
-    pub(crate) install_id: String,
     pub(crate) state: InstallStateKind,
     pub(crate) pct: Option<u8>,
     pub(crate) last_stage: Option<String>,
@@ -446,7 +445,6 @@ impl SettingsState {
         self.installs
             .entry(provider_id.clone())
             .or_insert(InstallSession {
-                install_id: install_id.clone(),
                 state: InstallStateKind::Running,
                 pct: None,
                 last_stage: None,
@@ -516,7 +514,6 @@ impl SettingsState {
     fn update_install_state(&mut self, provider_id: &str, info: InstallInfo) {
         let session = self.installs.entry(provider_id.to_string()).or_insert(
             InstallSession {
-                install_id: info.install_id.clone(),
                 state: info.state.clone(),
                 pct: None,
                 last_stage: None,
@@ -536,7 +533,6 @@ impl SettingsState {
             .installs
             .entry(provider_id.to_string())
             .or_insert(InstallSession {
-                install_id: event.install_id.clone(),
                 state: InstallStateKind::Running,
                 pct: None,
                 last_stage: None,

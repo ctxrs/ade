@@ -27,6 +27,7 @@ pub(crate) struct WorkspaceItem {
 #[derive(Clone)]
 pub(crate) struct ProviderItem {
     pub(crate) name: String,
+    #[allow(dead_code)]
     pub(crate) status: String,
 }
 

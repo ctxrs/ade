@@ -7,6 +7,8 @@ use gpui::{
 };
 
 use crate::automation;
+use crate::automation_tree;
+use crate::app_identity;
 use crate::theme::{ThemeColors, ThemeTokens};
 
 #[path = "icons.rs"]
@@ -96,9 +98,11 @@ pub fn run(options: AppOptions) {
             eprintln!("ctx-native: daemon config failed: {err}");
             "unknown".to_string()
         });
-    Application::new()
-        .with_assets(IconAssets::new())
+    let app = Application::new()
+        .with_assets(IconAssets::new());
+    app
         .run(move |cx: &mut App| {
+        app_identity::apply_app_identity();
         gpui_tokio::init(cx);
         let window_size = options.window_size.unwrap_or_default();
         let bounds = Bounds::centered(
@@ -110,6 +114,7 @@ pub fn run(options: AppOptions) {
             .open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
+                app_id: Some("ctx".to_string()),
                 ..Default::default()
             },
             |_, cx| {
@@ -223,6 +228,12 @@ impl Render for ShellView {
             );
         }
         div()
+            .on_children_prepainted(automation_tree::track_children_bounds(
+                "app-shell",
+                "application",
+                Some("ctx"),
+                None,
+            ))
             .id("app-shell")
             .size_full()
             .flex()

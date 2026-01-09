@@ -1,46 +1,42 @@
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use axum::{
-    extract::{Query, State},
+    extract::{
+        Query, State,
+        ws::{Message, WebSocket, WebSocketUpgrade},
+    },
     http::StatusCode,
+    response::IntoResponse,
     routing::{get, post},
     Json, Router,
 };
 use gpui::{
-    App, Bounds, Context, DevicePixels, Pixels, ScreenCaptureFrame, Window, WindowHandle, point,
-    size,
+    App, AppContext, Context, Keystroke, Modifiers, Window, WindowHandle, px, size,
 };
 use image::{ColorType, ImageFormat};
-use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde_json::{Map, json, Value};
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio::time::timeout;
 
 use crate::app::ShellView;
+use crate::automation_tree;
 
 #[derive(Clone, Debug, Default)]
 pub struct AutomationConfig {
     pub addr: Option<SocketAddr>,
     pub screenshot_dir: Option<PathBuf>,
+    #[allow(dead_code)]
     pub fixture: Option<String>,
 }
 
 impl AutomationConfig {
-    fn should_start(&self) -> bool {
-        self.addr.is_some() || self.screenshot_dir.is_some() || self.fixture.is_some()
-    }
-
     fn effective_addr(&self) -> Option<SocketAddr> {
-        if let Some(addr) = self.addr {
-            return Some(addr);
-        }
-        if self.should_start() {
-            return Some(SocketAddr::from(([127, 0, 0, 1], 0)));
-        }
-        None
+        self.addr
     }
 }
 
@@ -50,27 +46,59 @@ pub fn start(app: &mut App, window: WindowHandle<ShellView>, config: AutomationC
     };
     let (ready_tx, ready_rx) = watch::channel(false);
     let (command_tx, command_rx) = mpsc::channel(32);
+    let (render_tx, render_rx) = watch::channel(0u64);
     let state = Arc::new(AutomationState {
         ready_tx,
         ready_rx,
         command_tx,
         config: config.clone(),
+        render_tx,
+        render_rx,
+        render_counter: AtomicU64::new(0),
+        last_input_frame: AtomicU64::new(0),
     });
 
-    app.spawn(move |cx| async move {
-        run_command_loop(cx, window, command_rx).await;
+    let command_state = Arc::clone(&state);
+    app.spawn(move |cx: &mut gpui::AsyncApp| {
+        let cx = cx.clone();
+        async move {
+            run_command_loop(cx, window, command_rx, command_state).await;
+        }
     })
     .detach();
 
-    let handle = match tokio::runtime::Handle::try_current() {
-        Ok(handle) => handle,
-        Err(err) => {
-            eprintln!("ctx-native: automation runtime unavailable: {err}");
-            return;
+    match tokio::runtime::Handle::try_current() {
+        Ok(handle) => {
+            eprintln!("ctx-native: automation using existing tokio runtime");
+            handle.spawn(run_http_server(addr, Arc::clone(&state)));
         }
-    };
-    handle.spawn(run_http_server(addr, Arc::clone(&state)));
+        Err(err) => {
+            eprintln!(
+                "ctx-native: automation runtime unavailable ({err}); starting dedicated runtime thread"
+            );
+            let state = Arc::clone(&state);
+            std::thread::spawn(move || {
+                let runtime = tokio::runtime::Builder::new_multi_thread()
+                    .enable_all()
+                    .build();
+                match runtime {
+                    Ok(runtime) => {
+                        runtime.block_on(run_http_server(addr, state));
+                    }
+                    Err(err) => {
+                        eprintln!("ctx-native: automation runtime build failed: {err}");
+                    }
+                }
+            });
+        }
+    }
     let _ = state.ready_tx.send(true);
+
+    let frame_state = Arc::clone(&state);
+    let _ = window.update(app, |_, window, _cx| {
+        start_frame_tracking(window, frame_state);
+        ()
+    });
 }
 
 struct AutomationState {
@@ -78,6 +106,18 @@ struct AutomationState {
     ready_rx: watch::Receiver<bool>,
     command_tx: mpsc::Sender<AutomationRequest>,
     config: AutomationConfig,
+    render_tx: watch::Sender<u64>,
+    render_rx: watch::Receiver<u64>,
+    render_counter: AtomicU64,
+    last_input_frame: AtomicU64,
+}
+
+fn start_frame_tracking(window: &mut Window, state: Arc<AutomationState>) {
+    window.on_next_frame(move |window, _cx| {
+        let next = state.render_counter.fetch_add(1, Ordering::SeqCst) + 1;
+        let _ = state.render_tx.send(next);
+        start_frame_tracking(window, state);
+    });
 }
 
 async fn run_http_server(addr: SocketAddr, state: Arc<AutomationState>) {
@@ -102,6 +142,7 @@ async fn run_http_server(addr: SocketAddr, state: Arc<AutomationState>) {
         .route("/focus", post(focus_handler))
         .route("/screenshot", post(screenshot_handler))
         .route("/exit", post(exit_handler))
+        .route("/ws", get(ws_handler))
         .with_state(state);
 
     if let Err(err) = axum::serve(listener, app).await {
@@ -147,23 +188,10 @@ async fn ready_handler(
     State(state): State<Arc<AutomationState>>,
     Query(query): Query<ReadyQuery>,
 ) -> (StatusCode, Json<ApiResponse<Value>>) {
-    let timeout_ms = query.timeout_ms.unwrap_or(30_000);
-    let mut ready_rx = state.ready_rx.clone();
-    if *ready_rx.borrow() {
-        return ok(json!({ "ready": true }));
-    }
-
-    let ready = timeout(Duration::from_millis(timeout_ms), ready_rx.changed())
-        .await
-        .ok()
-        .and_then(Result::ok)
-        .map(|_| *ready_rx.borrow())
-        .unwrap_or(false);
-
-    if ready {
-        ok(json!({ "ready": true }))
-    } else {
-        err(StatusCode::REQUEST_TIMEOUT, "timeout waiting for native app readiness")
+    match wait_ready(&state, query.timeout_ms.unwrap_or(30_000)).await {
+        Ok(true) => ok(json!({ "ready": true })),
+        Ok(false) => err(StatusCode::REQUEST_TIMEOUT, "timeout waiting for native app readiness"),
+        Err(message) => err(StatusCode::INTERNAL_SERVER_ERROR, message),
     }
 }
 
@@ -173,6 +201,8 @@ enum FocusTarget {
     Main,
     Composer,
     ComposerAttachments,
+    ComposerProviderMenu,
+    ComposerModelMenu,
     SessionsPane,
     DiffPane,
     ArtifactsPane,
@@ -185,6 +215,8 @@ impl FocusTarget {
             FocusTarget::Main => "main",
             FocusTarget::Composer => "composer",
             FocusTarget::ComposerAttachments => "composer_attachments",
+            FocusTarget::ComposerProviderMenu => "composer_provider_menu",
+            FocusTarget::ComposerModelMenu => "composer_model_menu",
             FocusTarget::SessionsPane => "sessions_pane",
             FocusTarget::DiffPane => "diff_pane",
             FocusTarget::ArtifactsPane => "artifacts_pane",
@@ -241,6 +273,7 @@ async fn screenshot_handler(
 async fn exit_handler(
     State(state): State<Arc<AutomationState>>,
 ) -> (StatusCode, Json<ApiResponse<Value>>) {
+    eprintln!("ctx-native: exit request");
     let response = dispatch_command(&state, AutomationCommand::Exit).await;
     match response {
         Ok(result) => ok(result),
@@ -314,38 +347,104 @@ struct AutomationRequest {
 enum AutomationCommand {
     Focus { target: FocusTarget },
     Screenshot { path: PathBuf },
+    Resize { width: f32, height: f32 },
+    Type { text: String },
+    KeyPress { keystroke: Keystroke },
     Exit,
 }
 
 async fn run_command_loop(
-    cx: &mut gpui::AsyncApp,
+    cx: gpui::AsyncApp,
     window: WindowHandle<ShellView>,
     mut command_rx: mpsc::Receiver<AutomationRequest>,
+    state: Arc<AutomationState>,
 ) {
+    let any_window = gpui::AnyWindowHandle::from(window);
     while let Some(request) = command_rx.recv().await {
         let command = request.command;
         let response = match command {
-            AutomationCommand::Focus { target } => window
-                .update(cx, |view, window, cx| {
-                    apply_focus_target(view, window, cx, target);
-                    Ok(json!({ "target": target.as_str() }))
-                })
-                .map_err(|err| err.to_string())
-                .and_then(|result| result),
-            AutomationCommand::Screenshot { path } => capture_window(cx, &window, path)
+            AutomationCommand::Focus { target } => {
+                let mut cx = cx.clone();
+                window
+                    .update(&mut cx, |view, window, cx| {
+                        apply_focus_target(view, window, cx, target);
+                        mark_input(&state);
+                        Ok(json!({ "target": target.as_str() }))
+                    })
+                    .map_err(|err| err.to_string())
+                    .and_then(|result| result)
+            }
+            AutomationCommand::Screenshot { path } => capture_window(&cx, &window, path)
                 .await
                 .map(|path| json!({ "path": path.to_string_lossy() })),
-            AutomationCommand::Exit => window
-                .update(cx, |_, _, cx| {
-                    cx.quit();
-                    Ok(json!({ "quitting": true }))
+            AutomationCommand::Resize { width, height } => {
+                let mut cx = cx.clone();
+                window
+                    .update(&mut cx, |_, window, _cx| {
+                        if width <= 0.0 || height <= 0.0 {
+                            return Err("window size must be positive".to_string());
+                        }
+                        window.resize(size(px(width), px(height)));
+                        mark_input(&state);
+                        Ok(json!({ "width": width, "height": height }))
+                    })
+                    .map_err(|err| err.to_string())
+                    .and_then(|result| result)
+            }
+            AutomationCommand::Type { text } => {
+                let mut cx = cx.clone();
+                cx.update_window(any_window, |_, window, cx| {
+                    for ch in text.chars() {
+                        let keystroke = keystroke_for_char(ch);
+                        window.dispatch_keystroke(keystroke, cx);
+                    }
+                    mark_input(&state);
+                    json!({ "text": text, "chars": text.chars().count() })
                 })
                 .map_err(|err| err.to_string())
-                .and_then(|result| result),
+            }
+            AutomationCommand::KeyPress { keystroke } => {
+                let mut cx = cx.clone();
+                cx.update_window(any_window, |_, window, cx| {
+                    window.dispatch_keystroke(keystroke.clone(), cx);
+                    mark_input(&state);
+                    json!({ "key": keystroke.to_string() })
+                })
+                .map_err(|err| err.to_string())
+            }
+            AutomationCommand::Exit => {
+                let mut cx = cx.clone();
+                window
+                    .update(&mut cx, |_, _, cx| {
+                        cx.quit();
+                        Ok(json!({ "quitting": true }))
+                    })
+                    .map_err(|err| err.to_string())
+                    .and_then(|result| result)
+            }
         };
 
         let _ = request.respond_to.send(response);
     }
+}
+
+fn mark_input(state: &AutomationState) {
+    let current = state.render_counter.load(Ordering::SeqCst);
+    state.last_input_frame.store(current, Ordering::SeqCst);
+}
+
+fn keystroke_for_char(ch: char) -> Keystroke {
+    let key = match ch {
+        '\n' | '\r' => "enter".to_string(),
+        '\t' => "tab".to_string(),
+        ' ' => "space".to_string(),
+        _ => ch.to_string(),
+    };
+    Keystroke::parse(&key).unwrap_or_else(|_| Keystroke {
+        modifiers: Modifiers::none(),
+        key: key.clone(),
+        key_char: Some(key),
+    })
 }
 
 fn apply_focus_target(
@@ -362,10 +461,20 @@ fn apply_focus_target(
     match target {
         FocusTarget::Main => {}
         FocusTarget::Composer => {
-            view.composer_focus.focus(window);
+            view.composer_focus.focus(window, cx);
         }
         FocusTarget::ComposerAttachments => {
-            view.composer_attachment_focus.focus(window);
+            view.composer_attachment_focus.focus(window, cx);
+        }
+        FocusTarget::ComposerProviderMenu => {
+            view.composer_provider_menu_open = true;
+            view.composer_model_menu_open = false;
+            view.composer_focus.focus(window, cx);
+        }
+        FocusTarget::ComposerModelMenu => {
+            view.composer_model_menu_open = true;
+            view.composer_provider_menu_open = false;
+            view.composer_focus.focus(window, cx);
         }
         FocusTarget::SessionsPane => {
             view.show_sessions_pane = true;
@@ -384,103 +493,99 @@ fn apply_focus_target(
     cx.notify();
 }
 
-#[derive(Clone, Copy)]
-struct CaptureInfo {
-    window_bounds: Bounds<Pixels>,
-    display_bounds: Bounds<Pixels>,
-    scale_factor: f32,
-    display_id: Option<u64>,
-}
-
+#[cfg(target_os = "linux")]
 async fn capture_window(
-    cx: &mut gpui::AsyncApp,
-    window: &WindowHandle<ShellView>,
+    _cx: &gpui::AsyncApp,
+    _window: &WindowHandle<ShellView>,
     path: PathBuf,
 ) -> Result<PathBuf, String> {
-    let supported = cx
-        .update(|app| app.is_screen_capture_supported())
-        .map_err(|err| err.to_string())?;
-    if !supported {
-        return Err("GPUI screen capture is not available on this platform".to_string());
-    }
+    // Use OS-level capture on Linux via zed-scap.
+    use scap::capturer::{Capturer, Options};
+    use scap::frame::Frame;
+    // Build a capturer targeting the main display; this avoids needing a window handle.
+    let mut capturer = Capturer::build(Options {
+        fps: 30,
+        show_cursor: false,
+        show_highlight: false,
+        target: None,
+        crop_area: None,
+        output_type: scap::frame::FrameType::BGRAFrame,
+        output_resolution: scap::capturer::Resolution::Captured,
+        excluded_targets: None,
+    })
+    .map_err(|e| format!("failed to initialize scap capturer: {e}"))?;
 
-    let info = window
-        .update(cx, |_, window, cx| {
-            let window_bounds = window.bounds();
-            let scale_factor = window.scale_factor();
-            let display = window.display().or_else(|| cx.primary_display());
-            let display_bounds = display
-                .as_ref()
-                .map(|display| display.bounds())
-                .unwrap_or(window_bounds);
-            let display_id = display.map(|display| u64::from(u32::from(display.id())));
-            CaptureInfo {
-                window_bounds,
-                display_bounds,
-                scale_factor,
-                display_id,
+    capturer.start_capture();
+    let frame = capturer
+        .get_next_frame()
+        .map_err(|e| format!("failed to capture frame: {e}"))?;
+    capturer.stop_capture();
+
+    // Convert frame to RGBA8 buffer expected by image crate.
+    let (width, height, rgba): (u32, u32, Vec<u8>) = match frame {
+        Frame::BGRA(f) => {
+            // BGRA -> RGBA swap R and B
+            let mut out = f.data;
+            for px in out.chunks_exact_mut(4) {
+                px.swap(0, 2);
             }
-        })
-        .map_err(|err| err.to_string())?;
-
-    let sources_rx = cx
-        .update(|app| app.screen_capture_sources())
-        .map_err(|err| err.to_string())?;
-    let sources = timeout(Duration::from_secs(5), sources_rx)
-        .await
-        .map_err(|_| "timeout waiting for screen capture sources".to_string())?
-        .map_err(|err| err.to_string())?;
-    if sources.is_empty() {
-        return Err("no screen capture sources available".to_string());
-    }
-
-    let mut selected = None;
-    if let Some(display_id) = info.display_id {
-        for source in &sources {
-            if let Ok(metadata) = source.metadata() {
-                if metadata.id == display_id {
-                    selected = Some(source.clone());
-                    break;
-                }
-            }
+            (f.width as u32, f.height as u32, out)
         }
-    }
-    if selected.is_none() {
-        for source in &sources {
-            if let Ok(metadata) = source.metadata() {
-                if metadata.is_main.unwrap_or(false) {
-                    selected = Some(source.clone());
-                    break;
-                }
+        Frame::BGRx(f) => {
+            // B, G, R, X -> R, G, B, 255
+            let mut out = Vec::with_capacity((f.width * f.height * 4) as usize);
+            for px in f.data.chunks_exact(4) {
+                out.push(px[2]);
+                out.push(px[1]);
+                out.push(px[0]);
+                out.push(255);
             }
+            (f.width as u32, f.height as u32, out)
         }
-    }
-    let source = selected.unwrap_or_else(|| sources[0].clone());
-
-    let (frame_tx, frame_rx) = oneshot::channel();
-    let frame_tx = Arc::new(Mutex::new(Some(frame_tx)));
-    let stream_rx = source.stream(
-        cx.foreground_executor(),
-        Box::new(move |frame| {
-            if let Ok(mut slot) = frame_tx.lock() {
-                if let Some(tx) = slot.take() {
-                    let _ = tx.send(frame);
-                }
+        Frame::XBGR(f) => {
+            // X, B, G, R -> R, G, B, 255
+            let mut out = Vec::with_capacity((f.width * f.height * 4) as usize);
+            for px in f.data.chunks_exact(4) {
+                out.push(px[3]);
+                out.push(px[2]);
+                out.push(px[1]);
+                out.push(255);
             }
-        }),
-    );
-    let _stream = timeout(Duration::from_secs(5), stream_rx)
-        .await
-        .map_err(|_| "timeout starting screen capture stream".to_string())?
-        .map_err(|err| err.to_string())?;
-    let frame = timeout(Duration::from_secs(5), frame_rx)
-        .await
-        .map_err(|_| "timeout waiting for screen capture frame".to_string())?
-        .map_err(|_| "screen capture stream closed".to_string())?;
-
-    let rgba_frame = frame_to_rgba(frame)?;
-    let crop = compute_crop(info, rgba_frame.width, rgba_frame.height)?;
-    let cropped = crop_rgba(&rgba_frame, crop)?;
+            (f.width as u32, f.height as u32, out)
+        }
+        Frame::RGBx(f) => {
+            // R, G, B, X -> R, G, B, 255
+            let mut out = Vec::with_capacity((f.width * f.height * 4) as usize);
+            for px in f.data.chunks_exact(4) {
+                out.push(px[0]);
+                out.push(px[1]);
+                out.push(px[2]);
+                out.push(255);
+            }
+            (f.width as u32, f.height as u32, out)
+        }
+        Frame::BGR0(f) => {
+            // 3-byte BGR -> RGBA
+            let mut out = Vec::with_capacity((f.width * f.height * 4) as usize);
+            for px in f.data.chunks_exact(3) {
+                out.push(px[2]);
+                out.push(px[1]);
+                out.push(px[0]);
+                out.push(255);
+            }
+            (f.width as u32, f.height as u32, out)
+        }
+        Frame::RGB(f) => {
+            let mut out = Vec::with_capacity((f.width * f.height * 4) as usize);
+            for px in f.data.chunks_exact(3) {
+                out.extend_from_slice(&[px[0], px[1], px[2], 255]);
+            }
+            (f.width as u32, f.height as u32, out)
+        }
+        Frame::YUVFrame(_f) => {
+            return Err("unsupported YUV frame format from scap".to_string());
+        }
+    };
 
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
@@ -489,9 +594,9 @@ async fn capture_window(
 
     image::save_buffer_with_format(
         &path,
-        &cropped.data,
-        cropped.width,
-        cropped.height,
+        &rgba,
+        width,
+        height,
         ColorType::Rgba8,
         ImageFormat::Png,
     )
@@ -500,292 +605,513 @@ async fn capture_window(
     Ok(path)
 }
 
-#[derive(Clone, Copy)]
-struct CropRect {
-    x: i32,
-    y: i32,
-    width: i32,
-    height: i32,
-}
-
-#[derive(Clone)]
-struct RgbaFrame {
-    width: u32,
-    height: u32,
-    data: Vec<u8>,
-}
-
-fn compute_crop(info: CaptureInfo, frame_width: u32, frame_height: u32) -> Result<CropRect, String> {
-    let window_device = bounds_to_device(info.window_bounds, info.scale_factor);
-    let display_device = bounds_to_device(info.display_bounds, info.scale_factor);
-
-    let x = window_device.origin.x.0 - display_device.origin.x.0;
-    let y = window_device.origin.y.0 - display_device.origin.y.0;
-    let width = window_device.size.width.0;
-    let height = window_device.size.height.0;
-
-    let frame_width = frame_width as i32;
-    let frame_height = frame_height as i32;
-    if frame_width <= 0 || frame_height <= 0 {
-        return Err("screen capture returned an empty frame".to_string());
-    }
-
-    let mut crop_x = x.max(0);
-    let mut crop_y = y.max(0);
-    let mut crop_w = width;
-    let mut crop_h = height;
-    if crop_x >= frame_width || crop_y >= frame_height {
-        return Err("window bounds are outside the capture frame".to_string());
-    }
-    if crop_x + crop_w > frame_width {
-        crop_w = frame_width - crop_x;
-    }
-    if crop_y + crop_h > frame_height {
-        crop_h = frame_height - crop_y;
-    }
-    if crop_w <= 0 || crop_h <= 0 {
-        return Err("window bounds produce an empty capture region".to_string());
-    }
-
-    Ok(CropRect {
-        x: crop_x,
-        y: crop_y,
-        width: crop_w,
-        height: crop_h,
-    })
-}
-
-fn bounds_to_device(bounds: Bounds<Pixels>, scale_factor: f32) -> Bounds<DevicePixels> {
-    let scaled = bounds.scale(scale_factor);
-    Bounds::new(
-        point(DevicePixels::from(scaled.origin.x), DevicePixels::from(scaled.origin.y)),
-        size(
-            DevicePixels::from(scaled.size.width),
-            DevicePixels::from(scaled.size.height),
-        ),
-    )
-}
-
-fn crop_rgba(frame: &RgbaFrame, crop: CropRect) -> Result<RgbaFrame, String> {
-    let width = crop.width as u32;
-    let height = crop.height as u32;
-    let frame_width = frame.width as i32;
-    if width == 0 || height == 0 {
-        return Err("crop size is empty".to_string());
-    }
-    let mut data = Vec::with_capacity((width * height * 4) as usize);
-    for row in 0..crop.height {
-        let src_row = crop.y + row;
-        let src_start = ((src_row * frame_width + crop.x) * 4) as usize;
-        let src_end = src_start + (crop.width * 4) as usize;
-        data.extend_from_slice(&frame.data[src_start..src_end]);
-    }
-    Ok(RgbaFrame { width, height, data })
-}
-
-#[cfg(target_os = "macos")]
-fn frame_to_rgba(frame: ScreenCaptureFrame) -> Result<RgbaFrame, String> {
-    use core_foundation::base::TCFType;
-    use core_video::{pixel_buffer::CVPixelBuffer, r#return::kCVReturnSuccess};
-
-    let pixel_buffer = unsafe {
-        CVPixelBuffer::wrap_under_get_rule(frame.0.as_concrete_TypeRef() as _)
+#[cfg(not(target_os = "linux"))]
+async fn capture_window(
+    cx: &gpui::AsyncApp,
+    window: &WindowHandle<ShellView>,
+    path: PathBuf,
+) -> Result<PathBuf, String> {
+    // Default path (macOS, possibly Windows): use GPUI's in-process render.
+    let image = {
+        let mut cx_window = cx.clone();
+        window
+            .update(&mut cx_window, |_, window, _cx| window.render_to_image())
+            .map_err(|err| err.to_string())?
+            .map_err(|err| err.to_string())?
     };
-    unsafe {
-        if pixel_buffer.lock_base_address(0) != kCVReturnSuccess {
-            return Err("failed to lock screen capture buffer".to_string());
+
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|err| format!("failed to create screenshot dir: {err}"))?;
+    }
+
+    image::save_buffer_with_format(
+        &path,
+        image.as_raw(),
+        image.width(),
+        image.height(),
+        ColorType::Rgba8,
+        ImageFormat::Png,
+    )
+    .map_err(|err| format!("failed to write screenshot: {err}"))?;
+
+    Ok(path)
+}
+
+async fn wait_ready(
+    state: &AutomationState,
+    timeout_ms: u64,
+) -> Result<bool, String> {
+    let mut ready_rx = state.ready_rx.clone();
+    if *ready_rx.borrow() {
+        return Ok(true);
+    }
+
+    let ready = timeout(Duration::from_millis(timeout_ms), ready_rx.changed())
+        .await
+        .ok()
+        .and_then(Result::ok)
+        .map(|_| *ready_rx.borrow())
+        .unwrap_or(false);
+
+    Ok(ready)
+}
+
+async fn ws_handler(
+    ws: WebSocketUpgrade,
+    State(state): State<Arc<AutomationState>>,
+) -> impl IntoResponse {
+    ws.on_upgrade(move |socket| handle_ws(socket, state))
+}
+
+async fn handle_ws(mut socket: WebSocket, state: Arc<AutomationState>) {
+    while let Some(message) = socket.recv().await {
+        let message = match message {
+            Ok(message) => message,
+            Err(_) => break,
+        };
+
+        match message {
+            Message::Text(text) => {
+                if let Some(response) = handle_rpc_text(&state, &text).await {
+                    if let Ok(payload) = serde_json::to_string(&response) {
+                        if socket.send(Message::Text(payload)).await.is_err() {
+                            break;
+                        }
+                    }
+                }
+            }
+            Message::Binary(_) => {}
+            Message::Ping(payload) => {
+                let _ = socket.send(Message::Pong(payload)).await;
+            }
+            Message::Close(_) => break,
+            _ => {}
         }
-        let width = pixel_buffer.get_width() as u32;
-        let height = pixel_buffer.get_height() as u32;
-        let bytes_per_row = pixel_buffer.get_bytes_per_row() as usize;
-        let base = pixel_buffer.get_base_address();
-        if base.is_null() {
-            let _ = pixel_buffer.unlock_base_address(0);
-            return Err("screen capture buffer is null".to_string());
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct RpcRequest {
+    jsonrpc: Option<String>,
+    method: Option<String>,
+    params: Option<Value>,
+    id: Option<Value>,
+}
+
+#[derive(Debug, Serialize)]
+struct RpcResponse {
+    jsonrpc: &'static str,
+    id: Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    result: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<RpcError>,
+}
+
+#[derive(Debug, Serialize)]
+struct RpcError {
+    code: i64,
+    message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    data: Option<Value>,
+}
+
+impl RpcError {
+    fn new(code: i64, message: impl Into<String>) -> Self {
+        Self {
+            code,
+            message: message.into(),
+            data: None,
         }
-        let raw_len = bytes_per_row * height as usize;
-        let raw = std::slice::from_raw_parts(base as *const u8, raw_len);
-        let mut data = Vec::with_capacity((width * height * 4) as usize);
-        for row in 0..height as usize {
-            let start = row * bytes_per_row;
-            let end = start + (width as usize * 4);
-            for px in raw[start..end].chunks_exact(4) {
-                data.push(px[2]);
-                data.push(px[1]);
-                data.push(px[0]);
-                data.push(px[3]);
+    }
+
+    fn invalid_params(message: impl Into<String>) -> Self {
+        Self::new(-32602, message)
+    }
+
+    fn invalid_request(message: impl Into<String>) -> Self {
+        Self::new(-32600, message)
+    }
+
+    fn method_not_found(message: impl Into<String>) -> Self {
+        Self::new(-32601, message)
+    }
+
+    fn parse_error(message: impl Into<String>) -> Self {
+        Self::new(-32700, message)
+    }
+
+    fn server_error(message: impl Into<String>) -> Self {
+        Self::new(-32000, message)
+    }
+}
+
+async fn handle_rpc_text(state: &AutomationState, text: &str) -> Option<Value> {
+    let payload: Value = match serde_json::from_str(text) {
+        Ok(value) => value,
+        Err(err) => {
+            return Some(rpc_error_value(Value::Null, RpcError::parse_error(format!(
+                "parse error: {err}"
+            ))));
+        }
+    };
+
+    match payload {
+        Value::Array(items) => handle_rpc_batch(state, items).await,
+        Value::Object(_) => handle_rpc_single(state, payload).await,
+        _ => Some(rpc_error_value(
+            Value::Null,
+            RpcError::invalid_request("request must be an object or array"),
+        )),
+    }
+}
+
+async fn handle_rpc_batch(state: &AutomationState, items: Vec<Value>) -> Option<Value> {
+    if items.is_empty() {
+        return Some(rpc_error_value(
+            Value::Null,
+            RpcError::invalid_request("batch request must not be empty"),
+        ));
+    }
+
+    let mut responses = Vec::new();
+    for item in items {
+        if let Some(response) = handle_rpc_single(state, item).await {
+            responses.push(response);
+        }
+    }
+
+    if responses.is_empty() {
+        None
+    } else {
+        Some(Value::Array(responses))
+    }
+}
+
+async fn handle_rpc_single(state: &AutomationState, value: Value) -> Option<Value> {
+    let request: RpcRequest = match serde_json::from_value(value) {
+        Ok(request) => request,
+        Err(err) => {
+            return Some(rpc_error_value(
+                Value::Null,
+                RpcError::invalid_request(format!("invalid request: {err}")),
+            ));
+        }
+    };
+
+    let id = match normalize_rpc_id(request.id) {
+        Ok(id) => id,
+        Err(err) => return Some(rpc_error_value(Value::Null, err)),
+    };
+
+    if request.jsonrpc.as_deref() != Some("2.0") {
+        return Some(rpc_error_value(
+            id.unwrap_or(Value::Null),
+            RpcError::invalid_request("jsonrpc must be \"2.0\""),
+        ));
+    }
+
+    let method = match request.method {
+        Some(method) => method,
+        None => {
+            return Some(rpc_error_value(
+                id.unwrap_or(Value::Null),
+                RpcError::invalid_request("missing method"),
+            ));
+        }
+    };
+
+    let result = handle_rpc_method(state, method.as_str(), request.params).await;
+    match result {
+        Ok(result) => id.map(|id| rpc_result_value(id, result)),
+        Err(err) => id.map(|id| rpc_error_value(id, err)),
+    }
+}
+
+fn normalize_rpc_id(id: Option<Value>) -> Result<Option<Value>, RpcError> {
+    let Some(id) = id else {
+        return Ok(None);
+    };
+    match id {
+        Value::Null | Value::String(_) | Value::Number(_) => Ok(Some(id)),
+        _ => Err(RpcError::invalid_request("id must be string, number, or null")),
+    }
+}
+
+fn rpc_result_value(id: Value, result: Value) -> Value {
+    let fallback_id = id.clone();
+    let fallback_result = result.clone();
+    match serde_json::to_value(RpcResponse {
+        jsonrpc: "2.0",
+        id,
+        result: Some(result),
+        error: None,
+    }) {
+        Ok(value) => value,
+        Err(_) => json!({ "jsonrpc": "2.0", "id": fallback_id, "result": fallback_result }),
+    }
+}
+
+fn rpc_error_value(id: Value, error: RpcError) -> Value {
+    let fallback_id = id.clone();
+    match serde_json::to_value(RpcResponse {
+        jsonrpc: "2.0",
+        id,
+        result: None,
+        error: Some(error),
+    }) {
+        Ok(value) => value,
+        Err(_) => json!({ "jsonrpc": "2.0", "id": fallback_id, "error": { "code": -32000, "message": "serialization failure" } }),
+    }
+}
+
+async fn handle_rpc_method(
+    state: &AutomationState,
+    method: &str,
+    params: Option<Value>,
+) -> Result<Value, RpcError> {
+    match method {
+        "automation.ready" => {
+            let params: ReadyQuery = parse_params(params)?;
+            let ready = wait_ready(state, params.timeout_ms.unwrap_or(30_000))
+                .await
+                .map_err(RpcError::server_error)?;
+            if ready {
+                Ok(json!({ "ready": true }))
+            } else {
+                Err(RpcError::server_error("timeout waiting for native app readiness"))
             }
         }
-        if pixel_buffer.unlock_base_address(0) != kCVReturnSuccess {
-            return Err("failed to unlock screen capture buffer".to_string());
+        "automation.keyboard.press" => {
+            let params: KeyPressParams = parse_params(params)?;
+            let normalized = normalize_keystroke_input(&params.key);
+            let keystroke = Keystroke::parse(&normalized)
+                .map_err(|err| RpcError::invalid_params(err.to_string()))?;
+            dispatch_command(state, AutomationCommand::KeyPress { keystroke })
+                .await
+                .map_err(RpcError::server_error)
         }
-        Ok(RgbaFrame { width, height, data })
-    }
-}
-
-#[cfg(not(target_os = "macos"))]
-fn frame_to_rgba(frame: ScreenCaptureFrame) -> Result<RgbaFrame, String> {
-    use scap::frame::Frame;
-
-    match frame.0 {
-        Frame::BGRA(frame) => Ok(RgbaFrame {
-            width: frame.width as u32,
-            height: frame.height as u32,
-            data: convert_bgra(&frame.data),
-        }),
-        Frame::BGRx(frame) => Ok(RgbaFrame {
-            width: frame.width as u32,
-            height: frame.height as u32,
-            data: convert_bgrx(&frame.data),
-        }),
-        Frame::XBGR(frame) => Ok(RgbaFrame {
-            width: frame.width as u32,
-            height: frame.height as u32,
-            data: convert_xbgr(&frame.data),
-        }),
-        Frame::RGBx(frame) => Ok(RgbaFrame {
-            width: frame.width as u32,
-            height: frame.height as u32,
-            data: convert_rgbx(&frame.data),
-        }),
-        Frame::RGB(frame) => Ok(RgbaFrame {
-            width: frame.width as u32,
-            height: frame.height as u32,
-            data: convert_rgb(&frame.data),
-        }),
-        Frame::BGR0(frame) => Ok(RgbaFrame {
-            width: frame.width as u32,
-            height: frame.height as u32,
-            data: convert_bgr0(&frame.data, frame.width, frame.height),
-        }),
-        Frame::YUVFrame(frame) => Ok(RgbaFrame {
-            width: frame.width as u32,
-            height: frame.height as u32,
-            data: convert_nv12(&frame),
-        }),
-    }
-}
-
-#[cfg(not(target_os = "macos"))]
-fn convert_bgra(data: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(data.len());
-    for px in data.chunks_exact(4) {
-        out.push(px[2]);
-        out.push(px[1]);
-        out.push(px[0]);
-        out.push(px[3]);
-    }
-    out
-}
-
-#[cfg(not(target_os = "macos"))]
-fn convert_bgrx(data: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(data.len());
-    for px in data.chunks_exact(4) {
-        out.push(px[2]);
-        out.push(px[1]);
-        out.push(px[0]);
-        out.push(255);
-    }
-    out
-}
-
-#[cfg(not(target_os = "macos"))]
-fn convert_xbgr(data: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(data.len());
-    for px in data.chunks_exact(4) {
-        out.push(px[3]);
-        out.push(px[2]);
-        out.push(px[1]);
-        out.push(255);
-    }
-    out
-}
-
-#[cfg(not(target_os = "macos"))]
-fn convert_rgbx(data: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(data.len());
-    for px in data.chunks_exact(4) {
-        out.push(px[0]);
-        out.push(px[1]);
-        out.push(px[2]);
-        out.push(255);
-    }
-    out
-}
-
-#[cfg(not(target_os = "macos"))]
-fn convert_rgb(data: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity((data.len() / 3) * 4);
-    for px in data.chunks_exact(3) {
-        out.push(px[0]);
-        out.push(px[1]);
-        out.push(px[2]);
-        out.push(255);
-    }
-    out
-}
-
-#[cfg(not(target_os = "macos"))]
-fn convert_bgr0(data: &[u8], width: i32, height: i32) -> Vec<u8> {
-    let expected = (width * height * 4) as usize;
-    if data.len() == expected {
-        return convert_bgrx(data);
-    }
-    let mut out = Vec::with_capacity((data.len() / 3) * 4);
-    for px in data.chunks_exact(3) {
-        out.push(px[2]);
-        out.push(px[1]);
-        out.push(px[0]);
-        out.push(255);
-    }
-    out
-}
-
-#[cfg(not(target_os = "macos"))]
-fn convert_nv12(frame: &scap::frame::YUVFrame) -> Vec<u8> {
-    let width = frame.width.max(0) as usize;
-    let height = frame.height.max(0) as usize;
-    let mut out = vec![0; width * height * 4];
-    let y_stride = frame.luminance_stride.max(0) as usize;
-    let uv_stride = frame.chrominance_stride.max(0) as usize;
-    for y in 0..height {
-        let y_row = y * y_stride;
-        let uv_row = (y / 2) * uv_stride;
-        for x in 0..width {
-            let y_val = frame.luminance_bytes[y_row + x] as i32;
-            let uv_index = uv_row + (x / 2) * 2;
-            let u_val = frame.chrominance_bytes[uv_index] as i32;
-            let v_val = frame.chrominance_bytes[uv_index + 1] as i32;
-            let (r, g, b) = yuv_to_rgb(y_val, u_val, v_val);
-            let idx = (y * width + x) * 4;
-            out[idx] = r;
-            out[idx + 1] = g;
-            out[idx + 2] = b;
-            out[idx + 3] = 255;
+        "automation.locator.visible" => {
+            let params: LocatorParams = parse_params(params)?;
+            let node = resolve_selector_node(&params.selector)
+                .ok_or_else(|| RpcError::server_error("locator not found"))?;
+            Ok(json!({ "visible": node.visible }))
         }
+        "automation.locator.text" => {
+            let params: LocatorParams = parse_params(params)?;
+            let node = resolve_selector_node(&params.selector)
+                .ok_or_else(|| RpcError::server_error("locator not found"))?;
+            Ok(json!({ "text": node.name.unwrap_or_default() }))
+        }
+        "automation.locator.click" => {
+            let params: LocatorParams = parse_params(params)?;
+            let target = focus_target_for_selector(&params.selector)
+                .ok_or_else(|| RpcError::server_error("locator click not supported"))?;
+            dispatch_command(state, AutomationCommand::Focus { target })
+                .await
+                .map_err(RpcError::server_error)
+        }
+        "automation.locator.type" => {
+            let params: LocatorTypeParams = parse_params(params)?;
+            let target = match params.selector.kind.as_str() {
+                "id" if params.selector.value == "composer-input" || params.selector.value == "composer-send" => {
+                    FocusTarget::Composer
+                }
+                _ => {
+                    return Err(RpcError::server_error(
+                        "locator type is only supported for #composer-input",
+                    ));
+                }
+            };
+            dispatch_command(state, AutomationCommand::Focus { target })
+                .await
+                .map_err(RpcError::server_error)?;
+            dispatch_command(state, AutomationCommand::Type { text: params.text })
+                .await
+                .map_err(RpcError::server_error)
+        }
+        "automation.tree.snapshot" => {
+            serde_json::to_value(automation_tree::snapshot())
+                .map_err(|err| RpcError::server_error(err.to_string()))
+        }
+        "ctx.ready" => {
+            let params: ReadyQuery = parse_params(params)?;
+            let ready = wait_ready(state, params.timeout_ms.unwrap_or(30_000))
+                .await
+                .map_err(RpcError::server_error)?;
+            if ready {
+                Ok(json!({ "ready": true }))
+            } else {
+                Err(RpcError::server_error("timeout waiting for native app readiness"))
+            }
+        }
+        "ctx.screenshot" => {
+            let params: ScreenshotRequest = parse_params(params)?;
+            let path = resolve_screenshot_path(params, &state.config)
+                .map_err(RpcError::invalid_params)?;
+            let result = dispatch_command(state, AutomationCommand::Screenshot { path })
+                .await
+                .map_err(RpcError::server_error)?;
+            Ok(result)
+        }
+        "ctx.window.resize" => {
+            let params: ResizeParams = parse_params(params)?;
+            if params.width <= 0.0 || params.height <= 0.0 {
+                return Err(RpcError::invalid_params(
+                    "width and height must be positive",
+                ));
+            }
+            dispatch_command(
+                state,
+                AutomationCommand::Resize {
+                    width: params.width,
+                    height: params.height,
+                },
+            )
+            .await
+            .map_err(RpcError::server_error)
+        }
+        "ctx.input.click" => {
+            Err(RpcError::server_error(
+                "ctx.input.click is not supported (no in-process mouse injection yet)",
+            ))
+        }
+        "ctx.input.type" => {
+            let params: TypeParams = parse_params(params)?;
+            dispatch_command(
+                state,
+                AutomationCommand::Type { text: params.text },
+            )
+            .await
+            .map_err(RpcError::server_error)
+        }
+        "ctx.key.press" => {
+            let params: KeyPressParams = parse_params(params)?;
+            let normalized = normalize_keystroke_input(&params.key);
+            let keystroke = Keystroke::parse(&normalized)
+                .map_err(|err| RpcError::invalid_params(err.to_string()))?;
+            dispatch_command(state, AutomationCommand::KeyPress { keystroke })
+                .await
+                .map_err(RpcError::server_error)
+        }
+        "ctx.wait.idle" => {
+            let params: WaitIdleParams = parse_params(params)?;
+            wait_for_idle(state, params).await
+        }
+        _ => Err(RpcError::method_not_found(format!(
+            "unknown method {method}"
+        ))),
     }
-    out
 }
 
-#[cfg(not(target_os = "macos"))]
-fn yuv_to_rgb(y: i32, u: i32, v: i32) -> (u8, u8, u8) {
-    let c = y - 16;
-    let d = u - 128;
-    let e = v - 128;
-    let r = (298 * c + 409 * e + 128) >> 8;
-    let g = (298 * c - 100 * d - 208 * e + 128) >> 8;
-    let b = (298 * c + 516 * d + 128) >> 8;
-    (clamp_rgb(r), clamp_rgb(g), clamp_rgb(b))
+#[derive(Debug, Deserialize)]
+struct Selector {
+    kind: String,
+    value: String,
 }
 
-#[cfg(not(target_os = "macos"))]
-fn clamp_rgb(value: i32) -> u8 {
-    if value < 0 {
-        0
-    } else if value > 255 {
-        255
-    } else {
-        value as u8
+#[derive(Debug, Deserialize)]
+struct LocatorParams {
+    selector: Selector,
+}
+
+#[derive(Debug, Deserialize)]
+struct LocatorTypeParams {
+    selector: Selector,
+    text: String,
+}
+
+fn resolve_selector_node(selector: &Selector) -> Option<automation_tree::AutomationNode> {
+    match selector.kind.as_str() {
+        "id" => automation_tree::registry().get_by_id(&selector.value),
+        _ => None,
     }
+}
+
+fn focus_target_for_selector(selector: &Selector) -> Option<FocusTarget> {
+    if selector.kind != "id" {
+        return None;
+    }
+    match selector.value.as_str() {
+        "app-shell" => Some(FocusTarget::Main),
+        "composer-input" | "composer-send" => Some(FocusTarget::Composer),
+        "sessions-list" => Some(FocusTarget::SessionsPane),
+        "diff-pane" => Some(FocusTarget::DiffPane),
+        "artifacts-pane" => Some(FocusTarget::ArtifactsPane),
+        "terminal-panel" => Some(FocusTarget::TerminalPanel),
+        _ => None,
+    }
+}
+
+fn parse_params<T: DeserializeOwned>(params: Option<Value>) -> Result<T, RpcError> {
+    let value = match params {
+        None | Some(Value::Null) => Value::Object(Map::new()),
+        Some(value) => value,
+    };
+    serde_json::from_value(value).map_err(|err| RpcError::invalid_params(err.to_string()))
+}
+
+#[derive(Debug, Deserialize)]
+struct ResizeParams {
+    width: f32,
+    height: f32,
+}
+
+#[derive(Debug, Deserialize)]
+struct TypeParams {
+    text: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct KeyPressParams {
+    key: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct WaitIdleParams {
+    timeout_ms: Option<u64>,
+    frames: Option<u64>,
+}
+
+async fn wait_for_idle(state: &AutomationState, params: WaitIdleParams) -> Result<Value, RpcError> {
+    let frames = params.frames.unwrap_or(2).max(1);
+    let timeout_ms = params.timeout_ms.unwrap_or(3_000);
+    let target = state
+        .last_input_frame
+        .load(Ordering::SeqCst)
+        .saturating_add(frames);
+
+    let mut render_rx = state.render_rx.clone();
+    if *render_rx.borrow() >= target {
+        return Ok(json!({ "frames": frames, "render_count": *render_rx.borrow() }));
+    }
+
+    let wait_result = timeout(Duration::from_millis(timeout_ms), async {
+        loop {
+            render_rx
+                .changed()
+                .await
+                .map_err(|_| RpcError::server_error("render counter closed"))?;
+            if *render_rx.borrow() >= target {
+                break;
+            }
+        }
+        Ok::<_, RpcError>(*render_rx.borrow())
+    })
+    .await;
+
+    match wait_result {
+        Ok(Ok(render_count)) => Ok(json!({ "frames": frames, "render_count": render_count })),
+        Ok(Err(err)) => Err(err),
+        Err(_) => Err(RpcError::server_error("timeout waiting for idle frames")),
+    }
+}
+
+fn normalize_keystroke_input(input: &str) -> String {
+    input
+        .trim()
+        .replace('+', "-")
+        .split_whitespace()
+        .collect::<String>()
 }
