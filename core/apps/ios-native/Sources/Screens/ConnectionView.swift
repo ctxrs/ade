@@ -192,8 +192,12 @@ struct ConnectionView: View {
             if connection.isConnected {
                 shouldNavigate = true
             }
+        } catch let error as DaemonAPIError {
+            connection.lastError = formatPairingError(error)
+        } catch let error as MobileE2EEError {
+            connection.lastError = formatCryptoError(error)
         } catch {
-            connection.lastError = "Pairing failed."
+            connection.lastError = error.localizedDescription.isEmpty ? "Pairing failed." : error.localizedDescription
         }
     }
 
@@ -207,6 +211,44 @@ struct ConnectionView: View {
     private func appVersionString() -> String? {
         let info = Bundle.main.infoDictionary
         return info?["CFBundleShortVersionString"] as? String
+    }
+
+    private func formatPairingError(_ error: DaemonAPIError) -> String {
+        switch error {
+        case .invalidURL:
+            return "Pairing failed: invalid daemon URL."
+        case .missingToken:
+            return "Pairing failed: missing auth token."
+        case .invalidResponse:
+            return "Pairing failed: invalid response."
+        case .requestFailed(_, let message):
+            let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
+            let apiError = parseApiError(trimmed)
+            return apiError ?? (trimmed.isEmpty ? "Pairing failed." : trimmed)
+        }
+    }
+
+    private func parseApiError(_ message: String) -> String? {
+        guard let data = message.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let error = json["error"] as? String,
+              !error.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return nil
+        }
+        return error
+    }
+
+    private func formatCryptoError(_ error: MobileE2EEError) -> String {
+        switch error {
+        case .invalidBase64:
+            return "Pairing failed: invalid payload."
+        case .invalidKey:
+            return "Pairing failed: invalid key."
+        case .encryptFailed:
+            return "Pairing failed: encryption error."
+        case .decryptFailed:
+            return "Pairing failed: could not decrypt response."
+        }
     }
 
     private struct PairingAck: Decodable {
