@@ -87,7 +87,7 @@ impl<'a> ComposerView<'a> {
             .text_sm()
             .border_1()
             .border_color(self.colors.border)
-            .rounded_sm()
+            .rounded_full()
             .child(send_label)
             .id("composer-send");
 
@@ -138,12 +138,12 @@ impl<'a> ComposerView<'a> {
             .child(attachment_text);
 
         let mut add_attachment_button = div()
-            .px_2()
+            .px_3()
             .py_1()
             .text_sm()
             .border_1()
             .border_color(self.colors.border)
-            .rounded_sm()
+            .rounded_full()
             .child("Add")
             .id("composer-add-attachment");
         add_attachment_button = add_attachment_button
@@ -263,12 +263,12 @@ impl<'a> ComposerView<'a> {
             .gap_1()
             .child(
                 div()
-                    .px_2()
+                    .px_3()
                     .py_1()
                     .text_sm()
                     .border_1()
                     .border_color(self.colors.border)
-                    .rounded_sm()
+                    .rounded_full()
                     .bg(self.colors.panel_2)
                     .child(format!("Provider: {provider_label} v"))
                     .cursor_pointer()
@@ -284,12 +284,12 @@ impl<'a> ComposerView<'a> {
             .gap_1()
             .child(
                 div()
-                    .px_2()
+                    .px_3()
                     .py_1()
                     .text_sm()
                     .border_1()
                     .border_color(self.colors.border)
-                    .rounded_sm()
+                    .rounded_full()
                     .bg(self.colors.panel_2)
                     .child(format!("Model: {model_label} v"))
                     .cursor_pointer()
@@ -299,7 +299,7 @@ impl<'a> ComposerView<'a> {
             )
             .child(model_menu);
 
-        let mut attachments_block = div().flex().flex_col().gap_1();
+        let mut attachments_block = div().flex().flex_col().gap_2();
         if let Some(notice) = self.composer_notice {
             let notice = notice.to_string();
             attachments_block = attachments_block.child(
@@ -323,7 +323,7 @@ impl<'a> ComposerView<'a> {
                             .flex()
                             .items_center()
                             .justify_between()
-                            .px_2()
+                            .px_3()
                             .py_1()
                             .border_1()
                             .border_color(self.colors.border)
@@ -351,7 +351,7 @@ impl<'a> ComposerView<'a> {
             div()
                 .flex()
                 .items_center()
-                .gap_2()
+                .gap_3()
                 .child(attachment_input)
                 .child(add_attachment_button),
         );
@@ -360,12 +360,12 @@ impl<'a> ComposerView<'a> {
             .flex()
             .flex_row()
             .items_end()
-            .gap_2()
+            .gap_3()
             .border_1()
             .border_color(self.colors.border)
             .rounded_sm()
-            .px_2()
-            .py_2()
+            .px_3()
+            .py_3()
             .bg(self.colors.panel_2)
             .child(input)
             .child(send_button);
@@ -374,12 +374,12 @@ impl<'a> ComposerView<'a> {
             .id("composer")
             .flex()
             .flex_col()
-            .gap_2()
+            .gap_3()
             .child(
                 div()
                     .flex()
                     .items_start()
-                    .gap_2()
+                    .gap_3()
                     .child(provider_control)
                     .child(model_control),
             )

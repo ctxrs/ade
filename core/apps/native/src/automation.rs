@@ -14,7 +14,7 @@ use image::{ColorType, ImageFormat};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio::sync::{mpsc, oneshot, watch};
-use tokio::time::timeout;
+use tokio::time::timeout as tokio_timeout;
 
 use crate::app::ShellView;
 
@@ -62,8 +62,31 @@ pub fn start(app: &mut App, window: WindowHandle<ShellView>, config: AutomationC
     })
     .detach();
 
-    let handle = gpui_tokio::Tokio::handle(app);
-    handle.spawn(run_http_server(addr, Arc::clone(&state)));
+    match tokio::runtime::Handle::try_current() {
+        Ok(handle) => {
+            eprintln!("ctx-native: automation using existing tokio runtime");
+            handle.spawn(run_http_server(addr, Arc::clone(&state)));
+        }
+        Err(err) => {
+            eprintln!(
+                "ctx-native: automation runtime unavailable ({err}); starting dedicated runtime thread"
+            );
+            let state = Arc::clone(&state);
+            std::thread::spawn(move || {
+                let runtime = tokio::runtime::Builder::new_multi_thread()
+                    .enable_all()
+                    .build();
+                match runtime {
+                    Ok(runtime) => {
+                        runtime.block_on(run_http_server(addr, state));
+                    }
+                    Err(err) => {
+                        eprintln!("ctx-native: automation runtime build failed: {err}");
+                    }
+                }
+            });
+        }
+    }
     let _ = state.ready_tx.send(true);
 }
 
@@ -147,7 +170,7 @@ async fn ready_handler(
         return ok(json!({ "ready": true }));
     }
 
-    let ready = timeout(Duration::from_millis(timeout_ms), ready_rx.changed())
+    let ready = tokio_timeout(Duration::from_millis(timeout_ms), ready_rx.changed())
         .await
         .ok()
         .and_then(Result::ok)
@@ -235,6 +258,7 @@ async fn screenshot_handler(
 async fn exit_handler(
     State(state): State<Arc<AutomationState>>,
 ) -> (StatusCode, Json<ApiResponse<Value>>) {
+    eprintln!("ctx-native: exit request");
     let response = dispatch_command(&state, AutomationCommand::Exit).await;
     match response {
         Ok(result) => ok(result),
@@ -294,7 +318,7 @@ async fn dispatch_command(
         .await
         .map_err(|_| "automation command channel closed".to_string())?;
 
-    timeout(Duration::from_secs(10), response_rx)
+    tokio_timeout(Duration::from_secs(10), response_rx)
         .await
         .map_err(|_| "automation command timed out".to_string())?
         .map_err(|_| "automation command dropped".to_string())?

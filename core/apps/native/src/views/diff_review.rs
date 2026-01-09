@@ -133,7 +133,7 @@ impl<'a> DiffReviewView<'a> {
             div()
                 .flex()
                 .items_center()
-                .gap_2()
+                .gap_3()
                 .child(approve_button)
                 .child(reject_button)
         };
@@ -152,12 +152,12 @@ impl<'a> DiffReviewView<'a> {
                     .child(div().text_color(self.colors.text).child("All changes"))
                     .child(
                         div()
-                            .px_1()
+                            .px_2()
                             .py_0()
                             .text_sm()
                             .border_1()
                             .border_color(self.colors.border)
-                            .rounded_sm()
+                            .rounded_full()
                             .bg(self.colors.panel)
                             .text_color(self.colors.muted)
                             .child(format!("{}", self.state.files.len())),
@@ -196,8 +196,8 @@ impl<'a> DiffReviewView<'a> {
                             .flex()
                             .items_center()
                             .gap_2()
-                            .px_2()
-                            .py_1()
+                            .px_3()
+                            .py_2()
                             .border_1()
                             .border_color(item_border)
                             .rounded_sm()
@@ -254,21 +254,21 @@ impl<'a> DiffReviewView<'a> {
                     });
 
                     let mut undo_button = div()
-                        .px_2()
+                        .px_3()
                         .py_1()
                         .text_sm()
                         .border_1()
                         .border_color(self.colors.border)
-                        .rounded_sm()
+                        .rounded_full()
                         .child("Undo")
                         .id(format!("diff-file-undo-{}", file.key));
                     let mut keep_button = div()
-                        .px_2()
+                        .px_3()
                         .py_1()
                         .text_sm()
                         .border_1()
                         .border_color(self.colors.border)
-                        .rounded_sm()
+                        .rounded_full()
                         .child("Keep")
                         .id(format!("diff-file-keep-{}", file.key));
 
@@ -300,7 +300,7 @@ impl<'a> DiffReviewView<'a> {
                 let detail_header = div()
                     .flex()
                     .items_center()
-                    .gap_2()
+                    .gap_3()
                     .child(div().text_sm().child(file.file_path.clone()))
                     .child(summary)
                     .child(div().flex_1())
@@ -327,7 +327,7 @@ impl<'a> DiffReviewView<'a> {
                             .border_color(self.colors.border)
                             .rounded_sm()
                             .bg(self.colors.panel)
-                            .p_2()
+                            .p_3()
                             .child(preview),
                     )
             } else {
@@ -465,21 +465,21 @@ fn render_inline_diff(
             });
 
             let mut undo_button = div()
-                .px_2()
+                .px_3()
                 .py_1()
                 .text_sm()
                 .border_1()
                 .border_color(colors.border)
-                .rounded_sm()
+                .rounded_full()
                 .child("Undo")
                 .id(format!("diff-hunk-undo-{}", hunk.key));
             let mut keep_button = div()
-                .px_2()
+                .px_3()
                 .py_1()
                 .text_sm()
                 .border_1()
                 .border_color(colors.border)
-                .rounded_sm()
+                .rounded_full()
                 .child("Keep")
                 .id(format!("diff-hunk-keep-{}", hunk.key));
 
@@ -510,9 +510,9 @@ fn render_inline_diff(
         let header = div()
             .flex()
             .items_center()
-            .gap_2()
+            .gap_3()
             .px_2()
-            .py_1()
+            .py_2()
             .bg(colors.panel_2)
             .child(
                 div()

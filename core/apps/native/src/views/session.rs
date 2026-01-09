@@ -230,7 +230,7 @@ impl<'a> SessionView<'a> {
             .bg(self.colors.panel_2)
             .border_1()
             .border_color(self.colors.border)
-            .rounded_sm()
+            .rounded_full()
             .child(self.session.status.clone());
 
         let header_row = div()
@@ -361,7 +361,7 @@ impl<'a> SessionView<'a> {
 
         let show_right_pane =
             self.show_sessions_pane || self.show_diff_pane || self.show_artifacts_pane;
-        let mut content_row = div().flex().flex_row().gap_2().flex_1().child(center_column);
+        let mut content_row = div().flex().flex_row().gap_3().flex_1().child(center_column);
 
         if show_right_pane {
             let right_pane_handle = div()
@@ -381,7 +381,7 @@ impl<'a> SessionView<'a> {
                 .flex()
                 .flex_col()
                 .gap_3()
-                .w(px(320.0))
+                .w(px(360.0))
                 .pl_1();
 
             if self.show_sessions_pane {
@@ -395,7 +395,7 @@ impl<'a> SessionView<'a> {
                         .border_color(self.colors.border)
                         .rounded_sm()
                         .bg(self.colors.panel_2)
-                        .p_2()
+                        .p_3()
                         .child(
                             SessionsPaneView {
                                 colors: self.colors,
@@ -429,7 +429,7 @@ impl<'a> SessionView<'a> {
                         .border_color(self.colors.border)
                         .rounded_sm()
                         .bg(self.colors.panel_2)
-                        .p_2()
+                        .p_3()
                         .child(diff_review_view),
                 );
             }
@@ -445,7 +445,7 @@ impl<'a> SessionView<'a> {
                         .border_color(self.colors.border)
                         .rounded_sm()
                         .bg(self.colors.panel_2)
-                        .p_2()
+                        .p_3()
                         .child(
                             ArtifactsView {
                                 colors: self.colors,

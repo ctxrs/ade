@@ -42,17 +42,17 @@ impl<'a> ArtifactsView<'a> {
                 let on_click = cx.listener(move |view, _: &ClickEvent, _window, cx| {
                     view.select_artifact(index, cx);
                 });
-                list.child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .px_2()
-                        .py_1()
-                        .border_1()
-                        .border_color(item_border)
-                        .rounded_sm()
-                        .bg(item_bg)
-                        .text_sm()
+                    list.child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .px_3()
+                            .py_2()
+                            .border_1()
+                            .border_color(item_border)
+                            .rounded_sm()
+                            .bg(item_bg)
+                            .text_sm()
                         .child(label)
                         .cursor_pointer()
                         .id(ElementId::named_usize("artifact", index))
@@ -334,7 +334,7 @@ impl<'a> ArtifactsView<'a> {
                 div()
                     .flex()
                     .flex_row()
-                    .gap_2()
+                    .gap_3()
                     .items_center()
                     .child(open_button)
                     .child(open_in_app_button)

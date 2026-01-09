@@ -96,8 +96,9 @@ pub fn run(options: AppOptions) {
             eprintln!("ctx-native: daemon config failed: {err}");
             "unknown".to_string()
         });
-    Application::new()
-        .with_assets(IconAssets::new())
+    let app = Application::new()
+        .with_assets(IconAssets::new());
+    app
         .run(move |cx: &mut App| {
         gpui_tokio::init(cx);
         let window_size = options.window_size.unwrap_or_default();

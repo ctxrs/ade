@@ -24,9 +24,9 @@ impl<'a> MessagesView<'a> {
             div()
                 .flex()
                 .flex_col()
-                .gap_1()
-                .px_2()
-                .py_2()
+                .gap_2()
+                .px_3()
+                .py_3()
                 .border_1()
                 .border_color(colors.border)
                 .rounded_sm()
@@ -88,7 +88,7 @@ impl<'a> MessagesView<'a> {
                     .border_color(self.colors.border)
                     .rounded_sm()
                     .bg(self.colors.panel_2)
-                    .p_2()
+                    .p_3()
                     .child(list.h(px(220.0)).w_full()),
             )
     }

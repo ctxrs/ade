@@ -61,8 +61,8 @@ impl<'a> SessionsPaneView<'a> {
                             .flex()
                             .items_center()
                             .justify_between()
-                            .px_2()
-                            .py_1()
+                            .px_3()
+                            .py_2()
                             .border_1()
                             .border_color(item_border)
                             .rounded_sm()
@@ -150,8 +150,8 @@ impl<'a> SessionsPaneView<'a> {
                         .flex()
                         .items_center()
                         .justify_between()
-                        .px_2()
-                        .py_1()
+                        .px_3()
+                        .py_2()
                         .border_1()
                         .border_color(item_border)
                         .rounded_sm()
@@ -195,7 +195,7 @@ impl<'a> SessionsPaneView<'a> {
                 .border_color(self.colors.border)
                 .rounded_sm()
                 .bg(self.colors.panel_2)
-                .p_2()
+                .p_3()
                 .h(px(220.0))
                 .child(viewer_message);
 
@@ -223,12 +223,12 @@ impl<'a> SessionsPaneView<'a> {
             }
 
             let mut open_button = div()
-                .px_2()
+                .px_3()
                 .py_1()
                 .text_sm()
                 .border_1()
                 .border_color(self.colors.border)
-                .rounded_sm()
+                .rounded_full()
                 .child("Open in browser")
                 .id("web-stream-open");
             if let Some(stream_url) = selected_web_stream.as_ref() {
