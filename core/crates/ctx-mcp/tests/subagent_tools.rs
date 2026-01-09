@@ -20,6 +20,7 @@ async fn mcp_subagent_tools_call_daemon_http() {
             &format!("/api/mcp/sessions/{}/agent_init", parent_id),
             post(move |Json(body): Json<serde_json::Value>| async move {
                 assert_eq!(body["agents"][0]["prompt"], "check foo");
+                assert_eq!(body["tool_call_id"], "tool-1");
                 Json(json!({
                     "results": [{
                         "session_id": child_id,
@@ -75,6 +76,7 @@ async fn mcp_subagent_tools_call_daemon_http() {
             "method":"tools/call",
             "params":{
                 "name":"ctx.agent_init",
+                "_meta":{"toolCallId":"tool-1"},
                 "arguments":{
                     "agents":[
                         {

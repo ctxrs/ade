@@ -383,6 +383,14 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
         .route("/api/sessions/:id/messages", post(post_message))
         .route("/api/sessions/:id/subagents", get(list_session_subagents))
         .route(
+            "/api/sessions/:id/subagent_invocations",
+            get(list_session_subagent_invocations),
+        )
+        .route(
+            "/api/subagent_invocations/:id",
+            get(get_subagent_invocation),
+        )
+        .route(
             "/api/sessions/:id/artifacts",
             get(list_session_artifacts).post(set_session_artifacts),
         )
@@ -9351,6 +9359,59 @@ async fn list_session_subagents(
     Ok(Json(subs))
 }
 
+#[derive(Debug, Deserialize, Default)]
+struct SessionSubagentInvocationsQuery {
+    turn_id: Option<String>,
+}
+
+async fn list_session_subagent_invocations(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Query(q): Query<SessionSubagentInvocationsQuery>,
+) -> Result<Json<Vec<SubagentInvocation>>, StatusCode> {
+    let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
+    let session = state
+        .store
+        .get_session(session_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    let turn_id = match q.turn_id {
+        Some(raw) => {
+            let trimmed = raw.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(TurnId(
+                    uuid::Uuid::parse_str(trimmed).map_err(|_| StatusCode::BAD_REQUEST)?,
+                ))
+            }
+        }
+        None => None,
+    };
+
+    let invocations = state
+        .store
+        .list_subagent_invocations_for_session(session.id, turn_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(invocations))
+}
+
+async fn get_subagent_invocation(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<SubagentInvocation>, StatusCode> {
+    let invocation = state
+        .store
+        .get_subagent_invocation(&id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    Ok(Json(invocation))
+}
+
 async fn list_session_artifacts(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
@@ -9671,6 +9732,8 @@ const KNOWN_EFFORT_IDS: [&str; 6] = ["none", "minimal", "low", "medium", "high",
 
 #[derive(Debug, Deserialize)]
 struct AgentInitReq {
+    #[serde(default)]
+    tool_call_id: Option<String>,
     agents: Vec<AgentInitItem>,
 }
 
@@ -9685,6 +9748,76 @@ struct AgentInitItem {
     model: Option<String>,
     #[serde(default)]
     reasoning_effort: Option<String>,
+}
+
+fn build_subagent_request_json(agents: &[AgentInitItem]) -> serde_json::Value {
+    let mut items = Vec::with_capacity(agents.len());
+    for (idx, agent) in agents.iter().enumerate() {
+        let prompt = agent.prompt.trim();
+        let mut obj = serde_json::Map::new();
+        obj.insert(
+            "position".to_string(),
+            serde_json::Value::Number(serde_json::Number::from(idx as u64)),
+        );
+        let prompt_length = prompt.chars().count() as u64;
+        obj.insert(
+            "prompt_length".to_string(),
+            serde_json::Value::Number(serde_json::Number::from(prompt_length)),
+        );
+        if let Some(label) = agent
+            .label
+            .as_deref()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+        {
+            obj.insert(
+                "label".to_string(),
+                serde_json::Value::String(label.to_string()),
+            );
+        }
+        if let Some(harness) = agent
+            .harness
+            .as_deref()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+        {
+            obj.insert(
+                "harness".to_string(),
+                serde_json::Value::String(harness.to_string()),
+            );
+        }
+        if let Some(model) = agent
+            .model
+            .as_deref()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+        {
+            obj.insert(
+                "model".to_string(),
+                serde_json::Value::String(model.to_string()),
+            );
+        }
+        if let Some(reasoning_effort) = agent
+            .reasoning_effort
+            .as_deref()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+        {
+            let norm = normalize_effort_id(reasoning_effort);
+            if !norm.is_empty() {
+                obj.insert(
+                    "reasoning_effort".to_string(),
+                    serde_json::Value::String(norm),
+                );
+            }
+        }
+        items.push(serde_json::Value::Object(obj));
+    }
+
+    serde_json::json!({
+        "agents_total": agents.len(),
+        "agents": items,
+    })
 }
 
 #[derive(Debug, Serialize)]
@@ -10166,43 +10299,20 @@ async fn wait_for_run_terminal_event(
     }
 }
 
-async fn insert_subagent_system_message(
+async fn emit_subagent_invocation_notice(
     state: &Arc<AppState>,
-    parent: &Session,
-    content: String,
+    parent_session_id: SessionId,
+    parent_turn_id: Option<TurnId>,
+    payload: serde_json::Value,
 ) -> Result<(), (StatusCode, Json<ApiErrorResp>)> {
-    let msg = Message {
-        id: MessageId::new(),
-        session_id: parent.id,
-        task_id: parent.task_id,
-        track_id: parent.track_id,
-        run_id: None,
-        turn_id: None,
-        turn_sequence: None,
-        role: MessageRole::System,
-        content,
-        attachments: vec![],
-        delivery: MessageDelivery::Immediate,
-        delivered_at: None,
-        created_at: chrono::Utc::now(),
-    };
-    let saved = state.store.insert_message(msg).await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiErrorResp {
-                error: logs::redact_sensitive(&e.to_string()),
-            }),
-        )
-    })?;
-
     let event = state
         .store
         .append_session_event(
-            parent.id,
+            parent_session_id,
             None,
-            None,
-            SessionEventType::AssistantMessageInserted,
-            serde_json::json!({ "message_id": saved.id.0 }),
+            parent_turn_id,
+            SessionEventType::Notice,
+            payload,
         )
         .await
         .map_err(|e| {
@@ -10464,12 +10574,128 @@ async fn mcp_agent_init(
         }
     }
 
+    let request_json = Some(build_subagent_request_json(&req.agents));
+
+    let mut requested_tool_call_id = req
+        .tool_call_id
+        .as_deref()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_string());
+    let invocation_id = requested_tool_call_id
+        .clone()
+        .unwrap_or_else(|| format!("subagent-{}", uuid::Uuid::new_v4()));
+    let tool_call_id = requested_tool_call_id
+        .take()
+        .unwrap_or_else(|| invocation_id.clone());
+
+    let mut parent_turn_id = None;
+    if !tool_call_id.trim().is_empty() {
+        if let Ok(Some(tool)) = state
+            .store
+            .get_session_turn_tool(parent.id, &tool_call_id)
+            .await
+        {
+            parent_turn_id = Some(tool.turn_id);
+        }
+    }
+    if parent_turn_id.is_none() {
+        if let Ok(turns) = state
+            .store
+            .list_session_turns_page_by_seq(parent.id, None, Some(5))
+            .await
+        {
+            for turn in turns.iter().rev() {
+                if matches!(
+                    turn.status,
+                    SessionTurnStatus::Running | SessionTurnStatus::Queued
+                ) {
+                    parent_turn_id = Some(turn.turn_id);
+                    break;
+                }
+            }
+        }
+    }
+
+    let now = chrono::Utc::now();
+    let invocation = SubagentInvocation {
+        id: invocation_id.clone(),
+        tool_call_id: tool_call_id.clone(),
+        parent_session_id: parent.id,
+        parent_turn_id,
+        requested_count: req.agents.len() as i64,
+        request_json,
+        status: "requested".to_string(),
+        created_at: now,
+        updated_at: now,
+        children: Vec::new(),
+    };
+    state
+        .store
+        .upsert_subagent_invocation(invocation)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
+    emit_subagent_invocation_notice(
+        &state,
+        parent.id,
+        parent_turn_id,
+        serde_json::json!({
+            "kind": "subagent_invocation_created",
+            "invocation_id": invocation_id.clone(),
+            "tool_call_id": tool_call_id.clone(),
+            "status": "requested",
+            "requested_count": req.agents.len(),
+            "child_session_ids": Vec::<String>::new(),
+        }),
+    )
+    .await?;
+
+    let running_at = chrono::Utc::now();
+    state
+        .store
+        .update_subagent_invocation_status(&invocation_id, "running", running_at)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
+    emit_subagent_invocation_notice(
+        &state,
+        parent.id,
+        parent_turn_id,
+        serde_json::json!({
+            "kind": "subagent_invocation_updated",
+            "invocation_id": invocation_id.clone(),
+            "tool_call_id": tool_call_id.clone(),
+            "status": "running",
+            "child_session_ids": Vec::<String>::new(),
+        }),
+    )
+    .await?;
+
+    let child_ids = Arc::new(tokio::sync::Mutex::new(Vec::<String>::new()));
+
     let mut futures = Vec::with_capacity(req.agents.len());
     for (idx, agent) in req.agents.into_iter().enumerate() {
         let state = state.clone();
         let parent = parent.clone();
         let track = track.clone();
         let model_catalogs = model_catalogs.clone();
+        let invocation_id = invocation_id.clone();
+        let tool_call_id = tool_call_id.clone();
+        let child_ids = child_ids.clone();
+        let parent_turn_id = parent_turn_id;
         futures.push(async move {
             let prompt = agent.prompt.trim().to_string();
             if prompt.is_empty() {
@@ -10519,6 +10745,15 @@ async fn mcp_agent_init(
             )
             .map_err(|error| (StatusCode::BAD_REQUEST, Json(ApiErrorResp { error })))?;
 
+            let prompt_length = prompt.chars().count() as i64;
+            let requested_effort = agent
+                .reasoning_effort
+                .as_deref()
+                .map(normalize_effort_id)
+                .filter(|value| !value.is_empty());
+            let (_, model_effort) = split_model_id(&resolved.model_id);
+            let reasoning_effort = requested_effort.or(model_effort);
+
             let session = state
                 .store
                 .create_session(
@@ -10549,8 +10784,54 @@ async fn mcp_agent_init(
                 tracing::warn!(session_id = %session.id.0, "failed to set subagent label");
             }
 
-            insert_subagent_system_message(&state, &parent, format!("Subagent invoked: {label}"))
-                .await?;
+            let child_session_id = session.id;
+            let child_created_at = chrono::Utc::now();
+            let child = SubagentInvocationChild {
+                invocation_id: invocation_id.clone(),
+                child_session_id,
+                position: idx as i64,
+                status: "running".to_string(),
+                label: Some(label.clone()),
+                harness: Some(provider_id.clone()),
+                model: Some(resolved.model_id.clone()),
+                reasoning_effort: reasoning_effort.clone(),
+                prompt_length,
+                created_at: child_created_at,
+                updated_at: child_created_at,
+            };
+            state
+                .store
+                .upsert_subagent_invocation_child(child)
+                .await
+                .map_err(|e| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(ApiErrorResp {
+                            error: logs::redact_sensitive(&e.to_string()),
+                        }),
+                    )
+                })?;
+
+            let child_ids_snapshot = {
+                let mut ids = child_ids.lock().await;
+                let child_id_string = child_session_id.0.to_string();
+                ids.push(child_id_string);
+                ids.clone()
+            };
+            emit_subagent_invocation_notice(
+                &state,
+                parent.id,
+                parent_turn_id,
+                serde_json::json!({
+                    "kind": "subagent_invocation_updated",
+                    "invocation_id": invocation_id.clone(),
+                    "tool_call_id": tool_call_id.clone(),
+                    "status": "running",
+                    "child_session_ids": child_ids_snapshot,
+                }),
+            )
+            .await?;
+
             let (run_id, _message) = enqueue_subagent_prompt(&state, &session, prompt).await?;
 
             let terminal = wait_for_run_terminal_event(&state, session.id, run_id).await;
@@ -10562,6 +10843,33 @@ async fn mcp_agent_init(
                 Err(_) => "unknown",
             }
             .to_string();
+
+            let child_updated_at = chrono::Utc::now();
+            let child = SubagentInvocationChild {
+                invocation_id: invocation_id.clone(),
+                child_session_id,
+                position: idx as i64,
+                status: status.clone(),
+                label: Some(label.clone()),
+                harness: Some(provider_id.clone()),
+                model: Some(resolved.model_id.clone()),
+                reasoning_effort: reasoning_effort.clone(),
+                prompt_length,
+                created_at: child_created_at,
+                updated_at: child_updated_at,
+            };
+            state
+                .store
+                .upsert_subagent_invocation_child(child)
+                .await
+                .map_err(|e| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(ApiErrorResp {
+                            error: logs::redact_sensitive(&e.to_string()),
+                        }),
+                    )
+                })?;
 
             let content = state
                 .store
@@ -10582,9 +10890,83 @@ async fn mcp_agent_init(
         });
     }
 
-    let results = futures::future::try_join_all(futures)
+    let results = match futures::future::try_join_all(futures).await {
+        Ok(results) => results,
+        Err(err) => {
+            let updated_at = chrono::Utc::now();
+            if let Err(e) = state
+                .store
+                .update_subagent_invocation_status(&invocation_id, "failed", updated_at)
+                .await
+            {
+                tracing::warn!(error = ?e, "failed to update subagent invocation status");
+            }
+            let child_session_ids = {
+                let ids = child_ids.lock().await;
+                ids.clone()
+            };
+            let _ = emit_subagent_invocation_notice(
+                &state,
+                parent.id,
+                parent_turn_id,
+                serde_json::json!({
+                    "kind": "subagent_invocation_updated",
+                    "invocation_id": invocation_id.clone(),
+                    "tool_call_id": tool_call_id.clone(),
+                    "status": "failed",
+                    "child_session_ids": child_session_ids,
+                }),
+            )
+            .await;
+            return Err(err);
+        }
+    };
+
+    let final_status = if results.iter().all(|r| r.status == "completed") {
+        "completed"
+    } else {
+        "failed"
+    };
+    let updated_at = chrono::Utc::now();
+    state
+        .store
+        .update_subagent_invocation_status(&invocation_id, final_status, updated_at)
         .await
-        .map_err(|e: (StatusCode, Json<ApiErrorResp>)| e)?;
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
+    let child_session_ids = results
+        .iter()
+        .map(|r| r.session_id.0.to_string())
+        .collect::<Vec<_>>();
+    let child_statuses = results
+        .iter()
+        .map(|r| {
+            serde_json::json!({
+                "session_id": r.session_id.0.to_string(),
+                "status": r.status,
+            })
+        })
+        .collect::<Vec<_>>();
+    emit_subagent_invocation_notice(
+        &state,
+        parent.id,
+        parent_turn_id,
+        serde_json::json!({
+            "kind": "subagent_invocation_updated",
+            "invocation_id": invocation_id,
+            "tool_call_id": tool_call_id,
+            "status": final_status,
+            "child_session_ids": child_session_ids,
+            "child_statuses": child_statuses,
+        }),
+    )
+    .await?;
 
     Ok(Json(AgentInitResp { results }))
 }
@@ -10668,16 +11050,6 @@ async fn mcp_agent_reply(
                 error: "prompt is required".to_string(),
             }),
         ));
-    }
-
-    let label = child.title.trim().to_string();
-    if !label.is_empty() {
-        let _ = insert_subagent_system_message(
-            &state,
-            &parent,
-            format!("Replied to subagent: {label}"),
-        )
-        .await;
     }
 
     let (run_id, _message) = enqueue_subagent_prompt(&state, &child, prompt).await?;

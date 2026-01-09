@@ -1356,6 +1356,191 @@ impl Store {
         Ok(out)
     }
 
+    pub async fn upsert_subagent_invocation(
+        &self,
+        invocation: SubagentInvocation,
+    ) -> Result<SubagentInvocation> {
+        sqlx::query(
+            r#"INSERT INTO subagent_invocations (
+                   id, tool_call_id, parent_session_id, parent_turn_id,
+                   requested_count, request_json, status, created_at, updated_at
+               )
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(id) DO UPDATE SET
+                   tool_call_id = excluded.tool_call_id,
+                   parent_session_id = excluded.parent_session_id,
+                   parent_turn_id = COALESCE(excluded.parent_turn_id, subagent_invocations.parent_turn_id),
+                   requested_count = excluded.requested_count,
+                   request_json = COALESCE(excluded.request_json, subagent_invocations.request_json),
+                   status = excluded.status,
+                   updated_at = excluded.updated_at"#,
+        )
+        .bind(&invocation.id)
+        .bind(&invocation.tool_call_id)
+        .bind(invocation.parent_session_id.0.to_string())
+        .bind(invocation.parent_turn_id.map(|t| t.0.to_string()))
+        .bind(invocation.requested_count)
+        .bind(invocation.request_json.as_ref().map(serde_json::to_string).transpose()?)
+        .bind(&invocation.status)
+        .bind(invocation.created_at.to_rfc3339())
+        .bind(invocation.updated_at.to_rfc3339())
+        .execute(&self.pool)
+        .await?;
+        Ok(invocation)
+    }
+
+    pub async fn update_subagent_invocation_status(
+        &self,
+        id: &str,
+        status: &str,
+        updated_at: DateTime<Utc>,
+    ) -> Result<()> {
+        sqlx::query(
+            r#"UPDATE subagent_invocations
+               SET status = ?, updated_at = ?
+               WHERE id = ?"#,
+        )
+        .bind(status)
+        .bind(updated_at.to_rfc3339())
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn upsert_subagent_invocation_child(
+        &self,
+        child: SubagentInvocationChild,
+    ) -> Result<SubagentInvocationChild> {
+        sqlx::query(
+            r#"INSERT INTO subagent_invocation_children (
+                   invocation_id, child_session_id, position, status,
+                   label, harness, model, reasoning_effort, prompt_length,
+                   created_at, updated_at
+               )
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(invocation_id, child_session_id) DO UPDATE SET
+                   position = excluded.position,
+                   status = excluded.status,
+                   label = COALESCE(excluded.label, subagent_invocation_children.label),
+                   harness = COALESCE(excluded.harness, subagent_invocation_children.harness),
+                   model = COALESCE(excluded.model, subagent_invocation_children.model),
+                   reasoning_effort = COALESCE(excluded.reasoning_effort, subagent_invocation_children.reasoning_effort),
+                   prompt_length = excluded.prompt_length,
+                   updated_at = excluded.updated_at"#,
+        )
+        .bind(&child.invocation_id)
+        .bind(child.child_session_id.0.to_string())
+        .bind(child.position)
+        .bind(&child.status)
+        .bind(child.label.as_deref())
+        .bind(child.harness.as_deref())
+        .bind(child.model.as_deref())
+        .bind(child.reasoning_effort.as_deref())
+        .bind(child.prompt_length)
+        .bind(child.created_at.to_rfc3339())
+        .bind(child.updated_at.to_rfc3339())
+        .execute(&self.pool)
+        .await?;
+        Ok(child)
+    }
+
+    pub async fn get_subagent_invocation(&self, id: &str) -> Result<Option<SubagentInvocation>> {
+        let row = sqlx::query(
+            r#"SELECT id, tool_call_id, parent_session_id, parent_turn_id,
+                      requested_count, request_json, status, created_at, updated_at
+               FROM subagent_invocations
+               WHERE id = ?"#,
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        let Some(row) = row else {
+            return Ok(None);
+        };
+
+        let mut invocation = build_subagent_invocation_from_row(row)?;
+        let rows = sqlx::query(
+            r#"SELECT invocation_id, child_session_id, position, status,
+                      label, harness, model, reasoning_effort, prompt_length,
+                      created_at, updated_at
+               FROM subagent_invocation_children
+               WHERE invocation_id = ?
+               ORDER BY position ASC"#,
+        )
+        .bind(&invocation.id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        invocation.children = rows
+            .into_iter()
+            .filter_map(|r| build_subagent_invocation_child_from_row(r).ok())
+            .collect();
+        Ok(Some(invocation))
+    }
+
+    pub async fn list_subagent_invocations_for_session(
+        &self,
+        parent_session_id: SessionId,
+        parent_turn_id: Option<TurnId>,
+    ) -> Result<Vec<SubagentInvocation>> {
+        let mut qb = QueryBuilder::new(
+            r#"SELECT id, tool_call_id, parent_session_id, parent_turn_id,
+                      requested_count, request_json, status, created_at, updated_at
+               FROM subagent_invocations
+               WHERE parent_session_id = "#,
+        );
+        qb.push_bind(parent_session_id.0.to_string());
+        if let Some(turn_id) = parent_turn_id {
+            qb.push(" AND parent_turn_id = ");
+            qb.push_bind(turn_id.0.to_string());
+        }
+        qb.push(" ORDER BY created_at ASC");
+        let rows = qb.build().fetch_all(&self.pool).await?;
+
+        let mut invocations = Vec::with_capacity(rows.len());
+        for r in rows {
+            if let Ok(invocation) = build_subagent_invocation_from_row(r) {
+                invocations.push(invocation);
+            }
+        }
+        if invocations.is_empty() {
+            return Ok(invocations);
+        }
+
+        let mut child_qb = QueryBuilder::new(
+            r#"SELECT invocation_id, child_session_id, position, status,
+                      label, harness, model, reasoning_effort, prompt_length,
+                      created_at, updated_at
+               FROM subagent_invocation_children
+               WHERE invocation_id IN ("#,
+        );
+        let mut separated = child_qb.separated(", ");
+        for invocation in &invocations {
+            separated.push_bind(invocation.id.clone());
+        }
+        child_qb.push(") ORDER BY position ASC");
+        let child_rows = child_qb.build().fetch_all(&self.pool).await?;
+
+        let mut children_by_id: HashMap<String, Vec<SubagentInvocationChild>> = HashMap::new();
+        for r in child_rows {
+            if let Ok(child) = build_subagent_invocation_child_from_row(r) {
+                children_by_id
+                    .entry(child.invocation_id.clone())
+                    .or_default()
+                    .push(child);
+            }
+        }
+        for invocation in &mut invocations {
+            if let Some(children) = children_by_id.remove(&invocation.id) {
+                invocation.children = children;
+            }
+        }
+
+        Ok(invocations)
+    }
+
     // Message APIs
     pub async fn insert_message(&self, mut message: Message) -> Result<Message> {
         if matches!(message.delivery, MessageDelivery::Immediate) && message.delivered_at.is_none()
@@ -4370,6 +4555,56 @@ fn is_transient_session_event(
     }
 
     false
+}
+
+fn build_subagent_invocation_from_row(r: sqlx::sqlite::SqliteRow) -> Result<SubagentInvocation> {
+    let id: String = r.try_get("id")?;
+    let tool_call_id: String = r.try_get("tool_call_id")?;
+    let parent_session_id: String = r.try_get("parent_session_id")?;
+    let parent_turn_id: Option<String> = r.try_get("parent_turn_id")?;
+    let created_at: String = r.try_get("created_at")?;
+    let updated_at: String = r.try_get("updated_at")?;
+    let request_json = r
+        .try_get::<Option<String>, _>("request_json")?
+        .and_then(|raw| serde_json::from_str(&raw).ok());
+
+    Ok(SubagentInvocation {
+        id,
+        tool_call_id,
+        parent_session_id: SessionId(uuid::Uuid::parse_str(&parent_session_id)?),
+        parent_turn_id: parent_turn_id
+            .and_then(|value| uuid::Uuid::parse_str(&value).ok())
+            .map(TurnId),
+        requested_count: r.try_get("requested_count")?,
+        request_json,
+        status: r.try_get("status")?,
+        created_at: parse_dt(&created_at)?,
+        updated_at: parse_dt(&updated_at)?,
+        children: Vec::new(),
+    })
+}
+
+fn build_subagent_invocation_child_from_row(
+    r: sqlx::sqlite::SqliteRow,
+) -> Result<SubagentInvocationChild> {
+    let invocation_id: String = r.try_get("invocation_id")?;
+    let child_session_id: String = r.try_get("child_session_id")?;
+    let created_at: String = r.try_get("created_at")?;
+    let updated_at: String = r.try_get("updated_at")?;
+
+    Ok(SubagentInvocationChild {
+        invocation_id,
+        child_session_id: SessionId(uuid::Uuid::parse_str(&child_session_id)?),
+        position: r.try_get("position")?,
+        status: r.try_get("status")?,
+        label: r.try_get("label")?,
+        harness: r.try_get("harness")?,
+        model: r.try_get("model")?,
+        reasoning_effort: r.try_get("reasoning_effort")?,
+        prompt_length: r.try_get("prompt_length")?,
+        created_at: parse_dt(&created_at)?,
+        updated_at: parse_dt(&updated_at)?,
+    })
 }
 
 fn build_artifact_from_row(r: sqlx::sqlite::SqliteRow) -> Result<Artifact> {

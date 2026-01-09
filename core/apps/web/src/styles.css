@@ -380,6 +380,45 @@ button.linklike:hover {
   margin-bottom: 8px;
 }
 
+.subagent-invocations {
+  margin-bottom: 8px;
+}
+
+.subagent-invocation-row {
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+  margin-top: 8px;
+}
+
+.subagent-invocation-row:first-child {
+  border-top: none;
+  padding-top: 0;
+  margin-top: 0;
+}
+
+.subagent-child-row {
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.subagent-child-link {
+  border: none;
+  background: none;
+  color: var(--accent);
+  padding: 0;
+  font: inherit;
+  cursor: pointer;
+}
+
+.subagent-child-link:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.subagent-child-link:hover:not(:disabled) {
+  text-decoration: underline;
+}
+
 .new-activity {
   margin: 8px 0;
 }

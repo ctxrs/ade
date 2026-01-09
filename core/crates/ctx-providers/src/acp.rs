@@ -2126,11 +2126,26 @@ fn normalize_session_update(
         "tool_call" => {
             let tool_call_id = update
                 .get("toolCallId")
+                .or_else(|| update.get("tool_call_id"))
                 .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
+                .map(|v| v.trim())
+                .filter(|v| !v.is_empty())
+                .map(|v| v.to_string())
+                .or_else(|| {
+                    update
+                        .pointer("/rawInput/call_id")
+                        .and_then(|v| v.as_str())
+                        .or_else(|| {
+                            update
+                                .pointer("/raw_input/call_id")
+                                .and_then(|v| v.as_str())
+                        })
+                        .map(|v| v.to_string())
+                });
             let mut payload = Map::new();
-            payload.insert("tool_call_id".to_string(), json!(tool_call_id));
+            if let Some(tool_call_id) = tool_call_id {
+                payload.insert("tool_call_id".to_string(), json!(tool_call_id));
+            }
             payload.insert("acp_update".to_string(), update.clone());
             add_update_meta_fields(&mut payload, &context_window, &usage);
             vec![NormalizedEvent {
@@ -2141,12 +2156,27 @@ fn normalize_session_update(
         "tool_call_update" => {
             let tool_call_id = update
                 .get("toolCallId")
+                .or_else(|| update.get("tool_call_id"))
                 .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
+                .map(|v| v.trim())
+                .filter(|v| !v.is_empty())
+                .map(|v| v.to_string())
+                .or_else(|| {
+                    update
+                        .pointer("/rawInput/call_id")
+                        .and_then(|v| v.as_str())
+                        .or_else(|| {
+                            update
+                                .pointer("/raw_input/call_id")
+                                .and_then(|v| v.as_str())
+                        })
+                        .map(|v| v.to_string())
+                });
             let status = update.get("status").and_then(|v| v.as_str()).unwrap_or("");
             let mut payload = Map::new();
-            payload.insert("tool_call_id".to_string(), json!(tool_call_id));
+            if let Some(ref tool_call_id) = tool_call_id {
+                payload.insert("tool_call_id".to_string(), json!(tool_call_id));
+            }
             payload.insert("acp_update".to_string(), update.clone());
             add_update_meta_fields(&mut payload, &context_window, &usage);
             let mut out = vec![NormalizedEvent {
@@ -2155,7 +2185,9 @@ fn normalize_session_update(
             }];
             if matches!(status, "completed" | "failed") {
                 let mut payload = Map::new();
-                payload.insert("tool_call_id".to_string(), json!(tool_call_id));
+                if let Some(ref tool_call_id) = tool_call_id {
+                    payload.insert("tool_call_id".to_string(), json!(tool_call_id));
+                }
                 payload.insert("acp_update".to_string(), update.clone());
                 add_update_meta_fields(&mut payload, &context_window, &usage);
                 out.push(NormalizedEvent {

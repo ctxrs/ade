@@ -124,6 +124,33 @@ export type SessionSummary = {
   updated_at: string;
 };
 
+export type SubagentInvocationChild = {
+  invocation_id: string;
+  child_session_id: { 0: string } | string;
+  position: number;
+  status: string;
+  label?: string | null;
+  harness?: string | null;
+  model?: string | null;
+  reasoning_effort?: string | null;
+  prompt_length: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type SubagentInvocation = {
+  id: string;
+  tool_call_id: string;
+  parent_session_id: { 0: string } | string;
+  parent_turn_id?: { 0: string } | string | null;
+  requested_count: number;
+  request_json?: any;
+  status: string;
+  created_at: string;
+  updated_at: string;
+  children: SubagentInvocationChild[];
+};
+
 export type TrackSummary = {
   track: Track;
   sessions?: SessionSummary[];

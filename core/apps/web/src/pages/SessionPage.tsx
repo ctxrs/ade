@@ -28,6 +28,8 @@ import {
   SessionEvent,
   SessionTurn,
   SessionTurnTool,
+  SubagentInvocation,
+  SubagentInvocationChild,
   setSessionModel,
   authenticateSession,
   getSettings,
@@ -62,6 +64,7 @@ import {
 } from "../utils/codeTokenLinks";
 import { desktopOpenFile, desktopOpenPath, isDesktopApp } from "../utils/desktop";
 import { usePinnedScrollManager } from "./usePinnedScrollManager";
+import { useWorkbenchStore } from "../workbench/store";
 
 type ThreadItem =
   | {
@@ -481,6 +484,21 @@ function humanToolStatus(status: string): string {
   }
 }
 
+function subagentChildLabel(child: SubagentInvocationChild): string {
+  const label = child.label?.trim();
+  if (label) return label;
+  return `Subagent ${child.position + 1}`;
+}
+
+function formatSubagentChildMeta(child: SubagentInvocationChild): string {
+  const parts: string[] = [];
+  if (child.harness) parts.push(child.harness);
+  if (child.model) parts.push(child.model);
+  if (child.reasoning_effort) parts.push(child.reasoning_effort);
+  parts.push(`${child.prompt_length} chars`);
+  return parts.join(" · ");
+}
+
 function toolKindIcon(kind: string): string {
   const k = String(kind ?? "").trim().toLowerCase();
   if (k === "execute") return "$";
@@ -534,6 +552,7 @@ export function SessionView({
 }) {
   const id = sessionId;
   const supervisor = useSessionSupervisor();
+  const workbenchStore = useWorkbenchStore();
   const showDebug = useMemo(() => {
     try {
       return new URLSearchParams(window.location.search).get("debug") === "1";
@@ -961,6 +980,17 @@ export function SessionView({
 
   const entry = useSessionEntry(id ?? "");
   const session: Session | null = entry?.session ?? null;
+  const openChildSession = useCallback(
+    (childSessionId: string) => {
+      if (!session) return;
+      const taskId = idToString(session.task_id);
+      if (!taskId) return;
+      const trackId = idToString(session.track_id);
+      workbenchStore.focusTask(taskId, trackId || null, childSessionId || null);
+    },
+    [session, workbenchStore],
+  );
+
   const worktreeId = session ? idToString(session.worktree_id) : null;
   const turns = entry?.turns ?? [];
   const turnToolsByTurnId = entry?.turnToolsByTurnId ?? {};
@@ -970,6 +1000,8 @@ export function SessionView({
   const events: SessionEvent[] = entry?.events ?? [];
   const messages: Message[] = entry?.messages ?? [];
   const queue: Message[] = entry?.queue ?? [];
+  const subagentInvocations: SubagentInvocation[] = entry?.subagentInvocations ?? [];
+  const subagentInvocationsLoading = entry?.subagentInvocationsLoading ?? false;
   const eventsKey = `${entry?.lastEventSeq ?? 0}:${events.length}`;
   const turnsKey = deriveTurnsKey(turns);
   const messagesKey = deriveMessagesKey(messages);
@@ -2269,7 +2301,7 @@ export function SessionView({
                     }
                   }}
                 >
-                  {authBusy ? "Authenticating…" : "Authenticate"}
+                  {authBusy ? "Authenticating..." : "Authenticate"}
                 </button>
               </div>
             ) : (
@@ -2285,6 +2317,66 @@ export function SessionView({
             )}
           </div>
         )}
+        {(subagentInvocationsLoading || subagentInvocations.length > 0) && (
+          <div className="subagent-invocations card">
+            <div className="row" style={{ justifyContent: "space-between" }}>
+              <strong>Subagent invocations</strong>
+              {subagentInvocationsLoading ? (
+                <span className="muted">Loading...</span>
+              ) : (
+                <span className="muted">{subagentInvocations.length}</span>
+              )}
+            </div>
+            {subagentInvocations.length === 0 ? (
+              <div className="muted">Waiting for subagent data...</div>
+            ) : (
+              <div className="subagent-invocation-list">
+                {subagentInvocations.map((invocation) => {
+                  const children = invocation.children ?? [];
+                  const countLabel = `${children.length}/${invocation.requested_count}`;
+                  return (
+                    <div key={invocation.id} className="subagent-invocation-row">
+                      <div className="row" style={{ justifyContent: "space-between", alignItems: "baseline" }}>
+                        <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+                          <span className="badge">{humanToolStatus(invocation.status)}</span>
+                          <span className="muted">Subagents {countLabel}</span>
+                        </div>
+                      </div>
+                      {children.length > 0 ? (
+                        <ul className="sublist subagent-invocation-children">
+                          {children.map((child) => {
+                            const childId = idToString(child.child_session_id);
+                            const label = subagentChildLabel(child);
+                            const meta = formatSubagentChildMeta(child);
+                            return (
+                              <li key={`${invocation.id}:${childId || child.position}`} className="row subagent-child-row">
+                                <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+                                  <span className="badge">{humanToolStatus(child.status)}</span>
+                                  <button
+                                    type="button"
+                                    className="subagent-child-link"
+                                    onClick={() => childId && openChildSession(childId)}
+                                    disabled={!childId}
+                                  >
+                                    {label}
+                                  </button>
+                                </div>
+                                <span className="muted">{meta}</span>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      ) : (
+                        <div className="muted">No child sessions yet.</div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
         {queue.length > 0 && (
           <div className="queue-panel card">
             <div className="row">
@@ -2348,7 +2440,7 @@ export function SessionView({
           setAttachments={setDraftAttachments}
           onSend={sendNow}
           sendDisabled={sendBusy || !input.trim()}
-          sendDisabledReason={sendBusy ? "Sending…" : !input.trim() ? "Enter a message." : null}
+          sendDisabledReason={sendBusy ? "Sending..." : !input.trim() ? "Enter a message." : null}
           onInterrupt={id ? () => interruptSession(id) : null}
           verbosity={verbosity}
           onSetVerbosity={setVerbosityPref}
@@ -3084,7 +3176,7 @@ function WorkbenchToolGroupRow({
       {hasDetails && expanded && (
         <div className="wb-tool-group-body">
           {total > 0 && item.tools.length === 0 && toolsLoading && (
-            <div className="wb-tool-loading">Loading tools…</div>
+            <div className="wb-tool-loading">Loading tools...</div>
           )}
           {item.tools.map((tool) => (
             <WorkbenchToolRow
