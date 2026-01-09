@@ -5,6 +5,7 @@ import {
   getSessionHistory,
   idToString,
   listSessionArtifacts,
+  listSessionSubagentInvocations,
   listTurnTools,
   trackDiff,
   type Artifact,
@@ -15,6 +16,7 @@ import {
   type SessionTurn,
   type SessionTurnTool,
   type SessionTurnToolSummary,
+  type SubagentInvocation,
   type WorkspaceCatchupEvent,
 } from "../api/client";
 import type { WorkspaceCatchupEventSource } from "./workspaceCatchupStore";
@@ -54,6 +56,8 @@ export type SessionCacheEntry = {
   messages: Message[];
   artifacts: Artifact[];
   artifactsLoading: boolean;
+  subagentInvocations: SubagentInvocation[];
+  subagentInvocationsLoading: boolean;
   queue: Message[];
   diff?: string;
   diagnosticsByPath?: Record<string, any[]>;
@@ -118,6 +122,8 @@ type InternalEntry = SessionCacheEntry & {
   turnToolsHydratedByTurnId: Record<string, boolean>;
   artifactsLoaded: boolean;
   artifactsFetchedAtMs?: number;
+  subagentInvocationsLoaded: boolean;
+  subagentInvocationsFetchedAtMs?: number;
   trackId?: string;
   diagnosticsByPath: Record<string, any[]>;
   loadedFromCache: boolean;
@@ -329,6 +335,8 @@ export class SessionSupervisor {
         messages: e.messages,
         artifacts: e.artifacts,
         artifactsLoading: e.artifactsLoading,
+        subagentInvocations: e.subagentInvocations,
+        subagentInvocationsLoading: e.subagentInvocationsLoading,
         queue: e.queue,
         diff: e.diff,
         diagnosticsByPath: e.diagnosticsByPath,
@@ -373,6 +381,8 @@ export class SessionSupervisor {
       messages: [],
       artifacts: [],
       artifactsLoading: false,
+      subagentInvocations: [],
+      subagentInvocationsLoading: false,
       queue: [],
       diff: undefined,
       diagnosticsByPath: {},
@@ -395,6 +405,8 @@ export class SessionSupervisor {
       turnToolsHydratedByTurnId: {},
       artifactsLoaded: false,
       artifactsFetchedAtMs: undefined,
+      subagentInvocationsLoaded: false,
+      subagentInvocationsFetchedAtMs: undefined,
       trackId: undefined,
       loadedFromCache: false,
       headFromCache: false,
@@ -521,6 +533,7 @@ export class SessionSupervisor {
       this.applyHead(entry, head);
       await this.persistHead(entry);
       await this.ensureArtifacts(entry);
+      await this.ensureSubagentInvocations(entry);
     } catch (e: any) {
       if (!opts?.silent) {
         entry.error = e?.message ?? "Failed to load session";
@@ -553,6 +566,26 @@ export class SessionSupervisor {
       // ignore artifact load errors (missing session or daemon offline)
     } finally {
       entry.artifactsLoading = false;
+      entry.updatedAtMs = Date.now();
+      this.publish();
+    }
+  }
+
+  private async ensureSubagentInvocations(entry: InternalEntry, opts?: { force?: boolean }) {
+    if (entry.subagentInvocationsLoading) return;
+    if (entry.subagentInvocationsLoaded && !opts?.force) return;
+    entry.subagentInvocationsLoading = true;
+    entry.updatedAtMs = Date.now();
+    this.publish();
+    try {
+      const invocations = await listSessionSubagentInvocations(entry.sessionId);
+      entry.subagentInvocations = invocations;
+      entry.subagentInvocationsLoaded = true;
+      entry.subagentInvocationsFetchedAtMs = Date.now();
+    } catch {
+      // ignore invocation load errors
+    } finally {
+      entry.subagentInvocationsLoading = false;
       entry.updatedAtMs = Date.now();
       this.publish();
     }
@@ -922,6 +955,14 @@ export class SessionSupervisor {
     return true;
   }
 
+  private applySubagentInvocationNotice(entry: InternalEntry, event: SessionEvent): boolean {
+    if (String(event.event_type) !== "notice") return false;
+    const kind = event.payload_json?.kind;
+    if (kind !== "subagent_invocation_created" && kind !== "subagent_invocation_updated") return false;
+    void this.ensureSubagentInvocations(entry, { force: true });
+    return false;
+  }
+
   private applyToolEventToTurn(
     entry: InternalEntry,
     turnId: string,
@@ -1029,6 +1070,9 @@ export class SessionSupervisor {
       if (this.applyArtifactsEvent(entry, delta.event)) {
         changed = true;
       }
+      if (this.applySubagentInvocationNotice(entry, delta.event)) {
+        changed = true;
+      }
     }
 
     if (changed) {
@@ -1045,6 +1089,10 @@ export class SessionSupervisor {
     entry.artifactsLoaded = false;
     entry.artifactsLoading = false;
     entry.artifactsFetchedAtMs = undefined;
+    entry.subagentInvocations = [];
+    entry.subagentInvocationsLoaded = false;
+    entry.subagentInvocationsLoading = false;
+    entry.subagentInvocationsFetchedAtMs = undefined;
     entry.queue = [];
     entry.turnToolsByTurnId = {};
     entry.turnToolsHydratedByTurnId = {};

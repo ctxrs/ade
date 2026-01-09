@@ -1016,7 +1016,14 @@ async fn main() -> Result<()> {
                 } else {
                     raw_name
                 };
-                let arguments = params.get("arguments").cloned().unwrap_or(json!({}));
+                let mut arguments = params.get("arguments").cloned().unwrap_or(json!({}));
+                if let Some(tool_call_id) = tool_call_id_from_params(&params) {
+                    if let Some(obj) = arguments.as_object_mut() {
+                        obj.insert("tool_call_id".to_string(), Value::String(tool_call_id));
+                    } else {
+                        arguments = json!({ "tool_call_id": tool_call_id });
+                    }
+                }
                 match name.as_str() {
                     "ping" => ok(
                         id.unwrap(),
@@ -1776,6 +1783,35 @@ async fn daemon_post_json(
     Ok(res.json::<Value>().await?)
 }
 
+fn tool_call_id_from_params(params: &Value) -> Option<String> {
+    let meta = params.get("_meta").or_else(|| params.get("meta"));
+    let args = params.get("arguments");
+    let direct = meta
+        .and_then(|m| {
+            m.get("toolCallId")
+                .or_else(|| m.get("tool_call_id"))
+                .and_then(|v| v.as_str())
+        })
+        .or_else(|| {
+            params
+                .get("toolCallId")
+                .or_else(|| params.get("tool_call_id"))
+                .and_then(|v| v.as_str())
+        })
+        .or_else(|| {
+            args.and_then(|value| {
+                value
+                    .get("toolCallId")
+                    .or_else(|| value.get("tool_call_id"))
+            })
+            .and_then(|v| v.as_str())
+        });
+    direct
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+}
+
 async fn list_workspaces(client: &reqwest::Client, daemon_url: &str) -> Result<Value> {
     daemon_get_json(client, daemon_url, "/api/workspaces").await
 }
@@ -1795,8 +1831,20 @@ async fn agent_init_call(
         .get("agents")
         .and_then(|v| v.as_array())
         .context("missing agents")?;
+    let tool_call_id = args
+        .get("tool_call_id")
+        .and_then(|v| v.as_str())
+        .map(|v| v.trim())
+        .filter(|v| !v.is_empty())
+        .map(|v| v.to_string());
     let path = format!("/api/mcp/sessions/{}/agent_init", session_id);
-    daemon_post_json(client, daemon_url, &path, &json!({ "agents": agents })).await
+    let mut body = json!({ "agents": agents });
+    if let Some(tool_call_id) = tool_call_id {
+        if let Some(obj) = body.as_object_mut() {
+            obj.insert("tool_call_id".to_string(), Value::String(tool_call_id));
+        }
+    }
+    daemon_post_json(client, daemon_url, &path, &body).await
 }
 
 async fn agent_reply_call(

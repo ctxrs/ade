@@ -201,6 +201,42 @@ pub struct Session {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubagentInvocation {
+    pub id: String,
+    pub tool_call_id: String,
+    pub parent_session_id: SessionId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_turn_id: Option<TurnId>,
+    pub requested_count: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_json: Option<serde_json::Value>,
+    pub status: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    #[serde(default)]
+    pub children: Vec<SubagentInvocationChild>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubagentInvocationChild {
+    pub invocation_id: String,
+    pub child_session_id: SessionId,
+    pub position: i64,
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub harness: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<String>,
+    pub prompt_length: i64,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TerminalStatus {
     Running,
