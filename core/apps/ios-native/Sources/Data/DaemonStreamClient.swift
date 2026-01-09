@@ -47,8 +47,7 @@ final class DaemonStreamClient {
     }
 
     private func webSocketURL(baseURL: URL, path: String, token: String?, queryItems: [URLQueryItem] = []) -> URL? {
-        let normalizedPath = path.hasPrefix("/") ? path : "/\(path)"
-        guard let url = URL(string: normalizedPath, relativeTo: baseURL),
+        guard let url = resolveURL(baseURL: baseURL, path: path),
               var components = URLComponents(url: url, resolvingAgainstBaseURL: true) else {
             return nil
         }
@@ -65,6 +64,25 @@ final class DaemonStreamClient {
         if !mergedItems.isEmpty {
             components.queryItems = mergedItems
         }
+        return components.url
+    }
+
+    private func resolveURL(baseURL: URL, path: String) -> URL? {
+        let trimmedPath = path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        if trimmedPath.isEmpty {
+            return baseURL
+        }
+        if baseURL.path.isEmpty || baseURL.path == "/" {
+            let normalizedPath = "/\(trimmedPath)"
+            return URL(string: normalizedPath, relativeTo: baseURL)
+        }
+        guard var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: true) else {
+            return nil
+        }
+        let basePath = components.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        components.path = basePath.isEmpty ? "/\(trimmedPath)" : "/\(basePath)/\(trimmedPath)"
+        components.query = nil
+        components.fragment = nil
         return components.url
     }
 }

@@ -429,11 +429,8 @@ actor DaemonAPIClient {
     }
 
     private func buildRequest(baseURL: URL, path: String, method: HTTPMethod, queryItems: [URLQueryItem] = [], body: Encodable? = nil, token: String?) throws -> URLRequest {
-        let normalizedPath = path.hasPrefix("/") ? path : "/\(path)"
-        guard let base = URL(string: normalizedPath, relativeTo: baseURL) else {
-            throw DaemonAPIError.invalidURL
-        }
-        guard var components = URLComponents(url: base, resolvingAgainstBaseURL: true) else {
+        guard let base = resolveURL(baseURL: baseURL, path: path),
+              var components = URLComponents(url: base, resolvingAgainstBaseURL: true) else {
             throw DaemonAPIError.invalidURL
         }
         if !queryItems.isEmpty {
@@ -452,6 +449,25 @@ actor DaemonAPIClient {
             request.httpBody = try encoder.encode(AnyEncodable(body))
         }
         return request
+    }
+
+    private func resolveURL(baseURL: URL, path: String) -> URL? {
+        let trimmedPath = path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        if trimmedPath.isEmpty {
+            return baseURL
+        }
+        if baseURL.path.isEmpty || baseURL.path == "/" {
+            let normalizedPath = "/\(trimmedPath)"
+            return URL(string: normalizedPath, relativeTo: baseURL)
+        }
+        guard var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: true) else {
+            return nil
+        }
+        let basePath = components.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        components.path = basePath.isEmpty ? "/\(trimmedPath)" : "/\(basePath)/\(trimmedPath)"
+        components.query = nil
+        components.fragment = nil
+        return components.url
     }
 
     private func perform<T: Decodable>(_ request: URLRequest) async throws -> T {
