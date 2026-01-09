@@ -5,7 +5,7 @@ use gpui::{div, prelude::*, px};
 use ctx_core::ids::TurnId;
 use serde_json::Value;
 
-use crate::theme::ThemeColors;
+use crate::theme::{ThemeColors, ThemeMetrics};
 
 use super::super::state::turn_tools::{
     human_tool_kind, tool_status_tone, ToolStatusTone, TurnToolGroup, TurnToolItem,
@@ -18,6 +18,7 @@ pub(super) struct TurnToolsView<'a> {
 
 impl<'a> TurnToolsView<'a> {
     pub(super) fn render(&self) -> impl IntoElement {
+        let metrics = ThemeMetrics::default();
         let total_tools: usize = self.groups.iter().map(|group| group.tools.len()).sum();
         let list = if self.groups.is_empty() {
             div()
@@ -27,7 +28,7 @@ impl<'a> TurnToolsView<'a> {
         } else {
             self.groups
                 .iter()
-                .fold(div().flex().flex_col().gap_2(), |list, group| {
+                .fold(div().flex().flex_col().gap(px(metrics.spacing.xl)), |list, group| {
                     list.child(self.render_group(group))
                 })
         };
@@ -46,11 +47,12 @@ impl<'a> TurnToolsView<'a> {
                     .child("Tools")
                     .child(format!("{}", total_tools)),
             )
-            .child(div().h(px(8.0)))
+            .child(div().h(px(metrics.spacing.md)))
             .child(list)
     }
 
     fn render_group(&self, group: &TurnToolGroup) -> impl IntoElement {
+        let metrics = ThemeMetrics::default();
         // Match web copy and separators for summary: use " · " instead of " | "
         let label = group.summary.label().replace(" | ", " · ");
         let turn_label = format_turn_label(group.turn_id);
@@ -71,7 +73,7 @@ impl<'a> TurnToolsView<'a> {
             group
                 .tools
                 .iter()
-                .fold(div().flex().flex_col().gap_1(), |list, tool| list.child(self.render_tool(tool)))
+                .fold(div().flex().flex_col().gap(px(metrics.spacing.md)), |list, tool| list.child(self.render_tool(tool)))
         };
 
         // Header row (match web wb-event-row styling: subtle, muted, tight padding)
@@ -79,8 +81,8 @@ impl<'a> TurnToolsView<'a> {
             .flex()
             .items_center()
             .justify_between()
-            .px_1()
-            .py_0()
+            .px(px(metrics.spacing.xs))
+            .py(px(0.0))
             .text_sm()
             .text_color(self.colors.muted)
             .child(turn_label)
@@ -90,24 +92,25 @@ impl<'a> TurnToolsView<'a> {
         let body = div()
             .flex()
             .flex_col()
-            .gap_2()
+            .gap(px(metrics.spacing.xl))
             .border_1()
             .border_color(self.colors.border)
             .rounded_sm()
             .bg(self.colors.panel_2)
-            .p_2()
+            .p(px(metrics.spacing.md))
             .child(div().text_sm().text_color(self.colors.muted).child(time_line))
             .child(tools_list);
 
         div()
             .flex()
             .flex_col()
-            .gap_1()
+            .gap(px(metrics.spacing.md))
             .child(header_row)
             .child(body)
     }
 
     fn render_tool(&self, tool: &TurnToolItem) -> impl IntoElement {
+        let metrics = ThemeMetrics::default();
         let label_parts = tool_label_parts(tool);
         let kind_label = if tool.tool_kind.trim().is_empty() {
             "tool".to_string()
@@ -152,15 +155,15 @@ impl<'a> TurnToolsView<'a> {
             .flex()
             .items_center()
             .justify_between()
-            .px_1()
-            .py_0()
+            .px(px(metrics.spacing.xs))
+            .py(px(0.0))
             .text_sm()
             .text_color(self.colors.muted)
             .child(
                 div()
                     .flex()
                     .items_center()
-                    .gap_1()
+                    .gap(px(metrics.spacing.md))
                     .child(div().text_color(self.colors.text).child(label_parts.verb.clone()))
                     .child(if label_parts.rest.is_empty() {
                         div().into_any_element()
@@ -177,12 +180,12 @@ impl<'a> TurnToolsView<'a> {
             div()
                 .flex()
                 .flex_col()
-                .gap_2()
+                .gap(px(metrics.spacing.xl))
                 .border_1()
                 .border_color(self.colors.border)
                 .rounded_sm()
                 .bg(self.colors.panel_2)
-                .p_2()
+                .p(px(metrics.spacing.md))
                 .child(details)
                 .into_any_element()
         } else {
@@ -192,7 +195,7 @@ impl<'a> TurnToolsView<'a> {
         div()
             .flex()
             .flex_col()
-            .gap_1()
+            .gap(px(metrics.spacing.md))
             .child(event_row)
             .child(div().text_sm().text_color(self.colors.muted).child(time_line))
             .child(details_block)

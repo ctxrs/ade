@@ -1,7 +1,7 @@
 use gpui::{Context, ListState, div, list, prelude::*, px};
 use ctx_core::models::SessionEvent;
 
-use crate::theme::ThemeColors;
+use crate::theme::{ThemeColors, ThemeMetrics};
 
 use super::super::models::{session_event_type_label, MessageItem};
 use super::super::state::ShellView;
@@ -15,6 +15,7 @@ pub(super) struct MessagesView<'a> {
 
 impl<'a> MessagesView<'a> {
     pub(super) fn render(&self, cx: &mut Context<ShellView>) -> impl IntoElement {
+        let metrics = ThemeMetrics::default();
         let messages = self.messages.to_vec();
         let colors = self.colors;
         let list = list(self.message_list_state.clone(), move |index, _window, _cx| {
@@ -24,9 +25,9 @@ impl<'a> MessagesView<'a> {
             div()
                 .flex()
                 .flex_col()
-                .gap_1()
-                .px_1()
-                .py_1()
+                .gap(px(metrics.spacing.md))
+                .px(px(metrics.spacing.xs))
+                .py(px(metrics.spacing.sm))
                 .text_sm()
                 .child(
                     div()
@@ -45,8 +46,8 @@ impl<'a> MessagesView<'a> {
                 format!("{} new messages", self.new_message_count)
             };
             div()
-                .px_2()
-                .py_1()
+                .px(px(metrics.spacing.md))
+                .py(px(metrics.spacing.sm))
                 .text_sm()
                 .border_1()
                 .border_color(self.colors.border_strong)
@@ -77,10 +78,10 @@ impl<'a> MessagesView<'a> {
                     .child("Messages")
                     .child(indicator),
             )
-            .child(div().h(px(8.0)))
+            .child(div().h(px(metrics.spacing.md)))
             .child(
                 div()
-                    .p_2()
+                    .p(px(metrics.spacing.md))
                     .child(list.h(px(220.0)).w_full()),
             )
     }
@@ -93,6 +94,7 @@ pub(super) struct EventsView<'a> {
 
 impl<'a> EventsView<'a> {
     pub(super) fn render(&self) -> impl IntoElement {
+        let metrics = ThemeMetrics::default();
         let list = if self.events.is_empty() {
             div()
                 .text_sm()
@@ -101,11 +103,11 @@ impl<'a> EventsView<'a> {
         } else {
             self.events
                 .iter()
-                .fold(div().flex().flex_col().gap_2(), |list, event| {
+                .fold(div().flex().flex_col().gap(px(metrics.spacing.xl)), |list, event| {
                     let left = div()
                         .flex()
                         .items_center()
-                        .gap_2()
+                        .gap(px(metrics.spacing.xl))
                         .child(
                             div()
                                 .text_color(self.colors.muted)
@@ -117,8 +119,8 @@ impl<'a> EventsView<'a> {
                             .flex()
                             .items_center()
                             .justify_between()
-                            .px_1()
-                            .py_0()
+                            .px(px(metrics.spacing.xs))
+                            .py(px(0.0))
                             .text_sm()
                             .text_color(self.colors.muted)
                             .child(left)
@@ -145,7 +147,7 @@ impl<'a> EventsView<'a> {
                     .child("Events")
                     .child(format!("{}", self.events.len())),
             )
-            .child(div().h(px(8.0)))
+            .child(div().h(px(metrics.spacing.md)))
             .child(list)
     }
 }

@@ -2,8 +2,10 @@ use gpui::{ClickEvent, Context, CursorStyle, ElementId, FocusHandle, Rgba, div, 
 
 use ctx_core::models::MessageAttachment;
 
-use crate::automation_tree;
-use crate::theme::ThemeColors;
+use crate::{
+    automation_tree,
+    theme::{ThemeColors, ThemeMetrics},
+};
 
 use super::super::icons::{Icon, IconName};
 use super::super::state::ShellView;
@@ -39,6 +41,7 @@ pub(super) struct ComposerView<'a> {
 
 impl<'a> ComposerView<'a> {
     pub(super) fn render(&self, cx: &mut Context<ShellView>) -> impl IntoElement {
+        let metrics = ThemeMetrics::default();
         let placeholder_text = "Type a message...";
         let (input_text, is_placeholder) = if self.composer_text.is_empty() {
             (format!("|{placeholder_text}"), true)
@@ -81,8 +84,8 @@ impl<'a> ComposerView<'a> {
             send_bg.a = 0.20; // subtle tint
             let send_icon_color = if self.can_send { self.colors.text } else { self.colors.muted };
             let base = div()
-                .w(px(24.0))
-                .h(px(24.0))
+                .w(px(metrics.controls.h_sm))
+                .h(px(metrics.controls.h_sm))
                 .rounded_full()
                 .border_1()
                 .border_color(if self.can_send { self.colors.accent } else { self.colors.border })
@@ -137,8 +140,8 @@ impl<'a> ComposerView<'a> {
             .child(attachment_text);
 
         let mut add_attachment_button = div()
-            .px_2()
-            .py_1()
+            .px(px(metrics.spacing.md))
+            .py(px(metrics.spacing.sm))
             .text_sm()
             .rounded_full()
             .border_1()
@@ -162,7 +165,7 @@ impl<'a> ComposerView<'a> {
                     .child("No providers")
             } else {
                 self.provider_options.iter().enumerate().fold(
-                    div().flex().flex_col().gap_2(),
+                    div().flex().flex_col().gap(px(metrics.spacing.xl)),
                     |list, (index, provider)| {
                         let is_selected = self.selected_provider == Some(provider.as_str());
                         let provider_id = provider.clone();
@@ -172,8 +175,8 @@ impl<'a> ComposerView<'a> {
                             });
                         list.child(
                             div()
-                                .px_2()
-                                .py_1()
+                                .px(px(metrics.spacing.md))
+                                .py(px(metrics.spacing.sm))
                                 .border_1()
                                 .border_color(self.colors.border)
                                 .rounded_sm()
@@ -194,8 +197,8 @@ impl<'a> ComposerView<'a> {
             div()
                 .flex()
                 .flex_col()
-                .gap_2()
-                .p_2()
+                .gap(px(metrics.spacing.xl))
+                .p(px(metrics.spacing.md))
                 .border_1()
                 .border_color(self.colors.border)
                 .rounded_sm()
@@ -213,7 +216,7 @@ impl<'a> ComposerView<'a> {
                     .child("No models")
             } else {
                 self.model_options.iter().enumerate().fold(
-                    div().flex().flex_col().gap_2(),
+                    div().flex().flex_col().gap(px(metrics.spacing.xl)),
                     |list, (index, model)| {
                         let is_selected = self.selected_model == Some(model.as_str());
                         let model_id = model.clone();
@@ -223,8 +226,8 @@ impl<'a> ComposerView<'a> {
                             });
                         list.child(
                             div()
-                                .px_2()
-                                .py_1()
+                                .px(px(metrics.spacing.md))
+                                .py(px(metrics.spacing.sm))
                                 .border_1()
                                 .border_color(self.colors.border)
                                 .rounded_sm()
@@ -245,8 +248,8 @@ impl<'a> ComposerView<'a> {
             div()
                 .flex()
                 .flex_col()
-                .gap_2()
-                .p_2()
+                .gap(px(metrics.spacing.xl))
+                .p(px(metrics.spacing.md))
                 .border_1()
                 .border_color(self.colors.border)
                 .rounded_sm()
@@ -259,11 +262,11 @@ impl<'a> ComposerView<'a> {
         let provider_control = div()
             .flex()
             .flex_col()
-            .gap_1()
+            .gap(px(metrics.spacing.md))
             .child(
                 div()
-                    .px_2()
-                    .py_1()
+                    .px(px(metrics.spacing.md))
+                    .py(px(metrics.spacing.sm))
                     .text_sm()
                     .rounded_full()
                     .text_color(self.colors.muted)
@@ -278,11 +281,11 @@ impl<'a> ComposerView<'a> {
         let model_control = div()
             .flex()
             .flex_col()
-            .gap_1()
+            .gap(px(metrics.spacing.md))
             .child(
                 div()
-                    .px_2()
-                    .py_1()
+                    .px(px(metrics.spacing.md))
+                    .py(px(metrics.spacing.sm))
                     .text_sm()
                     .rounded_full()
                     .text_color(self.colors.muted)
@@ -294,7 +297,7 @@ impl<'a> ComposerView<'a> {
             )
             .child(model_menu);
 
-        let mut attachments_block = div().flex().flex_col().gap_2();
+        let mut attachments_block = div().flex().flex_col().gap(px(metrics.spacing.xl));
         if let Some(notice) = self.composer_notice {
             let notice = notice.to_string();
             attachments_block = attachments_block.child(
@@ -310,7 +313,7 @@ impl<'a> ComposerView<'a> {
                 .composer_attachments
                 .iter()
                 .enumerate()
-                .fold(div().flex().gap_2(), |list, (index, attachment)| {
+                .fold(div().flex().gap(px(metrics.spacing.xl)), |list, (index, attachment)| {
                     let label = attachment_label(attachment);
                     let on_remove = cx.listener(move |view, _: &ClickEvent, _window, cx| {
                         view.remove_composer_attachment(index, cx);
@@ -319,9 +322,9 @@ impl<'a> ComposerView<'a> {
                         div()
                             .flex()
                             .items_center()
-                            .gap_2()
-                            .px_2()
-                            .py_0()
+                            .gap(px(metrics.spacing.xl))
+                            .px(px(metrics.spacing.md))
+                            .py(px(0.0))
                             .rounded_full()
                             .border_1()
                             .border_color(self.colors.border)
@@ -330,8 +333,8 @@ impl<'a> ComposerView<'a> {
                             .child(label)
                             .child(
                                 div()
-                                    .px_1()
-                                    .py_0()
+                                    .px(px(metrics.spacing.xs))
+                                    .py(px(0.0))
                                     .text_sm()
                                     .text_color(self.colors.muted)
                                     .child("×")
@@ -347,7 +350,7 @@ impl<'a> ComposerView<'a> {
             div()
                 .flex()
                 .items_center()
-                .gap_2()
+                .gap(px(metrics.spacing.xl))
                 .child(attachment_input)
                 .child(add_attachment_button),
         );
@@ -356,12 +359,12 @@ impl<'a> ComposerView<'a> {
             .flex()
             .flex_row()
             .items_center()
-            .gap_3()
+            .gap(px(metrics.spacing.gutter))
             .border_1()
             .border_color(self.colors.border)
             .rounded_sm()
-            .px_3()
-            .py_2()
+            .px(px(metrics.spacing.xl))
+            .py(px(metrics.spacing.md))
             .bg(self.colors.panel_2)
             .child(input)
             .child(send_button);
@@ -370,12 +373,12 @@ impl<'a> ComposerView<'a> {
             .id("composer")
             .flex()
             .flex_col()
-            .gap_3()
+            .gap(px(metrics.spacing.gutter))
             .child(
                 div()
                     .flex()
                     .items_center()
-                    .gap_2()
+                    .gap(px(metrics.spacing.xl))
                     .child(provider_control)
                     .child(model_control),
             )
