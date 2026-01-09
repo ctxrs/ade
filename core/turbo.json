@@ -33,12 +33,24 @@
       "outputs": []
     },
     "native:check": {
+      "inputs": [
+        "apps/native/**",
+        "crates/**"
+      ],
       "outputs": []
     },
     "native:test": {
+      "inputs": [
+        "apps/native/**",
+        "crates/**"
+      ],
       "outputs": []
     },
     "native:test:automation": {
+      "inputs": [
+        "apps/native/**",
+        "crates/**"
+      ],
       "outputs": []
     }
   }
