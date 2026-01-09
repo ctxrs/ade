@@ -31,6 +31,15 @@
     },
     "rust:test": {
       "outputs": []
+    },
+    "native:check": {
+      "outputs": []
+    },
+    "native:test": {
+      "outputs": []
+    },
+    "native:test:automation": {
+      "outputs": []
     }
   }
 }

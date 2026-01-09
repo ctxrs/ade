@@ -1,4 +1,4 @@
-use gpui::{ClickEvent, Context, CursorStyle, ElementId, FocusHandle, Rgba, div, prelude::*, px};
+use gpui::{ClickEvent, Context, CursorStyle, ElementId, FocusHandle, div, prelude::*, px};
 
 use ctx_core::models::MessageAttachment;
 
@@ -81,7 +81,7 @@ impl<'a> ComposerView<'a> {
             .on_key_down(cx.listener(ShellView::on_composer_key_down))
             .child(input_text);
         // Send button: 24x24 circular with accent border and subtle accent tint, icon-only
-        let mut send_button = {
+        let send_button = {
             let mut send_bg = self.colors.accent;
             send_bg.a = 0.20; // subtle tint
             let send_icon_color = if self.can_send { self.colors.text } else { self.colors.muted };

@@ -256,7 +256,7 @@ impl<'a> SidebarView<'a> {
                     .render(),
                 );
         } else {
-            // Non-workbench routes: show navigation menu
+            // Non-workbench routes: show navigation menu + route-specific list.
             root = root.child(
                 NavigationListView {
                     colors: self.colors,
@@ -264,6 +264,29 @@ impl<'a> SidebarView<'a> {
                 }
                 .render(cx),
             );
+
+            match self.current_route {
+                ShellRoute::Workspaces => {
+                    root = root.child(
+                        WorkspaceListView {
+                            colors: self.colors,
+                            workspaces: self.workspaces,
+                            selected_workspace: self.selected_workspace,
+                        }
+                        .render(cx),
+                    );
+                }
+                ShellRoute::Providers => {
+                    root = root.child(
+                        ProviderListView {
+                            colors: self.colors,
+                            providers: self.providers,
+                        }
+                        .render(),
+                    );
+                }
+                _ => {}
+            }
         }
 
         root

@@ -32,31 +32,47 @@ pub struct ThemeSpacing {
     pub lg: f32,  // 10px
     pub xl: f32,  // 12px
     pub xxl: f32, // 16px
+    #[allow(dead_code)]
     pub xxxl: f32, // 20px
     pub gutter: f32, // 24px
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct ThemeRadii {
+    #[allow(dead_code)]
     pub sm: f32,   // 4px
+    #[allow(dead_code)]
     pub md: f32,   // 6px
+    #[allow(dead_code)]
     pub lg: f32,   // 8px
+    #[allow(dead_code)]
     pub xl: f32,   // 10px
+    #[allow(dead_code)]
     pub xxl: f32,  // 12px
+    #[allow(dead_code)]
     pub pill: f32, // 999px (fully rounded)
 }
 
 #[derive(Debug, Clone)]
 pub struct ThemeTypography {
+    #[allow(dead_code)]
     pub ui: String,   // UI font family
+    #[allow(dead_code)]
     pub mono: String, // Code font family
     // Font sizes in px to match web hierarchy
+    #[allow(dead_code)]
     pub xs: f32,   // 11px
+    #[allow(dead_code)]
     pub sm: f32,   // 12px
+    #[allow(dead_code)]
     pub md: f32,   // 13px (body)
+    #[allow(dead_code)]
     pub lg: f32,   // 14px
+    #[allow(dead_code)]
     pub xl: f32,   // 16px
+    #[allow(dead_code)]
     pub xxl: f32,  // 18px
+    #[allow(dead_code)]
     pub display: f32, // 22px
 }
 
@@ -65,15 +81,20 @@ pub struct ThemeControls {
     pub h_sm: f32,   // 22px
     pub h_md: f32,   // 26px
     pub h_lg: f32,   // 28px
+    #[allow(dead_code)]
     pub h_xl: f32,   // 30px
+    #[allow(dead_code)]
     pub h_round: f32, // 34px (round floating controls)
+    #[allow(dead_code)]
     pub topbar: f32, // 36px
 }
 
 #[derive(Debug, Clone)]
 pub struct ThemeMetrics {
     pub spacing: ThemeSpacing,
+    #[allow(dead_code)]
     pub radii: ThemeRadii,
+    #[allow(dead_code)]
     pub type_scale: ThemeTypography,
     pub controls: ThemeControls,
 }

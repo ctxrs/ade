@@ -20,7 +20,10 @@
     "rust:fmt": "cargo fmt --all -- --check",
     "rust:clippy": "CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-$HOME/.cache/cargo/ctx-monorepo/$(basename \"$(git rev-parse --git-dir)\")} cargo clippy --workspace --all-targets --all-features -- -D warnings",
     "rust:test": "CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-$HOME/.cache/cargo/ctx-monorepo/$(basename \"$(git rev-parse --git-dir)\")} cargo test -q",
-    "verify:quick": "turbo run typecheck --filter=ctx-web --filter=mobile --filter=@ctx/design --filter=@ctx/types --cache-dir=${TURBO_CACHE_DIR:-$HOME/.cache/turbo/ctx-monorepo} --output-logs=errors-only && turbo run test:quiet --filter=ctx-web --filter=mobile --cache-dir=${TURBO_CACHE_DIR:-$HOME/.cache/turbo/ctx-monorepo} --output-logs=errors-only && turbo run rust:fmt rust:clippy rust:test --filter=ctx-monorepo --cache-dir=${TURBO_CACHE_DIR:-$HOME/.cache/turbo/ctx-monorepo} --output-logs=errors-only"
+    "native:check": "RUSTFLAGS=-Dwarnings cargo check --manifest-path apps/native/Cargo.toml --all-targets",
+    "native:test": "RUSTFLAGS=-Dwarnings cargo test --manifest-path apps/native/Cargo.toml -q",
+    "native:test:automation": "RUSTFLAGS=-Dwarnings cargo test --manifest-path apps/native/Cargo.toml --features automation -q",
+    "verify:quick": "turbo run typecheck --filter=ctx-web --filter=mobile --filter=@ctx/design --filter=@ctx/types --cache-dir=${TURBO_CACHE_DIR:-$HOME/.cache/turbo/ctx-monorepo} --output-logs=errors-only && turbo run test:quiet --filter=ctx-web --filter=mobile --cache-dir=${TURBO_CACHE_DIR:-$HOME/.cache/turbo/ctx-monorepo} --output-logs=errors-only && turbo run rust:fmt rust:clippy rust:test native:check native:test native:test:automation --filter=ctx-monorepo --cache-dir=${TURBO_CACHE_DIR:-$HOME/.cache/turbo/ctx-monorepo} --output-logs=errors-only"
   },
   "devDependencies": {
     "pixelmatch": "^7.1.0",

@@ -8,7 +8,7 @@ use serde_json::Value;
 use crate::theme::{ThemeColors, ThemeMetrics};
 
 use super::super::state::turn_tools::{
-    human_tool_kind, tool_status_tone, ToolStatusTone, TurnToolGroup, TurnToolItem,
+    human_tool_kind, ToolStatusTone, TurnToolGroup, TurnToolItem,
 };
 
 pub(super) struct TurnToolsView<'a> {
@@ -112,11 +112,6 @@ impl<'a> TurnToolsView<'a> {
     fn render_tool(&self, tool: &TurnToolItem) -> impl IntoElement {
         let metrics = ThemeMetrics::default();
         let label_parts = tool_label_parts(tool);
-        let kind_label = if tool.tool_kind.trim().is_empty() {
-            "tool".to_string()
-        } else {
-            tool.tool_kind.clone()
-        };
 
         let mut time_line = format!("updated {}", tool.updated_at.to_rfc3339());
         if tool.updated_at != tool.created_at {
