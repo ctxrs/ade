@@ -79,6 +79,7 @@ pub struct ThemeTypography {
 #[derive(Debug, Clone, Copy)]
 pub struct ThemeControls {
     pub h_sm: f32,   // 22px
+    #[allow(dead_code)]
     pub h_md: f32,   // 26px
     pub h_lg: f32,   // 28px
     #[allow(dead_code)]

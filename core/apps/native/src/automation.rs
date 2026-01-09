@@ -493,119 +493,124 @@ fn apply_focus_target(
     cx.notify();
 }
 
+#[cfg(target_os = "linux")]
+async fn capture_window(
+    _cx: &gpui::AsyncApp,
+    _window: &WindowHandle<ShellView>,
+    path: PathBuf,
+) -> Result<PathBuf, String> {
+    // Use OS-level capture on Linux via zed-scap.
+    use scap::capturer::{Capturer, Options};
+    use scap::frame::Frame;
+    // Build a capturer targeting the main display; this avoids needing a window handle.
+    let mut capturer = Capturer::build(Options {
+        fps: 30,
+        show_cursor: false,
+        show_highlight: false,
+        target: None,
+        crop_area: None,
+        output_type: scap::frame::FrameType::BGRAFrame,
+        output_resolution: scap::capturer::Resolution::Captured,
+        excluded_targets: None,
+    })
+    .map_err(|e| format!("failed to initialize scap capturer: {e}"))?;
+
+    capturer.start_capture();
+    let frame = capturer
+        .get_next_frame()
+        .map_err(|e| format!("failed to capture frame: {e}"))?;
+    capturer.stop_capture();
+
+    // Convert frame to RGBA8 buffer expected by image crate.
+    let (width, height, rgba): (u32, u32, Vec<u8>) = match frame {
+        Frame::BGRA(f) => {
+            // BGRA -> RGBA swap R and B
+            let mut out = f.data;
+            for px in out.chunks_exact_mut(4) {
+                px.swap(0, 2);
+            }
+            (f.width as u32, f.height as u32, out)
+        }
+        Frame::BGRx(f) => {
+            // B, G, R, X -> R, G, B, 255
+            let mut out = Vec::with_capacity((f.width * f.height * 4) as usize);
+            for px in f.data.chunks_exact(4) {
+                out.push(px[2]);
+                out.push(px[1]);
+                out.push(px[0]);
+                out.push(255);
+            }
+            (f.width as u32, f.height as u32, out)
+        }
+        Frame::XBGR(f) => {
+            // X, B, G, R -> R, G, B, 255
+            let mut out = Vec::with_capacity((f.width * f.height * 4) as usize);
+            for px in f.data.chunks_exact(4) {
+                out.push(px[3]);
+                out.push(px[2]);
+                out.push(px[1]);
+                out.push(255);
+            }
+            (f.width as u32, f.height as u32, out)
+        }
+        Frame::RGBx(f) => {
+            // R, G, B, X -> R, G, B, 255
+            let mut out = Vec::with_capacity((f.width * f.height * 4) as usize);
+            for px in f.data.chunks_exact(4) {
+                out.push(px[0]);
+                out.push(px[1]);
+                out.push(px[2]);
+                out.push(255);
+            }
+            (f.width as u32, f.height as u32, out)
+        }
+        Frame::BGR0(f) => {
+            // 3-byte BGR -> RGBA
+            let mut out = Vec::with_capacity((f.width * f.height * 4) as usize);
+            for px in f.data.chunks_exact(3) {
+                out.push(px[2]);
+                out.push(px[1]);
+                out.push(px[0]);
+                out.push(255);
+            }
+            (f.width as u32, f.height as u32, out)
+        }
+        Frame::RGB(f) => {
+            let mut out = Vec::with_capacity((f.width * f.height * 4) as usize);
+            for px in f.data.chunks_exact(3) {
+                out.extend_from_slice(&[px[0], px[1], px[2], 255]);
+            }
+            (f.width as u32, f.height as u32, out)
+        }
+        Frame::YUVFrame(_f) => {
+            return Err("unsupported YUV frame format from scap".to_string());
+        }
+    };
+
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|err| format!("failed to create screenshot dir: {err}"))?;
+    }
+
+    image::save_buffer_with_format(
+        &path,
+        &rgba,
+        width,
+        height,
+        ColorType::Rgba8,
+        ImageFormat::Png,
+    )
+    .map_err(|err| format!("failed to write screenshot: {err}"))?;
+
+    Ok(path)
+}
+
+#[cfg(not(target_os = "linux"))]
 async fn capture_window(
     cx: &gpui::AsyncApp,
     window: &WindowHandle<ShellView>,
     path: PathBuf,
 ) -> Result<PathBuf, String> {
-    #[cfg(target_os = "linux")]
-    {
-        // Use OS-level capture on Linux via zed-scap.
-        use scap::capturer::{Capturer, Options};
-        use scap::frame::Frame;
-        // Build a capturer targeting the main display; this avoids needing a window handle.
-        let mut capturer = Capturer::build(Options {
-            fps: 30,
-            show_cursor: false,
-            show_highlight: false,
-            target: None,
-            crop_area: None,
-            output_type: scap::frame::FrameType::BGRAFrame,
-            output_resolution: scap::capturer::Resolution::Captured,
-            excluded_targets: None,
-        })
-        .map_err(|e| format!("failed to initialize scap capturer: {e}"))?;
-
-        capturer.start_capture();
-        let frame = capturer
-            .get_next_frame()
-            .map_err(|e| format!("failed to capture frame: {e}"))?;
-        capturer.stop_capture();
-
-        // Convert frame to RGBA8 buffer expected by image crate.
-        let (width, height, rgba): (u32, u32, Vec<u8>) = match frame {
-            Frame::BGRA(f) => {
-                // BGRA -> RGBA swap R and B
-                let mut out = f.data;
-                for px in out.chunks_exact_mut(4) {
-                    px.swap(0, 2);
-                }
-                (f.width as u32, f.height as u32, out)
-            }
-            Frame::BGRx(f) => {
-                // B, G, R, X -> R, G, B, 255
-                let mut out = Vec::with_capacity((f.width * f.height * 4) as usize);
-                for px in f.data.chunks_exact(4) {
-                    out.push(px[2]);
-                    out.push(px[1]);
-                    out.push(px[0]);
-                    out.push(255);
-                }
-                (f.width as u32, f.height as u32, out)
-            }
-            Frame::XBGR(f) => {
-                // X, B, G, R -> R, G, B, 255
-                let mut out = Vec::with_capacity((f.width * f.height * 4) as usize);
-                for px in f.data.chunks_exact(4) {
-                    out.push(px[3]);
-                    out.push(px[2]);
-                    out.push(px[1]);
-                    out.push(255);
-                }
-                (f.width as u32, f.height as u32, out)
-            }
-            Frame::RGBx(f) => {
-                // R, G, B, X -> R, G, B, 255
-                let mut out = Vec::with_capacity((f.width * f.height * 4) as usize);
-                for px in f.data.chunks_exact(4) {
-                    out.push(px[0]);
-                    out.push(px[1]);
-                    out.push(px[2]);
-                    out.push(255);
-                }
-                (f.width as u32, f.height as u32, out)
-            }
-            Frame::BGR0(f) => {
-                // 3-byte BGR -> RGBA
-                let mut out = Vec::with_capacity((f.width * f.height * 4) as usize);
-                for px in f.data.chunks_exact(3) {
-                    out.push(px[2]);
-                    out.push(px[1]);
-                    out.push(px[0]);
-                    out.push(255);
-                }
-                (f.width as u32, f.height as u32, out)
-            }
-            Frame::RGB(f) => {
-                let mut out = Vec::with_capacity((f.width * f.height * 4) as usize);
-                for px in f.data.chunks_exact(3) {
-                    out.extend_from_slice(&[px[0], px[1], px[2], 255]);
-                }
-                (f.width as u32, f.height as u32, out)
-            }
-            Frame::YUVFrame(_f) => {
-                return Err("unsupported YUV frame format from scap".to_string());
-            }
-        };
-
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|err| format!("failed to create screenshot dir: {err}"))?;
-        }
-
-        image::save_buffer_with_format(
-            &path,
-            &rgba,
-            width,
-            height,
-            ColorType::Rgba8,
-            ImageFormat::Png,
-        )
-        .map_err(|err| format!("failed to write screenshot: {err}"))?;
-
-        return Ok(path);
-    }
-
     // Default path (macOS, possibly Windows): use GPUI's in-process render.
     let image = {
         let mut cx_window = cx.clone();

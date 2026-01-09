@@ -22,6 +22,7 @@ pub(super) struct WorkspaceListView<'a> {
 impl<'a> WorkspaceListView<'a> {
     pub(super) fn render(&self, cx: &mut Context<ShellView>) -> impl IntoElement {
         let metrics = ThemeMetrics::default();
+        let _ = metrics;
         let list = if self.workspaces.is_empty() {
             div()
                 .text_sm()
@@ -79,6 +80,7 @@ pub(super) struct ProviderListView<'a> {
 impl<'a> ProviderListView<'a> {
     pub(super) fn render(&self) -> impl IntoElement {
         let metrics = ThemeMetrics::default();
+        let _ = metrics;
         let list = if self.providers.is_empty() {
             div()
                 .text_sm()
@@ -130,6 +132,7 @@ pub(super) struct NavigationListView {
 impl NavigationListView {
     pub(super) fn render(&self, cx: &mut Context<ShellView>) -> impl IntoElement {
         let metrics = ThemeMetrics::default();
+        let _ = metrics;
         // Order and labels aligned to web app nav copy
         // - "Workspaces" and "Settings" prominent
         // - "Providers" renamed to "Agent Harnesses"
@@ -255,6 +258,7 @@ pub(super) struct TaskListView<'a> {
 impl<'a> TaskListView<'a> {
     pub(super) fn render(&self) -> impl IntoElement {
         let metrics = ThemeMetrics::default();
+        let _ = metrics;
         let list = self
             .tasks
             .iter()

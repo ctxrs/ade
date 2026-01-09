@@ -17,6 +17,7 @@ pub fn primary<E: IntoElement>(colors: ThemeColors, label: E) -> Div {
         .child(label)
 }
 
+#[allow(dead_code)]
 pub fn ghost<E: IntoElement>(colors: ThemeColors, label: E) -> Div {
     let metrics = ThemeMetrics::default();
     div()
@@ -30,6 +31,7 @@ pub fn ghost<E: IntoElement>(colors: ThemeColors, label: E) -> Div {
         .child(label)
 }
 
+#[allow(dead_code)]
 pub fn ghost_icon<E: IntoElement>(colors: ThemeColors, icon: E) -> Div {
     let metrics = ThemeMetrics::default();
     div()

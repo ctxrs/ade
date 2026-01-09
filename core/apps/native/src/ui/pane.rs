@@ -2,6 +2,7 @@ use gpui::{Div, IntoElement, prelude::*, px, div};
 
 use crate::theme::{ThemeColors, ThemeMetrics};
 
+#[allow(dead_code)]
 pub fn container<E: IntoElement>(colors: ThemeColors, body: E) -> Div {
     let metrics = ThemeMetrics::default();
     div()
