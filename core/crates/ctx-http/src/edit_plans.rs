@@ -425,8 +425,25 @@ fn uri_to_relpath(root: &Path, uri: &Uri) -> Result<String> {
     let path = url
         .to_file_path()
         .map_err(|_| anyhow!("uri is not a file path"))?;
-    let canon = path.canonicalize().unwrap_or(path);
+
     let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    let canon = if let Ok(canon) = path.canonicalize() {
+        canon
+    } else {
+        // For file operations like create/rename, the target file may not exist yet.
+        // Canonicalize the nearest existing ancestor (parent dir), then join the file name.
+        let parent = path
+            .parent()
+            .ok_or_else(|| anyhow!("uri has no parent directory"))?;
+        let file_name = path
+            .file_name()
+            .ok_or_else(|| anyhow!("uri has no file name"))?;
+        let parent_canon = parent
+            .canonicalize()
+            .unwrap_or_else(|_| parent.to_path_buf());
+        parent_canon.join(file_name)
+    };
+
     if !canon.starts_with(&root) {
         anyhow::bail!("uri outside root");
     }

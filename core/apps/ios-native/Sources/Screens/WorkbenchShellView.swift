@@ -616,6 +616,22 @@ private struct WorkbenchNavRowView: View {
     let showsChevron: Bool
     let isSelected: Bool
 
+    init(
+        title: String,
+        subtitle: String,
+        status: String?,
+        icon: String,
+        showsChevron: Bool,
+        isSelected: Bool = false
+    ) {
+        self.title = title
+        self.subtitle = subtitle
+        self.status = status
+        self.icon = icon
+        self.showsChevron = showsChevron
+        self.isSelected = isSelected
+    }
+
     var body: some View {
         HStack(spacing: 12) {
             ZStack {

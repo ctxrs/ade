@@ -32,6 +32,9 @@
       "outputs": []
     },
     "rust:clippy": {
+      "dependsOn": [
+        "rust:fmt"
+      ],
       "inputs": [
         "Cargo.toml",
         "Cargo.lock",
@@ -40,6 +43,9 @@
       "outputs": []
     },
     "rust:test": {
+      "dependsOn": [
+        "rust:clippy"
+      ],
       "inputs": [
         "Cargo.toml",
         "Cargo.lock",
@@ -55,6 +61,9 @@
       "outputs": []
     },
     "native:check:automation": {
+      "dependsOn": [
+        "native:check"
+      ],
       "inputs": [
         "apps/native/**",
         "crates/**"
@@ -62,6 +71,9 @@
       "outputs": []
     },
     "native:test": {
+      "dependsOn": [
+        "native:check"
+      ],
       "inputs": [
         "apps/native/**",
         "crates/**"

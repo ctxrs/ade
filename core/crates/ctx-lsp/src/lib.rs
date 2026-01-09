@@ -1411,6 +1411,7 @@ struct LspSession {
 
 impl LspSession {
     async fn spawn(cfg: &LspManagerConfig, root: PathBuf, lang: Language) -> Result<Self> {
+        let root = root.canonicalize().unwrap_or(root);
         let (child, stdin, stdout) = spawn_server(cfg, lang.clone(), &root).await?;
 
         let (tx, mut rx) = mpsc::channel::<Value>(256);

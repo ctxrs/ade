@@ -32,7 +32,7 @@ use std::path::PathBuf;
 use clap::Parser;
 
 #[derive(Parser, Debug)]
-#[command(name = "ctx-native", version, about = "ctx native client")]
+#[command(name = "ctx", version, about = "ctx native client")]
 struct Cli {
     #[arg(long, value_name = "DIR")]
     screenshot_dir: Option<PathBuf>,

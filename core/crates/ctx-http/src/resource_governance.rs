@@ -1,4 +1,6 @@
-use anyhow::{Context, Result};
+#[cfg(target_os = "linux")]
+use anyhow::Context;
+use anyhow::Result;
 use chrono::{DateTime, Utc};
 #[cfg(target_os = "linux")]
 use tokio::process::Command;
@@ -15,7 +17,9 @@ use crate::settings::{
 
 #[cfg(target_os = "linux")]
 const SYSTEMD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
+#[cfg(target_os = "linux")]
 const SCOPE_UNIT_BASE: &str = "ctx-daemon";
+#[cfg(target_os = "linux")]
 const SCOPE_UNIT: &str = "ctx-daemon.scope";
 
 #[derive(Debug, Clone, PartialEq)]
@@ -270,9 +274,9 @@ async fn set_scope_properties(limits: &EffectiveResourceLimits) -> Result<()> {
 }
 
 pub async fn apply_limits(
-    pid: u32,
+    _pid: u32,
     limits: &EffectiveResourceLimits,
-    has_running_children: bool,
+    _has_running_children: bool,
 ) -> ResourceGovernanceRuntime {
     let mut runtime = ResourceGovernanceRuntime {
         last_applied: Some(limits.clone()),
@@ -284,14 +288,14 @@ pub async fn apply_limits(
         runtime.last_state = ResourceGovernanceStatusState::Unsupported;
         runtime.last_message =
             Some("Resource governance is not supported on this OS yet.".to_string());
-        return runtime;
+        runtime
     }
 
     #[cfg(target_os = "linux")]
     {
         let was_in_scope = is_in_scope(SCOPE_UNIT);
         if !was_in_scope {
-            if let Err(err) = attach_scope(pid, limits).await {
+            if let Err(err) = attach_scope(_pid, limits).await {
                 if !is_in_scope(SCOPE_UNIT) {
                     runtime.last_state = ResourceGovernanceStatusState::Unsupported;
                     runtime.last_message = Some(format!("{err:#}"));
@@ -308,7 +312,7 @@ pub async fn apply_limits(
 
         runtime.last_state = ResourceGovernanceStatusState::Applied;
         runtime.last_applied_at = Some(Utc::now());
-        runtime.requires_restart = !was_in_scope && has_running_children;
+        runtime.requires_restart = !was_in_scope && _has_running_children;
         if runtime.requires_restart {
             runtime.last_message =
                 Some("Restart to apply limits to existing processes.".to_string());

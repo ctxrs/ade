@@ -1,9 +1,9 @@
 #!/usr/bin/env node
-// Headless native automation runner (Xorg dummy + openbox + ctx-native + automation script)
+// Headless native automation runner (Xorg dummy + openbox + ctx + automation script)
 // - Extracts user-space Xorg + dummy driver into /tmp/xorg-user/root if missing
 // - Launches Xorg (dummy) and openbox on a free DISPLAY
 // - Sets software rendering env vars
-// - Builds and runs ctx-native with automation enabled
+// - Builds and runs ctx with automation enabled
 // - Waits for /ready, then runs native-automation.mjs
 // - Writes logs to /tmp/ctx-headless-<display> and prints a concise summary
 
@@ -186,7 +186,7 @@ async function main() {
   const port = args.addr ? Number(String(args.addr).split(':').pop()) : await findFreePort();
   const addr = args.addr || `127.0.0.1:${port}`;
   const targetDir = process.env.CARGO_TARGET_DIR || path.join(REPO_ROOT, 'target');
-  const appBin = path.join(targetDir, 'debug', os.platform() === 'win32' ? 'ctx-native.exe' : 'ctx-native');
+  const appBin = path.join(targetDir, 'debug', os.platform() === 'win32' ? 'ctx.exe' : 'ctx');
   const appArgs = [ '--automation-addr', addr, '--screenshot-dir', shotsDir, '--window-size', winSize ];
   const appEnv = { ...xEnv, RUST_LOG: process.env.RUST_LOG || 'info' };
   const app = spawnLogged(appBin, appArgs, { cwd: REPO_ROOT, env: appEnv }, logs.app);
@@ -241,4 +241,3 @@ async function main() {
 }
 
 main().catch((err) => { console.error('[headless] ERROR:', err?.message || err); process.exitCode = 1; });
-

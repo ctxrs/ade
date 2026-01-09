@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
 
+[[bin]]
+name = "ctx"
+path = "src/main.rs"
+
 [dependencies]
 anyhow = "1"
 axum = { version = "0.7", features = ["ws"] }
@@ -25,6 +29,7 @@ tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
 [features]
 default = []
 automation = ["gpui/test-support"]
+cargo-clippy = []
 
 [target.'cfg(not(target_os = "macos"))'.dependencies]
 scap = { git = "https://github.com/zed-industries/scap", rev = "4afea48c3b002197176fb19cd0f9b180dd36eaac", default-features = false, package = "zed-scap", version = "0.0.8-zed", features = ["x11"] }

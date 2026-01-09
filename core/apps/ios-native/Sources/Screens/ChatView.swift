@@ -77,10 +77,13 @@ struct ChatView: View {
                 .onAppear {
                     scrollToBottom(proxy: proxy, animated: false)
                 }
-                .onChange(of: viewModel.messages.last.map { MessageChangeKey(id: $0.id, text: $0.text) }) { _ in
+                .onChange(of: viewModel.messages.last?.id) { _, _ in
                     scrollToBottom(proxy: proxy, animated: true)
                 }
-                .onChange(of: isComposerFocused) { focused in
+                .onChange(of: viewModel.messages.last?.text) { _, _ in
+                    scrollToBottom(proxy: proxy, animated: true)
+                }
+                .onChange(of: isComposerFocused) { _, focused in
                     guard focused else { return }
                     scrollToBottom(proxy: proxy, animated: true)
                 }
@@ -144,10 +147,6 @@ struct ChatView: View {
     }
 }
 
-private struct MessageChangeKey: Equatable {
-    let id: UUID
-    let text: String
-}
 
 struct ChatDetailView: View {
     @EnvironmentObject private var connection: ConnectionStore
