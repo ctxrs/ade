@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 
-.PHONY: help dev verify-quick native-dev native-fmt native-check native-build native-run native-clippy native-clean
+.PHONY: help dev verify-quick native-dev native-dev-watch native-fmt native-check native-build native-run native-clippy native-clean
 
 CARGO ?= cargo
 PNPM ?= pnpm
@@ -10,6 +10,8 @@ NATIVE_RUSTFLAGS ?= -Dwarnings
 NATIVE_DEV_STRICT ?= 1
 NATIVE_FEATURES ?=
 NATIVE_ARGS ?=
+NATIVE_WATCH_PATHS ?= core/apps/native core/crates
+NATIVE_WATCH_EXTS ?= rs,toml
 
 help:
 	@echo "ctx-monorepo Make targets"
@@ -18,6 +20,7 @@ help:
 	@echo "  verify-quick      Run workspace quick verification (pnpm -C core verify:quick)"
 	@echo
 	@echo "  native-dev        Fast launch native app (does not start daemon)"
+	@echo "  native-dev-watch  Rebuild+restart native app on changes"
 	@echo "  native-fmt        cargo fmt for core/apps/native"
 	@echo "  native-check      cargo check for core/apps/native (RUSTFLAGS=-Dwarnings by default)"
 	@echo "  native-build      cargo build for core/apps/native (RUSTFLAGS=-Dwarnings by default)"
@@ -44,6 +47,18 @@ native-dev:
 		$(if $(CTX_DATA_DIR),CTX_DATA_DIR="$(CTX_DATA_DIR)",) \
 		RUSTFLAGS="$(if $(filter 1,$(NATIVE_DEV_STRICT)),$(NATIVE_RUSTFLAGS),)" \
 		$(CARGO) run --manifest-path $(NATIVE_MANIFEST) $(if $(NATIVE_FEATURES),--features "$(NATIVE_FEATURES)",) -- $(NATIVE_ARGS)
+
+native-dev-watch:
+	@command -v watchexec >/dev/null 2>&1 || { \
+		echo "error: watchexec is required for native-dev-watch (brew install watchexec)"; \
+		exit 1; \
+	}
+	@watchexec \
+		--restart \
+		--clear \
+		$(foreach p,$(NATIVE_WATCH_PATHS),--watch $(p)) \
+		--exts $(NATIVE_WATCH_EXTS) \
+		-- '$(MAKE)' native-dev
 
 native-fmt:
 	$(CARGO) fmt --manifest-path $(NATIVE_MANIFEST)
