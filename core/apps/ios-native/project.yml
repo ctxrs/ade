@@ -36,7 +36,7 @@ targets:
         CFBundleDisplayName: ctx
         CFBundleIdentifier: rs.ctx.ios
         CFBundleShortVersionString: 0.1.0
-        CFBundleVersion: 1
+        CFBundleVersion: "1"
         UILaunchScreen:
           UILaunchScreen: {}
         UIUserInterfaceStyle: Dark
