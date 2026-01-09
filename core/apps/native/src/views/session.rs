@@ -1,8 +1,10 @@
 use gpui::{Context, FocusHandle, ListState, div, prelude::*, px, Entity};
 use ctx_core::models::{Artifact, MessageAttachment, SessionEvent};
 
-use crate::automation_tree;
-use crate::theme::ThemeColors;
+use crate::{
+    automation_tree,
+    theme::{ThemeColors, ThemeMetrics},
+};
 
 use super::artifacts::ArtifactsView;
 use super::composer::ComposerView;
@@ -56,6 +58,7 @@ pub(crate) struct SessionView<'a> {
 
 impl<'a> SessionView<'a> {
     pub(super) fn render(&self, cx: &mut Context<ShellView>) -> impl IntoElement {
+        let metrics = ThemeMetrics::default();
         let has_session = self
             .selected_session
             .and_then(|index| self.sessions.get(index))
@@ -110,8 +113,8 @@ impl<'a> SessionView<'a> {
             ))
             .child("Interrupt");
         let mut interrupt_button = div()
-            .px_2()
-            .py_1()
+            .px(px(metrics.spacing.md))
+            .py(px(metrics.spacing.sm))
             .text_sm()
             .border_1()
             .border_color(self.colors.border)
@@ -143,8 +146,8 @@ impl<'a> SessionView<'a> {
             .child(Icon::new(IconName::Cancel, 12.0, cancel_color))
             .child("Cancel");
         let mut cancel_button = div()
-            .px_2()
-            .py_1()
+            .px(px(metrics.spacing.md))
+            .py(px(metrics.spacing.sm))
             .text_sm()
             .border_1()
             .border_color(self.colors.border)
@@ -171,8 +174,8 @@ impl<'a> SessionView<'a> {
                 (self.colors.panel_2, self.colors.muted)
             };
             div()
-                .w(px(28.0))
-                .h(px(28.0))
+                .w(px(metrics.controls.h_md))
+                .h(px(metrics.controls.h_md))
                 .flex()
                 .items_center()
                 .justify_center()
@@ -194,8 +197,8 @@ impl<'a> SessionView<'a> {
                 (self.colors.panel_2, self.colors.muted)
             };
             div()
-                .w(px(28.0))
-                .h(px(28.0))
+                .w(px(metrics.controls.h_md))
+                .h(px(metrics.controls.h_md))
                 .flex()
                 .items_center()
                 .justify_center()
@@ -217,8 +220,8 @@ impl<'a> SessionView<'a> {
                 (self.colors.panel_2, self.colors.muted)
             };
             div()
-                .w(px(28.0))
-                .h(px(28.0))
+                .w(px(metrics.controls.h_md))
+                .h(px(metrics.controls.h_md))
                 .flex()
                 .items_center()
                 .justify_center()
@@ -240,8 +243,8 @@ impl<'a> SessionView<'a> {
                 (self.colors.panel_2, self.colors.muted)
             };
             div()
-                .w(px(28.0))
-                .h(px(28.0))
+                .w(px(metrics.controls.h_md))
+                .h(px(metrics.controls.h_md))
                 .flex()
                 .items_center()
                 .justify_center()
@@ -257,12 +260,12 @@ impl<'a> SessionView<'a> {
         };
 
         let status_pill = div()
-            .px_2()
-            .py_0()
+            .px(px(metrics.spacing.md))
+            .py(px(metrics.spacing.xs))
             .text_sm()
-            .bg(self.colors.panel_2)
+            .bg(self.colors.panel)
             .border_1()
-            .border_color(self.colors.border)
+            .border_color(self.colors.border_strong)
             .rounded_full()
             .child(self.session.status.clone());
 
@@ -274,7 +277,7 @@ impl<'a> SessionView<'a> {
                 div()
                     .flex()
                     .items_center()
-                    .gap_2()
+                    .gap(px(metrics.spacing.lg))
                     .child(div().text_lg().child(self.session.title.clone()))
                     .child(status_pill),
             )
@@ -282,12 +285,12 @@ impl<'a> SessionView<'a> {
                 div()
                     .flex()
                     .items_center()
-                    .gap_2()
+                    .gap(px(metrics.spacing.lg))
                     .child(
                         div()
                             .flex()
                             .items_center()
-                            .gap_1()
+                            .gap(px(metrics.spacing.md))
                             .child(artifacts_toggle)
                             .child(diff_toggle)
                             .child(sessions_toggle)
@@ -300,7 +303,7 @@ impl<'a> SessionView<'a> {
         let header_block = div()
             .flex()
             .flex_col()
-            .gap_1()
+            .gap(px(metrics.spacing.sm))
             .child(header_row)
             .child(
                 div()
@@ -312,8 +315,8 @@ impl<'a> SessionView<'a> {
         let notice_block = match self.data_state {
             DataLoadState::Loading => Some(
                 div()
-                    .px_2()
-                    .py_1()
+                    .px(px(metrics.spacing.md))
+                    .py(px(metrics.spacing.sm))
                     .text_sm()
                     .text_color(self.colors.muted)
                     .border_1()
@@ -326,9 +329,9 @@ impl<'a> SessionView<'a> {
                 div()
                     .flex()
                     .flex_col()
-                    .gap_1()
-                    .px_2()
-                    .py_1()
+                    .gap(px(metrics.spacing.md))
+                    .px(px(metrics.spacing.md))
+                    .py(px(metrics.spacing.sm))
                     .text_sm()
                     .text_color(self.colors.error)
                     .border_1()
@@ -341,7 +344,7 @@ impl<'a> SessionView<'a> {
             DataLoadState::Loaded => None,
         };
 
-        let mut thread_stack = div().flex().flex_col().gap_3().flex_1();
+        let mut thread_stack = div().flex().flex_col().gap(px(metrics.spacing.gutter)).flex_1();
         if let Some(notice_block) = notice_block {
             thread_stack = thread_stack.child(notice_block);
         }
@@ -386,7 +389,7 @@ impl<'a> SessionView<'a> {
         let center_column = div()
             .flex()
             .flex_col()
-            .gap_3()
+            .gap(px(metrics.spacing.xxl))
             .flex_1()
             .child(header_block)
             .child(thread_stack)
@@ -394,11 +397,11 @@ impl<'a> SessionView<'a> {
 
         let show_right_pane =
             self.show_sessions_pane || self.show_diff_pane || self.show_artifacts_pane;
-        let mut content_row = div().flex().flex_row().gap_3().flex_1().child(center_column);
+        let mut content_row = div().flex().flex_row().gap(px(metrics.spacing.gutter)).flex_1().child(center_column);
 
         if show_right_pane {
             let right_pane_handle = div()
-                .w(px(12.0))
+                .w(px(metrics.spacing.xl))
                 .flex()
                 .items_center()
                 .justify_center()
@@ -406,16 +409,16 @@ impl<'a> SessionView<'a> {
                 .child(
                     div()
                         .w(px(2.0))
-                        .h(px(48.0))
+                        .h(px(metrics.spacing.gutter * 2.0))
                         .rounded_sm()
                         .bg(self.colors.border),
                 );
             let mut right_pane = div()
                 .flex()
                 .flex_col()
-                .gap_3()
+                .gap(px(metrics.spacing.gutter))
                 .w(px(360.0))
-                .pl_1();
+                .pl(px(metrics.spacing.sm));
 
             if self.show_sessions_pane {
                 right_pane = right_pane.child(
@@ -423,12 +426,12 @@ impl<'a> SessionView<'a> {
                         .id("sessions-pane")
                         .flex()
                         .flex_col()
-                        .gap_2()
+                        .gap(px(metrics.spacing.xl))
                         .border_1()
                         .border_color(self.colors.border)
                         .rounded_sm()
                         .bg(self.colors.panel_2)
-                        .p_3()
+                        .p(px(metrics.spacing.xl))
                         .child(
                             SessionsPaneView {
                                 colors: self.colors,
@@ -463,12 +466,12 @@ impl<'a> SessionView<'a> {
                         .id("diff-review-pane")
                         .flex()
                         .flex_col()
-                        .gap_2()
+                        .gap(px(metrics.spacing.xl))
                         .border_1()
                         .border_color(self.colors.border)
                         .rounded_sm()
                         .bg(self.colors.panel_2)
-                        .p_3()
+                        .p(px(metrics.spacing.xl))
                         .child(diff_review_view),
                 );
             }
@@ -485,12 +488,12 @@ impl<'a> SessionView<'a> {
                         .id("artifacts-pane")
                         .flex()
                         .flex_col()
-                        .gap_2()
+                        .gap(px(metrics.spacing.xl))
                         .border_1()
                         .border_color(self.colors.border)
                         .rounded_sm()
                         .bg(self.colors.panel_2)
-                        .p_3()
+                        .p(px(metrics.spacing.xl))
                         .child(
                             ArtifactsView {
                                 colors: self.colors,
@@ -512,7 +515,7 @@ impl<'a> SessionView<'a> {
             .flex()
             .flex_col()
             .flex_1()
-            .p_4()
+            .p(px(metrics.spacing.gutter))
             .bg(self.colors.panel)
             .child(content_row);
 
@@ -520,13 +523,13 @@ impl<'a> SessionView<'a> {
             root = root
                 .child(
                     div()
-                        .h(px(12.0))
+                        .h(px(metrics.spacing.xl))
                         .flex()
                         .items_center()
                         .justify_center()
                         .child(
                             div()
-                                .w(px(48.0))
+                                .w(px(metrics.spacing.gutter * 2.0))
                                 .h(px(2.0))
                                 .rounded_sm()
                                 .bg(self.colors.border),
@@ -537,7 +540,7 @@ impl<'a> SessionView<'a> {
                         .id("terminal-pane")
                         .border_t_1()
                         .border_color(self.colors.border)
-                        .pt_3()
+                        .pt(px(metrics.spacing.xl))
                         .child(self.terminal_panel_state.clone()),
                 );
         }

@@ -1,6 +1,6 @@
-use gpui::{ClickEvent, Context, ElementId, div, prelude::*};
+use gpui::{ClickEvent, Context, ElementId, div, prelude::*, px};
 
-use crate::theme::ThemeColors;
+use crate::theme::{ThemeColors, ThemeMetrics};
 
 use super::diagnostics::DiagnosticsPanelView;
 use super::session::SessionView;
@@ -96,8 +96,12 @@ impl<'a> RouterView<'a> {
 
     fn render_workspaces(&self, cx: &mut Context<ShellView>) -> impl IntoElement {
         let colors = self.shell.colors;
+        let metrics = ThemeMetrics::default();
         let refresh_button = self
             .action_button(colors, "Refresh")
+            .h(px(metrics.controls.h_sm))
+            .flex()
+            .items_center()
             .cursor_pointer()
             .id("workspaces-refresh")
             .active(|style| style.opacity(0.85))
@@ -122,7 +126,7 @@ impl<'a> RouterView<'a> {
                 .workspaces
                 .iter()
                 .enumerate()
-                .fold(div().flex().flex_col().gap_1(), |list, (index, workspace)| {
+                .fold(div().flex().flex_col().gap_2(), |list, (index, workspace)| {
                     let is_selected = self.shell.selected_workspace == Some(workspace.id);
                     let item_bg = if is_selected {
                         colors.panel
@@ -142,8 +146,8 @@ impl<'a> RouterView<'a> {
                         div()
                             .flex()
                             .items_center()
-                            .px_2()
-                            .py_1()
+                            .px_3()
+                            .py_2()
                             .border_1()
                             .border_color(item_border)
                             .rounded_sm()
@@ -162,7 +166,7 @@ impl<'a> RouterView<'a> {
             .flex_col()
             .flex_1()
             .gap_3()
-            .p_4()
+            .p(px(metrics.spacing.gutter))
             .bg(colors.panel)
             .child(header)
             .child(list)
@@ -170,6 +174,7 @@ impl<'a> RouterView<'a> {
 
     fn render_diagnostics(&self, _cx: &mut Context<ShellView>) -> impl IntoElement {
         let colors = self.shell.colors;
+        let metrics = ThemeMetrics::default();
         let panel = DiagnosticsPanelView {
             colors,
             frame_time_ms: None,
@@ -184,7 +189,7 @@ impl<'a> RouterView<'a> {
             .flex_col()
             .flex_1()
             .gap_3()
-            .p_4()
+            .p(px(metrics.spacing.gutter))
             .bg(colors.panel)
             .child(div().text_lg().child("Diagnostics"))
             .child(panel)
@@ -198,6 +203,7 @@ impl<'a> RouterView<'a> {
 
     fn render_app_settings(&self, cx: &mut Context<ShellView>) -> impl IntoElement {
         let colors = self.shell.colors;
+        let metrics = ThemeMetrics::default();
         let base_url = if self.shell.base_url == "unknown" {
             "Not connected".to_string()
         } else {
@@ -254,7 +260,7 @@ impl<'a> RouterView<'a> {
             .flex_col()
             .flex_1()
             .gap_3()
-            .p_4()
+            .p(px(metrics.spacing.gutter))
             .bg(colors.panel)
             .child(div().text_lg().child("App Settings"))
             .child(connection_card)
@@ -275,7 +281,7 @@ impl<'a> RouterView<'a> {
             .border_color(colors.border)
             .rounded_sm()
             .bg(colors.panel_2)
-            .p_2()
+            .p_3()
             .child(
                 div()
                     .text_sm()
@@ -287,7 +293,7 @@ impl<'a> RouterView<'a> {
 
     fn action_button(&self, colors: ThemeColors, label: &str) -> gpui::Div {
         div()
-            .px_2()
+            .px_3()
             .py_1()
             .text_sm()
             .border_1()

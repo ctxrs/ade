@@ -1,6 +1,6 @@
 use gpui::{ClickEvent, Context, Rgba, div, prelude::*, px};
 
-use crate::theme::ThemeColors;
+use crate::theme::{ThemeColors, ThemeMetrics};
 
 use super::super::icons::{Icon, IconName};
 use super::super::state::diff_review::{
@@ -17,6 +17,7 @@ pub(super) struct DiffReviewView<'a> {
 
 impl<'a> DiffReviewView<'a> {
     pub(super) fn render(&self, cx: &mut Context<DiffReviewState>) -> impl IntoElement {
+        let metrics = ThemeMetrics::default();
         let has_changes = !self.state.diff.trim().is_empty();
         let is_loading = self.state.busy_key.as_deref() == Some("diff:load");
         let mut root = div().flex().flex_col().gap_2();
@@ -24,8 +25,8 @@ impl<'a> DiffReviewView<'a> {
         if let Some(error) = &self.state.error {
             root = root.child(
                 div()
-                    .px_2()
-                    .py_1()
+                    .px(px(metrics.spacing.md))
+                    .py(px(metrics.spacing.sm))
                     .border_1()
                     .border_color(self.colors.error)
                     .rounded_sm()
@@ -39,8 +40,8 @@ impl<'a> DiffReviewView<'a> {
         if let Some(status) = &self.state.status {
             root = root.child(
                 div()
-                    .px_2()
-                    .py_1()
+                    .px(px(metrics.spacing.md))
+                    .py(px(metrics.spacing.sm))
                     .border_1()
                     .border_color(self.colors.success)
                     .rounded_sm()
@@ -96,44 +97,46 @@ impl<'a> DiffReviewView<'a> {
             });
 
             let mut reject_button = div()
-                .px_2()
-                .py_1()
+                .px(px(metrics.spacing.xxl))
+                .py(px(metrics.spacing.sm))
                 .text_sm()
                 .border_1()
                 .border_color(self.colors.border)
-                .rounded_sm()
+                .rounded_full()
                 .child("Reject")
+                .bg(self.colors.panel)
                 .id("diff-reject-all");
             let mut approve_button = div()
-                .px_2()
-                .py_1()
+                .px(px(metrics.spacing.xxl))
+                .py(px(metrics.spacing.sm))
                 .text_sm()
                 .border_1()
                 .border_color(self.colors.border)
-                .rounded_sm()
+                .rounded_full()
                 .child("Approve")
+                .bg(self.colors.accent)
+                .text_color(self.colors.text)
                 .id("diff-approve-all");
 
             if can_apply_all {
                 reject_button = reject_button
-                    .text_color(self.colors.error)
+                    .text_color(self.colors.text)
                     .cursor_pointer()
-                    .active(|style| style.opacity(0.85))
+                    .active(|style| style.opacity(0.92))
                     .on_click(on_reject);
                 approve_button = approve_button
-                    .text_color(self.colors.success)
                     .cursor_pointer()
-                    .active(|style| style.opacity(0.85))
+                    .active(|style| style.opacity(0.92))
                     .on_click(on_approve);
             } else {
-                reject_button = reject_button.text_color(self.colors.muted);
-                approve_button = approve_button.text_color(self.colors.muted);
+                reject_button = reject_button.text_color(self.colors.muted).bg(self.colors.panel_2);
+                approve_button = approve_button.text_color(self.colors.muted).bg(self.colors.panel_2);
             }
 
             div()
                 .flex()
                 .items_center()
-                .gap_3()
+                .gap_2()
                 .child(approve_button)
                 .child(reject_button)
         };
@@ -142,24 +145,29 @@ impl<'a> DiffReviewView<'a> {
             .flex()
             .items_center()
             .justify_between()
+            .px(px(metrics.spacing.xl))
+            .py(px(metrics.spacing.lg))
+            .border_b_1()
+            .border_color(self.colors.border)
+            .bg(self.colors.panel)
             .text_sm()
             .child(
                 div()
                     .flex()
                     .items_center()
-                    .gap_1()
-                    .child(Icon::new(IconName::Diff, 12.0, self.colors.muted))
+                    .gap_2()
+                    .child(Icon::new(IconName::Diff, 14.0, self.colors.muted))
                     .child(div().text_color(self.colors.text).child("All changes"))
                     .child(
                         div()
-                            .px_2()
-                            .py_0()
+                            .px(px(metrics.spacing.lg))
+                            .py(px(metrics.spacing.xxs))
                             .text_sm()
                             .border_1()
                             .border_color(self.colors.border)
                             .rounded_full()
                             .bg(self.colors.panel)
-                            .text_color(self.colors.muted)
+                            .text_color(self.colors.text)
                             .child(format!("{}", self.state.files.len())),
                     ),
             )
@@ -196,8 +204,8 @@ impl<'a> DiffReviewView<'a> {
                             .flex()
                             .items_center()
                             .gap_2()
-                            .px_3()
-                            .py_2()
+                            .px(px(metrics.spacing.xl))
+                            .py(px(metrics.spacing.md))
                             .border_1()
                             .border_color(item_border)
                             .rounded_sm()
@@ -254,21 +262,23 @@ impl<'a> DiffReviewView<'a> {
                     });
 
                     let mut undo_button = div()
-                        .px_3()
-                        .py_1()
+                        .px(px(metrics.spacing.xxl))
+                        .py(px(metrics.spacing.sm))
                         .text_sm()
                         .border_1()
                         .border_color(self.colors.border)
                         .rounded_full()
+                        .bg(self.colors.panel)
                         .child("Undo")
                         .id(format!("diff-file-undo-{}", file.key));
                     let mut keep_button = div()
-                        .px_3()
-                        .py_1()
+                        .px(px(metrics.spacing.xxl))
+                        .py(px(metrics.spacing.sm))
                         .text_sm()
                         .border_1()
                         .border_color(self.colors.border)
                         .rounded_full()
+                        .bg(self.colors.panel)
                         .child("Keep")
                         .id(format!("diff-file-keep-{}", file.key));
 
@@ -276,12 +286,12 @@ impl<'a> DiffReviewView<'a> {
                         undo_button = undo_button
                             .text_color(self.colors.error)
                             .cursor_pointer()
-                            .active(|style| style.opacity(0.85))
+                            .active(|style| style.opacity(0.92))
                             .on_click(on_undo);
                         keep_button = keep_button
                             .text_color(self.colors.success)
                             .cursor_pointer()
-                            .active(|style| style.opacity(0.85))
+                            .active(|style| style.opacity(0.92))
                             .on_click(on_keep);
                     } else {
                         undo_button = undo_button.text_color(self.colors.muted);
@@ -301,6 +311,11 @@ impl<'a> DiffReviewView<'a> {
                     .flex()
                     .items_center()
                     .gap_3()
+                    .px(px(metrics.spacing.xl))
+                    .py(px(metrics.spacing.md))
+                    .bg(self.colors.panel)
+                    .border_b_1()
+                    .border_color(self.colors.border)
                     .child(div().text_sm().child(file.file_path.clone()))
                     .child(summary)
                     .child(div().flex_1())
@@ -327,7 +342,7 @@ impl<'a> DiffReviewView<'a> {
                             .border_color(self.colors.border)
                             .rounded_sm()
                             .bg(self.colors.panel)
-                            .p_3()
+                            .p(px(metrics.spacing.xl))
                             .child(preview),
                     )
             } else {
@@ -352,7 +367,9 @@ impl<'a> DiffReviewView<'a> {
                     div()
                         .flex()
                         .flex_col()
-                        .w(px(240.0))
+                        .w(px(320.0))
+                        .p(px(metrics.spacing.xl))
+                        .gap_2()
                         .child(list),
                 )
                 .child(
@@ -360,10 +377,8 @@ impl<'a> DiffReviewView<'a> {
                         .flex()
                         .flex_col()
                         .flex_1()
-                        .border_1()
+                        .border_l_1()
                         .border_color(self.colors.border)
-                        .rounded_sm()
-                        .p_3()
                         .bg(self.colors.panel_2)
                         .child(detail),
                 ),
@@ -425,6 +440,7 @@ fn render_inline_diff(
             .child("No hunks to display.");
     }
 
+    let metrics = ThemeMetrics::default();
     let mut hunks = div().flex().flex_col().gap_2();
     let can_apply = state.track_id.is_some() && state.busy_key.is_none();
 
@@ -465,21 +481,23 @@ fn render_inline_diff(
             });
 
             let mut undo_button = div()
-                .px_3()
-                .py_1()
+                .px(px(metrics.spacing.xxl))
+                .py(px(metrics.spacing.sm))
                 .text_sm()
                 .border_1()
                 .border_color(colors.border)
                 .rounded_full()
+                .bg(colors.panel)
                 .child("Undo")
                 .id(format!("diff-hunk-undo-{}", hunk.key));
             let mut keep_button = div()
-                .px_3()
-                .py_1()
+                .px(px(metrics.spacing.xxl))
+                .py(px(metrics.spacing.sm))
                 .text_sm()
                 .border_1()
                 .border_color(colors.border)
                 .rounded_full()
+                .bg(colors.panel)
                 .child("Keep")
                 .id(format!("diff-hunk-keep-{}", hunk.key));
 
@@ -487,12 +505,12 @@ fn render_inline_diff(
                 undo_button = undo_button
                     .text_color(colors.error)
                     .cursor_pointer()
-                    .active(|style| style.opacity(0.85))
+                    .active(|style| style.opacity(0.92))
                     .on_click(on_undo);
                 keep_button = keep_button
                     .text_color(colors.success)
                     .cursor_pointer()
-                    .active(|style| style.opacity(0.85))
+                    .active(|style| style.opacity(0.92))
                     .on_click(on_keep);
             } else {
                 undo_button = undo_button.text_color(colors.muted);
@@ -511,9 +529,11 @@ fn render_inline_diff(
             .flex()
             .items_center()
             .gap_3()
-            .px_2()
-            .py_2()
-            .bg(colors.panel_2)
+            .px(px(metrics.spacing.xl))
+            .py(px(metrics.spacing.md))
+            .bg(colors.panel)
+            .border_b_1()
+            .border_color(colors.border)
             .child(
                 div()
                     .text_sm()
@@ -528,8 +548,8 @@ fn render_inline_diff(
             .flex()
             .flex_col()
             .gap_0()
-            .px_1()
-            .py_1()
+            .px(px(metrics.spacing.md))
+            .py(px(metrics.spacing.sm))
             .text_sm()
             .font_family(MONO_FONT_FAMILY)
             .whitespace_nowrap()

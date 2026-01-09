@@ -4,8 +4,10 @@ use std::time::{Duration, Instant};
 use gpui::{ClickEvent, Context, ElementId, div, prelude::*, px};
 use gpui_tokio::Tokio;
 
-use crate::automation_tree;
-use crate::theme::ThemeColors;
+use crate::{
+    automation_tree,
+    theme::{ThemeColors, ThemeMetrics},
+};
 
 use ctx_client::WebSessionInfo;
 
@@ -25,6 +27,7 @@ pub(crate) struct SessionsPaneView<'a> {
 
 impl<'a> SessionsPaneView<'a> {
     pub(super) fn render(&self, cx: &mut Context<ShellView>) -> impl IntoElement {
+        let metrics = ThemeMetrics::default();
         maybe_refresh_web_sessions(cx);
         let (web_sessions, selected_web_id, web_loading, web_error) = web_sessions_snapshot();
         let selected_web_session = selected_web_id
@@ -62,8 +65,8 @@ impl<'a> SessionsPaneView<'a> {
                             .flex()
                             .items_center()
                             .justify_between()
-                            .px_3()
-                            .py_2()
+                            .px(px(metrics.spacing.xl))
+                            .py(px(metrics.spacing.md))
                             .border_1()
                             .border_color(item_border)
                             .rounded_sm()
@@ -72,8 +75,8 @@ impl<'a> SessionsPaneView<'a> {
                             .child(session.title.clone())
                             .child(
                                 div()
-                                    .px_2()
-                                    .py_0()
+                                    .px(px(metrics.spacing.md))
+                                    .py(px(0.0))
                                     .text_sm()
                                     .text_color(self.colors.muted)
                                     .child(session.status.clone()),
@@ -106,14 +109,14 @@ impl<'a> SessionsPaneView<'a> {
         }
 
         let count_pill = div()
-            .px_1()
-            .py_0()
+            .px(px(metrics.spacing.md))
+            .py(px(0.0))
             .text_sm()
             .border_1()
             .border_color(self.colors.border)
-            .rounded_sm()
+            .rounded_full()
             .bg(self.colors.panel)
-            .text_color(self.colors.muted)
+            .text_color(self.colors.text)
             .child(format!("{}", self.sessions.len()));
 
         let web_list = if web_sessions.is_empty() {
@@ -157,8 +160,8 @@ impl<'a> SessionsPaneView<'a> {
                         .flex()
                         .items_center()
                         .justify_between()
-                        .px_3()
-                        .py_2()
+                        .px(px(metrics.spacing.xl))
+                        .py(px(metrics.spacing.md))
                         .border_1()
                         .border_color(item_border)
                         .rounded_sm()
@@ -167,8 +170,8 @@ impl<'a> SessionsPaneView<'a> {
                         .child(label)
                         .child(
                             div()
-                                .px_2()
-                                .py_0()
+                                .px(px(metrics.spacing.md))
+                                .py(px(0.0))
                                 .text_sm()
                                 .text_color(self.colors.muted)
                                 .child(session.status.clone()),
@@ -202,7 +205,7 @@ impl<'a> SessionsPaneView<'a> {
                 .border_color(self.colors.border)
                 .rounded_sm()
                 .bg(self.colors.panel_2)
-                .p_3()
+                .p(px(metrics.spacing.xl))
                 .h(px(220.0))
                 .child(viewer_message);
 
@@ -230,8 +233,8 @@ impl<'a> SessionsPaneView<'a> {
             }
 
             let mut open_button = div()
-                .px_3()
-                .py_1()
+                .px(px(metrics.spacing.xl))
+                .py(px(metrics.spacing.sm))
                 .text_sm()
                 .border_1()
                 .border_color(self.colors.border)
@@ -273,14 +276,14 @@ impl<'a> SessionsPaneView<'a> {
         };
 
         let web_count = div()
-            .px_1()
-            .py_0()
+            .px(px(metrics.spacing.md))
+            .py(px(0.0))
             .text_sm()
             .border_1()
             .border_color(self.colors.border)
-            .rounded_sm()
+            .rounded_full()
             .bg(self.colors.panel)
-            .text_color(self.colors.muted)
+            .text_color(self.colors.text)
             .child(format!("{}", web_sessions.len()));
 
         div()
@@ -293,6 +296,11 @@ impl<'a> SessionsPaneView<'a> {
                     .flex()
                     .items_center()
                     .justify_between()
+                    .px(px(metrics.spacing.xl))
+                    .py(px(metrics.spacing.lg))
+                    .border_b_1()
+                    .border_color(self.colors.border)
+                    .bg(self.colors.panel)
                     .text_sm()
                     .child(
                         div()
@@ -304,24 +312,24 @@ impl<'a> SessionsPaneView<'a> {
                     )
                     .child(count_pill),
             )
-            .child(div().h(px(6.0)))
             .child(list)
-            .child(div().h(px(6.0)))
             .child(stream_block)
-            .child(div().h(px(6.0)))
             .child(
                 div()
                     .flex()
                     .items_center()
                     .justify_between()
+                    .px(px(metrics.spacing.xl))
+                    .py(px(metrics.spacing.md))
+                    .border_b_1()
+                    .border_color(self.colors.border)
+                    .bg(self.colors.panel)
                     .text_sm()
                     .text_color(self.colors.muted)
                     .child("Web Sessions")
                     .child(web_count),
             )
-            .child(div().h(px(6.0)))
             .child(web_list)
-            .child(div().h(px(6.0)))
             .child(web_stream_section)
             .child(if let Some(error) = web_error {
                 div()
