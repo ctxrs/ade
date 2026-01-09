@@ -206,6 +206,7 @@ async fn handle_limits(
 
             if is_new {
                 log_guard_event(state, proc, "over_max", limits, proc.memory_bytes).await;
+                capture_guard_snapshot(state, proc, "over_max", proc.memory_bytes).await;
                 let kill_at_ms =
                     unix_ms_now().saturating_add(limits.grace_period.as_millis() as u64);
                 notify_sessions(
@@ -279,6 +280,7 @@ async fn kill_provider_process(
     system: &SystemSnapshot,
 ) {
     log_guard_event(state, proc, "kill", limits, proc.memory_bytes).await;
+    capture_guard_snapshot(state, proc, "kill", proc.memory_bytes).await;
     notify_sessions(
         state,
         proc,
@@ -302,6 +304,86 @@ async fn kill_provider_process(
             pid = proc.pid,
             "provider guard failed to kill process"
         );
+    }
+}
+
+async fn capture_guard_snapshot(
+    state: &Arc<AppState>,
+    proc: &ResourceProcess,
+    event: &str,
+    memory_bytes: u64,
+) {
+    #[cfg(target_os = "linux")]
+    {
+        let timestamp_ms = unix_ms_now();
+        let dir = state.data_root.join("logs").join("providers");
+        let path = dir.join(format!(
+            "provider-guard-{}-{}-{}-{}.log",
+            proc.label, proc.pid, event, timestamp_ms
+        ));
+        if tokio::fs::create_dir_all(&dir).await.is_err() {
+            return;
+        }
+
+        let mut output = String::new();
+        output.push_str(&format!("event={event}\n"));
+        output.push_str(&format!("pid={}\n", proc.pid));
+        output.push_str(&format!("label={}\n", proc.label));
+        output.push_str(&format!("memory_bytes={memory_bytes}\n"));
+        output.push_str(&format!("timestamp_ms={timestamp_ms}\n\n"));
+
+        let status_path = format!("/proc/{}/status", proc.pid);
+        match tokio::fs::read_to_string(&status_path).await {
+            Ok(status) => {
+                output.push_str("== /proc/pid/status ==\n");
+                output.push_str(&status);
+                output.push('\n');
+            }
+            Err(err) => {
+                output.push_str("== /proc/pid/status ==\n");
+                output.push_str(&format!("error={err:#}\n\n"));
+            }
+        }
+
+        let smaps_path = format!("/proc/{}/smaps_rollup", proc.pid);
+        match tokio::fs::read_to_string(&smaps_path).await {
+            Ok(smaps) => {
+                output.push_str("== /proc/pid/smaps_rollup ==\n");
+                output.push_str(&smaps);
+                output.push('\n');
+            }
+            Err(err) => {
+                output.push_str("== /proc/pid/smaps_rollup ==\n");
+                output.push_str(&format!("error={err:#}\n\n"));
+            }
+        }
+
+        let cmdline_path = format!("/proc/{}/cmdline", proc.pid);
+        match tokio::fs::read(&cmdline_path).await {
+            Ok(cmdline) => {
+                let printable = cmdline
+                    .split(|b| *b == 0)
+                    .filter_map(|part| std::str::from_utf8(part).ok())
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                output.push_str("== /proc/pid/cmdline ==\n");
+                output.push_str(&printable);
+                output.push('\n');
+            }
+            Err(err) => {
+                output.push_str("== /proc/pid/cmdline ==\n");
+                output.push_str(&format!("error={err:#}\n"));
+            }
+        }
+
+        if tokio::fs::write(&path, output).await.is_ok() {
+            tracing::info!(
+                provider_id = %proc.label,
+                pid = proc.pid,
+                path = %path.display(),
+                "captured provider guard snapshot"
+            );
+        }
     }
 }
 
