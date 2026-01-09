@@ -66,7 +66,7 @@ impl Render for TerminalPanelState {
                 .text_sm()
                 .border_1()
                 .border_color(colors.border)
-                .rounded_sm()
+                .rounded_full()
                 .bg(colors.panel)
                 .text_color(color)
                 .child(label)
@@ -141,7 +141,7 @@ impl Render for TerminalPanelState {
             .text_sm()
             .border_1()
             .border_color(colors.border)
-            .rounded_sm()
+            .rounded_full()
             .child(TerminalScope::Task.label())
             .id("terminal-scope-task");
         if task_scope_disabled {
@@ -168,7 +168,7 @@ impl Render for TerminalPanelState {
             .text_sm()
             .border_1()
             .border_color(colors.border)
-            .rounded_sm()
+            .rounded_full()
             .child(TerminalScope::Workspace.label())
             .id("terminal-scope-workspace");
         if self.scope == TerminalScope::Workspace {
@@ -359,7 +359,13 @@ impl Render for TerminalPanelState {
                             .child("Terminals")
                             .child(
                                 div()
+                                    .px_2()
+                                    .py_0()
                                     .text_sm()
+                                    .border_1()
+                                    .border_color(colors.border)
+                                    .rounded_full()
+                                    .bg(colors.panel)
                                     .text_color(colors.muted)
                                     .child(format!("{}", scope_terminals.len())),
                             ),

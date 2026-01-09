@@ -106,12 +106,12 @@ impl<'a> SessionsPaneView<'a> {
         }
 
         let count_pill = div()
-            .px_1()
+            .px_2()
             .py_0()
             .text_sm()
             .border_1()
             .border_color(self.colors.border)
-            .rounded_sm()
+            .rounded_full()
             .bg(self.colors.panel)
             .text_color(self.colors.muted)
             .child(format!("{}", self.sessions.len()));
@@ -273,12 +273,12 @@ impl<'a> SessionsPaneView<'a> {
         };
 
         let web_count = div()
-            .px_1()
+            .px_2()
             .py_0()
             .text_sm()
             .border_1()
             .border_color(self.colors.border)
-            .rounded_sm()
+            .rounded_full()
             .bg(self.colors.panel)
             .text_color(self.colors.muted)
             .child(format!("{}", web_sessions.len()));
@@ -304,11 +304,8 @@ impl<'a> SessionsPaneView<'a> {
                     )
                     .child(count_pill),
             )
-            .child(div().h(px(6.0)))
             .child(list)
-            .child(div().h(px(6.0)))
             .child(stream_block)
-            .child(div().h(px(6.0)))
             .child(
                 div()
                     .flex()
@@ -319,9 +316,7 @@ impl<'a> SessionsPaneView<'a> {
                     .child("Web Sessions")
                     .child(web_count),
             )
-            .child(div().h(px(6.0)))
             .child(web_list)
-            .child(div().h(px(6.0)))
             .child(web_stream_section)
             .child(if let Some(error) = web_error {
                 div()

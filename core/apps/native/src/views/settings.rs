@@ -35,8 +35,8 @@ fn status_pill(colors: ThemeColors, label: &str, tone: StatusTone) -> impl IntoE
 
 fn button_base<E: IntoElement>(colors: ThemeColors, label: E) -> gpui::Div {
     div()
-        .px_2()
-        .py_1()
+        .px_3()
+        .py_2()
         .text_sm()
         .border_1()
         .border_color(colors.border)
@@ -53,7 +53,7 @@ fn section_card<E: IntoElement>(colors: ThemeColors, title: &str, body: E) -> im
         .border_color(colors.border)
         .rounded_sm()
         .bg(colors.panel_2)
-        .p_2()
+        .p_3()
         .child(
             div()
                 .text_sm()
@@ -72,7 +72,7 @@ fn error_banner(colors: ThemeColors, title: &str, message: &str) -> impl IntoEle
         .border_color(colors.error)
         .rounded_sm()
         .bg(colors.panel)
-        .p_2()
+        .p_3()
         .child(
             div()
                 .text_sm()
@@ -114,7 +114,7 @@ impl Render for SettingsState {
             .flex()
             .items_center()
             .justify_between()
-            .child(div().text_sm().child("Settings"))
+            .child(div().text_lg().child("Settings"))
             .child(refresh_button);
 
         let summary_rows = self.summary_rows();
@@ -160,7 +160,7 @@ impl Render for SettingsState {
             self.workspaces
                 .iter()
                 .enumerate()
-                .fold(div().flex().flex_col().gap_1(), |list, (index, workspace)| {
+                .fold(div().flex().flex_col().gap_2(), |list, (index, workspace)| {
                     let is_selected = self.selected_workspace == Some(workspace.id);
                     let item_bg = if is_selected {
                         colors.panel
@@ -179,8 +179,8 @@ impl Render for SettingsState {
                         div()
                             .flex()
                             .items_center()
-                            .px_2()
-                            .py_1()
+                            .px_3()
+                            .py_2()
                             .border_1()
                             .border_color(item_border)
                             .rounded_sm()
@@ -219,7 +219,7 @@ impl Render for SettingsState {
 
         let provider_controls = section_card(
             colors,
-            "Agent harnesses",
+            "Agent Harnesses",
             div()
                 .flex()
                 .flex_col()
@@ -548,8 +548,8 @@ impl Render for SettingsState {
                             .flex()
                             .flex_col()
                             .gap_1()
-                            .px_2()
-                            .py_2()
+                            .px_3()
+                            .py_3()
                             .border_1()
                             .border_color(colors.border)
                             .rounded_sm()
@@ -569,7 +569,7 @@ impl Render for SettingsState {
             )
         };
 
-        let provider_card = section_card(colors, "Harnesses", provider_list);
+        let provider_card = section_card(colors, "Agent Harnesses", provider_list);
 
         let mut errors = div().flex().flex_col().gap_1();
         if let Some(message) = self.workspace_error.as_ref() {
@@ -587,7 +587,7 @@ impl Render for SettingsState {
             .flex()
             .flex_col()
             .gap_3()
-            .p_3()
+            .p_4()
             .child(header)
             .child(summary_card)
             .child(provider_controls)

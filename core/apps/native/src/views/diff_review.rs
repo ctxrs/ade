@@ -352,7 +352,7 @@ impl<'a> DiffReviewView<'a> {
                     div()
                         .flex()
                         .flex_col()
-                        .w(px(240.0))
+                        .w(px(260.0))
                         .child(list),
                 )
                 .child(

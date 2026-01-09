@@ -1,4 +1,4 @@
-use gpui::{ClickEvent, Context, CursorStyle, ElementId, FocusHandle, div, prelude::*};
+use gpui::{ClickEvent, Context, CursorStyle, ElementId, FocusHandle, Rgba, div, prelude::*, px};
 
 use ctx_core::models::MessageAttachment;
 
@@ -75,40 +75,32 @@ impl<'a> ComposerView<'a> {
             .on_click(cx.listener(ShellView::focus_composer))
             .on_key_down(cx.listener(ShellView::on_composer_key_down))
             .child(input_text);
-
-        let send_color = if self.can_send {
-            self.colors.text
-        } else {
-            self.colors.muted
+        // Send button: 24x24 circular with accent border and subtle accent tint, icon-only
+        let mut send_button = {
+            let mut send_bg = self.colors.accent;
+            send_bg.a = 0.20; // subtle tint
+            let send_icon_color = if self.can_send { self.colors.text } else { self.colors.muted };
+            let base = div()
+                .w(px(24.0))
+                .h(px(24.0))
+                .rounded_full()
+                .border_1()
+                .border_color(if self.can_send { self.colors.accent } else { self.colors.border })
+                .bg(if self.can_send { send_bg } else { self.colors.panel_2 })
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(Icon::new(IconName::Send, 14.0, send_icon_color))
+                .id("composer-send");
+            if self.can_send {
+                base
+                    .cursor_pointer()
+                    .active(|style| style.opacity(0.85))
+                    .on_click(cx.listener(ShellView::on_send_click))
+            } else {
+                base
+            }
         };
-        let send_label = div()
-            .flex()
-            .items_center()
-            .gap_1()
-            .child(Icon::new(IconName::Send, 14.0, send_color))
-            .child("Send");
-
-        let mut send_button = div()
-            .px_3()
-            .py_1()
-            .text_sm()
-            .border_1()
-            .border_color(self.colors.border)
-            .rounded_full()
-            .child(send_label)
-            .id("composer-send");
-
-        if self.can_send {
-            send_button = send_button
-                .bg(self.colors.panel)
-                .cursor_pointer()
-                .active(|style| style.opacity(0.85))
-                .on_click(cx.listener(ShellView::on_send_click));
-        } else {
-            send_button = send_button
-                .bg(self.colors.panel_2)
-                .text_color(self.colors.muted);
-        }
 
         let attachment_placeholder = "Attachment path (image)";
         let (attachment_text, attachment_is_placeholder) =
@@ -145,16 +137,16 @@ impl<'a> ComposerView<'a> {
             .child(attachment_text);
 
         let mut add_attachment_button = div()
-            .px_3()
+            .px_2()
             .py_1()
             .text_sm()
+            .rounded_full()
             .border_1()
             .border_color(self.colors.border)
-            .rounded_full()
-            .child("Add")
+            .bg(self.colors.panel)
+            .child("Attach")
             .id("composer-add-attachment");
         add_attachment_button = add_attachment_button
-            .bg(self.colors.panel)
             .cursor_pointer()
             .active(|style| style.opacity(0.85))
             .on_click(cx.listener(ShellView::on_add_attachment_click));
@@ -170,7 +162,7 @@ impl<'a> ComposerView<'a> {
                     .child("No providers")
             } else {
                 self.provider_options.iter().enumerate().fold(
-                    div().flex().flex_col().gap_1(),
+                    div().flex().flex_col().gap_2(),
                     |list, (index, provider)| {
                         let is_selected = self.selected_provider == Some(provider.as_str());
                         let provider_id = provider.clone();
@@ -202,7 +194,7 @@ impl<'a> ComposerView<'a> {
             div()
                 .flex()
                 .flex_col()
-                .gap_1()
+                .gap_2()
                 .p_2()
                 .border_1()
                 .border_color(self.colors.border)
@@ -221,7 +213,7 @@ impl<'a> ComposerView<'a> {
                     .child("No models")
             } else {
                 self.model_options.iter().enumerate().fold(
-                    div().flex().flex_col().gap_1(),
+                    div().flex().flex_col().gap_2(),
                     |list, (index, model)| {
                         let is_selected = self.selected_model == Some(model.as_str());
                         let model_id = model.clone();
@@ -253,7 +245,7 @@ impl<'a> ComposerView<'a> {
             div()
                 .flex()
                 .flex_col()
-                .gap_1()
+                .gap_2()
                 .p_2()
                 .border_1()
                 .border_color(self.colors.border)
@@ -270,14 +262,12 @@ impl<'a> ComposerView<'a> {
             .gap_1()
             .child(
                 div()
-                    .px_3()
+                    .px_2()
                     .py_1()
                     .text_sm()
-                    .border_1()
-                    .border_color(self.colors.border)
                     .rounded_full()
-                    .bg(self.colors.panel_2)
-                    .child(format!("Provider: {provider_label} v"))
+                    .text_color(self.colors.muted)
+                    .child(format!("Provider: {provider_label} ▾"))
                     .cursor_pointer()
                     .id("composer-provider-toggle")
                     .active(|style| style.opacity(0.85))
@@ -291,14 +281,12 @@ impl<'a> ComposerView<'a> {
             .gap_1()
             .child(
                 div()
-                    .px_3()
+                    .px_2()
                     .py_1()
                     .text_sm()
-                    .border_1()
-                    .border_color(self.colors.border)
                     .rounded_full()
-                    .bg(self.colors.panel_2)
-                    .child(format!("Model: {model_label} v"))
+                    .text_color(self.colors.muted)
+                    .child(format!("Model: {model_label} ▾"))
                     .cursor_pointer()
                     .id("composer-model-toggle")
                     .active(|style| style.opacity(0.85))
@@ -317,24 +305,26 @@ impl<'a> ComposerView<'a> {
             );
         }
         if !self.composer_attachments.is_empty() {
-            let list = self.composer_attachments.iter().enumerate().fold(
-                div().flex().flex_col().gap_1(),
-                |list, (index, attachment)| {
+            // Render attachments as compact pill chips with inline remove
+            let list = self
+                .composer_attachments
+                .iter()
+                .enumerate()
+                .fold(div().flex().gap_2(), |list, (index, attachment)| {
                     let label = attachment_label(attachment);
-                    let on_remove =
-                        cx.listener(move |view, _: &ClickEvent, _window, cx| {
-                            view.remove_composer_attachment(index, cx);
-                        });
+                    let on_remove = cx.listener(move |view, _: &ClickEvent, _window, cx| {
+                        view.remove_composer_attachment(index, cx);
+                    });
                     list.child(
                         div()
                             .flex()
                             .items_center()
-                            .justify_between()
-                            .px_3()
-                            .py_1()
+                            .gap_2()
+                            .px_2()
+                            .py_0()
+                            .rounded_full()
                             .border_1()
                             .border_color(self.colors.border)
-                            .rounded_sm()
                             .bg(self.colors.panel_2)
                             .text_sm()
                             .child(label)
@@ -344,21 +334,20 @@ impl<'a> ComposerView<'a> {
                                     .py_0()
                                     .text_sm()
                                     .text_color(self.colors.muted)
-                                    .child("Remove")
+                                    .child("×")
                                     .cursor_pointer()
                                     .id(ElementId::named_usize("composer-attachment-remove", index))
-                                    .on_click(on_remove)
+                                    .on_click(on_remove),
                             ),
                     )
-                },
-            );
+                });
             attachments_block = attachments_block.child(list);
         }
         attachments_block = attachments_block.child(
             div()
                 .flex()
                 .items_center()
-                .gap_3()
+                .gap_2()
                 .child(attachment_input)
                 .child(add_attachment_button),
         );
@@ -366,13 +355,13 @@ impl<'a> ComposerView<'a> {
         let composer_row = div()
             .flex()
             .flex_row()
-            .items_end()
+            .items_center()
             .gap_3()
             .border_1()
             .border_color(self.colors.border)
             .rounded_sm()
             .px_3()
-            .py_3()
+            .py_2()
             .bg(self.colors.panel_2)
             .child(input)
             .child(send_button);
@@ -385,8 +374,8 @@ impl<'a> ComposerView<'a> {
             .child(
                 div()
                     .flex()
-                    .items_start()
-                    .gap_3()
+                    .items_center()
+                    .gap_2()
                     .child(provider_control)
                     .child(model_control),
             )

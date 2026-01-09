@@ -51,33 +51,43 @@ impl<'a> TurnToolsView<'a> {
     }
 
     fn render_group(&self, group: &TurnToolGroup) -> impl IntoElement {
-        let label = group.summary.label();
+        // Match web copy and separators for summary: use " · " instead of " | "
+        let label = group.summary.label().replace(" | ", " · ");
         let turn_label = format_turn_label(group.turn_id);
         let mut time_line = format!("updated {}", group.updated_at.to_rfc3339());
         if group.updated_at != group.created_at {
             time_line = format!(
-                "started {} | {}",
+                "started {} · {}",
                 group.created_at.to_rfc3339(),
                 time_line
             );
         }
-        let tools = if group.tools.is_empty() {
+        let tools_list = if group.tools.is_empty() {
             div()
                 .text_sm()
                 .text_color(self.colors.muted)
                 .child("No tool activity.")
-                .into_any_element()
         } else {
             group
                 .tools
                 .iter()
-                .fold(div().flex().flex_col().gap_2(), |list, tool| {
-                    list.child(self.render_tool(tool))
-                })
-                .into_any_element()
+                .fold(div().flex().flex_col().gap_1(), |list, tool| list.child(self.render_tool(tool)))
         };
 
-        div()
+        // Header row (match web wb-event-row styling: subtle, muted, tight padding)
+        let header_row = div()
+            .flex()
+            .items_center()
+            .justify_between()
+            .px_1()
+            .py_0()
+            .text_sm()
+            .text_color(self.colors.muted)
+            .child(turn_label)
+            .child(label);
+
+        // Body with bordered container similar to wb-tool-group-body
+        let body = div()
             .flex()
             .flex_col()
             .gap_2()
@@ -86,23 +96,18 @@ impl<'a> TurnToolsView<'a> {
             .rounded_sm()
             .bg(self.colors.panel_2)
             .p_2()
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .text_sm()
-                    .text_color(self.colors.muted)
-                    .child(turn_label)
-                    .child(label),
-            )
             .child(div().text_sm().text_color(self.colors.muted).child(time_line))
-            .child(tools)
+            .child(tools_list);
+
+        div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .child(header_row)
+            .child(body)
     }
 
     fn render_tool(&self, tool: &TurnToolItem) -> impl IntoElement {
-        let status_label = format_status_label(&tool.status);
-        let status_color = status_color(self.colors, tool_status_tone(&tool.status));
         let label_parts = tool_label_parts(tool);
         let kind_label = if tool.tool_kind.trim().is_empty() {
             "tool".to_string()
@@ -113,7 +118,7 @@ impl<'a> TurnToolsView<'a> {
         let mut time_line = format!("updated {}", tool.updated_at.to_rfc3339());
         if tool.updated_at != tool.created_at {
             time_line = format!(
-                "started {} | {}",
+                "started {} · {}",
                 tool.created_at.to_rfc3339(),
                 time_line
             );
@@ -142,69 +147,55 @@ impl<'a> TurnToolsView<'a> {
             );
         }
 
-        div()
+        // Compact event row with verb · rest like wb-tool-row
+        let event_row = div()
             .flex()
-            .flex_col()
-            .gap_1()
-            .px_2()
-            .py_2()
-            .border_1()
-            .border_color(self.colors.border)
-            .rounded_sm()
-            .bg(self.colors.panel)
+            .items_center()
+            .justify_between()
+            .px_1()
+            .py_0()
+            .text_sm()
+            .text_color(self.colors.muted)
             .child(
                 div()
                     .flex()
                     .items_center()
-                    .justify_between()
-                    .text_sm()
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .child(
-                                div()
-                                    .text_color(status_color)
-                                    .child(status_label),
-                            )
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap_1()
-                                    .child(
-                                        div()
-                                            .text_color(self.colors.text)
-                                            .child(label_parts.verb.clone()),
-                                    )
-                                    .child(if label_parts.rest.is_empty() {
-                                        div().into_any_element()
-                                    } else {
-                                        div()
-                                            .text_color(self.colors.muted)
-                                            .child(label_parts.rest.clone())
-                                            .into_any_element()
-                                    }),
-                            )
-                            .child(
-                                div()
-                                    .text_color(self.colors.muted)
-                                    .child(kind_label),
-                            ),
-                    )
-                    .child(
+                    .gap_1()
+                    .child(div().text_color(self.colors.text).child(label_parts.verb.clone()))
+                    .child(if label_parts.rest.is_empty() {
+                        div().into_any_element()
+                    } else {
                         div()
                             .text_color(self.colors.muted)
-                            .child(tool.updated_at.to_rfc3339()),
-                    ),
-            )
+                            .child(format!(" · {}", label_parts.rest))
+                            .into_any_element()
+                    }),
+            );
+
+        // Optional details in a bordered container
+        let details_block = if has_details {
+            div()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .border_1()
+                .border_color(self.colors.border)
+                .rounded_sm()
+                .bg(self.colors.panel_2)
+                .p_2()
+                .child(details)
+                .into_any_element()
+        } else {
+            div().into_any_element()
+        };
+
+        div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .child(event_row)
             .child(div().text_sm().text_color(self.colors.muted).child(time_line))
-            .child(if has_details {
-                details.into_any_element()
-            } else {
-                div().into_any_element()
-            })
+            .child(details_block)
     }
 }
 

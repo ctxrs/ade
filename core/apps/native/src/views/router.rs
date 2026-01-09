@@ -122,7 +122,7 @@ impl<'a> RouterView<'a> {
                 .workspaces
                 .iter()
                 .enumerate()
-                .fold(div().flex().flex_col().gap_1(), |list, (index, workspace)| {
+                .fold(div().flex().flex_col().gap_2(), |list, (index, workspace)| {
                     let is_selected = self.shell.selected_workspace == Some(workspace.id);
                     let item_bg = if is_selected {
                         colors.panel
@@ -142,8 +142,8 @@ impl<'a> RouterView<'a> {
                         div()
                             .flex()
                             .items_center()
-                            .px_2()
-                            .py_1()
+                            .px_3()
+                            .py_2()
                             .border_1()
                             .border_color(item_border)
                             .rounded_sm()
@@ -275,7 +275,7 @@ impl<'a> RouterView<'a> {
             .border_color(colors.border)
             .rounded_sm()
             .bg(colors.panel_2)
-            .p_2()
+            .p_3()
             .child(
                 div()
                     .text_sm()
@@ -287,7 +287,7 @@ impl<'a> RouterView<'a> {
 
     fn action_button(&self, colors: ThemeColors, label: &str) -> gpui::Div {
         div()
-            .px_2()
+            .px_3()
             .py_1()
             .text_sm()
             .border_1()

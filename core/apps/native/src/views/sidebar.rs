@@ -44,8 +44,8 @@ impl<'a> WorkspaceListView<'a> {
                             .flex()
                             .items_center()
                             .justify_between()
-                            .px_2()
-                            .py_1()
+                            .px_3()
+                            .py_2()
                             .border_1()
                             .border_color(item_border)
                             .rounded_sm()
@@ -84,7 +84,7 @@ impl<'a> WorkspaceListView<'a> {
                     )
                     .child(format!("{}", self.workspaces.len())),
             )
-            .child(div().h(px(8.0)))
+            .child(div().h(px(10.0)))
             .child(list)
     }
 }
@@ -110,8 +110,8 @@ impl<'a> ProviderListView<'a> {
                             .flex()
                             .items_center()
                             .justify_between()
-                            .px_2()
-                            .py_1()
+                            .px_3()
+                            .py_2()
                             .border_1()
                             .border_color(self.colors.border)
                             .rounded_sm()
@@ -139,10 +139,10 @@ impl<'a> ProviderListView<'a> {
                     .justify_between()
                     .text_sm()
                     .text_color(self.colors.muted)
-                    .child("Providers")
+                    .child("Agent Harnesses")
                     .child(format!("{}", self.providers.len())),
             )
-            .child(div().h(px(8.0)))
+            .child(div().h(px(10.0)))
             .child(list)
     }
 }
@@ -164,19 +164,23 @@ pub(super) struct NavigationListView {
 
 impl NavigationListView {
     pub(super) fn render(&self, cx: &mut Context<ShellView>) -> impl IntoElement {
+        // Order and labels aligned to web app nav copy
+        // - "Workspaces" and "Settings" prominent
+        // - "Providers" renamed to "Agent Harnesses"
+        // - "App Settings" shown as "Launcher"
         let routes = [
             (ShellRoute::Workbench, "Workbench"),
             (ShellRoute::Workspaces, "Workspaces"),
             (ShellRoute::Settings, "Settings"),
-            (ShellRoute::Providers, "Providers"),
+            (ShellRoute::Providers, "Agent Harnesses"),
             (ShellRoute::Diagnostics, "Diagnostics"),
-            (ShellRoute::AppSettings, "App Settings"),
+            (ShellRoute::AppSettings, "Launcher"),
         ];
 
         let list = routes
             .iter()
             .enumerate()
-            .fold(div().flex().flex_col().gap_1(), |list, (index, (route, label))| {
+            .fold(div().flex().flex_col().gap_2(), |list, (index, (route, label))| {
             let active = self.current_route == *route;
             let item_bg = if active {
                 self.colors.panel
@@ -196,8 +200,8 @@ impl NavigationListView {
                 div()
                     .flex()
                     .items_center()
-                    .px_2()
-                    .py_1()
+                    .px_3()
+                    .py_2()
                     .border_1()
                     .border_color(item_border)
                     .rounded_sm()
@@ -223,7 +227,7 @@ impl NavigationListView {
                     .text_color(self.colors.muted)
                     .child("Navigation"),
             )
-            .child(div().h(px(8.0)))
+            .child(div().h(px(10.0)))
             .child(list)
     }
 }
@@ -239,7 +243,7 @@ impl<'a> SidebarView<'a> {
             .border_r_1()
             .border_color(self.colors.border)
             .p_3()
-            .gap_2()
+            .gap_3()
             .child(
                 NavigationListView {
                     colors: self.colors,
@@ -291,7 +295,7 @@ impl<'a> TaskListView<'a> {
             .tasks
             .iter()
             .enumerate()
-            .fold(div().flex().flex_col(), |list, (index, task)| {
+            .fold(div().flex().flex_col().gap_2(), |list, (index, task)| {
                 let is_selected = self.selected_task == Some(index);
                 let item_bg = if is_selected {
                     self.colors.panel
@@ -315,8 +319,8 @@ impl<'a> TaskListView<'a> {
                         .flex()
                         .items_center()
                         .justify_between()
-                        .px_2()
-                        .py_1()
+                        .px_3()
+                        .py_2()
                         .border_1()
                         .border_color(item_border)
                         .rounded_sm()
@@ -348,7 +352,7 @@ impl<'a> TaskListView<'a> {
                     .child("Tasks")
                     .child(format!("{}", self.tasks.len())),
             )
-            .child(div().h(px(12.0)))
+            .child(div().h(px(10.0)))
             .child(list)
     }
 }

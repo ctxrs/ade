@@ -389,12 +389,12 @@ impl<'a> ArtifactsView<'a> {
                     )
                     .child(
                         div()
-                            .px_1()
+                            .px_2()
                             .py_0()
                             .text_sm()
                             .border_1()
                             .border_color(self.colors.border)
-                            .rounded_sm()
+                            .rounded_full()
                             .bg(self.colors.panel)
                             .text_color(self.colors.muted)
                             .child(format!("{}", self.artifacts.len())),
@@ -410,7 +410,7 @@ impl<'a> ArtifactsView<'a> {
                         div()
                             .flex()
                             .flex_col()
-                            .w(px(220.0))
+                            .w(px(260.0))
                             .child(if self.artifacts.is_empty() {
                                 div()
                                     .text_sm()
