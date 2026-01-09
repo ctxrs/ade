@@ -6,13 +6,14 @@ license = "Apache-2.0"
 
 [dependencies]
 anyhow = "1"
-axum = "0.7"
+axum = { version = "0.7", features = ["ws"] }
 base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.5", features = ["derive"] }
 ctx-client = { path = "../../crates/ctx-client" }
 ctx-core = { path = "../../crates/ctx-core" }
 ctx-providers = { path = "../../crates/ctx-providers" }
+enigo = { version = "0.6.1", optional = true }
 futures-util = "0.3"
 gpui = { git = "https://github.com/zed-industries/zed", rev = "0660d8e0c8fd1595996e3b629265e19055ce9398", package = "gpui" }
 gpui_tokio = { git = "https://github.com/zed-industries/zed", rev = "0660d8e0c8fd1595996e3b629265e19055ce9398", package = "gpui_tokio" }
@@ -24,7 +25,7 @@ tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
 
 [features]
 default = []
-automation = ["gpui/test-support"]
+automation = ["gpui/test-support", "enigo"]
 
 [target.'cfg(not(target_os = "macos"))'.dependencies]
 scap = { git = "https://github.com/zed-industries/scap", rev = "4afea48c3b002197176fb19cd0f9b180dd36eaac", default-features = false, package = "zed-scap", version = "0.0.8-zed", features = ["x11"] }
