@@ -153,12 +153,12 @@ struct SettingsView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.visible, for: .navigationBar)
         .onAppear {
-            Task {
+            _Concurrency.Task {
                 await refreshAll()
             }
         }
         .onChange(of: connection.isConnected) { _ in
-            Task { await refreshAll() }
+            _Concurrency.Task { await refreshAll() }
         }
     }
 
@@ -293,7 +293,7 @@ struct SettingsView: View {
             set: { newValue in
                 telemetryEnabled = newValue
                 guard telemetryReady, !telemetrySaving, !isLoadingSettings else { return }
-                Task { await updateTelemetry(enabled: newValue) }
+                _Concurrency.Task { await updateTelemetry(enabled: newValue) }
             }
         )
     }
@@ -329,7 +329,6 @@ struct SettingsView: View {
         isLoadingSettings = false
     }
 
-    @MainActor
     @MainActor
     private func updateTelemetry(enabled: Bool) async {
         guard let client = connection.apiClient else { return }

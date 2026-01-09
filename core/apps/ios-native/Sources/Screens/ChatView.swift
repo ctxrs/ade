@@ -46,7 +46,7 @@ struct ChatView: View {
         .onAppear { viewModel.startPolling() }
         .onDisappear { viewModel.stopPolling() }
         .onChange(of: selectedPhotos) { newItems in
-            Task { await loadAttachments(from: newItems) }
+            _Concurrency.Task { await loadAttachments(from: newItems) }
         }
     }
 
@@ -76,10 +76,13 @@ struct ChatView: View {
                 .onAppear {
                     scrollToBottom(proxy: proxy, animated: false)
                 }
-                .onChange(of: viewModel.messages.last.map { ($0.id, $0.text) }) { _ in
+                .onChange(of: viewModel.messages.last?.id) { _, _ in
                     scrollToBottom(proxy: proxy, animated: true)
                 }
-                .onChange(of: isComposerFocused) { focused in
+                .onChange(of: viewModel.messages.last?.text) { _, _ in
+                    scrollToBottom(proxy: proxy, animated: true)
+                }
+                .onChange(of: isComposerFocused) { _, focused in
                     guard focused else { return }
                     scrollToBottom(proxy: proxy, animated: true)
                 }
@@ -826,8 +829,8 @@ final class ChatViewModel: ObservableObject {
     private var sessionId: String?
     private var workspaceId: String?
     private var lastEventSeq: Int?
-    private var pollTask: Task<Void, Never>?
-    private var streamTask: Task<Void, Never>?
+    private var pollTask: _Concurrency.Task<Void, Never>?
+    private var streamTask: _Concurrency.Task<Void, Never>?
     private var streamSocket: URLSessionWebSocketTask?
     private var isStreamConnected = false
     private var streamReconnectDelay: TimeInterval = 1
@@ -867,7 +870,7 @@ final class ChatViewModel: ObservableObject {
             if pollTask != nil {
                 startStream()
             }
-            Task {
+            _Concurrency.Task {
                 _ = await refreshMessages()
                 await refreshArtifacts()
             }
@@ -893,7 +896,7 @@ final class ChatViewModel: ObservableObject {
             assetToken = nil
             return
         }
-        Task { @MainActor in
+        _Concurrency.Task { @MainActor in
             assetBaseURL = await client.daemonBaseURL()
             assetToken = await client.authToken()
         }
@@ -907,7 +910,7 @@ final class ChatViewModel: ObservableObject {
         streamingAssistantState = nil
         artifacts = []
         artifactsError = nil
-        Task {
+        _Concurrency.Task {
             await primeStreamCursor()
             _ = await refreshMessages()
             await refreshArtifacts()
@@ -918,11 +921,11 @@ final class ChatViewModel: ObservableObject {
     func startPolling() {
         guard pollTask == nil else { return }
         startStream()
-        pollTask = Task {
-            while !Task.isCancelled {
+        pollTask = _Concurrency.Task {
+            while !_Concurrency.Task.isCancelled {
                 let result = await refreshMessages()
                 let delay = nextPollDelay(for: result)
-                try? await Task.sleep(nanoseconds: delay)
+                try? await _Concurrency.Task.sleep(nanoseconds: delay)
             }
         }
     }
@@ -938,7 +941,7 @@ final class ChatViewModel: ObservableObject {
         appendMessage(local)
         pendingAssistantResponse = true
 
-        Task {
+        _Concurrency.Task {
             guard let client else { return }
             let resolved = await resolveSessionId()
             guard let resolved else { return }
@@ -980,14 +983,14 @@ final class ChatViewModel: ObservableObject {
             errorMessage = nil
             if refreshPending {
                 refreshPending = false
-                Task { _ = await refreshMessages() }
+                _Concurrency.Task { _ = await refreshMessages() }
             }
             return .success
         } catch {
             errorMessage = "Failed to load messages."
             if refreshPending {
                 refreshPending = false
-                Task { _ = await refreshMessages() }
+                _Concurrency.Task { _ = await refreshMessages() }
             }
             return .failed
         }
@@ -1012,13 +1015,13 @@ final class ChatViewModel: ObservableObject {
             artifactsError = nil
             if artifactsRefreshPending {
                 artifactsRefreshPending = false
-                Task { await refreshArtifacts() }
+                _Concurrency.Task { await refreshArtifacts() }
             }
         } catch {
             artifactsError = "Failed to load artifacts."
             if artifactsRefreshPending {
                 artifactsRefreshPending = false
-                Task { await refreshArtifacts() }
+                _Concurrency.Task { await refreshArtifacts() }
             }
         }
     }
@@ -1158,7 +1161,7 @@ final class ChatViewModel: ObservableObject {
 
     private func startStream() {
         guard streamTask == nil else { return }
-        streamTask = Task {
+        streamTask = _Concurrency.Task {
             await streamLoop()
         }
     }
@@ -1175,13 +1178,13 @@ final class ChatViewModel: ObservableObject {
     }
 
     private func streamLoop() async {
-        while !Task.isCancelled {
+        while !_Concurrency.Task.isCancelled {
             guard client != nil else {
-                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                try? await _Concurrency.Task.sleep(nanoseconds: 1_000_000_000)
                 continue
             }
             guard let workspaceId = await resolveWorkspaceId() else {
-                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                try? await _Concurrency.Task.sleep(nanoseconds: 1_000_000_000)
                 continue
             }
             do {
@@ -1195,10 +1198,10 @@ final class ChatViewModel: ObservableObject {
             } catch {
                 isStreamConnected = false
             }
-            if Task.isCancelled { break }
+            if _Concurrency.Task.isCancelled { break }
             let delay = min(streamReconnectDelay, 15)
             streamReconnectDelay = min(streamReconnectDelay * 2, 15)
-            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            try? await _Concurrency.Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
         }
     }
 
@@ -1216,7 +1219,7 @@ final class ChatViewModel: ObservableObject {
     }
 
     private func listenToStream(_ socket: URLSessionWebSocketTask) async {
-        while !Task.isCancelled {
+        while !_Concurrency.Task.isCancelled {
             do {
                 let message = try await streamClient.receive(from: socket)
                 await handleStreamMessage(message)
@@ -1270,16 +1273,16 @@ final class ChatViewModel: ObservableObject {
                     applyTurnDelta(turn)
                 }
                 if delta.event?.eventType == "artifacts_set" {
-                    Task { await refreshArtifacts() }
+                    _Concurrency.Task { await refreshArtifacts() }
                 }
                 if let message = delta.message {
                     if message.role == .assistant {
                         pendingAssistantResponse = false
                         streamingAssistantState = nil
                     }
-                    Task { _ = await refreshMessages() }
+                    _Concurrency.Task { _ = await refreshMessages() }
                 } else if let turn = delta.turn, turn.status != .queued, turn.status != .running {
-                    Task { _ = await refreshMessages() }
+                    _Concurrency.Task { _ = await refreshMessages() }
                 }
             }
         case .sessionSummary(_, _, let summary):
@@ -1288,7 +1291,7 @@ final class ChatViewModel: ObservableObject {
                 if let lastEventSeq = summary.lastEventSeq {
                     self.lastEventSeq = lastEventSeq
                 }
-                Task {
+                _Concurrency.Task {
                     _ = await refreshMessages()
                     await refreshArtifacts()
                 }
@@ -1297,7 +1300,7 @@ final class ChatViewModel: ObservableObject {
             if sessionId.stringValue == currentSessionId {
                 lastEventSeq = afterSeq
                 streamingAssistantState = nil
-                Task {
+                _Concurrency.Task {
                     await primeStreamCursor(force: true)
                     _ = await refreshMessages()
                     await refreshArtifacts()

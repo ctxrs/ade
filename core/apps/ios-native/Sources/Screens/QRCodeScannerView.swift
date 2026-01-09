@@ -1,7 +1,7 @@
 import AVFoundation
 import SwiftUI
 
-private struct ConnectionQRResult {
+struct ConnectionQRResult {
     let baseURL: String
     let token: String
 }

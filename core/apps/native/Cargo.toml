@@ -29,6 +29,7 @@ tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
 [features]
 default = []
 automation = ["gpui/test-support"]
+cargo-clippy = []
 
 [target.'cfg(not(target_os = "macos"))'.dependencies]
 scap = { git = "https://github.com/zed-industries/scap", rev = "4afea48c3b002197176fb19cd0f9b180dd36eaac", default-features = false, package = "zed-scap", version = "0.0.8-zed", features = ["x11"] }

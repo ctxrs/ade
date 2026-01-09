@@ -52,7 +52,7 @@ struct ConnectionView: View {
                             }
 
                             Button {
-                                Task {
+                                _Concurrency.Task {
                                     isConnecting = true
                                     connection.baseURLText = daemonURL
                                     connection.tokenText = accessToken
