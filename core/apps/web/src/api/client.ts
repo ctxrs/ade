@@ -17,6 +17,8 @@ import type {
   SessionTurnTool,
   SessionTurnToolSummary,
   SessionSummary,
+  SubagentInvocation,
+  SubagentInvocationChild,
   SessionHead,
   SessionHeadDelta,
   SessionHistoryPage,
@@ -61,6 +63,8 @@ export type {
   SessionTurnTool,
   SessionTurnToolSummary,
   SessionSummary,
+  SubagentInvocation,
+  SubagentInvocationChild,
   SessionHead,
   SessionHeadDelta,
   SessionHistoryPage,
@@ -977,6 +981,16 @@ export const setSessionArtifacts = (sessionId: string, artifacts: ArtifactInput[
 
 export const listSessionSubagents = (sessionId: string) =>
   apiAny<SessionSummary[]>(`/api/sessions/${sessionId}/subagents`);
+
+export const listSessionSubagentInvocations = (sessionId: string, opts?: { turnId?: string }) => {
+  const qs = new URLSearchParams();
+  if (opts?.turnId) qs.set("turn_id", opts.turnId);
+  const suffix = qs.toString() ? `?${qs.toString()}` : "";
+  return apiAny<SubagentInvocation[]>(`/api/sessions/${sessionId}/subagent_invocations${suffix}`);
+};
+
+export const getSubagentInvocation = (invocationId: string) =>
+  apiAny<SubagentInvocation>(`/api/subagent_invocations/${invocationId}`);
 
 export const listWebSessions = () => apiAny<WebSessionInfo[]>("/api/sessions/web");
 

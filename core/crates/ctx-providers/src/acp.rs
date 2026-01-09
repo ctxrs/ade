@@ -5,7 +5,7 @@ use std::os::unix::process::ExitStatusExt;
 use std::os::windows::io::FromRawHandle;
 use std::path::{Path, PathBuf};
 use std::sync::{
-    atomic::{AtomicBool, AtomicU64, Ordering},
+    atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
     Arc, Mutex as StdMutex,
 };
 use std::time::Duration;
@@ -464,6 +464,7 @@ impl AcpSessionPool {
 struct AcpProcess {
     agent: AcpAgentConfig,
     child: Mutex<Child>,
+    pid_override: AtomicU32,
     #[cfg(target_os = "windows")]
     job: Option<std::os::windows::io::OwnedHandle>,
     write_tx: mpsc::UnboundedSender<String>,
@@ -478,6 +479,12 @@ struct AcpProcess {
     stdout_non_json: Mutex<Vec<String>>,
     ask_user_question: Option<Arc<AskUserQuestionBroker>>,
     router: SessionRouter,
+}
+
+struct SpawnedAcpChild {
+    child: Child,
+    pid_override: Option<u32>,
+    unit: Option<String>,
 }
 
 #[derive(Default)]
@@ -542,6 +549,10 @@ impl SessionRouter {
 
 impl AcpProcess {
     async fn pid(&self) -> Option<u32> {
+        let pid = self.pid_override.load(Ordering::Relaxed);
+        if pid != 0 {
+            return Some(pid);
+        }
         let child = self.child.lock().await;
         child.id()
     }
@@ -562,36 +573,18 @@ impl AcpProcess {
             None => (None, None),
         };
 
-        let mut cmd = Command::new(&agent.command);
-        cmd.args(&agent.args);
-        cmd.current_dir(&workdir);
-        cmd.stdin(std::process::Stdio::piped());
-        cmd.stdout(std::process::Stdio::piped());
-        cmd.stderr(std::process::Stdio::piped());
-        for (k, v) in env {
-            cmd.env(k, v);
-        }
-
-        #[cfg(target_os = "macos")]
-        if let Some(max_bytes) = acp_memory_max_bytes_macos() {
-            unsafe {
-                cmd.pre_exec(move || {
-                    let limit = libc::rlimit {
-                        rlim_cur: max_bytes as libc::rlim_t,
-                        rlim_max: max_bytes as libc::rlim_t,
-                    };
-                    libc::setrlimit(libc::RLIMIT_AS, &limit);
-                    Ok(())
-                });
-            }
-        }
-
-        let mut child = cmd.spawn().with_context(|| {
-            format!(
-                "spawning ACP agent {} ({})",
-                agent.provider_id, agent.command
-            )
-        })?;
+        let spawned = spawn_acp_child(&agent, &workdir, &env)
+            .await
+            .with_context(|| {
+                format!(
+                    "spawning ACP agent {} ({})",
+                    agent.provider_id, agent.command
+                )
+            })?;
+        let mut child = spawned.child;
+        let pid_override = spawned.pid_override;
+        #[cfg(target_os = "linux")]
+        let unit = spawned.unit;
 
         #[cfg(target_os = "windows")]
         let job = match attach_acp_job(&agent.provider_id, child.id().unwrap_or(0)) {
@@ -605,19 +598,8 @@ impl AcpProcess {
             }
         };
 
-        #[cfg(target_os = "linux")]
-        if let Some(pid) = child.id() {
-            if let Err(err) = attach_acp_scope(&agent.provider_id, pid).await {
-                tracing::warn!(
-                    provider_id = %agent.provider_id,
-                    pid,
-                    "failed to attach ACP process to systemd scope: {err:#}"
-                );
-            }
-        }
-
         if let Some(tx) = log_tx.as_ref() {
-            let pid = child.id().unwrap_or(0);
+            let pid = pid_override.or(child.id()).unwrap_or(0);
             let _ = tx.send(format!(
                 "[meta] started provider={} pid={}",
                 agent.provider_id, pid
@@ -648,6 +630,7 @@ impl AcpProcess {
         let process = Arc::new(Self {
             agent,
             child: Mutex::new(child),
+            pid_override: AtomicU32::new(pid_override.unwrap_or(0)),
             #[cfg(target_os = "windows")]
             job,
             write_tx,
@@ -663,6 +646,18 @@ impl AcpProcess {
             ask_user_question,
             router: SessionRouter::default(),
         });
+
+        #[cfg(target_os = "linux")]
+        if let Some(unit) = unit {
+            if pid_override.is_none() {
+                let process = Arc::clone(&process);
+                tokio::spawn(async move {
+                    if let Some(pid) = wait_for_systemd_main_pid(&unit).await {
+                        process.pid_override.store(pid, Ordering::Relaxed);
+                    }
+                });
+            }
+        }
 
         let stdout_process = Arc::clone(&process);
         tokio::spawn(async move {
@@ -1269,6 +1264,135 @@ impl AcpProcess {
     }
 }
 
+#[cfg(target_os = "linux")]
+async fn spawn_acp_child(
+    agent: &AcpAgentConfig,
+    workdir: &Path,
+    env: &HashMap<String, String>,
+) -> Result<SpawnedAcpChild> {
+    if systemd_run_supports_pid().await {
+        let child = spawn_acp_direct(agent, workdir, env)?;
+        if let Some(pid) = child.id() {
+            if let Err(err) = attach_acp_scope(&agent.provider_id, pid).await {
+                tracing::warn!(
+                    provider_id = %agent.provider_id,
+                    pid,
+                    "failed to attach ACP process to systemd scope: {err:#}"
+                );
+            }
+        }
+        return Ok(SpawnedAcpChild {
+            child,
+            pid_override: None,
+            unit: None,
+        });
+    }
+
+    if !systemd_run_available().await {
+        tracing::warn!(
+            provider_id = %agent.provider_id,
+            "systemd-run unavailable; spawning ACP without systemd scope isolation"
+        );
+        let child = spawn_acp_direct(agent, workdir, env)?;
+        return Ok(SpawnedAcpChild {
+            child,
+            pid_override: None,
+            unit: None,
+        });
+    }
+
+    let unit = acp_scope_unit(
+        &agent.provider_id,
+        &Utc::now().format("%Y%m%d%H%M%S%3f").to_string(),
+    );
+    let mut cmd = Command::new("systemd-run");
+    cmd.arg("--user")
+        .arg("--quiet")
+        .arg("--pipe")
+        .arg("--wait")
+        .arg("--unit")
+        .arg(&unit)
+        .arg("--working-directory")
+        .arg(workdir);
+    if let Some(max_mb) = acp_memory_max_mb() {
+        cmd.arg("--property").arg(format!("MemoryMax={}M", max_mb));
+    }
+    for (k, v) in std::env::vars() {
+        cmd.arg("--setenv").arg(format!("{k}={v}"));
+    }
+    for (k, v) in env {
+        cmd.arg("--setenv").arg(format!("{k}={v}"));
+    }
+    cmd.arg("--").arg(&agent.command).args(&agent.args);
+    cmd.stdin(std::process::Stdio::piped());
+    cmd.stdout(std::process::Stdio::piped());
+    cmd.stderr(std::process::Stdio::piped());
+
+    let child = cmd.spawn()?;
+    let pid_override = systemd_unit_main_pid(&unit).await;
+    Ok(SpawnedAcpChild {
+        child,
+        pid_override,
+        unit: Some(unit),
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn spawn_acp_direct(
+    agent: &AcpAgentConfig,
+    workdir: &Path,
+    env: &HashMap<String, String>,
+) -> Result<Child> {
+    let mut cmd = Command::new(&agent.command);
+    cmd.args(&agent.args);
+    cmd.current_dir(workdir);
+    cmd.stdin(std::process::Stdio::piped());
+    cmd.stdout(std::process::Stdio::piped());
+    cmd.stderr(std::process::Stdio::piped());
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
+    cmd.spawn().map_err(Into::into)
+}
+
+#[cfg(not(target_os = "linux"))]
+async fn spawn_acp_child(
+    agent: &AcpAgentConfig,
+    workdir: &Path,
+    env: &HashMap<String, String>,
+) -> Result<SpawnedAcpChild> {
+    let mut cmd = Command::new(&agent.command);
+    cmd.args(&agent.args);
+    cmd.current_dir(workdir);
+    cmd.stdin(std::process::Stdio::piped());
+    cmd.stdout(std::process::Stdio::piped());
+    cmd.stderr(std::process::Stdio::piped());
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
+
+    #[cfg(target_os = "macos")]
+    if let Some(max_bytes) = acp_memory_max_bytes_macos() {
+        unsafe {
+            cmd.pre_exec(move || {
+                let limit = libc::rlimit {
+                    rlim_cur: max_bytes as libc::rlim_t,
+                    rlim_max: max_bytes as libc::rlim_t,
+                };
+                libc::setrlimit(libc::RLIMIT_AS, &limit);
+                Ok(())
+            });
+        }
+    }
+
+    let child = cmd.spawn()?;
+    Ok(SpawnedAcpChild {
+        child,
+        pid_override: None,
+        unit: None,
+    })
+}
+
 #[cfg(target_os = "macos")]
 fn acp_memory_max_bytes_macos() -> Option<u64> {
     let mut value: u64 = 0;
@@ -1311,9 +1435,9 @@ fn sanitize_unit_component(input: &str) -> String {
 }
 
 #[cfg(target_os = "linux")]
-fn acp_scope_unit(provider_id: &str, pid: u32) -> String {
+fn acp_scope_unit(provider_id: &str, suffix: &str) -> String {
     let name = sanitize_unit_component(provider_id);
-    format!("ctx-acp-{}-{}", name, pid)
+    format!("ctx-acp-{}-{}", name, suffix)
 }
 
 #[cfg(target_os = "linux")]
@@ -1454,12 +1578,72 @@ async fn systemd_run_supports_pid() -> bool {
 }
 
 #[cfg(target_os = "linux")]
+async fn systemd_run_available() -> bool {
+    let mut cmd = Command::new("systemd-run");
+    cmd.arg("--version");
+    let output = timeout(SYSTEMD_TIMEOUT, cmd.output()).await;
+    let Ok(Ok(output)) = output else {
+        return false;
+    };
+    output.status.success()
+}
+
+#[cfg(target_os = "linux")]
+async fn systemd_unit_main_pid(unit: &str) -> Option<u32> {
+    if let Some(pid) = systemd_unit_main_pid_once(unit).await {
+        return Some(pid);
+    }
+    if unit.contains('.') {
+        return None;
+    }
+    let service = format!("{unit}.service");
+    if let Some(pid) = systemd_unit_main_pid_once(&service).await {
+        return Some(pid);
+    }
+    let scope = format!("{unit}.scope");
+    systemd_unit_main_pid_once(&scope).await
+}
+
+async fn systemd_unit_main_pid_once(unit: &str) -> Option<u32> {
+    let mut cmd = Command::new("systemctl");
+    cmd.arg("--user")
+        .arg("show")
+        .arg(unit)
+        .arg("-p")
+        .arg("MainPID")
+        .arg("--value");
+    let output = timeout(SYSTEMD_TIMEOUT, cmd.output()).await.ok()?;
+    let output = output.ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let value = String::from_utf8_lossy(&output.stdout);
+    let parsed = value.trim().parse::<u32>().ok()?;
+    if parsed == 0 {
+        None
+    } else {
+        Some(parsed)
+    }
+}
+
+#[cfg(target_os = "linux")]
+async fn wait_for_systemd_main_pid(unit: &str) -> Option<u32> {
+    for _ in 0..10 {
+        if let Some(pid) = systemd_unit_main_pid(unit).await {
+            return Some(pid);
+        }
+        tokio::time::sleep(Duration::from_millis(150)).await;
+    }
+    None
+}
+
+#[cfg(target_os = "linux")]
 async fn attach_acp_scope(provider_id: &str, pid: u32) -> Result<()> {
     if !systemd_run_supports_pid().await {
         anyhow::bail!("systemd-run lacks --pid; ACP scope isolation unavailable");
     }
 
-    let unit = acp_scope_unit(provider_id, pid);
+    let unit = acp_scope_unit(provider_id, &pid.to_string());
     let mut cmd = Command::new("systemd-run");
     cmd.arg("--user").arg("--scope").arg("--unit").arg(unit);
     if let Some(max_mb) = acp_memory_max_mb() {
@@ -1942,11 +2126,26 @@ fn normalize_session_update(
         "tool_call" => {
             let tool_call_id = update
                 .get("toolCallId")
+                .or_else(|| update.get("tool_call_id"))
                 .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
+                .map(|v| v.trim())
+                .filter(|v| !v.is_empty())
+                .map(|v| v.to_string())
+                .or_else(|| {
+                    update
+                        .pointer("/rawInput/call_id")
+                        .and_then(|v| v.as_str())
+                        .or_else(|| {
+                            update
+                                .pointer("/raw_input/call_id")
+                                .and_then(|v| v.as_str())
+                        })
+                        .map(|v| v.to_string())
+                });
             let mut payload = Map::new();
-            payload.insert("tool_call_id".to_string(), json!(tool_call_id));
+            if let Some(tool_call_id) = tool_call_id {
+                payload.insert("tool_call_id".to_string(), json!(tool_call_id));
+            }
             payload.insert("acp_update".to_string(), update.clone());
             add_update_meta_fields(&mut payload, &context_window, &usage);
             vec![NormalizedEvent {
@@ -1957,12 +2156,27 @@ fn normalize_session_update(
         "tool_call_update" => {
             let tool_call_id = update
                 .get("toolCallId")
+                .or_else(|| update.get("tool_call_id"))
                 .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
+                .map(|v| v.trim())
+                .filter(|v| !v.is_empty())
+                .map(|v| v.to_string())
+                .or_else(|| {
+                    update
+                        .pointer("/rawInput/call_id")
+                        .and_then(|v| v.as_str())
+                        .or_else(|| {
+                            update
+                                .pointer("/raw_input/call_id")
+                                .and_then(|v| v.as_str())
+                        })
+                        .map(|v| v.to_string())
+                });
             let status = update.get("status").and_then(|v| v.as_str()).unwrap_or("");
             let mut payload = Map::new();
-            payload.insert("tool_call_id".to_string(), json!(tool_call_id));
+            if let Some(ref tool_call_id) = tool_call_id {
+                payload.insert("tool_call_id".to_string(), json!(tool_call_id));
+            }
             payload.insert("acp_update".to_string(), update.clone());
             add_update_meta_fields(&mut payload, &context_window, &usage);
             let mut out = vec![NormalizedEvent {
@@ -1971,7 +2185,9 @@ fn normalize_session_update(
             }];
             if matches!(status, "completed" | "failed") {
                 let mut payload = Map::new();
-                payload.insert("tool_call_id".to_string(), json!(tool_call_id));
+                if let Some(ref tool_call_id) = tool_call_id {
+                    payload.insert("tool_call_id".to_string(), json!(tool_call_id));
+                }
                 payload.insert("acp_update".to_string(), update.clone());
                 add_update_meta_fields(&mut payload, &context_window, &usage);
                 out.push(NormalizedEvent {
