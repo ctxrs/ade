@@ -23,6 +23,7 @@ mod automation {
 }
 mod app;
 mod theme;
+mod ui;
 
 use std::net::SocketAddr;
 use std::path::PathBuf;

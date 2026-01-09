@@ -2,6 +2,7 @@ use gpui::{Context, ListState, div, list, prelude::*, px};
 use ctx_core::models::SessionEvent;
 
 use crate::theme::{ThemeColors, ThemeMetrics};
+use crate::ui::pill::{pill, count, PillTone};
 
 use super::super::models::{session_event_type_label, MessageItem};
 use super::super::state::ShellView;
@@ -45,16 +46,10 @@ impl<'a> MessagesView<'a> {
             } else {
                 format!("{} new messages", self.new_message_count)
             };
-            div()
-                .px(px(metrics.spacing.md))
-                .py(px(metrics.spacing.sm))
-                .text_sm()
-                .border_1()
-                .border_color(self.colors.border_strong)
-                .rounded_sm()
-                .bg(self.colors.panel)
-                .text_color(self.colors.accent)
-                .child(label)
+            pill(self.colors, label, PillTone::Accent)
+                // Match web pill-button-inner: 4px x 10px
+                .px(px(metrics.spacing.lg))
+                .py(px(metrics.spacing.xs))
                 .cursor_pointer()
                 .id("new-messages-indicator")
                 .active(|style| style.opacity(0.85))
@@ -116,7 +111,8 @@ impl<'a> EventsView<'a> {
                             .items_center()
                             .justify_between()
                             .px(px(metrics.spacing.xs))
-                            .py(px(0.0))
+                            // Slight breathing room to match compact web lists
+                            .py(px(metrics.spacing.xxs))
                             .text_sm()
                             .text_color(self.colors.muted)
                             .child(left)
@@ -141,7 +137,7 @@ impl<'a> EventsView<'a> {
                     .text_sm()
                     .text_color(self.colors.muted)
                     .child("Events")
-                    .child(format!("{}", self.events.len())),
+                    .child(count(self.colors, self.events.len())),
             )
             .child(div().h(px(metrics.spacing.sm)))
             .child(list)
