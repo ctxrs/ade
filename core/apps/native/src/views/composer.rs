@@ -2,6 +2,7 @@ use gpui::{ClickEvent, Context, CursorStyle, ElementId, FocusHandle, div, prelud
 
 use ctx_core::models::MessageAttachment;
 
+use crate::automation_tree;
 use crate::theme::ThemeColors;
 
 use super::super::icons::{Icon, IconName};
@@ -64,6 +65,12 @@ impl<'a> ComposerView<'a> {
             .text_color(input_color)
             .cursor(CursorStyle::IBeam)
             .track_focus(self.focus_handle)
+            .on_children_prepainted(automation_tree::track_children_bounds(
+                "composer-input",
+                "textbox",
+                Some("Composer"),
+                Some("app-shell"),
+            ))
             .id("composer-input")
             .on_click(cx.listener(ShellView::focus_composer))
             .on_key_down(cx.listener(ShellView::on_composer_key_down))

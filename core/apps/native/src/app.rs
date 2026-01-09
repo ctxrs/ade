@@ -7,6 +7,7 @@ use gpui::{
 };
 
 use crate::automation;
+use crate::automation_tree;
 use crate::theme::{ThemeColors, ThemeTokens};
 
 #[path = "icons.rs"]
@@ -224,6 +225,12 @@ impl Render for ShellView {
             );
         }
         div()
+            .on_children_prepainted(automation_tree::track_children_bounds(
+                "app-shell",
+                "application",
+                Some("ctx"),
+                None,
+            ))
             .id("app-shell")
             .size_full()
             .flex()

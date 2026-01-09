@@ -1,6 +1,7 @@
 use gpui::{Context, FocusHandle, ListState, div, prelude::*, px, Entity};
 use ctx_core::models::{Artifact, MessageAttachment, SessionEvent};
 
+use crate::automation_tree;
 use crate::theme::ThemeColors;
 
 use super::artifacts::ArtifactsView;
@@ -59,6 +60,38 @@ impl<'a> SessionView<'a> {
             .selected_session
             .and_then(|index| self.sessions.get(index))
             .is_some();
+        if !self.show_sessions_pane {
+            automation_tree::register_hidden(
+                "sessions-list",
+                "list",
+                Some("Sessions"),
+                Some("app-shell"),
+            );
+        }
+        if !self.show_diff_pane {
+            automation_tree::register_hidden(
+                "diff-pane",
+                "pane",
+                Some("Diff"),
+                Some("app-shell"),
+            );
+        }
+        if !self.show_artifacts_pane {
+            automation_tree::register_hidden(
+                "artifacts-pane",
+                "pane",
+                Some("Artifacts"),
+                Some("app-shell"),
+            );
+        }
+        if !self.show_terminal_panel {
+            automation_tree::register_hidden(
+                "terminal-panel",
+                "pane",
+                Some("Terminal"),
+                Some("app-shell"),
+            );
+        }
         let can_send = has_session
             && (!self.composer_text.trim().is_empty() || !self.composer_attachments.is_empty());
         let interrupt_color = if has_session {
@@ -421,6 +454,12 @@ impl<'a> SessionView<'a> {
                 });
                 right_pane = right_pane.child(
                     div()
+                        .on_children_prepainted(automation_tree::track_children_bounds(
+                            "diff-pane",
+                            "pane",
+                            Some("Diff"),
+                            Some("app-shell"),
+                        ))
                         .id("diff-review-pane")
                         .flex()
                         .flex_col()
@@ -437,6 +476,12 @@ impl<'a> SessionView<'a> {
             if self.show_artifacts_pane {
                 right_pane = right_pane.child(
                     div()
+                        .on_children_prepainted(automation_tree::track_children_bounds(
+                            "artifacts-pane",
+                            "pane",
+                            Some("Artifacts"),
+                            Some("app-shell"),
+                        ))
                         .id("artifacts-pane")
                         .flex()
                         .flex_col()

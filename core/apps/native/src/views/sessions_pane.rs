@@ -4,6 +4,7 @@ use std::time::{Duration, Instant};
 use gpui::{ClickEvent, Context, ElementId, div, prelude::*, px};
 use gpui_tokio::Tokio;
 
+use crate::automation_tree;
 use crate::theme::ThemeColors;
 
 use ctx_client::WebSessionInfo;
@@ -82,7 +83,13 @@ impl<'a> SessionsPaneView<'a> {
                             .on_click(on_click),
                     )
                 })
-        };
+        }
+        .on_children_prepainted(automation_tree::track_children_bounds(
+            "sessions-list",
+            "list",
+            Some("Sessions"),
+            Some("app-shell"),
+        ));
 
         let mut stream_block = div()
             .flex()

@@ -1,5 +1,6 @@
 #[cfg(feature = "automation")]
 mod automation;
+mod automation_tree;
 
 #[cfg(not(feature = "automation"))]
 mod automation {

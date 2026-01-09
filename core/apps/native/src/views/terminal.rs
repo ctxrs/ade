@@ -2,6 +2,8 @@ use gpui::{CursorStyle, div, prelude::*, px, Window};
 
 use ctx_core::models::TerminalStatus;
 
+use crate::automation_tree;
+
 use super::super::state::terminal::{
     TerminalLoadState, TerminalPanelState, TerminalScope, TerminalStreamState,
 };
@@ -329,6 +331,12 @@ impl Render for TerminalPanelState {
         }
 
         div()
+            .on_children_prepainted(automation_tree::track_children_bounds(
+                "terminal-panel",
+                "pane",
+                Some("Terminal"),
+                Some("app-shell"),
+            ))
             .id("terminal-panel")
             .flex()
             .flex_col()
