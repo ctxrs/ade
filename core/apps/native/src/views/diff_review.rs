@@ -426,6 +426,7 @@ fn render_inline_diff(
             .child("No hunks to display.");
     }
 
+    let metrics = ThemeMetrics::default();
     let mut hunks = div().flex().flex_col().gap_2();
     let can_apply = state.track_id.is_some() && state.busy_key.is_none();
 

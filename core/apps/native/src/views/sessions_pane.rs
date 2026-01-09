@@ -4,8 +4,10 @@ use std::time::{Duration, Instant};
 use gpui::{ClickEvent, Context, ElementId, div, prelude::*, px};
 use gpui_tokio::Tokio;
 
-use crate::automation_tree;
-use crate::theme::ThemeColors;
+use crate::{
+    automation_tree,
+    theme::{ThemeColors, ThemeMetrics},
+};
 
 use ctx_client::WebSessionInfo;
 
