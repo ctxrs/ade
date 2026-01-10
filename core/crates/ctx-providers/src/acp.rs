@@ -484,6 +484,7 @@ struct AcpProcess {
 struct SpawnedAcpChild {
     child: Child,
     pid_override: Option<u32>,
+    #[cfg(target_os = "linux")]
     unit: Option<String>,
 }
 
@@ -1389,7 +1390,6 @@ async fn spawn_acp_child(
     Ok(SpawnedAcpChild {
         child,
         pid_override: None,
-        unit: None,
     })
 }
 
@@ -1604,6 +1604,7 @@ async fn systemd_unit_main_pid(unit: &str) -> Option<u32> {
     systemd_unit_main_pid_once(&scope).await
 }
 
+#[cfg(target_os = "linux")]
 async fn systemd_unit_main_pid_once(unit: &str) -> Option<u32> {
     let mut cmd = Command::new("systemctl");
     cmd.arg("--user")
