@@ -195,16 +195,27 @@ final class WorkbenchSelectionStore: ObservableObject {
     }
 
     @discardableResult
-    func resolveSessionSelection(taskId: String, trackId: String, sessions: [SessionSummary]) -> Bool {
+    func resolveSessionSelection(
+        taskId: String,
+        trackId: String,
+        sessions: [SessionSummary],
+        preferredSessionId: String? = nil
+    ) -> Bool {
         guard let normalizedTaskId = SelectionDefaults.normalizedId(taskId),
               let normalizedTrackId = SelectionDefaults.normalizedId(trackId) else { return false }
         let currentTaskId = self.taskId
         let currentTrackId = self.trackId
         let currentSessionId = self.sessionId
-        let preferredSessionId = (currentTaskId == normalizedTaskId && currentTrackId == normalizedTrackId)
+        let normalizedPreferredSessionId = SelectionDefaults.normalizedId(preferredSessionId)
+        let persistedPreferredSessionId = (currentTaskId == normalizedTaskId && currentTrackId == normalizedTrackId)
             ? currentSessionId
             : nil
-        let resolvedSessionId = pickPreferredSessionId(from: sessions, preferredSessionId: preferredSessionId)
+        let sessionIds = Set(sessions.compactMap { SelectionDefaults.normalizedId($0.id) })
+        let persistedValidSessionId = persistedPreferredSessionId.flatMap { sessionIds.contains($0) ? $0 : nil }
+        let resolvedSessionId = pickPreferredSessionId(
+            from: sessions,
+            preferredSessionId: persistedValidSessionId ?? normalizedPreferredSessionId
+        )
         guard currentTaskId != normalizedTaskId
             || currentTrackId != normalizedTrackId
             || resolvedSessionId != currentSessionId else { return false }
