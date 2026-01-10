@@ -1,7 +1,8 @@
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use anyhow::{anyhow, Result};
-use gpui::Rgba;
+use gpui::{BorrowAppContext, Rgba, SharedString};
 
 #[derive(Debug, Clone)]
 pub struct ThemeTokens {
@@ -262,6 +263,81 @@ impl ThemeColors {
     }
 }
 
+pub fn apply_gpui_component_theme(
+    tokens: &ThemeTokens,
+    is_dark: bool,
+    cx: &mut impl BorrowAppContext,
+) {
+    fn set_color(
+        slot: &mut Option<SharedString>,
+        raw: &str,
+        token_name: &str,
+    ) {
+        match parse_color(raw).map(rgba_to_hex_string) {
+            Ok(hex) => *slot = Some(hex.into()),
+            Err(err) => eprintln!(
+                "ctx-native: gpui-component theme token parse failed: --{token_name}={raw}: {err}"
+            ),
+        }
+    }
+
+    let mut colors = gpui_component::ThemeConfigColors::default();
+
+    set_color(&mut colors.background, &tokens.bg, "bg");
+    set_color(&mut colors.foreground, &tokens.text, "text");
+    set_color(&mut colors.border, &tokens.border, "border");
+    set_color(&mut colors.input, &tokens.border_strong, "border-strong");
+
+    set_color(&mut colors.accent, &tokens.accent, "accent");
+    colors.accent_foreground = Some("#FFFFFF".into());
+
+    set_color(&mut colors.primary, &tokens.accent, "accent");
+    colors.primary_foreground = Some("#FFFFFF".into());
+
+    set_color(&mut colors.secondary, &tokens.panel_2, "panel-2");
+    set_color(&mut colors.secondary_foreground, &tokens.text, "text");
+
+    set_color(&mut colors.muted, &tokens.panel_2, "panel-2");
+    set_color(&mut colors.muted_foreground, &tokens.muted, "muted");
+
+    set_color(&mut colors.popover, &tokens.panel, "panel");
+    set_color(&mut colors.popover_foreground, &tokens.text, "text");
+
+    set_color(&mut colors.list, &tokens.panel, "panel");
+    set_color(&mut colors.list_even, &tokens.panel_2, "panel-2");
+    set_color(&mut colors.list_head, &tokens.panel_2, "panel-2");
+    set_color(&mut colors.list_hover, &tokens.panel_2, "panel-2");
+
+    set_color(&mut colors.sidebar, &tokens.panel, "panel");
+    set_color(&mut colors.sidebar_foreground, &tokens.text, "text");
+    set_color(&mut colors.sidebar_border, &tokens.border, "border");
+
+    set_color(&mut colors.title_bar, &tokens.panel, "panel");
+    set_color(&mut colors.title_bar_border, &tokens.border, "border");
+
+    set_color(&mut colors.success, &tokens.success, "success");
+    colors.success_foreground = Some("#FFFFFF".into());
+    set_color(&mut colors.warning, &tokens.warning, "warning");
+    colors.warning_foreground = Some("#FFFFFF".into());
+    set_color(&mut colors.danger, &tokens.error, "error");
+    colors.danger_foreground = Some("#FFFFFF".into());
+
+    let config = gpui_component::ThemeConfig {
+        name: "ctx-web".into(),
+        mode: if is_dark {
+            gpui_component::ThemeMode::Dark
+        } else {
+            gpui_component::ThemeMode::Light
+        },
+        colors,
+        ..Default::default()
+    };
+
+    cx.update_global::<gpui_component::Theme, _>(|theme, _cx| {
+        theme.apply_config(&Rc::new(config));
+    });
+}
+
 fn get_token(map: &HashMap<String, String>, key: &str) -> Result<String> {
     map.get(key)
         .cloned()
@@ -349,6 +425,19 @@ fn parse_color(value: &str) -> Result<Rgba> {
         return parse_rgba_function(trimmed);
     }
     Err(anyhow!("unsupported color value: {}", value))
+}
+
+fn rgba_to_hex_string(rgba: Rgba) -> String {
+    let value = u32::from(rgba);
+    let r = (value >> 24) & 0xff;
+    let g = (value >> 16) & 0xff;
+    let b = (value >> 8) & 0xff;
+    let a = value & 0xff;
+    if a == 0xff {
+        format!("#{:02X}{:02X}{:02X}", r, g, b)
+    } else {
+        format!("#{:02X}{:02X}{:02X}{:02X}", r, g, b, a)
+    }
 }
 
 fn parse_hex_color(hex: &str) -> Result<Rgba> {

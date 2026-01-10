@@ -10,7 +10,7 @@ mod automation {
 
     use gpui::{App, WindowHandle};
 
-    use crate::app::ShellView;
+    use gpui_component::Root;
 
     #[allow(dead_code)]
     #[derive(Clone, Debug, Default)]
@@ -20,7 +20,7 @@ mod automation {
         pub fixture: Option<String>,
     }
 
-    pub fn start(_app: &mut App, _window: WindowHandle<ShellView>, _config: AutomationConfig) {}
+    pub fn start(_app: &mut App, _window: WindowHandle<Root>, _config: AutomationConfig) {}
 }
 mod app;
 mod theme;

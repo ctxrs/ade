@@ -25,6 +25,7 @@ use tokio::time::timeout;
 
 use crate::app::ShellView;
 use crate::automation_tree;
+use gpui_component::Root;
 
 #[derive(Clone, Debug, Default)]
 pub struct AutomationConfig {
@@ -40,7 +41,7 @@ impl AutomationConfig {
     }
 }
 
-pub fn start(app: &mut App, window: WindowHandle<ShellView>, config: AutomationConfig) {
+pub fn start(app: &mut App, window: WindowHandle<Root>, config: AutomationConfig) {
     let Some(addr) = config.effective_addr() else {
         return;
     };
@@ -355,7 +356,7 @@ enum AutomationCommand {
 
 async fn run_command_loop(
     cx: gpui::AsyncApp,
-    window: WindowHandle<ShellView>,
+    window: WindowHandle<Root>,
     mut command_rx: mpsc::Receiver<AutomationRequest>,
     state: Arc<AutomationState>,
 ) {
@@ -366,8 +367,13 @@ async fn run_command_loop(
             AutomationCommand::Focus { target } => {
                 let mut cx = cx.clone();
                 window
-                    .update(&mut cx, |view, window, cx| {
-                        apply_focus_target(view, window, cx, target);
+                    .update(&mut cx, |root, window, cx| {
+                        let view = root
+                            .view()
+                            .clone()
+                            .downcast::<ShellView>()
+                            .map_err(|_| "root view is not a ShellView".to_string())?;
+                        view.update(cx, |view, cx| apply_focus_target(view, window, cx, target));
                         mark_input(&state);
                         Ok(json!({ "target": target.as_str() }))
                     })
@@ -496,7 +502,7 @@ fn apply_focus_target(
 #[cfg(target_os = "linux")]
 async fn capture_window(
     _cx: &gpui::AsyncApp,
-    _window: &WindowHandle<ShellView>,
+    _window: &WindowHandle<Root>,
     path: PathBuf,
 ) -> Result<PathBuf, String> {
     // Use OS-level capture on Linux via zed-scap.
@@ -608,7 +614,7 @@ async fn capture_window(
 #[cfg(not(target_os = "linux"))]
 async fn capture_window(
     cx: &gpui::AsyncApp,
-    window: &WindowHandle<ShellView>,
+    window: &WindowHandle<Root>,
     path: PathBuf,
 ) -> Result<PathBuf, String> {
     // Default path (macOS, possibly Windows): use GPUI's in-process render.

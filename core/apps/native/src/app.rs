@@ -74,7 +74,7 @@ impl FromStr for WindowSize {
     }
 }
 
-fn load_theme_colors(is_dark: bool) -> ThemeColors {
+fn load_theme(is_dark: bool) -> (ThemeTokens, ThemeColors) {
     let tokens = if is_dark {
         ThemeTokens::dark_from_web().unwrap_or_else(|err| {
             eprintln!("ctx-native: theme load failed: {err}");
@@ -83,15 +83,16 @@ fn load_theme_colors(is_dark: bool) -> ThemeColors {
     } else {
         ThemeTokens::light()
     };
-    ThemeColors::from_tokens(&tokens).unwrap_or_else(|err| {
+    let colors = ThemeColors::from_tokens(&tokens).unwrap_or_else(|err| {
         eprintln!("ctx-native: theme parse failed: {err}");
         ThemeColors::fallback_dark()
-    })
+    });
+    (tokens, colors)
 }
 
 pub fn run(options: AppOptions) {
     let is_dark = true;
-    let colors = load_theme_colors(is_dark);
+    let (theme_tokens, colors) = load_theme(is_dark);
     let base_url = ctx_client::resolve_daemon_config()
         .map(|cfg| cfg.base_url)
         .unwrap_or_else(|err| {
@@ -102,6 +103,8 @@ pub fn run(options: AppOptions) {
         .with_assets(IconAssets::new());
     app
         .run(move |cx: &mut App| {
+        gpui_component::init(cx);
+        crate::theme::apply_gpui_component_theme(&theme_tokens, is_dark, cx);
         app_identity::apply_app_identity();
         gpui_tokio::init(cx);
         let window_size = options.window_size.unwrap_or_default();
@@ -117,9 +120,9 @@ pub fn run(options: AppOptions) {
                 app_id: Some("ctx".to_string()),
                 ..Default::default()
             },
-            |_, cx| {
+            |window, cx| {
                 let base_url = base_url.clone();
-                cx.new(|cx| {
+                let view = cx.new(|cx| {
                     let diff_review_state = cx.new(|_| DiffReviewState::new());
                     let terminal_panel_state =
                         cx.new(|cx| TerminalPanelState::new(colors, cx.focus_handle()));
@@ -181,7 +184,8 @@ pub fn run(options: AppOptions) {
                     };
                     view.start_data_load(cx);
                     view
-                })
+                });
+                cx.new(|cx| gpui_component::Root::new(view, window, cx))
             },
         )
         .unwrap();

@@ -100,7 +100,9 @@ pub(crate) struct ShellView {
 impl ShellView {
     pub(crate) fn toggle_theme(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
         self.is_dark = !self.is_dark;
-        self.colors = super::load_theme_colors(self.is_dark);
+        let (tokens, colors) = super::load_theme(self.is_dark);
+        self.colors = colors;
+        crate::theme::apply_gpui_component_theme(&tokens, self.is_dark, cx);
         let colors = self.colors;
         cx.update_entity(&self.terminal_panel_state, |state, cx| {
             state.colors = colors;
