@@ -5,9 +5,11 @@ use gpui_tokio::Tokio;
 
 use ctx_core::ids::{SessionId, TaskId, WorkspaceId};
 use ctx_core::models::{
+    MessageRole,
     Artifact, SessionCatchupSummary, SessionEvent, SessionHead, SessionHistoryPage, Task,
     WorkspaceCatchupSnapshot, WorkspaceCatchupTaskSummary, WorkspaceCatchupTrackSummary,
 };
+use ctx_providers::adapters::ProviderStatus;
 
 use super::{AnchorRect, ArchiveConfirmState, ArtifactPreviewState, ShellView, StreamStatus, TaskArchiveAction, TaskMenuState};
 use super::super::models::{
@@ -20,14 +22,10 @@ use super::super::workspace_summary::{catchup_counts, task_session_summaries, Ta
 pub(crate) struct WorkspaceItem {
     pub(crate) id: WorkspaceId,
     pub(crate) name: String,
+    pub(crate) root_path: String,
 }
 
-#[derive(Clone)]
-pub(crate) struct ProviderItem {
-    pub(crate) name: String,
-    #[allow(dead_code)]
-    pub(crate) status: String,
-}
+pub(crate) type ProviderItem = ProviderStatus;
 
 struct InitialLoadResult {
     workspaces: Vec<WorkspaceItem>,
@@ -55,7 +53,7 @@ impl ShellView {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.clear_task_focus("Select a task to begin.");
+        self.clear_task_focus("Select a task to begin.", cx);
         cx.notify();
     }
 
@@ -70,9 +68,9 @@ impl ShellView {
     }
 
     pub(crate) fn start_data_load(&mut self, cx: &mut Context<Self>) {
-        self.ensure_message_list_handler(cx);
+        self.ensure_thread_list_handler(cx);
         self.data_state = DataLoadState::Loading;
-        self.reset_workspace_view("Loading workspace data...");
+        self.reset_workspace_view("Loading workspace data...", cx);
         cx.notify();
 
         let task = Tokio::spawn_result(cx, async move {
@@ -85,13 +83,7 @@ impl ShellView {
                 .map(|workspace| WorkspaceItem {
                     id: workspace.id,
                     name: workspace.name,
-                })
-                .collect::<Vec<_>>();
-            let providers = providers
-                .into_iter()
-                .map(|provider| ProviderItem {
-                    name: provider.provider_id,
-                    status: format!("{:?}", provider.health),
+                    root_path: workspace.root_path,
                 })
                 .collect::<Vec<_>>();
             Ok(InitialLoadResult {
@@ -122,7 +114,7 @@ impl ShellView {
                             if let Some(workspace_id) = view.selected_workspace {
                                 view.load_workspace(workspace_id, cx);
                             } else {
-                                view.reset_workspace_view("No workspaces yet.");
+                                view.reset_workspace_view("No workspaces yet.", cx);
                                 view.data_state = DataLoadState::Loaded;
                                 cx.notify();
                             }
@@ -131,7 +123,7 @@ impl ShellView {
                             view.workspaces.clear();
                             view.providers.clear();
                             view.selected_workspace = None;
-                            view.reset_workspace_view("Unable to load workspace list.");
+                            view.reset_workspace_view("Unable to load workspace list.", cx);
                             view.data_state = DataLoadState::Error(err.to_string());
                             cx.notify();
                         }
@@ -148,7 +140,7 @@ impl ShellView {
         self.selected_workspace = Some(workspace_id);
         self.stop_workspace_stream();
         self.data_state = DataLoadState::Loading;
-        self.reset_workspace_view("Loading workspace data...");
+        self.reset_workspace_view("Loading workspace data...", cx);
         cx.notify();
 
         let task = Tokio::spawn_result(cx, async move {
@@ -219,33 +211,45 @@ impl ShellView {
                 match result {
                     Ok(data) => {
                         view.apply_workspace_snapshot(data.snapshot);
-                        let selected_session_id = data
-                            .session_head
-                            .as_ref()
-                            .map(|head| head.session.id)
-                            .or_else(|| view.sessions.first().map(|summary| summary.session_id));
+                        let keep_new_task = view.new_task_mode_locked;
+                        let selected_session_id = if keep_new_task {
+                            None
+                        } else {
+                            data.session_head
+                                .as_ref()
+                                .map(|head| head.session.id)
+                                .or_else(|| view.sessions.first().map(|summary| summary.session_id))
+                        };
                         view.selected_session = selected_session_id
                             .and_then(|id| view.sessions.iter().position(|summary| summary.session_id == id));
-                        view.selected_task = view
-                            .selected_session
-                            .and_then(|index| view.sessions.get(index))
-                            .and_then(|summary| view.session_summary_map.get(&summary.session_id))
-                            .map(|summary| summary.session.task_id)
-                            .or_else(|| view.task_active_order.first().copied());
-                        view.session = data
-                            .session_head
-                            .as_ref()
-                            .map(session_info_from_head)
-                            .or_else(|| {
-                                view.selected_session
-                                    .and_then(|index| view.sessions.get(index))
-                                    .and_then(|summary| {
-                                        view.session_summary_map
-                                            .get(&summary.session_id)
-                                            .map(session_info_from_summary)
-                                    })
-                            })
-                            .unwrap_or_else(SessionInfo::placeholder);
+                        view.selected_task = if keep_new_task {
+                            None
+                        } else {
+                            view.selected_session
+                                .and_then(|index| view.sessions.get(index))
+                                .and_then(|summary| view.session_summary_map.get(&summary.session_id))
+                                .map(|summary| summary.session.task_id)
+                                .or_else(|| view.task_active_order.first().copied())
+                        };
+                        view.new_task_mode = keep_new_task || view.selected_session.is_none();
+                        view.composer_needs_apply = true;
+                        view.session = if keep_new_task {
+                            SessionInfo::placeholder()
+                        } else {
+                            data.session_head
+                                .as_ref()
+                                .map(session_info_from_head)
+                                .or_else(|| {
+                                    view.selected_session
+                                        .and_then(|index| view.sessions.get(index))
+                                        .and_then(|summary| {
+                                            view.session_summary_map
+                                                .get(&summary.session_id)
+                                                .map(session_info_from_summary)
+                                        })
+                                })
+                                .unwrap_or_else(SessionInfo::placeholder)
+                        };
                         view.sync_composer_defaults();
                         let mut messages = build_message_items(
                             data.session_head.as_ref(),
@@ -253,11 +257,11 @@ impl ShellView {
                         );
                         if messages.is_empty() {
                             messages.push(MessageItem::new(
-                                "assistant",
+                                MessageRole::Assistant,
                                 "No messages yet. Create one to begin.",
                             ));
                         }
-                        view.replace_messages(messages);
+                        view.replace_messages(messages, cx);
                         view.session_events = data.session_events;
                         if let Some(head) = data.session_head.as_ref() {
                             view.update_session_last_event_seq(head.session.id, head.last_event_seq);
@@ -275,7 +279,7 @@ impl ShellView {
                         view.start_workspace_stream(workspace_id, cx);
                     }
                     Err(err) => {
-                        view.reset_workspace_view("Unable to load workspace data.");
+                        view.reset_workspace_view("Unable to load workspace data.", cx);
                         view.data_state = DataLoadState::Error(err.to_string());
                         view.stream_status = StreamStatus::Idle;
                     }
@@ -288,7 +292,7 @@ impl ShellView {
         .detach();
     }
 
-    fn reset_workspace_view(&mut self, message: &str) {
+    fn reset_workspace_view(&mut self, message: &str, cx: &mut Context<Self>) {
         self.task_store_initialized = false;
         self.task_fetch_active = super::TaskFetchState::Idle;
         self.task_fetch_archived = super::TaskFetchState::Idle;
@@ -304,13 +308,12 @@ impl ShellView {
         self.selected_task = None;
         self.sessions.clear();
         self.selected_session = None;
-        self.replace_messages(vec![MessageItem::new("assistant", message)]);
+        self.replace_messages(vec![MessageItem::new(MessageRole::Assistant, message)], cx);
         self.artifacts.clear();
         self.artifact_preview = ArtifactPreviewState::None;
         self.session_events.clear();
         self.selected_artifact = None;
         self.composer_attachments.clear();
-        self.composer_attachment_input.clear();
         self.composer_notice = None;
         self.composer_provider_menu_open = false;
         self.composer_model_menu_open = false;
@@ -594,20 +597,26 @@ impl ShellView {
         }
     }
 
-    pub(crate) fn focus_task(&mut self, task_id: TaskId, cx: &mut Context<Self>) {
+    pub(crate) fn focus_task(
+        &mut self,
+        task_id: TaskId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(task) = self.tasks_by_id.get(&task_id).cloned() else {
             return;
         };
+        self.new_task_mode_locked = false;
         self.selected_task = Some(task_id);
         if let Some(session_id) = self.preferred_session_for_task(&task) {
-            self.select_session_by_id(session_id, cx);
+            self.select_session_by_id(session_id, window, cx);
         } else {
             self.selected_session = None;
             self.session = SessionInfo::placeholder();
             self.replace_messages(vec![MessageItem::new(
-                "assistant",
+                MessageRole::Assistant,
                 "No messages yet. Create one to begin.",
-            )]);
+            )], cx);
         }
         self.maybe_mark_selected_task_read(cx);
         cx.notify();
@@ -655,13 +664,18 @@ impl ShellView {
         session_unread || task_unread
     }
 
-    fn select_session_by_id(&mut self, session_id: SessionId, cx: &mut Context<Self>) {
+    fn select_session_by_id(
+        &mut self,
+        session_id: SessionId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if let Some(index) = self
             .sessions
             .iter()
             .position(|summary| summary.session_id == session_id)
         {
-            self.select_session(index, cx);
+            self.select_session(index, window, cx);
         }
     }
 
@@ -756,17 +770,24 @@ impl ShellView {
         }
     }
 
-    fn clear_task_focus(&mut self, message: &str) {
+    fn clear_task_focus(&mut self, message: &str, cx: &mut Context<Self>) {
         self.selected_task = None;
         self.selected_session = None;
+        self.new_task_mode = true;
+        self.new_task_mode_locked = true;
+        self.composer_needs_apply = true;
         self.session = SessionInfo::placeholder();
-        self.replace_messages(vec![MessageItem::new("assistant", message)]);
+        self.replace_messages(
+            vec![MessageItem::new(MessageRole::Assistant, message)],
+            cx,
+        );
         self.artifacts.clear();
         self.artifact_preview = ArtifactPreviewState::None;
         self.session_events.clear();
         self.selected_artifact = None;
     }
 
+    #[allow(dead_code)]
     pub(crate) fn begin_task_rename(
         &mut self,
         task_id: TaskId,
@@ -854,6 +875,7 @@ impl ShellView {
         cx.notify();
     }
 
+    #[allow(dead_code)]
     pub(crate) fn close_task_menu(&mut self, cx: &mut Context<Self>) {
         if self.task_menu.take().is_some() {
             cx.notify();
@@ -911,7 +933,7 @@ impl ShellView {
                     if let Ok(updated) = result {
                         view.apply_task_update(updated);
                         if next_archived && was_selected {
-                            view.clear_task_focus("Select a task to begin.");
+                            view.clear_task_focus("Select a task to begin.", cx);
                         }
                     }
                     view.archive_pending.remove(&task_id);
@@ -923,6 +945,7 @@ impl ShellView {
         .detach();
     }
 
+    #[allow(dead_code)]
     pub(crate) fn confirm_archive(&mut self, cx: &mut Context<Self>) {
         let Some(confirm) = self.archive_confirm else {
             return;
@@ -940,6 +963,7 @@ impl ShellView {
         self.apply_archive_toggle(confirm.task_id, true, cx);
     }
 
+    #[allow(dead_code)]
     pub(crate) fn cancel_archive_confirm(&mut self, cx: &mut Context<Self>) {
         self.archive_confirm = None;
         cx.notify();
@@ -974,6 +998,7 @@ impl ShellView {
         .detach();
     }
 
+    #[allow(dead_code)]
     pub(crate) fn mark_task_unread(&mut self, task_id: TaskId, cx: &mut Context<Self>) {
         let task = Tokio::spawn_result(cx, async move {
             let config = ctx_client::resolve_daemon_config()?;
@@ -998,6 +1023,7 @@ impl ShellView {
         .detach();
     }
 
+    #[allow(dead_code)]
     pub(crate) fn delete_task(&mut self, task_id: TaskId, cx: &mut Context<Self>) {
         let was_selected = self.selected_task == Some(task_id);
         let task = Tokio::spawn_result(cx, async move {
@@ -1015,7 +1041,7 @@ impl ShellView {
                     if result.is_ok() {
                         view.remove_task(task_id);
                         if was_selected {
-                            view.clear_task_focus("Select a task to begin.");
+                            view.clear_task_focus("Select a task to begin.", cx);
                         }
                         cx.notify();
                     }

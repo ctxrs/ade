@@ -7,7 +7,7 @@
 // - Waits for /ready, then runs native-automation.mjs
 // - Writes logs to /tmp/ctx-headless-<display> and prints a concise summary
 
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 import { createWriteStream, existsSync } from 'node:fs';
 import path from 'node:path';
@@ -55,6 +55,42 @@ async function runLogged(cmd, args, opts, logFilePath) {
 async function ensureDir(p) { await fs.mkdir(p, { recursive: true }); return p; }
 async function fileExists(p) { try { await fs.access(p); return true; } catch { return false; } }
 
+function parseModeline(output) {
+  const line = (output || '').split('\n').map((l) => l.trim()).find((l) => l.startsWith('Modeline '));
+  if (!line) return null;
+  const match = line.match(/Modeline\\s+\"([^\"]+)\"\\s+(.*)$/);
+  if (!match) return null;
+  return { name: match[1], line };
+}
+
+function runCvt(args) {
+  const result = spawnSync('cvt', args, { encoding: 'utf8' });
+  if (result.status !== 0) return null;
+  return parseModeline(result.stdout || '');
+}
+
+async function computeModeline(width, height) {
+  return (
+    runCvt(['-r', String(width), String(height), '60']) ||
+    runCvt([String(width), String(height), '60'])
+  );
+}
+
+function fallbackModeline(width, height) {
+  if (width === 2400 && height === 1704) {
+    return {
+      name: '2400x1704R',
+      line: 'Modeline \"2400x1704R\"  269.00  2400 2448 2480 2560  1704 1707 1717 1753 +hsync -vsync',
+    };
+  }
+  return null;
+}
+
+function hasXvfb() {
+  const result = spawnSync('Xvfb', ['-help'], { stdio: 'ignore' });
+  return result.status === 0;
+}
+
 async function findFreeDisplay(start = 210, end = 230) {
   for (let d = start; d <= end; d++) {
     const sock = `/tmp/.X11-unix/X${d}`;
@@ -101,7 +137,10 @@ async function ensureUserSpaceXorg(logDir) {
 
 async function writeXorgConfig({ width, height, logDir }) {
   const confPath = path.join(logDir, `xorg-dummy-${width}x${height}.conf`);
-  const conf = `Section "Device"\n  Identifier "DummyDevice"\n  Driver "dummy"\nEndSection\nSection "Monitor"\n  Identifier "DummyMonitor"\n  HorizSync 28-80\n  VertRefresh 48-75\nEndSection\nSection "Screen"\n  Identifier "DummyScreen"\n  Device "DummyDevice"\n  Monitor "DummyMonitor"\n  DefaultDepth 24\n  SubSection "Display"\n    Depth 24\n    Modes "${width}x${height}"\n  EndSubSection\nEndSection\n`;
+  const modeline = (await computeModeline(width, height)) || fallbackModeline(width, height);
+  const modeName = modeline?.name ?? `${width}x${height}`;
+  const videoRamKb = Math.max(256000, Math.ceil((width * height * 4) / 1024));
+  const conf = `Section "Device"\n  Identifier "DummyDevice"\n  Driver "dummy"\n  VideoRam ${videoRamKb}\nEndSection\nSection "Monitor"\n  Identifier "DummyMonitor"\n  HorizSync 28-160\n  VertRefresh 48-75\n${modeline ? `  ${modeline.line}\n` : ''}EndSection\nSection "Screen"\n  Identifier "DummyScreen"\n  Device "DummyDevice"\n  Monitor "DummyMonitor"\n  DefaultDepth 24\n  SubSection "Display"\n    Depth 24\n    Modes "${modeName}"\n    Virtual ${width} ${height}\n  EndSubSection\nEndSection\n`;
   await fs.writeFile(confPath, conf, 'utf8');
   return confPath;
 }
@@ -116,7 +155,17 @@ async function waitForXSocket(displayNumber, timeoutMs = 10000) {
 async function countPngs(dir) { try { const files = await fs.readdir(dir); return files.filter(f => f.toLowerCase().endsWith('.png')).length; } catch { return 0; } }
 
 function parseArgs(argv) {
-  const args = { width: 1280, height: 720, readyTimeoutMs: 30000, addr: null, screenshotDir: null };
+  const args = {
+    width: 1280,
+    height: 720,
+    readyTimeoutMs: 30000,
+    addr: null,
+    screenshotDir: null,
+    fixture: null,
+    automationScript: null,
+    useXvfb: null,
+    automationDelayMs: null,
+  };
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--window-size' && argv[i+1]) { const [w,h] = String(argv[++i]).split('x'); args.width = parseInt(w,10); args.height = parseInt(h,10); }
@@ -127,6 +176,14 @@ function parseArgs(argv) {
     else if (a.startsWith('--addr=')) { args.addr = a.slice('--addr='.length); }
     else if (a === '--screenshot-dir' && argv[i+1]) { args.screenshotDir = argv[++i]; }
     else if (a.startsWith('--screenshot-dir=')) { args.screenshotDir = a.slice('--screenshot-dir='.length); }
+    else if (a === '--fixture' && argv[i+1]) { args.fixture = argv[++i]; }
+    else if (a.startsWith('--fixture=')) { args.fixture = a.slice('--fixture='.length); }
+    else if (a === '--automation-script' && argv[i+1]) { args.automationScript = argv[++i]; }
+    else if (a.startsWith('--automation-script=')) { args.automationScript = a.slice('--automation-script='.length); }
+    else if (a === '--automation-delay-ms' && argv[i+1]) { args.automationDelayMs = Number(argv[++i]); }
+    else if (a.startsWith('--automation-delay-ms=')) { args.automationDelayMs = Number(a.slice('--automation-delay-ms='.length)); }
+    else if (a === '--xvfb') { args.useXvfb = true; }
+    else if (a === '--no-xvfb') { args.useXvfb = false; }
   }
   return args;
 }
@@ -146,11 +203,19 @@ async function main() {
   const winSize = `${args.width}x${args.height}`;
   log(`Using DISPLAY=${DISPLAY}, window ${winSize}`);
 
-  const tExtract0 = now();
-  const { extracted } = await ensureUserSpaceXorg(baseDir);
-  const tExtract1 = now();
+  const useXvfb = args.useXvfb ?? hasXvfb();
+  let extracted = false;
+  let tExtract0 = now();
+  let tExtract1 = tExtract0;
+  let xorgConf = null;
 
-  const xorgConf = await writeXorgConfig({ width: args.width, height: args.height, logDir: baseDir });
+  if (!useXvfb) {
+    tExtract0 = now();
+    const result = await ensureUserSpaceXorg(baseDir);
+    extracted = result.extracted;
+    tExtract1 = now();
+    xorgConf = await writeXorgConfig({ width: args.width, height: args.height, logDir: baseDir });
+  }
 
   const xEnv = {
     ...process.env,
@@ -167,9 +232,31 @@ async function main() {
     ].filter(Boolean).join(':'),
   };
 
-  // Start Xorg dummy
-  const xorgArgs = [ DISPLAY, '-noreset', '+extension', 'RANDR', '+extension', 'XFIXES', '+extension', 'RENDER', '+extension', 'GLX', '-config', xorgConf, '-logfile', logs.xorg, '-modulepath', XORG_MODULES ];
-  const xorg = spawnLogged(XORG_BIN, xorgArgs, { env: xEnv }, logs.xorg);
+  // Start X server
+  const xorg = useXvfb
+    ? spawnLogged(
+        'Xvfb',
+        [
+          DISPLAY,
+          '-screen',
+          '0',
+          `${args.width}x${args.height}x24`,
+          '-nolisten',
+          'tcp',
+          '-ac',
+          '+extension',
+          'RANDR',
+          '+extension',
+          'RENDER',
+          '+extension',
+          'XFIXES',
+          '+extension',
+          'GLX',
+        ],
+        { env: xEnv },
+        logs.xorg,
+      )
+    : spawnLogged(XORG_BIN, [DISPLAY, '-noreset', '+extension', 'RANDR', '+extension', 'XFIXES', '+extension', 'RENDER', '+extension', 'GLX', '-config', xorgConf, '-logfile', logs.xorg, '-modulepath', XORG_MODULES], { env: xEnv }, logs.xorg);
   const xReady = await waitForXSocket(displayNumber, 15000);
   if (!xReady) throw new Error('Xorg socket did not appear in time');
 
@@ -188,7 +275,15 @@ async function main() {
   const targetDir = process.env.CARGO_TARGET_DIR || path.join(REPO_ROOT, 'target');
   const appBin = path.join(targetDir, 'debug', os.platform() === 'win32' ? 'ctx.exe' : 'ctx');
   const appArgs = [ '--automation-addr', addr, '--screenshot-dir', shotsDir, '--window-size', winSize ];
-  const appEnv = { ...xEnv, RUST_LOG: process.env.RUST_LOG || 'info' };
+  if (args.fixture) {
+    appArgs.push('--fixture', args.fixture);
+  }
+  const appEnv = {
+    ...xEnv,
+    RUST_LOG: process.env.RUST_LOG || 'info',
+    CTX_SCREENSHOT_DIR: shotsDir,
+    CTX_WINDOW_SIZE: winSize,
+  };
   const app = spawnLogged(appBin, appArgs, { cwd: REPO_ROOT, env: appEnv }, logs.app);
 
   // Wait for /ready
@@ -206,8 +301,15 @@ async function main() {
 
   // Run automation script
   const tAuto0 = now();
+  const automationScript = args.automationScript
+    ? (path.isAbsolute(args.automationScript) ? args.automationScript : path.resolve(REPO_ROOT, args.automationScript))
+    : AUTOMATION_SCRIPT;
   await new Promise((resolve, reject) => {
-    const child = spawn('node', [AUTOMATION_SCRIPT, '--addr', httpUrl, '--ready-timeout-ms', String(args.readyTimeoutMs)], { cwd: REPO_ROOT, env: appEnv });
+    const automationArgs = ['--addr', httpUrl, '--ready-timeout-ms', String(args.readyTimeoutMs)];
+    if (Number.isFinite(args.automationDelayMs)) {
+      automationArgs.push('--delay-ms', String(args.automationDelayMs));
+    }
+    const child = spawn('node', ['--experimental-websocket', automationScript, ...automationArgs], { cwd: REPO_ROOT, env: appEnv });
     const logStream = createWriteStream(logs.automation, { flags: 'a' });
     child.stdout.on('data', (d) => logStream.write(d));
     child.stderr.on('data', (d) => logStream.write(d));

@@ -101,11 +101,12 @@ async fn main() -> Result<()> {
                         {
                             "name": "agent_init",
                             "title": "Init Subagents",
-                            "description": "Spawns one or more subagents (max configurable, default 10) for the current session and waits for their responses.",
+                            "description": "Spawns one or more subagents (max configurable, default 10) for the current session. response_mode defaults to enqueue.",
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {
                                     "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
+                                    "response_mode": { "type": "string", "enum": ["enqueue", "await"], "description": "Optional response mode (default enqueue)." },
                                     "agents": {
                                         "type": "array",
                                         "items": {
@@ -137,6 +138,46 @@ async fn main() -> Result<()> {
                                     "prompt": { "type": "string" }
                                 },
                                 "required": ["session_id", "prompt"],
+                                "additionalProperties": false
+                            }
+                        },
+                        {
+                            "name": "subagent_invocations_list",
+                            "title": "List Subagent Invocations",
+                            "description": "Lists subagent invocations for a session.",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
+                                    "turn_id": { "type": "string", "description": "Optional turn id to filter by." }
+                                },
+                                "additionalProperties": false
+                            }
+                        },
+                        {
+                            "name": "subagent_invocation_get",
+                            "title": "Get Subagent Invocation",
+                            "description": "Fetches a subagent invocation by id.",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "invocation_id": { "type": "string" }
+                                },
+                                "required": ["invocation_id"],
+                                "additionalProperties": false
+                            }
+                        },
+                        {
+                            "name": "subagent_wait",
+                            "title": "Wait for Subagent Invocation",
+                            "description": "Waits for a subagent invocation to complete and returns results.",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
+                                    "invocation_id": { "type": "string" }
+                                },
+                                "required": ["invocation_id"],
                                 "additionalProperties": false
                             }
                         },
@@ -1060,6 +1101,25 @@ async fn main() -> Result<()> {
                         Ok(val) => ok(id.unwrap(), tool_ok(val)),
                         Err(e) => ok(id.unwrap(), tool_err(e)),
                     },
+                    "subagent_invocations_list" => {
+                        match subagent_invocations_list_call(&client, &daemon_url, &arguments).await
+                        {
+                            Ok(val) => ok(id.unwrap(), tool_ok(val)),
+                            Err(e) => ok(id.unwrap(), tool_err(e)),
+                        }
+                    }
+                    "subagent_invocation_get" => {
+                        match subagent_invocation_get_call(&client, &daemon_url, &arguments).await {
+                            Ok(val) => ok(id.unwrap(), tool_ok(val)),
+                            Err(e) => ok(id.unwrap(), tool_err(e)),
+                        }
+                    }
+                    "subagent_wait" => {
+                        match subagent_wait_call(&client, &daemon_url, &arguments).await {
+                            Ok(val) => ok(id.unwrap(), tool_ok(val)),
+                            Err(e) => ok(id.unwrap(), tool_err(e)),
+                        }
+                    }
                     "artifacts_set" => {
                         let normalized =
                             (|| -> std::result::Result<(String, Vec<Value>), Value> {
@@ -1831,6 +1891,12 @@ async fn agent_init_call(
         .get("agents")
         .and_then(|v| v.as_array())
         .context("missing agents")?;
+    let response_mode = args
+        .get("response_mode")
+        .and_then(|v| v.as_str())
+        .map(|v| v.trim())
+        .filter(|v| !v.is_empty())
+        .map(|v| v.to_string());
     let tool_call_id = args
         .get("tool_call_id")
         .and_then(|v| v.as_str())
@@ -1839,6 +1905,11 @@ async fn agent_init_call(
         .map(|v| v.to_string());
     let path = format!("/api/mcp/sessions/{}/agent_init", session_id);
     let mut body = json!({ "agents": agents });
+    if let Some(response_mode) = response_mode {
+        if let Some(obj) = body.as_object_mut() {
+            obj.insert("response_mode".to_string(), Value::String(response_mode));
+        }
+    }
     if let Some(tool_call_id) = tool_call_id {
         if let Some(obj) = body.as_object_mut() {
             obj.insert("tool_call_id".to_string(), Value::String(tool_call_id));
@@ -1868,6 +1939,69 @@ async fn agent_reply_call(
         daemon_url,
         &path,
         &json!({ "session_id": session_id, "prompt": prompt }),
+    )
+    .await
+}
+
+async fn subagent_invocations_list_call(
+    client: &reqwest::Client,
+    daemon_url: &str,
+    args: &Value,
+) -> Result<Value> {
+    let session_id = args
+        .get("session_id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .or_else(|| ctx_env_opt("SESSION_ID"))
+        .context("missing session_id (set CTX_SESSION_ID)")?;
+    let turn_id = args
+        .get("turn_id")
+        .and_then(|v| v.as_str())
+        .map(|v| v.trim())
+        .filter(|v| !v.is_empty());
+    let mut path = format!("/api/sessions/{}/subagent_invocations", session_id);
+    if let Some(turn_id) = turn_id {
+        let turn_id = urlencoding::encode(turn_id);
+        path.push_str(&format!("?turn_id={turn_id}"));
+    }
+    daemon_get_json(client, daemon_url, &path).await
+}
+
+async fn subagent_invocation_get_call(
+    client: &reqwest::Client,
+    daemon_url: &str,
+    args: &Value,
+) -> Result<Value> {
+    let invocation_id = args
+        .get("invocation_id")
+        .and_then(|v| v.as_str())
+        .context("missing invocation_id")?;
+    let invocation_id = urlencoding::encode(invocation_id);
+    let path = format!("/api/subagent_invocations/{invocation_id}");
+    daemon_get_json(client, daemon_url, &path).await
+}
+
+async fn subagent_wait_call(
+    client: &reqwest::Client,
+    daemon_url: &str,
+    args: &Value,
+) -> Result<Value> {
+    let session_id = args
+        .get("session_id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .or_else(|| ctx_env_opt("SESSION_ID"))
+        .context("missing session_id (set CTX_SESSION_ID)")?;
+    let invocation_id = args
+        .get("invocation_id")
+        .and_then(|v| v.as_str())
+        .context("missing invocation_id")?;
+    let path = format!("/api/mcp/sessions/{}/subagent_wait", session_id);
+    daemon_post_json(
+        client,
+        daemon_url,
+        &path,
+        &json!({ "invocation_id": invocation_id }),
     )
     .await
 }

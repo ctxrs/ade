@@ -1,69 +1,45 @@
-use gpui::{Context, FocusHandle, ListState, div, prelude::*, px, Entity};
-use ctx_core::models::{Artifact, MessageAttachment, SessionEvent};
+use gpui::{Context, div, prelude::*, px};
 
-use crate::{
-    automation_tree,
-    theme::{ThemeColors, ThemeMetrics},
-};
+use crate::{automation_tree, theme::ThemeMetrics};
 
 use super::artifacts::ArtifactsView;
-use super::composer::ComposerView;
+use super::composer::{ComposerVariant, ComposerView};
 use super::diff_review::DiffReviewView;
-use super::messages::{EventsView, MessagesView};
+use super::messages::ThreadListView;
 use super::sessions_pane::SessionsPaneView;
 use super::super::icons::{Icon, IconName};
-use super::super::models::{MessageItem, SessionInfo};
-use super::super::state::{
-    ArtifactPreviewState, DataLoadState, DiffReviewState, ShellView, StreamStatus,
-    TerminalPanelState,
-};
-use super::super::workspace_summary::SessionSummaryItem;
+use super::super::state::{DataLoadState, ShellView};
 
 pub(crate) struct SessionView<'a> {
-    pub(super) colors: ThemeColors,
-    pub(super) session: &'a SessionInfo,
-    pub(super) sessions: &'a [SessionSummaryItem],
-    pub(super) selected_session: Option<usize>,
-    pub(super) messages: &'a [MessageItem],
-    pub(super) message_list_state: &'a ListState,
-    pub(super) new_message_count: usize,
-    pub(super) session_events: &'a [SessionEvent],
-    pub(super) artifacts: &'a [Artifact],
-    pub(super) selected_artifact: Option<usize>,
-    pub(super) artifact_preview: &'a ArtifactPreviewState,
-    pub(super) data_state: &'a DataLoadState,
-    pub(super) composer_text: &'a str,
-    pub(super) composer_cursor: usize,
-    pub(super) composer_attachment_text: &'a str,
-    pub(super) composer_attachment_cursor: usize,
-    pub(super) composer_attachments: &'a [MessageAttachment],
-    pub(super) provider_options: Vec<String>,
-    pub(super) model_options: Vec<String>,
-    pub(super) selected_provider: Option<String>,
-    pub(super) selected_model: Option<String>,
-    pub(super) provider_menu_open: bool,
-    pub(super) model_menu_open: bool,
-    pub(super) composer_notice: Option<String>,
-    pub(super) composer_attachment_focus: &'a FocusHandle,
-    pub(super) composer_focus: &'a FocusHandle,
-    pub(super) stream_status: &'a StreamStatus,
+    pub(super) shell: &'a ShellView,
     pub(super) resyncing: bool,
-    pub(super) show_sessions_pane: bool,
-    pub(super) show_diff_pane: bool,
-    pub(super) show_artifacts_pane: bool,
-    pub(super) show_terminal_panel: bool,
-    pub(super) diff_review_state: Entity<DiffReviewState>,
-    pub(super) terminal_panel_state: Entity<TerminalPanelState>,
 }
 
 impl<'a> SessionView<'a> {
     pub(super) fn render(&self, cx: &mut Context<ShellView>) -> impl IntoElement {
+        let shell = self.shell;
         let metrics = ThemeMetrics::default();
-        let has_session = self
+        if shell.new_task_mode {
+            let composer = ComposerView {
+                shell,
+                variant: ComposerVariant::NewTask,
+            }
+            .render(cx);
+            return div()
+                .id("session-view")
+                .flex()
+                .flex_col()
+                .flex_1()
+                .items_center()
+                .justify_center()
+                .p(px(24.0))
+                .child(composer);
+        }
+        let has_session = shell
             .selected_session
-            .and_then(|index| self.sessions.get(index))
+            .and_then(|index| shell.sessions.get(index))
             .is_some();
-        if !self.show_sessions_pane {
+        if !shell.show_sessions_pane {
             automation_tree::register_hidden(
                 "sessions-list",
                 "list",
@@ -71,7 +47,7 @@ impl<'a> SessionView<'a> {
                 Some("app-shell"),
             );
         }
-        if !self.show_diff_pane {
+        if !shell.show_diff_pane {
             automation_tree::register_hidden(
                 "diff-pane",
                 "pane",
@@ -79,7 +55,7 @@ impl<'a> SessionView<'a> {
                 Some("app-shell"),
             );
         }
-        if !self.show_artifacts_pane {
+        if !shell.show_artifacts_pane {
             automation_tree::register_hidden(
                 "artifacts-pane",
                 "pane",
@@ -87,7 +63,7 @@ impl<'a> SessionView<'a> {
                 Some("app-shell"),
             );
         }
-        if !self.show_terminal_panel {
+        if !shell.show_terminal_panel {
             automation_tree::register_hidden(
                 "terminal-panel",
                 "pane",
@@ -95,12 +71,10 @@ impl<'a> SessionView<'a> {
                 Some("app-shell"),
             );
         }
-        let can_send = has_session
-            && (!self.composer_text.trim().is_empty() || !self.composer_attachments.is_empty());
         let interrupt_color = if has_session {
-            self.colors.text
+            shell.colors.text
         } else {
-            self.colors.muted
+            shell.colors.muted
         };
         let interrupt_label = div()
             .flex()
@@ -118,27 +92,27 @@ impl<'a> SessionView<'a> {
             .py(px(metrics.spacing.xs))
             .text_sm()
             .border_1()
-            .border_color(self.colors.border)
+            .border_color(shell.colors.border)
             .rounded_full()
             .child(interrupt_label)
             .id("session-interrupt");
 
         if has_session {
             interrupt_button = interrupt_button
-                .bg(self.colors.panel)
+                .bg(shell.colors.panel)
                 .cursor_pointer()
                 .active(|style| style.opacity(0.85))
                 .on_click(cx.listener(ShellView::on_interrupt_click));
         } else {
             interrupt_button = interrupt_button
-                .bg(self.colors.panel_2)
-                .text_color(self.colors.muted);
+                .bg(shell.colors.panel_2)
+                .text_color(shell.colors.muted);
         }
 
         let cancel_color = if has_session {
-            self.colors.warning
+            shell.colors.warning
         } else {
-            self.colors.muted
+            shell.colors.muted
         };
         let cancel_label = div()
             .flex()
@@ -152,28 +126,28 @@ impl<'a> SessionView<'a> {
             .py(px(metrics.spacing.xs))
             .text_sm()
             .border_1()
-            .border_color(self.colors.border)
+            .border_color(shell.colors.border)
             .rounded_full()
             .child(cancel_label)
             .id("session-cancel");
 
         if has_session {
             cancel_button = cancel_button
-                .bg(self.colors.panel)
-                .text_color(self.colors.warning)
+                .bg(shell.colors.panel)
+                .text_color(shell.colors.warning)
                 .cursor_pointer()
                 .active(|style| style.opacity(0.85))
                 .on_click(cx.listener(ShellView::on_cancel_click));
         } else {
             cancel_button = cancel_button
-                .bg(self.colors.panel_2)
-                .text_color(self.colors.muted);
+                .bg(shell.colors.panel_2)
+                .text_color(shell.colors.muted);
         }
         let sessions_toggle = {
-            let (bg, color) = if self.show_sessions_pane {
-                (self.colors.panel, self.colors.text)
+            let (bg, color) = if shell.show_sessions_pane {
+                (shell.colors.panel, shell.colors.text)
             } else {
-                (self.colors.panel_2, self.colors.muted)
+                (shell.colors.panel_2, shell.colors.muted)
             };
             div()
                 // Match web .wb-icon 22x22, radius 8
@@ -192,10 +166,10 @@ impl<'a> SessionView<'a> {
         };
 
         let diff_toggle = {
-            let (bg, color) = if self.show_diff_pane {
-                (self.colors.panel, self.colors.text)
+            let (bg, color) = if shell.show_diff_pane {
+                (shell.colors.panel, shell.colors.text)
             } else {
-                (self.colors.panel_2, self.colors.muted)
+                (shell.colors.panel_2, shell.colors.muted)
             };
             div()
                 // Match web .wb-icon 22x22, radius 8
@@ -214,10 +188,10 @@ impl<'a> SessionView<'a> {
         };
 
         let artifacts_toggle = {
-            let (bg, color) = if self.show_artifacts_pane {
-                (self.colors.panel, self.colors.text)
+            let (bg, color) = if shell.show_artifacts_pane {
+                (shell.colors.panel, shell.colors.text)
             } else {
-                (self.colors.panel_2, self.colors.muted)
+                (shell.colors.panel_2, shell.colors.muted)
             };
             div()
                 // Match web .wb-icon 22x22, radius 8
@@ -236,10 +210,10 @@ impl<'a> SessionView<'a> {
         };
 
         let terminal_toggle = {
-            let (bg, color) = if self.show_terminal_panel {
-                (self.colors.panel, self.colors.text)
+            let (bg, color) = if shell.show_terminal_panel {
+                (shell.colors.panel, shell.colors.text)
             } else {
-                (self.colors.panel_2, self.colors.muted)
+                (shell.colors.panel_2, shell.colors.muted)
             };
             div()
                 // Match web .wb-icon 22x22, radius 8
@@ -262,12 +236,12 @@ impl<'a> SessionView<'a> {
             .px(px(metrics.spacing.md))
             .py(px(metrics.spacing.xxs))
             .text_sm()
-            .bg(self.colors.panel)
+            .bg(shell.colors.panel)
             .border_1()
-            .border_color(self.colors.border)
+            .border_color(shell.colors.border)
             .rounded_full()
-            .text_color(self.colors.muted)
-            .child(self.session.status.clone());
+            .text_color(shell.colors.muted)
+            .child(shell.session.status.clone());
 
         let header_row = div()
             .flex()
@@ -279,7 +253,7 @@ impl<'a> SessionView<'a> {
                     .items_center()
                     // Tighten to web gap 8px between title and pill
                     .gap(px(metrics.spacing.md))
-                    .child(div().text_lg().child(self.session.title.clone()))
+                    .child(div().text_lg().child(shell.session.title.clone()))
                     .child(status_pill),
             )
             .child(
@@ -309,21 +283,21 @@ impl<'a> SessionView<'a> {
             .child(
                 div()
                     .text_sm()
-                    .text_color(self.colors.muted)
-                    .child(self.session.detail.clone()),
+                    .text_color(shell.colors.muted)
+                    .child(shell.session.detail.clone()),
             );
 
-        let notice_block = match self.data_state {
+        let notice_block = match &shell.data_state {
             DataLoadState::Loading => Some(
                 div()
                     .px(px(metrics.spacing.md))
                     .py(px(metrics.spacing.sm))
                     .text_sm()
-                    .text_color(self.colors.muted)
+                    .text_color(shell.colors.muted)
                     .border_1()
-                    .border_color(self.colors.border)
+                    .border_color(shell.colors.border)
                     .rounded_sm()
-                    .bg(self.colors.panel_2)
+                    .bg(shell.colors.panel_2)
                     .child("Loading workspace data..."),
             ),
             DataLoadState::Error(err) => Some(
@@ -334,11 +308,11 @@ impl<'a> SessionView<'a> {
                     .px(px(metrics.spacing.md))
                     .py(px(metrics.spacing.sm))
                     .text_sm()
-                    .text_color(self.colors.error)
+                    .text_color(shell.colors.error)
                     .border_1()
-                    .border_color(self.colors.error)
+                    .border_color(shell.colors.error)
                     .rounded_sm()
-                    .bg(self.colors.panel_2)
+                    .bg(shell.colors.panel_2)
                     .child("Workspace data unavailable")
                     .child(format!("Error: {err}")),
             ),
@@ -349,41 +323,19 @@ impl<'a> SessionView<'a> {
         if let Some(notice_block) = notice_block {
             thread_stack = thread_stack.child(notice_block);
         }
-        thread_stack = thread_stack
-            .child(
-                EventsView {
-                    colors: self.colors,
-                    events: self.session_events,
-                }
-                .render(),
-            )
-            .child(
-                MessagesView {
-                    colors: self.colors,
-                    messages: self.messages,
-                    message_list_state: self.message_list_state,
-                    new_message_count: self.new_message_count,
-                }
-                .render(cx),
-            );
+        thread_stack = thread_stack.child(
+            ThreadListView {
+                shell,
+                items: &shell.thread_items,
+                list_state: &shell.thread_list_state,
+                new_item_count: shell.new_thread_item_count,
+            }
+            .render(cx),
+        );
 
         let composer = ComposerView {
-            colors: self.colors,
-            composer_text: self.composer_text,
-            composer_cursor: self.composer_cursor,
-            can_send,
-            focus_handle: self.composer_focus,
-            composer_attachment_text: self.composer_attachment_text,
-            composer_attachment_cursor: self.composer_attachment_cursor,
-            composer_attachments: self.composer_attachments,
-            provider_options: &self.provider_options,
-            model_options: &self.model_options,
-            selected_provider: self.selected_provider.as_deref(),
-            selected_model: self.selected_model.as_deref(),
-            provider_menu_open: self.provider_menu_open,
-            model_menu_open: self.model_menu_open,
-            composer_notice: self.composer_notice.as_deref(),
-            attachment_focus: self.composer_attachment_focus,
+            shell,
+            variant: ComposerVariant::ActiveSession,
         }
         .render(cx);
 
@@ -397,7 +349,7 @@ impl<'a> SessionView<'a> {
             .child(composer);
 
         let show_right_pane =
-            self.show_sessions_pane || self.show_diff_pane || self.show_artifacts_pane;
+            shell.show_sessions_pane || shell.show_diff_pane || shell.show_artifacts_pane;
         let mut content_row = div().flex().flex_row().gap(px(metrics.spacing.gutter)).flex_1().child(center_column);
 
         if show_right_pane {
@@ -412,7 +364,7 @@ impl<'a> SessionView<'a> {
                         .w(px(2.0))
                         .h(px(metrics.spacing.gutter * 2.0))
                         .rounded_sm()
-                        .bg(self.colors.border),
+                        .bg(shell.colors.border),
                 );
             let mut right_pane = div()
                 .flex()
@@ -421,7 +373,7 @@ impl<'a> SessionView<'a> {
                 .w(px(360.0))
                 .pl(px(metrics.spacing.sm));
 
-            if self.show_sessions_pane {
+            if shell.show_sessions_pane {
                 right_pane = right_pane.child(
                     div()
                         .id("sessions-pane")
@@ -429,16 +381,16 @@ impl<'a> SessionView<'a> {
                         .flex_col()
                         .gap(px(metrics.spacing.xl))
                         .border_1()
-                        .border_color(self.colors.border)
+                        .border_color(shell.colors.border)
                         .rounded_sm()
-                        .bg(self.colors.panel_2)
+                        .bg(shell.colors.panel_2)
                         .p(px(metrics.spacing.xl))
                         .child(
                             SessionsPaneView {
-                                colors: self.colors,
-                                sessions: self.sessions,
-                                selected_session: self.selected_session,
-                                stream_status: self.stream_status,
+                                colors: shell.colors,
+                                sessions: &shell.sessions,
+                                selected_session: shell.selected_session,
+                                stream_status: &shell.stream_status,
                                 resyncing: self.resyncing,
                             }
                             .render(cx)
@@ -447,10 +399,10 @@ impl<'a> SessionView<'a> {
                 );
             }
 
-            if self.show_diff_pane {
-                let diff_review_view = cx.update_entity(&self.diff_review_state, |state, cx| {
+            if shell.show_diff_pane {
+                let diff_review_view = cx.update_entity(&shell.diff_review_state, |state, cx| {
                     DiffReviewView {
-                        colors: self.colors,
+                        colors: shell.colors,
                         state,
                     }
                     .render(cx)
@@ -469,15 +421,15 @@ impl<'a> SessionView<'a> {
                         .flex_col()
                         .gap(px(metrics.spacing.xl))
                         .border_1()
-                        .border_color(self.colors.border)
+                        .border_color(shell.colors.border)
                         .rounded_sm()
-                        .bg(self.colors.panel_2)
+                        .bg(shell.colors.panel_2)
                         .p(px(metrics.spacing.xl))
                         .child(diff_review_view),
                 );
             }
 
-            if self.show_artifacts_pane {
+            if shell.show_artifacts_pane {
                 right_pane = right_pane.child(
                     div()
                         .on_children_prepainted(automation_tree::track_children_bounds(
@@ -491,16 +443,16 @@ impl<'a> SessionView<'a> {
                         .flex_col()
                         .gap(px(metrics.spacing.xl))
                         .border_1()
-                        .border_color(self.colors.border)
+                        .border_color(shell.colors.border)
                         .rounded_sm()
-                        .bg(self.colors.panel_2)
+                        .bg(shell.colors.panel_2)
                         .p(px(metrics.spacing.xl))
                         .child(
                             ArtifactsView {
-                                colors: self.colors,
-                                artifacts: self.artifacts,
-                                selected_artifact: self.selected_artifact,
-                                artifact_preview: self.artifact_preview,
+                                colors: shell.colors,
+                                artifacts: &shell.artifacts,
+                                selected_artifact: shell.selected_artifact,
+                                artifact_preview: &shell.artifact_preview,
                             }
                             .render(cx)
                             .into_any_element(),
@@ -517,10 +469,10 @@ impl<'a> SessionView<'a> {
             .flex_col()
             .flex_1()
             .p(px(metrics.spacing.gutter))
-            .bg(self.colors.panel)
+            .bg(shell.colors.panel)
             .child(content_row);
 
-        if self.show_terminal_panel {
+        if shell.show_terminal_panel {
             root = root
                 .child(
                     div()
@@ -533,16 +485,16 @@ impl<'a> SessionView<'a> {
                                 .w(px(metrics.spacing.gutter * 2.0))
                                 .h(px(2.0))
                                 .rounded_sm()
-                                .bg(self.colors.border),
+                                .bg(shell.colors.border),
                         ),
                 )
                 .child(
                     div()
                         .id("terminal-pane")
                         .border_t_1()
-                        .border_color(self.colors.border)
+                        .border_color(shell.colors.border)
                         .pt(px(metrics.spacing.xl))
-                        .child(self.terminal_panel_state.clone()),
+                        .child(shell.terminal_panel_state.clone()),
                 );
         }
 

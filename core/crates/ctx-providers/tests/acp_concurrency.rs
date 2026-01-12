@@ -73,6 +73,7 @@ async fn acp_concurrency_routes_updates_per_session() {
         client_title: "ctx test".to_string(),
         client_version: "0.0.0".to_string(),
         client_capabilities: json!({}),
+        system_prompt_append: None,
         mcp_servers: vec![],
     };
 

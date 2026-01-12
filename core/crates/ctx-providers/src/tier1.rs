@@ -75,6 +75,15 @@ impl Tier1AcpAdapter {
         Self::new_with_ask_user_question("claude", &command, args, broker)
     }
 
+    pub fn from_raw_with_ask_user_question(
+        id: &str,
+        command: String,
+        args: Vec<String>,
+        broker: Arc<AskUserQuestionBroker>,
+    ) -> Self {
+        Self::new_with_ask_user_question(id, &command, args, broker)
+    }
+
     pub fn from_command(
         id: &str,
         command: impl AsRef<std::path::Path>,
@@ -88,6 +97,10 @@ impl Tier1AcpAdapter {
 
     pub fn codex() -> Self {
         Self::new("codex", "codex-acp", vec![])
+    }
+
+    pub fn codex_with_ask_user_question(broker: Arc<AskUserQuestionBroker>) -> Self {
+        Self::new_with_ask_user_question("codex", "codex-acp", vec![], broker)
     }
 
     pub fn claude() -> Self {
@@ -395,6 +408,11 @@ fn build_acp_client_config(env: &HashMap<String, String>) -> AcpClientConfig {
         vec![]
     };
 
+    let system_prompt_append = env
+        .get("CTX_SYSTEM_PROMPT_APPEND")
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+
     AcpClientConfig {
         client_name: "ctx".to_string(),
         client_title: "ctx".to_string(),
@@ -403,6 +421,7 @@ fn build_acp_client_config(env: &HashMap<String, String>) -> AcpClientConfig {
             "fs": {"readTextFile": false, "writeTextFile": false},
             "terminal": false
         }),
+        system_prompt_append,
         mcp_servers,
     }
 }

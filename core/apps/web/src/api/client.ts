@@ -191,6 +191,12 @@ export type TelemetrySettings = {
   endpoint: string;
 };
 
+export type ProviderControlMode = "full" | "harness_native" | "ctx_enforced";
+
+export type SandboxingSettings = {
+  provider_control_mode: ProviderControlMode;
+};
+
 export type ResourceGovernanceStatusState = "disabled" | "applied" | "pending" | "unsupported" | "error";
 
 export type ResourceGovernanceStatus = {
@@ -243,6 +249,7 @@ export type Settings = {
   resource_governance?: ResourceGovernanceSettings | null;
   provider_guard?: ProviderGuardSettings | null;
   subagents?: SubagentSettings | null;
+  sandboxing?: SandboxingSettings | null;
 };
 
 export type WebSessionViewport = {
@@ -800,6 +807,14 @@ export const updateSettings = (settings: Settings) =>
     body: JSON.stringify(settings),
   });
 
+export type AgentSystemPromptConfig = {
+  config_path: string;
+  default_append: string;
+  configured_append?: string | null;
+  effective_append?: string | null;
+  source: "default" | "config" | "disabled";
+};
+
 export const createWorkspace = (root_path: string, name?: string) =>
   apiAny<Workspace>("/api/workspaces", {
     method: "POST",
@@ -843,6 +858,15 @@ export const createWorkspaceAttachment = (workspaceId: string, req: CreateWorksp
 export const deleteWorkspaceAttachment = (workspaceId: string, req: DeleteWorkspaceAttachmentRequest) =>
   apiAny<WorkspaceAttachment[]>(`/api/workspaces/${workspaceId}/attachments`, {
     method: "DELETE",
+    body: JSON.stringify(req),
+  });
+
+export const getAgentSystemPrompt = (workspaceId: string) =>
+  apiAny<AgentSystemPromptConfig>(`/api/workspaces/${workspaceId}/agent_system_prompt`);
+
+export const updateAgentSystemPrompt = (workspaceId: string, req: { system_prompt_append?: string | null }) =>
+  apiAny<AgentSystemPromptConfig>(`/api/workspaces/${workspaceId}/agent_system_prompt`, {
+    method: "POST",
     body: JSON.stringify(req),
   });
 

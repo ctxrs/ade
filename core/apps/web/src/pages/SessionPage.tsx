@@ -41,7 +41,7 @@ import {
 import { useOpenSession, useSessionEntry, useSessionSupervisor } from "../state/sessionSupervisor";
 import { loadSessionViewPrefsV1, saveSessionViewPrefsV1, type SessionViewVerbosity } from "../state/uiStateStore";
 import { Check, Copy } from "lucide-react";
-import { AskUserQuestionModal } from "../components/AskUserQuestionModal";
+import { AskUserQuestionCard } from "../components/AskUserQuestionCard";
 import { type SlashCommandDescriptor } from "../state/useComposerAutocomplete";
 import { HARNESS_CATALOG } from "../utils/harnessCatalog";
 import { useSettingsSnapshot, useSettingsStore } from "../state/settingsStore";
@@ -139,7 +139,23 @@ type ThreadItem =
     raw: any;
     updates_seen: number;
     has_details?: boolean;
+  }
+  | {
+    kind: "ask_user_question";
+    id: string;
+    turn_id: string;
+    created_at: string;
+    tool_call_id: string;
+    input: any;
+    answers?: Record<string, string>;
+    outcome?: "submitted" | "cancelled";
+    answered: boolean;
   };
+
+type AskUserQuestionAnswerState = {
+  outcome: "submitted" | "cancelled";
+  answers: Record<string, string>;
+};
 
 type WorkbenchTurnHeader = {
   id: string;
@@ -332,6 +348,58 @@ function buildCustomStatusByTurnId(events: SessionEvent[]): Map<string, string> 
   }
 
   return out;
+}
+
+function normalizeAskUserQuestionAnswers(raw: unknown): Record<string, string> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(raw)) {
+    if (typeof value === "string" && key.trim()) {
+      out[key] = value;
+    }
+  }
+  return out;
+}
+
+function extractAskUserQuestionAnswer(ev: SessionEvent): {
+  toolCallId: string;
+  outcome: "submitted" | "cancelled";
+  answers: Record<string, string>;
+} | null {
+  if (ev.event_type !== "notice") return null;
+  const payload = ev.payload_json ?? {};
+  if (payload.kind !== "ask_user_question_answered") return null;
+  const toolCallId = String(payload.tool_call_id ?? "").trim();
+  if (!toolCallId) return null;
+  const outcomeRaw = String(payload.outcome ?? "").trim();
+  const outcome =
+    outcomeRaw === "cancelled" ? "cancelled" : outcomeRaw === "submitted" ? "submitted" : "submitted";
+  const answers = normalizeAskUserQuestionAnswers(payload.answers ?? payload.answer ?? {});
+  return { toolCallId, outcome, answers };
+}
+
+function collectAskUserQuestionAnswers(
+  events: SessionEvent[],
+  optimistic: Record<string, AskUserQuestionAnswerState>,
+): Map<string, AskUserQuestionAnswerState> {
+  const map = new Map<string, AskUserQuestionAnswerState>();
+  for (const ev of events) {
+    const parsed = extractAskUserQuestionAnswer(ev);
+    if (!parsed) continue;
+    map.set(parsed.toolCallId, { outcome: parsed.outcome, answers: parsed.answers });
+  }
+  for (const [toolCallId, state] of Object.entries(optimistic)) {
+    if (!toolCallId) continue;
+    const existing = map.get(toolCallId);
+    if (!existing) {
+      map.set(toolCallId, state);
+      continue;
+    }
+    if (Object.keys(existing.answers ?? {}).length === 0 && Object.keys(state.answers ?? {}).length > 0) {
+      map.set(toolCallId, { outcome: existing.outcome, answers: state.answers });
+    }
+  }
+  return map;
 }
 
 
@@ -585,7 +653,7 @@ export function SessionView({
   const [authMethodId, setAuthMethodId] = useState<string>("");
   const [authBusy, setAuthBusy] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
-  const [optimisticAskAnswered, setOptimisticAskAnswered] = useState<Record<string, boolean>>({});
+  const [optimisticAskAnswers, setOptimisticAskAnswers] = useState<Record<string, AskUserQuestionAnswerState>>({});
   const [expandedTurnHeaders, setExpandedTurnHeaders] = useState<Record<string, boolean>>({});
   const [expandedTurnDetailsById, setExpandedTurnDetailsById] = useState<Record<string, boolean>>({});
   const [expandedToolById, setExpandedToolById] = useState<Record<string, boolean>>({});
@@ -915,7 +983,7 @@ export function SessionView({
     setFileOpenError(null);
     setAuthMethodId("");
     setAuthError(null);
-    setOptimisticAskAnswered({});
+    setOptimisticAskAnswers({});
   }, [id]);
 
   useEffect(() => {
@@ -1050,7 +1118,7 @@ export function SessionView({
     setProviderGuardActionError(null);
   }, [providerGuardNoticeKey]);
 
-  const askUserQuestion = useMemo(() => {
+  const activeAskToolCallId = useMemo(() => {
     const answered = new Set<string>();
     for (const ev of events) {
       if (ev.event_type !== "notice") continue;
@@ -1058,7 +1126,7 @@ export function SessionView({
       const toolCallId = String(ev.payload_json?.tool_call_id ?? "").trim();
       if (toolCallId) answered.add(toolCallId);
     }
-    for (const toolCallId of Object.keys(optimisticAskAnswered)) {
+    for (const toolCallId of Object.keys(optimisticAskAnswers)) {
       if (toolCallId) answered.add(toolCallId);
     }
 
@@ -1068,10 +1136,15 @@ export function SessionView({
       if (ev.payload_json?.kind !== "ask_user_question") continue;
       const toolCallId = String(ev.payload_json?.tool_call_id ?? "").trim();
       if (!toolCallId || answered.has(toolCallId)) continue;
-      return { toolCallId, input: ev.payload_json?.input ?? null };
+      return toolCallId;
     }
     return null;
-  }, [eventsKey, optimisticAskAnswered]);
+  }, [eventsKey, optimisticAskAnswers]);
+
+  const askUserQuestionAnswers = useMemo(
+    () => collectAskUserQuestionAnswers(events, optimisticAskAnswers),
+    [eventsKey, optimisticAskAnswers],
+  );
 
   const applyProviderGuardSettings = useCallback(
     async (opts: {
@@ -1364,10 +1437,18 @@ export function SessionView({
       messages,
       toolSummariesReady ? turnToolsByTurnId : {},
       events,
+      askUserQuestionAnswers,
     );
     // messages are canonical for turn headers; include in memo key
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [turnsKey, messagesKey, toolSummariesReady ? turnToolsByTurnId : null, eventsKey, turns.length]);
+  }, [
+    turnsKey,
+    messagesKey,
+    toolSummariesReady ? turnToolsByTurnId : null,
+    eventsKey,
+    turns.length,
+    askUserQuestionAnswers,
+  ]);
 
   const debugEvents = workbenchThreadView.debugEvents;
   const wbGroups = useMemo(
@@ -1967,6 +2048,42 @@ export function SessionView({
         />
       );
     }
+    if (item.kind === "ask_user_question") {
+      const isActive = item.tool_call_id === activeAskToolCallId;
+      return (
+        <AskUserQuestionCard
+          input={item.input}
+          answers={item.answers}
+          outcome={item.outcome}
+          readOnly={item.answered}
+          active={isActive}
+          onCancel={
+            item.answered
+              ? undefined
+              : async () => {
+                if (!id) throw new Error("Missing session id.");
+                await submitAskUserQuestion(id, item.tool_call_id, "cancelled", {});
+                setOptimisticAskAnswers((prev) => ({
+                  ...prev,
+                  [item.tool_call_id]: { outcome: "cancelled", answers: {} },
+                }));
+              }
+          }
+          onSubmit={
+            item.answered
+              ? undefined
+              : async (answers) => {
+                if (!id) throw new Error("Missing session id.");
+                await submitAskUserQuestion(id, item.tool_call_id, "submitted", answers);
+                setOptimisticAskAnswers((prev) => ({
+                  ...prev,
+                  [item.tool_call_id]: { outcome: "submitted", answers },
+                }));
+              }
+          }
+        />
+      );
+    }
     return (
       <ThreadItemView
         item={item}
@@ -1976,6 +2093,7 @@ export function SessionView({
       />
     );
   }, [
+    activeAskToolCallId,
     expandedToolById,
     expandedTurnDetailsById,
     handleFileOpenError,
@@ -2172,20 +2290,6 @@ export function SessionView({
           <div className="ctx-drop-overlay-text">Drop image to attach</div>
         </div>
       )}
-      <AskUserQuestionModal
-        open={Boolean(askUserQuestion)}
-        input={askUserQuestion?.input}
-        onCancel={async () => {
-          if (!askUserQuestion) return;
-          await submitAskUserQuestion(id, askUserQuestion.toolCallId, "cancelled", {});
-          setOptimisticAskAnswered((prev) => ({ ...prev, [askUserQuestion.toolCallId]: true }));
-        }}
-        onSubmit={async (answers) => {
-          if (!askUserQuestion) return;
-          await submitAskUserQuestion(id, askUserQuestion.toolCallId, "submitted", answers);
-          setOptimisticAskAnswered((prev) => ({ ...prev, [askUserQuestion.toolCallId]: true }));
-        }}
-      />
       <div className={leftClass}>
         {entry?.error && (
           <div className="banner">
@@ -3847,11 +3951,14 @@ export function buildWorkbenchThreadViewModel(
   messages: Message[],
   toolsByTurnId: Record<string, SessionTurnTool[]>,
   events: SessionEvent[],
+  askUserQuestionAnswers?: Map<string, AskUserQuestionAnswerState>,
 ): WorkbenchThreadView {
+  const answers =
+    askUserQuestionAnswers ?? collectAskUserQuestionAnswers(events, {});
   if (turns.length > 0) {
-    return buildWorkbenchThreadViewModelFromTurns(turns, messages, toolsByTurnId, events);
+    return buildWorkbenchThreadViewModelFromTurns(turns, messages, toolsByTurnId, events, answers);
   }
-  return buildWorkbenchThreadViewModelFromEvents(events, messages);
+  return buildWorkbenchThreadViewModelFromEvents(events, messages, answers);
 }
 
 function shouldRenderThoughtChunk(ev: SessionEvent): boolean {
@@ -3872,7 +3979,7 @@ function shouldRenderThoughtChunk(ev: SessionEvent): boolean {
 type ActivityEntry = {
   item: ThreadItem;
   created_at: string;
-  kind: "tool" | "thought";
+  kind: "tool" | "thought" | "ask_user_question";
   order_seq?: number;
 };
 
@@ -3938,11 +4045,36 @@ function applyToolUpdateFromEvent(
   }
 }
 
+function buildAskUserQuestionItem(
+  ev: SessionEvent,
+  turnId: string,
+  answersByToolCallId: Map<string, AskUserQuestionAnswerState>,
+): Extract<ThreadItem, { kind: "ask_user_question" }> | null {
+  if (ev.event_type !== "notice") return null;
+  const payload = ev.payload_json ?? {};
+  if (payload.kind !== "ask_user_question") return null;
+  const toolCallId = String(payload.tool_call_id ?? "").trim();
+  if (!toolCallId) return null;
+  const answerState = answersByToolCallId.get(toolCallId);
+  return {
+    kind: "ask_user_question",
+    id: `askq-${turnId}-${toolCallId}`,
+    turn_id: turnId,
+    created_at: ev.created_at,
+    tool_call_id: toolCallId,
+    input: payload.input ?? payload.input_json ?? payload,
+    answers: answerState?.answers,
+    outcome: answerState?.outcome,
+    answered: Boolean(answerState),
+  };
+}
+
 function buildTurnActivityTimeline(opts: {
   turnId: string;
   turn: SessionTurn;
   tools: Array<Extract<ThreadItem, { kind: "tool" }>>;
   events: SessionEvent[];
+  askUserQuestionAnswers: Map<string, AskUserQuestionAnswerState>;
 }): { activity: ActivityEntry[]; tools: Array<Extract<ThreadItem, { kind: "tool" }>> } {
   const toolById = new Map<string, Extract<ThreadItem, { kind: "tool" }>>();
   for (const tool of opts.tools) {
@@ -3951,8 +4083,22 @@ function buildTurnActivityTimeline(opts: {
 
   const activity: ActivityEntry[] = [];
   const toolInserted = new Set<string>();
+  const askInserted = new Set<string>();
 
   for (const ev of opts.events) {
+    if (ev.event_type === "notice") {
+      const askItem = buildAskUserQuestionItem(ev, opts.turnId, opts.askUserQuestionAnswers);
+      if (askItem && !askInserted.has(askItem.tool_call_id)) {
+        activity.push({
+          item: askItem,
+          created_at: ev.created_at,
+          kind: "ask_user_question",
+          order_seq: typeof ev.seq === "number" ? ev.seq : undefined,
+        });
+        askInserted.add(askItem.tool_call_id);
+      }
+    }
+
     if (ev.event_type === "thought_chunk") {
       if (!shouldRenderThoughtChunk(ev)) {
         continue;
@@ -4045,6 +4191,7 @@ function buildWorkbenchThreadViewModelFromTurns(
   messages: Message[],
   toolsByTurnId: Record<string, SessionTurnTool[]>,
   events: SessionEvent[],
+  askUserQuestionAnswers: Map<string, AskUserQuestionAnswerState> = new Map(),
 ): WorkbenchThreadView {
   const debugEvents: SessionEvent[] = [];
   const groups: SortableThreadGroup[] = [];
@@ -4119,6 +4266,7 @@ function buildWorkbenchThreadViewModelFromTurns(
       turn,
       tools,
       events: eventsByTurnId.get(turnId) ?? [],
+      askUserQuestionAnswers,
     });
 
     const assistantMessages = (messagesByTurnId.get(turnId) ?? [])
@@ -4136,7 +4284,7 @@ function buildWorkbenchThreadViewModelFromTurns(
     type TimelineEntry = {
       item: ThreadItem;
       created_at: string;
-      kind: "assistant" | "tool" | "thought";
+      kind: "assistant" | "tool" | "thought" | "ask_user_question";
       order_seq?: number;
       turn_sequence?: number;
     };
@@ -4239,7 +4387,11 @@ function buildWorkbenchThreadViewModelFromTurns(
   return { groups: mergeGroupsWithSystemMessages(groups, messages), debugEvents };
 }
 
-function buildWorkbenchThreadViewModelFromEvents(events: SessionEvent[], messages: Message[]): WorkbenchThreadView {
+function buildWorkbenchThreadViewModelFromEvents(
+  events: SessionEvent[],
+  messages: Message[],
+  askUserQuestionAnswers: Map<string, AskUserQuestionAnswerState> = new Map(),
+): WorkbenchThreadView {
   type ToolItem = Extract<ThreadItem, { kind: "tool" }>;
   type TurnGroup = {
     key: string;
@@ -4326,7 +4478,16 @@ function buildWorkbenchThreadViewModelFromEvents(events: SessionEvent[], message
       };
       let thought = "";
       let thoughtAt: string | null = null;
+      const askItems: Array<Extract<ThreadItem, { kind: "ask_user_question" }>> = [];
+      const askInserted = new Set<string>();
       for (const ev of events) {
+        if (ev.event_type === "notice") {
+          const askItem = buildAskUserQuestionItem(ev, g.key, askUserQuestionAnswers);
+          if (askItem && !askInserted.has(askItem.tool_call_id)) {
+            askItems.push(askItem);
+            askInserted.add(askItem.tool_call_id);
+          }
+        }
         if (ev.event_type === "thought_chunk") {
           const fragment = String(ev.payload_json?.content_fragment ?? "");
           if (fragment) {
@@ -4350,7 +4511,9 @@ function buildWorkbenchThreadViewModelFromEvents(events: SessionEvent[], message
           content: thought,
         });
       }
-      items.push(...g.toolItems);
+      const activityItems = [...g.toolItems, ...askItems];
+      activityItems.sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
+      items.push(...activityItems);
       if (items.length === 0) items.push({ kind: "spacer", id: `spacer-${g.key}`, created_at: g.first_at });
       groups.push({ sort_at: g.first_at, group: { key: g.key, header: g.header, items } });
       return { groups: mergeGroupsWithSystemMessages(groups, messages), debugEvents };
@@ -4387,12 +4550,22 @@ function buildWorkbenchThreadViewModelFromEvents(events: SessionEvent[], message
       };
 
       const evs = eventsInRangeExclusive(u.created_at, nextUser?.created_at ?? null);
+      const askItems: Array<Extract<ThreadItem, { kind: "ask_user_question" }>> = [];
+      const askInserted = new Set<string>();
 
       for (const ev of evs) {
         const eventId = idToString(ev.id) || `${ev.created_at}`;
         if (ev.created_at < g.first_at) g.first_at = ev.created_at;
 
         switch (ev.event_type) {
+          case "notice": {
+            const askItem = buildAskUserQuestionItem(ev, g.key, askUserQuestionAnswers);
+            if (askItem && !askInserted.has(askItem.tool_call_id)) {
+              askItems.push(askItem);
+              askInserted.add(askItem.tool_call_id);
+            }
+            break;
+          }
           case "error": {
             const message = extractErrorMessage(ev.payload_json) ?? "Error";
             const provider = String(ev.payload_json?.provider ?? "").trim();
@@ -4515,7 +4688,9 @@ function buildWorkbenchThreadViewModelFromEvents(events: SessionEvent[], message
       }
 
       const items: ThreadItem[] = [];
-      items.push(...g.toolItems);
+      const activityItems = [...g.toolItems, ...askItems];
+      activityItems.sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
+      items.push(...activityItems);
       if (g.assistant?.thought.trim()) {
         items.push({
           kind: "thought",
@@ -4595,12 +4770,22 @@ function buildWorkbenchThreadViewModelFromEvents(events: SessionEvent[], message
 
     const endAt = assistant?.created_at ?? nextUser?.created_at ?? null;
     const evs = eventsInRange(u.created_at, endAt);
+    const askItems: Array<Extract<ThreadItem, { kind: "ask_user_question" }>> = [];
+    const askInserted = new Set<string>();
 
     for (const ev of evs) {
       const eventId = idToString(ev.id) || `${ev.created_at}`;
       if (ev.created_at < g.first_at) g.first_at = ev.created_at;
 
       switch (ev.event_type) {
+        case "notice": {
+          const askItem = buildAskUserQuestionItem(ev, g.key, askUserQuestionAnswers);
+          if (askItem && !askInserted.has(askItem.tool_call_id)) {
+            askItems.push(askItem);
+            askInserted.add(askItem.tool_call_id);
+          }
+          break;
+        }
         case "error": {
           const message = extractErrorMessage(ev.payload_json) ?? "Error";
           const provider = String(ev.payload_json?.provider ?? "").trim();
@@ -4740,7 +4925,9 @@ function buildWorkbenchThreadViewModelFromEvents(events: SessionEvent[], message
     }
 
     const items: ThreadItem[] = [];
-    items.push(...g.toolItems);
+    const activityItems = [...g.toolItems, ...askItems];
+    activityItems.sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
+    items.push(...activityItems);
     if (g.assistant?.thought.trim()) {
       items.push({
         kind: "thought",
@@ -4785,14 +4972,25 @@ function buildWorkbenchThreadViewModelFromEvents(events: SessionEvent[], message
       assistant_first_at: null,
       assistant_complete_at: null,
     };
+    const askItems: Array<Extract<ThreadItem, { kind: "ask_user_question" }>> = [];
+    const askInserted = new Set<string>();
     for (const ev of events) {
+      if (ev.event_type === "notice") {
+        const askItem = buildAskUserQuestionItem(ev, g.key, askUserQuestionAnswers);
+        if (askItem && !askInserted.has(askItem.tool_call_id)) {
+          askItems.push(askItem);
+          askInserted.add(askItem.tool_call_id);
+        }
+      }
       const update = ev.payload_json?.acp_update ?? ev.payload_json ?? {};
       const toolCallId =
         String(ev.payload_json?.tool_call_id ?? update?.toolCallId ?? update?.rawInput?.call_id ?? "").trim();
       if (!toolCallId) continue;
       ensureTool(g, toolCallId, ev.created_at);
     }
-    const items: ThreadItem[] = [...g.toolItems];
+    const activityItems = [...g.toolItems, ...askItems];
+    activityItems.sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
+    const items: ThreadItem[] = [...activityItems];
     if (items.length === 0) items.push({ kind: "spacer", id: `spacer-${g.key}`, created_at: g.first_at });
     groups.push({ sort_at: g.first_at, group: { key: g.key, header: g.header, items } });
   }

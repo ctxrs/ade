@@ -5,8 +5,9 @@ use std::time::{Duration, Instant};
 
 use gpui::{
     Animation, AnimationExt, BoxShadow, ClickEvent, Context, ElementId, FontWeight, Hsla,
-    KeyDownEvent, MouseButton, MouseDownEvent, ObjectFit, Pixels, Point, Rgba, Transformation, div,
-    img, percentage, point, px, radians, size, svg, InteractiveElement as _,
+    KeyDownEvent, MouseButton, MouseDownEvent, ObjectFit, Pixels, Point, Rgba, Transformation,
+    div, ease_in_out, img, percentage, point, px, radians, size, svg,
+    InteractiveElement as _,
     StatefulInteractiveElement as _, prelude::*,
 };
 use gpui_component::{checkbox::Checkbox, input::Input, tooltip::Tooltip, v_virtual_list};
@@ -37,18 +38,30 @@ const SPINNER_BG: Rgba = rgba(255, 255, 255, 0.22);
 const SPINNER_ACCENT: Rgba = rgba(78, 163, 255, 0.90);
 const SPINNER_ARCHIVE: Rgba = rgba(251, 191, 36, 0.32);
 
+#[allow(dead_code)]
 const MENU_BG: Rgba = rgba(34, 34, 34, 0.92);
+#[allow(dead_code)]
 const MENU_BORDER: Rgba = rgba(255, 255, 255, 0.10);
+#[allow(dead_code)]
 const MENU_ITEM_HOVER_BG: Rgba = rgba(255, 255, 255, 0.06);
+#[allow(dead_code)]
 const MENU_ITEM_HOVER_BORDER: Rgba = rgba(255, 255, 255, 0.08);
+#[allow(dead_code)]
 const MENU_ITEM_DANGER: Rgba = rgba(255, 120, 120, 0.96);
+#[allow(dead_code)]
 const MENU_ITEM_DANGER_BG: Rgba = rgba(255, 69, 58, 0.10);
+#[allow(dead_code)]
 const MENU_ITEM_DANGER_BORDER: Rgba = rgba(255, 69, 58, 0.16);
 
+#[allow(dead_code)]
 const ARCHIVE_CONFIRM_BG: Rgba = rgba(34, 34, 34, 0.96);
+#[allow(dead_code)]
 const ARCHIVE_CONFIRM_BORDER: Rgba = rgba(255, 255, 255, 0.10);
+#[allow(dead_code)]
 const ARCHIVE_CONFIRM_BODY: Rgba = rgba(255, 255, 255, 0.76);
+#[allow(dead_code)]
 const ARCHIVE_CONFIRM_TITLE: Rgba = rgba(255, 255, 255, 0.95);
+#[allow(dead_code)]
 const ARCHIVE_TOGGLE_TEXT: Rgba = rgba(255, 255, 255, 0.70);
 
 const TASK_ROW_HEIGHT: f32 = 28.0;
@@ -57,6 +70,10 @@ const HEADER_HEIGHT: f32 = 22.0;
 const HEADER_GAP: f32 = 12.0;
 const ARCHIVED_HEADER_MARGIN: f32 = 12.0;
 const STATUS_ROW_HEIGHT: f32 = 18.0;
+
+const SIDEBAR_ANIM_DURATION: Duration = Duration::from_millis(180);
+const SIDEBAR_FADE_RATIO: f32 = 140.0 / 180.0;
+const HOVER_FADE_DURATION: Duration = Duration::from_millis(120);
 
 const SPINNER_DURATION: Duration = Duration::from_millis(800);
 static SPINNER_ANCHOR: OnceLock<Instant> = OnceLock::new();
@@ -145,6 +162,10 @@ impl<'a> ProviderListView<'a> {
             self.providers
                 .iter()
                 .fold(div().flex().flex_col(), |list, provider| {
+                    let label = harness_entry(&provider.provider_id)
+                        .map(|entry| entry.label.to_string())
+                        .unwrap_or_else(|| provider.provider_id.clone());
+                    let status = format!("{:?}", provider.health);
                     list.child(
                         div()
                             .flex()
@@ -155,12 +176,12 @@ impl<'a> ProviderListView<'a> {
                             .border_color(self.colors.border)
                             .px(px(12.0))
                             .py(px(6.0))
-                            .child(provider.name.clone())
+                            .child(label)
                             .child(
                                 div()
                                     .text_sm()
                                     .text_color(self.colors.muted)
-                                    .child(provider.status.clone()),
+                                    .child(status),
                             ),
                     )
                 })
@@ -240,6 +261,8 @@ impl<'a> SidebarView<'a> {
         let metrics = ThemeMetrics::default();
         let shell = self.shell;
         let sidebar_width = shell.sidebar_width;
+        let sidebar_anim_epoch = shell.sidebar_anim_epoch;
+        let sidebar_collapsed = shell.sidebar_collapsed;
         let is_workbench = shell.route == ShellRoute::Workbench;
         let mut root = div()
             .id("sidebar")
@@ -250,10 +273,7 @@ impl<'a> SidebarView<'a> {
             .overflow_hidden()
             .bg(SIDEBAR_BG)
             .border_r_1()
-            .border_color(shell.colors.border)
-            .when(shell.sidebar_collapsed, |this| {
-                this.w(px(0.0)).opacity(0.0).border_r_0().invisible()
-            });
+            .border_color(shell.colors.border);
 
         if is_workbench {
             root = root
@@ -292,10 +312,47 @@ impl<'a> SidebarView<'a> {
             }
         }
 
-        root
+        let root = root
             .when(is_workbench, |this| this.bg(SIDEBAR_BG))
             .when(!is_workbench, |this| this.bg(shell.colors.panel_2))
-            .when(!is_workbench, |this| this.p(px(metrics.spacing.xxs)))
+            .when(!is_workbench, |this| this.p(px(metrics.spacing.xxs)));
+
+        if sidebar_anim_epoch == 0 {
+            let root = if sidebar_collapsed {
+                root.w(px(0.0))
+                    .opacity(0.0)
+                    .border_r_0()
+                    .invisible()
+            } else {
+                root
+            };
+            root.into_any_element()
+        } else {
+            let target_width = sidebar_width;
+            root.with_animation(
+                ElementId::named_usize("sidebar-collapse", sidebar_anim_epoch as usize),
+                Animation::new(SIDEBAR_ANIM_DURATION).with_easing(ease_in_out),
+                move |this, delta| {
+                    let width = if sidebar_collapsed {
+                        target_width * (1.0 - delta)
+                    } else {
+                        target_width * delta
+                    };
+                    let fade = if SIDEBAR_FADE_RATIO <= f32::EPSILON {
+                        delta
+                    } else {
+                        (delta / SIDEBAR_FADE_RATIO).min(1.0)
+                    };
+                    let opacity = if sidebar_collapsed { 1.0 - fade } else { fade };
+                    this.w(px(width.max(0.0)))
+                        .opacity(opacity)
+                        .when(sidebar_collapsed && delta >= 0.99, |this| {
+                            this.invisible().border_r_0()
+                        })
+                },
+            )
+            .into_any_element()
+        }
     }
 
     fn render_workbench_header(&self, cx: &mut Context<ShellView>) -> impl IntoElement {
@@ -561,13 +618,19 @@ fn render_active_header(view: &ShellView) -> impl IntoElement {
 
 fn render_archived_header(view: &ShellView, cx: &mut Context<ShellView>) -> impl IntoElement {
     let is_collapsed = view.archived_collapsed;
-    let chevron = Icon::new(IconName::ChevronDown, 14.0, rgba(255, 255, 255, 0.55)).map(|icon| {
-        if is_collapsed {
-            icon.rotate(radians(-std::f32::consts::FRAC_PI_2))
-        } else {
-            icon
-        }
-    });
+    let chevron = Icon::new(IconName::ChevronDown, 14.0, rgba(255, 255, 255, 0.55))
+        .with_animation(
+            ElementId::named_usize("archived-chevron", is_collapsed as usize),
+            Animation::new(HOVER_FADE_DURATION).with_easing(ease_in_out),
+            move |icon, delta| {
+                let angle = if is_collapsed {
+                    -std::f32::consts::FRAC_PI_2 * delta
+                } else {
+                    -std::f32::consts::FRAC_PI_2 * (1.0 - delta)
+                };
+                icon.transform(Transformation::rotate(radians(angle)))
+            },
+        );
 
     let toggle = div()
         .w_full()
@@ -692,8 +755,6 @@ fn render_task_row(
     };
 
     let show_actions = hovered || view.task_menu.map(|menu| menu.task_id == task_id).unwrap_or(false);
-    let action_opacity = if show_actions { 1.0 } else { 0.0 };
-    let status_opacity = if show_actions { 0.0 } else { 1.0 };
 
     let leading = render_task_leading(view, provider_ids, selected);
     let meta = render_task_meta(
@@ -705,8 +766,7 @@ fn render_task_row(
         working,
         dot_kind,
         age_label,
-        action_opacity,
-        status_opacity,
+        show_actions,
         cx,
     );
 
@@ -743,11 +803,11 @@ fn render_task_row(
         .child(leading)
         .child(body)
         .child(meta)
-        .on_click(cx.listener(move |view, event: &ClickEvent, _window, cx| {
+        .on_click(cx.listener(move |view, event: &ClickEvent, window, cx| {
             if event.is_right_click() {
                 return;
             }
-            view.focus_task(task_id, cx);
+            view.focus_task(task_id, window, cx);
         }))
         .on_hover(cx.listener(move |view, hovered, _window, cx| {
             if *hovered {
@@ -763,10 +823,10 @@ fn render_task_row(
             view.toggle_task_menu(task_id, anchor, cx);
             cx.stop_propagation();
         }))
-        .on_key_down(cx.listener(move |view, event: &KeyDownEvent, _window, cx| {
+        .on_key_down(cx.listener(move |view, event: &KeyDownEvent, window, cx| {
             let key = event.keystroke.key.to_lowercase();
             if key == "enter" || key == " " {
-                view.focus_task(task_id, cx);
+                view.focus_task(task_id, window, cx);
                 cx.stop_propagation();
             }
         }));
@@ -838,8 +898,7 @@ fn render_task_meta(
     working: bool,
     dot_kind: Option<&'static str>,
     age_label: String,
-    action_opacity: f32,
-    status_opacity: f32,
+    show_actions: bool,
     cx: &mut Context<ShellView>,
 ) -> impl IntoElement {
     let status = div()
@@ -847,7 +906,6 @@ fn render_task_meta(
         .items_center()
         .justify_end()
         .gap(px(0.0))
-        .opacity(status_opacity)
         .child(
             div()
                 .min_w(px(28.0))
@@ -884,8 +942,34 @@ fn render_task_meta(
         archived,
         archiving,
         archive_pending,
-        action_opacity,
         cx,
+    );
+
+    let status_id = ElementId::from((
+        ElementId::from(task_id.0),
+        if show_actions { "task-status-hide" } else { "task-status-show" },
+    ));
+    let actions_id = ElementId::from((
+        ElementId::from(task_id.0),
+        if show_actions { "task-actions-show" } else { "task-actions-hide" },
+    ));
+
+    let status = status.with_animation(
+        status_id,
+        Animation::new(HOVER_FADE_DURATION).with_easing(ease_in_out),
+        move |this, delta| {
+            let opacity = if show_actions { 1.0 - delta } else { delta };
+            this.opacity(opacity)
+        },
+    );
+
+    let actions = actions.with_animation(
+        actions_id,
+        Animation::new(HOVER_FADE_DURATION).with_easing(ease_in_out),
+        move |this, delta| {
+            let opacity = if show_actions { delta } else { 1.0 - delta };
+            this.opacity(opacity).when(opacity <= 0.01, |this| this.invisible())
+        },
     );
 
     div()
@@ -969,9 +1053,8 @@ fn render_task_actions(
     archived: bool,
     archiving: bool,
     archive_pending: bool,
-    opacity: f32,
     cx: &mut Context<ShellView>,
-) -> impl IntoElement {
+) -> gpui::Div {
     let menu_button = task_action_button(
         cx,
         ElementId::from((ElementId::from(task_id.0), "task-menu-trigger")),
@@ -1022,8 +1105,6 @@ fn render_task_actions(
         .flex()
         .items_center()
         .gap(px(2.0))
-        .opacity(opacity)
-        .when(opacity == 0.0, |this| this.invisible())
         .child(menu_button)
         .child(archive_button)
 }
@@ -1103,12 +1184,14 @@ fn render_task_rename(
         .into_any_element()
 }
 
+#[allow(dead_code)]
 pub(crate) struct SidebarOverlays<'a> {
     pub(crate) shell: &'a ShellView,
     pub(crate) viewport: gpui::Size<Pixels>,
 }
 
 impl<'a> SidebarOverlays<'a> {
+    #[allow(dead_code)]
     pub(crate) fn render(&self, cx: &mut Context<ShellView>) -> gpui::AnyElement {
         if self.shell.task_menu.is_none() && self.shell.archive_confirm.is_none() {
             return div().into_any_element();
@@ -1136,6 +1219,7 @@ impl<'a> SidebarOverlays<'a> {
     }
 }
 
+#[allow(dead_code)]
 fn render_task_menu(
     view: &ShellView,
     menu: super::super::state::TaskMenuState,
@@ -1286,6 +1370,7 @@ fn render_task_menu(
         .into_any_element()
 }
 
+#[allow(dead_code)]
 fn render_archive_confirm(
     view: &ShellView,
     confirm: super::super::state::ArchiveConfirmState,
@@ -1423,6 +1508,7 @@ fn anchor_from_point(pos: Point<Pixels>, size: f32) -> AnchorRect {
     }
 }
 
+#[allow(dead_code)]
 fn clamp(value: f32, min: f32, max: f32) -> f32 {
     if max <= min {
         return min;

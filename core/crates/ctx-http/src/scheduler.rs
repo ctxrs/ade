@@ -22,7 +22,9 @@ use ctx_store::store::SessionTurnToolCountDeltas;
 use crate::daemon::AppState;
 use crate::installer;
 use crate::perf_telemetry::{PerfMetric, PerfMetricKind};
+use crate::settings::{self, ProviderControlMode};
 use crate::telemetry::TelemetryEvent;
+use crate::workspace_config;
 
 #[derive(Debug)]
 pub struct QueuedMessage {
@@ -46,6 +48,20 @@ struct RunningTurn {
     run_id: RunId,
     turn_id: TurnId,
     event_tx: mpsc::Sender<NormalizedEvent>,
+}
+
+fn provider_mode_id_for(
+    provider_id: &str,
+    control_mode: &ProviderControlMode,
+) -> Option<&'static str> {
+    match control_mode {
+        ProviderControlMode::Full => match provider_id {
+            "codex" => Some("full-access"),
+            "claude" => Some("bypassPermissions"),
+            _ => None,
+        },
+        ProviderControlMode::HarnessNative | ProviderControlMode::CtxEnforced => None,
+    }
 }
 
 pub async fn session_worker(
@@ -265,6 +281,10 @@ async fn start_turn(
         "CTX_DATA_ROOT".to_string(),
         state.data_root.to_string_lossy().to_string(),
     );
+    provider_env.insert(
+        "CLAUDE_CODE_ENABLE_ASK_USER_QUESTION_TOOL".to_string(),
+        "1".to_string(),
+    );
     if let Some(token) = state.auth_token.clone() {
         provider_env.insert("CTX_AUTH_TOKEN".to_string(), token);
     }
@@ -272,6 +292,15 @@ async fn start_turn(
         provider_env.insert("CTX_PROVIDER_SESSION_REF".to_string(), provider_ref);
     }
     provider_env.insert("CTX_SESSION_ID".to_string(), session.id.0.to_string());
+    let provider_control_mode = settings::load_settings(&state.data_root)
+        .await
+        .sandboxing
+        .as_ref()
+        .map(|s| s.provider_control_mode.clone())
+        .unwrap_or_default();
+    if let Some(mode_id) = provider_mode_id_for(&session.provider_id, &provider_control_mode) {
+        provider_env.insert("CTX_PROVIDER_MODE".to_string(), mode_id.to_string());
+    }
     if let Ok(v) = std::env::var("CTX_MCP_COMMAND") {
         provider_env.insert("CTX_MCP_COMMAND".to_string(), v);
     }
@@ -301,6 +330,18 @@ async fn start_turn(
         }
     }
 
+    let prompt_config = workspace_config::load_agent_system_prompt_append(workdir)
+        .await
+        .unwrap_or_else(|_| workspace_config::AgentSystemPromptAppendConfig::new_default(workdir));
+    let system_prompt_append = prompt_config.effective_append();
+    let mut context_blocks = Vec::new();
+    if let Some(append) = system_prompt_append.as_deref() {
+        if !provider_supports_system_prompt_append(&session.provider_id) {
+            context_blocks.push(json!({"type":"text","text": append}));
+        }
+        provider_env.insert("CTX_SYSTEM_PROMPT_APPEND".to_string(), append.to_string());
+    }
+
     let run_started_at = Instant::now();
     let spawn_started_at = Instant::now();
     let handle = match adapter
@@ -308,7 +349,7 @@ async fn start_turn(
             TurnInput {
                 content: prompt,
                 attachments: message.attachments.clone(),
-                context_blocks: Vec::new(),
+                context_blocks,
                 model_id: normalize_session_model_id(&session.model_id),
             },
             workdir.to_path_buf(),
@@ -1341,6 +1382,10 @@ fn normalize_session_model_id(model_id: &str) -> Option<String> {
     } else {
         Some(trimmed.to_string())
     }
+}
+
+fn provider_supports_system_prompt_append(provider_id: &str) -> bool {
+    matches!(provider_id, "claude")
 }
 
 #[derive(Default)]

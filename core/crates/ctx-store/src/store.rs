@@ -1414,12 +1414,13 @@ impl Store {
     ) -> Result<SubagentInvocationChild> {
         sqlx::query(
             r#"INSERT INTO subagent_invocation_children (
-                   invocation_id, child_session_id, position, status,
+                   invocation_id, child_session_id, run_id, position, status,
                    label, harness, model, reasoning_effort, prompt_length,
                    created_at, updated_at
                )
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(invocation_id, child_session_id) DO UPDATE SET
+                   run_id = COALESCE(excluded.run_id, subagent_invocation_children.run_id),
                    position = excluded.position,
                    status = excluded.status,
                    label = COALESCE(excluded.label, subagent_invocation_children.label),
@@ -1431,6 +1432,7 @@ impl Store {
         )
         .bind(&child.invocation_id)
         .bind(child.child_session_id.0.to_string())
+        .bind(child.run_id.as_ref().map(|run_id| run_id.0.to_string()))
         .bind(child.position)
         .bind(&child.status)
         .bind(child.label.as_deref())
@@ -1462,7 +1464,7 @@ impl Store {
 
         let mut invocation = build_subagent_invocation_from_row(row)?;
         let rows = sqlx::query(
-            r#"SELECT invocation_id, child_session_id, position, status,
+            r#"SELECT invocation_id, child_session_id, run_id, position, status,
                       label, harness, model, reasoning_effort, prompt_length,
                       created_at, updated_at
                FROM subagent_invocation_children
@@ -1510,7 +1512,7 @@ impl Store {
         }
 
         let mut child_qb = QueryBuilder::new(
-            r#"SELECT invocation_id, child_session_id, position, status,
+            r#"SELECT invocation_id, child_session_id, run_id, position, status,
                       label, harness, model, reasoning_effort, prompt_length,
                       created_at, updated_at
                FROM subagent_invocation_children
@@ -4589,12 +4591,16 @@ fn build_subagent_invocation_child_from_row(
 ) -> Result<SubagentInvocationChild> {
     let invocation_id: String = r.try_get("invocation_id")?;
     let child_session_id: String = r.try_get("child_session_id")?;
+    let run_id: Option<String> = r.try_get("run_id")?;
     let created_at: String = r.try_get("created_at")?;
     let updated_at: String = r.try_get("updated_at")?;
 
     Ok(SubagentInvocationChild {
         invocation_id,
         child_session_id: SessionId(uuid::Uuid::parse_str(&child_session_id)?),
+        run_id: run_id
+            .and_then(|value| uuid::Uuid::parse_str(&value).ok())
+            .map(RunId),
         position: r.try_get("position")?,
         status: r.try_get("status")?,
         label: r.try_get("label")?,

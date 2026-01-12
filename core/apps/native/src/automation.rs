@@ -15,8 +15,9 @@ use axum::{
     Json, Router,
 };
 use gpui::{
-    App, AppContext, Context, Keystroke, Modifiers, ScrollStrategy, Window, WindowHandle, px, size,
+    App, AppContext, ClickEvent, Context, Keystroke, Modifiers, ScrollStrategy, Window, WindowHandle, px, size,
 };
+use gpui_component::Root;
 use image::{ColorType, ImageFormat};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Map, json, Value};
@@ -25,7 +26,6 @@ use tokio::time::timeout;
 
 use crate::app::ShellView;
 use crate::automation_tree;
-use gpui_component::Root;
 
 #[derive(Clone, Debug, Default)]
 pub struct AutomationConfig {
@@ -260,6 +260,19 @@ async fn screenshot_handler(
     State(state): State<Arc<AutomationState>>,
     Json(request): Json<ScreenshotRequest>,
 ) -> (StatusCode, Json<ApiResponse<Value>>) {
+    // Wait for at least one render after the last input before capturing to avoid blank frames.
+    {
+        let current = *state.render_rx.borrow();
+        let mut render_rx = state.render_rx.clone();
+        if timeout(Duration::from_millis(200), render_rx.changed()).await.is_ok() {
+            let next = *render_rx.borrow();
+            eprintln!("ctx-native: screenshot waited for render {} -> {}", current, next);
+        } else {
+            eprintln!("ctx-native: screenshot render wait timed out at {}", current);
+        }
+    }
+
+
     let path = match resolve_screenshot_path(request, &state.config) {
         Ok(path) => path,
         Err(message) => return err(StatusCode::BAD_REQUEST, message),
@@ -370,12 +383,9 @@ async fn run_command_loop(
                 let mut cx = cx.clone();
                 window
                     .update(&mut cx, |root, window, cx| {
-                        let view = root
-                            .view()
-                            .clone()
-                            .downcast::<ShellView>()
-                            .map_err(|_| "root view is not a ShellView".to_string())?;
-                        view.update(cx, |view, cx| apply_focus_target(view, window, cx, target));
+                        with_shell_view(root, cx, |view, cx| {
+                            apply_focus_target(view, window, cx, target);
+                        })?;
                         mark_input(&state);
                         Ok(json!({ "target": target.as_str() }))
                     })
@@ -475,20 +485,20 @@ fn apply_focus_target(
                 .scroll_to_item(0, ScrollStrategy::Top);
         }
         FocusTarget::Composer => {
-            view.composer_focus.focus(window, cx);
+            view.focus_composer(&ClickEvent::default(), window, cx);
         }
         FocusTarget::ComposerAttachments => {
-            view.composer_attachment_focus.focus(window, cx);
+            view.focus_composer(&ClickEvent::default(), window, cx);
         }
         FocusTarget::ComposerProviderMenu => {
             view.composer_provider_menu_open = true;
             view.composer_model_menu_open = false;
-            view.composer_focus.focus(window, cx);
+            view.focus_composer(&ClickEvent::default(), window, cx);
         }
         FocusTarget::ComposerModelMenu => {
             view.composer_model_menu_open = true;
             view.composer_provider_menu_open = false;
-            view.composer_focus.focus(window, cx);
+            view.focus_composer(&ClickEvent::default(), window, cx);
         }
         FocusTarget::SessionsPane => {
             view.show_sessions_pane = true;
@@ -507,97 +517,124 @@ fn apply_focus_target(
     cx.notify();
 }
 
+fn with_shell_view<R, C: AppContext>(
+    root: &mut Root,
+    cx: &mut C,
+    f: impl FnOnce(&mut ShellView, &mut Context<ShellView>) -> R,
+) -> Result<R, String> {
+    let shell_view = root
+        .view()
+        .clone()
+        .downcast::<ShellView>()
+        .map_err(|_| "automation expected ShellView root".to_string())?;
+    Ok(shell_view.update(cx, f))
+}
+
 #[cfg(target_os = "linux")]
 async fn capture_window(
-    _cx: &gpui::AsyncApp,
-    _window: &WindowHandle<Root>,
+    cx: &gpui::AsyncApp,
+    window: &WindowHandle<Root>,
     path: PathBuf,
 ) -> Result<PathBuf, String> {
-    // Use OS-level capture on Linux via zed-scap.
+    // Use OS-level capture on Linux via zed-scap (GPUI render_to_image is not
+    // reliable on Blade). If scap is unavailable, fall back to GPUI render.
     use scap::capturer::{Capturer, Options};
     use scap::frame::Frame;
-    // Build a capturer targeting the main display; this avoids needing a window handle.
-    let mut capturer = Capturer::build(Options {
-        fps: 30,
-        show_cursor: false,
-        show_highlight: false,
-        target: None,
-        crop_area: None,
-        output_type: scap::frame::FrameType::BGRAFrame,
-        output_resolution: scap::capturer::Resolution::Captured,
-        excluded_targets: None,
-    })
-    .map_err(|e| format!("failed to initialize scap capturer: {e}"))?;
+    let capture_result = (|| -> Result<(u32, u32, Vec<u8>), String> {
+        let mut capturer = Capturer::build(Options {
+            fps: 30,
+            show_cursor: false,
+            show_highlight: false,
+            target: None,
+            crop_area: None,
+            output_type: scap::frame::FrameType::BGRAFrame,
+            output_resolution: scap::capturer::Resolution::Captured,
+            excluded_targets: None,
+        })
+        .map_err(|e| format!("failed to initialize scap capturer: {e}"))?;
 
-    capturer.start_capture();
-    let frame = capturer
-        .get_next_frame()
-        .map_err(|e| format!("failed to capture frame: {e}"))?;
-    capturer.stop_capture();
+        capturer.start_capture();
+        let frame = capturer
+            .get_next_frame()
+            .map_err(|e| format!("failed to capture frame: {e}"))?;
+        capturer.stop_capture();
 
-    // Convert frame to RGBA8 buffer expected by image crate.
-    let (width, height, rgba): (u32, u32, Vec<u8>) = match frame {
-        Frame::BGRA(f) => {
-            // BGRA -> RGBA swap R and B
-            let mut out = f.data;
-            for px in out.chunks_exact_mut(4) {
-                px.swap(0, 2);
+        let rgba = match frame {
+            Frame::BGRA(f) => {
+                let mut out = f.data;
+                for px in out.chunks_exact_mut(4) {
+                    px.swap(0, 2);
+                }
+                (f.width as u32, f.height as u32, out)
             }
-            (f.width as u32, f.height as u32, out)
-        }
-        Frame::BGRx(f) => {
-            // B, G, R, X -> R, G, B, 255
-            let mut out = Vec::with_capacity((f.width * f.height * 4) as usize);
-            for px in f.data.chunks_exact(4) {
-                out.push(px[2]);
-                out.push(px[1]);
-                out.push(px[0]);
-                out.push(255);
+            Frame::BGRx(f) => {
+                let mut out = Vec::with_capacity((f.width * f.height * 4) as usize);
+                for px in f.data.chunks_exact(4) {
+                    out.push(px[2]);
+                    out.push(px[1]);
+                    out.push(px[0]);
+                    out.push(255);
+                }
+                (f.width as u32, f.height as u32, out)
             }
-            (f.width as u32, f.height as u32, out)
-        }
-        Frame::XBGR(f) => {
-            // X, B, G, R -> R, G, B, 255
-            let mut out = Vec::with_capacity((f.width * f.height * 4) as usize);
-            for px in f.data.chunks_exact(4) {
-                out.push(px[3]);
-                out.push(px[2]);
-                out.push(px[1]);
-                out.push(255);
+            Frame::XBGR(f) => {
+                let mut out = Vec::with_capacity((f.width * f.height * 4) as usize);
+                for px in f.data.chunks_exact(4) {
+                    out.push(px[3]);
+                    out.push(px[2]);
+                    out.push(px[1]);
+                    out.push(255);
+                }
+                (f.width as u32, f.height as u32, out)
             }
-            (f.width as u32, f.height as u32, out)
-        }
-        Frame::RGBx(f) => {
-            // R, G, B, X -> R, G, B, 255
-            let mut out = Vec::with_capacity((f.width * f.height * 4) as usize);
-            for px in f.data.chunks_exact(4) {
-                out.push(px[0]);
-                out.push(px[1]);
-                out.push(px[2]);
-                out.push(255);
+            Frame::RGBx(f) => {
+                let mut out = Vec::with_capacity((f.width * f.height * 4) as usize);
+                for px in f.data.chunks_exact(4) {
+                    out.push(px[0]);
+                    out.push(px[1]);
+                    out.push(px[2]);
+                    out.push(255);
+                }
+                (f.width as u32, f.height as u32, out)
             }
-            (f.width as u32, f.height as u32, out)
-        }
-        Frame::BGR0(f) => {
-            // 3-byte BGR -> RGBA
-            let mut out = Vec::with_capacity((f.width * f.height * 4) as usize);
-            for px in f.data.chunks_exact(3) {
-                out.push(px[2]);
-                out.push(px[1]);
-                out.push(px[0]);
-                out.push(255);
+            Frame::BGR0(f) => {
+                let mut out = Vec::with_capacity((f.width * f.height * 4) as usize);
+                for px in f.data.chunks_exact(3) {
+                    out.push(px[2]);
+                    out.push(px[1]);
+                    out.push(px[0]);
+                    out.push(255);
+                }
+                (f.width as u32, f.height as u32, out)
             }
-            (f.width as u32, f.height as u32, out)
-        }
-        Frame::RGB(f) => {
-            let mut out = Vec::with_capacity((f.width * f.height * 4) as usize);
-            for px in f.data.chunks_exact(3) {
-                out.extend_from_slice(&[px[0], px[1], px[2], 255]);
+            Frame::RGB(f) => {
+                let mut out = Vec::with_capacity((f.width * f.height * 4) as usize);
+                for px in f.data.chunks_exact(3) {
+                    out.extend_from_slice(&[px[0], px[1], px[2], 255]);
+                }
+                (f.width as u32, f.height as u32, out)
             }
-            (f.width as u32, f.height as u32, out)
-        }
-        Frame::YUVFrame(_f) => {
-            return Err("unsupported YUV frame format from scap".to_string());
+            Frame::YUVFrame(_f) => {
+                return Err("unsupported YUV frame format from scap".to_string());
+            }
+        };
+        Ok(rgba)
+    })();
+
+    let (width, height, rgba): (u32, u32, Vec<u8>) = match capture_result {
+        Ok(data) => data,
+        Err(err) => {
+            eprintln!("ctx-native: scap capture failed, falling back to render_to_image: {err}");
+            let image = {
+                let mut cx_window = cx.clone();
+                window
+                    .update(&mut cx_window, |_, window, _cx| window.render_to_image())
+                    .map_err(|err| err.to_string())?
+                    .map_err(|err| err.to_string())?
+            };
+            let width = image.width();
+            let height = image.height();
+            (width, height, image.as_raw().to_vec())
         }
     };
 

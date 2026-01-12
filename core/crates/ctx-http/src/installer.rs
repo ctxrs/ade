@@ -922,6 +922,8 @@ async fn patch_claude_code_acp_for_ask_user_question(script_path: &Path) -> Resu
     let original = tokio::fs::read_to_string(&acp_agent_js)
         .await
         .with_context(|| format!("reading {}", acp_agent_js.display()))?;
+    let mut patched = original.clone();
+    let mut changed = false;
 
     // `@agentclientprotocol/sdk` implements `extMethod(method, ...)` by sending the JSON-RPC
     // request method `_${method}`. That means callers should pass `claude_code_acp/...` (no
@@ -929,26 +931,15 @@ async fn patch_claude_code_acp_for_ask_user_question(script_path: &Path) -> Resu
     //
     // Older/broken patches (including our initial one) used `_claude_code_acp/...` as the method
     // argument, which results in `__claude_code_acp/...` on the wire.
-    if original.contains("extMethod(\"_claude_code_acp/ask_user_question\"") {
-        let patched = original.replace(
+    if patched.contains("extMethod(\"_claude_code_acp/ask_user_question\"") {
+        patched = patched.replace(
             "extMethod(\"_claude_code_acp/ask_user_question\"",
             "extMethod(\"claude_code_acp/ask_user_question\"",
         );
-        tokio::fs::write(&acp_agent_js, patched)
-            .await
-            .with_context(|| format!("writing {}", acp_agent_js.display()))?;
-        return Ok(true);
-    }
-
-    if original.contains("extMethod(\"claude_code_acp/ask_user_question\"") {
-        return Ok(false);
+        changed = true;
     }
 
     let needle = "if (toolName === \"ExitPlanMode\") {";
-    let Some(insert_at) = original.find(needle) else {
-        return Ok(false);
-    };
-
     let ask_block = r#"if (toolName === "AskUserQuestion") {
                 if (signal.aborted) {
                     throw new Error("Tool use aborted");
@@ -997,10 +988,38 @@ async fn patch_claude_code_acp_for_ask_user_question(script_path: &Path) -> Resu
             }
             "#;
 
-    let mut patched = String::with_capacity(original.len() + ask_block.len() + 16);
-    patched.push_str(&original[..insert_at]);
-    patched.push_str(ask_block);
-    patched.push_str(&original[insert_at..]);
+    if !patched.contains("extMethod(\"claude_code_acp/ask_user_question\"") {
+        let Some(insert_at) = patched.find(needle) else {
+            return Ok(changed);
+        };
+        let mut next = String::with_capacity(patched.len() + ask_block.len() + 16);
+        next.push_str(&patched[..insert_at]);
+        next.push_str(ask_block);
+        next.push_str(&patched[insert_at..]);
+        patched = next;
+        changed = true;
+    }
+
+    if !patched.contains("CLAUDE_CODE_ENABLE_ASK_USER_QUESTION_TOOL") {
+        let allow_needle = "const disableBuiltInTools = params._meta?.disableBuiltInTools === true;";
+        let allow_block = r#"
+        if (!disableBuiltInTools && process.env.CLAUDE_CODE_ENABLE_ASK_USER_QUESTION_TOOL === "1") {
+            allowedTools.push("AskUserQuestion");
+        }"#;
+        if let Some(insert_at) = patched.find(allow_needle) {
+            let insert_at = insert_at + allow_needle.len();
+            let mut next = String::with_capacity(patched.len() + allow_block.len() + 8);
+            next.push_str(&patched[..insert_at]);
+            next.push_str(allow_block);
+            next.push_str(&patched[insert_at..]);
+            patched = next;
+            changed = true;
+        }
+    }
+
+    if !changed {
+        return Ok(false);
+    }
 
     tokio::fs::write(&acp_agent_js, patched)
         .await

@@ -224,7 +224,7 @@ importers:
         specifier: ^7.1.0
         version: 7.1.0
       playwright:
-        specifier: ^1.49.1
+        specifier: ^1.57.0
         version: 1.57.0
       pngjs:
         specifier: ^7.0.0

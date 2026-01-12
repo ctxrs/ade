@@ -26,6 +26,7 @@ pub mod title_generation;
 pub mod updates;
 pub mod web_sessions;
 pub mod workspace_catchup;
+pub mod workspace_config;
 pub mod worktree_bootstrap;
 
 #[cfg(feature = "fault_injection")]

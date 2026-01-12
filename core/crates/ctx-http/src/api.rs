@@ -64,6 +64,7 @@ use crate::web_sessions::{
     render_web_session_view, WebSessionCreateRequest, WebSessionInfo, WebSessionRunRequest,
     WebSessionRunResponse, WebSessionViewport,
 };
+use crate::workspace_config;
 use crate::worktree_bootstrap;
 use ctx_providers::adapters::ProviderStatus;
 use ctx_providers::events::NormalizedEvent;
@@ -368,6 +369,10 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
             "/api/workspaces/:id/attachments/sync",
             post(sync_workspace_attachments),
         )
+        .route(
+            "/api/workspaces/:id/agent_system_prompt",
+            get(get_agent_system_prompt).post(update_agent_system_prompt),
+        )
         .route("/api/workspaces/:id/tasks", post(create_task))
         .route("/api/tasks/:id", delete(delete_task))
         .route("/api/tasks/:id/title", post(update_task_title))
@@ -417,6 +422,10 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
         .route("/api/sessions/:id/authenticate", post(authenticate_session))
         .route("/api/mcp/sessions/:id/agent_init", post(mcp_agent_init))
         .route("/api/mcp/sessions/:id/agent_reply", post(mcp_agent_reply))
+        .route(
+            "/api/mcp/sessions/:id/subagent_wait",
+            post(mcp_subagent_wait),
+        )
         .route(
             "/api/sessions/web",
             post(create_web_session).get(list_web_sessions),
@@ -5240,6 +5249,7 @@ async fn get_provider_options(
         client_title: "ctx".to_string(),
         client_version: env!("CARGO_PKG_VERSION").to_string(),
         client_capabilities: serde_json::json!({}),
+        system_prompt_append: None,
         mcp_servers: vec![],
     };
 
@@ -5376,6 +5386,7 @@ async fn authenticate_provider_for_workspace(
         client_title: "ctx".to_string(),
         client_version: env!("CARGO_PKG_VERSION").to_string(),
         client_capabilities: serde_json::json!({}),
+        system_prompt_append: None,
         mcp_servers: vec![],
     };
 
@@ -5476,6 +5487,7 @@ async fn verify_provider_for_workspace(
         client_title: "ctx".to_string(),
         client_version: env!("CARGO_PKG_VERSION").to_string(),
         client_capabilities: serde_json::json!({}),
+        system_prompt_append: None,
         mcp_servers: vec![],
     };
 
@@ -6576,6 +6588,162 @@ async fn sync_workspace_attachments(
     )
     .await;
     Ok(Json(attachments))
+}
+
+#[derive(Debug, Serialize)]
+struct AgentSystemPromptConfigResponse {
+    config_path: String,
+    default_append: String,
+    configured_append: Option<String>,
+    effective_append: Option<String>,
+    source: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct UpdateAgentSystemPromptConfigReq {
+    #[serde(default)]
+    system_prompt_append: Option<String>,
+}
+
+async fn get_agent_system_prompt(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<AgentSystemPromptConfigResponse>, (StatusCode, Json<ApiErrorResp>)> {
+    let ws_id = WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid workspace id".to_string(),
+            }),
+        )
+    })?);
+    let workspace = state
+        .store
+        .get_workspace(ws_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "workspace not found".to_string(),
+            }),
+        ))?;
+
+    let cfg = workspace_config::load_agent_system_prompt_append(StdPath::new(&workspace.root_path))
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
+
+    let configured_append = cfg
+        .configured_append
+        .as_ref()
+        .map(|value| value.trim().to_string());
+    let effective_append = cfg.effective_append();
+    let source = match cfg.source() {
+        workspace_config::AgentSystemPromptAppendSource::Default => "default".to_string(),
+        workspace_config::AgentSystemPromptAppendSource::Config => "config".to_string(),
+        workspace_config::AgentSystemPromptAppendSource::Disabled => "disabled".to_string(),
+    };
+    let response = AgentSystemPromptConfigResponse {
+        config_path: cfg.config_path.to_string_lossy().to_string(),
+        default_append: cfg.default_append.clone(),
+        configured_append,
+        effective_append,
+        source,
+    };
+
+    Ok(Json(response))
+}
+
+async fn update_agent_system_prompt(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(req): Json<UpdateAgentSystemPromptConfigReq>,
+) -> Result<Json<AgentSystemPromptConfigResponse>, (StatusCode, Json<ApiErrorResp>)> {
+    let ws_id = WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid workspace id".to_string(),
+            }),
+        )
+    })?);
+    let workspace = state
+        .store
+        .get_workspace(ws_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "workspace not found".to_string(),
+            }),
+        ))?;
+
+    workspace_config::update_agent_system_prompt_append(
+        StdPath::new(&workspace.root_path),
+        req.system_prompt_append,
+    )
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&e.to_string()),
+            }),
+        )
+    })?;
+
+    let cfg = workspace_config::load_agent_system_prompt_append(StdPath::new(&workspace.root_path))
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
+
+    let configured_append = cfg
+        .configured_append
+        .as_ref()
+        .map(|value| value.trim().to_string());
+    let effective_append = cfg.effective_append();
+    let source = match cfg.source() {
+        workspace_config::AgentSystemPromptAppendSource::Default => "default".to_string(),
+        workspace_config::AgentSystemPromptAppendSource::Config => "config".to_string(),
+        workspace_config::AgentSystemPromptAppendSource::Disabled => "disabled".to_string(),
+    };
+    let response = AgentSystemPromptConfigResponse {
+        config_path: cfg.config_path.to_string_lossy().to_string(),
+        default_append: cfg.default_append.clone(),
+        configured_append,
+        effective_append,
+        source,
+    };
+
+    Ok(Json(response))
 }
 
 #[derive(Debug, Deserialize)]
@@ -9734,6 +9902,8 @@ const KNOWN_EFFORT_IDS: [&str; 6] = ["none", "minimal", "low", "medium", "high",
 struct AgentInitReq {
     #[serde(default)]
     tool_call_id: Option<String>,
+    #[serde(default)]
+    response_mode: Option<String>,
     agents: Vec<AgentInitItem>,
 }
 
@@ -9748,6 +9918,22 @@ struct AgentInitItem {
     model: Option<String>,
     #[serde(default)]
     reasoning_effort: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum AgentInitResponseMode {
+    Enqueue,
+    Await,
+}
+
+fn parse_agent_init_response_mode(value: Option<&str>) -> Result<AgentInitResponseMode, String> {
+    let trimmed = value.map(|raw| raw.trim()).filter(|raw| !raw.is_empty());
+    match trimmed {
+        None => Ok(AgentInitResponseMode::Enqueue),
+        Some("enqueue") => Ok(AgentInitResponseMode::Enqueue),
+        Some("await") => Ok(AgentInitResponseMode::Await),
+        Some(_) => Err("response_mode must be 'enqueue' or 'await'".to_string()),
+    }
 }
 
 fn build_subagent_request_json(agents: &[AgentInitItem]) -> serde_json::Value {
@@ -9822,6 +10008,8 @@ fn build_subagent_request_json(agents: &[AgentInitItem]) -> serde_json::Value {
 
 #[derive(Debug, Serialize)]
 struct AgentInitResp {
+    invocation_id: String,
+    status: String,
     results: Vec<AgentInitResult>,
 }
 
@@ -9834,6 +10022,18 @@ struct AgentInitResult {
     status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     content: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SubagentWaitReq {
+    invocation_id: String,
+}
+
+#[derive(Debug, Serialize)]
+struct SubagentWaitResp {
+    invocation_id: String,
+    status: String,
+    results: Vec<AgentInitResult>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -10203,6 +10403,7 @@ async fn load_provider_model_catalog(
         client_title: "ctx".to_string(),
         client_version: env!("CARGO_PKG_VERSION").to_string(),
         client_capabilities: serde_json::json!({}),
+        system_prompt_append: None,
         mcp_servers: vec![],
     };
     let mut env = std::collections::HashMap::new();
@@ -10327,6 +10528,170 @@ async fn emit_subagent_invocation_notice(
     Ok(())
 }
 
+fn build_agent_init_result(
+    child: &SubagentInvocationChild,
+    status: String,
+    content: Option<String>,
+) -> AgentInitResult {
+    let label = child
+        .label
+        .clone()
+        .unwrap_or_else(|| format!("Subagent {}", child.position + 1));
+    let provider_id = child.harness.clone().unwrap_or_default();
+    let model_id = child.model.clone().unwrap_or_default();
+    AgentInitResult {
+        session_id: child.child_session_id,
+        label,
+        provider_id,
+        model_id,
+        status,
+        content,
+    }
+}
+
+async fn run_subagent_child(
+    state: &Arc<AppState>,
+    child: SubagentInvocationChild,
+) -> Result<AgentInitResult, String> {
+    let run_id = child
+        .run_id
+        .ok_or_else(|| "subagent run_id missing".to_string())?;
+    let terminal = wait_for_run_terminal_event(state, child.child_session_id, run_id).await;
+    let status = match terminal {
+        Ok(SessionEventType::Done) => "completed",
+        Ok(SessionEventType::TurnInterrupted) => "interrupted",
+        Ok(SessionEventType::Error) => "failed",
+        Ok(_) => "completed",
+        Err(_) => "unknown",
+    }
+    .to_string();
+
+    let child_updated_at = chrono::Utc::now();
+    let mut updated_child = child.clone();
+    updated_child.status = status.clone();
+    updated_child.updated_at = child_updated_at;
+    state
+        .store
+        .upsert_subagent_invocation_child(updated_child)
+        .await
+        .map_err(|e| logs::redact_sensitive(&e.to_string()))?;
+
+    let content = state
+        .store
+        .get_last_assistant_message_for_run(child.child_session_id, run_id)
+        .await
+        .ok()
+        .flatten()
+        .map(|m| m.content);
+
+    Ok(build_agent_init_result(&child, status, content))
+}
+
+async fn finalize_subagent_invocation(
+    state: &Arc<AppState>,
+    invocation_id: &str,
+    tool_call_id: &str,
+    parent_session_id: SessionId,
+    parent_turn_id: Option<TurnId>,
+) -> Result<(), String> {
+    let Some(invocation) = state
+        .store
+        .get_subagent_invocation(invocation_id)
+        .await
+        .map_err(|e| logs::redact_sensitive(&e.to_string()))?
+    else {
+        return Ok(());
+    };
+
+    if invocation.children.is_empty() {
+        return Ok(());
+    }
+    if invocation
+        .children
+        .iter()
+        .any(|child| child.status == "running")
+    {
+        return Ok(());
+    }
+
+    let final_status = if invocation
+        .children
+        .iter()
+        .all(|child| child.status == "completed")
+    {
+        "completed"
+    } else {
+        "failed"
+    };
+    if invocation.status == final_status {
+        return Ok(());
+    }
+
+    let updated_at = chrono::Utc::now();
+    state
+        .store
+        .update_subagent_invocation_status(invocation_id, final_status, updated_at)
+        .await
+        .map_err(|e| logs::redact_sensitive(&e.to_string()))?;
+    let child_session_ids = invocation
+        .children
+        .iter()
+        .map(|child| child.child_session_id.0.to_string())
+        .collect::<Vec<_>>();
+    let child_statuses = invocation
+        .children
+        .iter()
+        .map(|child| {
+            serde_json::json!({
+                "session_id": child.child_session_id.0.to_string(),
+                "status": child.status,
+            })
+        })
+        .collect::<Vec<_>>();
+    emit_subagent_invocation_notice(
+        state,
+        parent_session_id,
+        parent_turn_id,
+        serde_json::json!({
+            "kind": "subagent_invocation_updated",
+            "invocation_id": invocation_id,
+            "tool_call_id": tool_call_id,
+            "status": final_status,
+            "child_session_ids": child_session_ids,
+            "child_statuses": child_statuses,
+        }),
+    )
+    .await
+    .map_err(|(_, err)| err.0.error)?;
+
+    Ok(())
+}
+
+async fn build_subagent_results_from_invocation(
+    state: &Arc<AppState>,
+    invocation: &SubagentInvocation,
+) -> Result<Vec<AgentInitResult>, String> {
+    let mut results = Vec::with_capacity(invocation.children.len());
+    for child in &invocation.children {
+        let content = match child.run_id {
+            Some(run_id) => state
+                .store
+                .get_last_assistant_message_for_run(child.child_session_id, run_id)
+                .await
+                .ok()
+                .flatten()
+                .map(|m| m.content),
+            None => None,
+        };
+        results.push(build_agent_init_result(
+            child,
+            child.status.clone(),
+            content,
+        ));
+    }
+    Ok(results)
+}
+
 async fn enqueue_subagent_prompt(
     state: &Arc<AppState>,
     session: &Session,
@@ -10448,6 +10813,8 @@ async fn mcp_agent_init(
             }),
         ));
     }
+    let response_mode = parse_agent_init_response_mode(req.response_mode.as_deref())
+        .map_err(|error| (StatusCode::BAD_REQUEST, Json(ApiErrorResp { error })))?;
 
     let parent = state
         .store
@@ -10784,24 +11151,26 @@ async fn mcp_agent_init(
                 tracing::warn!(session_id = %session.id.0, "failed to set subagent label");
             }
 
-            let child_session_id = session.id;
             let child_created_at = chrono::Utc::now();
+            let (run_id, _message) = enqueue_subagent_prompt(&state, &session, prompt).await?;
+            let child_session_id = session.id;
             let child = SubagentInvocationChild {
                 invocation_id: invocation_id.clone(),
                 child_session_id,
+                run_id: Some(run_id),
                 position: idx as i64,
                 status: "running".to_string(),
-                label: Some(label.clone()),
-                harness: Some(provider_id.clone()),
-                model: Some(resolved.model_id.clone()),
-                reasoning_effort: reasoning_effort.clone(),
+                label: Some(label),
+                harness: Some(provider_id),
+                model: Some(resolved.model_id),
+                reasoning_effort,
                 prompt_length,
                 created_at: child_created_at,
                 updated_at: child_created_at,
             };
             state
                 .store
-                .upsert_subagent_invocation_child(child)
+                .upsert_subagent_invocation_child(child.clone())
                 .await
                 .map_err(|e| {
                     (
@@ -10832,66 +11201,12 @@ async fn mcp_agent_init(
             )
             .await?;
 
-            let (run_id, _message) = enqueue_subagent_prompt(&state, &session, prompt).await?;
-
-            let terminal = wait_for_run_terminal_event(&state, session.id, run_id).await;
-            let status = match terminal {
-                Ok(SessionEventType::Done) => "completed",
-                Ok(SessionEventType::TurnInterrupted) => "interrupted",
-                Ok(SessionEventType::Error) => "failed",
-                Ok(_) => "completed",
-                Err(_) => "unknown",
-            }
-            .to_string();
-
-            let child_updated_at = chrono::Utc::now();
-            let child = SubagentInvocationChild {
-                invocation_id: invocation_id.clone(),
-                child_session_id,
-                position: idx as i64,
-                status: status.clone(),
-                label: Some(label.clone()),
-                harness: Some(provider_id.clone()),
-                model: Some(resolved.model_id.clone()),
-                reasoning_effort: reasoning_effort.clone(),
-                prompt_length,
-                created_at: child_created_at,
-                updated_at: child_updated_at,
-            };
-            state
-                .store
-                .upsert_subagent_invocation_child(child)
-                .await
-                .map_err(|e| {
-                    (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(ApiErrorResp {
-                            error: logs::redact_sensitive(&e.to_string()),
-                        }),
-                    )
-                })?;
-
-            let content = state
-                .store
-                .get_last_assistant_message_for_run(session.id, run_id)
-                .await
-                .ok()
-                .flatten()
-                .map(|m| m.content);
-
-            Ok(AgentInitResult {
-                session_id: session.id,
-                label,
-                provider_id,
-                model_id: resolved.model_id,
-                status,
-                content,
-            })
+            Ok(child)
         });
     }
 
-    let results = match futures::future::try_join_all(futures).await {
-        Ok(results) => results,
+    let children = match futures::future::try_join_all(futures).await {
+        Ok(children) => children,
         Err(err) => {
             let updated_at = chrono::Utc::now();
             if let Err(e) = state
@@ -10922,53 +11237,115 @@ async fn mcp_agent_init(
         }
     };
 
-    let final_status = if results.iter().all(|r| r.status == "completed") {
-        "completed"
-    } else {
-        "failed"
-    };
-    let updated_at = chrono::Utc::now();
-    state
-        .store
-        .update_subagent_invocation_status(&invocation_id, final_status, updated_at)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&e.to_string()),
-                }),
-            )
-        })?;
-    let child_session_ids = results
-        .iter()
-        .map(|r| r.session_id.0.to_string())
-        .collect::<Vec<_>>();
-    let child_statuses = results
-        .iter()
-        .map(|r| {
-            serde_json::json!({
-                "session_id": r.session_id.0.to_string(),
-                "status": r.status,
-            })
-        })
-        .collect::<Vec<_>>();
-    emit_subagent_invocation_notice(
-        &state,
-        parent.id,
-        parent_turn_id,
-        serde_json::json!({
-            "kind": "subagent_invocation_updated",
-            "invocation_id": invocation_id,
-            "tool_call_id": tool_call_id,
-            "status": final_status,
-            "child_session_ids": child_session_ids,
-            "child_statuses": child_statuses,
-        }),
-    )
-    .await?;
+    match response_mode {
+        AgentInitResponseMode::Await => {
+            let mut run_futures = Vec::with_capacity(children.len());
+            for child in children.into_iter() {
+                let state = state.clone();
+                run_futures.push(async move {
+                    run_subagent_child(&state, child).await.map_err(|error| {
+                        (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            Json(ApiErrorResp { error }),
+                        )
+                    })
+                });
+            }
 
-    Ok(Json(AgentInitResp { results }))
+            let results = match futures::future::try_join_all(run_futures).await {
+                Ok(results) => results,
+                Err(err) => {
+                    let updated_at = chrono::Utc::now();
+                    if let Err(e) = state
+                        .store
+                        .update_subagent_invocation_status(&invocation_id, "failed", updated_at)
+                        .await
+                    {
+                        tracing::warn!(
+                            error = ?e,
+                            "failed to update subagent invocation status"
+                        );
+                    }
+                    let child_session_ids = {
+                        let ids = child_ids.lock().await;
+                        ids.clone()
+                    };
+                    let _ = emit_subagent_invocation_notice(
+                        &state,
+                        parent.id,
+                        parent_turn_id,
+                        serde_json::json!({
+                            "kind": "subagent_invocation_updated",
+                            "invocation_id": invocation_id.clone(),
+                            "tool_call_id": tool_call_id.clone(),
+                            "status": "failed",
+                            "child_session_ids": child_session_ids,
+                        }),
+                    )
+                    .await;
+                    return Err(err);
+                }
+            };
+
+            let final_status = if results.iter().all(|r| r.status == "completed") {
+                "completed"
+            } else {
+                "failed"
+            };
+            if let Err(error) = finalize_subagent_invocation(
+                &state,
+                &invocation_id,
+                &tool_call_id,
+                parent.id,
+                parent_turn_id,
+            )
+            .await
+            {
+                tracing::warn!(error = %error, "failed to finalize subagent invocation");
+            }
+
+            Ok(Json(AgentInitResp {
+                invocation_id,
+                status: final_status.to_string(),
+                results,
+            }))
+        }
+        AgentInitResponseMode::Enqueue => {
+            for child in children.iter().cloned() {
+                let state = state.clone();
+                let invocation_id = invocation_id.clone();
+                let tool_call_id = tool_call_id.clone();
+                let parent_id = parent.id;
+                tokio::spawn(async move {
+                    if let Err(error) = run_subagent_child(&state, child).await {
+                        tracing::warn!(error = %error, "subagent execution failed");
+                    }
+                    if let Err(error) = finalize_subagent_invocation(
+                        &state,
+                        &invocation_id,
+                        &tool_call_id,
+                        parent_id,
+                        parent_turn_id,
+                    )
+                    .await
+                    {
+                        tracing::warn!(error = %error, "failed to finalize subagent invocation");
+                    }
+                });
+            }
+
+            let results = children
+                .iter()
+                .map(|child| build_agent_init_result(child, "running".to_string(), None))
+                .collect();
+
+            Ok(Json(AgentInitResp {
+                invocation_id,
+                status: "running".to_string(),
+                results,
+            }))
+        }
+    }
 }
 
 async fn mcp_agent_reply(
@@ -11075,6 +11452,153 @@ async fn mcp_agent_reply(
         session_id: child.id,
         status,
         content,
+    }))
+}
+
+async fn mcp_subagent_wait(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(req): Json<SubagentWaitReq>,
+) -> Result<Json<SubagentWaitResp>, (StatusCode, Json<ApiErrorResp>)> {
+    let parent_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid session id".to_string(),
+            }),
+        )
+    })?);
+
+    let parent = state
+        .store
+        .get_session(parent_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "parent session not found".to_string(),
+            }),
+        ))?;
+
+    let invocation_id = req.invocation_id.trim();
+    if invocation_id.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invocation_id is required".to_string(),
+            }),
+        ));
+    }
+
+    let invocation = state
+        .store
+        .get_subagent_invocation(invocation_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "subagent invocation not found".to_string(),
+            }),
+        ))?;
+
+    if invocation.parent_session_id != parent.id {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(ApiErrorResp {
+                error: "invocation does not belong to session".to_string(),
+            }),
+        ));
+    }
+
+    if invocation.children.is_empty() {
+        return Ok(Json(SubagentWaitResp {
+            invocation_id: invocation.id,
+            status: invocation.status,
+            results: Vec::new(),
+        }));
+    }
+
+    if matches!(invocation.status.as_str(), "requested" | "running") {
+        if invocation
+            .children
+            .iter()
+            .any(|child| child.run_id.is_none())
+        {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: "subagent run_id missing; cannot wait".to_string(),
+                }),
+            ));
+        }
+
+        let mut futures = Vec::with_capacity(invocation.children.len());
+        for child in invocation.children.clone() {
+            let state = state.clone();
+            futures.push(async move {
+                run_subagent_child(&state, child).await.map_err(|error| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(ApiErrorResp { error }),
+                    )
+                })
+            });
+        }
+        let results = futures::future::try_join_all(futures).await?;
+        let final_status = if results.iter().all(|r| r.status == "completed") {
+            "completed"
+        } else {
+            "failed"
+        };
+
+        if let Err(error) = finalize_subagent_invocation(
+            &state,
+            invocation_id,
+            &invocation.tool_call_id,
+            parent.id,
+            invocation.parent_turn_id,
+        )
+        .await
+        {
+            tracing::warn!(error = %error, "failed to finalize subagent invocation");
+        }
+
+        return Ok(Json(SubagentWaitResp {
+            invocation_id: invocation_id.to_string(),
+            status: final_status.to_string(),
+            results,
+        }));
+    }
+
+    let results = build_subagent_results_from_invocation(&state, &invocation)
+        .await
+        .map_err(|error| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp { error }),
+            )
+        })?;
+
+    Ok(Json(SubagentWaitResp {
+        invocation_id: invocation.id,
+        status: invocation.status,
+        results,
     }))
 }
 
@@ -11478,6 +12002,7 @@ async fn submit_ask_user_question(
         }
     };
     let answers = req.answers.unwrap_or_default();
+    let answers_for_event = answers.clone();
 
     let ok = state
         .ask_user_question
@@ -11508,6 +12033,7 @@ async fn submit_ask_user_question(
                 "kind": "ask_user_question_answered",
                 "tool_call_id": tool_call_id,
                 "outcome": outcome.as_str(),
+                "answers": answers_for_event,
             }),
         )
         .await

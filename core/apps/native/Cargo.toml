@@ -17,11 +17,14 @@ clap = { version = "4.5", features = ["derive"] }
 ctx-client = { path = "../../crates/ctx-client" }
 ctx-core = { path = "../../crates/ctx-core" }
 ctx-providers = { path = "../../crates/ctx-providers" }
+directories = "5"
 futures-util = "0.3"
 gpui = { git = "https://github.com/zed-industries/zed", package = "gpui" }
 gpui_tokio = { git = "https://github.com/zed-industries/zed", package = "gpui_tokio" }
-gpui-component = { git = "https://github.com/longbridge/gpui-component", rev = "779ee50742d3f2865d04c9d6b96a54168ab8d9d8" }
+gpui-component = { git = "https://github.com/ctxrs/gpui-component", rev = "76d64362a1c0bdf825f83efb0ae3f4cb93849bd7", version = "0.5.0" }
 image = { version = "0.25", default-features = false, features = ["png"] }
+qrcode = "0.14"
+regex = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "fs"] }

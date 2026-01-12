@@ -165,14 +165,17 @@ async function main() {
     { target: "terminal_panel", name: "terminal-panel" },
     { target: "main", name: "web-workbench-task-list" },
     { target: "archived_tasks", name: "web-workbench-archived-tasks" },
-    { target: "composer", name: "web-workbench-new-task" },
+    { target: "composer_new_task", name: "web-workbench-new-task" },
     { target: "composer_provider_menu", name: "web-workbench-harness-menu" },
     { target: "composer_model_menu", name: "web-workbench-model-menu" },
   ];
+  const archivedWaitMs = 60000;
 
   let runError = null;
   try {
     const readyTimeout = Math.max(args.readyTimeoutMs + 5000, DEFAULT_REQUEST_TIMEOUT_MS);
+    // Small delay to allow first render before screenshots
+    await sleep(500);
     await callJson(args.addr, `/ready?timeout_ms=${args.readyTimeoutMs}`, {
       timeoutMs: readyTimeout,
     });
@@ -182,7 +185,18 @@ async function main() {
         method: "POST",
         body: { target },
       });
-      await sleep(args.delayMs);
+      if (target === "archived_tasks") {
+        try {
+          await callJson(args.addr, "/wait", {
+            method: "POST",
+            body: { target: "archived_loaded", timeout_ms: archivedWaitMs },
+            timeoutMs: archivedWaitMs + 10000,
+          });
+        } catch (err) {
+          console.error(`Wait for archived tasks failed: ${err.message}`);
+        }
+      }
+      await sleep(Math.max(args.delayMs, 500));
       await callJson(args.addr, "/screenshot", {
         method: "POST",
         body: { name },

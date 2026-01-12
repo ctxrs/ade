@@ -10,31 +10,42 @@ pub(super) mod turn_tools;
 pub(super) mod workspace;
 
 use std::collections::{HashMap, HashSet};
-use std::time::Duration;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
 use gpui::AppContext as _;
-use gpui::{AsyncApp, ClickEvent, Context, FocusHandle, ListState, Task, Window, Entity, WeakEntity};
+use gpui::{
+    AsyncApp, Bounds, ClickEvent, Context, Entity, Image, ListState, Pixels, Subscription, Task,
+    WeakEntity, Window,
+};
 use gpui_component::{VirtualListScrollHandle, input::InputState};
 use gpui_tokio::Tokio;
+use ctx_client::{EnvTarget, ProviderOptions};
 use tokio::sync::watch;
 
-use ctx_core::ids::{SessionId, TaskId, WorkspaceId};
+use ctx_core::ids::{SessionId, TaskId, TurnId, WorkspaceId};
 use ctx_core::models::{
-    Artifact, MessageAttachment, SessionCatchupSummary, SessionEvent, WorkspaceCatchupClientMessage,
-    WorkspaceCatchupCursor,
+    Artifact, MessageAttachment, SessionCatchupSummary, SessionEvent, SessionTurn,
+    WorkspaceCatchupClientMessage, WorkspaceCatchupCursor,
 };
 
 use crate::theme::ThemeColors;
 use super::ui_state::UiStateStore;
 
-use super::models::{MessageItem, SessionInfo};
+use super::models::{MessageItem, SessionInfo, ThreadListItem, TurnToolSnapshot, WorkbenchTurnHeader};
 use super::workspace_summary::{SessionSummaryItem, TaskSummaryItem};
 
 pub(crate) use artifacts::ArtifactPreviewState;
-pub(crate) use composer::ComposerState;
+pub(crate) use composer::{
+    ComposerAutocompleteState, ComposerDraft, ComposerMenuId, ComposerState, ComposerVerbosity,
+    ContextWindowInfo, DraftTrack, PopoverPlacement, ProviderInstallState, WorkbenchModeId,
+};
 pub(crate) use diff_review::DiffReviewState;
-pub(crate) use settings::SettingsState;
+pub(crate) use settings::{
+    LabeledOption, SettingsInputKind, SettingsSection, SettingsSectionGroup, SettingsSelectKind,
+    SettingsState, SETTINGS_SECTIONS,
+};
 pub(crate) use stream::StreamStatus;
 pub(crate) use terminal::{TerminalContext, TerminalPanelState};
 pub(crate) use workspace::{DataLoadState, ProviderItem, WorkspaceItem};
@@ -62,6 +73,7 @@ pub(crate) enum TaskArchiveAction {
     Unarchive,
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct AnchorRect {
     pub(crate) left: f32,
@@ -71,27 +83,50 @@ pub(crate) struct AnchorRect {
     pub(crate) height: f32,
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ArchiveConfirmState {
     pub(crate) task_id: TaskId,
     pub(crate) anchor: AnchorRect,
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct TaskMenuState {
     pub(crate) task_id: TaskId,
     pub(crate) anchor: AnchorRect,
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct SidebarResizeState {
     pub(crate) start_x: f32,
     pub(crate) start_width: f32,
 }
 
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SessionViewVerbosity {
+    Terse,
+    Default,
+    Verbose,
+}
+
+impl SessionViewVerbosity {
+    #[allow(dead_code)]
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            SessionViewVerbosity::Terse => "Terse",
+            SessionViewVerbosity::Default => "Default",
+            SessionViewVerbosity::Verbose => "Verbose",
+        }
+    }
+}
+
 pub(crate) struct ShellView {
     pub(crate) colors: ThemeColors,
     pub(crate) base_url: String,
+    #[allow(dead_code)]
     pub(crate) is_dark: bool,
     pub(crate) route: ShellRoute,
     pub(crate) workspaces: Vec<WorkspaceItem>,
@@ -130,6 +165,7 @@ pub(crate) struct ShellView {
     pub(crate) archive_confirm_dismissed: bool,
     pub(crate) sidebar_width: f32,
     pub(crate) sidebar_collapsed: bool,
+    pub(crate) sidebar_anim_epoch: u64,
     pub(crate) sidebar_resizing: bool,
     pub(crate) sidebar_resize_state: Option<SidebarResizeState>,
     pub(crate) sidebar_resizer_hovered: bool,
@@ -140,6 +176,19 @@ pub(crate) struct ShellView {
     pub(crate) sessions: Vec<SessionSummaryItem>,
     pub(crate) selected_session: Option<usize>,
     pub(crate) messages: Vec<MessageItem>,
+    pub(crate) session_turns: Vec<SessionTurn>,
+    pub(crate) session_turn_tools: HashMap<TurnId, Vec<TurnToolSnapshot>>,
+    pub(crate) thread_items: Vec<ThreadListItem>,
+    pub(crate) sticky_turn_header: Option<WorkbenchTurnHeader>,
+    pub(crate) sticky_turn_header_at_top: bool,
+    pub(crate) expanded_turn_headers: HashMap<String, bool>,
+    pub(crate) expanded_messages: HashMap<String, bool>,
+    pub(crate) expanded_turn_details: HashMap<String, bool>,
+    pub(crate) expanded_tools: HashMap<String, bool>,
+    pub(crate) turn_tools_loading: HashSet<TurnId>,
+    pub(crate) verbosity: SessionViewVerbosity,
+    #[allow(dead_code)]
+    pub(crate) verbosity_menu_open: bool,
     pub(crate) artifacts: Vec<Artifact>,
     pub(crate) selected_artifact: Option<usize>,
     pub(crate) artifact_preview: ArtifactPreviewState,
@@ -147,22 +196,78 @@ pub(crate) struct ShellView {
     pub(crate) session_summary_map: HashMap<SessionId, SessionCatchupSummary>,
     pub(crate) session: SessionInfo,
     pub(crate) data_state: DataLoadState,
-    pub(crate) composer: ComposerState,
-    pub(crate) composer_focus: FocusHandle,
+    pub(crate) new_task_mode: bool,
+    pub(crate) new_task_mode_locked: bool,
+    pub(crate) composer_new_input: Entity<InputState>,
+    pub(crate) composer_session_input: Entity<InputState>,
     pub(crate) composer_attachments: Vec<MessageAttachment>,
-    pub(crate) composer_attachment_input: ComposerState,
-    pub(crate) composer_attachment_focus: FocusHandle,
+    pub(crate) composer_new_attachments: Vec<MessageAttachment>,
+    pub(crate) composer_session_attachments: HashMap<SessionId, Vec<MessageAttachment>>,
+    pub(crate) composer_new_draft: ComposerDraft,
+    pub(crate) composer_session_drafts: HashMap<SessionId, ComposerDraft>,
+    pub(crate) composer_start_busy: bool,
+    pub(crate) composer_start_error: Option<String>,
+    pub(crate) composer_needs_apply: bool,
     pub(crate) composer_notice: Option<String>,
-    pub(crate) message_list_state: ListState,
-    pub(crate) message_list_len: usize,
-    pub(crate) message_auto_follow: bool,
-    pub(crate) new_message_count: usize,
+    pub(crate) composer_open_menu: Option<ComposerMenuId>,
+    pub(crate) composer_menu_trigger_bounds: HashMap<ComposerMenuId, Bounds<Pixels>>,
+    pub(crate) composer_menu_bounds: HashMap<ComposerMenuId, Bounds<Pixels>>,
+    pub(crate) composer_menu_placements: HashMap<ComposerMenuId, PopoverPlacement>,
+    pub(crate) composer_tooltip_open: Option<ComposerMenuId>,
+    pub(crate) composer_tooltip_trigger_bounds: HashMap<ComposerMenuId, Bounds<Pixels>>,
+    pub(crate) composer_tooltip_bounds: HashMap<ComposerMenuId, Bounds<Pixels>>,
+    pub(crate) composer_tooltip_placements: HashMap<ComposerMenuId, PopoverPlacement>,
+    pub(crate) composer_tooltip_close_id: u64,
+    pub(crate) composer_mode_id: WorkbenchModeId,
+    pub(crate) composer_verbosity: ComposerVerbosity,
+    pub(crate) composer_context_window: Option<ContextWindowInfo>,
+    pub(crate) composer_env_target: EnvTarget,
+    pub(crate) composer_use_multiple_agents: bool,
+    pub(crate) composer_draft_tracks: Vec<DraftTrack>,
+    pub(crate) composer_provider_options: HashMap<String, ProviderOptions>,
+    pub(crate) composer_provider_opts_busy: HashMap<String, bool>,
+    pub(crate) composer_provider_auth_busy: HashMap<String, bool>,
+    pub(crate) composer_provider_verify_busy: HashMap<String, bool>,
+    pub(crate) composer_provider_installs: HashMap<String, ProviderInstallState>,
+    pub(crate) composer_install_polling: HashSet<String>,
+    pub(crate) composer_install_all_busy: bool,
+    pub(crate) composer_provider_action_notice: Option<String>,
+    pub(crate) composer_provider_action_error: Option<String>,
+    pub(crate) composer_harness_expanded_provider: Option<String>,
+    pub(crate) composer_harness_count_menu_provider: Option<String>,
+    pub(crate) composer_harness_count_menu_placement: Option<PopoverPlacement>,
+    pub(crate) composer_harness_count_trigger_bounds: HashMap<String, Bounds<Pixels>>,
+    pub(crate) composer_harness_count_menu_bounds: Option<Bounds<Pixels>>,
+    pub(crate) composer_recording: bool,
+    pub(crate) composer_harness_search: Entity<InputState>,
+    pub(crate) composer_model_search: Entity<InputState>,
+    pub(crate) composer_model_search_placeholder: String,
+    pub(crate) composer_model_manual: Entity<InputState>,
+    pub(crate) composer_autocomplete: ComposerAutocompleteState,
+    pub(crate) composer_track_model_inputs: HashMap<String, Entity<InputState>>,
+    pub(crate) composer_track_model_placeholders: HashMap<String, String>,
+    pub(crate) composer_track_input_subscriptions: HashMap<String, Subscription>,
+    pub(crate) composer_autocomplete_input_bounds: Option<Bounds<Pixels>>,
+    pub(crate) composer_autocomplete_anchor_bounds: Option<Bounds<Pixels>>,
+    pub(crate) composer_autocomplete_menu_placement: Option<PopoverPlacement>,
+    pub(crate) composer_autocomplete_menu_width: Option<Pixels>,
+    pub(crate) composer_autocomplete_preview_placement: Option<PopoverPlacement>,
+    pub(crate) composer_attachment_images: HashMap<String, Arc<Image>>,
+    pub(crate) composer_attachment_loading: HashSet<String>,
+    pub(crate) attachment_fetch_failed: HashSet<String>,
+    pub(crate) composer_subscriptions: Vec<Subscription>,
+    pub(crate) composer_subscriptions_set: bool,
+    pub(crate) thread_list_state: ListState,
+    pub(crate) thread_list_len: usize,
+    pub(crate) thread_auto_follow: bool,
+    pub(crate) new_thread_item_count: usize,
+    pub(crate) copied_flags: HashMap<String, Instant>,
     pub(crate) stream_status: StreamStatus,
     pub(crate) resyncing_session: Option<SessionId>,
     pub(crate) stream_subscribe_tx: Option<watch::Sender<WorkspaceCatchupClientMessage>>,
     pub(crate) stream_stop_tx: Option<watch::Sender<bool>>,
     pub(crate) session_last_event_seq: HashMap<SessionId, i64>,
-    pub(crate) message_list_handler_set: bool,
+    pub(crate) thread_list_handler_set: bool,
     pub(crate) show_sessions_pane: bool,
     pub(crate) show_diff_pane: bool,
     pub(crate) show_artifacts_pane: bool,
@@ -175,6 +280,7 @@ pub(crate) struct ShellView {
 }
 
 impl ShellView {
+    #[allow(dead_code)]
     pub(crate) fn toggle_theme(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
         self.is_dark = !self.is_dark;
         let (tokens, colors) = super::load_theme(self.is_dark);
@@ -210,6 +316,7 @@ impl ShellView {
             return;
         }
         self.sidebar_collapsed = collapsed;
+        self.sidebar_anim_epoch = self.sidebar_anim_epoch.wrapping_add(1);
         if collapsed {
             self.sidebar_resizing = false;
             self.sidebar_resize_state = None;
@@ -232,6 +339,12 @@ impl ShellView {
                 .set_archived_collapsed(workspace_id, collapsed);
         }
         cx.notify();
+    }
+
+    #[cfg(feature = "automation")]
+    #[allow(dead_code)]
+    pub(crate) fn archived_ready(&self) -> bool {
+        self.task_archived_loaded && self.task_fetch_archived != TaskFetchState::Loading
     }
 
     pub(crate) fn set_sidebar_width(

@@ -13,7 +13,9 @@ import {
   ResourceGovernanceSettings,
   ResourceGovernanceStatus,
   ResourceUtilization,
+  SandboxingSettings,
   Settings,
+  AgentSystemPromptConfig,
   TelemetrySettings,
   TitleGenerationSettings,
   WorkspaceAttachment,
@@ -21,6 +23,7 @@ import {
   deleteWorkspaceAttachment,
   disableMobileAccess,
   enableMobileAccess,
+  getAgentSystemPrompt,
   getMobileAccessStatus,
   Workspace,
   authenticateProviderForWorkspace,
@@ -38,6 +41,7 @@ import {
   listWorkspaces,
   syncWorkspaceAttachments,
   updateSettings,
+  updateAgentSystemPrompt,
   verifyProviderForWorkspace,
 } from "../api/client";
 import {
@@ -55,6 +59,8 @@ import {
   writeCachedValue,
 } from "../utils/entitlementsCache";
 import { getSupabaseClient } from "../utils/supabaseClient";
+
+const AGENT_PROMPT_DEFAULT = "You are working inside ctx, an agent development environment. Use ctx MCP tools to attach photos/videos as artifacts, start persistent web sessions (Playwright REPL/scripts), and run sub-agents for research or well-scoped implementations. Check `.ctx/.refs/` and `.ctx/docs/` for extra reference repos and docs." as const;
 
 const MODEL_OPTIONS: Array<{ value: string; label: string }> = [
   { value: "auto", label: "Default (Deepgram Nova-3)" },
@@ -91,6 +97,7 @@ type SectionId =
   | "models_routing"
   | "sandboxing"
   | "worktree_bootstrap"
+  | "agent_system_prompt"
   | "workspace_attachments"
   | "context_pack"
   | "resource_governance"
@@ -120,6 +127,7 @@ const SECTIONS: Array<{
   { id: "models_routing", label: "Models & Routing", group: "main" },
   { id: "sandboxing", label: "Sandboxing", group: "main" },
   { id: "worktree_bootstrap", label: "Worktree Bootstrap", group: "main" },
+  { id: "agent_system_prompt", label: "Agent System Prompt", group: "main" },
   { id: "workspace_attachments", label: "Workspace Attachments", group: "main" },
   { id: "context_pack", label: "ctx pack", group: "main" },
   { id: "resource_governance", label: "Resource Limits", group: "main" },
@@ -366,7 +374,9 @@ export default function SettingsPage() {
   const [titleGenModel, setTitleGenModel] = useState("google/gemini-3-flash-preview");
   const [titleGenUseJson, setTitleGenUseJson] = useState(true);
   const resourceGovernanceHydrated = useRef(false);
+  const sandboxingHydrated = useRef(false);
   const [resourceGovernanceEnabled, setResourceGovernanceEnabled] = useState(true);
+  const [providerControlMode, setProviderControlMode] = useState<SandboxingSettings["provider_control_mode"]>("full");
   const [resourceGovernanceMode, setResourceGovernanceMode] =
     useState<ResourceGovernanceSettings["mode"]>("auto");
   const [resourceCpuQuotaPct, setResourceCpuQuotaPct] = useState("");
@@ -407,6 +417,12 @@ export default function SettingsPage() {
   const [docsAttachmentBusy, setDocsAttachmentBusy] = useState(false);
   const [attachmentSyncBusy, setAttachmentSyncBusy] = useState(false);
   const [attachmentDeleteBusy, setAttachmentDeleteBusy] = useState<Record<string, boolean>>({});
+
+  const [agentPromptConfig, setAgentPromptConfig] = useState<AgentSystemPromptConfig | null>(null);
+  const [agentPromptLoading, setAgentPromptLoading] = useState(false);
+  const [agentPromptError, setAgentPromptError] = useState<string | null>(null);
+  const [agentPromptSaving, setAgentPromptSaving] = useState(false);
+  const [agentPromptText, setAgentPromptText] = useState("");
 
   const [resourceSnapshot, setResourceSnapshot] = useState<ResourceUtilization | null>(null);
   const [resourceLoading, setResourceLoading] = useState(false);
@@ -650,6 +666,14 @@ export default function SettingsPage() {
         const rg = s.resource_governance ?? null;
         if (rg) {
           setResourceGovernanceEnabled(rg.enabled);
+        }
+
+        const sb = s.sandboxing ?? null;
+        if (sb?.provider_control_mode) {
+          setProviderControlMode(sb.provider_control_mode);
+        }
+
+        if (rg) {
           setResourceGovernanceMode(rg.mode ?? "auto");
           setResourceCpuQuotaPct(rg.cpu_quota_pct ? String(rg.cpu_quota_pct) : "");
           setResourceMemoryHighGb(formatGiB(rg.memory_high_mb));
@@ -711,6 +735,9 @@ export default function SettingsPage() {
         setResourceEffective(next.resource_governance.effective ?? null);
         setResourceStatus(next.resource_governance.status ?? null);
       }
+      if (next.sandboxing?.provider_control_mode) {
+        setProviderControlMode(next.sandboxing.provider_control_mode);
+      }
     } catch (e: any) {
       if (seq !== saveSeq.current) return;
       setSaveError(e?.message ?? String(e));
@@ -741,6 +768,12 @@ export default function SettingsPage() {
       use_json: titleGenUseJson,
     };
   }, [titleGenApiKey, titleGenBaseUrl, titleGenModel, titleGenUseJson]);
+
+  const sandboxingPayload = useMemo((): SandboxingSettings => {
+    return {
+      provider_control_mode: providerControlMode,
+    };
+  }, [providerControlMode]);
 
   const resourceGovernancePayload = useMemo((): ResourceGovernanceSettings => {
     const cpuQuota = Number(resourceCpuQuotaPct);
@@ -824,6 +857,19 @@ export default function SettingsPage() {
 
   useEffect(() => {
     if (!loaded) return;
+    if (!sandboxingHydrated.current) {
+      sandboxingHydrated.current = true;
+      return;
+    }
+    const t = window.setTimeout(() => {
+      savePatch({ sandboxing: sandboxingPayload });
+    }, 450);
+    return () => window.clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loaded, sandboxingPayload]);
+
+  useEffect(() => {
+    if (!loaded) return;
     if (!resourceGovernanceHydrated.current) {
       resourceGovernanceHydrated.current = true;
       return;
@@ -886,6 +932,68 @@ export default function SettingsPage() {
     [workspaceId],
   );
 
+  const refreshAgentSystemPrompt = useCallback(async () => {
+    if (!workspaceId) return;
+    if (!workspaces.some((ws) => idToString((ws as any).id) === workspaceId)) return;
+    setAgentPromptLoading(true);
+    setAgentPromptError(null);
+    try {
+      const next = await getAgentSystemPrompt(workspaceId);
+      setAgentPromptConfig(next);
+      const baseText = next.configured_append ?? next.default_append ?? AGENT_PROMPT_DEFAULT;
+      setAgentPromptText(baseText);
+    } catch (e: any) {
+      const message = e?.message ?? String(e);
+      const lower = message.toLowerCase();
+      const first = workspaces[0];
+      const isNotFound = lower.includes("404") || lower.includes("workspace not found");
+      if (isNotFound && first) {
+        const firstId = idToString((first as any).id);
+        if (workspaceId !== firstId) {
+          setWorkspaceId(firstId);
+          setAgentPromptError(null);
+          setAgentPromptLoading(false);
+          return;
+        }
+      }
+      if (isNotFound) {
+        const fallbackWs = workspaces.find((ws) => idToString((ws as any).id) === workspaceId) ?? workspaces[0];
+        const fallbackPath = fallbackWs ? `${fallbackWs.root_path}/.ctx/config.toml` : ".ctx/config.toml";
+        setAgentPromptConfig({
+          config_path: fallbackPath,
+          default_append: AGENT_PROMPT_DEFAULT,
+          configured_append: null,
+          effective_append: AGENT_PROMPT_DEFAULT,
+          source: "default",
+        });
+        setAgentPromptText(AGENT_PROMPT_DEFAULT);
+        setAgentPromptError(null);
+      } else {
+        setAgentPromptError(message);
+      }
+    } finally {
+      setAgentPromptLoading(false);
+    }
+  }, [workspaceId, workspaces]);
+
+  const handleSaveAgentPrompt = useCallback(async () => {
+    if (!workspaceId) return;
+    setAgentPromptSaving(true);
+    setAgentPromptError(null);
+    try {
+      const trimmed = agentPromptText.trim();
+      const payload = trimmed.length ? trimmed : null;
+      const next = await updateAgentSystemPrompt(workspaceId, { system_prompt_append: payload });
+      setAgentPromptConfig(next);
+      const baseText = next.configured_append ?? next.default_append ?? "";
+      setAgentPromptText(baseText);
+    } catch (e: any) {
+      setAgentPromptError(e?.message ?? String(e));
+    } finally {
+      setAgentPromptSaving(false);
+    }
+  }, [workspaceId, agentPromptText]);
+
   const syncWorkspaceAttachmentsNow = useCallback(async () => {
     if (!workspaceId) return;
     setAttachmentSyncBusy(true);
@@ -906,12 +1014,24 @@ export default function SettingsPage() {
 
   useEffect(() => {
     setProviderOptions({});
-  }, [workspaceId]);
+  }, [workspaceId, workspaces]);
+
+  useEffect(() => {
+    if (!workspaces.length) return;
+    if (!workspaceId) {
+      setWorkspaceId(idToString((workspaces[0] as any).id));
+      return;
+    }
+    const found = workspaces.some((ws) => idToString((ws as any).id) === workspaceId);
+    if (!found) {
+      setWorkspaceId(idToString((workspaces[0] as any).id));
+    }
+  }, [workspaces, workspaceId]);
 
   useEffect(() => {
     setAttachments([]);
     setAttachmentsError(null);
-  }, [workspaceId]);
+  }, [workspaceId, workspaces]);
 
   useEffect(() => {
     if (active !== "agent_harnesses") return;
@@ -965,6 +1085,17 @@ export default function SettingsPage() {
       }
     };
   }, [active, workspaceId]);
+
+  useEffect(() => {
+    if (active !== "agent_system_prompt") return;
+    if (!workspaceId) return;
+    if (!workspaces.some((ws) => idToString((ws as any).id) === workspaceId)) return;
+    refreshAgentSystemPrompt().catch(() => {});
+  }, [active, workspaceId, workspaces, refreshAgentSystemPrompt]);
+
+  useEffect(() => {
+    setAgentPromptError(null);
+  }, [workspaceId]);
 
   useEffect(() => {
     if (active !== "workspace_attachments") return;
@@ -1291,7 +1422,7 @@ export default function SettingsPage() {
     }
   }, [workspaceFromQuery, workspaceId]);
 
-  const anySaving = saving || editorSaving;
+  const anySaving = saving || editorSaving || agentPromptSaving;
 
   const vscodeRemoteTargets: DesktopEditorSettings["target"][] = [
     "vscode",
@@ -1417,6 +1548,80 @@ export default function SettingsPage() {
               control={<pre className="settings-code-block">{example}</pre>}
             />
           </Card>
+        </>
+      );
+    }
+
+    if (active === "agent_system_prompt") {
+      const anyWorkspace = workspaces.length > 0;
+      const selectedWorkspace = workspaces.find((ws) => idToString((ws as any).id) === workspaceId) ?? null;
+      const configPath =
+        agentPromptConfig?.config_path ??
+        (selectedWorkspace ? `${selectedWorkspace.root_path}/.ctx/config.toml` : ".ctx/config.toml");
+      const statusLabel = agentPromptConfig?.source === "config" ? "Custom" : "Default";
+      const baseCustom = agentPromptConfig?.configured_append ?? agentPromptConfig?.default_append ?? AGENT_PROMPT_DEFAULT;
+      const promptDirty = agentPromptConfig ? agentPromptText.trim() !== baseCustom.trim() : false;
+      const canSave = Boolean(workspaceId) && !agentPromptSaving && promptDirty;
+
+      return (
+        <>
+          <Card title="Agent System Prompt">
+            <Row
+              title="Workspace"
+              description="Choose the repo to configure."
+              control={
+                <select
+                  className="settings-control settings-select"
+                  value={workspaceId ?? ""}
+                  onChange={(e) => setWorkspaceId(e.target.value || null)}
+                  disabled={!anyWorkspace}
+                >
+                  {workspaces.map((ws) => {
+                    const id = idToString((ws as any).id);
+                    return (
+                      <option key={id} value={id}>
+                        {ws.name}
+                      </option>
+                    );
+                  })}
+                </select>
+              }
+            />
+            <Row
+              title="Config file"
+              description="Repo-scoped agent prompt configuration."
+              control={<span className="settings-pill wb-mono">{configPath}</span>}
+            />
+            <Row
+              title="Prompt append"
+              description="Saved to .ctx/config.toml. Pre-filled with the default; edit to override."
+              control={
+                <textarea
+                  className="settings-control settings-control-wide"
+                  rows={6}
+                  value={agentPromptText}
+                  onChange={(e) => setAgentPromptText(e.target.value)}
+                  disabled={!workspaceId || agentPromptLoading}
+                  placeholder="Add a custom system prompt append."
+                />
+              }
+            />
+            <Row
+              title="Actions"
+              control={
+                <button
+                  type="button"
+                  className="settings-btn"
+                  onClick={() => handleSaveAgentPrompt().catch(() => {})}
+                  disabled={!canSave}
+                >
+                  {agentPromptSaving ? "Saving…" : "Save"}
+                </button>
+              }
+            />
+          </Card>
+          {agentPromptLoading ? <div className="settings-banner">Loading agent prompt…</div> : null}
+          {agentPromptError ? <div className="settings-banner settings-banner-error">{agentPromptError}</div> : null}
         </>
       );
     }
@@ -2609,9 +2814,33 @@ export default function SettingsPage() {
       );
     }
 
+    if (active === "sandboxing") {
+      return (
+        <>
+          <Card title="Sandboxing">
+            <Row
+              title="Provider control"
+              description="Default is full capability. Switch to honor the harness's native permission settings."
+              control={
+                <select
+                  className="settings-control settings-select"
+                  value={providerControlMode}
+                  onChange={(e) => setProviderControlMode(e.target.value as SandboxingSettings["provider_control_mode"])}
+                  disabled={!loaded}
+                >
+                  <option value="full">Full capability</option>
+                  <option value="harness_native">Harness-native permissions</option>
+                  <option value="ctx_enforced">ctx-enforced (coming soon)</option>
+                </select>
+              }
+            />
+          </Card>
+        </>
+      );
+    }
+
     if (
       active === "models_routing" ||
-      active === "sandboxing" ||
       active === "context_pack" ||
       active === "team_enterprise" ||
       active === "usage_analytics"

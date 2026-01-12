@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use axum::{routing::post, Json, Router};
+use axum::{routing::get, routing::post, Json, Router};
 use serde_json::json;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
@@ -14,14 +14,18 @@ fn mcp_bin() -> &'static str {
 async fn mcp_subagent_tools_call_daemon_http() {
     let parent_id = "00000000-0000-0000-0000-000000000001";
     let child_id = "00000000-0000-0000-0000-000000000002";
+    let invocation_id = "subagent-1";
 
     let app = Router::new()
         .route(
             &format!("/api/mcp/sessions/{}/agent_init", parent_id),
             post(move |Json(body): Json<serde_json::Value>| async move {
                 assert_eq!(body["agents"][0]["prompt"], "check foo");
+                assert_eq!(body["response_mode"], "await");
                 assert_eq!(body["tool_call_id"], "tool-1");
                 Json(json!({
+                    "invocation_id": invocation_id,
+                    "status": "completed",
                     "results": [{
                         "session_id": child_id,
                         "label": "Audit FooAPI",
@@ -42,6 +46,74 @@ async fn mcp_subagent_tools_call_daemon_http() {
                     "session_id": child_id,
                     "status": "completed",
                     "content": "summary"
+                }))
+            }),
+        )
+        .route(
+            &format!("/api/sessions/{}/subagent_invocations", parent_id),
+            get(move || async move {
+                Json(json!([
+                    {
+                        "id": invocation_id,
+                        "tool_call_id": "tool-1",
+                        "parent_session_id": parent_id,
+                        "requested_count": 1,
+                        "status": "completed",
+                        "created_at": "2024-01-01T00:00:00Z",
+                        "updated_at": "2024-01-01T00:00:00Z",
+                        "children": [{
+                            "invocation_id": invocation_id,
+                            "child_session_id": child_id,
+                            "run_id": "11111111-1111-1111-1111-111111111111",
+                            "position": 0,
+                            "status": "completed",
+                            "prompt_length": 3,
+                            "created_at": "2024-01-01T00:00:00Z",
+                            "updated_at": "2024-01-01T00:00:00Z"
+                        }]
+                    }
+                ]))
+            }),
+        )
+        .route(
+            &format!("/api/subagent_invocations/{}", invocation_id),
+            get(move || async move {
+                Json(json!({
+                    "id": invocation_id,
+                    "tool_call_id": "tool-1",
+                    "parent_session_id": parent_id,
+                    "requested_count": 1,
+                    "status": "completed",
+                    "created_at": "2024-01-01T00:00:00Z",
+                    "updated_at": "2024-01-01T00:00:00Z",
+                    "children": [{
+                        "invocation_id": invocation_id,
+                        "child_session_id": child_id,
+                        "run_id": "11111111-1111-1111-1111-111111111111",
+                        "position": 0,
+                        "status": "completed",
+                        "prompt_length": 3,
+                        "created_at": "2024-01-01T00:00:00Z",
+                        "updated_at": "2024-01-01T00:00:00Z"
+                    }]
+                }))
+            }),
+        )
+        .route(
+            &format!("/api/mcp/sessions/{}/subagent_wait", parent_id),
+            post(move |Json(body): Json<serde_json::Value>| async move {
+                assert_eq!(body["invocation_id"], invocation_id);
+                Json(json!({
+                    "invocation_id": invocation_id,
+                    "status": "completed",
+                    "results": [{
+                        "session_id": child_id,
+                        "label": "Audit FooAPI",
+                        "provider_id": "codex",
+                        "model_id": "gpt-5.2",
+                        "status": "completed",
+                        "content": "final"
+                    }]
                 }))
             }),
         )
@@ -78,6 +150,7 @@ async fn mcp_subagent_tools_call_daemon_http() {
                 "name":"ctx.agent_init",
                 "_meta":{"toolCallId":"tool-1"},
                 "arguments":{
+                    "response_mode":"await",
                     "agents":[
                         {
                             "prompt":"check foo",
@@ -101,6 +174,39 @@ async fn mcp_subagent_tools_call_daemon_http() {
                 }
             }
         }),
+        json!({
+            "jsonrpc":"2.0",
+            "id":5,
+            "method":"tools/call",
+            "params":{
+                "name":"ctx.subagent_invocations_list",
+                "arguments":{
+                    "session_id": parent_id
+                }
+            }
+        }),
+        json!({
+            "jsonrpc":"2.0",
+            "id":6,
+            "method":"tools/call",
+            "params":{
+                "name":"ctx.subagent_invocation_get",
+                "arguments":{
+                    "invocation_id": invocation_id
+                }
+            }
+        }),
+        json!({
+            "jsonrpc":"2.0",
+            "id":7,
+            "method":"tools/call",
+            "params":{
+                "name":"ctx.subagent_wait",
+                "arguments":{
+                    "invocation_id": invocation_id
+                }
+            }
+        }),
     ] {
         stdin.write_all(msg.to_string().as_bytes()).await.unwrap();
         stdin.write_all(b"\n").await.unwrap();
@@ -109,6 +215,9 @@ async fn mcp_subagent_tools_call_daemon_http() {
 
     let mut got_init = false;
     let mut got_reply = false;
+    let mut got_list = false;
+    let mut got_get = false;
+    let mut got_wait = false;
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     while tokio::time::Instant::now() < deadline {
         let Some(line) = reader.next_line().await.unwrap() else {
@@ -126,14 +235,35 @@ async fn mcp_subagent_tools_call_daemon_http() {
                 assert!(text.contains("summary"));
                 got_reply = true;
             }
+            Some(5) => {
+                let text = v["result"]["content"][0]["text"].as_str().unwrap_or("");
+                assert!(text.contains(invocation_id));
+                got_list = true;
+            }
+            Some(6) => {
+                let text = v["result"]["content"][0]["text"].as_str().unwrap_or("");
+                assert!(text.contains("completed"));
+                got_get = true;
+            }
+            Some(7) => {
+                let text = v["result"]["content"][0]["text"].as_str().unwrap_or("");
+                assert!(text.contains("final"));
+                got_wait = true;
+            }
             _ => {}
         }
-        if got_init && got_reply {
+        if got_init && got_reply && got_list && got_get && got_wait {
             break;
         }
     }
 
     assert!(got_init, "did not receive agent_init response");
     assert!(got_reply, "did not receive agent_reply response");
+    assert!(
+        got_list,
+        "did not receive subagent_invocations_list response"
+    );
+    assert!(got_get, "did not receive subagent_invocation_get response");
+    assert!(got_wait, "did not receive subagent_wait response");
     let _ = child.kill().await;
 }
