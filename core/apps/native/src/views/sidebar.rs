@@ -151,8 +151,8 @@ impl<'a> ProviderListView<'a> {
                 .iter()
                 .fold(div().flex().flex_col(), |list, provider| {
                     let label = harness_entry(&provider.provider_id)
-                        .map(|entry| entry.label)
-                        .unwrap_or(provider.provider_id.as_str());
+                        .map(|entry| entry.label.to_string())
+                        .unwrap_or_else(|| provider.provider_id.clone());
                     let status = format!("{:?}", provider.health);
                     list.child(
                         div()
@@ -791,11 +791,11 @@ fn render_task_row(
         .child(leading)
         .child(body)
         .child(meta)
-        .on_click(cx.listener(move |view, event: &ClickEvent, _window, cx| {
+        .on_click(cx.listener(move |view, event: &ClickEvent, window, cx| {
             if event.is_right_click() {
                 return;
             }
-            view.focus_task(task_id, cx);
+            view.focus_task(task_id, window, cx);
         }))
         .on_hover(cx.listener(move |view, hovered, _window, cx| {
             if *hovered {
@@ -811,10 +811,10 @@ fn render_task_row(
             view.toggle_task_menu(task_id, anchor, cx);
             cx.stop_propagation();
         }))
-        .on_key_down(cx.listener(move |view, event: &KeyDownEvent, _window, cx| {
+        .on_key_down(cx.listener(move |view, event: &KeyDownEvent, window, cx| {
             let key = event.keystroke.key.to_lowercase();
             if key == "enter" || key == " " {
-                view.focus_task(task_id, cx);
+                view.focus_task(task_id, window, cx);
                 cx.stop_propagation();
             }
         }));

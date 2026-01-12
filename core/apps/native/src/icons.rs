@@ -1,7 +1,8 @@
 use std::borrow::Cow;
 
 use gpui::{
-    AssetSource, Result, Rgba, SharedString, Svg, Transformation, prelude::*, px, svg,
+    App, AssetSource, Component, Radians, RenderOnce, Result, Rgba, SharedString, Svg,
+    Transformation, Window, prelude::*, px, svg,
 };
 
 // Lucide icons (MIT), rendered as monochrome SVG masks.
@@ -239,23 +240,30 @@ impl Icon {
 
 }
 
-impl IntoElement for Icon {
-    type Element = Svg;
-
-    fn into_element(self) -> Self::Element {
+impl RenderOnce for Icon {
+    fn render(self, window: &mut Window, _cx: &mut App) -> impl IntoElement {
+        let color = self
+            .color
+            .unwrap_or_else(|| window.text_style().color.into());
         let mut icon = svg()
             .path(self.name.path())
             .w(px(self.size))
             .h(px(self.size))
-            .flex_none();
+            .flex_none()
+            .text_color(color);
 
-        if let Some(color) = self.color {
-            icon = icon.text_color(color);
-        }
         if let Some(transformation) = self.transformation {
             icon = icon.with_transformation(transformation);
         }
 
         icon
+    }
+}
+
+impl IntoElement for Icon {
+    type Element = Component<Icon>;
+
+    fn into_element(self) -> Self::Element {
+        Component::new(self)
     }
 }

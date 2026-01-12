@@ -165,7 +165,7 @@ async function main() {
     { target: "terminal_panel", name: "terminal-panel" },
     { target: "main", name: "web-workbench-task-list" },
     { target: "archived_tasks", name: "web-workbench-archived-tasks" },
-    { target: "composer", name: "web-workbench-new-task" },
+    { target: "composer_new_task", name: "web-workbench-new-task" },
     { target: "composer_provider_menu", name: "web-workbench-harness-menu" },
     { target: "composer_model_menu", name: "web-workbench-model-menu" },
   ];

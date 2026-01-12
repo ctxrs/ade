@@ -3,8 +3,8 @@ use std::str::FromStr;
 
 use chrono::Utc;
 use gpui::{
-    App, Application, Bounds, ClickEvent, Context, ListAlignment, ListState, MouseMoveEvent,
-    MouseUpEvent, Rgba, ScrollStrategy, Window, WindowBounds, WindowOptions, div,
+    App, Application, Bounds, Context, ListAlignment, ListState, ScrollStrategy, Window,
+    WindowBounds, WindowOptions, div,
     InteractiveElement as _, StatefulInteractiveElement as _, prelude::*, px, size,
 };
 use gpui_component::{VirtualListScrollHandle, input::{InputEvent, InputState}};
@@ -42,7 +42,7 @@ use self::state::{
     WorkbenchModeId,
 };
 use ctx_client::EnvTarget;
-use self::views::{RouterView, SidebarOverlays};
+use self::views::RouterView;
 
 pub(crate) use self::state::{ComposerMenuId, ShellView};
 
@@ -393,8 +393,8 @@ impl Render for ShellView {
             .unwrap_or_else(|| "No workspace".to_string());
         let task_label = self
             .selected_task
-            .and_then(|index| self.tasks.get(index))
-            .map(|task| task.title.clone());
+            .and_then(|task_id| self.tasks_by_id.get(&task_id))
+            .map(|task| task.task.title.clone());
         let mut title_label = div()
             .flex()
             .items_center()

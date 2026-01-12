@@ -16,8 +16,8 @@ use std::time::Duration;
 use chrono::{DateTime, Utc};
 use gpui::AppContext as _;
 use gpui::{
-    AsyncApp, Bounds, ClickEvent, Context, Entity, FocusHandle, Image, ListState, Pixels,
-    Subscription, Task, WeakEntity, Window,
+    AsyncApp, Bounds, ClickEvent, Context, Entity, Image, ListState, Pixels, Subscription, Task,
+    WeakEntity, Window,
 };
 use gpui_component::{VirtualListScrollHandle, input::InputState};
 use gpui_tokio::Tokio;

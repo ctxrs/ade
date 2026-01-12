@@ -584,13 +584,18 @@ impl ShellView {
         }
     }
 
-    pub(crate) fn focus_task(&mut self, task_id: TaskId, cx: &mut Context<Self>) {
+    pub(crate) fn focus_task(
+        &mut self,
+        task_id: TaskId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(task) = self.tasks_by_id.get(&task_id).cloned() else {
             return;
         };
         self.selected_task = Some(task_id);
         if let Some(session_id) = self.preferred_session_for_task(&task) {
-            self.select_session_by_id(session_id, cx);
+            self.select_session_by_id(session_id, window, cx);
         } else {
             self.selected_session = None;
             self.session = SessionInfo::placeholder();
@@ -645,13 +650,18 @@ impl ShellView {
         session_unread || task_unread
     }
 
-    fn select_session_by_id(&mut self, session_id: SessionId, cx: &mut Context<Self>) {
+    fn select_session_by_id(
+        &mut self,
+        session_id: SessionId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if let Some(index) = self
             .sessions
             .iter()
             .position(|summary| summary.session_id == session_id)
         {
-            self.select_session(index, cx);
+            self.select_session(index, window, cx);
         }
     }
 
@@ -749,6 +759,8 @@ impl ShellView {
     fn clear_task_focus(&mut self, message: &str) {
         self.selected_task = None;
         self.selected_session = None;
+        self.new_task_mode = true;
+        self.composer_needs_apply = true;
         self.session = SessionInfo::placeholder();
         self.replace_messages(vec![MessageItem::new("assistant", message)]);
         self.artifacts.clear();
