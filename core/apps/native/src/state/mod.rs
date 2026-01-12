@@ -280,6 +280,7 @@ pub(crate) struct ShellView {
 }
 
 impl ShellView {
+    #[allow(dead_code)]
     pub(crate) fn toggle_theme(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
         self.is_dark = !self.is_dark;
         let (tokens, colors) = super::load_theme(self.is_dark);
