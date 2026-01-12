@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 
 use gpui::{
-    AssetSource, Radians, Result, Rgba, SharedString, Svg, Transformation, prelude::*, px, svg,
+    AssetSource, Result, Rgba, SharedString, Svg, Transformation, prelude::*, px, svg,
 };
 
 // Lucide icons (MIT), rendered as monochrome SVG masks.
@@ -174,10 +174,6 @@ impl Icon {
         self
     }
 
-    pub(crate) fn rotate(mut self, radians: impl Into<Radians>) -> Self {
-        self.transformation = Some(Transformation::rotate(radians));
-        self
-    }
 }
 
 impl IntoElement for Icon {

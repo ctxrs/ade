@@ -130,6 +130,7 @@ pub(crate) struct ShellView {
     pub(crate) archive_confirm_dismissed: bool,
     pub(crate) sidebar_width: f32,
     pub(crate) sidebar_collapsed: bool,
+    pub(crate) sidebar_anim_epoch: u64,
     pub(crate) sidebar_resizing: bool,
     pub(crate) sidebar_resize_state: Option<SidebarResizeState>,
     pub(crate) sidebar_resizer_hovered: bool,
@@ -210,6 +211,7 @@ impl ShellView {
             return;
         }
         self.sidebar_collapsed = collapsed;
+        self.sidebar_anim_epoch = self.sidebar_anim_epoch.wrapping_add(1);
         if collapsed {
             self.sidebar_resizing = false;
             self.sidebar_resize_state = None;
@@ -232,6 +234,11 @@ impl ShellView {
                 .set_archived_collapsed(workspace_id, collapsed);
         }
         cx.notify();
+    }
+
+    #[cfg(feature = "automation")]
+    pub(crate) fn archived_ready(&self) -> bool {
+        self.task_archived_loaded && self.task_fetch_archived != TaskFetchState::Loading
     }
 
     pub(crate) fn set_sidebar_width(

@@ -169,6 +169,7 @@ async function main() {
     { target: "composer_provider_menu", name: "web-workbench-harness-menu" },
     { target: "composer_model_menu", name: "web-workbench-model-menu" },
   ];
+  const archivedWaitMs = 60000;
 
   let runError = null;
   try {
@@ -182,6 +183,17 @@ async function main() {
         method: "POST",
         body: { target },
       });
+      if (target === "archived_tasks") {
+        try {
+          await callJson(args.addr, "/wait", {
+            method: "POST",
+            body: { target: "archived_loaded", timeout_ms: archivedWaitMs },
+            timeoutMs: archivedWaitMs + 10000,
+          });
+        } catch (err) {
+          console.error(`Wait for archived tasks failed: ${err.message}`);
+        }
+      }
       await sleep(args.delayMs);
       await callJson(args.addr, "/screenshot", {
         method: "POST",
