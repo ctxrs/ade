@@ -9,7 +9,7 @@ use reqwest::{header, multipart, Method};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use url::{Url, form_urlencoded};
+use url::{form_urlencoded, Url};
 
 use ctx_core::ids::{ArtifactId, SessionId, TaskId, TerminalId, TrackId, WorkspaceId, WorktreeId};
 use ctx_core::models::{
@@ -891,10 +891,7 @@ impl Client {
                 serializer.append_pair("limit", &limit.to_string());
             }
             let qs = serializer.finish();
-            format!(
-                "/api/sessions/{}/completions/files?{}",
-                session_id.0, qs
-            )
+            format!("/api/sessions/{}/completions/files?{}", session_id.0, qs)
         };
         self.request_json(Method::GET, &path, None::<&()>).await
     }
@@ -979,7 +976,11 @@ impl Client {
             part = part.file_name(name.to_string());
         }
         let form = multipart::Form::new().part("file", part);
-        let resp = req.multipart(form).send().await.context("sending request")?;
+        let resp = req
+            .multipart(form)
+            .send()
+            .await
+            .context("sending request")?;
         let status = resp.status();
         if !status.is_success() {
             let text = resp.text().await.context("reading response body")?;
@@ -999,8 +1000,7 @@ impl Client {
         let resp = if text.trim().is_empty() {
             return Err(anyhow!("empty response when uploading blob"));
         } else {
-            serde_json::from_str::<BlobUploadResp>(&text)
-                .context("decoding blob response")?
+            serde_json::from_str::<BlobUploadResp>(&text).context("decoding blob response")?
         };
         Ok(resp)
     }
