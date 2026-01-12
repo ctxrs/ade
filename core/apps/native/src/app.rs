@@ -545,7 +545,7 @@ impl Render for ShellView {
                             .child(title_group)
                             .child(
                                 div()
-                                    .id("theme-toggle")
+                                    .id("settings-button")
                                     .flex_none()
                                     .px_2()
                                     .py_1()
@@ -557,7 +557,9 @@ impl Render for ShellView {
                                     .cursor_pointer()
                                     .active(|this| this.opacity(0.85))
                                     .child(toggle_label)
-                                    .on_click(cx.listener(Self::toggle_theme)),
+                                    .on_click(cx.listener(|view, _: &ClickEvent, _window, cx| {
+                                        view.set_route(ShellRoute::Settings, cx);
+                                    })),
                             ),
                     ),
             )
