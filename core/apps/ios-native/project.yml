@@ -10,12 +10,15 @@ settings:
     MARKETING_VERSION: 0.1.0
     CURRENT_PROJECT_VERSION: 1
     DEVELOPMENT_TEAM: ""  # Select your own team for device signing.
-    ENABLE_PREVIEWS: YES
+    ENABLE_PREVIEWS: NO
     INFOPLIST_FILE: Sources/App/Info.plist
     ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait
     UISupportedInterfaceOrientations~ipad: UIInterfaceOrientationPortrait
     UIUserInterfaceStyle: Dark
+configs:
+  Debug: debug
+  Release: release
 packages:
   Sodium:
     url: https://github.com/jedisct1/swift-sodium.git
@@ -40,10 +43,16 @@ targets:
     platform: iOS
     dependencies:
       - package: Sodium
+    settings:
+      base:
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_IDENTITY: "-"
+        OTHER_CODE_SIGN_FLAGS: "--deep"
     sources:
       - path: Sources
-    resources:
-      - path: Resources
+      - path: Resources/Assets.xcassets
+        type: folder.assetcatalog
+        buildPhase: resources
     info:
       path: Sources/App/Info.plist
       properties:

@@ -16,6 +16,13 @@ struct WorkbenchShellView: View {
     @State private var lastWorkspaceId: String?
     @State private var sessionCreationTaskId: String?
     @State private var didResetSelection = false
+    @State private var taskQuery = ""
+    @State private var shouldAutoOpenDrawer = ProcessInfo.processInfo.environment["CTX_OPEN_DRAWER_ON_LAUNCH"] == "1"
+    @State private var renameTarget: WorkspaceCatchupTaskSummary?
+    @State private var renameText: String = ""
+    @State private var renameError: String?
+    @State private var isRenaming = false
+    @State private var archiveInFlight: Set<String> = []
 
     var body: some View {
         GeometryReader { proxy in
@@ -54,6 +61,7 @@ struct WorkbenchShellView: View {
                         Color.black.opacity(0.35)
                             .ignoresSafeArea()
                             .onTapGesture { isDrawerOpen = false }
+                            .accessibilityIdentifier("drawer.scrim")
                     }
                 }
 
@@ -67,12 +75,22 @@ struct WorkbenchShellView: View {
                     isLoadingTasks: isLoadingTasks,
                     taskError: taskError,
                     activeTaskId: workbenchSelection.taskId,
+                    taskQuery: $taskQuery,
                     drawerWidth: drawerWidth,
-                    onClose: { isDrawerOpen = false },
                     onRefresh: { _Concurrency.Task { await loadWorkspaces() } },
                     onSelectTask: { task in
                         selectTask(task)
                         isDrawerOpen = false
+                    },
+                    onNewTask: {
+                        workbenchSelection.clearSelection()
+                        isDrawerOpen = false
+                    },
+                    onRenameTask: { task in
+                        beginRename(task)
+                    },
+                    onArchiveToggle: { task in
+                        _Concurrency.Task { await toggleArchive(task) }
                     }
                 )
                 .offset(x: isDrawerOpen ? 0 : -drawerWidth - 24)
@@ -87,6 +105,11 @@ struct WorkbenchShellView: View {
         .task(id: selectedWorkspace?.id) {
             await loadTasks()
         }
+        .onAppear {
+            if shouldAutoOpenDrawer {
+                isDrawerOpen = true
+            }
+        }
         .onChange(of: connection.isConnected) { connected in
             guard connected else { return }
             _Concurrency.Task {
@@ -96,6 +119,15 @@ struct WorkbenchShellView: View {
         }
         .onChange(of: workbenchSelection.taskId) { _ in
             resolveSelectionForCurrentTask()
+        }
+        .sheet(isPresented: $isRenaming) {
+            RenameSheet(
+                title: $renameText,
+                errorMessage: renameError,
+                onCancel: { renameTarget = nil; renameError = nil; isRenaming = false },
+                onSave: { _Concurrency.Task { await submitRename() } }
+            )
+            .presentationDetents([.medium])
         }
     }
 
@@ -278,6 +310,59 @@ struct WorkbenchShellView: View {
         }
         return items.first
     }
+
+    private func beginRename(_ task: WorkspaceCatchupTaskSummary) {
+        renameTarget = task
+        let current = task.task.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        renameText = current.isEmpty ? "New Task" : current
+        renameError = nil
+        isRenaming = true
+    }
+
+    @MainActor
+    private func submitRename() async {
+        guard let target = renameTarget else { return }
+        let next = renameText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !next.isEmpty else {
+            renameError = "Title required."
+            return
+        }
+        guard let client = connection.apiClient else {
+            renameError = "Not connected."
+            return
+        }
+        do {
+            _ = try await client.updateTaskTitle(taskId: target.task.id.stringValue, title: next)
+            renameTarget = nil
+            renameError = nil
+            isRenaming = false
+            await loadTasks()
+        } catch {
+            renameError = "Failed to rename."
+        }
+    }
+
+    @MainActor
+    private func toggleArchive(_ task: WorkspaceCatchupTaskSummary) async {
+        guard let client = connection.apiClient else {
+            taskError = "Connect to a daemon to manage tasks."
+            return
+        }
+        let taskId = task.task.id.stringValue
+        if archiveInFlight.contains(taskId) { return }
+        archiveInFlight.insert(taskId)
+        defer { archiveInFlight.remove(taskId) }
+        do {
+            if task.task.archivedAt != nil {
+                _ = try await client.unarchiveTask(taskId: taskId)
+            } else {
+                _ = try await client.archiveTask(taskId: taskId)
+            }
+            await loadTasks()
+        } catch {
+            taskError = "Failed to update task."
+        }
+    }
 }
 
 private struct WorkbenchHomeView: View {
@@ -352,139 +437,131 @@ private struct WorkbenchDrawerView: View {
     let isLoadingTasks: Bool
     let taskError: String?
     let activeTaskId: String?
+    @Binding var taskQuery: String
     let drawerWidth: CGFloat
-    let onClose: () -> Void
     let onRefresh: () -> Void
     let onSelectTask: (WorkspaceCatchupTaskSummary) -> Void
+    let onNewTask: () -> Void
+    let onRenameTask: (WorkspaceCatchupTaskSummary) -> Void
+    let onArchiveToggle: (WorkspaceCatchupTaskSummary) -> Void
     @State private var showArchived = false
 
     var body: some View {
-        VStack(spacing: 0) {
-            ScrollView(showsIndicators: false) {
-                VStack(alignment: .leading, spacing: 20) {
-                    HStack {
-                        Text("ctx")
-                            .font(.title2.weight(.semibold))
-                            .foregroundColor(.ctxTextPrimary)
-                        Spacer()
-                        Button(action: onClose) {
-                            Image(systemName: "xmark")
-                                .font(.headline)
-                        }
-                        .foregroundColor(.ctxTextSecondary)
-                        .accessibilityIdentifier("drawer.close")
-                    }
+        let trimmedQuery = taskQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let filteredActive = filterTasks(activeTasks, matching: trimmedQuery)
+        let filteredArchived = filterTasks(archivedTasks, matching: trimmedQuery)
 
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("Tasks")
-                            .font(.caption.weight(.semibold))
+        VStack(spacing: 0) {
+            VStack(spacing: 12) {
+                HStack(spacing: 10) {
+                    WorkbenchSearchField(text: $taskQuery)
+                    Button(action: onNewTask) {
+                        Image(systemName: "square.and.pencil")
+                            .font(.headline)
+                            .foregroundColor(.ctxTextPrimary)
+                            .frame(width: 40, height: 40)
+                            .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                    .stroke(Color.ctxLine, lineWidth: 1)
+                            )
+                    }
+                    .accessibilityIdentifier("drawer.newtask")
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 16)
+
+                Divider()
+                    .background(Color.ctxLine.opacity(0.8))
+            }
+
+            ScrollView(showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 16) {
+                    WorkbenchSectionHeaderView(title: "Active")
+
+                    if selectedWorkspace == nil {
+                        Text("Select a workspace in settings to view tasks.")
+                            .font(.caption)
                             .foregroundColor(.ctxTextMuted)
-                        if selectedWorkspace == nil {
-                            Text("Select a workspace in settings to view tasks.")
+                    } else if isLoadingTasks {
+                        ProgressView()
+                            .tint(.ctxAccent)
+                    } else if let taskError {
+                        Text(taskError)
+                            .font(.caption)
+                            .foregroundColor(.ctxError)
+                    } else {
+                        if filteredActive.isEmpty {
+                            Text("No active tasks.")
                                 .font(.caption)
                                 .foregroundColor(.ctxTextMuted)
                         } else {
-                            if isLoadingTasks {
-                                ProgressView()
-                                    .tint(.ctxAccent)
-                            } else if let taskError {
-                                Text(taskError)
-                                    .font(.caption)
-                                    .foregroundColor(.ctxError)
-                            } else {
-                                if activeTasks.isEmpty {
-                                    Text("No active tasks.")
-                                        .font(.caption)
-                                        .foregroundColor(.ctxTextMuted)
-                                } else {
-                                    VStack(spacing: 10) {
-                                        ForEach(activeTasks, id: \.task.id) { task in
-                                            Button {
-                                                onSelectTask(task)
-                                            } label: {
-                                                WorkbenchNavRowView(
-                                                    title: task.task.title,
-                                                    subtitle: task.task.description ?? "Status: \(task.task.status)",
-                                                    status: task.task.status.capitalized,
-                                                    icon: "list.bullet.rectangle",
-                                                    showsChevron: false,
-                                                    isSelected: activeTaskId == task.task.id.stringValue
-                                                )
-                                            }
-                                            .buttonStyle(.plain)
-                                            .accessibilityIdentifier("drawer.task.\(task.task.id.stringValue)")
-                                        }
+                                LazyVStack(spacing: 2) {
+                                    ForEach(filteredActive, id: \.task.id) { task in
+                                        Button {
+                                            onSelectTask(task)
+                                        } label: {
+                                        WorkbenchTaskRowView(
+                                            task: task,
+                                            isSelected: activeTaskId == task.task.id.stringValue
+                                        )
                                     }
+                                    .buttonStyle(.plain)
+                                    .contextMenu {
+                                        Button("Rename") { onRenameTask(task) }
+                                        let archived = task.task.archivedAt != nil
+                                        Button(archived ? "Unarchive" : "Archive") { onArchiveToggle(task) }
+                                    }
+                                    .accessibilityIdentifier("drawer.task.\(task.task.id.stringValue)")
                                 }
-
-                                DisclosureGroup(isExpanded: $showArchived) {
-                                    if archivedTasks.isEmpty {
-                                        Text("No archived tasks.")
-                                            .font(.caption)
-                                            .foregroundColor(.ctxTextMuted)
-                                            .padding(.top, 6)
-                                    } else {
-                                        VStack(spacing: 10) {
-                                            ForEach(archivedTasks, id: \.task.id) { task in
-                                                Button {
-                                                    onSelectTask(task)
-                                                } label: {
-                                                    WorkbenchNavRowView(
-                                                        title: task.task.title,
-                                                        subtitle: task.task.description ?? "Status: \(task.task.status)",
-                                                        status: task.task.status.capitalized,
-                                                        icon: "archivebox",
-                                                        showsChevron: false,
-                                                        isSelected: activeTaskId == task.task.id.stringValue
-                                                    )
-                                                }
-                                                .buttonStyle(.plain)
-                                                .accessibilityIdentifier("drawer.task.\(task.task.id.stringValue)")
-                                            }
-                                        }
-                                        .padding(.top, 8)
-                                    }
-                                } label: {
-                                    HStack {
-                                        Text("Archived")
-                                            .font(.caption.weight(.semibold))
-                                            .foregroundColor(.ctxTextMuted)
-                                        Spacer()
-                                        Text("\(archivedTasks.count)")
-                                            .font(.caption)
-                                            .foregroundColor(.ctxTextSecondary)
-                                    }
-                                }
-                                .accessibilityIdentifier("drawer.archived.toggle")
-                                .accentColor(.ctxTextSecondary)
                             }
                         }
-                    }
 
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("Shortcuts")
-                            .font(.caption.weight(.semibold))
-                            .foregroundColor(.ctxTextMuted)
-                        NavigationLink {
-                            SettingsView(selectedWorkspace: selectedWorkspace)
+                        DisclosureGroup(isExpanded: $showArchived) {
+                            if filteredArchived.isEmpty {
+                                Text("No archived tasks.")
+                                    .font(.caption)
+                                    .foregroundColor(.ctxTextMuted)
+                                    .padding(.top, 6)
+                            } else {
+                                LazyVStack(spacing: 2) {
+                                    ForEach(filteredArchived, id: \.task.id) { task in
+                                        Button {
+                                            onSelectTask(task)
+                                        } label: {
+                                            WorkbenchTaskRowView(
+                                                task: task,
+                                                isSelected: activeTaskId == task.task.id.stringValue
+                                            )
+                                        }
+                                        .buttonStyle(.plain)
+                                        .contextMenu {
+                                            Button("Rename") { onRenameTask(task) }
+                                            Button("Unarchive") { onArchiveToggle(task) }
+                                        }
+                                        .accessibilityIdentifier("drawer.task.\(task.task.id.stringValue)")
+                                    }
+                                }
+                                .padding(.top, 6)
+                            }
                         } label: {
-                            DrawerLinkRowView(title: "Settings", icon: "gearshape")
+                            HStack {
+                                WorkbenchSectionHeaderView(title: "Archived")
+                                Spacer()
+                                Text("\(filteredArchived.count)")
+                                    .font(.system(size: 12))
+                                    .foregroundColor(.ctxTextSecondary)
+                                Image(systemName: "chevron.down")
+                                    .font(.caption)
+                                    .foregroundColor(.ctxTextSecondary)
+                                    .rotationEffect(.degrees(showArchived ? 0 : -90))
+                            }
                         }
-                        NavigationLink {
-                            DiagnosticsView()
-                        } label: {
-                            DrawerLinkRowView(title: "Diagnostics", icon: "waveform.path.ecg")
-                        }
-                    }
-
-                    HStack(spacing: 12) {
-                        GlassPill(text: "Daemon healthy", tint: .ctxAccent)
-                        Spacer()
-                        Image(systemName: "antenna.radiowaves.left.and.right")
-                            .foregroundColor(.ctxTextSecondary)
+                        .accessibilityIdentifier("drawer.archived.toggle")
+                        .accentColor(.ctxTextSecondary)
                     }
                 }
-                .padding(20)
+                .padding(16)
             }
 
             Divider()
@@ -771,8 +848,10 @@ private struct WorkbenchNewTaskView: View {
             await loadModels()
         }
         .onAppear {
-            let isUITest = ProcessInfo.processInfo.environment["CTX_UI_TEST_MODE"] == "1"
-            if isUITest {
+            let env = ProcessInfo.processInfo.environment
+            let isUITest = env["CTX_UI_TEST_MODE"] == "1"
+            let shouldFocusPrompt = isUITest && env["CTX_OPEN_DRAWER_ON_LAUNCH"] != "1"
+            if shouldFocusPrompt {
                 _Concurrency.Task { @MainActor in
                     try? await _Concurrency.Task.sleep(nanoseconds: 200_000_000)
                     isPromptFocused = true
@@ -1338,6 +1417,360 @@ private func resolveDefaultSessionConfig(
     let modelIds = extractModelIds(from: options.models)
     let modelId = modelIds.first ?? "default"
     return (providerId, modelId)
+}
+
+// MARK: - Task list helpers (web parity)
+
+private struct WorkbenchSearchField: View {
+    @Binding var text: String
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .foregroundColor(.ctxTextSecondary)
+            TextField("Search Tasks", text: $text)
+                .textFieldStyle(.plain)
+                .foregroundColor(.ctxTextPrimary)
+                .font(.system(size: 13))
+                .disableAutocorrection(true)
+                .textInputAutocapitalization(.never)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(Color.ctxLine, lineWidth: 1)
+        )
+        .accessibilityIdentifier("drawer.search")
+    }
+}
+
+private struct WorkbenchSectionHeaderView: View {
+    let title: String
+
+    var body: some View {
+        Text(title.uppercased())
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundColor(.ctxTextMuted)
+            .kerning(0.6)
+    }
+}
+
+private struct WorkbenchTaskRowView: View {
+    let task: WorkspaceCatchupTaskSummary
+    let isSelected: Bool
+
+    private var title: String {
+        let trimmed = task.task.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "New Task" : trimmed
+    }
+
+    private var indicators: TaskRowIndicators {
+        TaskRowIndicators(task: task)
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            TaskHarnessView(
+                providerIds: indicators.providerIds
+            )
+            .frame(width: 18, height: 18)
+
+            Text(title)
+                .font(.system(size: 12.5))
+                .foregroundColor(.ctxTextPrimary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+
+            Spacer()
+
+            HStack(spacing: 6) {
+                Text(indicators.ageLabel)
+                    .font(.system(size: 12))
+                    .foregroundColor(.ctxTextMuted)
+                    .frame(minWidth: 28, alignment: .trailing)
+
+                TaskSpinnerView(isActive: indicators.isWorking)
+
+                if indicators.dotKind == .unread {
+                    TaskStatusDot(color: Color.ctxAccent)
+                } else if indicators.dotKind == .error {
+                    TaskStatusDot(color: Color.ctxError)
+                }
+            }
+        }
+        .padding(.vertical, 6)
+        .padding(.horizontal, 8)
+        .background(isSelected ? Color.white.opacity(0.06) : Color.clear, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(isSelected ? Color.ctxLine : Color.clear, lineWidth: 1)
+        )
+    }
+}
+
+private struct TaskHarnessView: View {
+    let providerIds: [String]
+
+    private var primaryProviderId: String? {
+        providerIds.first
+    }
+
+    var body: some View {
+        let base = RoundedRectangle(cornerRadius: 6, style: .continuous)
+        if let providerId = primaryProviderId,
+           let harness = HarnessCatalog.entry(for: providerId) {
+            Image(harness.assetName)
+                .resizable()
+                .renderingMode(.original)
+                .scaledToFit()
+                .frame(width: 16, height: 16)
+                .clipShape(base)
+                .modifier(HarnessInvertModifier(shouldInvert: harness.invertInDark))
+                .background(
+                    base
+                        .fill(Color.white.opacity(0.04))
+                )
+        } else {
+            base
+                .fill(Color.white.opacity(0.10))
+                .overlay(
+                    base.stroke(Color(red: 0.071, green: 0.071, blue: 0.071).opacity(0.8), lineWidth: 1)
+                )
+        }
+    }
+}
+
+private struct TaskSpinnerView: View {
+    let isActive: Bool
+    @State private var isAnimating = false
+
+    var body: some View {
+        Circle()
+            .trim(from: 0.15, to: 1)
+            .stroke(
+                AngularGradient(
+                    gradient: Gradient(colors: [Color.ctxAccent, Color.white.opacity(0.22)]),
+                    center: .center
+                ),
+                style: StrokeStyle(lineWidth: 2, lineCap: .round)
+            )
+            .frame(width: isActive ? 12 : 0, height: isActive ? 12 : 0)
+            .opacity(isActive ? 1 : 0)
+            .rotationEffect(.degrees(isAnimating ? 360 : 0))
+            .animation(isActive ? .linear(duration: 0.8).repeatForever(autoreverses: false) : .default, value: isAnimating)
+            .onAppear { isAnimating = true }
+            .onChange(of: isActive) { next in
+                if next { isAnimating = true }
+            }
+    }
+}
+
+private struct TaskStatusDot: View {
+    let color: Color
+
+    var body: some View {
+        Circle()
+            .fill(color)
+            .frame(width: 6, height: 6)
+    }
+}
+
+private struct RenameSheet: View {
+    @Binding var title: String
+    let errorMessage: String?
+    let onCancel: () -> Void
+    let onSave: () -> Void
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Title") {
+                    TextField("Task title", text: $title)
+                        .textInputAutocapitalization(.sentences)
+                }
+                if let errorMessage {
+                    Section {
+                        Text(errorMessage)
+                            .foregroundColor(.ctxError)
+                            .font(.footnote)
+                    }
+                }
+            }
+            .navigationTitle("Rename Task")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel", action: onCancel)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save", action: onSave)
+                        .disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+        }
+    }
+}
+
+private struct TaskRowIndicators {
+    let providerIds: [String]
+    let isWorking: Bool
+    let dotKind: TaskRowDotKind?
+    let ageLabel: String
+
+    init(task: WorkspaceCatchupTaskSummary) {
+        providerIds = resolveProviderIds(for: task)
+        isWorking = taskHasWorkingSession(task)
+        let hasError = taskHasErrorSession(task)
+        let unread = taskHasUnread(task, isWorking: isWorking)
+        if hasError {
+            dotKind = .error
+        } else if unread {
+            dotKind = .unread
+        } else {
+            dotKind = nil
+        }
+        ageLabel = formatRelativeAgeShort(task.task.lastActivityAt ?? task.task.updatedAt ?? task.task.createdAt)
+    }
+}
+
+private enum TaskRowDotKind {
+    case unread
+    case error
+}
+
+private struct HarnessCatalogEntry {
+    let id: String
+    let assetName: String
+    let invertInDark: Bool
+}
+
+private enum HarnessCatalog {
+    static let entries: [String: HarnessCatalogEntry] = [
+        "claude": .init(id: "claude", assetName: "harness_claude", invertInDark: false),
+        "codex": .init(id: "codex", assetName: "harness_codex", invertInDark: true),
+        "qwen": .init(id: "qwen", assetName: "harness_qwen", invertInDark: false),
+        "cursor": .init(id: "cursor", assetName: "harness_cursor", invertInDark: true),
+        "amp": .init(id: "amp", assetName: "harness_amp", invertInDark: false),
+        "droid": .init(id: "droid", assetName: "harness_droid", invertInDark: true),
+        "gemini": .init(id: "gemini", assetName: "harness_gemini", invertInDark: false),
+        "copilot": .init(id: "copilot", assetName: "harness_copilot", invertInDark: true),
+        "opencode": .init(id: "opencode", assetName: "harness_opencode", invertInDark: true),
+        "cline": .init(id: "cline", assetName: "harness_cline", invertInDark: false),
+        "mistral": .init(id: "mistral", assetName: "harness_mistral", invertInDark: false),
+        "auggie": .init(id: "auggie", assetName: "harness_auggie", invertInDark: true),
+        "goose": .init(id: "goose", assetName: "harness_goose", invertInDark: false),
+        "kimi": .init(id: "kimi", assetName: "harness_kimi", invertInDark: false),
+        "kiro": .init(id: "kiro", assetName: "harness_kiro", invertInDark: false),
+        "codebuff": .init(id: "codebuff", assetName: "harness_codebuff", invertInDark: false),
+        "charm": .init(id: "charm", assetName: "harness_charm", invertInDark: false),
+        "rovo": .init(id: "rovo", assetName: "harness_rovo", invertInDark: false),
+        "aider": .init(id: "aider", assetName: "harness_aider", invertInDark: false),
+        "continue": .init(id: "continue", assetName: "harness_continue", invertInDark: false),
+        "openhands": .init(id: "openhands", assetName: "harness_openhands", invertInDark: false),
+        "swe-agent": .init(id: "swe-agent", assetName: "harness_swe-agent", invertInDark: false),
+        "cagent": .init(id: "cagent", assetName: "harness_cagent", invertInDark: false),
+        "kilo": .init(id: "kilo", assetName: "harness_kilo", invertInDark: false),
+        "cody": .init(id: "cody", assetName: "harness_cody", invertInDark: false),
+        "junie": .init(id: "junie", assetName: "harness_junie", invertInDark: false)
+    ]
+
+    static func entry(for id: String) -> HarnessCatalogEntry? {
+        entries[id.lowercased()]
+    }
+}
+
+private struct HarnessInvertModifier: ViewModifier {
+    let shouldInvert: Bool
+
+    func body(content: Content) -> some View {
+        if shouldInvert {
+            content.colorInvert()
+        } else {
+            content
+        }
+    }
+}
+
+private func taskHasWorkingSession(_ task: WorkspaceCatchupTaskSummary) -> Bool {
+    for track in task.tracks {
+        for summary in track.sessions {
+            let status = summary.session.status.lowercased()
+            if status == "failed" || status == "cancelled" || status == "completed" {
+                continue
+            }
+            if summary.activity?.isWorking == true {
+                return true
+            }
+        }
+    }
+    return false
+}
+
+private func taskHasErrorSession(_ task: WorkspaceCatchupTaskSummary) -> Bool {
+    for track in task.tracks {
+        for summary in track.sessions {
+            let status = summary.session.status.lowercased()
+            if status == "failed" || status == "cancelled" {
+                return true
+            }
+        }
+    }
+    return false
+}
+
+private func taskHasUnread(_ task: WorkspaceCatchupTaskSummary, isWorking: Bool) -> Bool {
+    guard !isWorking else { return false }
+    guard let lastAssistantIso = task.task.lastAssistantMessageAt else { return false }
+    let lastAssistant = parseIso(lastAssistantIso)
+    let seen = parseIso(task.task.assistantSeenAt)
+    guard let lastAssistant else { return false }
+    if let seen {
+        return lastAssistant > seen
+    }
+    return true
+}
+
+private func resolveProviderIds(for task: WorkspaceCatchupTaskSummary) -> [String] {
+    var ordered: [String] = []
+    for track in task.tracks {
+        for summary in track.sessions {
+            let providerId = summary.session.providerId.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !providerId.isEmpty else { continue }
+            if !ordered.contains(providerId) {
+                ordered.append(providerId)
+            }
+        }
+    }
+    return ordered
+}
+
+private func filterTasks(_ tasks: [WorkspaceCatchupTaskSummary], matching query: String) -> [WorkspaceCatchupTaskSummary] {
+    guard !query.isEmpty else { return tasks }
+    return tasks.filter { task in
+        let title = task.task.title.lowercased()
+        return title.contains(query) || task.task.id.stringValue.lowercased().contains(query)
+    }
+}
+
+private let isoFormatter: ISO8601DateFormatter = {
+    let f = ISO8601DateFormatter()
+    f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    return f
+}()
+
+private func parseIso(_ iso: String?) -> Date? {
+    guard let iso else { return nil }
+    return isoFormatter.date(from: iso) ?? ISO8601DateFormatter().date(from: iso)
+}
+
+private func formatRelativeAgeShort(_ iso: String?) -> String {
+    guard let iso, let date = parseIso(iso) else { return "Now" }
+    let seconds = max(0, Int(Date().timeIntervalSince(date)))
+    if seconds < 60 { return "Now" }
+    if seconds < 3600 { return "\(max(1, seconds / 60))m" }
+    if seconds < 86_400 { return "\(max(1, seconds / 3600))h" }
+    return "\(max(1, seconds / 86_400))d"
 }
 
 #Preview {
