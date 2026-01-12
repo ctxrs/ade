@@ -3,7 +3,7 @@ use std::str::FromStr;
 
 use chrono::Utc;
 use gpui::{
-    App, Application, Bounds, Context, ListAlignment, ListState, ScrollStrategy, Window,
+    App, Application, Bounds, ClickEvent, Context, ListAlignment, ListState, ScrollStrategy, Window,
     WindowBounds, WindowOptions, div,
     InteractiveElement as _, StatefulInteractiveElement as _, prelude::*, px, size,
 };
@@ -44,7 +44,6 @@ use self::state::{
 };
 use ctx_client::EnvTarget;
 use self::views::RouterView;
-use ctx_core::models::MessageRole;
 pub(crate) use self::state::ShellView;
 
 #[derive(Clone, Debug)]
@@ -311,7 +310,6 @@ pub fn run(options: AppOptions) {
                         resyncing_session: None,
                         stream_subscribe_tx: None,
                         stream_stop_tx: None,
-                        session_last_event_seq: HashMap::new(),
                         thread_list_handler_set: false,
                         show_sessions_pane: false,
                         show_diff_pane: false,
