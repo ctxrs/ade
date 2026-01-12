@@ -503,10 +503,12 @@ impl ShellView {
         cx: &mut Context<Self>,
     ) {
         if self.new_task_mode {
+            self.new_task_mode_locked = true;
             self.focus_composer(&ClickEvent::default(), window, cx);
             return;
         }
         self.new_task_mode = true;
+        self.new_task_mode_locked = true;
         self.apply_active_composer_state(window, cx);
     }
 
@@ -519,6 +521,7 @@ impl ShellView {
             return;
         }
         self.new_task_mode = false;
+        self.new_task_mode_locked = false;
         self.apply_active_composer_state(window, cx);
     }
 
@@ -1245,6 +1248,7 @@ impl ShellView {
         if self.composer_start_busy {
             return;
         }
+        self.new_task_mode_locked = false;
 
         self.ensure_primary_draft_track();
         let provider_ids: Vec<String> = self

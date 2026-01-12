@@ -149,13 +149,11 @@ pub fn run(options: AppOptions) {
                     let composer_new_input = cx.new(|cx| {
                         InputState::new(window, cx)
                             .multi_line(true)
-                            .auto_grow(1, 22)
                             .placeholder("@ for context, / for commands")
                     });
                     let composer_session_input = cx.new(|cx| {
                         InputState::new(window, cx)
                             .multi_line(true)
-                            .auto_grow(1, 8)
                             .placeholder("@ for context, / for commands")
                     });
                     let composer_harness_search = cx.new(|cx| {
@@ -231,6 +229,7 @@ pub fn run(options: AppOptions) {
                         session: SessionInfo::placeholder(),
                         data_state: DataLoadState::Loading,
                         new_task_mode: true,
+                        new_task_mode_locked: false,
                         composer_new_input,
                         composer_session_input,
                         composer_attachments: Vec::new(),

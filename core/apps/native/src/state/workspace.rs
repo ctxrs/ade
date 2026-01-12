@@ -208,35 +208,45 @@ impl ShellView {
                 match result {
                     Ok(data) => {
                         view.apply_workspace_snapshot(data.snapshot);
-                        let selected_session_id = data
-                            .session_head
-                            .as_ref()
-                            .map(|head| head.session.id)
-                            .or_else(|| view.sessions.first().map(|summary| summary.session_id));
+                        let keep_new_task = view.new_task_mode_locked;
+                        let selected_session_id = if keep_new_task {
+                            None
+                        } else {
+                            data.session_head
+                                .as_ref()
+                                .map(|head| head.session.id)
+                                .or_else(|| view.sessions.first().map(|summary| summary.session_id))
+                        };
                         view.selected_session = selected_session_id
                             .and_then(|id| view.sessions.iter().position(|summary| summary.session_id == id));
-                        view.selected_task = view
-                            .selected_session
-                            .and_then(|index| view.sessions.get(index))
-                            .and_then(|summary| view.session_summary_map.get(&summary.session_id))
-                            .map(|summary| summary.session.task_id)
-                            .or_else(|| view.task_active_order.first().copied());
-                        view.new_task_mode = view.selected_session.is_none();
+                        view.selected_task = if keep_new_task {
+                            None
+                        } else {
+                            view.selected_session
+                                .and_then(|index| view.sessions.get(index))
+                                .and_then(|summary| view.session_summary_map.get(&summary.session_id))
+                                .map(|summary| summary.session.task_id)
+                                .or_else(|| view.task_active_order.first().copied())
+                        };
+                        view.new_task_mode = keep_new_task || view.selected_session.is_none();
                         view.composer_needs_apply = true;
-                        view.session = data
-                            .session_head
-                            .as_ref()
-                            .map(session_info_from_head)
-                            .or_else(|| {
-                                view.selected_session
-                                    .and_then(|index| view.sessions.get(index))
-                                    .and_then(|summary| {
-                                        view.session_summary_map
-                                            .get(&summary.session_id)
-                                            .map(session_info_from_summary)
-                                    })
-                            })
-                            .unwrap_or_else(SessionInfo::placeholder);
+                        view.session = if keep_new_task {
+                            SessionInfo::placeholder()
+                        } else {
+                            data.session_head
+                                .as_ref()
+                                .map(session_info_from_head)
+                                .or_else(|| {
+                                    view.selected_session
+                                        .and_then(|index| view.sessions.get(index))
+                                        .and_then(|summary| {
+                                            view.session_summary_map
+                                                .get(&summary.session_id)
+                                                .map(session_info_from_summary)
+                                        })
+                                })
+                                .unwrap_or_else(SessionInfo::placeholder)
+                        };
                         view.sync_composer_defaults();
                         let mut messages = build_message_items(
                             data.session_head.as_ref(),
@@ -593,6 +603,7 @@ impl ShellView {
         let Some(task) = self.tasks_by_id.get(&task_id).cloned() else {
             return;
         };
+        self.new_task_mode_locked = false;
         self.selected_task = Some(task_id);
         if let Some(session_id) = self.preferred_session_for_task(&task) {
             self.select_session_by_id(session_id, window, cx);
@@ -760,6 +771,7 @@ impl ShellView {
         self.selected_task = None;
         self.selected_session = None;
         self.new_task_mode = true;
+        self.new_task_mode_locked = true;
         self.composer_needs_apply = true;
         self.session = SessionInfo::placeholder();
         self.replace_messages(vec![MessageItem::new("assistant", message)]);

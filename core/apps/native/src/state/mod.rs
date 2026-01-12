@@ -157,6 +157,7 @@ pub(crate) struct ShellView {
     pub(crate) session: SessionInfo,
     pub(crate) data_state: DataLoadState,
     pub(crate) new_task_mode: bool,
+    pub(crate) new_task_mode_locked: bool,
     pub(crate) composer_new_input: Entity<InputState>,
     pub(crate) composer_session_input: Entity<InputState>,
     pub(crate) composer_attachments: Vec<MessageAttachment>,

@@ -317,7 +317,7 @@ impl<'a> ComposerView<'a> {
             .items_start()
             .disabled(input_disabled);
 
-        let input_wrap = div()
+        let mut input_wrap = div()
             .w_full()
             .relative()
             .on_children_prepainted(automation_tree::track_children_bounds(
@@ -340,6 +340,9 @@ impl<'a> ComposerView<'a> {
                 }
             })
             .child(input);
+        if is_new {
+            input_wrap = input_wrap.min_h(min_height);
+        }
 
         let attachments = if shell.composer_attachments.is_empty() {
             div()
