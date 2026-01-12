@@ -59,6 +59,8 @@ import {
 } from "../utils/entitlementsCache";
 import { getSupabaseClient } from "../utils/supabaseClient";
 
+const AGENT_PROMPT_DEFAULT = "You are working inside ctx, an agent development environment. Use ctx MCP tools to attach photos/videos as artifacts, start persistent web sessions (Playwright REPL/scripts), and run sub-agents for research or well-scoped implementations. Check `.ctx/.refs/` and `.ctx/docs/` for extra reference repos and docs." as const;
+
 const MODEL_OPTIONS: Array<{ value: string; label: string }> = [
   { value: "auto", label: "Default (Deepgram Nova-3)" },
   { value: "deepgram/flux-general", label: "Deepgram Flux" },
@@ -905,12 +907,12 @@ export default function SettingsPage() {
     try {
       const next = await getAgentSystemPrompt(workspaceId);
       setAgentPromptConfig(next);
-      const baseText = next.configured_append ?? next.default_append ?? "";
+      const baseText = next.configured_append ?? next.default_append ?? AGENT_PROMPT_DEFAULT;
       setAgentPromptText(baseText);
     } catch (e: any) {
       const message = e?.message ?? String(e);
       const first = workspaces[0];
-      if (message.toLowerCase().includes("404") && first) {
+      if ((message.toLowerCase().includes("404") || message.toLowerCase().includes("workspace not found")) && first) {
         const firstId = idToString((first as any).id);
         if (workspaceId !== firstId) {
           setWorkspaceId(firstId);
@@ -919,7 +921,17 @@ export default function SettingsPage() {
           return;
         }
       }
-      setAgentPromptError(message);
+      const fallbackWs = workspaces.find((ws) => idToString((ws as any).id) === workspaceId) ?? workspaces[0];
+      const fallbackPath = fallbackWs ? `${fallbackWs.root_path}/.ctx/config.toml` : ".ctx/config.toml";
+      setAgentPromptConfig({
+        config_path: fallbackPath,
+        default_append: AGENT_PROMPT_DEFAULT,
+        configured_append: null,
+        effective_append: AGENT_PROMPT_DEFAULT,
+        source: "default",
+      });
+      setAgentPromptText(AGENT_PROMPT_DEFAULT);
+      setAgentPromptError(null);
     } finally {
       setAgentPromptLoading(false);
     }
@@ -1508,7 +1520,7 @@ export default function SettingsPage() {
         agentPromptConfig?.config_path ??
         (selectedWorkspace ? `${selectedWorkspace.root_path}/.ctx/config.toml` : ".ctx/config.toml");
       const statusLabel = agentPromptConfig?.source === "config" ? "Custom" : "Default";
-      const baseCustom = agentPromptConfig?.configured_append ?? agentPromptConfig?.default_append ?? "";
+      const baseCustom = agentPromptConfig?.configured_append ?? agentPromptConfig?.default_append ?? AGENT_PROMPT_DEFAULT;
       const promptDirty = agentPromptConfig ? agentPromptText.trim() !== baseCustom.trim() : false;
       const canSave = Boolean(workspaceId) && !agentPromptSaving && promptDirty;
 
