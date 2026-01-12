@@ -23,6 +23,8 @@ mod harness_catalog;
 mod workspace_summary;
 #[path = "models.rs"]
 mod models;
+#[path = "model_effort.rs"]
+mod model_effort;
 #[path = "relative_time.rs"]
 mod relative_time;
 #[path = "ui_state.rs"]
@@ -35,11 +37,14 @@ mod views;
 use self::icons::{Icon, IconAssets, IconName};
 use self::models::{MessageItem, SessionInfo};
 use self::state::{
-    ArtifactPreviewState, ComposerState, DataLoadState, DiffReviewState, SettingsState,
-    ShellRoute, StreamStatus, TaskFetchState, TerminalPanelState,
+    ArtifactPreviewState, ComposerAutocompleteState, ComposerDraft, ComposerVerbosity, DataLoadState,
+    DiffReviewState, SettingsState, ShellRoute, StreamStatus, TaskFetchState, TerminalPanelState,
+    WorkbenchModeId,
 };
 use self::views::{RouterView, SidebarOverlays};
 
+
+use ctx_client::EnvTarget;
 pub(crate) use self::state::ShellView;
 
 #[derive(Clone, Debug)]
@@ -233,6 +238,7 @@ pub fn run(options: AppOptions) {
                         archive_confirm_dismissed,
                         sidebar_width: 260.0,
                         sidebar_collapsed: false,
+                        sidebar_anim_epoch: 0,
                         sidebar_resizing: false,
                         sidebar_resize_state: None,
                         sidebar_resizer_hovered: false,
@@ -253,12 +259,66 @@ pub fn run(options: AppOptions) {
                         session_summary_map: HashMap::new(),
                         session: SessionInfo::placeholder(),
                         data_state: DataLoadState::Loading,
-                        composer: ComposerState::new(),
-                        composer_focus: cx.focus_handle(),
+                        new_task_mode: true,
+                        new_task_mode_locked: true,
+                        composer_new_input: cx.new(|cx| InputState::new(window, cx)),
+                        composer_session_input: cx.new(|cx| InputState::new(window, cx)),
                         composer_attachments: Vec::new(),
-                        composer_attachment_input: ComposerState::new(),
-                        composer_attachment_focus: cx.focus_handle(),
+                        composer_new_attachments: Vec::new(),
+                        composer_session_attachments: HashMap::new(),
+                        composer_new_draft: ComposerDraft::default(),
+                        composer_session_drafts: HashMap::new(),
+                        composer_start_busy: false,
+                        composer_start_error: None,
+                        composer_needs_apply: false,
                         composer_notice: None,
+                        composer_open_menu: None,
+                        composer_menu_trigger_bounds: HashMap::new(),
+                        composer_menu_bounds: HashMap::new(),
+                        composer_menu_placements: HashMap::new(),
+                        composer_tooltip_open: None,
+                        composer_tooltip_trigger_bounds: HashMap::new(),
+                        composer_tooltip_bounds: HashMap::new(),
+                        composer_tooltip_placements: HashMap::new(),
+                        composer_tooltip_close_id: 0,
+                        composer_mode_id: WorkbenchModeId::Default,
+                        composer_verbosity: ComposerVerbosity::Default,
+                        composer_context_window: None,
+                        composer_env_target: EnvTarget::Local,
+                        composer_use_multiple_agents: false,
+                        composer_draft_tracks: Vec::new(),
+                        composer_provider_options: HashMap::new(),
+                        composer_provider_opts_busy: HashMap::new(),
+                        composer_provider_auth_busy: HashMap::new(),
+                        composer_provider_verify_busy: HashMap::new(),
+                        composer_provider_installs: HashMap::new(),
+                        composer_install_polling: HashSet::new(),
+                        composer_install_all_busy: false,
+                        composer_provider_action_notice: None,
+                        composer_provider_action_error: None,
+                        composer_harness_expanded_provider: None,
+                        composer_harness_count_menu_provider: None,
+                        composer_harness_count_menu_placement: None,
+                        composer_harness_count_trigger_bounds: HashMap::new(),
+                        composer_harness_count_menu_bounds: None,
+                        composer_recording: false,
+                        composer_harness_search: cx.new(|cx| InputState::new(window, cx)),
+                        composer_model_search: cx.new(|cx| InputState::new(window, cx)),
+                        composer_model_search_placeholder: String::new(),
+                        composer_model_manual: cx.new(|cx| InputState::new(window, cx)),
+                        composer_autocomplete: ComposerAutocompleteState::new(),
+                        composer_track_model_inputs: HashMap::new(),
+                        composer_track_model_placeholders: HashMap::new(),
+                        composer_track_input_subscriptions: HashMap::new(),
+                        composer_autocomplete_input_bounds: None,
+                        composer_autocomplete_anchor_bounds: None,
+                        composer_autocomplete_menu_placement: None,
+                        composer_autocomplete_menu_width: None,
+                        composer_autocomplete_preview_placement: None,
+                        composer_attachment_images: HashMap::new(),
+                        composer_attachment_loading: HashSet::new(),
+                        composer_subscriptions: Vec::new(),
+                        composer_subscriptions_set: false,
                         message_list_state: ListState::new(1, ListAlignment::Bottom, px(160.0)),
                         message_list_len: 1,
                         message_auto_follow: true,
@@ -386,8 +446,6 @@ impl Render for ShellView {
                     .map(|summary| summary.session_id == resync_id)
             })
             .unwrap_or(false);
-        let provider_options = self.composer_provider_options();
-        let model_options = self.composer_model_options();
         let workspace_label = self
             .selected_workspace
             .and_then(|id| self.workspaces.iter().find(|ws| ws.id == id))
@@ -493,8 +551,6 @@ impl Render for ShellView {
                     .child(
                         RouterView {
                             shell: self,
-                            provider_options,
-                            model_options,
                             resyncing,
                         }
                         .render(cx),

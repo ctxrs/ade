@@ -174,6 +174,8 @@ async function main() {
   let runError = null;
   try {
     const readyTimeout = Math.max(args.readyTimeoutMs + 5000, DEFAULT_REQUEST_TIMEOUT_MS);
+    // Small delay to allow first render before screenshots
+    await sleep(500);
     await callJson(args.addr, `/ready?timeout_ms=${args.readyTimeoutMs}`, {
       timeoutMs: readyTimeout,
     });
@@ -194,7 +196,7 @@ async function main() {
           console.error(`Wait for archived tasks failed: ${err.message}`);
         }
       }
-      await sleep(args.delayMs);
+      await sleep(Math.max(args.delayMs, 500));
       await callJson(args.addr, "/screenshot", {
         method: "POST",
         body: { name },

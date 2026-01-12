@@ -15,7 +15,7 @@ use axum::{
     Json, Router,
 };
 use gpui::{
-    App, AppContext, Context, Keystroke, Modifiers, ScrollStrategy, Window, WindowHandle, px, size,
+    App, AppContext, ClickEvent, Context, Keystroke, Modifiers, ScrollStrategy, Window, WindowHandle, px, size,
 };
 use gpui_component::Root;
 use image::{ColorType, ImageFormat};
@@ -260,6 +260,19 @@ async fn screenshot_handler(
     State(state): State<Arc<AutomationState>>,
     Json(request): Json<ScreenshotRequest>,
 ) -> (StatusCode, Json<ApiResponse<Value>>) {
+    // Wait for at least one render after the last input before capturing to avoid blank frames.
+    {
+        let current = *state.render_rx.borrow();
+        let mut render_rx = state.render_rx.clone();
+        if timeout(Duration::from_millis(200), render_rx.changed()).await.is_ok() {
+            let next = *render_rx.borrow();
+            eprintln!("ctx-native: screenshot waited for render {} -> {}", current, next);
+        } else {
+            eprintln!("ctx-native: screenshot render wait timed out at {}", current);
+        }
+    }
+
+
     let path = match resolve_screenshot_path(request, &state.config) {
         Ok(path) => path,
         Err(message) => return err(StatusCode::BAD_REQUEST, message),
@@ -472,20 +485,20 @@ fn apply_focus_target(
                 .scroll_to_item(0, ScrollStrategy::Top);
         }
         FocusTarget::Composer => {
-            view.composer_focus.focus(window, cx);
+            view.focus_composer(&ClickEvent::default(), window, cx);
         }
         FocusTarget::ComposerAttachments => {
-            view.composer_attachment_focus.focus(window, cx);
+            view.focus_composer(&ClickEvent::default(), window, cx);
         }
         FocusTarget::ComposerProviderMenu => {
             view.composer_provider_menu_open = true;
             view.composer_model_menu_open = false;
-            view.composer_focus.focus(window, cx);
+            view.focus_composer(&ClickEvent::default(), window, cx);
         }
         FocusTarget::ComposerModelMenu => {
             view.composer_model_menu_open = true;
             view.composer_provider_menu_open = false;
-            view.composer_focus.focus(window, cx);
+            view.focus_composer(&ClickEvent::default(), window, cx);
         }
         FocusTarget::SessionsPane => {
             view.show_sessions_pane = true;

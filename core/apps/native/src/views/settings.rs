@@ -744,6 +744,8 @@ impl SettingsState {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+
+        eprintln!("ctx-native: settings render active={:?} loaded={} load_error={:?}", active, loaded, load_error);
         if !loaded {
             return settings_empty("Loading…", false).into_any_element();
         }
