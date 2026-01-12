@@ -54,6 +54,7 @@ pub struct AcpClientConfig {
     pub client_title: String,
     pub client_version: String,
     pub client_capabilities: serde_json::Value,
+    pub system_prompt_append: Option<String>,
     pub mcp_servers: Vec<AcpMcpServer>,
 }
 
@@ -866,11 +867,20 @@ impl AcpProcess {
         }
 
         if session_id.is_none() {
+            let mut new_payload = json!({"cwd": cwd, "mcpServers": mcp_servers});
+            if let Some(append) = client.system_prompt_append.as_deref() {
+                let trimmed = append.trim();
+                if !trimmed.is_empty() {
+                    if let Some(obj) = new_payload.as_object_mut() {
+                        obj.insert(
+                            "_meta".to_string(),
+                            json!({"systemPrompt": {"append": trimmed}}),
+                        );
+                    }
+                }
+            }
             let new_resp = self
-                .send_request(
-                    "session/new",
-                    json!({"cwd": cwd, "mcpServers": mcp_servers}),
-                )
+                .send_request("session/new", new_payload)
                 .await
                 .context("waiting for session/new response")?;
             if let Some(err) = new_resp.get("error") {
@@ -1857,7 +1867,12 @@ fn filter_process_env(env: HashMap<String, String>) -> HashMap<String, String> {
     // Per-session CTX_* vars must not be set on a shared provider process.
     // Session-specific values are passed via ACP `session/new` mcpServers env instead.
     env.into_iter()
-        .filter(|(k, _)| !matches!(k.as_str(), "CTX_SESSION_ID" | "CTX_PROVIDER_SESSION_REF"))
+        .filter(|(k, _)| {
+            !matches!(
+                k.as_str(),
+                "CTX_SESSION_ID" | "CTX_PROVIDER_SESSION_REF" | "CTX_SYSTEM_PROMPT_APPEND"
+            )
+        })
         .collect()
 }
 

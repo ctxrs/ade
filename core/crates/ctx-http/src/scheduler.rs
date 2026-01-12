@@ -23,6 +23,7 @@ use crate::daemon::AppState;
 use crate::installer;
 use crate::perf_telemetry::{PerfMetric, PerfMetricKind};
 use crate::telemetry::TelemetryEvent;
+use crate::workspace_config;
 
 #[derive(Debug)]
 pub struct QueuedMessage {
@@ -301,6 +302,18 @@ async fn start_turn(
         }
     }
 
+    let prompt_config = workspace_config::load_agent_system_prompt_append(workdir)
+        .await
+        .unwrap_or_else(|_| workspace_config::AgentSystemPromptAppendConfig::new_default(workdir));
+    let system_prompt_append = prompt_config.effective_append();
+    let mut context_blocks = Vec::new();
+    if let Some(append) = system_prompt_append.as_deref() {
+        if !provider_supports_system_prompt_append(&session.provider_id) {
+            context_blocks.push(json!({"type":"text","text": append}));
+        }
+        provider_env.insert("CTX_SYSTEM_PROMPT_APPEND".to_string(), append.to_string());
+    }
+
     let run_started_at = Instant::now();
     let spawn_started_at = Instant::now();
     let handle = match adapter
@@ -308,7 +321,7 @@ async fn start_turn(
             TurnInput {
                 content: prompt,
                 attachments: message.attachments.clone(),
-                context_blocks: Vec::new(),
+                context_blocks,
                 model_id: normalize_session_model_id(&session.model_id),
             },
             workdir.to_path_buf(),
@@ -1341,6 +1354,10 @@ fn normalize_session_model_id(model_id: &str) -> Option<String> {
     } else {
         Some(trimmed.to_string())
     }
+}
+
+fn provider_supports_system_prompt_append(provider_id: &str) -> bool {
+    matches!(provider_id, "claude")
 }
 
 #[derive(Default)]

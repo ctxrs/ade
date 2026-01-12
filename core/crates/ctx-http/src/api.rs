@@ -64,6 +64,7 @@ use crate::web_sessions::{
     render_web_session_view, WebSessionCreateRequest, WebSessionInfo, WebSessionRunRequest,
     WebSessionRunResponse, WebSessionViewport,
 };
+use crate::workspace_config;
 use crate::worktree_bootstrap;
 use ctx_providers::adapters::ProviderStatus;
 use ctx_providers::events::NormalizedEvent;
@@ -367,6 +368,10 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
         .route(
             "/api/workspaces/:id/attachments/sync",
             post(sync_workspace_attachments),
+        )
+        .route(
+            "/api/workspaces/:id/agent_system_prompt",
+            get(get_agent_system_prompt).post(update_agent_system_prompt),
         )
         .route("/api/workspaces/:id/tasks", post(create_task))
         .route("/api/tasks/:id", delete(delete_task))
@@ -5244,6 +5249,7 @@ async fn get_provider_options(
         client_title: "ctx".to_string(),
         client_version: env!("CARGO_PKG_VERSION").to_string(),
         client_capabilities: serde_json::json!({}),
+        system_prompt_append: None,
         mcp_servers: vec![],
     };
 
@@ -5380,6 +5386,7 @@ async fn authenticate_provider_for_workspace(
         client_title: "ctx".to_string(),
         client_version: env!("CARGO_PKG_VERSION").to_string(),
         client_capabilities: serde_json::json!({}),
+        system_prompt_append: None,
         mcp_servers: vec![],
     };
 
@@ -5480,6 +5487,7 @@ async fn verify_provider_for_workspace(
         client_title: "ctx".to_string(),
         client_version: env!("CARGO_PKG_VERSION").to_string(),
         client_capabilities: serde_json::json!({}),
+        system_prompt_append: None,
         mcp_servers: vec![],
     };
 
@@ -6580,6 +6588,162 @@ async fn sync_workspace_attachments(
     )
     .await;
     Ok(Json(attachments))
+}
+
+#[derive(Debug, Serialize)]
+struct AgentSystemPromptConfigResponse {
+    config_path: String,
+    default_append: String,
+    configured_append: Option<String>,
+    effective_append: Option<String>,
+    source: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct UpdateAgentSystemPromptConfigReq {
+    #[serde(default)]
+    system_prompt_append: Option<String>,
+}
+
+async fn get_agent_system_prompt(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<AgentSystemPromptConfigResponse>, (StatusCode, Json<ApiErrorResp>)> {
+    let ws_id = WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid workspace id".to_string(),
+            }),
+        )
+    })?);
+    let workspace = state
+        .store
+        .get_workspace(ws_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "workspace not found".to_string(),
+            }),
+        ))?;
+
+    let cfg = workspace_config::load_agent_system_prompt_append(StdPath::new(&workspace.root_path))
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
+
+    let configured_append = cfg
+        .configured_append
+        .as_ref()
+        .map(|value| value.trim().to_string());
+    let effective_append = cfg.effective_append();
+    let source = match cfg.source() {
+        workspace_config::AgentSystemPromptAppendSource::Default => "default".to_string(),
+        workspace_config::AgentSystemPromptAppendSource::Config => "config".to_string(),
+        workspace_config::AgentSystemPromptAppendSource::Disabled => "disabled".to_string(),
+    };
+    let response = AgentSystemPromptConfigResponse {
+        config_path: cfg.config_path.to_string_lossy().to_string(),
+        default_append: cfg.default_append.clone(),
+        configured_append,
+        effective_append,
+        source,
+    };
+
+    Ok(Json(response))
+}
+
+async fn update_agent_system_prompt(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(req): Json<UpdateAgentSystemPromptConfigReq>,
+) -> Result<Json<AgentSystemPromptConfigResponse>, (StatusCode, Json<ApiErrorResp>)> {
+    let ws_id = WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid workspace id".to_string(),
+            }),
+        )
+    })?);
+    let workspace = state
+        .store
+        .get_workspace(ws_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "workspace not found".to_string(),
+            }),
+        ))?;
+
+    workspace_config::update_agent_system_prompt_append(
+        StdPath::new(&workspace.root_path),
+        req.system_prompt_append,
+    )
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&e.to_string()),
+            }),
+        )
+    })?;
+
+    let cfg = workspace_config::load_agent_system_prompt_append(StdPath::new(&workspace.root_path))
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
+
+    let configured_append = cfg
+        .configured_append
+        .as_ref()
+        .map(|value| value.trim().to_string());
+    let effective_append = cfg.effective_append();
+    let source = match cfg.source() {
+        workspace_config::AgentSystemPromptAppendSource::Default => "default".to_string(),
+        workspace_config::AgentSystemPromptAppendSource::Config => "config".to_string(),
+        workspace_config::AgentSystemPromptAppendSource::Disabled => "disabled".to_string(),
+    };
+    let response = AgentSystemPromptConfigResponse {
+        config_path: cfg.config_path.to_string_lossy().to_string(),
+        default_append: cfg.default_append.clone(),
+        configured_append,
+        effective_append,
+        source,
+    };
+
+    Ok(Json(response))
 }
 
 #[derive(Debug, Deserialize)]
@@ -10239,6 +10403,7 @@ async fn load_provider_model_catalog(
         client_title: "ctx".to_string(),
         client_version: env!("CARGO_PKG_VERSION").to_string(),
         client_capabilities: serde_json::json!({}),
+        system_prompt_append: None,
         mcp_servers: vec![],
     };
     let mut env = std::collections::HashMap::new();

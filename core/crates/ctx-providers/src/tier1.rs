@@ -395,6 +395,11 @@ fn build_acp_client_config(env: &HashMap<String, String>) -> AcpClientConfig {
         vec![]
     };
 
+    let system_prompt_append = env
+        .get("CTX_SYSTEM_PROMPT_APPEND")
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+
     AcpClientConfig {
         client_name: "ctx".to_string(),
         client_title: "ctx".to_string(),
@@ -403,6 +408,7 @@ fn build_acp_client_config(env: &HashMap<String, String>) -> AcpClientConfig {
             "fs": {"readTextFile": false, "writeTextFile": false},
             "terminal": false
         }),
+        system_prompt_append,
         mcp_servers,
     }
 }

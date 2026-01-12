@@ -14,6 +14,7 @@ import {
   ResourceGovernanceStatus,
   ResourceUtilization,
   Settings,
+  AgentSystemPromptConfig,
   TelemetrySettings,
   TitleGenerationSettings,
   WorkspaceAttachment,
@@ -21,6 +22,7 @@ import {
   deleteWorkspaceAttachment,
   disableMobileAccess,
   enableMobileAccess,
+  getAgentSystemPrompt,
   getMobileAccessStatus,
   Workspace,
   authenticateProviderForWorkspace,
@@ -38,6 +40,7 @@ import {
   listWorkspaces,
   syncWorkspaceAttachments,
   updateSettings,
+  updateAgentSystemPrompt,
   verifyProviderForWorkspace,
 } from "../api/client";
 import {
@@ -91,6 +94,7 @@ type SectionId =
   | "models_routing"
   | "sandboxing"
   | "worktree_bootstrap"
+  | "agent_system_prompt"
   | "workspace_attachments"
   | "context_pack"
   | "resource_governance"
@@ -120,6 +124,7 @@ const SECTIONS: Array<{
   { id: "models_routing", label: "Models & Routing", group: "main" },
   { id: "sandboxing", label: "Sandboxing", group: "main" },
   { id: "worktree_bootstrap", label: "Worktree Bootstrap", group: "main" },
+  { id: "agent_system_prompt", label: "Agent System Prompt", group: "main" },
   { id: "workspace_attachments", label: "Workspace Attachments", group: "main" },
   { id: "context_pack", label: "ctx pack", group: "main" },
   { id: "resource_governance", label: "Resource Limits", group: "main" },
@@ -407,6 +412,13 @@ export default function SettingsPage() {
   const [docsAttachmentBusy, setDocsAttachmentBusy] = useState(false);
   const [attachmentSyncBusy, setAttachmentSyncBusy] = useState(false);
   const [attachmentDeleteBusy, setAttachmentDeleteBusy] = useState<Record<string, boolean>>({});
+
+  const [agentPromptConfig, setAgentPromptConfig] = useState<AgentSystemPromptConfig | null>(null);
+  const [agentPromptLoading, setAgentPromptLoading] = useState(false);
+  const [agentPromptError, setAgentPromptError] = useState<string | null>(null);
+  const [agentPromptSaving, setAgentPromptSaving] = useState(false);
+  const [agentPromptUseDefault, setAgentPromptUseDefault] = useState(true);
+  const [agentPromptCustom, setAgentPromptCustom] = useState("");
 
   const [resourceSnapshot, setResourceSnapshot] = useState<ResourceUtilization | null>(null);
   const [resourceLoading, setResourceLoading] = useState(false);
@@ -886,6 +898,41 @@ export default function SettingsPage() {
     [workspaceId],
   );
 
+  const refreshAgentSystemPrompt = useCallback(async () => {
+    if (!workspaceId) return;
+    setAgentPromptLoading(true);
+    setAgentPromptError(null);
+    try {
+      const next = await getAgentSystemPrompt(workspaceId);
+      setAgentPromptConfig(next);
+      const baseCustom = next.configured_append ?? next.default_append;
+      setAgentPromptCustom(baseCustom ?? "");
+      setAgentPromptUseDefault(next.source === "default");
+    } catch (e: any) {
+      setAgentPromptError(e?.message ?? String(e));
+    } finally {
+      setAgentPromptLoading(false);
+    }
+  }, [workspaceId]);
+
+  const handleSaveAgentPrompt = useCallback(async () => {
+    if (!workspaceId) return;
+    setAgentPromptSaving(true);
+    setAgentPromptError(null);
+    try {
+      const payload = agentPromptUseDefault ? null : agentPromptCustom;
+      const next = await updateAgentSystemPrompt(workspaceId, { system_prompt_append: payload });
+      setAgentPromptConfig(next);
+      const baseCustom = next.configured_append ?? next.default_append;
+      setAgentPromptCustom(baseCustom ?? "");
+      setAgentPromptUseDefault(next.source === "default");
+    } catch (e: any) {
+      setAgentPromptError(e?.message ?? String(e));
+    } finally {
+      setAgentPromptSaving(false);
+    }
+  }, [workspaceId, agentPromptUseDefault, agentPromptCustom]);
+
   const syncWorkspaceAttachmentsNow = useCallback(async () => {
     if (!workspaceId) return;
     setAttachmentSyncBusy(true);
@@ -965,6 +1012,12 @@ export default function SettingsPage() {
       }
     };
   }, [active, workspaceId]);
+
+  useEffect(() => {
+    if (active !== "agent_system_prompt") return;
+    if (!workspaceId) return;
+    refreshAgentSystemPrompt().catch(() => {});
+  }, [active, workspaceId, refreshAgentSystemPrompt]);
 
   useEffect(() => {
     if (active !== "workspace_attachments") return;
@@ -1291,7 +1344,7 @@ export default function SettingsPage() {
     }
   }, [workspaceFromQuery, workspaceId]);
 
-  const anySaving = saving || editorSaving;
+  const anySaving = saving || editorSaving || agentPromptSaving;
 
   const vscodeRemoteTargets: DesktopEditorSettings["target"][] = [
     "vscode",
@@ -1417,6 +1470,111 @@ export default function SettingsPage() {
               control={<pre className="settings-code-block">{example}</pre>}
             />
           </Card>
+        </>
+      );
+    }
+
+    if (active === "agent_system_prompt") {
+      const anyWorkspace = workspaces.length > 0;
+      const selectedWorkspace = workspaces.find((ws) => idToString((ws as any).id) === workspaceId) ?? null;
+      const configPath =
+        agentPromptConfig?.config_path ??
+        (selectedWorkspace ? `${selectedWorkspace.root_path}/.ctx/config.toml` : ".ctx/config.toml");
+      const statusLabel =
+        agentPromptConfig?.source === "config"
+          ? "Custom"
+          : agentPromptConfig?.source === "disabled"
+            ? "Disabled"
+            : "Default";
+      const baseCustom = agentPromptConfig?.configured_append ?? agentPromptConfig?.default_append ?? "";
+      const baseUseDefault = agentPromptConfig?.source === "default";
+      const promptDirty =
+        agentPromptConfig &&
+        (agentPromptUseDefault !== baseUseDefault ||
+          (!agentPromptUseDefault && agentPromptCustom.trim() !== baseCustom.trim()));
+      const canSave = Boolean(workspaceId) && !agentPromptSaving && Boolean(promptDirty);
+
+      return (
+        <>
+          <Card title="Agent System Prompt">
+            <Row
+              title="Workspace"
+              description="Choose the repo to configure."
+              control={
+                <select
+                  className="settings-control settings-select"
+                  value={workspaceId ?? ""}
+                  onChange={(e) => setWorkspaceId(e.target.value || null)}
+                  disabled={!anyWorkspace}
+                >
+                  {workspaces.map((ws) => {
+                    const id = idToString((ws as any).id);
+                    return (
+                      <option key={id} value={id}>
+                        {ws.name}
+                      </option>
+                    );
+                  })}
+                </select>
+              }
+            />
+            <Row
+              title="Config file"
+              description="Repo-scoped agent prompt configuration."
+              control={<span className="settings-pill wb-mono">{configPath}</span>}
+            />
+            <Row
+              title="Status"
+              description="Default prompt applies when no override is set."
+              control={<span className="settings-pill">{statusLabel}</span>}
+            />
+            <Row
+              title="Default prompt"
+              description="Applied when the config has no override."
+              control={<pre className="settings-code-block">{agentPromptConfig?.default_append ?? ""}</pre>}
+            />
+            <Row
+              title="Use default"
+              description="Turn off to provide a custom override."
+              control={
+                <Toggle
+                  checked={agentPromptUseDefault}
+                  disabled={!workspaceId || agentPromptLoading}
+                  onChange={setAgentPromptUseDefault}
+                  ariaLabel="Use default agent system prompt"
+                />
+              }
+            />
+            <Row
+              title="Custom override"
+              description="Saved to .ctx/config.toml when you save."
+              control={
+                <textarea
+                  className="settings-control settings-control-wide"
+                  rows={5}
+                  value={agentPromptCustom}
+                  onChange={(e) => setAgentPromptCustom(e.target.value)}
+                  disabled={!workspaceId || agentPromptUseDefault || agentPromptLoading}
+                  placeholder="Add a custom system prompt append."
+                />
+              }
+            />
+            <Row
+              title="Actions"
+              control={
+                <button
+                  type="button"
+                  className="settings-btn"
+                  onClick={() => handleSaveAgentPrompt().catch(() => {})}
+                  disabled={!canSave}
+                >
+                  {agentPromptSaving ? "Saving…" : "Save"}
+                </button>
+              }
+            />
+          </Card>
+          {agentPromptLoading ? <div className="settings-banner">Loading agent prompt…</div> : null}
+          {agentPromptError ? <div className="settings-banner settings-banner-error">{agentPromptError}</div> : null}
         </>
       );
     }
