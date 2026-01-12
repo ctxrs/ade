@@ -911,8 +911,10 @@ export default function SettingsPage() {
       setAgentPromptText(baseText);
     } catch (e: any) {
       const message = e?.message ?? String(e);
+      const lower = message.toLowerCase();
       const first = workspaces[0];
-      if ((message.toLowerCase().includes("404") || message.toLowerCase().includes("workspace not found")) && first) {
+      const isNotFound = lower.includes("404") || lower.includes("workspace not found");
+      if (isNotFound && first) {
         const firstId = idToString((first as any).id);
         if (workspaceId !== firstId) {
           setWorkspaceId(firstId);
@@ -921,17 +923,21 @@ export default function SettingsPage() {
           return;
         }
       }
-      const fallbackWs = workspaces.find((ws) => idToString((ws as any).id) === workspaceId) ?? workspaces[0];
-      const fallbackPath = fallbackWs ? `${fallbackWs.root_path}/.ctx/config.toml` : ".ctx/config.toml";
-      setAgentPromptConfig({
-        config_path: fallbackPath,
-        default_append: AGENT_PROMPT_DEFAULT,
-        configured_append: null,
-        effective_append: AGENT_PROMPT_DEFAULT,
-        source: "default",
-      });
-      setAgentPromptText(AGENT_PROMPT_DEFAULT);
-      setAgentPromptError(null);
+      if (isNotFound) {
+        const fallbackWs = workspaces.find((ws) => idToString((ws as any).id) === workspaceId) ?? workspaces[0];
+        const fallbackPath = fallbackWs ? `${fallbackWs.root_path}/.ctx/config.toml` : ".ctx/config.toml";
+        setAgentPromptConfig({
+          config_path: fallbackPath,
+          default_append: AGENT_PROMPT_DEFAULT,
+          configured_append: null,
+          effective_append: AGENT_PROMPT_DEFAULT,
+          source: "default",
+        });
+        setAgentPromptText(AGENT_PROMPT_DEFAULT);
+        setAgentPromptError(null);
+      } else {
+        setAgentPromptError(message);
+      }
     } finally {
       setAgentPromptLoading(false);
     }
