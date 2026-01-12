@@ -31,12 +31,14 @@ use tokio_util::io::ReaderStream;
 mod bootstrap;
 mod drivers;
 
+use bootstrap::render_bootstrap_script;
 use drivers::aws::{AwsConfig, AwsDriver};
 use drivers::azure::{AzureConfig, AzureDriver};
 use drivers::gcp::{GcpConfig, GcpDriver};
 use drivers::local::LocalDriver;
 use drivers::WorkerDriver;
 use serde_json::json;
+use tracing::warn;
 
 const DEFAULT_BIND: &str = "0.0.0.0:8787";
 const DEFAULT_DRIVER: &str = "local";
@@ -509,6 +511,8 @@ struct AppState {
     driver: Arc<dyn WorkerDriver>,
     public_base_url: String,
     worker_shim_path: String,
+    session_mount_path: String,
+    workdir_path: String,
     auth_token: Option<String>,
     relays: Arc<RwLock<HashMap<String, Arc<Mutex<RelayState>>>>>,
     terminal_relays: Arc<RwLock<HashMap<String, Arc<Mutex<TerminalRelayState>>>>>,
@@ -574,6 +578,9 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
+    if let Err(err) = rustls::crypto::aws_lc_rs::default_provider().install_default() {
+        warn!("failed to install rustls crypto provider: {err:?}");
+    }
 
     let args = Args::parse();
     let config_path = args.config.clone().or_else(default_config_path);
@@ -728,6 +735,8 @@ async fn main() -> Result<()> {
         driver,
         public_base_url,
         worker_shim_path: resolved.worker_shim_path.clone(),
+        session_mount_path: resolved.session_mount_path.clone(),
+        workdir_path: resolved.workdir_path.clone(),
         auth_token,
         relays: Arc::new(RwLock::new(HashMap::new())),
         terminal_relays: Arc::new(RwLock::new(HashMap::new())),
@@ -761,6 +770,7 @@ async fn main() -> Result<()> {
             "/workers/:id/terminals/:terminal_id/worker",
             get(terminal_worker_ws),
         )
+        .route("/workers/:id/bootstrap", get(get_worker_bootstrap))
         .route("/shim", get(get_worker_shim))
         .route("/health", get(health))
         .layer(middleware::from_fn_with_state(
@@ -808,6 +818,43 @@ async fn get_worker_shim(State(state): State<AppState>) -> Result<impl IntoRespo
     ))
 }
 
+async fn get_worker_bootstrap(
+    State(state): State<AppState>,
+    Path(worker_id): Path<String>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    let spec = get_request_spec(&state, &worker_id).await?;
+    let base_commit = get_base_commit(&state, &worker_id).await?;
+    let mut candidates = vec![
+        "/dev/xvdf".to_string(),
+        "/dev/sdf".to_string(),
+        "/dev/nvme1n1".to_string(),
+    ];
+    candidates.retain(|v| !v.is_empty());
+    let shim_url = format!("{}/shim", state.public_base_url.trim_end_matches('/'));
+    let bootstrap = bootstrap::BootstrapSpec {
+        worker_id: &worker_id,
+        gateway_url: state.public_base_url.as_str(),
+        gateway_token: spec.env.get("CTX_WORKER_GATEWAY_TOKEN").map(|v| v.as_str()),
+        base_commit: &base_commit,
+        diff_debounce_ms: spec.diff_debounce_ms.unwrap_or(1500),
+        repo: &spec.repo,
+        provider_id: spec.provider_id.as_deref(),
+        env: &spec.env,
+        shim_url: &shim_url,
+        workdir: &state.workdir_path,
+        mount_path: &state.session_mount_path,
+        mount_device_candidates: candidates,
+    };
+    let script = render_bootstrap_script(&bootstrap);
+    Ok((
+        [
+            ("content-type", "text/x-shellscript"),
+            ("cache-control", "no-store"),
+        ],
+        script,
+    ))
+}
+
 async fn health() -> impl IntoResponse {
     Json(json!({"ok": true}))
 }
@@ -828,7 +875,9 @@ async fn auth_middleware(
     if path == "/health" {
         return next.run(req).await;
     }
-    if method == "GET"
+    if method == "GET" && path.contains("/bootstrap") {
+        // Requires auth; fall through.
+    } else if method == "GET"
         && (path.starts_with("/workers/")
             && !path.contains("/acp/")
             && !path.contains("/terminals/")
@@ -1094,6 +1143,7 @@ async fn acp_daemon_ws(
 }
 
 async fn handle_worker_socket(state: AppState, worker_id: String, socket: WebSocket) {
+    info!(worker_id = %worker_id, "acp worker websocket connected");
     let relay = relay_for(&state, &worker_id).await;
     let (mut sender, mut receiver) = socket.split();
     let (tx, mut rx) = mpsc::unbounded_channel::<RelayMessage>();
@@ -1146,6 +1196,7 @@ async fn handle_worker_socket(state: AppState, worker_id: String, socket: WebSoc
     }
 
     let _ = send_task.await;
+    info!(worker_id = %worker_id, "acp worker websocket closed");
 }
 
 async fn handle_daemon_socket(state: AppState, worker_id: String, socket: WebSocket) {
@@ -1167,8 +1218,13 @@ async fn handle_daemon_socket(state: AppState, worker_id: String, socket: WebSoc
             let mut relay_guard = relay.lock().await;
             relay_guard.sessions.insert(sid.clone(), tx.clone());
             if let Some(worker_tx) = relay_guard.worker_tx.as_ref() {
-                let _ = worker_tx.send(relay_msg);
+                let _ = worker_tx.send(relay_msg.clone());
             }
+            info!(
+                worker_id = %worker_id,
+                session_id = %sid,
+                "acp daemon websocket connected"
+            );
         }
     }
 
@@ -1206,6 +1262,11 @@ async fn handle_daemon_socket(state: AppState, worker_id: String, socket: WebSoc
     let _ = send_task.await;
     let mut relay_guard = relay.lock().await;
     relay_guard.sessions.remove(&session_id);
+    info!(
+        worker_id = %worker_id,
+        session_id = %session_id,
+        "acp daemon websocket closed"
+    );
 }
 
 async fn open_terminal(

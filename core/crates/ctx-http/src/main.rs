@@ -1,5 +1,6 @@
 use anyhow::{anyhow, Result};
 use clap::{Parser, Subcommand};
+use tracing::warn;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[derive(Parser)]
@@ -80,6 +81,10 @@ async fn main() -> Result<()> {
         tracing_subscriber::fmt()
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .init();
+    }
+
+    if let Err(err) = rustls::crypto::aws_lc_rs::default_provider().install_default() {
+        warn!("failed to install rustls crypto provider: {err:?}");
     }
 
     match cli.command {

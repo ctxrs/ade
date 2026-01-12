@@ -13,7 +13,7 @@ use tokio::sync::RwLock;
 
 use ctx_worker_protocol::{RepoSpec, SshInfo, StartWorkerRequest};
 
-use crate::bootstrap::{render_bootstrap_script, BootstrapSpec};
+use crate::bootstrap::render_fetch_bootstrap_script;
 
 use super::WorkerDriver;
 
@@ -150,7 +150,7 @@ impl AwsDriver {
         &self,
         worker_id: &str,
         spec: &StartWorkerRequest,
-        base_commit_sha: &str,
+        _base_commit_sha: &str,
         gateway_url: &str,
         volume_id: &str,
     ) -> Result<String> {
@@ -167,22 +167,12 @@ impl AwsDriver {
         ];
         candidates.retain(|value| !value.is_empty());
 
-        let bootstrap = BootstrapSpec {
-            worker_id,
-            gateway_url,
-            gateway_token: self.auth_token.as_deref(),
-            base_commit: base_commit_sha,
-            diff_debounce_ms: spec.diff_debounce_ms.unwrap_or(1500),
-            repo: &spec.repo,
-            provider_id: spec.provider_id.as_deref(),
-            env: &spec.env,
-            shim_url: &self.config.worker_shim_url,
-            workdir: &self.config.workdir,
-            mount_path: &self.config.mount_path,
-            mount_device_candidates: candidates,
-        };
-        let user_data = render_bootstrap_script(&bootstrap);
-        let user_data_b64 = base64::engine::general_purpose::STANDARD.encode(user_data);
+        // Use a tiny user-data script that fetches the full bootstrap from the gateway
+        // to stay well under the 16KB EC2 user-data limit.
+        let ca_b64 = spec.env.get("CTX_GATEWAY_CA_B64").map(|v| v.as_str());
+        let fetch_script =
+            render_fetch_bootstrap_script(worker_id, gateway_url, self.auth_token.as_deref(), ca_b64);
+        let user_data_b64 = base64::engine::general_purpose::STANDARD.encode(fetch_script);
 
         let mut run = self
             .client

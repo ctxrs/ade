@@ -112,6 +112,13 @@ pub async fn run_remote_prompt(
     env: HashMap<String, String>,
     event_sink: mpsc::Sender<NormalizedEvent>,
 ) -> Result<RunHandle> {
+    tracing::info!(
+        "remote_acp: connecting to gateway for worker run (provider={}, session={})",
+        provider_id,
+        env.get("CTX_SESSION_ID")
+            .cloned()
+            .unwrap_or_else(|| "unknown-session".to_string())
+    );
     let gateway_url = env
         .get(GATEWAY_ENV_URL)
         .cloned()
@@ -150,7 +157,14 @@ pub async fn run_remote_prompt(
             token,
             gateway_ca_pem.as_deref(),
         )
-        .await?;
+        .await
+        .context("connect_gateway")?;
+        tracing::info!(
+            "remote_acp: connected to gateway url={} worker_id={} session_id={}",
+            gateway_url,
+            worker_id,
+            session_id
+        );
 
         let init_msg = RelayMessage::Init {
             session_id: session_id.clone(),
@@ -184,6 +198,7 @@ pub async fn run_remote_prompt(
                             "version": client.client_version,
                         }
                     }),
+                    false,
                 )
                 .await?;
 
@@ -228,6 +243,7 @@ pub async fn run_remote_prompt(
                     2,
                     "session/new",
                     json!({"cwd": workdir.to_string_lossy().to_string(), "mcpServers": mcp_servers}),
+                    false,
                 )
                 .await?;
 
@@ -306,6 +322,7 @@ pub async fn run_remote_prompt(
                     3,
                     "session/prompt",
                     json!({"sessionId": acp_session_id.clone(), "prompt": prompt}),
+                    true,
                 )
                 .await?;
 
@@ -449,7 +466,16 @@ struct RequestContext<'a> {
 }
 
 impl<'a> RequestContext<'a> {
-    async fn send_request(&mut self, id: u64, method: &str, params: Value) -> Result<Value> {
+    async fn send_request(
+        &mut self,
+        id: u64,
+        method: &str,
+        params: Value,
+        allow_update_completion: bool,
+    ) -> Result<Value> {
+        if allow_update_completion {
+            self.state.saw_done = false;
+        }
         let req = json!({
             "jsonrpc": "2.0",
             "id": id,
@@ -466,6 +492,9 @@ impl<'a> RequestContext<'a> {
                 let events = normalize_session_update(&msg, self.state);
                 for ev in events {
                     let _ = self.event_sink.send(ev).await;
+                }
+                if allow_update_completion && self.state.saw_done {
+                    return Ok(json!({"result": {"stopReason": "update"}}));
                 }
                 continue;
             }

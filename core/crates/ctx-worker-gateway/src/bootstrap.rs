@@ -17,6 +17,82 @@ pub struct BootstrapSpec<'a> {
     pub mount_device_candidates: Vec<String>,
 }
 
+/// Very small user-data that fetches the full bootstrap script from the gateway.
+pub fn render_fetch_bootstrap_script(
+    worker_id: &str,
+    gateway_url: &str,
+    gateway_token: Option<&str>,
+    gateway_ca_b64: Option<&str>,
+) -> String {
+    let mut script = String::new();
+    script.push_str("#!/usr/bin/env bash\n");
+    script.push_str("set -euo pipefail\n\n");
+    script.push_str(&format!("CTX_WORKER_ID={}\n", shell_quote(worker_id)));
+    script.push_str(&format!("CTX_GATEWAY_URL={}\n", shell_quote(gateway_url)));
+    if let Some(token) = gateway_token {
+        script.push_str(&format!("CTX_WORKER_GATEWAY_TOKEN={}\n", shell_quote(token)));
+    }
+    if let Some(ca) = gateway_ca_b64 {
+        script.push_str(&format!("CTX_GATEWAY_CA_B64={}\n", shell_quote(ca)));
+    }
+    script.push_str(
+        r#"
+install_curl() {
+  if command -v curl >/dev/null 2>&1; then
+    return 0
+  fi
+  if command -v apt-get >/dev/null 2>&1; then
+    apt-get update -y >/dev/null 2>&1 || true
+    apt-get install -y curl >/dev/null 2>&1 || true
+  elif command -v dnf >/dev/null 2>&1; then
+    dnf install -y curl >/dev/null 2>&1 || true
+  elif command -v yum >/dev/null 2>&1; then
+    yum install -y curl >/dev/null 2>&1 || true
+  fi
+}
+
+install_ca() {
+  if [ -z "${CTX_GATEWAY_CA_B64:-}" ]; then
+    return 0
+  fi
+  local ca_path="/etc/ctx-gateway-ca.pem"
+  if base64 --help 2>&1 | grep -q -- '--decode'; then
+    echo "$CTX_GATEWAY_CA_B64" | base64 --decode > "$ca_path"
+  else
+    echo "$CTX_GATEWAY_CA_B64" | base64 -d > "$ca_path"
+  fi
+  chmod 600 "$ca_path"
+  export CTX_GATEWAY_CA_PATH="$ca_path"
+}
+
+fetch_bootstrap() {
+  local url="${CTX_GATEWAY_URL%/}/workers/${CTX_WORKER_ID}/bootstrap"
+  local args=()
+  if [ -n "${CTX_WORKER_GATEWAY_TOKEN:-}" ]; then
+    url="${url}?token=${CTX_WORKER_GATEWAY_TOKEN}"
+  fi
+  if [ -n "${CTX_GATEWAY_CA_PATH:-}" ]; then
+    args+=(--cacert "$CTX_GATEWAY_CA_PATH")
+  else
+    args+=(--insecure)
+  fi
+  curl -fsSL "${args[@]}" "$url" -o /tmp/ctx-bootstrap.sh
+  chmod +x /tmp/ctx-bootstrap.sh
+}
+
+main() {
+  install_curl
+  install_ca
+  fetch_bootstrap
+  /tmp/ctx-bootstrap.sh
+}
+
+main "$@"
+"#,
+    );
+    script
+}
+
 pub fn render_bootstrap_script(spec: &BootstrapSpec<'_>) -> String {
     let mut script = String::new();
     script.push_str("#!/usr/bin/env bash\n");
@@ -83,10 +159,13 @@ pub fn render_bootstrap_script(spec: &BootstrapSpec<'_>) -> String {
     script.push_str("  if command -v apt-get >/dev/null 2>&1; then\n");
     script.push_str("    apt-get update -y >/dev/null 2>&1 || true\n");
     script.push_str("    apt-get install -y git curl tar >/dev/null 2>&1 || true\n");
+    script.push_str("    apt-get install -y libssl1.1 >/dev/null 2>&1 || true\n");
     script.push_str("  elif command -v dnf >/dev/null 2>&1; then\n");
     script.push_str("    dnf install -y git curl tar >/dev/null 2>&1 || true\n");
+    script.push_str("    dnf install -y compat-openssl11 >/dev/null 2>&1 || dnf install -y openssl11 >/dev/null 2>&1 || true\n");
     script.push_str("  elif command -v yum >/dev/null 2>&1; then\n");
     script.push_str("    yum install -y git curl tar >/dev/null 2>&1 || true\n");
+    script.push_str("    yum install -y compat-openssl11 >/dev/null 2>&1 || yum install -y openssl11 >/dev/null 2>&1 || true\n");
     script.push_str("  fi\n");
     script.push_str("}\n\n");
 
@@ -112,7 +191,13 @@ pub fn render_bootstrap_script(spec: &BootstrapSpec<'_>) -> String {
     );
     script.push_str("    case \"$url\" in\n");
     script.push_str("      \"${CTX_GATEWAY_URL%/}\"*)\n");
-    script.push_str("        curl --cacert \"$CTX_GATEWAY_CA_PATH\" -fsSL \"$url\" -o \"$dest\"\n");
+    script.push_str("        local insecure=\"\"\n");
+    script.push_str("        if echo \"$CTX_GATEWAY_URL\" | grep -Eq '^https?://([0-9]{1,3}\\.){3}[0-9]{1,3}(:|/|$)'; then\n");
+    script.push_str("          insecure=\"--insecure\"\n");
+    script.push_str("        fi\n");
+    script.push_str(
+        "        curl $insecure --cacert \"$CTX_GATEWAY_CA_PATH\" -fsSL \"$url\" -o \"$dest\"\n",
+    );
     script.push_str("        return $?\n");
     script.push_str("        ;;\n");
     script.push_str("    esac\n");
@@ -132,6 +217,22 @@ pub fn render_bootstrap_script(spec: &BootstrapSpec<'_>) -> String {
     script.push_str("    fi\n");
     script.push_str("    chmod 600 /root/.codex/auth.json\n");
     script.push_str("    unset CTX_CODEX_AUTH_B64\n");
+    script.push_str("  fi\n");
+    script.push_str("}\n\n");
+
+    script.push_str("install_codex_config() {\n");
+    script.push_str("  if [ -n \"${CTX_CODEX_CONFIG_B64:-}\" ]; then\n");
+    script.push_str("    mkdir -p /root/.codex\n");
+    script.push_str("    if base64 --help 2>&1 | grep -q -- '--decode'; then\n");
+    script.push_str(
+        "      echo \"$CTX_CODEX_CONFIG_B64\" | base64 --decode > /root/.codex/config.toml\n",
+    );
+    script.push_str("    else\n");
+    script
+        .push_str("      echo \"$CTX_CODEX_CONFIG_B64\" | base64 -d > /root/.codex/config.toml\n");
+    script.push_str("    fi\n");
+    script.push_str("    chmod 600 /root/.codex/config.toml\n");
+    script.push_str("    unset CTX_CODEX_CONFIG_B64\n");
     script.push_str("  fi\n");
     script.push_str("}\n\n");
 
@@ -258,20 +359,25 @@ pub fn render_bootstrap_script(spec: &BootstrapSpec<'_>) -> String {
     script.push_str("      fi\n");
     script.push_str("      ;;\n");
     script.push_str("    archive)\n");
-    script.push_str("      if [ ! -f \"$CTX_WORKDIR/.ctx_archive_done\" ]; then\n");
+    script.push_str("      if [ ! -f \"$CTX_WORKDIR/.ctx/.ctx_archive_done\" ]; then\n");
     script.push_str("        curl -fsSL \"$CTX_REPO_ARCHIVE_URL\" -o /tmp/ctx-repo.tgz\n");
     script
         .push_str("        tar -xzf /tmp/ctx-repo.tgz -C \"$CTX_WORKDIR\" --strip-components=1\n");
+    script.push_str("        mkdir -p \"$CTX_WORKDIR/.ctx\"\n");
     script.push_str("        if [ ! -d \"$CTX_WORKDIR/.git\" ]; then\n");
+    script.push_str("          cd \"$CTX_WORKDIR\"\n");
     script.push_str("          git init >/dev/null 2>&1 || true\n");
     script.push_str(
         "          git config user.email \"ctx-worker@localhost\" >/dev/null 2>&1 || true\n",
     );
     script.push_str("          git config user.name \"ctx-worker\" >/dev/null 2>&1 || true\n");
     script.push_str("          git add . >/dev/null 2>&1 || true\n");
-    script.push_str("          git commit -m \"ctx base\" >/dev/null 2>&1 || true\n");
+    script.push_str("          git commit --allow-empty -m \"ctx base\" >/dev/null 2>&1 || true\n");
+    script.push_str("          if [ -d \"$CTX_WORKDIR/.git\" ]; then\n");
+    script.push_str("            echo \".ctx/\" >> \"$CTX_WORKDIR/.git/info/exclude\" || true\n");
+    script.push_str("          fi\n");
     script.push_str("        fi\n");
-    script.push_str("        touch \"$CTX_WORKDIR/.ctx_archive_done\"\n");
+    script.push_str("        touch \"$CTX_WORKDIR/.ctx/.ctx_archive_done\"\n");
     script.push_str("      fi\n");
     script.push_str("      if [ -d \"$CTX_WORKDIR/.git\" ]; then\n");
     script.push_str("        CTX_BASE_COMMIT=$(git rev-parse HEAD 2>/dev/null || echo \"HEAD\")\n");
@@ -287,6 +393,28 @@ pub fn render_bootstrap_script(spec: &BootstrapSpec<'_>) -> String {
     script.push_str("      exit 1\n");
     script.push_str("      ;;\n");
     script.push_str("  esac\n");
+    script.push_str("}\n\n");
+
+    script.push_str("ensure_git_repo() {\n");
+    script.push_str("  if [ -d \"$CTX_WORKDIR/.git\" ]; then\n");
+    script.push_str("    return 0\n");
+    script.push_str("  fi\n");
+    script.push_str("  if ! command -v git >/dev/null 2>&1; then\n");
+    script.push_str("    log \"git not available; skipping git init\"\n");
+    script.push_str("    return 0\n");
+    script.push_str("  fi\n");
+    script.push_str("  log \"initializing git repo in $CTX_WORKDIR\"\n");
+    script.push_str("  cd \"$CTX_WORKDIR\"\n");
+    script.push_str("  git init >/dev/null 2>&1 || true\n");
+    script.push_str("  git config user.email \"ctx-worker@localhost\" >/dev/null 2>&1 || true\n");
+    script.push_str("  git config user.name \"ctx-worker\" >/dev/null 2>&1 || true\n");
+    script.push_str("  git add . >/dev/null 2>&1 || true\n");
+    script.push_str("  git commit --allow-empty -m \"ctx base\" >/dev/null 2>&1 || true\n");
+    script.push_str("  if [ -d \"$CTX_WORKDIR/.git\" ]; then\n");
+    script.push_str("    echo \".ctx/\" >> \"$CTX_WORKDIR/.git/info/exclude\" || true\n");
+    script.push_str("    CTX_BASE_COMMIT=$(git rev-parse HEAD 2>/dev/null || echo \"HEAD\")\n");
+    script.push_str("    export CTX_BASE_COMMIT\n");
+    script.push_str("  fi\n");
     script.push_str("}\n\n");
 
     script.push_str("install_shim() {\n");
@@ -322,9 +450,11 @@ pub fn render_bootstrap_script(spec: &BootstrapSpec<'_>) -> String {
     script.push_str("  install_deps\n");
     script.push_str("  install_gateway_ca\n");
     script.push_str("  install_codex_auth\n");
+    script.push_str("  install_codex_config\n");
     script.push_str("  install_providers\n");
     script.push_str("  mount_session_disk\n");
     script.push_str("  hydrate_repo\n");
+    script.push_str("  ensure_git_repo\n");
     script.push_str("  install_shim\n");
     script.push_str("  start_shim\n");
     script.push_str("}\n\n");

@@ -349,8 +349,32 @@ async fn start_turn(
     if let Ok(Some(worker)) = state.store.get_track_worker(session.track_id).await {
         provider_env.insert("CTX_WORKER_GATEWAY_URL".to_string(), worker.gateway_url);
         provider_env.insert("CTX_WORKER_ID".to_string(), worker.worker_id);
+    if let Ok(Some(worker)) = state.store.get_track_worker(session.track_id).await {
+        provider_env.insert("CTX_WORKER_GATEWAY_URL".to_string(), worker.gateway_url);
+        provider_env.insert("CTX_WORKER_ID".to_string(), worker.worker_id);
+        provider_env
+            .entry("CTX_MCP_DISABLED".to_string())
+            .or_insert_with(|| "1".to_string());
+        if let Ok(token) = std::env::var("CTX_WORKER_GATEWAY_TOKEN") {
+            let trimmed = token.trim();
+            if !trimmed.is_empty() {
+                provider_env.insert("CTX_WORKER_GATEWAY_TOKEN".to_string(), trimmed.to_string());
+            }
+        }
+        let settings = user_settings::load_settings(&state.data_root).await;
+        if let Some(pem) = settings
+            .cloud_workers
+            .and_then(|cw| cw.gateway)
+            .and_then(|gateway| gateway.gateway_ca_pem)
+        {
+            let trimmed = pem.trim();
+            if !trimmed.is_empty() {
+                let encoded = base64::engine::general_purpose::STANDARD.encode(trimmed.as_bytes());
+                provider_env.insert("CTX_WORKER_GATEWAY_CA_B64".to_string(), encoded);
+            }
+        }
     }
-theirs
+464d871 (Gateway: fetch bootstrap to avoid EC2 user-data limit; doc creds/setup)
     }
 
     let run_started_at = Instant::now();

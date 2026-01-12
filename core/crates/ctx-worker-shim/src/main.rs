@@ -47,6 +47,9 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
+    if let Err(err) = rustls::crypto::aws_lc_rs::default_provider().install_default() {
+        warn!("failed to install rustls crypto provider: {err:?}");
+    }
 
     let args = Args::parse();
     let args = ResolvedArgs::from_args(args)?;
@@ -635,28 +638,51 @@ async fn register_worker(client: &reqwest::Client, args: &ResolvedArgs) -> Resul
 }
 
 async fn emit_diff(client: &reqwest::Client, args: &ResolvedArgs) -> Result<()> {
-    let base = &args.base_commit;
-    let head = git_output(&args.workdir, &["rev-parse", "HEAD"]).await?;
-    let patch = git_output(
-        &args.workdir,
-        &["diff", "--binary", &format!("{base}..HEAD")],
-    )
-    .await?;
-    let changed_files_raw = git_output(
-        &args.workdir,
-        &["diff", "--name-only", &format!("{base}..HEAD")],
-    )
-    .await?;
-    let changed_files = changed_files_raw
-        .lines()
-        .filter(|line| !line.trim().is_empty())
-        .map(|line| line.trim().to_string())
-        .collect::<Vec<_>>();
-    let (file_count, line_additions, line_deletions) = diff_stats(&args.workdir, base).await?;
+    let base = resolve_base_commit(&args.workdir, &args.base_commit).await?;
+    let head = git_rev_parse(&args.workdir, "HEAD")
+        .await?
+        .unwrap_or_else(|| base.clone());
+    let mut patch =
+        git_output_allow(&args.workdir, &["diff", "--binary", &base], &[0, 1]).await?;
+    let changed_files_raw =
+        git_output_allow(&args.workdir, &["diff", "--name-only", "-z", &base], &[0, 1]).await?;
+    let mut seen = std::collections::HashSet::new();
+    let mut changed_files = Vec::new();
+    for entry in changed_files_raw.split_terminator('\0') {
+        if entry.is_empty() {
+            continue;
+        }
+        if should_ignore_path(Path::new(entry)) {
+            continue;
+        }
+        if seen.insert(entry.to_string()) {
+            changed_files.push(entry.to_string());
+        }
+    }
+    let untracked = list_untracked_files(&args.workdir).await?;
+    for file in &untracked {
+        let diff = git_output_allow(
+            &args.workdir,
+            &["diff", "--binary", "--no-index", "--", "/dev/null", file],
+            &[0, 1],
+        )
+        .await?;
+        if !diff.is_empty() {
+            patch.push_str(&diff);
+        }
+        if should_ignore_path(Path::new(file)) {
+            continue;
+        }
+        if seen.insert(file.clone()) {
+            changed_files.push(file.clone());
+        }
+    }
+    let (file_count, line_additions, line_deletions) =
+        diff_stats(&args.workdir, &base, &untracked).await?;
 
     let diff = DiffArtifact {
         worker_id: args.worker_id.clone(),
-        base_commit_sha: base.to_string(),
+        base_commit_sha: base.clone(),
         head_commit_sha: head.trim().to_string(),
         generated_at: Utc::now(),
         patch,
@@ -696,20 +722,118 @@ async fn git_output(workdir: &Path, args: &[&str]) -> Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
-async fn diff_stats(workdir: &Path, base: &str) -> Result<(i64, i64, i64)> {
-    let output = git_output(workdir, &["diff", "--numstat", &format!("{base}..HEAD")]).await?;
+async fn git_rev_parse(workdir: &Path, rev: &str) -> Result<Option<String>> {
+    let output = Command::new("git")
+        .args(["rev-parse", rev])
+        .current_dir(workdir)
+        .output()
+        .await
+        .context("running git")?;
+    if !output.status.success() {
+        return Ok(None);
+    }
+    Ok(Some(
+        String::from_utf8_lossy(&output.stdout).trim().to_string(),
+    ))
+}
+
+async fn git_output_allow(workdir: &Path, args: &[&str], allowed: &[i32]) -> Result<String> {
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(workdir)
+        .output()
+        .await
+        .context("running git")?;
+    let code = output.status.code().unwrap_or(-1);
+    if !output.status.success() && !allowed.contains(&code) {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("git command failed: {stderr}");
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+async fn resolve_base_commit(workdir: &Path, base: &str) -> Result<String> {
+    if git_commit_exists(workdir, base).await? {
+        return Ok(base.to_string());
+    }
+    if let Some(head) = git_rev_parse(workdir, "HEAD").await? {
+        warn!(base, head, "base commit missing; falling back to HEAD");
+        return Ok(head);
+    }
+    let empty_tree = git_output(workdir, &["hash-object", "-t", "tree", "/dev/null"]).await?;
+    let empty_tree = empty_tree.trim().to_string();
+    warn!(base, empty_tree, "base commit missing; using empty tree");
+    Ok(empty_tree)
+}
+
+async fn git_commit_exists(workdir: &Path, rev: &str) -> Result<bool> {
+    let output = Command::new("git")
+        .args(["rev-parse", "--verify", &format!("{rev}^{{commit}}")])
+        .current_dir(workdir)
+        .output()
+        .await
+        .context("running git")?;
+    Ok(output.status.success())
+}
+
+async fn list_untracked_files(workdir: &Path) -> Result<Vec<String>> {
+    let output = git_output(workdir, &["ls-files", "--others", "--exclude-standard", "-z"]).await?;
+    let files = output
+        .split_terminator('\0')
+        .filter(|entry| !entry.is_empty())
+        .filter(|entry| !should_ignore_path(Path::new(entry)))
+        .map(|entry| entry.to_string())
+        .collect::<Vec<_>>();
+    Ok(files)
+}
+
+async fn diff_stats(
+    workdir: &Path,
+    base: &str,
+    untracked: &[String],
+) -> Result<(i64, i64, i64)> {
+    let output =
+        git_output_allow(workdir, &["diff", "--numstat", "-z", base], &[0, 1]).await?;
     let mut files = 0i64;
     let mut additions = 0i64;
     let mut deletions = 0i64;
 
-    for line in output.lines() {
-        let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.len() < 3 {
-            continue;
+    let mut apply_numstat = |record: &str| {
+        let mut parts = record.split('\t');
+        let adds = parts.next();
+        let dels = parts.next();
+        let path = parts.next();
+        if adds.is_none() || dels.is_none() || path.is_none() {
+            return;
+        }
+        if should_ignore_path(Path::new(path.unwrap())) {
+            return;
         }
         files += 1;
-        additions += parts[0].parse::<i64>().unwrap_or(0);
-        deletions += parts[1].parse::<i64>().unwrap_or(0);
+        additions += adds.unwrap().parse::<i64>().unwrap_or(0);
+        deletions += dels.unwrap().parse::<i64>().unwrap_or(0);
+    };
+
+    for record in output.split_terminator('\0') {
+        if record.is_empty() {
+            continue;
+        }
+        apply_numstat(record);
+    }
+
+    for file in untracked {
+        let output = git_output_allow(
+            workdir,
+            &["diff", "--numstat", "-z", "--no-index", "--", "/dev/null", file],
+            &[0, 1],
+        )
+        .await?;
+        for record in output.split_terminator('\0') {
+            if record.is_empty() {
+                continue;
+            }
+            apply_numstat(record);
+        }
     }
 
     Ok((files, additions, deletions))

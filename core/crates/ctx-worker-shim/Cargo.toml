@@ -11,7 +11,7 @@ clap.workspace = true
 ctx-worker-protocol = { path = "../ctx-worker-protocol" }
 notify = "6"
 reqwest.workspace = true
-rustls.workspace = true
+rustls = { workspace = true, features = ["aws-lc-rs"] }
 serde.workspace = true
 serde_json.workspace = true
 http = "1"
