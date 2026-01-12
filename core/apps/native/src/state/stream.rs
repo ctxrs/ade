@@ -218,12 +218,30 @@ impl ShellView {
             return;
         }
 
+        if let Some(turn) = delta.turn {
+            let mut found = false;
+            for existing in &mut self.session_turns {
+                if existing.turn_id == turn.turn_id {
+                    *existing = turn.clone();
+                    found = true;
+                    break;
+                }
+            }
+            if !found {
+                self.session_turns.push(turn);
+                self.session_turns
+                    .sort_by(|a, b| a.started_at.cmp(&b.started_at));
+            }
+        }
+
         if let Some(event) = delta.event {
             self.push_session_event(event);
         }
 
         if let Some(message) = delta.message {
-            self.push_message(message_item_from_model(&message));
+            self.push_message(message_item_from_model(&message), cx);
+        } else {
+            self.rebuild_thread_items();
         }
 
         cx.notify();

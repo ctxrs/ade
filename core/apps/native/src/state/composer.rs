@@ -15,7 +15,7 @@ use tokio::time::sleep;
 
 use ctx_client::{EnvTarget, InstallInfo, InstallProgressEvent, InstallStateKind, ProviderOptions};
 use ctx_core::ids::SessionId;
-use ctx_core::models::{MessageAttachment, MessageDelivery};
+use ctx_core::models::{MessageAttachment, MessageDelivery, MessageRole};
 use ctx_providers::adapters::ProviderHealth;
 
 use super::ShellView;
@@ -1230,10 +1230,13 @@ impl ShellView {
                             view.load_session_details(session_id, cx);
                         }
                         Err(_) => {
-                            view.push_message(MessageItem::new(
-                                "assistant",
-                                "Unable to send message.",
-                            ));
+                            view.push_message(
+                                MessageItem::new(
+                                    MessageRole::Assistant,
+                                    "Unable to send message.",
+                                ),
+                                cx,
+                            );
                         }
                     }
                     cx.notify();
@@ -2554,10 +2557,13 @@ impl ShellView {
                     match result {
                         Ok(session_id) => view.load_session_details(session_id, cx),
                         Err(_) => {
-                            view.push_message(MessageItem::new(
-                                "assistant",
-                                "Unable to update session model.",
-                            ));
+                            view.push_message(
+                                MessageItem::new(
+                                    MessageRole::Assistant,
+                                    "Unable to update session model.",
+                                ),
+                                cx,
+                            );
                         }
                     }
                     cx.notify();

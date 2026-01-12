@@ -1,14 +1,21 @@
-use gpui::{AsyncApp, ClickEvent, Context, ListOffset, WeakEntity, Window, px};
+use std::collections::HashMap;
+
+use std::time::{Duration, Instant};
+
+use gpui::{AsyncApp, ClickEvent, ClipboardItem, Context, ListOffset, WeakEntity, Window, px};
 use gpui_tokio::Tokio;
 
-use ctx_core::ids::SessionId;
-use ctx_core::models::{Artifact, SessionEvent, SessionHead, SessionHistoryPage};
+use ctx_core::ids::{SessionId, TurnId};
+use ctx_core::models::{
+    Artifact, MessageRole, SessionEvent, SessionHead, SessionHistoryPage, SessionTurn,
+};
 
 use super::{ArtifactPreviewState, ShellView};
 use super::super::models::{
-    build_message_items, session_info_from_head, session_info_from_summary, MessageItem,
-    SessionInfo,
+    build_message_items, build_thread_list_items, session_info_from_head, session_info_from_summary,
+    MessageItem, SessionInfo, ThreadItem, ThreadListItem, TurnToolSnapshot, WorkbenchTurnHeader,
 };
+use super::SessionViewVerbosity;
 
 struct SessionLoadResult {
     session_id: SessionId,
@@ -17,6 +24,8 @@ struct SessionLoadResult {
     session_events: Vec<SessionEvent>,
     artifacts: Vec<Artifact>,
 }
+
+const COPIED_TIMEOUT: Duration = Duration::from_millis(1_000);
 
 #[derive(Clone, Copy)]
 enum SessionControlAction {
@@ -58,15 +67,15 @@ impl ShellView {
         self.request_session_control(SessionControlAction::Cancel, cx);
     }
 
-    pub(crate) fn on_new_messages_click(
+    pub(crate) fn on_jump_to_latest_click(
         &mut self,
         _: &ClickEvent,
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.message_auto_follow = true;
-        self.new_message_count = 0;
-        self.scroll_messages_to_bottom();
+        self.thread_auto_follow = true;
+        self.new_thread_item_count = 0;
+        self.scroll_thread_to_bottom();
         cx.notify();
     }
 
@@ -95,10 +104,10 @@ impl ShellView {
                             view.load_session_details(session_id, cx);
                         }
                         Err(_) => {
-                            view.push_message(MessageItem::new(
-                                "assistant",
-                                action.failure_message(),
-                            ));
+                            view.push_message(
+                                MessageItem::new(MessageRole::Assistant, action.failure_message()),
+                                cx,
+                            );
                         }
                     }
                     cx.notify();
@@ -109,35 +118,106 @@ impl ShellView {
         .detach();
     }
 
-    pub(super) fn ensure_message_list_handler(&mut self, cx: &mut Context<Self>) {
-        if self.message_list_handler_set {
+    pub(crate) fn ensure_thread_list_handler(&mut self, cx: &mut Context<Self>) {
+        if self.thread_list_handler_set {
             return;
         }
         let view_handle = cx.entity();
-        self.message_list_state
+        self.thread_list_state
             .set_scroll_handler(move |event, _window, cx| {
                 let _ = view_handle.update(cx, |view, cx| {
                     let auto_follow = !event.is_scrolled;
-                    if view.message_auto_follow != auto_follow
-                        || (auto_follow && view.new_message_count > 0)
+                    if view.thread_auto_follow != auto_follow
+                        || (auto_follow && view.new_thread_item_count > 0)
                     {
-                        view.message_auto_follow = auto_follow;
+                        view.thread_auto_follow = auto_follow;
                         if auto_follow {
-                            view.new_message_count = 0;
+                            view.new_thread_item_count = 0;
                         }
                         cx.notify();
                     }
+                    view.update_sticky_turn_header(event.visible_range.clone());
                 });
             });
-        self.message_list_handler_set = true;
+        self.thread_list_handler_set = true;
     }
 
-    pub(super) fn replace_messages(&mut self, messages: Vec<MessageItem>) {
+    fn schedule_copied_reset(&self, key: String, cx: &mut Context<Self>) {
+        cx.spawn(move |this: WeakEntity<ShellView>, cx: &mut AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                tokio::time::sleep(COPIED_TIMEOUT).await;
+                this.update(&mut cx, |view, cx| {
+                    let now = Instant::now();
+                    if matches!(view.copied_flags.get(&key), Some(expiry) if *expiry <= now) {
+                        view.copied_flags.remove(&key);
+                        cx.notify();
+                    }
+                })
+                .ok();
+            }
+        })
+        .detach();
+    }
+
+    pub(crate) fn copy_text_with_key(
+        &mut self,
+        key: String,
+        text: String,
+        cx: &mut Context<Self>,
+    ) {
+        if text.trim().is_empty() {
+            return;
+        }
+        self.copied_flags
+            .insert(key.clone(), Instant::now() + COPIED_TIMEOUT);
+        cx.write_to_clipboard(ClipboardItem::new_string(text));
+        self.schedule_copied_reset(key, cx);
+        cx.notify();
+    }
+
+    pub(crate) fn copied_flag(&self, key: &str) -> bool {
+        self.copied_flags
+            .get(key)
+            .map(|expires| *expires > Instant::now())
+            .unwrap_or(false)
+    }
+
+
+    pub(crate) fn on_toggle_turn_header(&mut self, id: String, cx: &mut Context<Self>) {
+        let expanded = self.expanded_turn_headers.get(&id).copied().unwrap_or(false);
+        self.expanded_turn_headers.insert(id, !expanded);
+        cx.notify();
+    }
+
+    pub(crate) fn on_toggle_message(&mut self, id: String, cx: &mut Context<Self>) {
+        let expanded = self.expanded_messages.get(&id).copied().unwrap_or(false);
+        self.expanded_messages.insert(id, !expanded);
+        cx.notify();
+    }
+
+    pub(crate) fn on_toggle_turn_details(&mut self, id: String, cx: &mut Context<Self>) {
+        let expanded = self.expanded_turn_details.get(&id).copied().unwrap_or(false);
+        self.expanded_turn_details.insert(id, !expanded);
+        cx.notify();
+    }
+
+    pub(crate) fn on_toggle_tool(&mut self, id: String, cx: &mut Context<Self>) {
+        let expanded = self.expanded_tools.get(&id).copied().unwrap_or(false);
+        self.expanded_tools.insert(id, !expanded);
+        cx.notify();
+    }
+
+    pub(super) fn replace_messages(&mut self, messages: Vec<MessageItem>, cx: &mut Context<Self>) {
         self.messages = messages;
-        self.message_list_len = self.messages.len();
-        self.message_list_state.reset(self.message_list_len);
-        self.message_auto_follow = true;
-        self.new_message_count = 0;
+        self.prefetch_attachment_images(cx);
+        self.rebuild_thread_items();
+        self.thread_auto_follow = true;
+        self.new_thread_item_count = 0;
+    }
+
+    fn prefetch_attachment_images(&mut self, _cx: &mut Context<Self>) {
+        // TODO: fetch and cache image_ref attachments for rendering parity.
     }
 
     fn clear_placeholder_messages(&mut self) {
@@ -150,30 +230,27 @@ impl ShellView {
             .any(|placeholder| placeholder == &content)
         {
             self.messages.clear();
-            self.message_list_state.reset(0);
-            self.message_list_len = 0;
         }
     }
 
-    pub(super) fn push_message(&mut self, message: MessageItem) {
+    pub(super) fn push_message(&mut self, message: MessageItem, cx: &mut Context<Self>) {
         self.clear_placeholder_messages();
-        let old_len = self.message_list_len;
         self.messages.push(message);
-        let new_len = self.messages.len();
-        if new_len != old_len {
-            self.message_list_state.splice(old_len..old_len, new_len - old_len);
-            self.message_list_len = new_len;
-        }
-        if self.message_auto_follow {
-            self.scroll_messages_to_bottom();
-        } else {
-            self.new_message_count = self.new_message_count.saturating_add(new_len - old_len);
+        self.prefetch_attachment_images(cx);
+        let old_len = self.thread_list_len;
+        self.rebuild_thread_items();
+        let new_len = self.thread_list_len;
+        if self.thread_auto_follow {
+            self.scroll_thread_to_bottom();
+        } else if new_len > old_len {
+            self.new_thread_item_count =
+                self.new_thread_item_count.saturating_add(new_len - old_len);
         }
     }
 
-    fn scroll_messages_to_bottom(&mut self) {
-        let count = self.messages.len();
-        self.message_list_state.scroll_to(ListOffset {
+    fn scroll_thread_to_bottom(&mut self) {
+        let count = self.thread_list_len;
+        self.thread_list_state.scroll_to(ListOffset {
             item_ix: count,
             offset_in_item: px(0.0),
         });
@@ -213,9 +290,10 @@ impl ShellView {
             self.composer_model_id = Some(summary.session.model_id.clone());
         }
         self.replace_messages(vec![MessageItem::new(
-            "assistant",
+            MessageRole::Assistant,
             "Loading session messages...",
-        )]);
+        )], cx);
+        self.reset_thread_state();
         self.artifacts.clear();
         self.artifact_preview = ArtifactPreviewState::None;
         self.session_events.clear();
@@ -297,12 +375,18 @@ impl ShellView {
                         );
                         if messages.is_empty() {
                             messages.push(MessageItem::new(
-                                "assistant",
+                                MessageRole::Assistant,
                                 "No messages yet. Create one to begin.",
                             ));
                         }
-                        view.replace_messages(messages);
                         view.session_events = data.session_events;
+                        view.session_turns = merge_session_turns(
+                            data.session_head.as_ref(),
+                            data.session_history.as_ref(),
+                        );
+                        view.session_turn_tools =
+                            build_turn_tool_snapshots(data.session_head.as_ref());
+                        view.replace_messages(messages, cx);
                         if let Some(head) = data.session_head.as_ref() {
                             view.update_session_last_event_seq(head.session.id, head.last_event_seq);
                         } else if let Some(event) = view.session_events.last() {
@@ -321,10 +405,17 @@ impl ShellView {
                     }
                     Err(_) => {
                         view.replace_messages(vec![MessageItem::new(
-                            "assistant",
+                            MessageRole::Assistant,
                             "Unable to load session details.",
-                        )]);
+                        )], cx);
                         view.session_events.clear();
+                        view.session_turns.clear();
+                        view.session_turn_tools.clear();
+                        view.thread_items.clear();
+                        view.thread_list_state.reset(0);
+                        view.thread_list_len = 0;
+                        view.sticky_turn_header = None;
+                        view.sticky_turn_header_at_top = true;
                         view.artifacts.clear();
                         view.selected_artifact = None;
                         view.artifact_preview = ArtifactPreviewState::None;
@@ -350,4 +441,124 @@ impl ShellView {
             .map(|summary| summary.session_id)
             == Some(session_id)
     }
+
+    fn reset_thread_state(&mut self) {
+        self.session_turns.clear();
+        self.session_turn_tools.clear();
+        self.thread_items.clear();
+        self.thread_list_state.reset(0);
+        self.thread_list_len = 0;
+        self.thread_auto_follow = true;
+        self.new_thread_item_count = 0;
+        self.sticky_turn_header = None;
+        self.sticky_turn_header_at_top = true;
+        self.expanded_turn_headers.clear();
+        self.expanded_messages.clear();
+        self.expanded_turn_details.clear();
+        self.expanded_tools.clear();
+        self.turn_tools_loading.clear();
+    }
+
+    pub(crate) fn rebuild_thread_items(&mut self) {
+        let items = build_thread_list_items(
+            &self.session_turns,
+            &self.messages,
+            &self.session_turn_tools,
+            &self.session_events,
+        );
+        let items = filter_thread_list_items(items, self.verbosity);
+        let old_len = self.thread_list_len;
+        self.thread_items = items;
+        let new_len = self.thread_items.len();
+        self.thread_list_len = new_len;
+        self.thread_list_state.reset(new_len);
+        if self.thread_auto_follow {
+            self.new_thread_item_count = 0;
+            self.scroll_thread_to_bottom();
+        } else if new_len > old_len {
+            self.new_thread_item_count =
+                self.new_thread_item_count.saturating_add(new_len - old_len);
+        }
+        if new_len == 0 {
+            self.sticky_turn_header = None;
+            self.sticky_turn_header_at_top = true;
+        }
+    }
+
+    fn update_sticky_turn_header(&mut self, visible_range: std::ops::Range<usize>) {
+        if self.thread_items.is_empty() {
+            self.sticky_turn_header = None;
+            self.sticky_turn_header_at_top = true;
+            return;
+        }
+        let start = visible_range
+            .start
+            .min(self.thread_items.len().saturating_sub(1));
+        self.sticky_turn_header_at_top = matches!(
+            self.thread_items.get(start),
+            Some(ThreadListItem::TurnHeader { .. })
+        );
+        let mut header: Option<WorkbenchTurnHeader> = None;
+        for item in self.thread_items.iter().take(start + 1) {
+            if let ThreadListItem::TurnHeader { header: h, .. } = item {
+                header = Some(h.clone());
+            }
+        }
+        self.sticky_turn_header = header;
+    }
+}
+
+fn merge_session_turns(
+    head: Option<&SessionHead>,
+    history: Option<&SessionHistoryPage>,
+) -> Vec<SessionTurn> {
+    let mut turns: HashMap<TurnId, SessionTurn> = HashMap::new();
+    if let Some(history) = history {
+        for turn in &history.turns {
+            turns.insert(turn.turn_id, turn.clone());
+        }
+    }
+    if let Some(head) = head {
+        for turn in &head.turns {
+            turns.insert(turn.turn_id, turn.clone());
+        }
+    }
+    let mut out: Vec<SessionTurn> = turns.into_values().collect();
+    out.sort_by(|a, b| {
+        a.started_at
+            .cmp(&b.started_at)
+            .then_with(|| a.updated_at.cmp(&b.updated_at))
+    });
+    out
+}
+
+fn build_turn_tool_snapshots(head: Option<&SessionHead>) -> HashMap<TurnId, Vec<TurnToolSnapshot>> {
+    let mut out: HashMap<TurnId, Vec<TurnToolSnapshot>> = HashMap::new();
+    let Some(head) = head else {
+        return out;
+    };
+    for summary in &head.tool_summaries {
+        out.entry(summary.turn_id)
+            .or_default()
+            .push(TurnToolSnapshot::from_summary(summary));
+    }
+    out
+}
+
+fn filter_thread_list_items(
+    items: Vec<ThreadListItem>,
+    verbosity: SessionViewVerbosity,
+) -> Vec<ThreadListItem> {
+    if !matches!(verbosity, SessionViewVerbosity::Terse) {
+        return items;
+    }
+    items
+        .into_iter()
+        .filter(|item| match item {
+            ThreadListItem::Item(ThreadItem::Tool(_))
+            | ThreadListItem::Item(ThreadItem::ToolGroup { .. })
+            | ThreadListItem::Item(ThreadItem::Thought { .. }) => false,
+            _ => true,
+        })
+        .collect()
 }

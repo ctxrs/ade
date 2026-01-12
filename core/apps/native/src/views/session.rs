@@ -5,7 +5,7 @@ use crate::{automation_tree, theme::ThemeMetrics};
 use super::artifacts::ArtifactsView;
 use super::composer::{ComposerVariant, ComposerView};
 use super::diff_review::DiffReviewView;
-use super::messages::{EventsView, MessagesView};
+use super::messages::ThreadListView;
 use super::sessions_pane::SessionsPaneView;
 use super::super::icons::{Icon, IconName};
 use super::super::state::{DataLoadState, ShellView};
@@ -323,23 +323,15 @@ impl<'a> SessionView<'a> {
         if let Some(notice_block) = notice_block {
             thread_stack = thread_stack.child(notice_block);
         }
-        thread_stack = thread_stack
-            .child(
-                EventsView {
-                    colors: shell.colors,
-                    events: &shell.session_events,
-                }
-                .render(),
-            )
-            .child(
-                MessagesView {
-                    colors: shell.colors,
-                    messages: &shell.messages,
-                    message_list_state: &shell.message_list_state,
-                    new_message_count: shell.new_message_count,
-                }
-                .render(cx),
-            );
+        thread_stack = thread_stack.child(
+            ThreadListView {
+                shell,
+                items: &shell.thread_items,
+                list_state: &shell.thread_list_state,
+                new_item_count: shell.new_thread_item_count,
+            }
+            .render(cx),
+        );
 
         let composer = ComposerView {
             shell,

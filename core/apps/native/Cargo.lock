@@ -1549,6 +1549,7 @@ dependencies = [
  "image",
  "objc",
  "qrcode",
+ "regex",
  "serde",
  "serde_json",
  "tokio",
@@ -2592,7 +2593,7 @@ dependencies = [
 [[package]]
 name = "gpui-component"
 version = "0.5.0"
-source = "git+https://github.com/longbridge/gpui-component?rev=779ee50742d3f2865d04c9d6b96a54168ab8d9d8#779ee50742d3f2865d04c9d6b96a54168ab8d9d8"
+source = "git+https://github.com/ctxrs/gpui-component?rev=76d64362a1c0bdf825f83efb0ae3f4cb93849bd7#76d64362a1c0bdf825f83efb0ae3f4cb93849bd7"
 dependencies = [
  "aho-corasick",
  "anyhow",
@@ -2630,7 +2631,7 @@ dependencies = [
 [[package]]
 name = "gpui-component-macros"
 version = "0.5.0"
-source = "git+https://github.com/longbridge/gpui-component?rev=779ee50742d3f2865d04c9d6b96a54168ab8d9d8#779ee50742d3f2865d04c9d6b96a54168ab8d9d8"
+source = "git+https://github.com/ctxrs/gpui-component?rev=76d64362a1c0bdf825f83efb0ae3f4cb93849bd7#76d64362a1c0bdf825f83efb0ae3f4cb93849bd7"
 dependencies = [
  "proc-macro2",
  "quote",

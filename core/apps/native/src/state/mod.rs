@@ -11,7 +11,7 @@ pub(super) mod workspace;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
 use gpui::AppContext as _;
@@ -24,16 +24,16 @@ use gpui_tokio::Tokio;
 use ctx_client::{EnvTarget, ProviderOptions};
 use tokio::sync::watch;
 
-use ctx_core::ids::{SessionId, TaskId, WorkspaceId};
+use ctx_core::ids::{SessionId, TaskId, TurnId, WorkspaceId};
 use ctx_core::models::{
-    Artifact, MessageAttachment, SessionCatchupSummary, SessionEvent, WorkspaceCatchupClientMessage,
-    WorkspaceCatchupCursor,
+    Artifact, MessageAttachment, SessionCatchupSummary, SessionEvent, SessionTurn,
+    WorkspaceCatchupClientMessage, WorkspaceCatchupCursor,
 };
 
-use crate::theme::{ThemeColors, apply_gpui_component_theme};
+use crate::theme::ThemeColors;
 use super::ui_state::UiStateStore;
 
-use super::models::{MessageItem, SessionInfo};
+use super::models::{MessageItem, SessionInfo, ThreadListItem, TurnToolSnapshot, WorkbenchTurnHeader};
 use super::workspace_summary::{SessionSummaryItem, TaskSummaryItem};
 
 pub(crate) use artifacts::ArtifactPreviewState;
@@ -43,7 +43,8 @@ pub(crate) use composer::{
 };
 pub(crate) use diff_review::DiffReviewState;
 pub(crate) use settings::{
-    LabeledOption, SettingsInputKind, SettingsSection, SettingsSectionGroup, SettingsSelectKind, SettingsState, SETTINGS_SECTIONS,
+    LabeledOption, SettingsInputKind, SettingsSection, SettingsSectionGroup, SettingsSelectKind,
+    SettingsState, SETTINGS_SECTIONS,
 };
 pub(crate) use stream::StreamStatus;
 pub(crate) use terminal::{TerminalContext, TerminalPanelState};
@@ -103,9 +104,29 @@ pub(crate) struct SidebarResizeState {
     pub(crate) start_width: f32,
 }
 
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SessionViewVerbosity {
+    Terse,
+    Default,
+    Verbose,
+}
+
+impl SessionViewVerbosity {
+    #[allow(dead_code)]
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            SessionViewVerbosity::Terse => "Terse",
+            SessionViewVerbosity::Default => "Default",
+            SessionViewVerbosity::Verbose => "Verbose",
+        }
+    }
+}
+
 pub(crate) struct ShellView {
     pub(crate) colors: ThemeColors,
     pub(crate) base_url: String,
+    #[allow(dead_code)]
     pub(crate) is_dark: bool,
     pub(crate) route: ShellRoute,
     pub(crate) workspaces: Vec<WorkspaceItem>,
@@ -155,6 +176,19 @@ pub(crate) struct ShellView {
     pub(crate) sessions: Vec<SessionSummaryItem>,
     pub(crate) selected_session: Option<usize>,
     pub(crate) messages: Vec<MessageItem>,
+    pub(crate) session_turns: Vec<SessionTurn>,
+    pub(crate) session_turn_tools: HashMap<TurnId, Vec<TurnToolSnapshot>>,
+    pub(crate) thread_items: Vec<ThreadListItem>,
+    pub(crate) sticky_turn_header: Option<WorkbenchTurnHeader>,
+    pub(crate) sticky_turn_header_at_top: bool,
+    pub(crate) expanded_turn_headers: HashMap<String, bool>,
+    pub(crate) expanded_messages: HashMap<String, bool>,
+    pub(crate) expanded_turn_details: HashMap<String, bool>,
+    pub(crate) expanded_tools: HashMap<String, bool>,
+    pub(crate) turn_tools_loading: HashSet<TurnId>,
+    pub(crate) verbosity: SessionViewVerbosity,
+    #[allow(dead_code)]
+    pub(crate) verbosity_menu_open: bool,
     pub(crate) artifacts: Vec<Artifact>,
     pub(crate) selected_artifact: Option<usize>,
     pub(crate) artifact_preview: ArtifactPreviewState,
@@ -222,16 +256,17 @@ pub(crate) struct ShellView {
     pub(crate) composer_attachment_loading: HashSet<String>,
     pub(crate) composer_subscriptions: Vec<Subscription>,
     pub(crate) composer_subscriptions_set: bool,
-    pub(crate) message_list_state: ListState,
-    pub(crate) message_list_len: usize,
-    pub(crate) message_auto_follow: bool,
-    pub(crate) new_message_count: usize,
+    pub(crate) thread_list_state: ListState,
+    pub(crate) thread_list_len: usize,
+    pub(crate) thread_auto_follow: bool,
+    pub(crate) new_thread_item_count: usize,
+    pub(crate) copied_flags: HashMap<String, Instant>,
     pub(crate) stream_status: StreamStatus,
     pub(crate) resyncing_session: Option<SessionId>,
     pub(crate) stream_subscribe_tx: Option<watch::Sender<WorkspaceCatchupClientMessage>>,
     pub(crate) stream_stop_tx: Option<watch::Sender<bool>>,
     pub(crate) session_last_event_seq: HashMap<SessionId, i64>,
-    pub(crate) message_list_handler_set: bool,
+    pub(crate) thread_list_handler_set: bool,
     pub(crate) show_sessions_pane: bool,
     pub(crate) show_diff_pane: bool,
     pub(crate) show_artifacts_pane: bool,
@@ -248,14 +283,14 @@ impl ShellView {
         self.is_dark = !self.is_dark;
         let (tokens, colors) = super::load_theme(self.is_dark);
         self.colors = colors;
-        apply_gpui_component_theme(&tokens, self.is_dark, cx);
+        crate::theme::apply_gpui_component_theme(&tokens, self.is_dark, cx);
         let colors = self.colors;
         cx.update_entity(&self.terminal_panel_state, |state, cx| {
             state.colors = colors;
             cx.notify();
         });
         cx.update_entity(&self.settings_state, |state, cx| {
-            state.update_theme(colors, self.is_dark);
+            state.colors = colors;
             cx.notify();
         });
         cx.notify();
@@ -305,6 +340,7 @@ impl ShellView {
     }
 
     #[cfg(feature = "automation")]
+    #[allow(dead_code)]
     pub(crate) fn archived_ready(&self) -> bool {
         self.task_archived_loaded && self.task_fetch_archived != TaskFetchState::Loading
     }

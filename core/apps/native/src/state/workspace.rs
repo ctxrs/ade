@@ -5,6 +5,7 @@ use gpui_tokio::Tokio;
 
 use ctx_core::ids::{SessionId, TaskId, WorkspaceId};
 use ctx_core::models::{
+    MessageRole,
     Artifact, SessionCatchupSummary, SessionEvent, SessionHead, SessionHistoryPage, Task,
     WorkspaceCatchupSnapshot, WorkspaceCatchupTaskSummary, WorkspaceCatchupTrackSummary,
 };
@@ -52,7 +53,7 @@ impl ShellView {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.clear_task_focus("Select a task to begin.");
+        self.clear_task_focus("Select a task to begin.", cx);
         cx.notify();
     }
 
@@ -67,9 +68,9 @@ impl ShellView {
     }
 
     pub(crate) fn start_data_load(&mut self, cx: &mut Context<Self>) {
-        self.ensure_message_list_handler(cx);
+        self.ensure_thread_list_handler(cx);
         self.data_state = DataLoadState::Loading;
-        self.reset_workspace_view("Loading workspace data...");
+        self.reset_workspace_view("Loading workspace data...", cx);
         cx.notify();
 
         let task = Tokio::spawn_result(cx, async move {
@@ -113,7 +114,7 @@ impl ShellView {
                             if let Some(workspace_id) = view.selected_workspace {
                                 view.load_workspace(workspace_id, cx);
                             } else {
-                                view.reset_workspace_view("No workspaces yet.");
+                                view.reset_workspace_view("No workspaces yet.", cx);
                                 view.data_state = DataLoadState::Loaded;
                                 cx.notify();
                             }
@@ -122,7 +123,7 @@ impl ShellView {
                             view.workspaces.clear();
                             view.providers.clear();
                             view.selected_workspace = None;
-                            view.reset_workspace_view("Unable to load workspace list.");
+                            view.reset_workspace_view("Unable to load workspace list.", cx);
                             view.data_state = DataLoadState::Error(err.to_string());
                             cx.notify();
                         }
@@ -139,7 +140,7 @@ impl ShellView {
         self.selected_workspace = Some(workspace_id);
         self.stop_workspace_stream();
         self.data_state = DataLoadState::Loading;
-        self.reset_workspace_view("Loading workspace data...");
+        self.reset_workspace_view("Loading workspace data...", cx);
         cx.notify();
 
         let task = Tokio::spawn_result(cx, async move {
@@ -256,11 +257,11 @@ impl ShellView {
                         );
                         if messages.is_empty() {
                             messages.push(MessageItem::new(
-                                "assistant",
+                                MessageRole::Assistant,
                                 "No messages yet. Create one to begin.",
                             ));
                         }
-                        view.replace_messages(messages);
+                        view.replace_messages(messages, cx);
                         view.session_events = data.session_events;
                         if let Some(head) = data.session_head.as_ref() {
                             view.update_session_last_event_seq(head.session.id, head.last_event_seq);
@@ -278,7 +279,7 @@ impl ShellView {
                         view.start_workspace_stream(workspace_id, cx);
                     }
                     Err(err) => {
-                        view.reset_workspace_view("Unable to load workspace data.");
+                        view.reset_workspace_view("Unable to load workspace data.", cx);
                         view.data_state = DataLoadState::Error(err.to_string());
                         view.stream_status = StreamStatus::Idle;
                     }
@@ -291,7 +292,7 @@ impl ShellView {
         .detach();
     }
 
-    fn reset_workspace_view(&mut self, message: &str) {
+    fn reset_workspace_view(&mut self, message: &str, cx: &mut Context<Self>) {
         self.task_store_initialized = false;
         self.task_fetch_active = super::TaskFetchState::Idle;
         self.task_fetch_archived = super::TaskFetchState::Idle;
@@ -307,7 +308,7 @@ impl ShellView {
         self.selected_task = None;
         self.sessions.clear();
         self.selected_session = None;
-        self.replace_messages(vec![MessageItem::new("assistant", message)]);
+        self.replace_messages(vec![MessageItem::new(MessageRole::Assistant, message)], cx);
         self.artifacts.clear();
         self.artifact_preview = ArtifactPreviewState::None;
         self.session_events.clear();
@@ -613,9 +614,9 @@ impl ShellView {
             self.selected_session = None;
             self.session = SessionInfo::placeholder();
             self.replace_messages(vec![MessageItem::new(
-                "assistant",
+                MessageRole::Assistant,
                 "No messages yet. Create one to begin.",
-            )]);
+            )], cx);
         }
         self.maybe_mark_selected_task_read(cx);
         cx.notify();
@@ -769,14 +770,17 @@ impl ShellView {
         }
     }
 
-    fn clear_task_focus(&mut self, message: &str) {
+    fn clear_task_focus(&mut self, message: &str, cx: &mut Context<Self>) {
         self.selected_task = None;
         self.selected_session = None;
         self.new_task_mode = true;
         self.new_task_mode_locked = true;
         self.composer_needs_apply = true;
         self.session = SessionInfo::placeholder();
-        self.replace_messages(vec![MessageItem::new("assistant", message)]);
+        self.replace_messages(
+            vec![MessageItem::new(MessageRole::Assistant, message)],
+            cx,
+        );
         self.artifacts.clear();
         self.artifact_preview = ArtifactPreviewState::None;
         self.session_events.clear();
@@ -929,7 +933,7 @@ impl ShellView {
                     if let Ok(updated) = result {
                         view.apply_task_update(updated);
                         if next_archived && was_selected {
-                            view.clear_task_focus("Select a task to begin.");
+                            view.clear_task_focus("Select a task to begin.", cx);
                         }
                     }
                     view.archive_pending.remove(&task_id);
@@ -1037,7 +1041,7 @@ impl ShellView {
                     if result.is_ok() {
                         view.remove_task(task_id);
                         if was_selected {
-                            view.clear_task_focus("Select a task to begin.");
+                            view.clear_task_focus("Select a task to begin.", cx);
                         }
                         cx.notify();
                     }

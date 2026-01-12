@@ -191,6 +191,7 @@ pub(crate) enum SettingsSelectKind {
 
 pub(crate) struct SettingsState {
     pub(crate) colors: ThemeColors,
+    #[allow(dead_code)]
     pub(crate) is_dark: bool,
     pub(crate) harness_logos: HashMap<String, Arc<Image>>,
     pub(crate) shell_handle: Option<Entity<crate::app::ShellView>>,
@@ -953,6 +954,7 @@ impl SettingsState {
         cx.notify();
     }
 
+    #[allow(dead_code)]
     pub(crate) fn update_theme(&mut self, colors: ThemeColors, is_dark: bool) {
         self.colors = colors;
         if self.is_dark != is_dark {
@@ -961,6 +963,7 @@ impl SettingsState {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn set_shell_handle(&mut self, handle: Entity<crate::app::ShellView>) {
         self.shell_handle = Some(handle);
     }
