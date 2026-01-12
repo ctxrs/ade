@@ -47,7 +47,13 @@ struct SettingsView: View {
                                 .font(.headline)
                                 .foregroundColor(.ctxTextPrimary)
                             SettingsRowView(title: "User", value: userLabel)
-                            SettingsRowView(title: "Workspace", value: workspaceLabel)
+                            NavigationLink {
+                                WorkspaceSwitchView()
+                            } label: {
+                                SettingsLinkRowView(title: "Workspace", value: workspaceLabel)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityIdentifier("settings.workspace.link")
                             SettingsRowView(title: "Plan", value: planLabel)
                         }
                     }
@@ -446,6 +452,167 @@ private struct SettingsRowView: View {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .stroke(Color.ctxLine, lineWidth: 1)
         )
+    }
+}
+
+private struct SettingsLinkRowView: View {
+    let title: String
+    let value: String
+
+    var body: some View {
+        HStack {
+            Text(title)
+                .foregroundColor(.ctxTextSecondary)
+            Spacer()
+            Text(value)
+                .foregroundColor(.ctxTextPrimary)
+                .multilineTextAlignment(.trailing)
+            Image(systemName: "chevron.right")
+                .foregroundColor(.ctxTextSecondary)
+                .font(.caption)
+        }
+        .font(.subheadline)
+        .padding(12)
+        .background(Color.ctxSurface.opacity(0.6), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(Color.ctxLine, lineWidth: 1)
+        )
+    }
+}
+
+struct WorkspaceSwitchView: View {
+    @EnvironmentObject private var connection: ConnectionStore
+    @EnvironmentObject private var workspaceSelection: WorkspaceSelectionStore
+    @EnvironmentObject private var workbenchSelection: WorkbenchSelectionStore
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var workspaces: [WorkspaceSummary] = []
+    @State private var isLoading = false
+    @State private var errorMessage: String?
+
+    var body: some View {
+        ZStack {
+            CtxBackgroundView()
+            ScrollView(showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 16) {
+                    Text("Workspace")
+                        .font(.largeTitle.weight(.semibold))
+                        .foregroundColor(.ctxTextPrimary)
+                        .padding(.top, 12)
+
+                    if isLoading {
+                        Text("Loading workspaces...")
+                            .font(.caption)
+                            .foregroundColor(.ctxTextMuted)
+                    } else if let errorMessage {
+                        Text(errorMessage)
+                            .font(.caption)
+                            .foregroundColor(.ctxError)
+                    }
+
+                    if workspaces.isEmpty, !isLoading {
+                        Text("No workspaces available.")
+                            .font(.caption)
+                            .foregroundColor(.ctxTextMuted)
+                    } else {
+                        VStack(spacing: 12) {
+                            ForEach(workspaces) { workspace in
+                                Button {
+                                    selectWorkspace(workspace)
+                                } label: {
+                                    WorkspaceSwitchRowView(
+                                        workspace: workspace,
+                                        isSelected: workspace.id == workspaceSelection.workspaceId
+                                    )
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
+                }
+                .padding(.horizontal, 20)
+                .padding(.bottom, 24)
+            }
+        }
+        .navigationTitle("Workspace")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.visible, for: .navigationBar)
+        .task {
+            await loadWorkspaces()
+        }
+        .onChange(of: connection.isConnected) { _ in
+            _Concurrency.Task { await loadWorkspaces() }
+        }
+    }
+
+    @MainActor
+    private func loadWorkspaces() async {
+        guard let client = connection.apiClient else {
+            workspaces = []
+            errorMessage = "Connect to a daemon to load workspaces."
+            return
+        }
+        isLoading = true
+        errorMessage = nil
+        do {
+            workspaces = try await client.listWorkspaces()
+        } catch {
+            workspaces = []
+            errorMessage = "Failed to load workspaces."
+        }
+        isLoading = false
+    }
+
+    private func selectWorkspace(_ workspace: WorkspaceSummary) {
+        workspaceSelection.setWorkspace(workspace, daemonKey: connection.baseURLText)
+        workbenchSelection.setContext(daemonKey: connection.baseURLText, workspaceId: workspace.id)
+        workbenchSelection.setSelection(taskId: nil, trackId: nil, sessionId: nil)
+        dismiss()
+    }
+}
+
+private struct WorkspaceSwitchRowView: View {
+    let workspace: WorkspaceSummary
+    let isSelected: Bool
+
+    var body: some View {
+        HStack(spacing: 12) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Color.ctxSurfaceRaised)
+                Image(systemName: "folder")
+                    .foregroundColor(.ctxAccent)
+            }
+            .frame(width: 36, height: 36)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(workspace.name)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundColor(.ctxTextPrimary)
+                Text(workspaceDetailText)
+                    .font(.caption)
+                    .foregroundColor(.ctxTextMuted)
+            }
+
+            Spacer()
+
+            if isSelected {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundColor(.ctxAccent)
+            }
+        }
+        .padding(12)
+        .background(Color.ctxSurface.opacity(isSelected ? 0.75 : 0.6), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(isSelected ? Color.ctxAccent.opacity(0.6) : Color.ctxLine, lineWidth: 1)
+        )
+    }
+
+    private var workspaceDetailText: String {
+        let url = URL(fileURLWithPath: workspace.rootPath)
+        return url.lastPathComponent.isEmpty ? workspace.rootPath : url.lastPathComponent
     }
 }
 

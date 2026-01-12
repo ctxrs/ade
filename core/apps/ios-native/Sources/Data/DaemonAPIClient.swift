@@ -168,8 +168,8 @@ actor DaemonAPIClient {
     }
 
     func listMessages(sessionId: String) async throws -> [MessageSummary] {
-        let items: [Message] = try await request("/api/sessions/\(sessionId)/messages")
-        return items.map(MessageSummary.init)
+        let head = try await getSessionHead(sessionId: sessionId, limit: 200, includeEvents: false)
+        return head.messages.map(MessageSummary.init)
     }
 
     func postMessage(sessionId: String, content: String, delivery: MessageDelivery?, attachments: [MessageAttachment]?) async throws -> MessageSummary {

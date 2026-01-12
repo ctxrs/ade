@@ -40,8 +40,19 @@ struct ConnectionView: View {
                                 GlassPill(text: "Local network", tint: .ctxAccent)
                             }
 
-                            CtxField(title: "Daemon URL", placeholder: "https://your-daemon.local", text: $daemonURL)
-                            CtxField(title: "Access Token", placeholder: "Paste token", text: $accessToken, isSecure: true)
+                            CtxField(
+                                title: "Daemon URL",
+                                placeholder: "https://your-daemon.local",
+                                text: $daemonURL,
+                                accessibilityId: "connection.daemon"
+                            )
+                            CtxField(
+                                title: "Access Token",
+                                placeholder: "Paste token",
+                                text: $accessToken,
+                                isSecure: true,
+                                accessibilityId: "connection.token"
+                            )
 
                             Toggle(isOn: $rememberDevice) {
                                 Text("Remember this device")
@@ -75,6 +86,7 @@ struct ConnectionView: View {
                             }
                             .buttonStyle(CtxPrimaryButtonStyle())
                             .disabled(isConnecting)
+                            .accessibilityIdentifier("connection.connect")
 
                             Button {
                                 isShowingScanner = true
@@ -86,6 +98,7 @@ struct ConnectionView: View {
                                 }
                             }
                             .buttonStyle(CtxGhostButtonStyle())
+                            .accessibilityIdentifier("connection.scan")
                         }
                     }
 

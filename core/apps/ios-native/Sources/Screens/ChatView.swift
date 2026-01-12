@@ -74,6 +74,7 @@ struct ChatView: View {
                     .padding(.bottom, CtxChatStyle.messageBottomPadding)
                 }
                 .scrollDismissesKeyboard(.interactively)
+                .accessibilityIdentifier("chat.messages")
                 .onAppear {
                     scrollToBottom(proxy: proxy, animated: false)
                 }
@@ -207,6 +208,8 @@ struct MessageRow: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: message.role == .assistant ? .leading : .trailing)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("chat.message.\(message.role == .assistant ? "assistant" : "user")")
     }
 
     private var bubble: some View {
@@ -216,6 +219,7 @@ struct MessageRow: View {
                     .font(CtxChatStyle.bodyFont)
                     .foregroundColor(.ctxTextPrimary)
                     .lineSpacing(CtxChatStyle.bodyLineSpacing)
+                    .accessibilityIdentifier("chat.message.text.\(message.role == .assistant ? "assistant" : "user")")
             }
             if !message.attachments.isEmpty {
                 AttachmentStrip(
@@ -225,6 +229,7 @@ struct MessageRow: View {
             }
         }
         .modifier(MessageBubbleStyle(role: message.role, maxBubbleWidth: maxBubbleWidth))
+        .accessibilityElement(children: .contain)
     }
 }
 
@@ -714,6 +719,7 @@ struct ComposerBar: View {
                 }
                 TextField("", text: $text, axis: .vertical)
                     .lineLimit(1...6)
+                    .accessibilityIdentifier("chat.composer.input")
                     .font(CtxChatStyle.bodyFont)
                     .foregroundColor(.ctxTextPrimary)
                     .tint(.ctxAccent)
@@ -728,7 +734,7 @@ struct ComposerBar: View {
                 Spacer(minLength: 0)
 
                 if isSendEnabled {
-                    ComposerCircleButton(systemName: "arrow.up") {
+                    ComposerCircleButton(systemName: "arrow.up", accessibilityId: "chat.composer.send") {
                         onSend()
                     }
                 } else {
@@ -765,7 +771,14 @@ struct ComposerToolIcon: View {
 
 struct ComposerCircleButton: View {
     let systemName: String
+    let accessibilityId: String?
     let action: () -> Void
+
+    init(systemName: String, accessibilityId: String? = nil, action: @escaping () -> Void) {
+        self.systemName = systemName
+        self.accessibilityId = accessibilityId
+        self.action = action
+    }
 
     var body: some View {
         Button(action: action) {
@@ -777,6 +790,7 @@ struct ComposerCircleButton: View {
                     Circle().fill(Color.ctxAccent)
                 )
         }
+        .accessibilityIdentifier(accessibilityId ?? "")
     }
 }
 
@@ -982,8 +996,9 @@ final class ChatViewModel: ObservableObject {
                     attachments: summary.attachments ?? []
                 )
             }
-            messages = applyStreamingAssistantState(to: nextMessages)
-            if pendingAssistantResponse, nextMessages.last?.role == .assistant {
+            let nextWithStreaming = applyStreamingAssistantState(to: nextMessages)
+            messages = nextWithStreaming
+            if pendingAssistantResponse, nextWithStreaming.contains(where: { $0.role == .assistant }) {
                 pendingAssistantResponse = false
                 streamingAssistantState = nil
             }

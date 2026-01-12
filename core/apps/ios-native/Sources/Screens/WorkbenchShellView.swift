@@ -15,6 +15,7 @@ struct WorkbenchShellView: View {
     @State private var taskError: String?
     @State private var lastWorkspaceId: String?
     @State private var sessionCreationTaskId: String?
+    @State private var didResetSelection = false
 
     var body: some View {
         GeometryReader { proxy in
@@ -59,7 +60,6 @@ struct WorkbenchShellView: View {
                 WorkbenchDrawerView(
                     workspaces: workspaces,
                     selectedWorkspace: selectedWorkspace,
-                    selectedWorkspaceId: selectedWorkspace?.id,
                     isLoadingWorkspaces: isLoadingWorkspaces,
                     workspaceError: workspaceError,
                     activeTasks: activeTasks,
@@ -70,14 +70,6 @@ struct WorkbenchShellView: View {
                     drawerWidth: drawerWidth,
                     onClose: { isDrawerOpen = false },
                     onRefresh: { _Concurrency.Task { await loadWorkspaces() } },
-                    onSelectWorkspace: { workspace in
-                        workspaceSelection.setWorkspace(workspace, daemonKey: connection.baseURLText)
-                        workbenchSelection.setContext(daemonKey: connection.baseURLText, workspaceId: workspace.id)
-                        workbenchSelection.setSelection(taskId: nil, trackId: nil, sessionId: nil)
-                        lastWorkspaceId = workspace.id
-                        _Concurrency.Task { await loadTasks() }
-                        isDrawerOpen = false
-                    },
                     onSelectTask: { task in
                         selectTask(task)
                         isDrawerOpen = false
@@ -164,6 +156,7 @@ struct WorkbenchShellView: View {
             }
             let selectionWorkspaceId = resolved?.id ?? workspaceSelection.workspaceId
             workbenchSelection.setContext(daemonKey: daemonKey, workspaceId: selectionWorkspaceId)
+            resetSelectionIfNeeded()
             if selectionWorkspaceId != lastWorkspaceId {
                 workbenchSelection.setSelection(taskId: nil, trackId: nil, sessionId: nil)
                 lastWorkspaceId = selectionWorkspaceId
@@ -212,6 +205,14 @@ struct WorkbenchShellView: View {
         }
         guard resolved.sessionId == nil, task.task.archivedAt == nil else { return }
         _Concurrency.Task { await ensurePrimarySession(taskId: taskId) }
+    }
+
+    private func resetSelectionIfNeeded() {
+        guard !didResetSelection else { return }
+        if ProcessInfo.processInfo.environment["CTX_RESET_SELECTION"] == "1" {
+            workbenchSelection.clearSelection()
+        }
+        didResetSelection = true
     }
 
     private func selectTask(_ task: WorkspaceCatchupTaskSummary) {
@@ -321,6 +322,7 @@ private struct WorkbenchTopBar: View {
                     .font(.title2)
             }
             .foregroundColor(.ctxTextPrimary)
+            .accessibilityIdentifier("drawer.open")
 
             Button(action: onWorkspaceTap) {
                 VStack(alignment: .leading, spacing: 2) {
@@ -343,7 +345,6 @@ private struct WorkbenchTopBar: View {
 private struct WorkbenchDrawerView: View {
     let workspaces: [WorkspaceSummary]
     let selectedWorkspace: WorkspaceSummary?
-    let selectedWorkspaceId: String?
     let isLoadingWorkspaces: Bool
     let workspaceError: String?
     let activeTasks: [WorkspaceCatchupTaskSummary]
@@ -354,113 +355,50 @@ private struct WorkbenchDrawerView: View {
     let drawerWidth: CGFloat
     let onClose: () -> Void
     let onRefresh: () -> Void
-    let onSelectWorkspace: (WorkspaceSummary) -> Void
     let onSelectTask: (WorkspaceCatchupTaskSummary) -> Void
     @State private var showArchived = false
 
     var body: some View {
-        ScrollView(showsIndicators: false) {
-            VStack(alignment: .leading, spacing: 20) {
-                HStack {
-                    Text("ctx")
-                        .font(.title2.weight(.semibold))
-                        .foregroundColor(.ctxTextPrimary)
-                    Spacer()
-                    Button(action: onClose) {
-                        Image(systemName: "xmark")
-                            .font(.headline)
-                    }
-                    .foregroundColor(.ctxTextSecondary)
-                }
-
-                VStack(alignment: .leading, spacing: 12) {
+        VStack(spacing: 0) {
+            ScrollView(showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 20) {
                     HStack {
-                        Text("Workspaces")
+                        Text("ctx")
+                            .font(.title2.weight(.semibold))
+                            .foregroundColor(.ctxTextPrimary)
+                        Spacer()
+                        Button(action: onClose) {
+                            Image(systemName: "xmark")
+                                .font(.headline)
+                        }
+                        .foregroundColor(.ctxTextSecondary)
+                        .accessibilityIdentifier("drawer.close")
+                    }
+
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Tasks")
                             .font(.caption.weight(.semibold))
                             .foregroundColor(.ctxTextMuted)
-                        Spacer()
-                        Button(action: onRefresh) {
-                            Image(systemName: "arrow.clockwise")
-                                .foregroundColor(.ctxTextSecondary)
+                        if selectedWorkspace == nil {
+                            Text("Select a workspace in settings to view tasks.")
                                 .font(.caption)
-                        }
-                    }
-                    if isLoadingWorkspaces {
-                        ProgressView()
-                            .tint(.ctxAccent)
-                    } else if let workspaceError {
-                        Text(workspaceError)
-                            .font(.caption)
-                            .foregroundColor(.ctxError)
-                    } else if workspaces.isEmpty {
-                        Text("No workspaces connected yet.")
-                            .font(.caption)
-                            .foregroundColor(.ctxTextMuted)
-                    } else {
-                        ForEach(workspaces) { workspace in
-                            Button {
-                                onSelectWorkspace(workspace)
-                            } label: {
-                                DrawerWorkspaceRowView(
-                                    workspace: workspace,
-                                    isSelected: workspace.id == selectedWorkspaceId
-                                )
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                }
-
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("Tasks")
-                        .font(.caption.weight(.semibold))
-                        .foregroundColor(.ctxTextMuted)
-                    if selectedWorkspace == nil {
-                        Text("Select a workspace to view tasks.")
-                            .font(.caption)
-                            .foregroundColor(.ctxTextMuted)
-                    } else {
-                        if isLoadingTasks {
-                            ProgressView()
-                                .tint(.ctxAccent)
-                        } else if let taskError {
-                            Text(taskError)
-                                .font(.caption)
-                                .foregroundColor(.ctxError)
+                                .foregroundColor(.ctxTextMuted)
                         } else {
-                            if activeTasks.isEmpty {
-                                Text("No active tasks.")
+                            if isLoadingTasks {
+                                ProgressView()
+                                    .tint(.ctxAccent)
+                            } else if let taskError {
+                                Text(taskError)
                                     .font(.caption)
-                                    .foregroundColor(.ctxTextMuted)
+                                    .foregroundColor(.ctxError)
                             } else {
-                                VStack(spacing: 10) {
-                                    ForEach(activeTasks, id: \.task.id) { task in
-                                        Button {
-                                            onSelectTask(task)
-                                        } label: {
-                                            WorkbenchNavRowView(
-                                                title: task.task.title,
-                                                subtitle: task.task.description ?? "Status: \(task.task.status)",
-                                                status: task.task.status.capitalized,
-                                                icon: "list.bullet.rectangle",
-                                                showsChevron: false,
-                                                isSelected: activeTaskId == task.task.id.stringValue
-                                            )
-                                        }
-                                        .buttonStyle(.plain)
-                                    }
-                                }
-                            }
-
-                            DisclosureGroup(isExpanded: $showArchived) {
-                                if archivedTasks.isEmpty {
-                                    Text("No archived tasks.")
+                                if activeTasks.isEmpty {
+                                    Text("No active tasks.")
                                         .font(.caption)
                                         .foregroundColor(.ctxTextMuted)
-                                        .padding(.top, 6)
                                 } else {
                                     VStack(spacing: 10) {
-                                        ForEach(archivedTasks, id: \.task.id) { task in
+                                        ForEach(activeTasks, id: \.task.id) { task in
                                             Button {
                                                 onSelectTask(task)
                                             } label: {
@@ -468,57 +406,99 @@ private struct WorkbenchDrawerView: View {
                                                     title: task.task.title,
                                                     subtitle: task.task.description ?? "Status: \(task.task.status)",
                                                     status: task.task.status.capitalized,
-                                                    icon: "archivebox",
+                                                    icon: "list.bullet.rectangle",
                                                     showsChevron: false,
                                                     isSelected: activeTaskId == task.task.id.stringValue
                                                 )
                                             }
                                             .buttonStyle(.plain)
+                                            .accessibilityIdentifier("drawer.task.\(task.task.id.stringValue)")
                                         }
                                     }
-                                    .padding(.top, 8)
                                 }
-                            } label: {
-                                HStack {
-                                    Text("Archived")
-                                        .font(.caption.weight(.semibold))
-                                        .foregroundColor(.ctxTextMuted)
-                                    Spacer()
-                                    Text("\(archivedTasks.count)")
-                                        .font(.caption)
-                                        .foregroundColor(.ctxTextSecondary)
+
+                                DisclosureGroup(isExpanded: $showArchived) {
+                                    if archivedTasks.isEmpty {
+                                        Text("No archived tasks.")
+                                            .font(.caption)
+                                            .foregroundColor(.ctxTextMuted)
+                                            .padding(.top, 6)
+                                    } else {
+                                        VStack(spacing: 10) {
+                                            ForEach(archivedTasks, id: \.task.id) { task in
+                                                Button {
+                                                    onSelectTask(task)
+                                                } label: {
+                                                    WorkbenchNavRowView(
+                                                        title: task.task.title,
+                                                        subtitle: task.task.description ?? "Status: \(task.task.status)",
+                                                        status: task.task.status.capitalized,
+                                                        icon: "archivebox",
+                                                        showsChevron: false,
+                                                        isSelected: activeTaskId == task.task.id.stringValue
+                                                    )
+                                                }
+                                                .buttonStyle(.plain)
+                                                .accessibilityIdentifier("drawer.task.\(task.task.id.stringValue)")
+                                            }
+                                        }
+                                        .padding(.top, 8)
+                                    }
+                                } label: {
+                                    HStack {
+                                        Text("Archived")
+                                            .font(.caption.weight(.semibold))
+                                            .foregroundColor(.ctxTextMuted)
+                                        Spacer()
+                                        Text("\(archivedTasks.count)")
+                                            .font(.caption)
+                                            .foregroundColor(.ctxTextSecondary)
+                                    }
                                 }
+                                .accessibilityIdentifier("drawer.archived.toggle")
+                                .accentColor(.ctxTextSecondary)
                             }
-                            .accentColor(.ctxTextSecondary)
                         }
                     }
-                }
 
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("Shortcuts")
-                        .font(.caption.weight(.semibold))
-                        .foregroundColor(.ctxTextMuted)
-                    NavigationLink {
-                        SettingsView(selectedWorkspace: selectedWorkspace)
-                    } label: {
-                        DrawerLinkRowView(title: "Settings", icon: "gearshape")
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Shortcuts")
+                            .font(.caption.weight(.semibold))
+                            .foregroundColor(.ctxTextMuted)
+                        NavigationLink {
+                            SettingsView(selectedWorkspace: selectedWorkspace)
+                        } label: {
+                            DrawerLinkRowView(title: "Settings", icon: "gearshape")
+                        }
+                        NavigationLink {
+                            DiagnosticsView()
+                        } label: {
+                            DrawerLinkRowView(title: "Diagnostics", icon: "waveform.path.ecg")
+                        }
                     }
-                    NavigationLink {
-                        DiagnosticsView()
-                    } label: {
-                        DrawerLinkRowView(title: "Diagnostics", icon: "waveform.path.ecg")
-                    }
-                }
 
-                HStack(spacing: 12) {
-                    GlassPill(text: "Daemon healthy", tint: .ctxAccent)
-                    Spacer()
-                    Image(systemName: "antenna.radiowaves.left.and.right")
-                        .foregroundColor(.ctxTextSecondary)
+                    HStack(spacing: 12) {
+                        GlassPill(text: "Daemon healthy", tint: .ctxAccent)
+                        Spacer()
+                        Image(systemName: "antenna.radiowaves.left.and.right")
+                            .foregroundColor(.ctxTextSecondary)
+                    }
                 }
+                .padding(20)
             }
-            .padding(20)
+
+            Divider()
+                .background(Color.ctxLine.opacity(0.8))
+
+            WorkbenchWorkspaceSwitcherView(
+                workspaces: workspaces,
+                selectedWorkspace: selectedWorkspace,
+                isLoadingWorkspaces: isLoadingWorkspaces,
+                workspaceError: workspaceError,
+                onRefresh: onRefresh
+            )
         }
+        .accessibilityIdentifier("drawer.container")
         .safeAreaInset(edge: .top, spacing: 0) {
             Color.clear.frame(height: 12)
         }
@@ -557,6 +537,87 @@ private struct DrawerLinkRowView: View {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .stroke(Color.ctxLine, lineWidth: 1)
         )
+    }
+}
+
+private struct WorkbenchWorkspaceSwitcherView: View {
+    let workspaces: [WorkspaceSummary]
+    let selectedWorkspace: WorkspaceSummary?
+    let isLoadingWorkspaces: Bool
+    let workspaceError: String?
+    let onRefresh: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Workspace")
+                    .font(.caption.weight(.semibold))
+                    .foregroundColor(.ctxTextMuted)
+                Spacer()
+                Button(action: onRefresh) {
+                    Image(systemName: "arrow.clockwise")
+                        .foregroundColor(.ctxTextSecondary)
+                        .font(.caption)
+                }
+            }
+
+            if isLoadingWorkspaces {
+                ProgressView()
+                    .tint(.ctxAccent)
+            } else if let workspaceError {
+                Text(workspaceError)
+                    .font(.caption)
+                    .foregroundColor(.ctxError)
+            } else if workspaces.isEmpty {
+                Text("No workspaces connected yet.")
+                    .font(.caption)
+                    .foregroundColor(.ctxTextMuted)
+            } else {
+                NavigationLink {
+                    WorkspaceSwitchView()
+                } label: {
+                    HStack(spacing: 12) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(selectedWorkspace?.name ?? "No workspace")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundColor(.ctxTextPrimary)
+                            if let detail = selectedWorkspace?.rootPath {
+                                Text(workspaceDetailText(detail))
+                                    .font(.caption)
+                                    .foregroundColor(.ctxTextMuted)
+                            }
+                        }
+                        Spacer()
+                        HStack(spacing: 6) {
+                            Text("Switch")
+                                .font(.subheadline.weight(.semibold))
+                            Image(systemName: "chevron.right")
+                                .font(.caption)
+                        }
+                        .foregroundColor(.ctxAccent)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(Color.ctxSurfaceRaised, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("drawer.workspace.switch")
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.ctxSurface.opacity(0.6), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(Color.ctxLine, lineWidth: 1)
+        )
+        .padding(.horizontal, 16)
+        .padding(.bottom, 16)
+    }
+
+    private func workspaceDetailText(_ rootPath: String) -> String {
+        let url = URL(fileURLWithPath: rootPath)
+        return url.lastPathComponent.isEmpty ? rootPath : url.lastPathComponent
     }
 }
 
@@ -614,7 +675,7 @@ private struct WorkbenchNavigationFlowView: View {
         } else {
             WorkbenchEmptyStateView(
                 title: "No workspace selected",
-                message: "Pick a workspace from the drawer to start browsing tasks."
+                message: "Pick a workspace in settings to start browsing tasks."
             )
         }
     }
@@ -637,6 +698,7 @@ private struct WorkbenchNewTaskView: View {
     @State private var isLoadingModels = false
     @State private var errorMessage: String?
     @State private var isSubmitting = false
+    @FocusState private var isPromptFocused: Bool
 
     var body: some View {
         ScrollView(showsIndicators: false) {
@@ -658,7 +720,12 @@ private struct WorkbenchNewTaskView: View {
                         Text("Prompt")
                             .font(.caption.weight(.semibold))
                             .foregroundColor(.ctxTextMuted)
-                        CtxTextArea(placeholder: "Describe what you want...", text: $prompt)
+                        CtxTextArea(
+                            placeholder: "Describe what you want...",
+                            text: $prompt,
+                            accessibilityId: "newtask.prompt",
+                            isFocused: $isPromptFocused
+                        )
 
                         WorkbenchMenuPicker(
                             title: "Harness",
@@ -692,6 +759,7 @@ private struct WorkbenchNewTaskView: View {
                 }
                 .buttonStyle(CtxPrimaryButtonStyle())
                 .disabled(!canSubmit)
+                .accessibilityIdentifier("newtask.start")
             }
             .padding(.horizontal, 20)
             .padding(.bottom, 20)
@@ -701,6 +769,15 @@ private struct WorkbenchNewTaskView: View {
         }
         .task(id: effectiveProviderId) {
             await loadModels()
+        }
+        .onAppear {
+            let isUITest = ProcessInfo.processInfo.environment["CTX_UI_TEST_MODE"] == "1"
+            if isUITest {
+                _Concurrency.Task { @MainActor in
+                    try? await _Concurrency.Task.sleep(nanoseconds: 200_000_000)
+                    isPromptFocused = true
+                }
+            }
         }
     }
 
@@ -853,8 +930,23 @@ private struct WorkbenchNewTaskView: View {
 private struct CtxTextArea: View {
     let placeholder: String
     @Binding var text: String
+    let accessibilityId: String?
+    let isFocused: FocusState<Bool>.Binding?
+
+    init(
+        placeholder: String,
+        text: Binding<String>,
+        accessibilityId: String? = nil,
+        isFocused: FocusState<Bool>.Binding? = nil
+    ) {
+        self.placeholder = placeholder
+        self._text = text
+        self.accessibilityId = accessibilityId
+        self.isFocused = isFocused
+    }
 
     var body: some View {
+        let isUITest = ProcessInfo.processInfo.environment["CTX_UI_TEST_MODE"] == "1"
         ZStack(alignment: .topLeading) {
             if text.isEmpty {
                 Text(placeholder)
@@ -863,12 +955,62 @@ private struct CtxTextArea: View {
                     .padding(.horizontal, 12)
                     .padding(.vertical, 12)
             }
-            TextEditor(text: $text)
-                .foregroundColor(.ctxTextPrimary)
-                .font(.subheadline)
-                .frame(minHeight: 140)
-                .scrollContentBackground(.hidden)
-                .padding(8)
+            if let accessibilityId {
+                if isUITest {
+                    if let isFocused {
+                        TextField("", text: $text)
+                            .foregroundColor(.ctxTextPrimary)
+                            .font(.subheadline)
+                            .frame(minHeight: 140, alignment: .topLeading)
+                            .padding(8)
+                            .accessibilityIdentifier(accessibilityId)
+                            .focused(isFocused)
+                    } else {
+                        TextField("", text: $text)
+                            .foregroundColor(.ctxTextPrimary)
+                            .font(.subheadline)
+                            .frame(minHeight: 140, alignment: .topLeading)
+                            .padding(8)
+                            .accessibilityIdentifier(accessibilityId)
+                    }
+                } else {
+                    if let isFocused {
+                        TextEditor(text: $text)
+                            .foregroundColor(.ctxTextPrimary)
+                            .font(.subheadline)
+                            .frame(minHeight: 140)
+                            .scrollContentBackground(.hidden)
+                            .padding(8)
+                            .accessibilityIdentifier(accessibilityId)
+                            .focused(isFocused)
+                    } else {
+                        TextEditor(text: $text)
+                            .foregroundColor(.ctxTextPrimary)
+                            .font(.subheadline)
+                            .frame(minHeight: 140)
+                            .scrollContentBackground(.hidden)
+                            .padding(8)
+                            .accessibilityIdentifier(accessibilityId)
+                    }
+                }
+            } else {
+                if let isFocused {
+                    TextEditor(text: $text)
+                        .foregroundColor(.ctxTextPrimary)
+                        .font(.subheadline)
+                        .frame(minHeight: 140)
+                        .scrollContentBackground(.hidden)
+                        .padding(8)
+                        .focused(isFocused)
+                } else {
+                    TextEditor(text: $text)
+                        .foregroundColor(.ctxTextPrimary)
+                        .font(.subheadline)
+                        .frame(minHeight: 140)
+                        .scrollContentBackground(.hidden)
+                        .padding(8)
+                }
+            }
         }
         .background(Color.ctxSurface.opacity(0.6), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay(
@@ -1140,7 +1282,7 @@ private func extractModelIds(from models: JSONValue?) -> [String] {
             case .string(let string):
                 return string
             case .object(let object):
-                if case .string(let id) = object["id"] {
+                if case .string(let id) = object["modelId"] ?? object["id"] {
                     return id
                 }
                 return nil
@@ -1150,8 +1292,17 @@ private func extractModelIds(from models: JSONValue?) -> [String] {
         }
         return uniqueTrimmed(rawIds)
     case .object(let object):
+        if let available = object["availableModels"] {
+            return extractModelIds(from: available)
+        }
+        if let models = object["models"] {
+            return extractModelIds(from: models)
+        }
         if let choices = object["choices"] {
             return extractModelIds(from: choices)
+        }
+        if case .string(let current) = object["currentModelId"] {
+            return uniqueTrimmed([current])
         }
         let keys = object.keys.filter { !$0.isEmpty && $0 != "choices" }.sorted()
         return keys

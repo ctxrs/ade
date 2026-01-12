@@ -20,6 +20,20 @@ packages:
   Sodium:
     url: https://github.com/jedisct1/swift-sodium.git
     from: 0.10.0
+schemes:
+  CtxIOS:
+    build:
+      targets:
+        CtxIOS: all
+    test:
+      targets:
+        - CtxIOSUITests
+      environmentVariables:
+        CTX_IOS_BASE_URL: $(CTX_IOS_BASE_URL)
+        CTX_IOS_TOKEN: $(CTX_IOS_TOKEN)
+        CTX_AUTO_CONNECT: "1"
+        CTX_RESET_SELECTION: "1"
+        CTX_UI_TEST_MODE: "1"
 targets:
   CtxIOS:
     type: application
@@ -48,3 +62,16 @@ targets:
         NSMicrophoneUsageDescription: "Send voice messages."
         NSPhotoLibraryUsageDescription: "Attach images."
         NSPhotoLibraryAddUsageDescription: "Save images."
+
+  CtxIOSUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    dependencies:
+      - target: CtxIOS
+    sources:
+      - path: Tests/UITests
+    info:
+      path: Tests/UITests/Info.plist
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: rs.ctx.ios.uitests
