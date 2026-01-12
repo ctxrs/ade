@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 use std::io::Cursor;
 use std::sync::{Arc, OnceLock};
 
@@ -167,4 +168,224 @@ fn hue_to_rgb(p: f32, q: f32, mut t: f32) -> f32 {
         return p + (q - p) * (2.0 / 3.0 - t) * 6.0;
     }
     p
+=======
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use gpui::{Image, ImageFormat};
+
+#[derive(Clone, Debug)]
+pub(crate) struct HarnessCatalogEntry {
+    pub(crate) id: &'static str,
+    pub(crate) label: &'static str,
+    pub(crate) logo_bytes: Option<&'static [u8]>,
+    pub(crate) invert_in_dark: bool,
+}
+
+const LOGO_AMP: &[u8] = include_bytes!("../assets/emdash-logos/ampcode.png");
+const LOGO_ATLASSIAN: &[u8] = include_bytes!("../assets/emdash-logos/atlassian.png");
+const LOGO_AUGMENT: &[u8] = include_bytes!("../assets/emdash-logos/augmentcode.png");
+const LOGO_CHARM: &[u8] = include_bytes!("../assets/emdash-logos/charm.png");
+const LOGO_CLAUDE: &[u8] = include_bytes!("../assets/emdash-logos/claude.png");
+const LOGO_CLINE: &[u8] = include_bytes!("../assets/emdash-logos/cline.png");
+const LOGO_CODEBUFF: &[u8] = include_bytes!("../assets/emdash-logos/codebuff.png");
+const LOGO_CURSOR: &[u8] = include_bytes!("../assets/emdash-logos/cursorlogo.png");
+const LOGO_DROID: &[u8] = include_bytes!("../assets/emdash-logos/factorydroid.png");
+const LOGO_GEMINI: &[u8] = include_bytes!("../assets/emdash-logos/gemini.png");
+const LOGO_COPILOT: &[u8] = include_bytes!("../assets/emdash-logos/ghcopilot.png");
+const LOGO_GOOSE: &[u8] = include_bytes!("../assets/emdash-logos/goose.png");
+const LOGO_KIMI: &[u8] = include_bytes!("../assets/emdash-logos/kimi.png");
+const LOGO_KIRO: &[u8] = include_bytes!("../assets/emdash-logos/kiro.png");
+const LOGO_MISTRAL: &[u8] = include_bytes!("../assets/emdash-logos/mistral.png");
+const LOGO_CODEX: &[u8] = include_bytes!("../assets/emdash-logos/openai.png");
+const LOGO_OPENCODE: &[u8] = include_bytes!("../assets/emdash-logos/opencode.png");
+const LOGO_QWEN: &[u8] = include_bytes!("../assets/emdash-logos/qwen.png");
+
+const LOGO_AIDER: &[u8] = include_bytes!("../assets/harness-logos/aider.png");
+const LOGO_CAGENT: &[u8] = include_bytes!("../assets/harness-logos/cagent.png");
+const LOGO_CODY: &[u8] = include_bytes!("../assets/harness-logos/cody.png");
+const LOGO_CONTINUE: &[u8] = include_bytes!("../assets/harness-logos/continue.png");
+const LOGO_JUNIE: &[u8] = include_bytes!("../assets/harness-logos/junie.png");
+const LOGO_KILO: &[u8] = include_bytes!("../assets/harness-logos/kilo.png");
+const LOGO_OPENHANDS: &[u8] = include_bytes!("../assets/harness-logos/openhands.png");
+const LOGO_SWE_AGENT: &[u8] = include_bytes!("../assets/harness-logos/swe-agent.png");
+
+pub(crate) const HARNESS_CATALOG: &[HarnessCatalogEntry] = &[
+    HarnessCatalogEntry {
+        id: "claude",
+        label: "Claude Code",
+        logo_bytes: Some(LOGO_CLAUDE),
+        invert_in_dark: false,
+    },
+    HarnessCatalogEntry {
+        id: "codex",
+        label: "Codex",
+        logo_bytes: Some(LOGO_CODEX),
+        invert_in_dark: true,
+    },
+    HarnessCatalogEntry {
+        id: "qwen",
+        label: "Qwen Code",
+        logo_bytes: Some(LOGO_QWEN),
+        invert_in_dark: false,
+    },
+    HarnessCatalogEntry {
+        id: "cursor",
+        label: "Cursor",
+        logo_bytes: Some(LOGO_CURSOR),
+        invert_in_dark: true,
+    },
+    HarnessCatalogEntry {
+        id: "amp",
+        label: "Amp",
+        logo_bytes: Some(LOGO_AMP),
+        invert_in_dark: false,
+    },
+    HarnessCatalogEntry {
+        id: "droid",
+        label: "Droid",
+        logo_bytes: Some(LOGO_DROID),
+        invert_in_dark: true,
+    },
+    HarnessCatalogEntry {
+        id: "gemini",
+        label: "Gemini",
+        logo_bytes: Some(LOGO_GEMINI),
+        invert_in_dark: false,
+    },
+    HarnessCatalogEntry {
+        id: "copilot",
+        label: "Copilot",
+        logo_bytes: Some(LOGO_COPILOT),
+        invert_in_dark: true,
+    },
+    HarnessCatalogEntry {
+        id: "opencode",
+        label: "OpenCode",
+        logo_bytes: Some(LOGO_OPENCODE),
+        invert_in_dark: true,
+    },
+    HarnessCatalogEntry {
+        id: "cline",
+        label: "Cline",
+        logo_bytes: Some(LOGO_CLINE),
+        invert_in_dark: false,
+    },
+    HarnessCatalogEntry {
+        id: "mistral",
+        label: "Mistral Vibe",
+        logo_bytes: Some(LOGO_MISTRAL),
+        invert_in_dark: false,
+    },
+    HarnessCatalogEntry {
+        id: "auggie",
+        label: "Auggie",
+        logo_bytes: Some(LOGO_AUGMENT),
+        invert_in_dark: true,
+    },
+    HarnessCatalogEntry {
+        id: "goose",
+        label: "Goose",
+        logo_bytes: Some(LOGO_GOOSE),
+        invert_in_dark: false,
+    },
+    HarnessCatalogEntry {
+        id: "kimi",
+        label: "Kimi",
+        logo_bytes: Some(LOGO_KIMI),
+        invert_in_dark: false,
+    },
+    HarnessCatalogEntry {
+        id: "kiro",
+        label: "Kiro",
+        logo_bytes: Some(LOGO_KIRO),
+        invert_in_dark: false,
+    },
+    HarnessCatalogEntry {
+        id: "codebuff",
+        label: "Codebuff",
+        logo_bytes: Some(LOGO_CODEBUFF),
+        invert_in_dark: false,
+    },
+    HarnessCatalogEntry {
+        id: "charm",
+        label: "Charm",
+        logo_bytes: Some(LOGO_CHARM),
+        invert_in_dark: false,
+    },
+    HarnessCatalogEntry {
+        id: "rovo",
+        label: "Rovo Dev",
+        logo_bytes: Some(LOGO_ATLASSIAN),
+        invert_in_dark: false,
+    },
+    HarnessCatalogEntry {
+        id: "aider",
+        label: "Aider",
+        logo_bytes: Some(LOGO_AIDER),
+        invert_in_dark: false,
+    },
+    HarnessCatalogEntry {
+        id: "continue",
+        label: "Continue",
+        logo_bytes: Some(LOGO_CONTINUE),
+        invert_in_dark: false,
+    },
+    HarnessCatalogEntry {
+        id: "openhands",
+        label: "OpenHands",
+        logo_bytes: Some(LOGO_OPENHANDS),
+        invert_in_dark: false,
+    },
+    HarnessCatalogEntry {
+        id: "swe-agent",
+        label: "SWE-agent",
+        logo_bytes: Some(LOGO_SWE_AGENT),
+        invert_in_dark: false,
+    },
+    HarnessCatalogEntry {
+        id: "cagent",
+        label: "cagent",
+        logo_bytes: Some(LOGO_CAGENT),
+        invert_in_dark: false,
+    },
+    HarnessCatalogEntry {
+        id: "kilo",
+        label: "Kilo Code",
+        logo_bytes: Some(LOGO_KILO),
+        invert_in_dark: false,
+    },
+    HarnessCatalogEntry {
+        id: "cody",
+        label: "Cody",
+        logo_bytes: Some(LOGO_CODY),
+        invert_in_dark: false,
+    },
+    HarnessCatalogEntry {
+        id: "junie",
+        label: "JetBrains Junie",
+        logo_bytes: Some(LOGO_JUNIE),
+        invert_in_dark: false,
+    },
+];
+
+pub(crate) fn harness_entry(id: &str) -> Option<&'static HarnessCatalogEntry> {
+    HARNESS_CATALOG.iter().find(|entry| entry.id == id)
+}
+
+pub(crate) fn harness_label(id: &str) -> String {
+    harness_entry(id)
+        .map(|entry| entry.label.to_string())
+        .unwrap_or_else(|| id.to_string())
+}
+
+pub(crate) fn build_harness_logo_map() -> HashMap<String, Arc<Image>> {
+    let mut map = HashMap::new();
+    for entry in HARNESS_CATALOG {
+        let Some(bytes) = entry.logo_bytes else { continue; };
+        let image = Image::from_bytes(ImageFormat::Png, bytes.to_vec());
+        map.insert(entry.id.to_string(), Arc::new(image));
+    }
+    map
+>>>>>>> 44e8674 (Implement native composer parity)
 }

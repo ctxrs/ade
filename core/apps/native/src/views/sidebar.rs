@@ -150,6 +150,10 @@ impl<'a> ProviderListView<'a> {
             self.providers
                 .iter()
                 .fold(div().flex().flex_col(), |list, provider| {
+                    let label = harness_entry(&provider.provider_id)
+                        .map(|entry| entry.label)
+                        .unwrap_or(provider.provider_id.as_str());
+                    let status = format!("{:?}", provider.health);
                     list.child(
                         div()
                             .flex()
@@ -160,12 +164,12 @@ impl<'a> ProviderListView<'a> {
                             .border_color(self.colors.border)
                             .px(px(12.0))
                             .py(px(6.0))
-                            .child(provider.name.clone())
+                            .child(label)
                             .child(
                                 div()
                                     .text_sm()
                                     .text_color(self.colors.muted)
-                                    .child(provider.status.clone()),
+                                    .child(status),
                             ),
                     )
                 })

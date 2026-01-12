@@ -57,8 +57,8 @@ impl<'a> SessionsPaneView<'a> {
                     } else {
                         self.colors.border
                     };
-                    let on_click = cx.listener(move |view, _: &ClickEvent, _window, cx| {
-                        view.select_session(index, cx);
+                    let on_click = cx.listener(move |view, _: &ClickEvent, window, cx| {
+                        view.select_session(index, window, cx);
                     });
                     list.child(
                         div()

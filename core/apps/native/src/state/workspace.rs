@@ -8,6 +8,7 @@ use ctx_core::models::{
     Artifact, SessionCatchupSummary, SessionEvent, SessionHead, SessionHistoryPage, Task,
     WorkspaceCatchupSnapshot, WorkspaceCatchupTaskSummary, WorkspaceCatchupTrackSummary,
 };
+use ctx_providers::adapters::ProviderStatus;
 
 use super::{AnchorRect, ArchiveConfirmState, ArtifactPreviewState, ShellView, StreamStatus, TaskArchiveAction, TaskMenuState};
 use super::super::models::{
@@ -22,12 +23,7 @@ pub(crate) struct WorkspaceItem {
     pub(crate) name: String,
 }
 
-#[derive(Clone)]
-pub(crate) struct ProviderItem {
-    pub(crate) name: String,
-    #[allow(dead_code)]
-    pub(crate) status: String,
-}
+pub(crate) type ProviderItem = ProviderStatus;
 
 struct InitialLoadResult {
     workspaces: Vec<WorkspaceItem>,
@@ -85,13 +81,6 @@ impl ShellView {
                 .map(|workspace| WorkspaceItem {
                     id: workspace.id,
                     name: workspace.name,
-                })
-                .collect::<Vec<_>>();
-            let providers = providers
-                .into_iter()
-                .map(|provider| ProviderItem {
-                    name: provider.provider_id,
-                    status: format!("{:?}", provider.health),
                 })
                 .collect::<Vec<_>>();
             Ok(InitialLoadResult {
@@ -232,6 +221,8 @@ impl ShellView {
                             .and_then(|summary| view.session_summary_map.get(&summary.session_id))
                             .map(|summary| summary.session.task_id)
                             .or_else(|| view.task_active_order.first().copied());
+                        view.new_task_mode = view.selected_session.is_none();
+                        view.composer_needs_apply = true;
                         view.session = data
                             .session_head
                             .as_ref()
@@ -310,7 +301,6 @@ impl ShellView {
         self.session_events.clear();
         self.selected_artifact = None;
         self.composer_attachments.clear();
-        self.composer_attachment_input.clear();
         self.composer_notice = None;
         self.composer_provider_menu_open = false;
         self.composer_model_menu_open = false;

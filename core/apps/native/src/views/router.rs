@@ -11,8 +11,6 @@ use super::super::state::{ShellRoute, ShellView, SidebarResizeState};
 
 pub(crate) struct RouterView<'a> {
     pub(crate) shell: &'a ShellView,
-    pub(crate) provider_options: Vec<String>,
-    pub(crate) model_options: Vec<String>,
     pub(crate) resyncing: bool,
 }
 
@@ -96,40 +94,8 @@ impl<'a> RouterView<'a> {
 
     fn render_workbench(&self, cx: &mut Context<ShellView>) -> impl IntoElement {
         SessionView {
-            colors: self.shell.colors,
-            session: &self.shell.session,
-            sessions: &self.shell.sessions,
-            selected_session: self.shell.selected_session,
-            messages: &self.shell.messages,
-            message_list_state: &self.shell.message_list_state,
-            new_message_count: self.shell.new_message_count,
-            session_events: &self.shell.session_events,
-            artifacts: &self.shell.artifacts,
-            selected_artifact: self.shell.selected_artifact,
-            artifact_preview: &self.shell.artifact_preview,
-            data_state: &self.shell.data_state,
-            composer_text: self.shell.composer.text(),
-            composer_cursor: self.shell.composer.cursor(),
-            composer_attachment_text: self.shell.composer_attachment_input.text(),
-            composer_attachment_cursor: self.shell.composer_attachment_input.cursor(),
-            composer_attachments: &self.shell.composer_attachments,
-            provider_options: self.provider_options.clone(),
-            model_options: self.model_options.clone(),
-            selected_provider: self.shell.composer_provider_id.clone(),
-            selected_model: self.shell.composer_model_id.clone(),
-            provider_menu_open: self.shell.composer_provider_menu_open,
-            model_menu_open: self.shell.composer_model_menu_open,
-            composer_notice: self.shell.composer_notice.clone(),
-            composer_attachment_focus: &self.shell.composer_attachment_focus,
-            composer_focus: &self.shell.composer_focus,
-            stream_status: &self.shell.stream_status,
+            shell: self.shell,
             resyncing: self.resyncing,
-            show_sessions_pane: self.shell.show_sessions_pane,
-            show_diff_pane: self.shell.show_diff_pane,
-            show_artifacts_pane: self.shell.show_artifacts_pane,
-            show_terminal_panel: self.shell.show_terminal_panel,
-            diff_review_state: self.shell.diff_review_state.clone(),
-            terminal_panel_state: self.shell.terminal_panel_state.clone(),
         }
         .render(cx)
     }

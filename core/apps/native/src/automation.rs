@@ -23,8 +23,9 @@ use serde_json::{Map, json, Value};
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio::time::timeout;
 
-use crate::app::ShellView;
 use crate::automation_tree;
+use crate::app::ShellView;
+use crate::app::ComposerMenuId;
 use gpui_component::Root;
 
 #[derive(Clone, Debug, Default)]
@@ -142,6 +143,9 @@ async fn run_http_server(addr: SocketAddr, state: Arc<AutomationState>) {
         .route("/ready", get(ready_handler))
         .route("/focus", post(focus_handler))
         .route("/wait", post(wait_handler))
+        .route("/type", post(type_handler))
+        .route("/keypress", post(keypress_handler))
+        .route("/composer/attach", post(attach_handler))
         .route("/screenshot", post(screenshot_handler))
         .route("/exit", post(exit_handler))
         .route("/ws", get(ws_handler))
@@ -252,9 +256,16 @@ enum FocusTarget {
     Main,
     ArchivedTasks,
     Composer,
+    ComposerNewTask,
+    ComposerSession,
+    ComposerMenuClose,
     ComposerAttachments,
     ComposerProviderMenu,
     ComposerModelMenu,
+    ComposerEffortMenu,
+    ComposerModeMenu,
+    ComposerIsolationMenu,
+    ComposerVerbosityMenu,
     SessionsPane,
     DiffPane,
     ArtifactsPane,
@@ -267,9 +278,16 @@ impl FocusTarget {
             FocusTarget::Main => "main",
             FocusTarget::ArchivedTasks => "archived_tasks",
             FocusTarget::Composer => "composer",
+            FocusTarget::ComposerNewTask => "composer_new_task",
+            FocusTarget::ComposerSession => "composer_session",
+            FocusTarget::ComposerMenuClose => "composer_menu_close",
             FocusTarget::ComposerAttachments => "composer_attachments",
             FocusTarget::ComposerProviderMenu => "composer_provider_menu",
             FocusTarget::ComposerModelMenu => "composer_model_menu",
+            FocusTarget::ComposerEffortMenu => "composer_effort_menu",
+            FocusTarget::ComposerModeMenu => "composer_mode_menu",
+            FocusTarget::ComposerIsolationMenu => "composer_isolation_menu",
+            FocusTarget::ComposerVerbosityMenu => "composer_verbosity_menu",
             FocusTarget::SessionsPane => "sessions_pane",
             FocusTarget::DiffPane => "diff_pane",
             FocusTarget::ArtifactsPane => "artifacts_pane",
@@ -291,6 +309,80 @@ async fn focus_handler(
         &state,
         AutomationCommand::Focus {
             target: request.target,
+        },
+    )
+    .await;
+    match response {
+        Ok(result) => ok(result),
+        Err(message) => err(StatusCode::INTERNAL_SERVER_ERROR, message),
+    }
+}
+
+#[derive(Deserialize)]
+struct TypeRequest {
+    text: String,
+}
+
+async fn type_handler(
+    State(state): State<Arc<AutomationState>>,
+    Json(request): Json<TypeRequest>,
+) -> (StatusCode, Json<ApiResponse<Value>>) {
+    let response = dispatch_command(
+        &state,
+        AutomationCommand::Type {
+            text: request.text,
+        },
+    )
+    .await;
+    match response {
+        Ok(result) => ok(result),
+        Err(message) => err(StatusCode::INTERNAL_SERVER_ERROR, message),
+    }
+}
+
+#[derive(Deserialize)]
+struct KeyPressRequest {
+    key: String,
+}
+
+async fn keypress_handler(
+    State(state): State<Arc<AutomationState>>,
+    Json(request): Json<KeyPressRequest>,
+) -> (StatusCode, Json<ApiResponse<Value>>) {
+    let normalized = normalize_keystroke_input(&request.key);
+    let keystroke = match Keystroke::parse(&normalized) {
+        Ok(keystroke) => keystroke,
+        Err(parse_err) => {
+            return err(StatusCode::BAD_REQUEST, format!("invalid keystroke: {parse_err}"));
+        }
+    };
+    let response = dispatch_command(
+        &state,
+        AutomationCommand::KeyPress { keystroke },
+    )
+    .await;
+    match response {
+        Ok(result) => ok(result),
+        Err(message) => err(StatusCode::INTERNAL_SERVER_ERROR, message),
+    }
+}
+
+#[derive(Deserialize)]
+struct ComposerAttachRequest {
+    paths: Vec<PathBuf>,
+}
+
+async fn attach_handler(
+    State(state): State<Arc<AutomationState>>,
+    Json(request): Json<ComposerAttachRequest>,
+) -> (StatusCode, Json<ApiResponse<Value>>) {
+    if request.paths.is_empty() {
+        return err(StatusCode::BAD_REQUEST, "paths must not be empty");
+    }
+    let response = dispatch_command(
+        &state,
+        AutomationCommand::Attach {
+            paths: request.paths,
         },
     )
     .await;
@@ -411,6 +503,7 @@ enum AutomationCommand {
     Screenshot { path: PathBuf },
     Resize { width: f32, height: f32 },
     Type { text: String },
+    Attach { paths: Vec<PathBuf> },
     KeyPress { keystroke: Keystroke },
     Exit,
 }
@@ -493,6 +586,26 @@ async fn run_command_loop(
                 })
                 .map_err(|err| err.to_string())
             }
+            AutomationCommand::Attach { paths } => {
+                let mut cx = cx.clone();
+                window
+                    .update(&mut cx, |root, _window, cx| {
+                        let view = root
+                            .view()
+                            .clone()
+                            .downcast::<ShellView>()
+                            .map_err(|_| "root view is not a ShellView".to_string())?;
+                        view.update(cx, |view, cx| {
+                            for path in paths.iter().cloned() {
+                                view.add_attachment_from_path(path, cx);
+                            }
+                        });
+                        mark_input(&state);
+                        Ok(json!({ "count": paths.len() }))
+                    })
+                    .map_err(|err| err.to_string())
+                    .and_then(|result| result)
+            }
             AutomationCommand::KeyPress { keystroke } => {
                 let mut cx = cx.clone();
                 cx.update_window(any_window, |_, window, cx| {
@@ -557,20 +670,67 @@ fn apply_focus_target(
                 .scroll_to_item(0, ScrollStrategy::Top);
         }
         FocusTarget::Composer => {
-            view.composer_focus.focus(window, cx);
+            view.active_composer_input()
+                .update(cx, |state, cx| state.focus(window, cx));
+        }
+        FocusTarget::ComposerNewTask => {
+            view.set_new_task_mode(window, cx);
+            view.active_composer_input()
+                .update(cx, |state, cx| state.focus(window, cx));
+        }
+        FocusTarget::ComposerSession => {
+            view.set_session_mode_active(window, cx);
+            view.active_composer_input()
+                .update(cx, |state, cx| state.focus(window, cx));
+        }
+        FocusTarget::ComposerMenuClose => {
+            view.close_menu(cx);
         }
         FocusTarget::ComposerAttachments => {
-            view.composer_attachment_focus.focus(window, cx);
+            view.active_composer_input()
+                .update(cx, |state, cx| state.focus(window, cx));
         }
         FocusTarget::ComposerProviderMenu => {
-            view.composer_provider_menu_open = true;
-            view.composer_model_menu_open = false;
-            view.composer_focus.focus(window, cx);
+            if view.composer_open_menu != Some(ComposerMenuId::Harness) {
+                view.toggle_menu(ComposerMenuId::Harness, window, cx);
+            }
+            view.active_composer_input()
+                .update(cx, |state, cx| state.focus(window, cx));
         }
         FocusTarget::ComposerModelMenu => {
-            view.composer_model_menu_open = true;
-            view.composer_provider_menu_open = false;
-            view.composer_focus.focus(window, cx);
+            if view.composer_open_menu != Some(ComposerMenuId::Model) {
+                view.toggle_menu(ComposerMenuId::Model, window, cx);
+            }
+            view.active_composer_input()
+                .update(cx, |state, cx| state.focus(window, cx));
+        }
+        FocusTarget::ComposerEffortMenu => {
+            if view.composer_open_menu != Some(ComposerMenuId::Effort) {
+                view.toggle_menu(ComposerMenuId::Effort, window, cx);
+            }
+            view.active_composer_input()
+                .update(cx, |state, cx| state.focus(window, cx));
+        }
+        FocusTarget::ComposerModeMenu => {
+            if view.composer_open_menu != Some(ComposerMenuId::Mode) {
+                view.toggle_menu(ComposerMenuId::Mode, window, cx);
+            }
+            view.active_composer_input()
+                .update(cx, |state, cx| state.focus(window, cx));
+        }
+        FocusTarget::ComposerIsolationMenu => {
+            if view.composer_open_menu != Some(ComposerMenuId::Isolation) {
+                view.toggle_menu(ComposerMenuId::Isolation, window, cx);
+            }
+            view.active_composer_input()
+                .update(cx, |state, cx| state.focus(window, cx));
+        }
+        FocusTarget::ComposerVerbosityMenu => {
+            if view.composer_open_menu != Some(ComposerMenuId::Verbosity) {
+                view.toggle_menu(ComposerMenuId::Verbosity, window, cx);
+            }
+            view.active_composer_input()
+                .update(cx, |state, cx| state.focus(window, cx));
         }
         FocusTarget::SessionsPane => {
             view.show_sessions_pane = true;
