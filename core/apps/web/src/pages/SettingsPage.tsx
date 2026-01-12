@@ -417,8 +417,7 @@ export default function SettingsPage() {
   const [agentPromptLoading, setAgentPromptLoading] = useState(false);
   const [agentPromptError, setAgentPromptError] = useState<string | null>(null);
   const [agentPromptSaving, setAgentPromptSaving] = useState(false);
-  const [agentPromptUseDefault, setAgentPromptUseDefault] = useState(true);
-  const [agentPromptCustom, setAgentPromptCustom] = useState("");
+  const [agentPromptText, setAgentPromptText] = useState("");
 
   const [resourceSnapshot, setResourceSnapshot] = useState<ResourceUtilization | null>(null);
   const [resourceLoading, setResourceLoading] = useState(false);
@@ -905,9 +904,8 @@ export default function SettingsPage() {
     try {
       const next = await getAgentSystemPrompt(workspaceId);
       setAgentPromptConfig(next);
-      const baseCustom = next.configured_append ?? next.default_append;
-      setAgentPromptCustom(baseCustom ?? "");
-      setAgentPromptUseDefault(next.source === "default");
+      const baseText = next.configured_append ?? next.default_append ?? "";
+      setAgentPromptText(baseText);
     } catch (e: any) {
       setAgentPromptError(e?.message ?? String(e));
     } finally {
@@ -920,18 +918,18 @@ export default function SettingsPage() {
     setAgentPromptSaving(true);
     setAgentPromptError(null);
     try {
-      const payload = agentPromptUseDefault ? null : agentPromptCustom;
+      const trimmed = agentPromptText.trim();
+      const payload = trimmed.length ? trimmed : null;
       const next = await updateAgentSystemPrompt(workspaceId, { system_prompt_append: payload });
       setAgentPromptConfig(next);
-      const baseCustom = next.configured_append ?? next.default_append;
-      setAgentPromptCustom(baseCustom ?? "");
-      setAgentPromptUseDefault(next.source === "default");
+      const baseText = next.configured_append ?? next.default_append ?? "";
+      setAgentPromptText(baseText);
     } catch (e: any) {
       setAgentPromptError(e?.message ?? String(e));
     } finally {
       setAgentPromptSaving(false);
     }
-  }, [workspaceId, agentPromptUseDefault, agentPromptCustom]);
+  }, [workspaceId, agentPromptText]);
 
   const syncWorkspaceAttachmentsNow = useCallback(async () => {
     if (!workspaceId) return;
@@ -954,6 +952,18 @@ export default function SettingsPage() {
   useEffect(() => {
     setProviderOptions({});
   }, [workspaceId]);
+
+  useEffect(() => {
+    if (!workspaces.length) return;
+    if (!workspaceId) {
+      setWorkspaceId(idToString((workspaces[0] as any).id));
+      return;
+    }
+    const found = workspaces.some((ws) => idToString((ws as any).id) === workspaceId);
+    if (!found) {
+      setWorkspaceId(idToString((workspaces[0] as any).id));
+    }
+  }, [workspaces, workspaceId]);
 
   useEffect(() => {
     setAttachments([]);
@@ -1480,19 +1490,10 @@ export default function SettingsPage() {
       const configPath =
         agentPromptConfig?.config_path ??
         (selectedWorkspace ? `${selectedWorkspace.root_path}/.ctx/config.toml` : ".ctx/config.toml");
-      const statusLabel =
-        agentPromptConfig?.source === "config"
-          ? "Custom"
-          : agentPromptConfig?.source === "disabled"
-            ? "Disabled"
-            : "Default";
+      const statusLabel = agentPromptConfig?.source === "config" ? "Custom" : "Default";
       const baseCustom = agentPromptConfig?.configured_append ?? agentPromptConfig?.default_append ?? "";
-      const baseUseDefault = agentPromptConfig?.source === "default";
-      const promptDirty =
-        agentPromptConfig &&
-        (agentPromptUseDefault !== baseUseDefault ||
-          (!agentPromptUseDefault && agentPromptCustom.trim() !== baseCustom.trim()));
-      const canSave = Boolean(workspaceId) && !agentPromptSaving && Boolean(promptDirty);
+      const promptDirty = agentPromptConfig ? agentPromptText.trim() !== baseCustom.trim() : false;
+      const canSave = Boolean(workspaceId) && !agentPromptSaving && promptDirty;
 
       return (
         <>
@@ -1534,27 +1535,15 @@ export default function SettingsPage() {
               control={<pre className="settings-code-block">{agentPromptConfig?.default_append ?? ""}</pre>}
             />
             <Row
-              title="Use default"
-              description="Turn off to provide a custom override."
-              control={
-                <Toggle
-                  checked={agentPromptUseDefault}
-                  disabled={!workspaceId || agentPromptLoading}
-                  onChange={setAgentPromptUseDefault}
-                  ariaLabel="Use default agent system prompt"
-                />
-              }
-            />
-            <Row
-              title="Custom override"
-              description="Saved to .ctx/config.toml when you save."
+              title="Prompt append"
+              description="Saved to .ctx/config.toml. Leave unchanged to keep the default."
               control={
                 <textarea
                   className="settings-control settings-control-wide"
                   rows={5}
-                  value={agentPromptCustom}
-                  onChange={(e) => setAgentPromptCustom(e.target.value)}
-                  disabled={!workspaceId || agentPromptUseDefault || agentPromptLoading}
+                  value={agentPromptText}
+                  onChange={(e) => setAgentPromptText(e.target.value)}
+                  disabled={!workspaceId || agentPromptLoading}
                   placeholder="Add a custom system prompt append."
                 />
               }
