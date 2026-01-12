@@ -45,6 +45,8 @@ use ctx_client::EnvTarget;
 use self::views::RouterView;
 
 pub(crate) use self::state::ShellView;
+#[cfg(feature = "automation")]
+pub(crate) use self::state::ComposerMenuId;
 
 #[derive(Clone, Debug)]
 pub struct AppOptions {
