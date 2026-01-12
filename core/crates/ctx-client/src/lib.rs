@@ -5,11 +5,11 @@ use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
 use directories::BaseDirs;
-use reqwest::{header, Method};
+use reqwest::{header, multipart, Method};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use url::Url;
+use url::{form_urlencoded, Url};
 
 use ctx_core::ids::{ArtifactId, SessionId, TaskId, TerminalId, TrackId, WorkspaceId, WorktreeId};
 use ctx_core::models::{
@@ -169,6 +169,16 @@ pub struct WebSessionInfo {
     pub stream_path: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stream_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BlobUploadResp {
+    pub blob_id: String,
+    pub sha256: String,
+    pub bytes: i64,
+    pub mime_type: String,
+    #[serde(default)]
+    pub name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -868,6 +878,45 @@ impl Client {
         self.request_json(Method::GET, &path, None::<&()>).await
     }
 
+    pub async fn list_session_file_completions(
+        &self,
+        session_id: SessionId,
+        query: &str,
+        limit: Option<u32>,
+    ) -> Result<Vec<String>> {
+        let path = {
+            let mut serializer = form_urlencoded::Serializer::new(String::new());
+            serializer.append_pair("query", query);
+            if let Some(limit) = limit {
+                serializer.append_pair("limit", &limit.to_string());
+            }
+            let qs = serializer.finish();
+            format!("/api/sessions/{}/completions/files?{}", session_id.0, qs)
+        };
+        self.request_json(Method::GET, &path, None::<&()>).await
+    }
+
+    pub async fn list_workspace_file_completions(
+        &self,
+        workspace_id: WorkspaceId,
+        query: &str,
+        limit: Option<u32>,
+    ) -> Result<Vec<String>> {
+        let path = {
+            let mut serializer = form_urlencoded::Serializer::new(String::new());
+            serializer.append_pair("query", query);
+            if let Some(limit) = limit {
+                serializer.append_pair("limit", &limit.to_string());
+            }
+            let qs = serializer.finish();
+            format!(
+                "/api/workspaces/{}/completions/files?{}",
+                workspace_id.0, qs
+            )
+        };
+        self.request_json(Method::GET, &path, None::<&()>).await
+    }
+
     pub async fn list_session_artifacts(&self, session_id: SessionId) -> Result<Vec<Artifact>> {
         let path = format!("/api/sessions/{}/artifacts", session_id.0);
         self.request_json(Method::GET, &path, None::<&()>).await
@@ -887,6 +936,81 @@ impl Client {
         if let Some((start, end)) = range {
             let value = format!("bytes={start}-{end}");
             req = req.header(header::RANGE, value);
+        }
+        let resp = req.send().await.context("sending request")?;
+        let status = resp.status();
+        if !status.is_success() {
+            let text = resp.text().await.context("reading response body")?;
+            let snippet = text.trim();
+            let msg = if snippet.is_empty() {
+                format!("request failed with status {}", status.as_u16())
+            } else {
+                format!(
+                    "request failed with status {}: {}",
+                    status.as_u16(),
+                    snippet
+                )
+            };
+            return Err(anyhow!(msg));
+        }
+        let bytes = resp.bytes().await.context("reading response body")?;
+        Ok(bytes.to_vec())
+    }
+
+    pub async fn upload_blob(
+        &self,
+        bytes: Vec<u8>,
+        mime_type: &str,
+        name: Option<&str>,
+    ) -> Result<BlobUploadResp> {
+        let url = self.url_for("/api/blobs")?;
+        let mut req = self.http.request(Method::POST, url);
+        if let Some(token) = &self.auth_token {
+            req = req.bearer_auth(token);
+        }
+
+        let mut part = multipart::Part::bytes(bytes)
+            .mime_str(mime_type)
+            .context("invalid blob mime type")?;
+        if let Some(name) = name {
+            part = part.file_name(name.to_string());
+        }
+        let form = multipart::Form::new().part("file", part);
+        let resp = req
+            .multipart(form)
+            .send()
+            .await
+            .context("sending request")?;
+        let status = resp.status();
+        if !status.is_success() {
+            let text = resp.text().await.context("reading response body")?;
+            let snippet = text.trim();
+            let msg = if snippet.is_empty() {
+                format!("request failed with status {}", status.as_u16())
+            } else {
+                format!(
+                    "request failed with status {}: {}",
+                    status.as_u16(),
+                    snippet
+                )
+            };
+            return Err(anyhow!(msg));
+        }
+        let text = resp.text().await.context("reading response body")?;
+        let resp = if text.trim().is_empty() {
+            return Err(anyhow!("empty response when uploading blob"));
+        } else {
+            serde_json::from_str::<BlobUploadResp>(&text).context("decoding blob response")?
+        };
+        Ok(resp)
+    }
+
+    pub async fn get_blob(&self, blob_id: &str) -> Result<Vec<u8>> {
+        let path = format!("/api/blobs/{blob_id}");
+        let url = self.url_for(&path)?;
+        let mut req = self.http.request(Method::GET, url);
+        if let Some(token) = &self.auth_token {
+            req = req.bearer_auth(token);
         }
         let resp = req.send().await.context("sending request")?;
         let status = resp.status();

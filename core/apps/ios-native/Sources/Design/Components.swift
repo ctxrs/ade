@@ -47,6 +47,7 @@ struct CtxField: View {
     let placeholder: String
     @Binding var text: String
     var isSecure: Bool = false
+    var accessibilityId: String? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -56,10 +57,12 @@ struct CtxField: View {
             Group {
                 if isSecure {
                     SecureField(placeholder, text: $text)
+                        .accessibilityIdentifier(accessibilityId ?? "")
                 } else {
                     TextField(placeholder, text: $text)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
+                        .accessibilityIdentifier(accessibilityId ?? "")
                 }
             }
             .foregroundColor(.ctxTextPrimary)

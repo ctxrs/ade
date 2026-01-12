@@ -168,8 +168,8 @@ actor DaemonAPIClient {
     }
 
     func listMessages(sessionId: String) async throws -> [MessageSummary] {
-        let items: [Message] = try await request("/api/sessions/\(sessionId)/messages")
-        return items.map(MessageSummary.init)
+        let head = try await getSessionHead(sessionId: sessionId, limit: 200, includeEvents: false)
+        return head.messages.map(MessageSummary.init)
     }
 
     func postMessage(sessionId: String, content: String, delivery: MessageDelivery?, attachments: [MessageAttachment]?) async throws -> MessageSummary {
@@ -348,6 +348,17 @@ actor DaemonAPIClient {
         try await request("/api/workspaces/\(workspaceId)/providers/\(providerId)/options")
     }
 
+    func getWorkspaceCatchupSnapshot(workspaceId: String, includeArchived: Bool) async throws -> WorkspaceCatchupSnapshot {
+        let params = WorkspaceCatchupParams(
+            limit: nil,
+            includeArchived: includeArchived,
+            archivedOnly: false,
+            activeCursor: nil,
+            archivedCursor: nil
+        )
+        return try await getWorkspaceCatchup(workspaceId: workspaceId, params: params)
+    }
+
     private func requireToken() throws -> String {
         if let tokenCache {
             return tokenCache
@@ -356,14 +367,7 @@ actor DaemonAPIClient {
     }
 
     private func getWorkspaceCatchupSnapshot(workspaceId: String) async throws -> WorkspaceCatchupSnapshot {
-        let params = WorkspaceCatchupParams(
-            limit: nil,
-            includeArchived: false,
-            archivedOnly: false,
-            activeCursor: nil,
-            archivedCursor: nil
-        )
-        return try await getWorkspaceCatchup(workspaceId: workspaceId, params: params)
+        try await getWorkspaceCatchupSnapshot(workspaceId: workspaceId, includeArchived: false)
     }
 
     private func findSessions(

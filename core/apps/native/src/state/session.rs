@@ -189,12 +189,20 @@ impl ShellView {
             .map(|summary| summary.session_id)
     }
 
-    pub(crate) fn select_session(&mut self, index: usize, cx: &mut Context<Self>) {
+    pub(crate) fn select_session(
+        &mut self,
+        index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(summary) = self.sessions.get(index) else {
             return;
         };
         let session_id = summary.session_id;
         self.selected_session = Some(index);
+        self.new_task_mode = false;
+        self.new_task_mode_locked = false;
+        self.apply_active_composer_state(window, cx);
         self.session = self
             .session_summary_map
             .get(&session_id)

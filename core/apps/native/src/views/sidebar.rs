@@ -38,18 +38,30 @@ const SPINNER_BG: Rgba = rgba(255, 255, 255, 0.22);
 const SPINNER_ACCENT: Rgba = rgba(78, 163, 255, 0.90);
 const SPINNER_ARCHIVE: Rgba = rgba(251, 191, 36, 0.32);
 
+#[allow(dead_code)]
 const MENU_BG: Rgba = rgba(34, 34, 34, 0.92);
+#[allow(dead_code)]
 const MENU_BORDER: Rgba = rgba(255, 255, 255, 0.10);
+#[allow(dead_code)]
 const MENU_ITEM_HOVER_BG: Rgba = rgba(255, 255, 255, 0.06);
+#[allow(dead_code)]
 const MENU_ITEM_HOVER_BORDER: Rgba = rgba(255, 255, 255, 0.08);
+#[allow(dead_code)]
 const MENU_ITEM_DANGER: Rgba = rgba(255, 120, 120, 0.96);
+#[allow(dead_code)]
 const MENU_ITEM_DANGER_BG: Rgba = rgba(255, 69, 58, 0.10);
+#[allow(dead_code)]
 const MENU_ITEM_DANGER_BORDER: Rgba = rgba(255, 69, 58, 0.16);
 
+#[allow(dead_code)]
 const ARCHIVE_CONFIRM_BG: Rgba = rgba(34, 34, 34, 0.96);
+#[allow(dead_code)]
 const ARCHIVE_CONFIRM_BORDER: Rgba = rgba(255, 255, 255, 0.10);
+#[allow(dead_code)]
 const ARCHIVE_CONFIRM_BODY: Rgba = rgba(255, 255, 255, 0.76);
+#[allow(dead_code)]
 const ARCHIVE_CONFIRM_TITLE: Rgba = rgba(255, 255, 255, 0.95);
+#[allow(dead_code)]
 const ARCHIVE_TOGGLE_TEXT: Rgba = rgba(255, 255, 255, 0.70);
 
 const TASK_ROW_HEIGHT: f32 = 28.0;
@@ -150,6 +162,10 @@ impl<'a> ProviderListView<'a> {
             self.providers
                 .iter()
                 .fold(div().flex().flex_col(), |list, provider| {
+                    let label = harness_entry(&provider.provider_id)
+                        .map(|entry| entry.label.to_string())
+                        .unwrap_or_else(|| provider.provider_id.clone());
+                    let status = format!("{:?}", provider.health);
                     list.child(
                         div()
                             .flex()
@@ -160,12 +176,12 @@ impl<'a> ProviderListView<'a> {
                             .border_color(self.colors.border)
                             .px(px(12.0))
                             .py(px(6.0))
-                            .child(provider.name.clone())
+                            .child(label)
                             .child(
                                 div()
                                     .text_sm()
                                     .text_color(self.colors.muted)
-                                    .child(provider.status.clone()),
+                                    .child(status),
                             ),
                     )
                 })
@@ -787,11 +803,11 @@ fn render_task_row(
         .child(leading)
         .child(body)
         .child(meta)
-        .on_click(cx.listener(move |view, event: &ClickEvent, _window, cx| {
+        .on_click(cx.listener(move |view, event: &ClickEvent, window, cx| {
             if event.is_right_click() {
                 return;
             }
-            view.focus_task(task_id, cx);
+            view.focus_task(task_id, window, cx);
         }))
         .on_hover(cx.listener(move |view, hovered, _window, cx| {
             if *hovered {
@@ -807,10 +823,10 @@ fn render_task_row(
             view.toggle_task_menu(task_id, anchor, cx);
             cx.stop_propagation();
         }))
-        .on_key_down(cx.listener(move |view, event: &KeyDownEvent, _window, cx| {
+        .on_key_down(cx.listener(move |view, event: &KeyDownEvent, window, cx| {
             let key = event.keystroke.key.to_lowercase();
             if key == "enter" || key == " " {
-                view.focus_task(task_id, cx);
+                view.focus_task(task_id, window, cx);
                 cx.stop_propagation();
             }
         }));
@@ -1168,12 +1184,14 @@ fn render_task_rename(
         .into_any_element()
 }
 
+#[allow(dead_code)]
 pub(crate) struct SidebarOverlays<'a> {
     pub(crate) shell: &'a ShellView,
     pub(crate) viewport: gpui::Size<Pixels>,
 }
 
 impl<'a> SidebarOverlays<'a> {
+    #[allow(dead_code)]
     pub(crate) fn render(&self, cx: &mut Context<ShellView>) -> gpui::AnyElement {
         if self.shell.task_menu.is_none() && self.shell.archive_confirm.is_none() {
             return div().into_any_element();
@@ -1201,6 +1219,7 @@ impl<'a> SidebarOverlays<'a> {
     }
 }
 
+#[allow(dead_code)]
 fn render_task_menu(
     view: &ShellView,
     menu: super::super::state::TaskMenuState,
@@ -1351,6 +1370,7 @@ fn render_task_menu(
         .into_any_element()
 }
 
+#[allow(dead_code)]
 fn render_archive_confirm(
     view: &ShellView,
     confirm: super::super::state::ArchiveConfirmState,
@@ -1488,6 +1508,7 @@ fn anchor_from_point(pos: Point<Pixels>, size: f32) -> AnchorRect {
     }
 }
 
+#[allow(dead_code)]
 fn clamp(value: f32, min: f32, max: f32) -> f32 {
     if max <= min {
         return min;

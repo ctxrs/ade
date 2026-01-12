@@ -20,6 +20,19 @@ final class ConnectionStore: ObservableObject {
         self.tokenStore = KeychainTokenStore()
     }
 
+    func applyLaunchConfig(_ config: LaunchConfig) {
+        if config.baseURL != nil || config.token != nil {
+            setSecureConfig(nil)
+        }
+        if let baseURL = config.baseURL {
+            baseURLText = baseURL
+        }
+        if let token = config.token {
+            tokenText = token
+        }
+    }
+
+
     func setSecureConfig(_ config: SecureConnectionConfig?) {
         secureConfig = config
         SecureConnectionDefaults.save(config)

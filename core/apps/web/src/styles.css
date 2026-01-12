@@ -384,6 +384,10 @@ button.linklike:hover {
   margin-bottom: 8px;
 }
 
+.wb-session-view .subagent-invocations {
+  display: none;
+}
+
 .subagent-invocation-row {
   border-top: 1px solid var(--border);
   padding-top: 8px;

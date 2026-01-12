@@ -82,6 +82,7 @@ pub struct ThemeControls {
     pub h_sm: f32,   // 22px
     #[allow(dead_code)]
     pub h_md: f32,   // 26px
+    #[allow(dead_code)]
     pub h_lg: f32,   // 28px
     #[allow(dead_code)]
     pub h_xl: f32,   // 30px
@@ -298,7 +299,8 @@ pub fn apply_gpui_component_theme(
     set_color(&mut colors.secondary_foreground, &tokens.text, "text");
 
     set_color(&mut colors.muted, &tokens.panel_2, "panel-2");
-    set_color(&mut colors.muted_foreground, &tokens.muted, "muted");
+    // Match web placeholder text (#d4d4d4) and handle alpha in component theme.
+    colors.muted_foreground = Some("#D4D4D4".into());
 
     set_color(&mut colors.popover, &tokens.panel, "panel");
     set_color(&mut colors.popover_foreground, &tokens.text, "text");
