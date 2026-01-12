@@ -281,6 +281,10 @@ async fn start_turn(
         "CTX_DATA_ROOT".to_string(),
         state.data_root.to_string_lossy().to_string(),
     );
+    provider_env.insert(
+        "CLAUDE_CODE_ENABLE_ASK_USER_QUESTION_TOOL".to_string(),
+        "1".to_string(),
+    );
     if let Some(token) = state.auth_token.clone() {
         provider_env.insert("CTX_AUTH_TOKEN".to_string(), token);
     }

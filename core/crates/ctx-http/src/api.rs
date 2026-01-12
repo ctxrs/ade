@@ -12002,6 +12002,7 @@ async fn submit_ask_user_question(
         }
     };
     let answers = req.answers.unwrap_or_default();
+    let answers_for_event = answers.clone();
 
     let ok = state
         .ask_user_question
@@ -12032,6 +12033,7 @@ async fn submit_ask_user_question(
                 "kind": "ask_user_question_answered",
                 "tool_call_id": tool_call_id,
                 "outcome": outcome.as_str(),
+                "answers": answers_for_event,
             }),
         )
         .await
