@@ -899,6 +899,7 @@ export default function SettingsPage() {
 
   const refreshAgentSystemPrompt = useCallback(async () => {
     if (!workspaceId) return;
+    if (!workspaces.some((ws) => idToString((ws as any).id) === workspaceId)) return;
     setAgentPromptLoading(true);
     setAgentPromptError(null);
     try {
@@ -911,7 +912,7 @@ export default function SettingsPage() {
     } finally {
       setAgentPromptLoading(false);
     }
-  }, [workspaceId]);
+  }, [workspaceId, workspaces]);
 
   const handleSaveAgentPrompt = useCallback(async () => {
     if (!workspaceId) return;
@@ -951,7 +952,7 @@ export default function SettingsPage() {
 
   useEffect(() => {
     setProviderOptions({});
-  }, [workspaceId]);
+  }, [workspaceId, workspaces]);
 
   useEffect(() => {
     if (!workspaces.length) return;
@@ -968,7 +969,7 @@ export default function SettingsPage() {
   useEffect(() => {
     setAttachments([]);
     setAttachmentsError(null);
-  }, [workspaceId]);
+  }, [workspaceId, workspaces]);
 
   useEffect(() => {
     if (active !== "agent_harnesses") return;
@@ -1026,8 +1027,9 @@ export default function SettingsPage() {
   useEffect(() => {
     if (active !== "agent_system_prompt") return;
     if (!workspaceId) return;
+    if (!workspaces.some((ws) => idToString((ws as any).id) === workspaceId)) return;
     refreshAgentSystemPrompt().catch(() => {});
-  }, [active, workspaceId, refreshAgentSystemPrompt]);
+  }, [active, workspaceId, workspaces, refreshAgentSystemPrompt]);
 
   useEffect(() => {
     if (active !== "workspace_attachments") return;
@@ -1530,17 +1532,12 @@ export default function SettingsPage() {
               control={<span className="settings-pill">{statusLabel}</span>}
             />
             <Row
-              title="Default prompt"
-              description="Applied when the config has no override."
-              control={<pre className="settings-code-block">{agentPromptConfig?.default_append ?? ""}</pre>}
-            />
-            <Row
               title="Prompt append"
-              description="Saved to .ctx/config.toml. Leave unchanged to keep the default."
+              description="Saved to .ctx/config.toml. Pre-filled with the default; edit to override."
               control={
                 <textarea
                   className="settings-control settings-control-wide"
-                  rows={5}
+                  rows={6}
                   value={agentPromptText}
                   onChange={(e) => setAgentPromptText(e.target.value)}
                   disabled={!workspaceId || agentPromptLoading}
