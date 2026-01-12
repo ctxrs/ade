@@ -908,7 +908,18 @@ export default function SettingsPage() {
       const baseText = next.configured_append ?? next.default_append ?? "";
       setAgentPromptText(baseText);
     } catch (e: any) {
-      setAgentPromptError(e?.message ?? String(e));
+      const message = e?.message ?? String(e);
+      const first = workspaces[0];
+      if (message.toLowerCase().includes("404") && first) {
+        const firstId = idToString((first as any).id);
+        if (workspaceId !== firstId) {
+          setWorkspaceId(firstId);
+          setAgentPromptError(null);
+          setAgentPromptLoading(false);
+          return;
+        }
+      }
+      setAgentPromptError(message);
     } finally {
       setAgentPromptLoading(false);
     }
@@ -1030,6 +1041,10 @@ export default function SettingsPage() {
     if (!workspaces.some((ws) => idToString((ws as any).id) === workspaceId)) return;
     refreshAgentSystemPrompt().catch(() => {});
   }, [active, workspaceId, workspaces, refreshAgentSystemPrompt]);
+
+  useEffect(() => {
+    setAgentPromptError(null);
+  }, [workspaceId]);
 
   useEffect(() => {
     if (active !== "workspace_attachments") return;
@@ -1525,11 +1540,6 @@ export default function SettingsPage() {
               title="Config file"
               description="Repo-scoped agent prompt configuration."
               control={<span className="settings-pill wb-mono">{configPath}</span>}
-            />
-            <Row
-              title="Status"
-              description="Default prompt applies when no override is set."
-              control={<span className="settings-pill">{statusLabel}</span>}
             />
             <Row
               title="Prompt append"
