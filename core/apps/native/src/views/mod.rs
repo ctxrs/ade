@@ -13,3 +13,4 @@ mod turn_tools;
 mod router;
 
 pub(super) use router::RouterView;
+pub(super) use sidebar::SidebarOverlays;

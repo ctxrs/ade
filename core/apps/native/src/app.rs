@@ -39,12 +39,13 @@ use self::models::{MessageItem, SessionInfo};
 use self::state::{
     ArtifactPreviewState, ComposerAutocompleteState, ComposerDraft, ComposerVerbosity, DataLoadState,
     DiffReviewState, SettingsState, ShellRoute, StreamStatus, TaskFetchState, TerminalPanelState,
-    WorkbenchModeId,
+    WorkbenchModeId, SessionViewVerbosity,
 };
 use self::views::{RouterView, SidebarOverlays};
 
 
 use ctx_client::EnvTarget;
+use ctx_core::models::MessageRole;
 pub(crate) use self::state::ShellView;
 
 #[derive(Clone, Debug)]
@@ -249,13 +250,25 @@ pub fn run(options: AppOptions) {
                         sessions: Vec::new(),
                         selected_session: None,
                         messages: vec![MessageItem::new(
-                            "assistant",
-                            "Loading workspace data...",
+                            MessageRole::Assistant,
+                            "Loading session messages...",
                         )],
+                        session_turns: Vec::new(),
+                        session_turn_tools: HashMap::new(),
+                        thread_items: Vec::new(),
+                        sticky_turn_header: None,
+                        sticky_turn_header_at_top: true,
+                        expanded_turn_headers: HashMap::new(),
+                        expanded_messages: HashMap::new(),
+                        expanded_turn_details: HashMap::new(),
+                        expanded_tools: HashMap::new(),
+                        turn_tools_loading: HashSet::new(),
+                        verbosity: SessionViewVerbosity::Default,
+                        verbosity_menu_open: false,
                         artifacts: Vec::new(),
-                        session_events: Vec::new(),
                         selected_artifact: None,
                         artifact_preview: ArtifactPreviewState::None,
+                        session_events: Vec::new(),
                         session_summary_map: HashMap::new(),
                         session: SessionInfo::placeholder(),
                         data_state: DataLoadState::Loading,
@@ -319,16 +332,17 @@ pub fn run(options: AppOptions) {
                         composer_attachment_loading: HashSet::new(),
                         composer_subscriptions: Vec::new(),
                         composer_subscriptions_set: false,
-                        message_list_state: ListState::new(1, ListAlignment::Bottom, px(160.0)),
-                        message_list_len: 1,
-                        message_auto_follow: true,
-                        new_message_count: 0,
+                        thread_list_state: ListState::new(0, ListAlignment::Bottom, px(160.0)),
+                        thread_list_len: 0,
+                        thread_auto_follow: true,
+                        new_thread_item_count: 0,
+                        copied_flags: HashMap::new(),
                         stream_status: StreamStatus::Idle,
                         resyncing_session: None,
                         stream_subscribe_tx: None,
                         stream_stop_tx: None,
                         session_last_event_seq: HashMap::new(),
-                        message_list_handler_set: false,
+                        thread_list_handler_set: false,
                         show_sessions_pane: false,
                         show_diff_pane: false,
                         show_artifacts_pane: false,
