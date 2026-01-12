@@ -30,7 +30,7 @@ use ctx_core::models::{
     WorkspaceCatchupCursor,
 };
 
-use crate::theme::ThemeColors;
+use crate::theme::{ThemeColors, apply_gpui_component_theme};
 use super::ui_state::UiStateStore;
 
 use super::models::{MessageItem, SessionInfo};
@@ -42,7 +42,9 @@ pub(crate) use composer::{
     ContextWindowInfo, DraftTrack, PopoverPlacement, ProviderInstallState, WorkbenchModeId,
 };
 pub(crate) use diff_review::DiffReviewState;
-pub(crate) use settings::SettingsState;
+pub(crate) use settings::{
+    LabeledOption, SettingsInputKind, SettingsSection, SettingsSectionGroup, SettingsSelectKind, SettingsState, SETTINGS_SECTIONS,
+};
 pub(crate) use stream::StreamStatus;
 pub(crate) use terminal::{TerminalContext, TerminalPanelState};
 pub(crate) use workspace::{DataLoadState, ProviderItem, WorkspaceItem};
@@ -246,14 +248,14 @@ impl ShellView {
         self.is_dark = !self.is_dark;
         let (tokens, colors) = super::load_theme(self.is_dark);
         self.colors = colors;
-        crate::theme::apply_gpui_component_theme(&tokens, self.is_dark, cx);
+        apply_gpui_component_theme(&tokens, self.is_dark, cx);
         let colors = self.colors;
         cx.update_entity(&self.terminal_panel_state, |state, cx| {
             state.colors = colors;
             cx.notify();
         });
         cx.update_entity(&self.settings_state, |state, cx| {
-            state.colors = colors;
+            state.update_theme(colors, self.is_dark);
             cx.notify();
         });
         cx.notify();

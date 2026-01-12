@@ -1,11 +1,11 @@
+use std::collections::HashMap;
 use std::io::Cursor;
 use std::sync::{Arc, OnceLock};
 
 use gpui::{Image, ImageFormat};
-use image::imageops::colorops::{huerotate_in_place, invert};
 use image::{DynamicImage, ImageFormat as PngFormat};
+use image::imageops::colorops::{huerotate_in_place, invert};
 
-#[derive(Clone, Debug)]
 pub(crate) struct HarnessCatalogEntry {
     pub(crate) id: &'static str,
     pub(crate) label: &'static str,
@@ -14,70 +14,55 @@ pub(crate) struct HarnessCatalogEntry {
     pub(crate) inverted_image: Arc<Image>,
 }
 
-const LOGO_AMP: &[u8] = include_bytes!("../assets/emdash-logos/ampcode.png");
-const LOGO_ATLASSIAN: &[u8] = include_bytes!("../assets/emdash-logos/atlassian.png");
-const LOGO_AUGMENT: &[u8] = include_bytes!("../assets/emdash-logos/augmentcode.png");
-const LOGO_CHARM: &[u8] = include_bytes!("../assets/emdash-logos/charm.png");
-const LOGO_CLAUDE: &[u8] = include_bytes!("../assets/emdash-logos/claude.png");
-const LOGO_CLINE: &[u8] = include_bytes!("../assets/emdash-logos/cline.png");
-const LOGO_CODEBUFF: &[u8] = include_bytes!("../assets/emdash-logos/codebuff.png");
-const LOGO_CURSOR: &[u8] = include_bytes!("../assets/emdash-logos/cursorlogo.png");
-const LOGO_DROID: &[u8] = include_bytes!("../assets/emdash-logos/factorydroid.png");
-const LOGO_GEMINI: &[u8] = include_bytes!("../assets/emdash-logos/gemini.png");
-const LOGO_COPILOT: &[u8] = include_bytes!("../assets/emdash-logos/ghcopilot.png");
-const LOGO_GOOSE: &[u8] = include_bytes!("../assets/emdash-logos/goose.png");
-const LOGO_KIMI: &[u8] = include_bytes!("../assets/emdash-logos/kimi.png");
-const LOGO_KIRO: &[u8] = include_bytes!("../assets/emdash-logos/kiro.png");
-const LOGO_MISTRAL: &[u8] = include_bytes!("../assets/emdash-logos/mistral.png");
-const LOGO_CODEX: &[u8] = include_bytes!("../assets/emdash-logos/openai.png");
-const LOGO_OPENCODE: &[u8] = include_bytes!("../assets/emdash-logos/opencode.png");
-const LOGO_QWEN: &[u8] = include_bytes!("../assets/emdash-logos/qwen.png");
-
-const LOGO_AIDER: &[u8] = include_bytes!("../assets/harness-logos/aider.png");
-const LOGO_CAGENT: &[u8] = include_bytes!("../assets/harness-logos/cagent.png");
-const LOGO_CODY: &[u8] = include_bytes!("../assets/harness-logos/cody.png");
-const LOGO_CONTINUE: &[u8] = include_bytes!("../assets/harness-logos/continue.png");
-const LOGO_JUNIE: &[u8] = include_bytes!("../assets/harness-logos/junie.png");
-const LOGO_KILO: &[u8] = include_bytes!("../assets/harness-logos/kilo.png");
-const LOGO_OPENHANDS: &[u8] = include_bytes!("../assets/harness-logos/openhands.png");
-const LOGO_SWE_AGENT: &[u8] = include_bytes!("../assets/harness-logos/swe-agent.png");
-
 pub(crate) fn harness_catalog() -> &'static [HarnessCatalogEntry] {
     static CATALOG: OnceLock<Vec<HarnessCatalogEntry>> = OnceLock::new();
     CATALOG.get_or_init(|| {
         vec![
-            entry("claude", "Claude Code", LOGO_CLAUDE, false),
-            entry("codex", "Codex", LOGO_CODEX, true),
-            entry("qwen", "Qwen Code", LOGO_QWEN, false),
-            entry("cursor", "Cursor", LOGO_CURSOR, true),
-            entry("amp", "Amp", LOGO_AMP, false),
-            entry("droid", "Droid", LOGO_DROID, true),
-            entry("gemini", "Gemini", LOGO_GEMINI, false),
-            entry("copilot", "Copilot", LOGO_COPILOT, true),
-            entry("opencode", "OpenCode", LOGO_OPENCODE, true),
-            entry("cline", "Cline", LOGO_CLINE, false),
-            entry("mistral", "Mistral Vibe", LOGO_MISTRAL, false),
-            entry("auggie", "Auggie", LOGO_AUGMENT, true),
-            entry("goose", "Goose", LOGO_GOOSE, false),
-            entry("kimi", "Kimi", LOGO_KIMI, false),
-            entry("kiro", "Kiro", LOGO_KIRO, false),
-            entry("codebuff", "Codebuff", LOGO_CODEBUFF, false),
-            entry("charm", "Charm", LOGO_CHARM, false),
-            entry("rovo", "Rovo Dev", LOGO_ATLASSIAN, false),
-            entry("aider", "Aider", LOGO_AIDER, false),
-            entry("continue", "Continue", LOGO_CONTINUE, false),
-            entry("openhands", "OpenHands", LOGO_OPENHANDS, false),
-            entry("swe-agent", "SWE-agent", LOGO_SWE_AGENT, false),
-            entry("cagent", "cagent", LOGO_CAGENT, false),
-            entry("kilo", "Kilo Code", LOGO_KILO, false),
-            entry("cody", "Cody", LOGO_CODY, false),
-            entry("junie", "JetBrains Junie", LOGO_JUNIE, false),
+            entry("claude", "Claude Code", include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../web/src/assets/emdash-logos/claude.png")), false),
+            entry("codex", "Codex", include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../web/src/assets/emdash-logos/openai.png")), true),
+            entry("qwen", "Qwen Code", include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../web/src/assets/emdash-logos/qwen.png")), false),
+            entry("cursor", "Cursor", include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../web/src/assets/emdash-logos/cursorlogo.png")), true),
+            entry("amp", "Amp", include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../web/src/assets/emdash-logos/ampcode.png")), false),
+            entry("droid", "Droid", include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../web/src/assets/emdash-logos/factorydroid.png")), true),
+            entry("gemini", "Gemini", include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../web/src/assets/emdash-logos/gemini.png")), false),
+            entry("copilot", "Copilot", include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../web/src/assets/emdash-logos/ghcopilot.png")), true),
+            entry("opencode", "OpenCode", include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../web/src/assets/emdash-logos/opencode.png")), true),
+            entry("cline", "Cline", include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../web/src/assets/emdash-logos/cline.png")), false),
+            entry("mistral", "Mistral Vibe", include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../web/src/assets/emdash-logos/mistral.png")), false),
+            entry("auggie", "Auggie", include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../web/src/assets/emdash-logos/augmentcode.png")), true),
+            entry("goose", "Goose", include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../web/src/assets/emdash-logos/goose.png")), false),
+            entry("kimi", "Kimi", include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../web/src/assets/emdash-logos/kimi.png")), false),
+            entry("kiro", "Kiro", include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../web/src/assets/emdash-logos/kiro.png")), false),
+            entry("codebuff", "Codebuff", include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../web/src/assets/emdash-logos/codebuff.png")), false),
+            entry("charm", "Charm", include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../web/src/assets/emdash-logos/charm.png")), false),
+            entry("rovo", "Rovo Dev", include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../web/src/assets/emdash-logos/atlassian.png")), false),
+            entry("aider", "Aider", include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../web/src/assets/harness-logos/aider.png")), false),
+            entry("continue", "Continue", include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../web/src/assets/harness-logos/continue.png")), false),
+            entry("openhands", "OpenHands", include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../web/src/assets/harness-logos/openhands.png")), false),
+            entry("swe-agent", "SWE-agent", include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../web/src/assets/harness-logos/swe-agent.png")), false),
+            entry("cagent", "cagent", include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../web/src/assets/harness-logos/cagent.png")), false),
+            entry("kilo", "Kilo Code", include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../web/src/assets/harness-logos/kilo.png")), false),
+            entry("cody", "Cody", include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../web/src/assets/harness-logos/cody.png")), false),
+            entry("junie", "JetBrains Junie", include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../web/src/assets/harness-logos/junie.png")), false),
         ]
     })
 }
 
 pub(crate) fn harness_entry(id: &str) -> Option<&'static HarnessCatalogEntry> {
     harness_catalog().iter().find(|entry| entry.id == id)
+}
+
+pub(crate) fn build_harness_logo_map(is_dark: bool) -> HashMap<String, Arc<Image>> {
+    let mut map = HashMap::new();
+    for entry in harness_catalog() {
+        let image = if is_dark && entry.invert_in_dark {
+            entry.inverted_image.clone()
+        } else {
+            entry.image.clone()
+        };
+        map.insert(entry.id.to_string(), image);
+    }
+    map
 }
 
 fn entry(

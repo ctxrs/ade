@@ -9,7 +9,6 @@ mod automation {
     use std::path::PathBuf;
 
     use gpui::{App, WindowHandle};
-
     use gpui_component::Root;
 
     #[allow(dead_code)]

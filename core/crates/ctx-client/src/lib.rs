@@ -13,9 +13,10 @@ use url::{form_urlencoded, Url};
 
 use ctx_core::ids::{ArtifactId, SessionId, TaskId, TerminalId, TrackId, WorkspaceId, WorktreeId};
 use ctx_core::models::{
-    Artifact, Message, MessageAttachment, MessageDelivery, Session, SessionEventsPage, SessionHead,
-    SessionHistoryPage, SessionTurnTool, Task, TerminalSession, Track, TrackDiffSummaryResponse,
-    Workspace, WorkspaceCatchupCursor, WorkspaceCatchupSnapshot,
+    Artifact, AttachmentMode, AttachmentUpdatePolicy, Message, MessageAttachment, MessageDelivery,
+    Session, SessionEventsPage, SessionHead, SessionHistoryPage, SessionTurnTool, Task,
+    TerminalSession, Track, TrackDiffSummaryResponse, Workspace, WorkspaceAttachment,
+    WorkspaceAttachmentKind, WorkspaceCatchupCursor, WorkspaceCatchupSnapshot,
 };
 use ctx_providers::adapters::ProviderStatus;
 
@@ -292,7 +293,7 @@ pub struct PublicSubagentSettings {
     pub max_per_call: Option<u32>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DictationProvider {
     Disabled,
@@ -300,14 +301,14 @@ pub enum DictationProvider {
     LiveKitInference,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ResourceGovernanceMode {
     Auto,
     Custom,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ResourceGovernanceStatusState {
     Disabled,
@@ -347,6 +348,224 @@ pub struct PublicResourceGovernanceSettings {
     pub effective: Option<PublicResourceGovernanceLimits>,
     #[serde(default)]
     pub status: Option<PublicResourceGovernanceStatus>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct UpdateSettingsRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dictation: Option<UpdateDictationSettingsRequest>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub telemetry: Option<UpdateTelemetrySettingsRequest>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title_generation: Option<UpdateTitleGenerationSettingsRequest>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resource_governance: Option<UpdateResourceGovernanceSettingsRequest>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider_guard: Option<UpdateProviderGuardSettingsRequest>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subagents: Option<UpdateSubagentSettingsRequest>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct UpdateDictationSettingsRequest {
+    pub enabled: bool,
+    pub provider: DictationProvider,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub livekit: Option<UpdateLiveKitDictationSettingsRequest>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct UpdateLiveKitDictationSettingsRequest {
+    pub base_url: String,
+    pub api_key: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub api_secret: Option<String>,
+    pub model: String,
+    pub language: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct UpdateTelemetrySettingsRequest {
+    pub enabled: bool,
+    pub endpoint: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct UpdateTitleGenerationSettingsRequest {
+    pub base_url: String,
+    pub api_key: String,
+    pub model: String,
+    #[serde(default)]
+    pub use_json: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct UpdateResourceGovernanceSettingsRequest {
+    pub enabled: bool,
+    pub mode: ResourceGovernanceMode,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cpu_quota_pct: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory_high_mb: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory_max_mb: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct UpdateProviderGuardSettingsRequest {
+    pub enabled: bool,
+    pub mode: ResourceGovernanceMode,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory_high_mb: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory_max_mb: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub interval_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub grace_period_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct UpdateSubagentSettingsRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_per_call: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CreateWorkspaceAttachmentRequest {
+    pub kind: WorkspaceAttachmentKind,
+    pub name: String,
+    pub source: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub revision: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subpath: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mount_relpath: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mode: Option<AttachmentMode>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub update_policy: Option<AttachmentUpdatePolicy>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DeleteWorkspaceAttachmentRequest {
+    pub kind: WorkspaceAttachmentKind,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SyncWorkspaceAttachmentsRequest {
+    pub refresh: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MobileTunnelState {
+    Idle,
+    Running,
+    Error,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MobileAccessStatus {
+    pub enabled: bool,
+    #[serde(default)]
+    pub tunnel_id: Option<String>,
+    #[serde(default)]
+    pub public_base_url: Option<String>,
+    #[serde(default)]
+    pub relay_base_url: Option<String>,
+    #[serde(default)]
+    pub daemon_public_key: Option<String>,
+    pub tunnel_state: MobileTunnelState,
+    #[serde(default)]
+    pub last_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnableMobileAccessResponse {
+    pub status: MobileAccessStatus,
+    pub qr_payload: Value,
+    pub pairing_expires_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SystemSnapshot {
+    pub cpu_pct: f32,
+    pub memory_total_bytes: u64,
+    pub memory_used_bytes: u64,
+    pub swap_total_bytes: u64,
+    pub swap_used_bytes: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiskSnapshot {
+    pub name: String,
+    pub mount_point: String,
+    pub total_bytes: u64,
+    pub available_bytes: u64,
+    pub file_system: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResourceChildProcess {
+    pub pid: u32,
+    #[serde(default)]
+    pub parent_pid: Option<u32>,
+    pub name: String,
+    #[serde(default)]
+    pub cmdline: Option<String>,
+    pub cpu_pct: f32,
+    pub memory_bytes: u64,
+    pub virtual_memory_bytes: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResourceProcess {
+    pub label: String,
+    pub pid: u32,
+    pub cpu_pct: f32,
+    pub memory_bytes: u64,
+    pub virtual_memory_bytes: u64,
+    pub child_count: u64,
+    pub children: Vec<ResourceChildProcess>,
+    pub children_truncated: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResourceProcesses {
+    #[serde(default)]
+    pub daemon: Option<ResourceProcess>,
+    pub providers: Vec<ResourceProcess>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorktreeDiskSnapshot {
+    pub worktree_id: String,
+    pub root_path: String,
+    pub size_bytes: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkspaceDiskSnapshot {
+    pub workspace_id: String,
+    pub root_path: String,
+    pub size_bytes: u64,
+    pub size_collected_at: String,
+    pub size_cache_age_ms: u64,
+    #[serde(default)]
+    pub disk: Option<DiskSnapshot>,
+    pub worktrees: Vec<WorktreeDiskSnapshot>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResourceUtilizationSnapshot {
+    pub collected_at: String,
+    pub cache_age_ms: u64,
+    pub system: SystemSnapshot,
+    pub processes: ResourceProcesses,
+    pub workspace: WorkspaceDiskSnapshot,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -1065,6 +1284,75 @@ impl Client {
 
     pub async fn get_settings(&self) -> Result<PublicSettings> {
         self.request_json(Method::GET, "/api/settings", None::<&()>)
+            .await
+    }
+
+    pub async fn update_settings(&self, req: &UpdateSettingsRequest) -> Result<PublicSettings> {
+        self.request_json(Method::POST, "/api/settings", Some(req))
+            .await
+    }
+
+    pub async fn list_workspace_attachments(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> Result<Vec<WorkspaceAttachment>> {
+        let path = format!("/api/workspaces/{}/attachments", workspace_id.0);
+        self.request_json(Method::GET, &path, None::<&()>).await
+    }
+
+    pub async fn sync_workspace_attachments(
+        &self,
+        workspace_id: WorkspaceId,
+        refresh: bool,
+    ) -> Result<Vec<WorkspaceAttachment>> {
+        let path = format!("/api/workspaces/{}/attachments/sync", workspace_id.0);
+        let req = SyncWorkspaceAttachmentsRequest { refresh };
+        self.request_json(Method::POST, &path, Some(&req)).await
+    }
+
+    pub async fn create_workspace_attachment(
+        &self,
+        workspace_id: WorkspaceId,
+        req: &CreateWorkspaceAttachmentRequest,
+    ) -> Result<Vec<WorkspaceAttachment>> {
+        let path = format!("/api/workspaces/{}/attachments", workspace_id.0);
+        self.request_json(Method::POST, &path, Some(req)).await
+    }
+
+    pub async fn delete_workspace_attachment(
+        &self,
+        workspace_id: WorkspaceId,
+        req: &DeleteWorkspaceAttachmentRequest,
+    ) -> Result<Vec<WorkspaceAttachment>> {
+        let path = format!("/api/workspaces/{}/attachments", workspace_id.0);
+        self.request_json(Method::DELETE, &path, Some(req)).await
+    }
+
+    pub async fn get_resource_utilization(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> Result<ResourceUtilizationSnapshot> {
+        let path = format!("/api/resource_utilization?workspace_id={}", workspace_id.0);
+        self.request_json(Method::GET, &path, None::<&()>).await
+    }
+
+    pub async fn get_mobile_access_status(&self) -> Result<MobileAccessStatus> {
+        self.request_json(Method::GET, "/api/mobile/access/status", None::<&()>)
+            .await
+    }
+
+    pub async fn enable_mobile_access(
+        &self,
+        supabase_token: &str,
+    ) -> Result<EnableMobileAccessResponse> {
+        let req = serde_json::json!({ "supabase_token": supabase_token });
+        self.request_json(Method::POST, "/api/mobile/access/enable", Some(&req))
+            .await
+    }
+
+    pub async fn disable_mobile_access(&self, supabase_token: &str) -> Result<()> {
+        let req = serde_json::json!({ "supabase_token": supabase_token });
+        self.request_empty(Method::POST, "/api/mobile/access/disable", Some(&req))
             .await
     }
 

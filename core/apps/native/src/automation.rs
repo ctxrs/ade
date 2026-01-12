@@ -2,7 +2,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use axum::{
     extract::{
@@ -17,16 +17,15 @@ use axum::{
 use gpui::{
     App, AppContext, Context, Keystroke, Modifiers, ScrollStrategy, Window, WindowHandle, px, size,
 };
+use gpui_component::Root;
 use image::{ColorType, ImageFormat};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Map, json, Value};
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio::time::timeout;
 
-use crate::automation_tree;
 use crate::app::ShellView;
-use crate::app::ComposerMenuId;
-use gpui_component::Root;
+use crate::automation_tree;
 
 #[derive(Clone, Debug, Default)]
 pub struct AutomationConfig {
@@ -142,10 +141,6 @@ async fn run_http_server(addr: SocketAddr, state: Arc<AutomationState>) {
     let app = Router::new()
         .route("/ready", get(ready_handler))
         .route("/focus", post(focus_handler))
-        .route("/wait", post(wait_handler))
-        .route("/type", post(type_handler))
-        .route("/keypress", post(keypress_handler))
-        .route("/composer/attach", post(attach_handler))
         .route("/screenshot", post(screenshot_handler))
         .route("/exit", post(exit_handler))
         .route("/ws", get(ws_handler))
@@ -203,69 +198,13 @@ async fn ready_handler(
 
 #[derive(Debug, Deserialize, Clone, Copy)]
 #[serde(rename_all = "snake_case")]
-enum WaitTarget {
-    ArchivedLoaded,
-}
-
-#[derive(Deserialize)]
-struct WaitRequest {
-    target: WaitTarget,
-    timeout_ms: Option<u64>,
-}
-
-async fn wait_handler(
-    State(state): State<Arc<AutomationState>>,
-    Json(request): Json<WaitRequest>,
-) -> (StatusCode, Json<ApiResponse<Value>>) {
-    let timeout_ms = request.timeout_ms.unwrap_or(30_000);
-    let timeout = Duration::from_millis(timeout_ms);
-    let start = Instant::now();
-    loop {
-        let response = dispatch_command_with_timeout(
-            &state,
-            AutomationCommand::Check { target: request.target },
-            Duration::from_secs(10),
-        )
-        .await;
-
-        match response {
-            Ok(result) => {
-                let ready = result
-                    .get("ready")
-                    .and_then(|value| value.as_bool())
-                    .unwrap_or(false);
-                if ready {
-                    return ok(result);
-                }
-            }
-            Err(message) => {
-                return err(StatusCode::REQUEST_TIMEOUT, message);
-            }
-        }
-
-        if start.elapsed() >= timeout {
-            return err(StatusCode::REQUEST_TIMEOUT, "timeout waiting for archived tasks to load");
-        }
-        tokio::time::sleep(Duration::from_millis(250)).await;
-    }
-}
-
-#[derive(Debug, Deserialize, Clone, Copy)]
-#[serde(rename_all = "snake_case")]
 enum FocusTarget {
     Main,
     ArchivedTasks,
     Composer,
-    ComposerNewTask,
-    ComposerSession,
-    ComposerMenuClose,
     ComposerAttachments,
     ComposerProviderMenu,
     ComposerModelMenu,
-    ComposerEffortMenu,
-    ComposerModeMenu,
-    ComposerIsolationMenu,
-    ComposerVerbosityMenu,
     SessionsPane,
     DiffPane,
     ArtifactsPane,
@@ -278,16 +217,9 @@ impl FocusTarget {
             FocusTarget::Main => "main",
             FocusTarget::ArchivedTasks => "archived_tasks",
             FocusTarget::Composer => "composer",
-            FocusTarget::ComposerNewTask => "composer_new_task",
-            FocusTarget::ComposerSession => "composer_session",
-            FocusTarget::ComposerMenuClose => "composer_menu_close",
             FocusTarget::ComposerAttachments => "composer_attachments",
             FocusTarget::ComposerProviderMenu => "composer_provider_menu",
             FocusTarget::ComposerModelMenu => "composer_model_menu",
-            FocusTarget::ComposerEffortMenu => "composer_effort_menu",
-            FocusTarget::ComposerModeMenu => "composer_mode_menu",
-            FocusTarget::ComposerIsolationMenu => "composer_isolation_menu",
-            FocusTarget::ComposerVerbosityMenu => "composer_verbosity_menu",
             FocusTarget::SessionsPane => "sessions_pane",
             FocusTarget::DiffPane => "diff_pane",
             FocusTarget::ArtifactsPane => "artifacts_pane",
@@ -309,80 +241,6 @@ async fn focus_handler(
         &state,
         AutomationCommand::Focus {
             target: request.target,
-        },
-    )
-    .await;
-    match response {
-        Ok(result) => ok(result),
-        Err(message) => err(StatusCode::INTERNAL_SERVER_ERROR, message),
-    }
-}
-
-#[derive(Deserialize)]
-struct TypeRequest {
-    text: String,
-}
-
-async fn type_handler(
-    State(state): State<Arc<AutomationState>>,
-    Json(request): Json<TypeRequest>,
-) -> (StatusCode, Json<ApiResponse<Value>>) {
-    let response = dispatch_command(
-        &state,
-        AutomationCommand::Type {
-            text: request.text,
-        },
-    )
-    .await;
-    match response {
-        Ok(result) => ok(result),
-        Err(message) => err(StatusCode::INTERNAL_SERVER_ERROR, message),
-    }
-}
-
-#[derive(Deserialize)]
-struct KeyPressRequest {
-    key: String,
-}
-
-async fn keypress_handler(
-    State(state): State<Arc<AutomationState>>,
-    Json(request): Json<KeyPressRequest>,
-) -> (StatusCode, Json<ApiResponse<Value>>) {
-    let normalized = normalize_keystroke_input(&request.key);
-    let keystroke = match Keystroke::parse(&normalized) {
-        Ok(keystroke) => keystroke,
-        Err(parse_err) => {
-            return err(StatusCode::BAD_REQUEST, format!("invalid keystroke: {parse_err}"));
-        }
-    };
-    let response = dispatch_command(
-        &state,
-        AutomationCommand::KeyPress { keystroke },
-    )
-    .await;
-    match response {
-        Ok(result) => ok(result),
-        Err(message) => err(StatusCode::INTERNAL_SERVER_ERROR, message),
-    }
-}
-
-#[derive(Deserialize)]
-struct ComposerAttachRequest {
-    paths: Vec<PathBuf>,
-}
-
-async fn attach_handler(
-    State(state): State<Arc<AutomationState>>,
-    Json(request): Json<ComposerAttachRequest>,
-) -> (StatusCode, Json<ApiResponse<Value>>) {
-    if request.paths.is_empty() {
-        return err(StatusCode::BAD_REQUEST, "paths must not be empty");
-    }
-    let response = dispatch_command(
-        &state,
-        AutomationCommand::Attach {
-            paths: request.paths,
         },
     )
     .await;
@@ -468,14 +326,6 @@ async fn dispatch_command(
     state: &AutomationState,
     command: AutomationCommand,
 ) -> Result<Value, String> {
-    dispatch_command_with_timeout(state, command, Duration::from_secs(10)).await
-}
-
-async fn dispatch_command_with_timeout(
-    state: &AutomationState,
-    command: AutomationCommand,
-    timeout_duration: Duration,
-) -> Result<Value, String> {
     let (respond_to, response_rx) = oneshot::channel();
     state
         .command_tx
@@ -486,7 +336,7 @@ async fn dispatch_command_with_timeout(
         .await
         .map_err(|_| "automation command channel closed".to_string())?;
 
-    timeout(timeout_duration, response_rx)
+    timeout(Duration::from_secs(10), response_rx)
         .await
         .map_err(|_| "automation command timed out".to_string())?
         .map_err(|_| "automation command dropped".to_string())?
@@ -499,11 +349,9 @@ struct AutomationRequest {
 
 enum AutomationCommand {
     Focus { target: FocusTarget },
-    Check { target: WaitTarget },
     Screenshot { path: PathBuf },
     Resize { width: f32, height: f32 },
     Type { text: String },
-    Attach { paths: Vec<PathBuf> },
     KeyPress { keystroke: Keystroke },
     Exit,
 }
@@ -522,37 +370,11 @@ async fn run_command_loop(
                 let mut cx = cx.clone();
                 window
                     .update(&mut cx, |root, window, cx| {
-                        let view = root
-                            .view()
-                            .clone()
-                            .downcast::<ShellView>()
-                            .map_err(|_| "root view is not a ShellView".to_string())?;
-                        view.update(cx, |view, cx| apply_focus_target(view, window, cx, target));
+                        with_shell_view(root, cx, |view, cx| {
+                            apply_focus_target(view, window, cx, target);
+                        })?;
                         mark_input(&state);
                         Ok(json!({ "target": target.as_str() }))
-                    })
-                    .map_err(|err| err.to_string())
-                    .and_then(|result| result)
-            }
-            AutomationCommand::Check { target } => {
-                let mut cx = cx.clone();
-                window
-                    .update(&mut cx, |root, _, cx| {
-                        let view = root
-                            .view()
-                            .clone()
-                            .downcast::<ShellView>()
-                            .map_err(|_| "root view is not a ShellView".to_string())?;
-                        let ready = view.update(cx, |view, cx| {
-                            let ready = match target {
-                                WaitTarget::ArchivedLoaded => view.archived_ready(),
-                            };
-                            if !ready && view.task_store_initialized {
-                                view.ensure_archived_loaded(cx);
-                            }
-                            ready
-                        });
-                        Ok(json!({ "target": "archived_loaded", "ready": ready }))
                     })
                     .map_err(|err| err.to_string())
                     .and_then(|result| result)
@@ -585,26 +407,6 @@ async fn run_command_loop(
                     json!({ "text": text, "chars": text.chars().count() })
                 })
                 .map_err(|err| err.to_string())
-            }
-            AutomationCommand::Attach { paths } => {
-                let mut cx = cx.clone();
-                window
-                    .update(&mut cx, |root, _window, cx| {
-                        let view = root
-                            .view()
-                            .clone()
-                            .downcast::<ShellView>()
-                            .map_err(|_| "root view is not a ShellView".to_string())?;
-                        view.update(cx, |view, cx| {
-                            for path in paths.iter().cloned() {
-                                view.add_attachment_from_path(path, cx);
-                            }
-                        });
-                        mark_input(&state);
-                        Ok(json!({ "count": paths.len() }))
-                    })
-                    .map_err(|err| err.to_string())
-                    .and_then(|result| result)
             }
             AutomationCommand::KeyPress { keystroke } => {
                 let mut cx = cx.clone();
@@ -670,67 +472,20 @@ fn apply_focus_target(
                 .scroll_to_item(0, ScrollStrategy::Top);
         }
         FocusTarget::Composer => {
-            view.active_composer_input()
-                .update(cx, |state, cx| state.focus(window, cx));
-        }
-        FocusTarget::ComposerNewTask => {
-            view.set_new_task_mode(window, cx);
-            view.active_composer_input()
-                .update(cx, |state, cx| state.focus(window, cx));
-        }
-        FocusTarget::ComposerSession => {
-            view.set_session_mode_active(window, cx);
-            view.active_composer_input()
-                .update(cx, |state, cx| state.focus(window, cx));
-        }
-        FocusTarget::ComposerMenuClose => {
-            view.close_menu(cx);
+            view.composer_focus.focus(window, cx);
         }
         FocusTarget::ComposerAttachments => {
-            view.active_composer_input()
-                .update(cx, |state, cx| state.focus(window, cx));
+            view.composer_attachment_focus.focus(window, cx);
         }
         FocusTarget::ComposerProviderMenu => {
-            if view.composer_open_menu != Some(ComposerMenuId::Harness) {
-                view.toggle_menu(ComposerMenuId::Harness, window, cx);
-            }
-            view.active_composer_input()
-                .update(cx, |state, cx| state.focus(window, cx));
+            view.composer_provider_menu_open = true;
+            view.composer_model_menu_open = false;
+            view.composer_focus.focus(window, cx);
         }
         FocusTarget::ComposerModelMenu => {
-            if view.composer_open_menu != Some(ComposerMenuId::Model) {
-                view.toggle_menu(ComposerMenuId::Model, window, cx);
-            }
-            view.active_composer_input()
-                .update(cx, |state, cx| state.focus(window, cx));
-        }
-        FocusTarget::ComposerEffortMenu => {
-            if view.composer_open_menu != Some(ComposerMenuId::Effort) {
-                view.toggle_menu(ComposerMenuId::Effort, window, cx);
-            }
-            view.active_composer_input()
-                .update(cx, |state, cx| state.focus(window, cx));
-        }
-        FocusTarget::ComposerModeMenu => {
-            if view.composer_open_menu != Some(ComposerMenuId::Mode) {
-                view.toggle_menu(ComposerMenuId::Mode, window, cx);
-            }
-            view.active_composer_input()
-                .update(cx, |state, cx| state.focus(window, cx));
-        }
-        FocusTarget::ComposerIsolationMenu => {
-            if view.composer_open_menu != Some(ComposerMenuId::Isolation) {
-                view.toggle_menu(ComposerMenuId::Isolation, window, cx);
-            }
-            view.active_composer_input()
-                .update(cx, |state, cx| state.focus(window, cx));
-        }
-        FocusTarget::ComposerVerbosityMenu => {
-            if view.composer_open_menu != Some(ComposerMenuId::Verbosity) {
-                view.toggle_menu(ComposerMenuId::Verbosity, window, cx);
-            }
-            view.active_composer_input()
-                .update(cx, |state, cx| state.focus(window, cx));
+            view.composer_model_menu_open = true;
+            view.composer_provider_menu_open = false;
+            view.composer_focus.focus(window, cx);
         }
         FocusTarget::SessionsPane => {
             view.show_sessions_pane = true;
@@ -749,16 +504,29 @@ fn apply_focus_target(
     cx.notify();
 }
 
+fn with_shell_view<R, C: AppContext>(
+    root: &mut Root,
+    cx: &mut C,
+    f: impl FnOnce(&mut ShellView, &mut Context<ShellView>) -> R,
+) -> Result<R, String> {
+    let shell_view = root
+        .view()
+        .clone()
+        .downcast::<ShellView>()
+        .map_err(|_| "automation expected ShellView root".to_string())?;
+    Ok(shell_view.update(cx, f))
+}
+
 #[cfg(target_os = "linux")]
 async fn capture_window(
     _cx: &gpui::AsyncApp,
     _window: &WindowHandle<Root>,
     path: PathBuf,
 ) -> Result<PathBuf, String> {
-    // Use OS-level capture on Linux via zed-scap.
+    // Use OS-level capture on Linux via zed-scap (GPUI render_to_image is not
+    // reliable on Blade).
     use scap::capturer::{Capturer, Options};
     use scap::frame::Frame;
-    // Build a capturer targeting the main display; this avoids needing a window handle.
     let mut capturer = Capturer::build(Options {
         fps: 30,
         show_cursor: false,

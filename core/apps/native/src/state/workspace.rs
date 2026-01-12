@@ -21,6 +21,7 @@ use super::super::workspace_summary::{catchup_counts, task_session_summaries, Ta
 pub(crate) struct WorkspaceItem {
     pub(crate) id: WorkspaceId,
     pub(crate) name: String,
+    pub(crate) root_path: String,
 }
 
 pub(crate) type ProviderItem = ProviderStatus;
@@ -81,6 +82,7 @@ impl ShellView {
                 .map(|workspace| WorkspaceItem {
                     id: workspace.id,
                     name: workspace.name,
+                    root_path: workspace.root_path,
                 })
                 .collect::<Vec<_>>();
             Ok(InitialLoadResult {

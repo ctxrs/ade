@@ -3,24 +3,22 @@ use std::str::FromStr;
 
 use chrono::Utc;
 use gpui::{
-    App, Application, Bounds, Context, ListAlignment, ListState, ScrollStrategy, Window,
-    WindowBounds, WindowOptions, div,
+    App, Application, Bounds, ClickEvent, Context, ListAlignment, ListState, MouseMoveEvent,
+    MouseUpEvent, Rgba, ScrollStrategy, Window, WindowBounds, WindowOptions, div,
     InteractiveElement as _, StatefulInteractiveElement as _, prelude::*, px, size,
 };
-use gpui_component::{VirtualListScrollHandle, input::{InputEvent, InputState}};
+use gpui_component::{Root, VirtualListScrollHandle, input::{InputEvent, InputState}};
 
 use crate::automation;
 use crate::automation_tree;
 use crate::app_identity;
-use crate::theme::{ThemeColors, ThemeTokens};
+use crate::theme::{ThemeColors, ThemeTokens, apply_gpui_component_theme};
 use self::ui_state::UiStateStore;
 
 #[path = "icons.rs"]
 mod icons;
 #[path = "harness_catalog.rs"]
 mod harness_catalog;
-#[path = "model_effort.rs"]
-mod model_effort;
 #[path = "workspace_summary.rs"]
 mod workspace_summary;
 #[path = "models.rs"]
@@ -37,16 +35,12 @@ mod views;
 use self::icons::{Icon, IconAssets, IconName};
 use self::models::{MessageItem, SessionInfo};
 use self::state::{
-    ArtifactPreviewState, ComposerAutocompleteState, ComposerDraft, ComposerVerbosity, DataLoadState,
-    DiffReviewState, SettingsState, ShellRoute, StreamStatus, TaskFetchState, TerminalPanelState,
-    WorkbenchModeId,
+    ArtifactPreviewState, ComposerState, DataLoadState, DiffReviewState, SettingsState,
+    ShellRoute, StreamStatus, TaskFetchState, TerminalPanelState,
 };
-use ctx_client::EnvTarget;
-use self::views::RouterView;
+use self::views::{RouterView, SidebarOverlays};
 
 pub(crate) use self::state::ShellView;
-#[cfg(feature = "automation")]
-pub(crate) use self::state::ComposerMenuId;
 
 #[derive(Clone, Debug)]
 pub struct AppOptions {
@@ -69,6 +63,15 @@ impl Default for WindowSize {
     }
 }
 
+const fn rgba(r: u8, g: u8, b: u8, a: f32) -> Rgba {
+    Rgba {
+        r: r as f32 / 255.0,
+        g: g as f32 / 255.0,
+        b: b as f32 / 255.0,
+        a,
+    }
+}
+
 impl FromStr for WindowSize {
     type Err = String;
 
@@ -87,6 +90,27 @@ impl FromStr for WindowSize {
             return Err("window size must be positive".to_string());
         }
         Ok(Self { width, height })
+    }
+}
+
+fn settings_section_from_fixture(value: &str) -> Option<state::SettingsSection> {
+    match value {
+        "general" => Some(state::SettingsSection::General),
+        "agent_harnesses" => Some(state::SettingsSection::AgentHarnesses),
+        "models_routing" => Some(state::SettingsSection::ModelsRouting),
+        "sandboxing" => Some(state::SettingsSection::Sandboxing),
+        "worktree_bootstrap" => Some(state::SettingsSection::WorktreeBootstrap),
+        "workspace_attachments" => Some(state::SettingsSection::WorkspaceAttachments),
+        "context_pack" => Some(state::SettingsSection::ContextPack),
+        "resource_governance" => Some(state::SettingsSection::ResourceGovernance),
+        "mobile_access" => Some(state::SettingsSection::MobileAccess),
+        "resource_utilization" => Some(state::SettingsSection::ResourceUtilization),
+        "dictation" => Some(state::SettingsSection::Dictation),
+        "title_generation" => Some(state::SettingsSection::TitleGeneration),
+        "billing" => Some(state::SettingsSection::Billing),
+        "team_enterprise" => Some(state::SettingsSection::TeamEnterprise),
+        "usage_analytics" => Some(state::SettingsSection::UsageAnalytics),
+        _ => None,
     }
 }
 
@@ -119,16 +143,28 @@ pub fn run(options: AppOptions) {
         .with_assets(IconAssets::new());
     app
         .run(move |cx: &mut App| {
-        gpui_component::init(cx);
-        crate::theme::apply_gpui_component_theme(&theme_tokens, is_dark, cx);
         app_identity::apply_app_identity();
         gpui_tokio::init(cx);
+        gpui_component::init(cx);
+        apply_gpui_component_theme(&theme_tokens, is_dark, cx);
         let window_size = options.window_size.unwrap_or_default();
         let bounds = Bounds::centered(
             None,
             size(px(window_size.width), px(window_size.height)),
             cx,
         );
+        let (initial_route, initial_settings_section) = match options.automation.fixture.as_deref() {
+            Some("settings") => (Some(ShellRoute::Settings), None),
+            Some("providers") => (Some(ShellRoute::Providers), None),
+            Some(fixture) if fixture.starts_with("settings:") => {
+                let section = fixture
+                    .strip_prefix("settings:")
+                    .and_then(settings_section_from_fixture);
+                (Some(ShellRoute::Settings), section)
+            }
+            _ => (None, None),
+        };
+
         let window = cx
             .open_window(
             WindowOptions {
@@ -138,37 +174,26 @@ pub fn run(options: AppOptions) {
             },
             |window, cx| {
                 let base_url = base_url.clone();
+                let initial_route = initial_route;
+                let initial_settings_section = initial_settings_section;
                 let view = cx.new(|cx| {
                     let diff_review_state = cx.new(|_| DiffReviewState::new());
                     let terminal_panel_state =
                         cx.new(|cx| TerminalPanelState::new(colors, cx.focus_handle()));
-                    let settings_state = cx.new(|_| SettingsState::new(colors));
+                    let settings_state = cx.new(|_| SettingsState::new(colors, is_dark));
+                    if let Some(section) = initial_settings_section {
+                        settings_state.update(cx, |state, cx| {
+                            state.set_active_section(section, cx);
+                        });
+                    }
                     let task_search_input =
                         cx.new(|cx| InputState::new(window, cx).placeholder("Search Tasks"));
                     let rename_input = cx.new(|cx| InputState::new(window, cx));
                     let ui_state = UiStateStore::load();
                     let archive_confirm_dismissed = ui_state.archive_confirm_dismissed();
-                    let composer_new_input = cx.new(|cx| {
-                        InputState::new(window, cx)
-                            .auto_grow(1, 22)
-                            .placeholder("@ for context, / for commands")
-                    });
-                    let composer_session_input = cx.new(|cx| {
-                        InputState::new(window, cx)
-                            .auto_grow(1, 12)
-                            .placeholder("@ for context, / for commands")
-                    });
-                    let composer_harness_search = cx.new(|cx| {
-                        InputState::new(window, cx).placeholder("Search agents")
-                    });
-                    let composer_model_search = cx.new(|cx| {
-                        InputState::new(window, cx).placeholder("Search models")
-                    });
-                    let composer_model_manual = cx.new(|cx| {
-                        InputState::new(window, cx).placeholder("model_id")
-                    });
                     let mut view = ShellView {
                         colors,
+                        // Will set shell handle on settings state below after the ShellView entity exists.
                         base_url,
                         is_dark,
                         route: ShellRoute::Workbench,
@@ -208,7 +233,6 @@ pub fn run(options: AppOptions) {
                         archive_confirm_dismissed,
                         sidebar_width: 260.0,
                         sidebar_collapsed: false,
-                        sidebar_anim_epoch: 0,
                         sidebar_resizing: false,
                         sidebar_resize_state: None,
                         sidebar_resizer_hovered: false,
@@ -227,69 +251,14 @@ pub fn run(options: AppOptions) {
                         selected_artifact: None,
                         artifact_preview: ArtifactPreviewState::None,
                         session_summary_map: HashMap::new(),
-                        session_last_event_seq: HashMap::new(),
                         session: SessionInfo::placeholder(),
                         data_state: DataLoadState::Loading,
-                        new_task_mode: true,
-                        new_task_mode_locked: false,
-                        composer_new_input,
-                        composer_session_input,
+                        composer: ComposerState::new(),
+                        composer_focus: cx.focus_handle(),
                         composer_attachments: Vec::new(),
-                        composer_new_attachments: Vec::new(),
-                        composer_session_attachments: HashMap::new(),
-                        composer_new_draft: ComposerDraft::default(),
-                        composer_session_drafts: HashMap::new(),
-                        composer_start_busy: false,
-                        composer_start_error: None,
-                        composer_needs_apply: false,
+                        composer_attachment_input: ComposerState::new(),
+                        composer_attachment_focus: cx.focus_handle(),
                         composer_notice: None,
-                        composer_open_menu: None,
-                        composer_menu_trigger_bounds: HashMap::new(),
-                        composer_menu_bounds: HashMap::new(),
-                        composer_menu_placements: HashMap::new(),
-                        composer_tooltip_open: None,
-                        composer_tooltip_trigger_bounds: HashMap::new(),
-                        composer_tooltip_bounds: HashMap::new(),
-                        composer_tooltip_placements: HashMap::new(),
-                        composer_tooltip_close_id: 0,
-                        composer_mode_id: WorkbenchModeId::Default,
-                        composer_verbosity: ComposerVerbosity::Default,
-                        composer_context_window: None,
-                        composer_env_target: EnvTarget::Worktree,
-                        composer_use_multiple_agents: false,
-                        composer_draft_tracks: Vec::new(),
-                        composer_provider_options: HashMap::new(),
-                        composer_provider_opts_busy: HashMap::new(),
-                        composer_provider_auth_busy: HashMap::new(),
-                        composer_provider_verify_busy: HashMap::new(),
-                        composer_provider_installs: HashMap::new(),
-                        composer_install_polling: HashSet::new(),
-                        composer_install_all_busy: false,
-                        composer_provider_action_notice: None,
-                        composer_provider_action_error: None,
-                        composer_harness_expanded_provider: None,
-                        composer_harness_count_menu_provider: None,
-                        composer_harness_count_menu_placement: None,
-                        composer_harness_count_trigger_bounds: HashMap::new(),
-                        composer_harness_count_menu_bounds: None,
-                        composer_recording: false,
-                        composer_harness_search,
-                        composer_model_search,
-                        composer_model_search_placeholder: "Search models".to_string(),
-                        composer_model_manual,
-                        composer_autocomplete: ComposerAutocompleteState::new(),
-                        composer_track_model_inputs: HashMap::new(),
-                        composer_track_model_placeholders: HashMap::new(),
-                        composer_track_input_subscriptions: HashMap::new(),
-                        composer_autocomplete_input_bounds: None,
-                        composer_autocomplete_anchor_bounds: None,
-                        composer_autocomplete_menu_placement: None,
-                        composer_autocomplete_menu_width: None,
-                        composer_autocomplete_preview_placement: None,
-                        composer_attachment_images: HashMap::new(),
-                        composer_attachment_loading: HashSet::new(),
-                        composer_subscriptions: Vec::new(),
-                        composer_subscriptions_set: false,
                         message_list_state: ListState::new(1, ListAlignment::Bottom, px(160.0)),
                         message_list_len: 1,
                         message_auto_follow: true,
@@ -298,6 +267,7 @@ pub fn run(options: AppOptions) {
                         resyncing_session: None,
                         stream_subscribe_tx: None,
                         stream_stop_tx: None,
+                        session_last_event_seq: HashMap::new(),
                         message_list_handler_set: false,
                         show_sessions_pane: false,
                         show_diff_pane: false,
@@ -309,6 +279,7 @@ pub fn run(options: AppOptions) {
                         aux_workspace_id: None,
                         aux_session_id: None,
                     };
+
                     let search_subscription = cx.subscribe_in(
                         &task_search_input,
                         window,
@@ -356,9 +327,17 @@ pub fn run(options: AppOptions) {
 
                     view.start_relative_time(cx);
                     view.start_data_load(cx);
+                    if let Some(route) = initial_route {
+                        view.set_route(route, cx);
+                    }
+                    // Give the settings state a handle to this ShellView for navigation (e.g., sidebar backlink).
+                    let shell_handle = cx.entity();
+                    view.settings_state.update(cx, |state, _cx| {
+                        state.set_shell_handle(shell_handle);
+                    });
                     view
                 });
-                cx.new(|cx| gpui_component::Root::new(view, window, cx))
+                cx.new(|cx| Root::new(view, window, cx))
             },
         )
         .unwrap();
@@ -369,15 +348,35 @@ pub fn run(options: AppOptions) {
 
 impl Render for ShellView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.init_composer(window, cx);
-        if self.composer_needs_apply {
-            self.composer_needs_apply = false;
-            self.apply_active_composer_state(window, cx);
-        }
-        self.ensure_composer_provider_options(cx);
-        self.update_composer_placeholders(window, cx);
-        self.ensure_track_model_inputs(window, cx);
         self.sync_auxiliary_panes(cx);
+        if self.sidebar_resizing {
+            let view_handle = cx.entity();
+            window.on_mouse_event({
+                let view_handle = view_handle.clone();
+                move |event: &MouseMoveEvent, _, window, cx| {
+                    let _ = view_handle.update(cx, |view, cx| {
+                        if let Some(state) = view.sidebar_resize_state {
+                            let delta = f32::from(event.position.x) - state.start_x;
+                            let next_width = state.start_width + delta;
+                            view.set_sidebar_width(next_width, window, cx);
+                        }
+                    });
+                }
+            });
+            window.on_mouse_event({
+                let view_handle = view_handle.clone();
+                move |_: &MouseUpEvent, _, _window, cx| {
+                    let _ = view_handle.update(cx, |view, cx| {
+                        if view.sidebar_resizing {
+                            view.sidebar_resizing = false;
+                            view.sidebar_resize_state = None;
+                            view.sidebar_resizer_hovered = false;
+                            cx.notify();
+                        }
+                    });
+                }
+            });
+        }
         let toggle_label = Icon::new(IconName::Settings, 12.0, self.colors.muted);
         let resyncing = self
             .resyncing_session
@@ -387,6 +386,8 @@ impl Render for ShellView {
                     .map(|summary| summary.session_id == resync_id)
             })
             .unwrap_or(false);
+        let provider_options = self.composer_provider_options();
+        let model_options = self.composer_model_options();
         let workspace_label = self
             .selected_workspace
             .and_then(|id| self.workspaces.iter().find(|ws| ws.id == id))
@@ -410,6 +411,30 @@ impl Render for ShellView {
                     .child(task_label),
             );
         }
+        let mut title_group = div().flex().items_center().gap(px(10.0));
+        if self.route == ShellRoute::Workbench && self.sidebar_collapsed {
+            let expand = div()
+                .w(px(26.0))
+                .h(px(26.0))
+                .rounded(px(8.0))
+                .border_1()
+                .border_color(self.colors.border)
+                .bg(rgba(255, 255, 255, 0.03))
+                .text_size(px(16.0))
+                .text_color(self.colors.text)
+                .flex()
+                .items_center()
+                .justify_center()
+                .child("›")
+                .cursor_pointer()
+                .id("sidebar-expand")
+                .active(|style| style.opacity(0.85))
+                .on_click(cx.listener(|view, _: &ClickEvent, _window, cx| {
+                    view.set_sidebar_collapsed(false, cx);
+                }));
+            title_group = title_group.child(expand);
+        }
+        title_group = title_group.child(title_label);
         div()
             .on_children_prepainted(automation_tree::track_children_bounds(
                 "app-shell",
@@ -421,6 +446,7 @@ impl Render for ShellView {
             .size_full()
             .flex()
             .flex_col()
+            .relative()
             .bg(self.colors.bg)
             .text_color(self.colors.text)
             .child(
@@ -439,7 +465,7 @@ impl Render for ShellView {
                             .items_center()
                             .justify_between()
                             .w_full()
-                            .child(title_label)
+                            .child(title_group)
                             .child(
                                 div()
                                     .id("theme-toggle")
@@ -467,10 +493,21 @@ impl Render for ShellView {
                     .child(
                         RouterView {
                             shell: self,
+                            provider_options,
+                            model_options,
                             resyncing,
                         }
                         .render(cx),
                     ),
             )
+            .when(self.route == ShellRoute::Workbench, |this| {
+                this.child(
+                    SidebarOverlays {
+                        shell: self,
+                        viewport: window.bounds().size,
+                    }
+                    .render(cx),
+                )
+            })
     }
 }
