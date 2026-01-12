@@ -408,6 +408,11 @@ pub fn run(options: AppOptions) {
 
 impl Render for ShellView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Wire composer state: subscriptions, provider options, track inputs, and placeholders.
+        self.init_composer(window, cx);
+        self.ensure_composer_provider_options(cx);
+        self.ensure_track_model_inputs(window, cx);
+        self.update_composer_placeholders(window, cx);
         self.sync_auxiliary_panes(cx);
         if self.sidebar_resizing {
             let view_handle = cx.entity();
