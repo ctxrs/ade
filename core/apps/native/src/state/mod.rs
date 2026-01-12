@@ -9,19 +9,24 @@ pub(super) mod terminal;
 pub(super) mod turn_tools;
 pub(super) mod workspace;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::time::Duration;
 
+use chrono::{DateTime, Utc};
 use gpui::AppContext as _;
-use gpui::{ClickEvent, Context, FocusHandle, ListState, Window, Entity};
+use gpui::{AsyncApp, ClickEvent, Context, FocusHandle, ListState, Task, Window, Entity, WeakEntity};
+use gpui_component::{VirtualListScrollHandle, input::InputState};
+use gpui_tokio::Tokio;
 use tokio::sync::watch;
 
-use ctx_core::ids::{SessionId, WorkspaceId};
+use ctx_core::ids::{SessionId, TaskId, WorkspaceId};
 use ctx_core::models::{
-    Artifact, MessageAttachment, SessionCatchupSummary, SessionEvent,
-    WorkspaceCatchupClientMessage,
+    Artifact, MessageAttachment, SessionCatchupSummary, SessionEvent, WorkspaceCatchupClientMessage,
+    WorkspaceCatchupCursor,
 };
 
 use crate::theme::ThemeColors;
+use super::ui_state::UiStateStore;
 
 use super::models::{MessageItem, SessionInfo};
 use super::workspace_summary::{SessionSummaryItem, TaskSummaryItem};
@@ -44,6 +49,46 @@ pub(crate) enum ShellRoute {
     AppSettings,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TaskFetchState {
+    Idle,
+    Loading,
+    Error,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TaskArchiveAction {
+    Archive,
+    Unarchive,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct AnchorRect {
+    pub(crate) left: f32,
+    pub(crate) top: f32,
+    pub(crate) bottom: f32,
+    pub(crate) width: f32,
+    pub(crate) height: f32,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ArchiveConfirmState {
+    pub(crate) task_id: TaskId,
+    pub(crate) anchor: AnchorRect,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct TaskMenuState {
+    pub(crate) task_id: TaskId,
+    pub(crate) anchor: AnchorRect,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct SidebarResizeState {
+    pub(crate) start_x: f32,
+    pub(crate) start_width: f32,
+}
+
 pub(crate) struct ShellView {
     pub(crate) colors: ThemeColors,
     pub(crate) base_url: String,
@@ -58,8 +103,40 @@ pub(crate) struct ShellView {
     pub(crate) composer_model_menu_open: bool,
     pub(crate) catchup_active_total: Option<i64>,
     pub(crate) catchup_archived_total: Option<i64>,
-    pub(crate) tasks: Vec<TaskSummaryItem>,
-    pub(crate) selected_task: Option<usize>,
+    pub(crate) task_store_initialized: bool,
+    pub(crate) task_fetch_active: TaskFetchState,
+    pub(crate) task_fetch_archived: TaskFetchState,
+    pub(crate) task_has_more_active: bool,
+    pub(crate) task_has_more_archived: bool,
+    pub(crate) task_archived_loaded: bool,
+    pub(crate) task_active_cursor: Option<WorkspaceCatchupCursor>,
+    pub(crate) task_archived_cursor: Option<WorkspaceCatchupCursor>,
+    pub(crate) tasks_by_id: HashMap<TaskId, TaskSummaryItem>,
+    pub(crate) task_active_order: Vec<TaskId>,
+    pub(crate) task_archived_order: Vec<TaskId>,
+    pub(crate) task_query: String,
+    pub(crate) task_search_input: Entity<InputState>,
+    pub(crate) task_list_scroll_handle: VirtualListScrollHandle,
+    pub(crate) task_hovered: Option<TaskId>,
+    pub(crate) task_menu: Option<TaskMenuState>,
+    pub(crate) selected_task: Option<TaskId>,
+    pub(crate) renaming_task_id: Option<TaskId>,
+    pub(crate) rename_input: Entity<InputState>,
+    pub(crate) rename_ignore_blur: bool,
+    pub(crate) archive_pending: HashMap<TaskId, TaskArchiveAction>,
+    pub(crate) task_mark_read_inflight: HashSet<TaskId>,
+    pub(crate) archive_confirm: Option<ArchiveConfirmState>,
+    pub(crate) archive_confirm_dont_remind: bool,
+    pub(crate) archive_confirm_dismissed: bool,
+    pub(crate) sidebar_width: f32,
+    pub(crate) sidebar_collapsed: bool,
+    pub(crate) sidebar_resizing: bool,
+    pub(crate) sidebar_resize_state: Option<SidebarResizeState>,
+    pub(crate) sidebar_resizer_hovered: bool,
+    pub(crate) archived_collapsed: bool,
+    pub(crate) relative_now: DateTime<Utc>,
+    pub(crate) relative_time_task: Option<Task<()>>,
+    pub(crate) ui_state: UiStateStore,
     pub(crate) sessions: Vec<SessionSummaryItem>,
     pub(crate) selected_session: Option<usize>,
     pub(crate) messages: Vec<MessageItem>,
@@ -126,6 +203,94 @@ impl ShellView {
             });
         }
         cx.notify();
+    }
+
+    pub(crate) fn set_sidebar_collapsed(&mut self, collapsed: bool, cx: &mut Context<Self>) {
+        if self.sidebar_collapsed == collapsed {
+            return;
+        }
+        self.sidebar_collapsed = collapsed;
+        if collapsed {
+            self.sidebar_resizing = false;
+            self.sidebar_resize_state = None;
+            self.sidebar_resizer_hovered = false;
+        }
+        if let Some(workspace_id) = self.selected_workspace {
+            self.ui_state
+                .set_sidebar_collapsed(workspace_id, collapsed);
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn set_archived_collapsed(&mut self, collapsed: bool, cx: &mut Context<Self>) {
+        if self.archived_collapsed == collapsed {
+            return;
+        }
+        self.archived_collapsed = collapsed;
+        if let Some(workspace_id) = self.selected_workspace {
+            self.ui_state
+                .set_archived_collapsed(workspace_id, collapsed);
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn set_sidebar_width(
+        &mut self,
+        width: f32,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) {
+        let clamped = self.clamp_sidebar_width(width, window);
+        if (self.sidebar_width - clamped).abs() < f32::EPSILON {
+            return;
+        }
+        self.sidebar_width = clamped;
+        if let Some(workspace_id) = self.selected_workspace {
+            self.ui_state.set_sidebar_width(workspace_id, clamped);
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn clamp_sidebar_width(&self, width: f32, window: &Window) -> f32 {
+        let viewport = f32::from(window.bounds().size.width);
+        let max = (viewport - 240.0).max(170.0);
+        width.round().clamp(170.0, max)
+    }
+
+    pub(crate) fn start_relative_time(&mut self, cx: &mut Context<Self>) {
+        if self.relative_time_task.is_some() {
+            return;
+        }
+        let (tick_tx, mut tick_rx) = watch::channel(Utc::now());
+        let tick_task = Tokio::spawn(cx, async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(60));
+            loop {
+                interval.tick().await;
+                if tick_tx.send(Utc::now()).is_err() {
+                    break;
+                }
+            }
+        });
+        tick_task.detach();
+
+        let update_task = cx.spawn(move |this: WeakEntity<ShellView>, cx: &mut AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                while tick_rx.changed().await.is_ok() {
+                    let now = *tick_rx.borrow();
+                    if this
+                        .update(&mut cx, |view, cx| {
+                            view.relative_now = now;
+                            cx.notify();
+                        })
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            }
+        });
+        self.relative_time_task = Some(update_task);
     }
 
     pub(crate) fn toggle_sessions_pane(

@@ -90,6 +90,11 @@ pub struct CreateTaskRequest {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct UpdateTaskTitleRequest<'a> {
+    pub title: &'a str,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct CreateTrackRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
@@ -621,6 +626,37 @@ impl Client {
     ) -> Result<Task> {
         let path = format!("/api/workspaces/{}/tasks", workspace_id.0);
         self.request_json(Method::POST, &path, Some(req)).await
+    }
+
+    pub async fn update_task_title(&self, task_id: TaskId, title: &str) -> Result<Task> {
+        let path = format!("/api/tasks/{}/title", task_id.0);
+        let req = UpdateTaskTitleRequest { title };
+        self.request_json(Method::POST, &path, Some(&req)).await
+    }
+
+    pub async fn delete_task(&self, task_id: TaskId) -> Result<()> {
+        let path = format!("/api/tasks/{}", task_id.0);
+        self.request_empty(Method::DELETE, &path, None::<&()>).await
+    }
+
+    pub async fn archive_task(&self, task_id: TaskId) -> Result<Task> {
+        let path = format!("/api/tasks/{}/archive", task_id.0);
+        self.request_json(Method::POST, &path, None::<&()>).await
+    }
+
+    pub async fn unarchive_task(&self, task_id: TaskId) -> Result<Task> {
+        let path = format!("/api/tasks/{}/unarchive", task_id.0);
+        self.request_json(Method::POST, &path, None::<&()>).await
+    }
+
+    pub async fn mark_task_read(&self, task_id: TaskId) -> Result<Task> {
+        let path = format!("/api/tasks/{}/mark_read", task_id.0);
+        self.request_json(Method::POST, &path, None::<&()>).await
+    }
+
+    pub async fn mark_task_unread(&self, task_id: TaskId) -> Result<Task> {
+        let path = format!("/api/tasks/{}/mark_unread", task_id.0);
+        self.request_json(Method::POST, &path, None::<&()>).await
     }
 
     pub async fn get_workspace_catchup(

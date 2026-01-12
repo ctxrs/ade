@@ -1,41 +1,45 @@
-use ctx_core::ids::SessionId;
-use ctx_core::models::{SessionStatus, TaskStatus, WorkspaceCatchupSnapshot};
+use ctx_core::ids::{SessionId, TaskId};
+use ctx_core::models::{
+    SessionStatus, Task, WorkspaceCatchupSnapshot, WorkspaceCatchupTrackSummary,
+    WorkspaceCatchupTaskSummary,
+};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TaskSummaryStatus {
-    Pending,
-    Running,
-    Completed,
-    Failed,
-    Cancelled,
-}
-
-impl TaskSummaryStatus {
-    pub fn label(self) -> &'static str {
-        match self {
-            TaskSummaryStatus::Pending => "Pending",
-            TaskSummaryStatus::Running => "Running",
-            TaskSummaryStatus::Completed => "Done",
-            TaskSummaryStatus::Failed => "Failed",
-            TaskSummaryStatus::Cancelled => "Cancelled",
-        }
-    }
-
-    fn from_task_status(status: &TaskStatus) -> Self {
-        match status {
-            TaskStatus::Pending => TaskSummaryStatus::Pending,
-            TaskStatus::Running => TaskSummaryStatus::Running,
-            TaskStatus::Completed => TaskSummaryStatus::Completed,
-            TaskStatus::Failed => TaskSummaryStatus::Failed,
-            TaskStatus::Cancelled => TaskSummaryStatus::Cancelled,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct TaskSummaryItem {
-    pub title: String,
-    pub status: TaskSummaryStatus,
+    pub id: TaskId,
+    pub task: Task,
+    pub tracks: Vec<WorkspaceCatchupTrackSummary>,
+    pub sort_at_ms: i64,
+}
+
+impl TaskSummaryItem {
+    pub fn from_summary(summary: &WorkspaceCatchupTaskSummary) -> Self {
+        let sort_at_ms = summary
+            .task
+            .archived_at
+            .unwrap_or(summary.task.created_at)
+            .timestamp_millis();
+        Self {
+            id: summary.task.id,
+            task: summary.task.clone(),
+            tracks: summary.tracks.clone(),
+            sort_at_ms,
+        }
+    }
+
+    pub fn with_task(&self, task: Task) -> Self {
+        let sort_at = task.archived_at.unwrap_or(task.created_at);
+        Self {
+            id: self.id,
+            task,
+            tracks: self.tracks.clone(),
+            sort_at_ms: sort_at.timestamp_millis(),
+        }
+    }
+
+    pub fn is_archived(&self) -> bool {
+        self.task.archived_at.is_some()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -58,35 +62,41 @@ pub fn catchup_counts(snapshot: &WorkspaceCatchupSnapshot) -> WorkspaceCatchupCo
     }
 }
 
+#[cfg(test)]
 pub fn task_summaries(snapshot: &WorkspaceCatchupSnapshot) -> Vec<TaskSummaryItem> {
     snapshot
         .active
         .tasks
         .iter()
-        .map(|summary| TaskSummaryItem {
-            title: summary.task.title.clone(),
-            status: TaskSummaryStatus::from_task_status(&summary.task.status),
-        })
+        .map(TaskSummaryItem::from_summary)
         .collect()
 }
 
+#[cfg(test)]
 pub fn session_summaries(snapshot: &WorkspaceCatchupSnapshot) -> Vec<SessionSummaryItem> {
+    snapshot
+        .active
+        .tasks
+        .iter()
+        .flat_map(|task| task_session_summaries(&TaskSummaryItem::from_summary(task)))
+        .collect()
+}
+
+pub fn task_session_summaries(task: &TaskSummaryItem) -> Vec<SessionSummaryItem> {
     let mut items = Vec::new();
-    for task in &snapshot.active.tasks {
-        for track in &task.tracks {
-            for session in &track.sessions {
-                let title = if session.session.title.is_empty() {
-                    "Session".to_string()
-                } else {
-                    session.session.title.clone()
-                };
-                let status = session_status_text(&session.session.status, session.activity.is_working);
-                items.push(SessionSummaryItem {
-                    session_id: session.session.id,
-                    title,
-                    status: status.to_string(),
-                });
-            }
+    for track in &task.tracks {
+        for session in &track.sessions {
+            let title = if session.session.title.is_empty() {
+                "Session".to_string()
+            } else {
+                session.session.title.clone()
+            };
+            let status = session_status_text(&session.session.status, session.activity.is_working);
+            items.push(SessionSummaryItem {
+                session_id: session.session.id,
+                title,
+                status: status.to_string(),
+            });
         }
     }
     items
@@ -175,8 +185,8 @@ mod tests {
 
         let tasks = task_summaries(&snapshot);
         assert_eq!(tasks.len(), 1);
-        assert_eq!(tasks[0].title, "Fix login");
-        assert_eq!(tasks[0].status, TaskSummaryStatus::Running);
+        assert_eq!(tasks[0].task.title, "Fix login");
+        assert_eq!(tasks[0].id.0.to_string(), "00000000-0000-0000-0000-000000000010");
 
         let sessions = session_summaries(&snapshot);
         assert_eq!(sessions.len(), 1);

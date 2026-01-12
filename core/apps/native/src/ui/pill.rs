@@ -2,6 +2,7 @@ use gpui::{Div, IntoElement, prelude::*, px, div};
 
 use crate::theme::{ThemeColors, ThemeMetrics};
 
+#[allow(dead_code)]
 #[derive(Clone, Copy)]
 pub enum PillTone {
     Neutral,
@@ -21,6 +22,7 @@ fn tone_color(colors: ThemeColors, tone: PillTone) -> gpui::Rgba {
     }
 }
 
+#[allow(dead_code)]
 pub fn pill<E: IntoElement>(colors: ThemeColors, label: E, tone: PillTone) -> Div {
     let metrics = ThemeMetrics::default();
     div()
@@ -35,6 +37,7 @@ pub fn pill<E: IntoElement>(colors: ThemeColors, label: E, tone: PillTone) -> Di
         .child(label)
 }
 
+#[allow(dead_code)]
 pub fn count(colors: ThemeColors, n: usize) -> Div {
     let metrics = ThemeMetrics::default();
     div()

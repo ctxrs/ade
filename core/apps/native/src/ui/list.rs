@@ -2,6 +2,7 @@ use gpui::{Div, IntoElement, prelude::*, px, div};
 
 use crate::theme::ThemeColors;
 
+#[allow(dead_code)]
 #[derive(Clone, Copy)]
 pub enum RowDensity {
     Tight,
@@ -28,6 +29,7 @@ pub fn row<E: IntoElement>(colors: ThemeColors, active: bool, density: RowDensit
         .child(left)
 }
 
+#[allow(dead_code)]
 pub fn row_lr<L: IntoElement, R: IntoElement>(
     colors: ThemeColors,
     active: bool,

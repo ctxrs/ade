@@ -1,11 +1,13 @@
-use gpui::{ClickEvent, Context, ElementId, div, prelude::*, px};
+use gpui::{
+    ClickEvent, Context, ElementId, MouseButton, MouseDownEvent, Rgba, div, prelude::*, px,
+};
 
 use crate::theme::{ThemeColors, ThemeMetrics};
 
 use super::diagnostics::DiagnosticsPanelView;
 use super::session::SessionView;
 use super::sidebar::SidebarView;
-use super::super::state::{ShellRoute, ShellView};
+use super::super::state::{ShellRoute, ShellView, SidebarResizeState};
 
 pub(crate) struct RouterView<'a> {
     pub(crate) shell: &'a ShellView,
@@ -16,17 +18,7 @@ pub(crate) struct RouterView<'a> {
 
 impl<'a> RouterView<'a> {
     pub(crate) fn render(&self, cx: &mut Context<ShellView>) -> impl IntoElement {
-        let sidebar = SidebarView {
-            colors: self.shell.colors,
-            current_route: self.shell.route,
-            workspaces: &self.shell.workspaces,
-            selected_workspace: self.shell.selected_workspace,
-            providers: &self.shell.providers,
-            tasks: &self.shell.tasks,
-            selected_task: self.shell.selected_task,
-        }
-        .render(cx)
-        .into_any_element();
+        let sidebar = SidebarView { shell: self.shell }.render(cx).into_any_element();
 
         let main = match self.shell.route {
             ShellRoute::Workbench => self.render_workbench(cx).into_any_element(),
@@ -37,12 +29,69 @@ impl<'a> RouterView<'a> {
             ShellRoute::Workspaces => self.render_workspaces(cx).into_any_element(),
         };
 
+        let resizer = if self.shell.route == ShellRoute::Workbench && !self.shell.sidebar_collapsed {
+            self.render_sidebar_resizer(cx).into_any_element()
+        } else {
+            div().into_any_element()
+        };
+
         div()
             .flex()
             .flex_row()
             .flex_1()
+            .relative()
             .child(sidebar)
             .child(main)
+            .child(resizer)
+    }
+
+    fn render_sidebar_resizer(&self, cx: &mut Context<ShellView>) -> impl IntoElement {
+        let left = (self.shell.sidebar_width - 3.0).max(0.0);
+        let highlight = rgba(78, 163, 255, 0.35);
+        let bar_color = if self.shell.sidebar_resizing || self.shell.sidebar_resizer_hovered {
+            highlight
+        } else {
+            rgba(255, 255, 255, 0.0)
+        };
+
+        div()
+            .id("sidebar-resizer")
+            .absolute()
+            .top_0()
+            .bottom_0()
+            .left(px(left))
+            .w(px(6.0))
+            .cursor_col_resize()
+            .on_hover(cx.listener(|view, hovered, _window, cx| {
+                view.sidebar_resizer_hovered = *hovered;
+                cx.notify();
+            }))
+            .on_mouse_down(MouseButton::Left, cx.listener(|view, event: &MouseDownEvent, window, cx| {
+                window.prevent_default();
+                if event.click_count >= 2 {
+                    view.set_sidebar_width(260.0, window, cx);
+                    view.sidebar_resizing = false;
+                    view.sidebar_resize_state = None;
+                    cx.notify();
+                    return;
+                }
+                view.sidebar_resizing = true;
+                view.sidebar_resize_state = Some(SidebarResizeState {
+                    start_x: f32::from(event.position.x),
+                    start_width: view.sidebar_width,
+                });
+                cx.notify();
+            }))
+            .child(
+                div()
+                    .absolute()
+                    .top_0()
+                    .bottom_0()
+                    .left(px(2.0))
+                    .w(px(2.0))
+                    .rounded_full()
+                    .bg(bar_color),
+            )
     }
 
     fn render_workbench(&self, cx: &mut Context<ShellView>) -> impl IntoElement {
@@ -301,5 +350,14 @@ impl<'a> RouterView<'a> {
             .rounded_sm()
             .bg(colors.panel)
             .child(label.to_string())
+    }
+}
+
+const fn rgba(r: u8, g: u8, b: u8, a: f32) -> Rgba {
+    Rgba {
+        r: r as f32 / 255.0,
+        g: g as f32 / 255.0,
+        b: b as f32 / 255.0,
+        a,
     }
 }

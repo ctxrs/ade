@@ -1,15 +1,19 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 
+use chrono::Utc;
 use gpui::{
-    App, Application, Bounds, Context, ListAlignment, ListState, Window, WindowBounds,
-    WindowOptions, div, prelude::*, px, size,
+    App, Application, Bounds, ClickEvent, Context, ListAlignment, ListState, MouseMoveEvent,
+    MouseUpEvent, Rgba, ScrollStrategy, Window, WindowBounds, WindowOptions, div,
+    InteractiveElement as _, StatefulInteractiveElement as _, prelude::*, px, size,
 };
+use gpui_component::{VirtualListScrollHandle, input::{InputEvent, InputState}};
 
 use crate::automation;
 use crate::automation_tree;
 use crate::app_identity;
 use crate::theme::{ThemeColors, ThemeTokens};
+use self::ui_state::UiStateStore;
 
 #[path = "icons.rs"]
 mod icons;
@@ -17,6 +21,12 @@ mod icons;
 mod workspace_summary;
 #[path = "models.rs"]
 mod models;
+#[path = "relative_time.rs"]
+mod relative_time;
+#[path = "ui_state.rs"]
+mod ui_state;
+#[path = "harness_catalog.rs"]
+mod harness_catalog;
 #[path = "state/mod.rs"]
 mod state;
 #[path = "views/mod.rs"]
@@ -26,9 +36,9 @@ use self::icons::{Icon, IconAssets, IconName};
 use self::models::{MessageItem, SessionInfo};
 use self::state::{
     ArtifactPreviewState, ComposerState, DataLoadState, DiffReviewState, SettingsState,
-    ShellRoute, StreamStatus, TerminalPanelState,
+    ShellRoute, StreamStatus, TaskFetchState, TerminalPanelState,
 };
-use self::views::RouterView;
+use self::views::{RouterView, SidebarOverlays};
 
 pub(crate) use self::state::ShellView;
 
@@ -50,6 +60,15 @@ impl Default for WindowSize {
             width: 1200.0,
             height: 800.0,
         }
+    }
+}
+
+const fn rgba(r: u8, g: u8, b: u8, a: f32) -> Rgba {
+    Rgba {
+        r: r as f32 / 255.0,
+        g: g as f32 / 255.0,
+        b: b as f32 / 255.0,
+        a,
     }
 }
 
@@ -127,6 +146,11 @@ pub fn run(options: AppOptions) {
                     let terminal_panel_state =
                         cx.new(|cx| TerminalPanelState::new(colors, cx.focus_handle()));
                     let settings_state = cx.new(|_| SettingsState::new(colors));
+                    let task_search_input =
+                        cx.new(|cx| InputState::new(window, cx).placeholder("Search Tasks"));
+                    let rename_input = cx.new(|cx| InputState::new(window, cx));
+                    let ui_state = UiStateStore::load();
+                    let archive_confirm_dismissed = ui_state.archive_confirm_dismissed();
                     let mut view = ShellView {
                         colors,
                         base_url,
@@ -141,8 +165,40 @@ pub fn run(options: AppOptions) {
                         composer_model_menu_open: false,
                         catchup_active_total: None,
                         catchup_archived_total: None,
-                        tasks: Vec::new(),
+                        task_store_initialized: false,
+                        task_fetch_active: TaskFetchState::Idle,
+                        task_fetch_archived: TaskFetchState::Idle,
+                        task_has_more_active: true,
+                        task_has_more_archived: false,
+                        task_archived_loaded: false,
+                        task_active_cursor: None,
+                        task_archived_cursor: None,
+                        tasks_by_id: HashMap::new(),
+                        task_active_order: Vec::new(),
+                        task_archived_order: Vec::new(),
+                        task_query: String::new(),
+                        task_search_input: task_search_input.clone(),
+                        task_list_scroll_handle: VirtualListScrollHandle::new(),
+                        task_hovered: None,
+                        task_menu: None,
                         selected_task: None,
+                        renaming_task_id: None,
+                        rename_input: rename_input.clone(),
+                        rename_ignore_blur: false,
+                        archive_pending: HashMap::new(),
+                        task_mark_read_inflight: HashSet::new(),
+                        archive_confirm: None,
+                        archive_confirm_dont_remind: false,
+                        archive_confirm_dismissed,
+                        sidebar_width: 260.0,
+                        sidebar_collapsed: false,
+                        sidebar_resizing: false,
+                        sidebar_resize_state: None,
+                        sidebar_resizer_hovered: false,
+                        archived_collapsed: true,
+                        relative_now: Utc::now(),
+                        relative_time_task: None,
+                        ui_state,
                         sessions: Vec::new(),
                         selected_session: None,
                         messages: vec![MessageItem::new(
@@ -154,7 +210,6 @@ pub fn run(options: AppOptions) {
                         selected_artifact: None,
                         artifact_preview: ArtifactPreviewState::None,
                         session_summary_map: HashMap::new(),
-                        session_last_event_seq: HashMap::new(),
                         session: SessionInfo::placeholder(),
                         data_state: DataLoadState::Loading,
                         composer: ComposerState::new(),
@@ -171,6 +226,7 @@ pub fn run(options: AppOptions) {
                         resyncing_session: None,
                         stream_subscribe_tx: None,
                         stream_stop_tx: None,
+                        session_last_event_seq: HashMap::new(),
                         message_list_handler_set: false,
                         show_sessions_pane: false,
                         show_diff_pane: false,
@@ -182,6 +238,53 @@ pub fn run(options: AppOptions) {
                         aux_workspace_id: None,
                         aux_session_id: None,
                     };
+
+                    let search_subscription = cx.subscribe_in(
+                        &task_search_input,
+                        window,
+                        |view: &mut ShellView, state: &gpui::Entity<InputState>, event, _window, cx| {
+                            if matches!(event, InputEvent::Change) {
+                                let value = state.read(cx).value().to_string();
+                                if view.task_query != value {
+                                    view.task_query = value;
+                                    view.task_list_scroll_handle
+                                        .scroll_to_item(0, ScrollStrategy::Top);
+                                    cx.notify();
+                                }
+                            }
+                        },
+                    );
+                    search_subscription.detach();
+
+                    let rename_subscription = cx.subscribe_in(
+                        &rename_input,
+                        window,
+                        |view, state: &gpui::Entity<InputState>, event, _window, cx| {
+                            match event {
+                                InputEvent::PressEnter { .. } => {
+                                    if let Some(task_id) = view.renaming_task_id {
+                                        let value = state.read(cx).value().to_string();
+                                        view.rename_ignore_blur = true;
+                                        view.commit_task_rename(task_id, value, cx);
+                                    }
+                                }
+                                InputEvent::Blur => {
+                                    if let Some(task_id) = view.renaming_task_id {
+                                        if view.rename_ignore_blur {
+                                            view.rename_ignore_blur = false;
+                                            return;
+                                        }
+                                        let value = state.read(cx).value().to_string();
+                                        view.commit_task_rename(task_id, value, cx);
+                                    }
+                                }
+                                _ => {}
+                            }
+                        },
+                    );
+                    rename_subscription.detach();
+
+                    view.start_relative_time(cx);
                     view.start_data_load(cx);
                     view
                 });
@@ -195,8 +298,36 @@ pub fn run(options: AppOptions) {
 }
 
 impl Render for ShellView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sync_auxiliary_panes(cx);
+        if self.sidebar_resizing {
+            let view_handle = cx.entity();
+            window.on_mouse_event({
+                let view_handle = view_handle.clone();
+                move |event: &MouseMoveEvent, _, window, cx| {
+                    let _ = view_handle.update(cx, |view, cx| {
+                        if let Some(state) = view.sidebar_resize_state {
+                            let delta = f32::from(event.position.x) - state.start_x;
+                            let next_width = state.start_width + delta;
+                            view.set_sidebar_width(next_width, window, cx);
+                        }
+                    });
+                }
+            });
+            window.on_mouse_event({
+                let view_handle = view_handle.clone();
+                move |_: &MouseUpEvent, _, _window, cx| {
+                    let _ = view_handle.update(cx, |view, cx| {
+                        if view.sidebar_resizing {
+                            view.sidebar_resizing = false;
+                            view.sidebar_resize_state = None;
+                            view.sidebar_resizer_hovered = false;
+                            cx.notify();
+                        }
+                    });
+                }
+            });
+        }
         let toggle_label = Icon::new(IconName::Settings, 12.0, self.colors.muted);
         let resyncing = self
             .resyncing_session
@@ -215,8 +346,8 @@ impl Render for ShellView {
             .unwrap_or_else(|| "No workspace".to_string());
         let task_label = self
             .selected_task
-            .and_then(|index| self.tasks.get(index))
-            .map(|task| task.title.clone());
+            .and_then(|task_id| self.tasks_by_id.get(&task_id))
+            .map(|task| task.task.title.clone());
         let mut title_label = div()
             .flex()
             .items_center()
@@ -231,6 +362,30 @@ impl Render for ShellView {
                     .child(task_label),
             );
         }
+        let mut title_group = div().flex().items_center().gap(px(10.0));
+        if self.route == ShellRoute::Workbench && self.sidebar_collapsed {
+            let expand = div()
+                .w(px(26.0))
+                .h(px(26.0))
+                .rounded(px(8.0))
+                .border_1()
+                .border_color(self.colors.border)
+                .bg(rgba(255, 255, 255, 0.03))
+                .text_size(px(16.0))
+                .text_color(self.colors.text)
+                .flex()
+                .items_center()
+                .justify_center()
+                .child("›")
+                .cursor_pointer()
+                .id("sidebar-expand")
+                .active(|style| style.opacity(0.85))
+                .on_click(cx.listener(|view, _: &ClickEvent, _window, cx| {
+                    view.set_sidebar_collapsed(false, cx);
+                }));
+            title_group = title_group.child(expand);
+        }
+        title_group = title_group.child(title_label);
         div()
             .on_children_prepainted(automation_tree::track_children_bounds(
                 "app-shell",
@@ -242,6 +397,7 @@ impl Render for ShellView {
             .size_full()
             .flex()
             .flex_col()
+            .relative()
             .bg(self.colors.bg)
             .text_color(self.colors.text)
             .child(
@@ -260,7 +416,7 @@ impl Render for ShellView {
                             .items_center()
                             .justify_between()
                             .w_full()
-                            .child(title_label)
+                            .child(title_group)
                             .child(
                                 div()
                                     .id("theme-toggle")
@@ -295,5 +451,14 @@ impl Render for ShellView {
                         .render(cx),
                     ),
             )
+            .when(self.route == ShellRoute::Workbench, |this| {
+                this.child(
+                    SidebarOverlays {
+                        shell: self,
+                        viewport: window.bounds().size,
+                    }
+                    .render(cx),
+                )
+            })
     }
 }

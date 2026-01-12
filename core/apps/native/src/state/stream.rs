@@ -18,7 +18,6 @@ use ctx_core::models::{
 
 use super::ShellView;
 use super::super::models::{message_item_from_model, session_info_from_summary};
-use super::super::workspace_summary::SessionSummaryItem;
 
 #[derive(Clone)]
 pub(crate) enum StreamStatus {
@@ -162,8 +161,24 @@ impl ShellView {
 
     fn apply_workspace_event(&mut self, event: WorkspaceCatchupEvent, cx: &mut Context<Self>) {
         match event {
+            WorkspaceCatchupEvent::TaskUpsert { task, .. } => {
+                self.upsert_task_summary(task);
+                self.send_stream_subscribe();
+                self.maybe_mark_selected_task_read(cx);
+                cx.notify();
+            }
+            WorkspaceCatchupEvent::TaskDelete { task_id, .. } => {
+                self.remove_task(task_id);
+                self.send_stream_subscribe();
+                cx.notify();
+            }
+            WorkspaceCatchupEvent::TrackUpsert { track, .. } => {
+                self.apply_track_summary(track);
+                self.send_stream_subscribe();
+                cx.notify();
+            }
             WorkspaceCatchupEvent::SessionSummary { summary, .. } => {
-                self.apply_session_summary(summary, cx);
+                self.handle_session_summary(summary, cx);
             }
             WorkspaceCatchupEvent::SessionHeadDelta { delta, .. } => {
                 self.apply_session_head_delta(*delta, cx);
@@ -179,39 +194,21 @@ impl ShellView {
         }
     }
 
-    fn apply_session_summary(&mut self, summary: SessionCatchupSummary, cx: &mut Context<Self>) {
+    fn handle_session_summary(&mut self, summary: SessionCatchupSummary, cx: &mut Context<Self>) {
         let session_id = summary.session.id;
-        let info = session_info_from_summary(&summary);
         let is_new = !self.session_summary_map.contains_key(&session_id);
-
-        self.session_summary_map.insert(session_id, summary.clone());
-        if let Some(seq) = summary.last_event_seq {
-            self.update_session_last_event_seq(session_id, seq);
-        }
-
-        if let Some(item) = self
-            .sessions
-            .iter_mut()
-            .find(|item| item.session_id == session_id)
-        {
-            item.title = info.title.clone();
-            item.status = info.status.clone();
-        } else {
-            self.sessions.push(SessionSummaryItem {
-                session_id,
-                title: info.title.clone(),
-                status: info.status.clone(),
-            });
-        }
-
+        self.apply_session_summary(summary);
         if self.is_session_selected(session_id) {
-            self.session = info;
+            if let Some(summary) = self.session_summary_map.get(&session_id) {
+                self.session = session_info_from_summary(summary);
+            }
         }
 
         if is_new {
             self.send_stream_subscribe();
         }
 
+        self.maybe_mark_selected_task_read(cx);
         cx.notify();
     }
 

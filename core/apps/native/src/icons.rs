@@ -1,6 +1,8 @@
 use std::borrow::Cow;
 
-use gpui::{AssetSource, Result, Rgba, SharedString, Svg, prelude::*, px, svg};
+use gpui::{
+    AssetSource, Radians, Result, Rgba, SharedString, Svg, Transformation, prelude::*, px, svg,
+};
 
 // Lucide icons (MIT), rendered as monochrome SVG masks.
 const SETTINGS_SVG: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"/><circle cx="12" cy="12" r="3"/></svg>"#;
@@ -13,6 +15,13 @@ const IMAGE_SVG: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="24" he
 const DIFF_SVG: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" x2="6" y1="3" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>"#;
 const SESSIONS_SVG: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></svg>"#;
 const TERMINAL_SVG: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19h8"/><path d="m4 17 6-6-6-6"/></svg>"#;
+const ARCHIVE_SVG: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="5" x="2" y="3" rx="1" /><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8" /><path d="M10 12h4" /></svg>"#;
+const CHEVRON_DOWN_SVG: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6" /></svg>"#;
+const CHEVRON_LEFT_SVG: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6" /></svg>"#;
+const CHEVRON_RIGHT_SVG: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6" /></svg>"#;
+const ELLIPSIS_SVG: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1" /><circle cx="19" cy="12" r="1" /><circle cx="5" cy="12" r="1" /></svg>"#;
+const LAYERS_PLUS_SVG: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 .83.18 2 2 0 0 0 .83-.18l8.58-3.9a1 1 0 0 0 0-1.831z" /><path d="M16 17h6" /><path d="M19 14v6" /><path d="M2 12a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 .825.178" /><path d="M2 17a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l2.116-.962" /></svg>"#;
+const SPINNER_ARC_SVG: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="6" r="5" stroke-dasharray="7.9 23.5" transform="rotate(-90 6 6)" /></svg>"#;
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum IconName {
@@ -26,10 +35,17 @@ pub(crate) enum IconName {
     Diff,
     Sessions,
     Terminal,
+    Archive,
+    ChevronDown,
+    ChevronLeft,
+    ChevronRight,
+    Ellipsis,
+    LayersPlus,
+    SpinnerArc,
 }
 
 impl IconName {
-    const fn path(self) -> &'static str {
+    pub(crate) const fn path(self) -> &'static str {
         match self {
             Self::Settings => "icons/settings.svg",
             Self::Refresh => "icons/refresh-cw.svg",
@@ -41,6 +57,13 @@ impl IconName {
             Self::Diff => "icons/git-branch.svg",
             Self::Sessions => "icons/monitor.svg",
             Self::Terminal => "icons/terminal.svg",
+            Self::Archive => "icons/archive.svg",
+            Self::ChevronDown => "icons/chevron-down.svg",
+            Self::ChevronLeft => "icons/chevron-left.svg",
+            Self::ChevronRight => "icons/chevron-right.svg",
+            Self::Ellipsis => "icons/ellipsis.svg",
+            Self::LayersPlus => "icons/layers-plus.svg",
+            Self::SpinnerArc => "icons/spinner-arc.svg",
         }
     }
 
@@ -56,6 +79,13 @@ impl IconName {
             Self::Diff => DIFF_SVG,
             Self::Sessions => SESSIONS_SVG,
             Self::Terminal => TERMINAL_SVG,
+            Self::Archive => ARCHIVE_SVG,
+            Self::ChevronDown => CHEVRON_DOWN_SVG,
+            Self::ChevronLeft => CHEVRON_LEFT_SVG,
+            Self::ChevronRight => CHEVRON_RIGHT_SVG,
+            Self::Ellipsis => ELLIPSIS_SVG,
+            Self::LayersPlus => LAYERS_PLUS_SVG,
+            Self::SpinnerArc => SPINNER_ARC_SVG,
         }
     }
 }
@@ -81,6 +111,13 @@ impl AssetSource for IconAssets {
             "icons/git-branch.svg" => IconName::Diff.svg(),
             "icons/monitor.svg" => IconName::Sessions.svg(),
             "icons/terminal.svg" => IconName::Terminal.svg(),
+            "icons/archive.svg" => IconName::Archive.svg(),
+            "icons/chevron-down.svg" => IconName::ChevronDown.svg(),
+            "icons/chevron-left.svg" => IconName::ChevronLeft.svg(),
+            "icons/chevron-right.svg" => IconName::ChevronRight.svg(),
+            "icons/ellipsis.svg" => IconName::Ellipsis.svg(),
+            "icons/layers-plus.svg" => IconName::LayersPlus.svg(),
+            "icons/spinner-arc.svg" => IconName::SpinnerArc.svg(),
             _ => return Ok(None),
         };
 
@@ -101,6 +138,13 @@ impl AssetSource for IconAssets {
                 SharedString::from("git-branch.svg"),
                 SharedString::from("monitor.svg"),
                 SharedString::from("terminal.svg"),
+                SharedString::from("archive.svg"),
+                SharedString::from("chevron-down.svg"),
+                SharedString::from("chevron-left.svg"),
+                SharedString::from("chevron-right.svg"),
+                SharedString::from("ellipsis.svg"),
+                SharedString::from("layers-plus.svg"),
+                SharedString::from("spinner-arc.svg"),
             ])
         } else {
             Ok(Vec::new())
@@ -112,11 +156,27 @@ pub(crate) struct Icon {
     name: IconName,
     size: f32,
     color: Rgba,
+    transformation: Option<Transformation>,
 }
 
 impl Icon {
     pub(crate) fn new(name: IconName, size: f32, color: Rgba) -> Self {
-        Self { name, size, color }
+        Self {
+            name,
+            size,
+            color,
+            transformation: None,
+        }
+    }
+
+    pub(crate) fn transform(mut self, transformation: Transformation) -> Self {
+        self.transformation = Some(transformation);
+        self
+    }
+
+    pub(crate) fn rotate(mut self, radians: impl Into<Radians>) -> Self {
+        self.transformation = Some(Transformation::rotate(radians));
+        self
     }
 }
 
@@ -124,11 +184,17 @@ impl IntoElement for Icon {
     type Element = Svg;
 
     fn into_element(self) -> Self::Element {
-        svg()
+        let icon = svg()
             .path(self.name.path())
             .w(px(self.size))
             .h(px(self.size))
             .text_color(self.color)
-            .flex_none()
+            .flex_none();
+
+        if let Some(transformation) = self.transformation {
+            icon.with_transformation(transformation)
+        } else {
+            icon
+        }
     }
 }

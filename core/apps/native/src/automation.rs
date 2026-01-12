@@ -15,7 +15,7 @@ use axum::{
     Json, Router,
 };
 use gpui::{
-    App, AppContext, Context, Keystroke, Modifiers, Window, WindowHandle, px, size,
+    App, AppContext, Context, Keystroke, Modifiers, ScrollStrategy, Window, WindowHandle, px, size,
 };
 use image::{ColorType, ImageFormat};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
@@ -200,6 +200,7 @@ async fn ready_handler(
 #[serde(rename_all = "snake_case")]
 enum FocusTarget {
     Main,
+    ArchivedTasks,
     Composer,
     ComposerAttachments,
     ComposerProviderMenu,
@@ -214,6 +215,7 @@ impl FocusTarget {
     fn as_str(&self) -> &'static str {
         match self {
             FocusTarget::Main => "main",
+            FocusTarget::ArchivedTasks => "archived_tasks",
             FocusTarget::Composer => "composer",
             FocusTarget::ComposerAttachments => "composer_attachments",
             FocusTarget::ComposerProviderMenu => "composer_provider_menu",
@@ -466,6 +468,12 @@ fn apply_focus_target(
 
     match target {
         FocusTarget::Main => {}
+        FocusTarget::ArchivedTasks => {
+            view.set_archived_collapsed(false, cx);
+            view.ensure_archived_loaded(cx);
+            view.task_list_scroll_handle
+                .scroll_to_item(0, ScrollStrategy::Top);
+        }
         FocusTarget::Composer => {
             view.composer_focus.focus(window, cx);
         }

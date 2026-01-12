@@ -4,6 +4,7 @@ use crate::theme::{ThemeColors, ThemeMetrics};
 
 // Minimal native button primitives wired to ThemeMetrics/Colors.
 
+#[allow(dead_code)]
 pub fn primary<E: IntoElement>(colors: ThemeColors, label: E) -> Div {
     let metrics = ThemeMetrics::default();
     div()
