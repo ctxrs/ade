@@ -127,6 +127,7 @@ export type SessionSummary = {
 export type SubagentInvocationChild = {
   invocation_id: string;
   child_session_id: { 0: string } | string;
+  run_id?: { 0: string } | string | null;
   position: number;
   status: string;
   label?: string | null;

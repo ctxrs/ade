@@ -221,6 +221,8 @@ pub struct SubagentInvocation {
 pub struct SubagentInvocationChild {
     pub invocation_id: String,
     pub child_session_id: SessionId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<RunId>,
     pub position: i64,
     pub status: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
