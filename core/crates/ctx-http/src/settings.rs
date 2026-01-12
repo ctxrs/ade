@@ -18,6 +18,8 @@ pub struct Settings {
     pub provider_guard: Option<ProviderGuardSettings>,
     #[serde(default)]
     pub subagents: Option<SubagentSettings>,
+    #[serde(default)]
+    pub sandboxing: Option<SandboxingSettings>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -70,6 +72,28 @@ pub struct TelemetrySettings {
     pub enabled: bool,
     #[serde(default = "crate::telemetry::default_telemetry_endpoint")]
     pub endpoint: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderControlMode {
+    #[default]
+    Full,
+    HarnessNative,
+    CtxEnforced,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SandboxingSettings {
+    pub provider_control_mode: ProviderControlMode,
+}
+
+impl Default for SandboxingSettings {
+    fn default() -> Self {
+        Self {
+            provider_control_mode: ProviderControlMode::Full,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -171,6 +195,8 @@ pub struct PublicSettings {
     pub provider_guard: Option<PublicProviderGuardSettings>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub subagents: Option<PublicSubagentSettings>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sandboxing: Option<PublicSandboxingSettings>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -202,6 +228,11 @@ pub struct PublicTitleGenerationSettings {
     pub api_key: String,
     pub model: String,
     pub use_json: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PublicSandboxingSettings {
+    pub provider_control_mode: ProviderControlMode,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -280,6 +311,8 @@ pub struct UpdateSettingsReq {
     pub provider_guard: Option<UpdateProviderGuardSettingsReq>,
     #[serde(default)]
     pub subagents: Option<UpdateSubagentSettingsReq>,
+    #[serde(default)]
+    pub sandboxing: Option<UpdateSandboxingSettingsReq>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -346,6 +379,11 @@ pub struct UpdateSubagentSettingsReq {
     pub max_per_call: Option<u32>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct UpdateSandboxingSettingsReq {
+    pub provider_control_mode: ProviderControlMode,
+}
+
 fn settings_path(data_root: &Path) -> PathBuf {
     data_root.join(SETTINGS_FILE_NAME)
 }
@@ -361,6 +399,9 @@ pub async fn load_settings(data_root: &Path) -> Settings {
     }
     if settings.provider_guard.is_none() {
         settings.provider_guard = Some(ProviderGuardSettings::default());
+    }
+    if settings.sandboxing.is_none() {
+        settings.sandboxing = Some(SandboxingSettings::default());
     }
 
     // Environment overrides (optional) for easy local bring-up.
@@ -494,6 +535,12 @@ pub fn to_public(settings: &Settings) -> PublicSettings {
     let subagents = settings.subagents.as_ref().map(|s| PublicSubagentSettings {
         max_per_call: s.max_per_call,
     });
+    let sandboxing = settings
+        .sandboxing
+        .as_ref()
+        .map(|s| PublicSandboxingSettings {
+            provider_control_mode: s.provider_control_mode.clone(),
+        });
     PublicSettings {
         dictation,
         telemetry,
@@ -501,6 +548,7 @@ pub fn to_public(settings: &Settings) -> PublicSettings {
         resource_governance,
         provider_guard,
         subagents,
+        sandboxing,
     }
 }
 
@@ -568,6 +616,10 @@ pub fn apply_update(mut current: Settings, req: UpdateSettingsReq) -> Settings {
         let mut next = current.subagents.unwrap_or_default();
         next.max_per_call = s.max_per_call;
         current.subagents = Some(next);
+    if let Some(s) = req.sandboxing {
+        let mut next = current.sandboxing.unwrap_or_default();
+        next.provider_control_mode = s.provider_control_mode;
+        current.sandboxing = Some(next);
     }
     current
 }

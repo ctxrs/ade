@@ -90,6 +90,15 @@ pub struct AcpSessionPool {
 struct AcpContextSession {
     acp_session_id: String,
     model_id: Option<String>,
+    mode_id: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct PermissionOption {
+    option_id: String,
+    label: String,
+    kind: String,
+    description: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -262,6 +271,28 @@ impl AcpSessionPool {
             }
         }
 
+        if let Some(desired_mode_id) =
+            normalize_session_mode_id(env.get("CTX_PROVIDER_MODE").map(|s| s.as_str()))
+        {
+            let already_set = {
+                let map = self.sessions.lock().await;
+                map.get(&session_key)
+                    .and_then(|s| s.mode_id.as_deref())
+                    .is_some_and(|m| m == desired_mode_id)
+            };
+            if !already_set
+                && process
+                    .set_mode(&acp_session_id, desired_mode_id.clone(), event_sink.clone())
+                    .await
+                    .is_ok()
+            {
+                let mut map = self.sessions.lock().await;
+                if let Some(entry) = map.get_mut(&session_key) {
+                    entry.mode_id = Some(desired_mode_id);
+                }
+            }
+        }
+
         let result = process
             .prompt(
                 &session_key,
@@ -359,7 +390,14 @@ impl AcpSessionPool {
                 .cloned()
                 .context("no active ACP process")?
         };
-        process.set_mode(&acp_session_id, mode_id, tx).await
+        process
+            .set_mode(&acp_session_id, mode_id.clone(), tx)
+            .await?;
+        let mut map = self.sessions.lock().await;
+        if let Some(entry) = map.get_mut(&session_key) {
+            entry.mode_id = Some(mode_id);
+        }
+        Ok(())
     }
 
     pub async fn authenticate(
@@ -447,6 +485,7 @@ impl AcpSessionPool {
             AcpContextSession {
                 acp_session_id: created.session_id.clone(),
                 model_id: None,
+                mode_id: None,
             },
         );
         Ok(created.session_id)
@@ -500,6 +539,12 @@ enum AcpSessionNotification {
         req_id: u64,
         tool_call_id: String,
         input: serde_json::Value,
+    },
+    RequestPermission {
+        req_id: u64,
+        tool_call_id: String,
+        tool_call: serde_json::Value,
+        options: Vec<serde_json::Value>,
     },
     Raw(serde_json::Value),
     Shutdown {
@@ -960,6 +1005,12 @@ impl AcpProcess {
         let mut ask_req_id: Option<u64> = None;
         let mut ask_tool_call_id: Option<String> = None;
         let mut ask_rx: Option<oneshot::Receiver<AskUserQuestionAnswer>> = None;
+        let mut perm_req_id: Option<u64> = None;
+        let mut perm_tool_call_id: Option<String> = None;
+        let mut perm_broker_id: Option<String> = None;
+        let mut perm_question: Option<String> = None;
+        let mut perm_options: Vec<PermissionOption> = Vec::new();
+        let mut perm_rx: Option<oneshot::Receiver<AskUserQuestionAnswer>> = None;
 
         let prompt_resp = loop {
             tokio::select! {
@@ -1002,6 +1053,76 @@ impl AcpProcess {
                     ask_rx = None;
                     continue;
                 }
+                perm_answer = async {
+                    if let Some(rx) = perm_rx.as_mut() {
+                        rx.await
+                    } else {
+                        std::future::pending::<
+                            Result<AskUserQuestionAnswer, tokio::sync::oneshot::error::RecvError>,
+                        >()
+                        .await
+                    }
+                } => {
+                    let req_id = perm_req_id.take().context("missing permission request id")?;
+                    let tool_call_id = perm_tool_call_id.take().unwrap_or_default();
+                    let broker_id = perm_broker_id.take().unwrap_or_else(|| tool_call_id.clone());
+                    let question = perm_question.take().unwrap_or_default();
+                    let options = std::mem::take(&mut perm_options);
+
+                    let answer = match perm_answer {
+                        Ok(v) => v,
+                        Err(_) => AskUserQuestionAnswer {
+                            outcome: AskUserQuestionOutcome::Cancelled,
+                            answers: Default::default(),
+                        },
+                    };
+
+                    let selected_label = answer
+                        .answers
+                        .get(&question)
+                        .map(|s| s.as_str())
+                        .or_else(|| answer.answers.values().next().map(|s| s.as_str()));
+
+                    let option_id = match answer.outcome {
+                        AskUserQuestionOutcome::Submitted => select_permission_option_id(
+                            &options,
+                            selected_label,
+                            &["allow_once", "allow_always"],
+                        ),
+                        AskUserQuestionOutcome::Cancelled => select_permission_option_id(
+                            &options,
+                            None,
+                            &["reject_once", "reject_always"],
+                        ),
+                    }
+                    .unwrap_or_else(|| "reject".to_string());
+
+                    let resp = json!({
+                        "jsonrpc": "2.0",
+                        "id": req_id,
+                        "result": {
+                            "_meta": {
+                                "context": {
+                                    "provider": self.agent.provider_id,
+                                    "autoApproved": false,
+                                }
+                            },
+                            "outcome": {
+                                "outcome": "selected",
+                                "optionId": option_id
+                            }
+                        }
+                    });
+                    let line = serde_json::to_string(&resp).context("serializing permission response")?;
+                    let _ = self.write_tx.send(line);
+
+                    if let Some(broker) = self.ask_user_question.as_ref() {
+                        broker.abandon(context_session_id, &broker_id).await;
+                    }
+
+                    perm_rx = None;
+                    continue;
+                }
                 _ = &mut cancel_rx => {
                     let _ = self.send_cancel_notification(acp_session_id);
 
@@ -1022,6 +1143,34 @@ impl AcpProcess {
                         (ask_tool_call_id.as_deref(), self.ask_user_question.as_ref())
                     {
                         broker.abandon(context_session_id, tool_call_id).await;
+                    }
+
+                    if let Some(req_id) = perm_req_id.take() {
+                        let options = std::mem::take(&mut perm_options);
+                        let option_id = select_permission_option_id(
+                            &options,
+                            None,
+                            &["reject_once", "reject_always"],
+                        )
+                        .unwrap_or_else(|| "reject".to_string());
+                        let resp = json!({
+                            "jsonrpc": "2.0",
+                            "id": req_id,
+                            "result": {
+                                "outcome": {
+                                    "outcome": "selected",
+                                    "optionId": option_id
+                                }
+                            }
+                        });
+                        if let Ok(line) = serde_json::to_string(&resp) {
+                            let _ = self.write_tx.send(line);
+                        }
+                    }
+                    if let (Some(broker_id), Some(broker)) =
+                        (perm_broker_id.as_deref(), self.ask_user_question.as_ref())
+                    {
+                        broker.abandon(context_session_id, broker_id).await;
                     }
 
                     let _ = event_sink.send(NormalizedEvent {
@@ -1067,6 +1216,74 @@ impl AcpProcess {
                                 }),
                             }).await;
                         }
+                        Some(AcpSessionNotification::RequestPermission { req_id, tool_call_id, tool_call, options }) => {
+                            if perm_rx.is_some() {
+                                let resp = json!({"jsonrpc":"2.0","id": req_id, "error": {"code": -32603, "message": "nested permission request not supported"}});
+                                let line = serde_json::to_string(&resp)?;
+                                let _ = self.write_tx.send(line);
+                                continue;
+                            }
+
+                            let Some(broker) = self.ask_user_question.as_ref() else {
+                                let resp = json!({"jsonrpc":"2.0","id": req_id, "error": {"code": -32601, "message": "permission requests not supported by this client"}} );
+                                let line = serde_json::to_string(&resp)?;
+                                let _ = self.write_tx.send(line);
+                                continue;
+                            };
+
+                            let normalized = normalize_permission_options(&options);
+                            if normalized.is_empty() {
+                                let resp = json!({"jsonrpc":"2.0","id": req_id, "error": {"code": -32602, "message": "permission request missing options"}} );
+                                let line = serde_json::to_string(&resp)?;
+                                let _ = self.write_tx.send(line);
+                                continue;
+                            }
+
+                            let question = build_permission_question(&tool_call);
+                            let prompt_options = normalized
+                                .iter()
+                                .map(|opt| {
+                                    let mut obj = json!({
+                                        "label": opt.label,
+                                    });
+                                    if let Some(desc) = opt.description.as_ref() {
+                                        if let Some(map) = obj.as_object_mut() {
+                                            map.insert("description".to_string(), json!(desc));
+                                        }
+                                    }
+                                    obj
+                                })
+                                .collect::<Vec<_>>();
+                            let input = json!({
+                                "questions": [{
+                                    "header": "Permission",
+                                    "question": question,
+                                    "options": prompt_options,
+                                    "multiSelect": false,
+                                }],
+                                "tool_call": tool_call,
+                                "request_type": "permission",
+                            });
+                            let broker_id = format!("permission:{}", tool_call_id);
+
+                            perm_req_id = Some(req_id);
+                            perm_tool_call_id = Some(tool_call_id.clone());
+                            perm_broker_id = Some(broker_id.clone());
+                            perm_question = Some(question);
+                            perm_options = normalized;
+                            perm_rx = Some(broker.begin(context_session_id.to_string(), broker_id.clone()).await);
+
+                            let _ = event_sink.send(NormalizedEvent {
+                                event_type: SessionEventType::Notice,
+                                payload_json: json!({
+                                    "kind": "ask_user_question",
+                                    "subkind": "permission_request",
+                                    "provider": self.agent.provider_id,
+                                    "tool_call_id": broker_id,
+                                    "input": input,
+                                }),
+                            }).await;
+                        }
                         Some(AcpSessionNotification::Raw(parsed)) => {
                             if emit_raw_notifications {
                                 let _ = event_sink.send(NormalizedEvent {
@@ -1101,6 +1318,15 @@ impl AcpProcess {
                                         let _ = self.write_tx.send(line);
                                         if let Some(broker) = self.ask_user_question.as_ref() {
                                             broker.abandon(context_session_id, &tool_call_id).await;
+                                        }
+                                    }
+                                    AcpSessionNotification::RequestPermission { req_id, tool_call_id, .. } => {
+                                        let resp = json!({"jsonrpc":"2.0","id": req_id, "error": {"code": -32603, "message": "permission request received after prompt completed"}});
+                                        let line = serde_json::to_string(&resp)?;
+                                        let _ = self.write_tx.send(line);
+                                        if let Some(broker) = self.ask_user_question.as_ref() {
+                                            let broker_id = format!("permission:{}", tool_call_id);
+                                            broker.abandon(context_session_id, &broker_id).await;
                                         }
                                     }
                                     AcpSessionNotification::Raw(parsed) => {
@@ -1704,10 +1930,59 @@ async fn stdout_pump(
                 if parsed.get("method").and_then(|v| v.as_str())
                     == Some("session/request_permission")
                 {
-                    if let Ok(Some(line)) =
-                        build_request_permission_response(&process.agent.provider_id, &parsed)
-                    {
-                        let _ = process.write_tx.send(line);
+                    let req_id = match parsed.get("id").and_then(jsonrpc_id_u64) {
+                        Some(id) => id,
+                        None => continue,
+                    };
+                    let params = parsed.get("params").cloned().unwrap_or(json!({}));
+                    let session_id = params
+                        .get("sessionId")
+                        .or_else(|| params.get("session_id"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .trim()
+                        .to_string();
+                    let tool_call = params.get("toolCall").cloned().unwrap_or(json!({}));
+                    let tool_call_id = tool_call
+                        .get("toolCallId")
+                        .or_else(|| tool_call.get("tool_call_id"))
+                        .or_else(|| params.get("toolCallId"))
+                        .or_else(|| params.get("tool_call_id"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .trim()
+                        .to_string();
+                    let options = params
+                        .get("options")
+                        .and_then(|v| v.as_array())
+                        .cloned()
+                        .unwrap_or_default();
+
+                    if session_id.is_empty() || tool_call_id.is_empty() {
+                        let resp = json!({"jsonrpc":"2.0","id": req_id, "error": {"code": -32602, "message": "missing sessionId or toolCallId"}});
+                        if let Ok(line) = serde_json::to_string(&resp) {
+                            let _ = process.write_tx.send(line);
+                        }
+                        continue;
+                    }
+
+                    let routed = process
+                        .router
+                        .send(
+                            &session_id,
+                            AcpSessionNotification::RequestPermission {
+                                req_id,
+                                tool_call_id,
+                                tool_call,
+                                options,
+                            },
+                        )
+                        .await;
+                    if !routed {
+                        let resp = json!({"jsonrpc":"2.0","id": req_id, "error": {"code": -32603, "message": "request_permission received outside of an active session prompt"}});
+                        if let Ok(line) = serde_json::to_string(&resp) {
+                            let _ = process.write_tx.send(line);
+                        }
                     }
                     continue;
                 }
@@ -2001,6 +2276,94 @@ fn normalize_session_model_id(model_id: Option<&str>) -> Option<String> {
     } else {
         Some(trimmed.to_string())
     }
+}
+
+fn normalize_session_mode_id(mode_id: Option<&str>) -> Option<String> {
+    let trimmed = mode_id?.trim();
+    if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("default") {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+fn normalize_permission_options(options: &[serde_json::Value]) -> Vec<PermissionOption> {
+    options
+        .iter()
+        .filter_map(|opt| {
+            let option_id = opt
+                .get("optionId")
+                .or_else(|| opt.get("option_id"))
+                .or_else(|| opt.get("id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .trim();
+            if option_id.is_empty() {
+                return None;
+            }
+            let label = opt
+                .get("name")
+                .or_else(|| opt.get("label"))
+                .or_else(|| opt.get("title"))
+                .and_then(|v| v.as_str())
+                .unwrap_or(option_id)
+                .trim();
+            let kind = opt
+                .get("kind")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            let description = opt
+                .get("description")
+                .and_then(|v| v.as_str())
+                .map(|v| v.to_string());
+            Some(PermissionOption {
+                option_id: option_id.to_string(),
+                label: label.to_string(),
+                kind,
+                description,
+            })
+        })
+        .collect()
+}
+
+fn build_permission_question(tool_call: &serde_json::Value) -> String {
+    let title = tool_call
+        .get("title")
+        .or_else(|| tool_call.get("name"))
+        .or_else(|| tool_call.get("toolName"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("tool call")
+        .trim();
+    let kind = tool_call
+        .get("kind")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim();
+    if kind.is_empty() {
+        format!("Allow tool call: {}?", title)
+    } else {
+        format!("Allow tool call: {} ({})?", title, kind)
+    }
+}
+
+fn select_permission_option_id(
+    options: &[PermissionOption],
+    selected_label: Option<&str>,
+    preferred_kinds: &[&str],
+) -> Option<String> {
+    if let Some(label) = selected_label {
+        if let Some(opt) = options.iter().find(|o| o.label == label) {
+            return Some(opt.option_id.clone());
+        }
+    }
+    for kind in preferred_kinds {
+        if let Some(opt) = options.iter().find(|o| o.kind == *kind) {
+            return Some(opt.option_id.clone());
+        }
+    }
+    options.first().map(|opt| opt.option_id.clone())
 }
 
 fn build_request_permission_response(

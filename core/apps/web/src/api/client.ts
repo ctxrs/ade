@@ -191,6 +191,12 @@ export type TelemetrySettings = {
   endpoint: string;
 };
 
+export type ProviderControlMode = "full" | "harness_native" | "ctx_enforced";
+
+export type SandboxingSettings = {
+  provider_control_mode: ProviderControlMode;
+};
+
 export type ResourceGovernanceStatusState = "disabled" | "applied" | "pending" | "unsupported" | "error";
 
 export type ResourceGovernanceStatus = {
@@ -243,6 +249,7 @@ export type Settings = {
   resource_governance?: ResourceGovernanceSettings | null;
   provider_guard?: ProviderGuardSettings | null;
   subagents?: SubagentSettings | null;
+  sandboxing?: SandboxingSettings | null;
 };
 
 export type WebSessionViewport = {

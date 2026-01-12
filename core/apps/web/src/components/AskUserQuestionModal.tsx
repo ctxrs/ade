@@ -57,12 +57,13 @@ export function AskUserQuestionModal({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const allowOther = input?.request_type !== "permission";
   const active = questions[Math.max(0, Math.min(activeIdx, questions.length - 1))] ?? null;
 
   const answers = useMemo(() => {
     const out: Record<string, string> = {};
     for (const q of questions) {
-      const other = (otherByQuestion[q.question] ?? "").trim();
+      const other = allowOther ? (otherByQuestion[q.question] ?? "").trim() : "";
       if (other) {
         out[q.question] = other;
         continue;
@@ -72,7 +73,7 @@ export function AskUserQuestionModal({
       out[q.question] = q.multiSelect ? [...selected].join(", ") : [...selected][0];
     }
     return out;
-  }, [questions, otherByQuestion, selectedByQuestion]);
+  }, [allowOther, questions, otherByQuestion, selectedByQuestion]);
 
   const canSubmit =
     questions.length > 0 &&
@@ -84,7 +85,7 @@ export function AskUserQuestionModal({
   return (
     <div className="askq-overlay" role="dialog" aria-modal="true" aria-label="Questions">
       <div className="askq-modal">
-        <div className="askq-title">Claude questions</div>
+        <div className="askq-title">Agent questions</div>
 
         <div className="askq-tabs" role="tablist" aria-label="Questions">
           {questions.map((q, idx) => {
@@ -144,20 +145,22 @@ export function AskUserQuestionModal({
               })}
             </div>
 
-            <label className="askq-other">
-              <div className="askq-other-label">Other</div>
-              <input
-                className="askq-other-input"
-                value={otherByQuestion[active.question] ?? ""}
-                disabled={busy}
-                placeholder="Type something else…"
-                onChange={(e) => {
-                  const v = e.target.value;
-                  setError(null);
-                  setOtherByQuestion((prev) => ({ ...prev, [active.question]: v }));
-                }}
-              />
-            </label>
+            {allowOther ? (
+              <label className="askq-other">
+                <div className="askq-other-label">Other</div>
+                <input
+                  className="askq-other-input"
+                  value={otherByQuestion[active.question] ?? ""}
+                  disabled={busy}
+                  placeholder="Type something else…"
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setError(null);
+                    setOtherByQuestion((prev) => ({ ...prev, [active.question]: v }));
+                  }}
+                />
+              </label>
+            ) : null}
 
             {error ? <div className="askq-error">{error}</div> : null}
           </div>

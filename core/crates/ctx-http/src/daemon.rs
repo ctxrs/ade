@@ -1130,6 +1130,27 @@ pub async fn serve(bind: String, data_dir: Option<String>) -> Result<()> {
         });
     }
 
+    let codex_adapter: Arc<Tier1AcpAdapter> = Arc::new(
+        agent_cfg
+            .providers
+            .get("codex")
+            .map(|c| {
+                Tier1AcpAdapter::from_raw_with_ask_user_question(
+                    "codex",
+                    c.command.clone(),
+                    c.args.clone(),
+                    Arc::clone(&state.ask_user_question),
+                )
+            })
+            .unwrap_or_else(|| {
+                Tier1AcpAdapter::codex_with_ask_user_question(Arc::clone(&state.ask_user_question))
+            }),
+    );
+    {
+        let mut map = state.providers.lock().await;
+        map.insert("codex".into(), codex_adapter.clone());
+    }
+
     // Claude-only extension plumbing: AskUserQuestion is implemented via a Claude-specific ACP
     // extension method and should not be threaded into other providers.
     let claude_adapter: Arc<Tier1AcpAdapter> = Arc::new(match claude_cmd {

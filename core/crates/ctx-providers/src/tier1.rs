@@ -75,6 +75,15 @@ impl Tier1AcpAdapter {
         Self::new_with_ask_user_question("claude", &command, args, broker)
     }
 
+    pub fn from_raw_with_ask_user_question(
+        id: &str,
+        command: String,
+        args: Vec<String>,
+        broker: Arc<AskUserQuestionBroker>,
+    ) -> Self {
+        Self::new_with_ask_user_question(id, &command, args, broker)
+    }
+
     pub fn from_command(
         id: &str,
         command: impl AsRef<std::path::Path>,
@@ -88,6 +97,10 @@ impl Tier1AcpAdapter {
 
     pub fn codex() -> Self {
         Self::new("codex", "codex-acp", vec![])
+    }
+
+    pub fn codex_with_ask_user_question(broker: Arc<AskUserQuestionBroker>) -> Self {
+        Self::new_with_ask_user_question("codex", "codex-acp", vec![], broker)
     }
 
     pub fn claude() -> Self {

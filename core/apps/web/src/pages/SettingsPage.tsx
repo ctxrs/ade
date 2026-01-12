@@ -13,6 +13,7 @@ import {
   ResourceGovernanceSettings,
   ResourceGovernanceStatus,
   ResourceUtilization,
+  SandboxingSettings,
   Settings,
   AgentSystemPromptConfig,
   TelemetrySettings,
@@ -373,7 +374,9 @@ export default function SettingsPage() {
   const [titleGenModel, setTitleGenModel] = useState("google/gemini-3-flash-preview");
   const [titleGenUseJson, setTitleGenUseJson] = useState(true);
   const resourceGovernanceHydrated = useRef(false);
+  const sandboxingHydrated = useRef(false);
   const [resourceGovernanceEnabled, setResourceGovernanceEnabled] = useState(true);
+  const [providerControlMode, setProviderControlMode] = useState<SandboxingSettings["provider_control_mode"]>("full");
   const [resourceGovernanceMode, setResourceGovernanceMode] =
     useState<ResourceGovernanceSettings["mode"]>("auto");
   const [resourceCpuQuotaPct, setResourceCpuQuotaPct] = useState("");
@@ -663,6 +666,14 @@ export default function SettingsPage() {
         const rg = s.resource_governance ?? null;
         if (rg) {
           setResourceGovernanceEnabled(rg.enabled);
+        }
+
+        const sb = s.sandboxing ?? null;
+        if (sb?.provider_control_mode) {
+          setProviderControlMode(sb.provider_control_mode);
+        }
+
+        if (rg) {
           setResourceGovernanceMode(rg.mode ?? "auto");
           setResourceCpuQuotaPct(rg.cpu_quota_pct ? String(rg.cpu_quota_pct) : "");
           setResourceMemoryHighGb(formatGiB(rg.memory_high_mb));
@@ -724,6 +735,9 @@ export default function SettingsPage() {
         setResourceEffective(next.resource_governance.effective ?? null);
         setResourceStatus(next.resource_governance.status ?? null);
       }
+      if (next.sandboxing?.provider_control_mode) {
+        setProviderControlMode(next.sandboxing.provider_control_mode);
+      }
     } catch (e: any) {
       if (seq !== saveSeq.current) return;
       setSaveError(e?.message ?? String(e));
@@ -754,6 +768,12 @@ export default function SettingsPage() {
       use_json: titleGenUseJson,
     };
   }, [titleGenApiKey, titleGenBaseUrl, titleGenModel, titleGenUseJson]);
+
+  const sandboxingPayload = useMemo((): SandboxingSettings => {
+    return {
+      provider_control_mode: providerControlMode,
+    };
+  }, [providerControlMode]);
 
   const resourceGovernancePayload = useMemo((): ResourceGovernanceSettings => {
     const cpuQuota = Number(resourceCpuQuotaPct);
@@ -834,6 +854,19 @@ export default function SettingsPage() {
     return () => window.clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loaded, titleGenerationPayload]);
+
+  useEffect(() => {
+    if (!loaded) return;
+    if (!sandboxingHydrated.current) {
+      sandboxingHydrated.current = true;
+      return;
+    }
+    const t = window.setTimeout(() => {
+      savePatch({ sandboxing: sandboxingPayload });
+    }, 450);
+    return () => window.clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loaded, sandboxingPayload]);
 
   useEffect(() => {
     if (!loaded) return;
@@ -2781,9 +2814,33 @@ export default function SettingsPage() {
       );
     }
 
+    if (active === "sandboxing") {
+      return (
+        <>
+          <Card title="Sandboxing">
+            <Row
+              title="Provider control"
+              description="Default is full capability. Switch to honor the harness's native permission settings."
+              control={
+                <select
+                  className="settings-control settings-select"
+                  value={providerControlMode}
+                  onChange={(e) => setProviderControlMode(e.target.value as SandboxingSettings["provider_control_mode"])}
+                  disabled={!loaded}
+                >
+                  <option value="full">Full capability</option>
+                  <option value="harness_native">Harness-native permissions</option>
+                  <option value="ctx_enforced">ctx-enforced (coming soon)</option>
+                </select>
+              }
+            />
+          </Card>
+        </>
+      );
+    }
+
     if (
       active === "models_routing" ||
-      active === "sandboxing" ||
       active === "context_pack" ||
       active === "team_enterprise" ||
       active === "usage_analytics"

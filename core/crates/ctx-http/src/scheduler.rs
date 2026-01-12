@@ -22,6 +22,7 @@ use ctx_store::store::SessionTurnToolCountDeltas;
 use crate::daemon::AppState;
 use crate::installer;
 use crate::perf_telemetry::{PerfMetric, PerfMetricKind};
+use crate::settings::{self, ProviderControlMode};
 use crate::telemetry::TelemetryEvent;
 use crate::workspace_config;
 
@@ -47,6 +48,20 @@ struct RunningTurn {
     run_id: RunId,
     turn_id: TurnId,
     event_tx: mpsc::Sender<NormalizedEvent>,
+}
+
+fn provider_mode_id_for(
+    provider_id: &str,
+    control_mode: &ProviderControlMode,
+) -> Option<&'static str> {
+    match control_mode {
+        ProviderControlMode::Full => match provider_id {
+            "codex" => Some("full-access"),
+            "claude" => Some("bypassPermissions"),
+            _ => None,
+        },
+        ProviderControlMode::HarnessNative | ProviderControlMode::CtxEnforced => None,
+    }
 }
 
 pub async fn session_worker(
@@ -273,6 +288,15 @@ async fn start_turn(
         provider_env.insert("CTX_PROVIDER_SESSION_REF".to_string(), provider_ref);
     }
     provider_env.insert("CTX_SESSION_ID".to_string(), session.id.0.to_string());
+    let provider_control_mode = settings::load_settings(&state.data_root)
+        .await
+        .sandboxing
+        .as_ref()
+        .map(|s| s.provider_control_mode.clone())
+        .unwrap_or_default();
+    if let Some(mode_id) = provider_mode_id_for(&session.provider_id, &provider_control_mode) {
+        provider_env.insert("CTX_PROVIDER_MODE".to_string(), mode_id.to_string());
+    }
     if let Ok(v) = std::env::var("CTX_MCP_COMMAND") {
         provider_env.insert("CTX_MCP_COMMAND".to_string(), v);
     }
