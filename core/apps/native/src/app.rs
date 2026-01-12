@@ -149,11 +149,13 @@ pub fn run(options: AppOptions) {
                     let composer_new_input = cx.new(|cx| {
                         InputState::new(window, cx)
                             .multi_line(true)
+                            .rows(4)
                             .placeholder("@ for context, / for commands")
                     });
                     let composer_session_input = cx.new(|cx| {
                         InputState::new(window, cx)
                             .multi_line(true)
+                            .rows(3)
                             .placeholder("@ for context, / for commands")
                     });
                     let composer_harness_search = cx.new(|cx| {

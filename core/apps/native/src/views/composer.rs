@@ -303,7 +303,7 @@ impl<'a> ComposerView<'a> {
 
         let input_disabled = is_new && shell.composer_start_busy;
 
-        let input = Input::new(shell.active_composer_input())
+        let mut input = Input::new(shell.active_composer_input())
             .appearance(false)
             .bordered(false)
             .focus_bordered(false)
@@ -316,6 +316,9 @@ impl<'a> ComposerView<'a> {
             .w_full()
             .items_start()
             .disabled(input_disabled);
+        if is_new {
+            input = input.text_color(colors.text);
+        }
 
         let mut input_wrap = div()
             .w_full()
