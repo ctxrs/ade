@@ -311,8 +311,6 @@ impl<'a> ComposerView<'a> {
             .line_height(line_height)
             .px(pad)
             .py(pad)
-            .min_h(min_height)
-            .max_h(max_height)
             .w_full()
             .items_start()
             .disabled(input_disabled);

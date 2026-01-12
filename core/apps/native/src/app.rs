@@ -148,14 +148,12 @@ pub fn run(options: AppOptions) {
                     let archive_confirm_dismissed = ui_state.archive_confirm_dismissed();
                     let composer_new_input = cx.new(|cx| {
                         InputState::new(window, cx)
-                            .multi_line(true)
-                            .rows(4)
+                            .auto_grow(1, 22)
                             .placeholder("@ for context, / for commands")
                     });
                     let composer_session_input = cx.new(|cx| {
                         InputState::new(window, cx)
-                            .multi_line(true)
-                            .rows(3)
+                            .auto_grow(1, 12)
                             .placeholder("@ for context, / for commands")
                     });
                     let composer_harness_search = cx.new(|cx| {
