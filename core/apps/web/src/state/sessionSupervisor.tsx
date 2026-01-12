@@ -146,6 +146,12 @@ const WARM_TTL_MS = readTunableInt("contextWarmSessionTtlMs", 10 * 60 * 1000);
 const HEAD_LIMIT = readTunableInt("contextSessionHeadLimit", TURN_PAGE_LIMIT);
 const SUBSCRIBE_LIMIT = readTunableInt("contextSubscribeLimit", 20);
 const DIFF_REFRESH_MS = readTunableInt("contextDiffRefreshMs", 30 * 1000);
+// TEMP: Disable live git diff subscriptions during the webapp -> native migration.
+// This is not the correct long-term behavior; re-enable once perf/memory issues are resolved.
+const ENABLE_LIVE_DIFF_SUBSCRIPTION = false;
+
+const shouldSubscribeDiff = (opts?: OpenOptions): boolean =>
+  ENABLE_LIVE_DIFF_SUBSCRIPTION && Boolean(opts?.watchDiff);
 
 export class SessionSupervisor {
   private listeners = new Set<() => void>();
@@ -194,7 +200,7 @@ export class SessionSupervisor {
   openSession = (sessionId: string, opts?: OpenOptions) => {
     const entry = this.ensureEntry(sessionId);
     entry.refCount += 1;
-    if (opts?.watchDiff) entry.wantDiffCount += 1;
+    if (shouldSubscribeDiff(opts)) entry.wantDiffCount += 1;
     entry.warmUntilMs = Date.now() + WARM_TTL_MS;
     this.ensureLoaded(sessionId, opts).catch(() => {});
     this.refreshSubscriptions();
@@ -205,7 +211,7 @@ export class SessionSupervisor {
     const entry = this.entries.get(sessionId);
     if (!entry) return;
     entry.refCount = Math.max(0, entry.refCount - 1);
-    if (opts?.watchDiff) entry.wantDiffCount = Math.max(0, entry.wantDiffCount - 1);
+    if (shouldSubscribeDiff(opts)) entry.wantDiffCount = Math.max(0, entry.wantDiffCount - 1);
     entry.warmUntilMs = Date.now() + WARM_TTL_MS;
     this.refreshSubscriptions();
     this.publish();
@@ -286,9 +292,12 @@ export class SessionSupervisor {
     this.publish();
     try {
       const tools = await listTurnTools(sessionId, turnId);
+      // TEMP: Keep only summary-level tool data to reduce memory pressure in the webapp.
+      // Restore full tool payload hydration after the native migration stabilizes.
+      const summarized = tools.map(summarizeToolPayload);
       entry.turnToolsByTurnId = {
         ...entry.turnToolsByTurnId,
-        [turnId]: tools,
+        [turnId]: summarized,
       };
       entry.turnToolsHydratedByTurnId[turnId] = true;
     } finally {
@@ -518,8 +527,10 @@ export class SessionSupervisor {
     }
     if (entry.fetching.head) return;
     if (entry.turnsHydrated && !opts?.force && !entry.headFromCache) {
-      if (opts?.watchDiff) {
+      if (shouldSubscribeDiff(opts)) {
         void this.refreshDiff(entry);
+      } else if (opts?.watchDiff) {
+        void this.refreshDiff(entry, { allowWithoutSubscription: true });
       }
       return;
     }
@@ -546,8 +557,10 @@ export class SessionSupervisor {
       entry.updatedAtMs = Date.now();
       this.publish();
     }
-    if (opts?.watchDiff) {
+    if (shouldSubscribeDiff(opts)) {
       void this.refreshDiff(entry);
+    } else if (opts?.watchDiff) {
+      void this.refreshDiff(entry, { allowWithoutSubscription: true });
     }
   }
 
@@ -684,10 +697,14 @@ export class SessionSupervisor {
     this.publish();
   }
 
-  private async refreshDiff(entry: InternalEntry, force = false) {
+  private async refreshDiff(
+    entry: InternalEntry,
+    opts?: { force?: boolean; allowWithoutSubscription?: boolean },
+  ) {
+    const force = opts?.force ?? false;
     if (entry.fetching.diff) return;
     if (!entry.trackId) return;
-    if (entry.wantDiffCount <= 0) return;
+    if (!opts?.allowWithoutSubscription && entry.wantDiffCount <= 0) return;
     if (!force && entry.diff !== undefined && entry.diffFetchedAtMs) {
       const ageMs = Date.now() - entry.diffFetchedAtMs;
       if (ageMs < DIFF_REFRESH_MS) return;
@@ -1009,7 +1026,7 @@ export class SessionSupervisor {
       for (const entry of this.entries.values()) {
         if (entry.trackId !== trackId) continue;
         if (entry.wantDiffCount <= 0) continue;
-        void this.refreshDiff(entry, true);
+        void this.refreshDiff(entry, { force: true });
       }
       return;
     }
@@ -1393,6 +1410,15 @@ const toolInputPreview = (input: unknown): Record<string, unknown> | null => {
   }
   return Object.keys(out).length > 0 ? out : null;
 };
+
+const summarizeToolPayload = (
+  tool: SessionTurnTool,
+): SessionTurnTool & { summary_only: boolean } => ({
+  ...tool,
+  input_json: toolInputPreview(tool.input_json) ?? null,
+  output_text: null,
+  summary_only: true,
+});
 
 const buildToolSummaries = (byTurn: Record<string, SessionTurnTool[]>): SessionTurnToolSummary[] => {
   const out: SessionTurnToolSummary[] = [];
