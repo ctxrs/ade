@@ -2136,3 +2136,25 @@ fn attachments_from_value(value: Option<&Value>) -> Vec<MessageAttachment> {
         Err(_) => Vec::new(),
     }
 }
+
+
+pub(crate) fn inline_attachment_key(mime_type: &str, data_base64: &str) -> String {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    let mut hasher = DefaultHasher::new();
+    mime_type.hash(&mut hasher);
+    data_base64.hash(&mut hasher);
+    format!("inline:{:016x}", hasher.finish())
+}
+
+pub(crate) fn attachment_cache_key(attachment: &MessageAttachment) -> String {
+    match attachment {
+        MessageAttachment::ImageRef { blob_id, .. } => blob_id.clone(),
+        MessageAttachment::Image {
+            mime_type,
+            data_base64,
+            ..
+        } => inline_attachment_key(mime_type, data_base64),
+    }
+}

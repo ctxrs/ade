@@ -299,6 +299,7 @@ pub fn run(options: AppOptions) {
                         composer_autocomplete_preview_placement: None,
                         composer_attachment_images: HashMap::new(),
                         composer_attachment_loading: HashSet::new(),
+                        attachment_fetch_failed: HashSet::new(),
                         composer_subscriptions: Vec::new(),
                         composer_subscriptions_set: false,
                         thread_list_state: ListState::new(0, ListAlignment::Bottom, px(160.0)),

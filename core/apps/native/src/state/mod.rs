@@ -254,6 +254,7 @@ pub(crate) struct ShellView {
     pub(crate) composer_autocomplete_preview_placement: Option<PopoverPlacement>,
     pub(crate) composer_attachment_images: HashMap<String, Arc<Image>>,
     pub(crate) composer_attachment_loading: HashSet<String>,
+    pub(crate) attachment_fetch_failed: HashSet<String>,
     pub(crate) composer_subscriptions: Vec<Subscription>,
     pub(crate) composer_subscriptions_set: bool,
     pub(crate) thread_list_state: ListState,

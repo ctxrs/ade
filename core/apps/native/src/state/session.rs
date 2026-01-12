@@ -1,19 +1,26 @@
-use std::collections::HashMap;
-
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use gpui::{AsyncApp, ClickEvent, ClipboardItem, Context, ListOffset, WeakEntity, Window, px};
+use base64::{engine::general_purpose::STANDARD, Engine as _};
+
+use gpui::{
+    AsyncApp, ClickEvent, ClipboardItem, Context, Image, ImageFormat, ListOffset, WeakEntity,
+    Window, px,
+};
 use gpui_tokio::Tokio;
 
 use ctx_core::ids::{SessionId, TurnId};
 use ctx_core::models::{
     Artifact, MessageRole, SessionEvent, SessionHead, SessionHistoryPage, SessionTurn,
 };
+use ctx_client;
 
 use super::{ArtifactPreviewState, ShellView};
 use super::super::models::{
-    build_message_items, build_thread_list_items, session_info_from_head, session_info_from_summary,
-    MessageItem, SessionInfo, ThreadItem, ThreadListItem, TurnToolSnapshot, WorkbenchTurnHeader,
+    attachment_cache_key, build_message_items, build_thread_list_items, session_info_from_head,
+    session_info_from_summary, MessageAttachment, MessageItem, SessionInfo, ThreadItem,
+    ThreadListItem, TurnToolSnapshot, WorkbenchTurnHeader,
 };
 use super::SessionViewVerbosity;
 
@@ -216,8 +223,86 @@ impl ShellView {
         self.new_thread_item_count = 0;
     }
 
-    fn prefetch_attachment_images(&mut self, _cx: &mut Context<Self>) {
-        // TODO: fetch and cache image_ref attachments for rendering parity.
+    fn prefetch_attachment_images(&mut self, cx: &mut Context<Self>) {
+        let attachments: Vec<MessageAttachment> = self
+            .messages
+            .iter()
+            .flat_map(|message| message.attachments.clone())
+            .collect();
+        let active_keys: HashSet<String> =
+            attachments.iter().map(attachment_cache_key).collect();
+        self.attachment_fetch_failed
+            .retain(|key| active_keys.contains(key));
+
+        for attachment in attachments {
+            let cache_key = attachment_cache_key(&attachment);
+            if self.composer_attachment_images.contains_key(&cache_key)
+                || self.composer_attachment_loading.contains(&cache_key)
+                || self.attachment_fetch_failed.contains(&cache_key)
+            {
+                continue;
+            }
+            match attachment {
+                MessageAttachment::Image {
+                    mime_type,
+                    data_base64,
+                    ..
+                } => {
+                    if let Some(image) = inline_attachment_image(&mime_type, &data_base64) {
+                        self.composer_attachment_images
+                            .insert(cache_key.clone(), image);
+                        cx.notify();
+                    } else {
+                        self.attachment_fetch_failed.insert(cache_key);
+                    }
+                }
+                MessageAttachment::ImageRef {
+                    blob_id,
+                    mime_type,
+                    ..
+                } => {
+                    self.composer_attachment_loading.insert(blob_id.clone());
+                    let blob_id_for_task = blob_id.clone();
+                    let blob_id_for_update = blob_id.clone();
+                    let mime = mime_type.clone();
+                    let task = Tokio::spawn_result(cx, async move {
+                        let config = ctx_client::resolve_daemon_config()?;
+                        let client = ctx_client::Client::new(config)?;
+                        let bytes = client.get_blob(&blob_id_for_task).await?;
+                        Ok((blob_id_for_task, mime, bytes))
+                    });
+
+                    cx.spawn(move |this: WeakEntity<ShellView>, cx: &mut AsyncApp| {
+                        let mut cx = cx.clone();
+                        async move {
+                            let result = task.await;
+                            this.update(&mut cx, |view, cx| {
+                                view.composer_attachment_loading
+                                    .remove(&blob_id_for_update);
+                                match result {
+                                    Ok((blob_id, mime, bytes)) => {
+                                        let format = ImageFormat::from_mime_type(&mime)
+                                            .unwrap_or(ImageFormat::Png);
+                                        view.composer_attachment_images.insert(
+                                            blob_id,
+                                            Arc::new(Image::from_bytes(format, bytes)),
+                                        );
+                                    }
+                                    Err(_) => {
+                                        view.attachment_fetch_failed.insert(
+                                            blob_id_for_update.clone(),
+                                        );
+                                    }
+                                }
+                                cx.notify();
+                            })
+                            .ok();
+                        }
+                    })
+                    .detach();
+                }
+            }
+        }
     }
 
     fn clear_placeholder_messages(&mut self) {
@@ -561,4 +646,10 @@ fn filter_thread_list_items(
             _ => true,
         })
         .collect()
+}
+
+fn inline_attachment_image(mime_type: &str, data_base64: &str) -> Option<Arc<Image>> {
+    let format = ImageFormat::from_mime_type(mime_type).unwrap_or(ImageFormat::Png);
+    let bytes = STANDARD.decode(data_base64).ok()?;
+    Some(Arc::new(Image::from_bytes(format, bytes)))
 }

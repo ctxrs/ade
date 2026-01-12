@@ -1,16 +1,26 @@
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+    time::Instant,
+};
+
+use base64::{engine::general_purpose::STANDARD, Engine as _};
+
 use ctx_core::models::{MessageRole, SessionTurnStatus};
 use gpui::{
-    div, linear_color_stop, linear_gradient, list, prelude::*, px, AnyElement, App, ClickEvent,
-    Context, Edges, ElementId, Element, InteractiveElement, ListState, Pixels, Rgba, SharedString,
-    Stateful, StatefulInteractiveElement, StyleRefinement, WeakEntity, Window,
+    div, img, linear_color_stop, linear_gradient, list, prelude::*, px, AnyElement, App,
+    ClickEvent, Context, Edges, ElementId, Element, Image, ImageFormat, InteractiveElement,
+    ListState, ObjectFit, Pixels, Rgba, SharedString, Stateful, StatefulInteractiveElement,
+    StyleRefinement, WeakEntity, Window,
 };
 use gpui_component::{Icon, IconName, StyledExt};
 use gpui_component::text::{InlineCodeStyle, TextView, TextViewStyle};
-use std::time::Instant;
 
 use crate::theme::{ThemeColors, ThemeMetrics};
 
-use super::super::models::{MessageAttachment, ThreadItem, ThreadListItem, ThreadToolItem};
+use super::super::models::{
+    attachment_cache_key, MessageAttachment, ThreadItem, ThreadListItem, ThreadToolItem,
+};
 use super::super::state::ShellView;
 
 fn markdown_view(
@@ -172,6 +182,12 @@ impl<'a> ThreadListView<'a> {
         let expanded_messages = self.shell.expanded_messages.clone();
         let expanded_turn_details = self.shell.expanded_turn_details.clone();
         let expanded_tools = self.shell.expanded_tools.clone();
+        let attachment_images = self.shell.composer_attachment_images.clone();
+        let attachment_loading = self.shell.composer_attachment_loading.clone();
+        let attachment_failed = self.shell.attachment_fetch_failed.clone();
+        let list_attachment_images = attachment_images.clone();
+        let list_attachment_loading = attachment_loading.clone();
+        let list_attachment_failed = attachment_failed.clone();
         let list = list(self.list_state.clone(), move |index, _window, cx| {
             let Some(item) = items.get(index) else {
                 return div().into_any_element();
@@ -185,6 +201,9 @@ impl<'a> ThreadListView<'a> {
                 &expanded_tools,
                 is_dark,
                 copied_flags.clone(),
+                list_attachment_images.clone(),
+                list_attachment_loading.clone(),
+                list_attachment_failed.clone(),
                 list_weak.clone(),
                 cx,
             )
@@ -217,7 +236,15 @@ impl<'a> ThreadListView<'a> {
                                     weak_view.clone(),
                                 )
                                 .selectable(true),
-                            ),
+                            )
+                            .child(render_attachments(
+                                &header.attachments,
+                                colors,
+                                &attachment_images,
+                                &attachment_loading,
+                                &attachment_failed,
+                                AttachmentVariant::Header,
+                            )),
                     )
                     .into_any_element()
             }
@@ -283,6 +310,9 @@ fn render_thread_item(
     expanded_tools: &std::collections::HashMap<String, bool>,
     is_dark: bool,
     copied_flags: std::collections::HashMap<String, Instant>,
+    attachment_images: HashMap<String, Arc<Image>>,
+    attachment_loading: HashSet<String>,
+    attachment_failed: HashSet<String>,
     weak_view: WeakEntity<ShellView>,
     cx: &mut App,
 ) -> AnyElement {
@@ -314,7 +344,14 @@ fn render_thread_item(
                     .child(fade_overlay(px(36.0), colors.bg))
                     .into_any_element()
             };
-            let attachments = render_attachments(&header.attachments, colors);
+            let attachments = render_attachments(
+                &header.attachments,
+                colors,
+                &attachment_images,
+                &attachment_loading,
+                &attachment_failed,
+                AttachmentVariant::Header,
+            );
             let copy_button = if header.content.trim().is_empty() {
                 div().into_any_element()
             } else {
@@ -480,7 +517,14 @@ fn render_thread_item(
             } else {
                 div().into_any_element()
             };
-            let attachments = render_attachments(&attachments, colors);
+            let attachments = render_attachments(
+                &attachments,
+                colors,
+                &attachment_images,
+                &attachment_loading,
+                &attachment_failed,
+                AttachmentVariant::Message,
+            );
             let role_label = format!("{:?}", role).to_lowercase();
             let mut bubble = div()
                 .bg(bubble_bg)
@@ -942,59 +986,137 @@ fn render_tool_item(
         .into_any_element()
 }
 
-fn render_attachments(attachments: &[MessageAttachment], colors: ThemeColors) -> AnyElement {
+enum AttachmentVariant {
+    Header,
+    Message,
+}
+
+fn render_attachments(
+    attachments: &[MessageAttachment],
+    colors: ThemeColors,
+    images: &HashMap<String, Arc<Image>>,
+    loading: &HashSet<String>,
+    failed: &HashSet<String>,
+    variant: AttachmentVariant,
+) -> AnyElement {
     if attachments.is_empty() {
         return div().into_any_element();
     }
-    let metrics = ThemeMetrics::default();
-    let list = attachments.iter().enumerate().fold(
-        div().flex().flex_row().gap(px(metrics.spacing.sm)),
-        |row, (i, attachment)| row.child(render_attachment(i, attachment, colors)),
+    let (gap, margin_top) = match variant {
+        AttachmentVariant::Header => (6.0, 8.0),
+        AttachmentVariant::Message => (8.0, 8.0),
+    };
+    let row = attachments.iter().enumerate().fold(
+        div()
+            .flex()
+            .flex_row()
+            .flex_wrap()
+            .gap(px(gap)),
+        |row, (i, attachment)| {
+            row.child(render_attachment(
+                i,
+                attachment,
+                colors,
+                images,
+                loading,
+                failed,
+                &variant,
+            ))
+        },
     );
-    div()
-        .flex()
-        .flex_col()
-        .gap(px(metrics.spacing.xs))
-        .child(list)
-        .into_any_element()
+    div().flex().flex_col().mt(px(margin_top)).child(row).into_any_element()
 }
 
 fn render_attachment(
-    index: usize,
+    _index: usize,
     attachment: &MessageAttachment,
     colors: ThemeColors,
+    images: &HashMap<String, Arc<Image>>,
+    loading: &HashSet<String>,
+    failed: &HashSet<String>,
+    variant: &AttachmentVariant,
 ) -> AnyElement {
-    match attachment {
-        MessageAttachment::Image {
-            data_base64: _,
-            mime_type: _,
-            name,
-        } => {
-            let label = name.clone().unwrap_or_else(|| format!("image-{}", index));
-            attachment_box(colors, format!("{}", label))
-        }
-        MessageAttachment::ImageRef { blob_id, name, .. } => {
-            let label = name
-                .clone()
-                .unwrap_or_else(|| format!("{}", blob_id));
-            attachment_box(colors, label)
-        }
+    let cache_key = attachment_cache_key(attachment);
+    let image = images
+        .get(&cache_key)
+        .cloned()
+        .or_else(|| match attachment {
+            MessageAttachment::Image {
+                mime_type,
+                data_base64,
+                ..
+            } => inline_attachment_image(mime_type, data_base64),
+            _ => None,
+        });
+    let is_loading = loading.contains(&cache_key);
+    let is_failed = failed.contains(&cache_key);
+    let (width, height, radius, fit) = match variant {
+        AttachmentVariant::Header => (44.0, 44.0, 8.0, ObjectFit::Cover),
+        AttachmentVariant::Message => (240.0, 180.0, 6.0, ObjectFit::Contain),
+    };
+
+    let content: AnyElement = if let Some(image) = image {
+        img(image)
+            .w(px(width))
+            .h(px(height))
+            .rounded(px(radius))
+            .border_1()
+            .border_color(colors.border)
+            .object_fit(fit)
+            .into_any_element()
+    } else {
+        let icon = if is_failed {
+            IconName::TriangleAlert
+        } else {
+            IconName::Frame
+        };
+        div()
+            .w(px(width))
+            .h(px(height))
+            .rounded(px(radius))
+            .border_1()
+            .border_color(colors.border)
+            .bg(Rgba {
+                r: 1.0,
+                g: 1.0,
+                b: 1.0,
+                a: 0.02,
+            })
+            .flex()
+            .items_center()
+            .justify_center()
+            .text_color(colors.muted)
+            .child(
+                Icon::new(icon)
+                    .size(px(if matches!(variant, AttachmentVariant::Header) {
+                        14.0
+                    } else {
+                        16.0
+                    }))
+                    .text_color(colors.muted),
+            )
+            .into_any_element()
+    };
+
+    let mut container = div()
+        .relative()
+        .overflow_hidden()
+        .rounded(px(radius))
+        .child(content);
+
+    container = match variant {
+        AttachmentVariant::Header => container.w(px(width)).h(px(height)),
+        AttachmentVariant::Message => container.w(px(width)).h(px(height)),
+    };
+
+    if is_loading {
+        container = container.opacity(0.8);
     }
+    container.into_any_element()
 }
 
-fn attachment_box(colors: ThemeColors, label: String) -> AnyElement {
-    div()
-        .w(px(120.0))
-        .h(px(80.0))
-        .rounded_md()
-        .border_1()
-        .border_color(colors.border)
-        .bg(colors.panel)
-        .flex()
-        .items_center()
-        .justify_center()
-        .text_sm()
-        .text_color(colors.muted)
-        .child(label)
-        .into_any_element()
+fn inline_attachment_image(mime_type: &str, data_base64: &str) -> Option<Arc<Image>> {
+    let format = ImageFormat::from_mime_type(mime_type).unwrap_or(ImageFormat::Png);
+    let bytes = STANDARD.decode(data_base64).ok()?;
+    Some(Arc::new(Image::from_bytes(format, bytes)))
 }
