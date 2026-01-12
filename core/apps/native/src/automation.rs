@@ -2,7 +2,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use axum::{
     extract::{
@@ -141,6 +141,7 @@ async fn run_http_server(addr: SocketAddr, state: Arc<AutomationState>) {
     let app = Router::new()
         .route("/ready", get(ready_handler))
         .route("/focus", post(focus_handler))
+        .route("/wait", post(wait_handler))
         .route("/screenshot", post(screenshot_handler))
         .route("/exit", post(exit_handler))
         .route("/ws", get(ws_handler))
@@ -193,6 +194,55 @@ async fn ready_handler(
         Ok(true) => ok(json!({ "ready": true })),
         Ok(false) => err(StatusCode::REQUEST_TIMEOUT, "timeout waiting for native app readiness"),
         Err(message) => err(StatusCode::INTERNAL_SERVER_ERROR, message),
+    }
+}
+
+#[derive(Debug, Deserialize, Clone, Copy)]
+#[serde(rename_all = "snake_case")]
+enum WaitTarget {
+    ArchivedLoaded,
+}
+
+#[derive(Deserialize)]
+struct WaitRequest {
+    target: WaitTarget,
+    timeout_ms: Option<u64>,
+}
+
+async fn wait_handler(
+    State(state): State<Arc<AutomationState>>,
+    Json(request): Json<WaitRequest>,
+) -> (StatusCode, Json<ApiResponse<Value>>) {
+    let timeout_ms = request.timeout_ms.unwrap_or(30_000);
+    let timeout = Duration::from_millis(timeout_ms);
+    let start = Instant::now();
+    loop {
+        let response = dispatch_command_with_timeout(
+            &state,
+            AutomationCommand::Check { target: request.target },
+            Duration::from_secs(10),
+        )
+        .await;
+
+        match response {
+            Ok(result) => {
+                let ready = result
+                    .get("ready")
+                    .and_then(|value| value.as_bool())
+                    .unwrap_or(false);
+                if ready {
+                    return ok(result);
+                }
+            }
+            Err(message) => {
+                return err(StatusCode::REQUEST_TIMEOUT, message);
+            }
+        }
+
+        if start.elapsed() >= timeout {
+            return err(StatusCode::REQUEST_TIMEOUT, "timeout waiting for archived tasks to load");
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
     }
 }
 
@@ -326,6 +376,14 @@ async fn dispatch_command(
     state: &AutomationState,
     command: AutomationCommand,
 ) -> Result<Value, String> {
+    dispatch_command_with_timeout(state, command, Duration::from_secs(10)).await
+}
+
+async fn dispatch_command_with_timeout(
+    state: &AutomationState,
+    command: AutomationCommand,
+    timeout_duration: Duration,
+) -> Result<Value, String> {
     let (respond_to, response_rx) = oneshot::channel();
     state
         .command_tx
@@ -336,7 +394,7 @@ async fn dispatch_command(
         .await
         .map_err(|_| "automation command channel closed".to_string())?;
 
-    timeout(Duration::from_secs(10), response_rx)
+    timeout(timeout_duration, response_rx)
         .await
         .map_err(|_| "automation command timed out".to_string())?
         .map_err(|_| "automation command dropped".to_string())?
@@ -349,6 +407,7 @@ struct AutomationRequest {
 
 enum AutomationCommand {
     Focus { target: FocusTarget },
+    Check { target: WaitTarget },
     Screenshot { path: PathBuf },
     Resize { width: f32, height: f32 },
     Type { text: String },
@@ -378,6 +437,29 @@ async fn run_command_loop(
                         view.update(cx, |view, cx| apply_focus_target(view, window, cx, target));
                         mark_input(&state);
                         Ok(json!({ "target": target.as_str() }))
+                    })
+                    .map_err(|err| err.to_string())
+                    .and_then(|result| result)
+            }
+            AutomationCommand::Check { target } => {
+                let mut cx = cx.clone();
+                window
+                    .update(&mut cx, |root, _, cx| {
+                        let view = root
+                            .view()
+                            .clone()
+                            .downcast::<ShellView>()
+                            .map_err(|_| "root view is not a ShellView".to_string())?;
+                        let ready = view.update(cx, |view, cx| {
+                            let ready = match target {
+                                WaitTarget::ArchivedLoaded => view.archived_ready(),
+                            };
+                            if !ready && view.task_store_initialized {
+                                view.ensure_archived_loaded(cx);
+                            }
+                            ready
+                        });
+                        Ok(json!({ "target": "archived_loaded", "ready": ready }))
                     })
                     .map_err(|err| err.to_string())
                     .and_then(|result| result)

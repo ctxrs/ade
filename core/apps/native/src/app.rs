@@ -192,6 +192,7 @@ pub fn run(options: AppOptions) {
                         archive_confirm_dismissed,
                         sidebar_width: 260.0,
                         sidebar_collapsed: false,
+                        sidebar_anim_epoch: 0,
                         sidebar_resizing: false,
                         sidebar_resize_state: None,
                         sidebar_resizer_hovered: false,
