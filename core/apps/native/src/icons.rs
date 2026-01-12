@@ -1,8 +1,8 @@
 use std::borrow::Cow;
 
 use gpui::{
-    App, AssetSource, Component, Radians, RenderOnce, Result, Rgba, SharedString, Svg,
-    Transformation, Window, prelude::*, px, svg,
+    App, AssetSource, Component, RenderOnce, Result, Rgba, SharedString, Transformation, Window,
+    prelude::*, px, svg,
 };
 
 // Lucide icons (MIT), rendered as monochrome SVG masks.

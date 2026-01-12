@@ -292,7 +292,7 @@ impl<'a> ComposerView<'a> {
         let is_new = matches!(self.variant, ComposerVariant::NewTask);
         let show_model_effort = !is_new || shell.composer_draft_tracks.len() <= 1;
 
-        let (min_height, max_height) = if is_new {
+        let (min_height, _max_height) = if is_new {
             (px(88.0), px(380.0))
         } else {
             (px(28.0), px(220.0))

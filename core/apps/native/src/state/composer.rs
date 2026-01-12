@@ -85,6 +85,7 @@ impl ComposerState {
         self.selection_anchor != self.cursor
     }
 
+    #[allow(dead_code)]
     pub(crate) fn select_all(&mut self) {
         self.selection_anchor = 0;
         self.cursor = self.text.len();
@@ -333,6 +334,7 @@ pub(crate) struct ContextWindowInfo {
 
 #[derive(Clone, Debug)]
 pub(crate) struct ProviderInstallState {
+    #[allow(dead_code)]
     pub(crate) install_id: String,
     pub(crate) state: InstallStateKind,
     pub(crate) pct: Option<f32>,
@@ -366,6 +368,7 @@ pub(crate) enum ComposerAutocompleteItemKind {
 
 #[derive(Clone, Debug)]
 pub(crate) struct ComposerAutocompleteItem {
+    #[allow(dead_code)]
     pub(crate) key: String,
     pub(crate) kind: ComposerAutocompleteItemKind,
     pub(crate) label: String,
@@ -497,6 +500,7 @@ impl ShellView {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn set_new_task_mode(
         &mut self,
         window: &mut Window,
@@ -512,6 +516,7 @@ impl ShellView {
         self.apply_active_composer_state(window, cx);
     }
 
+    #[allow(dead_code)]
     pub(crate) fn set_session_mode_active(
         &mut self,
         window: &mut Window,
@@ -597,6 +602,7 @@ impl ShellView {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn on_composer_tab(
         &mut self,
         _: &IndentInline,
@@ -608,6 +614,7 @@ impl ShellView {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn on_composer_arrow_up(
         &mut self,
         _: &MoveUp,
@@ -619,6 +626,7 @@ impl ShellView {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn on_composer_arrow_down(
         &mut self,
         _: &MoveDown,
@@ -630,6 +638,7 @@ impl ShellView {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn on_composer_escape(
         &mut self,
         _: &Escape,
@@ -1421,6 +1430,7 @@ impl ShellView {
         .detach();
     }
 
+    #[allow(dead_code)]
     fn clear_composer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.active_composer_input()
             .update(cx, |state, cx| state.set_value("", window, cx));
@@ -2155,6 +2165,7 @@ impl ShellView {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn composer_provider_options(&self) -> Vec<String> {
         self.providers
             .iter()
@@ -2162,6 +2173,7 @@ impl ShellView {
             .collect()
     }
 
+    #[allow(dead_code)]
     pub(crate) fn composer_model_options(&self) -> Vec<String> {
         let Some(provider_id) = self.composer_provider_id.as_deref() else {
             return Vec::new();

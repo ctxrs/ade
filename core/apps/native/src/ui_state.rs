@@ -80,6 +80,7 @@ impl UiStateStore {
         self.state.archive_confirm_dismissed
     }
 
+    #[allow(dead_code)]
     pub(crate) fn set_archive_confirm_dismissed(&mut self, dismissed: bool) {
         self.state.archive_confirm_dismissed = dismissed;
         self.save();

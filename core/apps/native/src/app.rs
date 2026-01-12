@@ -44,7 +44,7 @@ use self::state::{
 use ctx_client::EnvTarget;
 use self::views::RouterView;
 
-pub(crate) use self::state::{ComposerMenuId, ShellView};
+pub(crate) use self::state::ShellView;
 
 #[derive(Clone, Debug)]
 pub struct AppOptions {

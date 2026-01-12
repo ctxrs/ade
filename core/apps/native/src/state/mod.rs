@@ -70,6 +70,7 @@ pub(crate) enum TaskArchiveAction {
     Unarchive,
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct AnchorRect {
     pub(crate) left: f32,
@@ -79,18 +80,21 @@ pub(crate) struct AnchorRect {
     pub(crate) height: f32,
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ArchiveConfirmState {
     pub(crate) task_id: TaskId,
     pub(crate) anchor: AnchorRect,
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct TaskMenuState {
     pub(crate) task_id: TaskId,
     pub(crate) anchor: AnchorRect,
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct SidebarResizeState {
     pub(crate) start_x: f32,

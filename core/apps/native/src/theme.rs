@@ -82,6 +82,7 @@ pub struct ThemeControls {
     pub h_sm: f32,   // 22px
     #[allow(dead_code)]
     pub h_md: f32,   // 26px
+    #[allow(dead_code)]
     pub h_lg: f32,   // 28px
     #[allow(dead_code)]
     pub h_xl: f32,   // 30px

@@ -8,6 +8,7 @@ pub(crate) struct ModelOption {
 
 #[derive(Clone, Debug)]
 pub(crate) struct ParsedModelId {
+    #[allow(dead_code)]
     pub(crate) full: String,
     pub(crate) base: String,
     pub(crate) effort: Option<String>,

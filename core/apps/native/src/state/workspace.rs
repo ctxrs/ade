@@ -781,6 +781,7 @@ impl ShellView {
         self.selected_artifact = None;
     }
 
+    #[allow(dead_code)]
     pub(crate) fn begin_task_rename(
         &mut self,
         task_id: TaskId,
@@ -868,6 +869,7 @@ impl ShellView {
         cx.notify();
     }
 
+    #[allow(dead_code)]
     pub(crate) fn close_task_menu(&mut self, cx: &mut Context<Self>) {
         if self.task_menu.take().is_some() {
             cx.notify();
@@ -937,6 +939,7 @@ impl ShellView {
         .detach();
     }
 
+    #[allow(dead_code)]
     pub(crate) fn confirm_archive(&mut self, cx: &mut Context<Self>) {
         let Some(confirm) = self.archive_confirm else {
             return;
@@ -954,6 +957,7 @@ impl ShellView {
         self.apply_archive_toggle(confirm.task_id, true, cx);
     }
 
+    #[allow(dead_code)]
     pub(crate) fn cancel_archive_confirm(&mut self, cx: &mut Context<Self>) {
         self.archive_confirm = None;
         cx.notify();
@@ -988,6 +992,7 @@ impl ShellView {
         .detach();
     }
 
+    #[allow(dead_code)]
     pub(crate) fn mark_task_unread(&mut self, task_id: TaskId, cx: &mut Context<Self>) {
         let task = Tokio::spawn_result(cx, async move {
             let config = ctx_client::resolve_daemon_config()?;
@@ -1012,6 +1017,7 @@ impl ShellView {
         .detach();
     }
 
+    #[allow(dead_code)]
     pub(crate) fn delete_task(&mut self, task_id: TaskId, cx: &mut Context<Self>) {
         let was_selected = self.selected_task == Some(task_id);
         let task = Tokio::spawn_result(cx, async move {
