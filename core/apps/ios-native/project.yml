@@ -46,8 +46,6 @@ targets:
     settings:
       base:
         CODE_SIGN_STYLE: Automatic
-        CODE_SIGN_IDENTITY: "-"
-        OTHER_CODE_SIGN_FLAGS: "--deep"
     sources:
       - path: Sources
       - path: Resources/Assets.xcassets
