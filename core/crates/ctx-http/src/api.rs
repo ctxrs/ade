@@ -39,12 +39,12 @@ use tower::util::ServiceExt;
 use tower_http::services::{ServeDir, ServeFile};
 use url::Url;
 
+use chrono::Utc;
 use ctx_core::ids::*;
 use ctx_core::models::*;
 use ctx_fs::git::{assert_git_repo, list_tracked_files, list_untracked_files, rev_parse_head};
 use ctx_fs::worktrees::{create_worktree, diff_worktree_summary, managed_worktree_path};
 use ctx_store::store::MobileDeviceUpsert;
-use chrono::Utc;
 use ctx_worker_protocol::{
     DiffArtifact, RepoSpec, StartWorkerRequest, StartWorkerResponse, TerminalOpenRequest,
 };
@@ -5883,18 +5883,14 @@ async fn create_workspace_terminal(
         None => None,
     };
     let track_worker = if let Some(track_id) = track_id {
-        state
-            .store
-            .get_track_worker(track_id)
-            .await
-            .map_err(|_| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ApiErrorResp {
-                        error: "failed to load track worker".to_string(),
-                    }),
-                )
-            })?
+        state.store.get_track_worker(track_id).await.map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: "failed to load track worker".to_string(),
+                }),
+            )
+        })?
     } else {
         None
     };
@@ -6102,7 +6098,8 @@ async fn delete_terminal(
                 let gateway_token = std::env::var("CTX_WORKER_GATEWAY_TOKEN")
                     .ok()
                     .filter(|value| !value.trim().is_empty());
-                let _ = close_remote_terminal(&worker, &terminal_id, gateway_token.as_deref()).await;
+                let _ =
+                    close_remote_terminal(&worker, &terminal_id, gateway_token.as_deref()).await;
             }
         }
         let _ = session.kill();
@@ -13099,7 +13096,11 @@ async fn resolve_cloud_worker_gateway_url(
                 }),
             )
         })?;
-    if let Some(url) = workspace_cfg.gateway_url.as_ref().filter(|v| !v.trim().is_empty()) {
+    if let Some(url) = workspace_cfg
+        .gateway_url
+        .as_ref()
+        .filter(|v| !v.trim().is_empty())
+    {
         return Ok(url.trim().to_string());
     }
 
@@ -13169,9 +13170,7 @@ async fn start_track_worker_inner(
         base_commit_sha: Some(base_commit),
         diff_debounce_ms: opts.diff_debounce_ms.or(req.diff_debounce_ms),
         ttl_seconds: opts.ttl_seconds.or(req.ttl_seconds),
-        snapshot_ttl_seconds: opts
-            .snapshot_ttl_seconds
-            .or(req.snapshot_ttl_seconds),
+        snapshot_ttl_seconds: opts.snapshot_ttl_seconds.or(req.snapshot_ttl_seconds),
         env: HashMap::new(),
     };
 
@@ -13256,13 +13255,7 @@ async fn aws_sdk_config(
     access_key_id: &str,
     secret_access_key: &str,
 ) -> anyhow::Result<aws_config::SdkConfig> {
-    let credentials = Credentials::new(
-        access_key_id,
-        secret_access_key,
-        None,
-        None,
-        "ctx",
-    );
+    let credentials = Credentials::new(access_key_id, secret_access_key, None, None, "ctx");
     let config = aws_config::from_env()
         .region(Region::new(region.to_string()))
         .credentials_provider(credentials)
@@ -13366,8 +13359,9 @@ async fn start_track_worker(
         )
     })?);
     let (track, worktree) = load_track_and_worktree(&state, track_id).await?;
-    let worker = start_track_worker_inner(state, track, worktree, req, StartWorkerOptions::default())
-        .await?;
+    let worker =
+        start_track_worker_inner(state, track, worktree, req, StartWorkerOptions::default())
+            .await?;
     Ok(Json(worker))
 }
 
@@ -13403,17 +13397,16 @@ async fn start_track_cloud_worker(
                 error: "workspace not found".to_string(),
             }),
         ))?;
-    let workspace_cfg =
-        load_workspace_cloud_workers_config(StdPath::new(&workspace.root_path)).await.map_err(
-            |e| {
-                (
-                    StatusCode::BAD_REQUEST,
-                    Json(ApiErrorResp {
-                        error: e.to_string(),
-                    }),
-                )
-            },
-        )?;
+    let workspace_cfg = load_workspace_cloud_workers_config(StdPath::new(&workspace.root_path))
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: e.to_string(),
+                }),
+            )
+        })?;
 
     let gateway_url = resolve_cloud_worker_gateway_url(&state, &workspace.root_path).await?;
     let base_commit = if worktree.base_commit_sha.trim().is_empty() {
@@ -13435,7 +13428,9 @@ async fn start_track_cloud_worker(
         .unwrap_or_else(|| base_commit.clone());
     let repo = resolve_cloud_worker_repo_spec(&worktree, &reference).await?;
     let diff_debounce_ms = req.diff_debounce_ms.or(workspace_cfg.diff_debounce_ms);
-    let ttl_seconds = req.ttl_seconds.or(workspace_cfg.idle_timeout_minutes.map(|m| m * 60));
+    let ttl_seconds = req
+        .ttl_seconds
+        .or(workspace_cfg.idle_timeout_minutes.map(|m| m * 60));
     let snapshot_ttl_seconds = req.snapshot_ttl_seconds.or_else(|| {
         workspace_cfg
             .snapshot_ttl_days
@@ -13494,18 +13489,14 @@ async fn delete_track_worker(
             }),
         )
     })?);
-    let worker = state
-        .store
-        .get_track_worker(track_id)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: e.to_string(),
-                }),
-            )
-        })?;
+    let worker = state.store.get_track_worker(track_id).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResp {
+                error: e.to_string(),
+            }),
+        )
+    })?;
     if let Some(worker) = worker {
         let url = format!(
             "{}/workers/{}/stop",

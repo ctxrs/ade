@@ -642,10 +642,13 @@ async fn emit_diff(client: &reqwest::Client, args: &ResolvedArgs) -> Result<()> 
     let head = git_rev_parse(&args.workdir, "HEAD")
         .await?
         .unwrap_or_else(|| base.clone());
-    let mut patch =
-        git_output_allow(&args.workdir, &["diff", "--binary", &base], &[0, 1]).await?;
-    let changed_files_raw =
-        git_output_allow(&args.workdir, &["diff", "--name-only", "-z", &base], &[0, 1]).await?;
+    let mut patch = git_output_allow(&args.workdir, &["diff", "--binary", &base], &[0, 1]).await?;
+    let changed_files_raw = git_output_allow(
+        &args.workdir,
+        &["diff", "--name-only", "-z", &base],
+        &[0, 1],
+    )
+    .await?;
     let mut seen = std::collections::HashSet::new();
     let mut changed_files = Vec::new();
     for entry in changed_files_raw.split_terminator('\0') {
@@ -777,7 +780,11 @@ async fn git_commit_exists(workdir: &Path, rev: &str) -> Result<bool> {
 }
 
 async fn list_untracked_files(workdir: &Path) -> Result<Vec<String>> {
-    let output = git_output(workdir, &["ls-files", "--others", "--exclude-standard", "-z"]).await?;
+    let output = git_output(
+        workdir,
+        &["ls-files", "--others", "--exclude-standard", "-z"],
+    )
+    .await?;
     let files = output
         .split_terminator('\0')
         .filter(|entry| !entry.is_empty())
@@ -787,13 +794,8 @@ async fn list_untracked_files(workdir: &Path) -> Result<Vec<String>> {
     Ok(files)
 }
 
-async fn diff_stats(
-    workdir: &Path,
-    base: &str,
-    untracked: &[String],
-) -> Result<(i64, i64, i64)> {
-    let output =
-        git_output_allow(workdir, &["diff", "--numstat", "-z", base], &[0, 1]).await?;
+async fn diff_stats(workdir: &Path, base: &str, untracked: &[String]) -> Result<(i64, i64, i64)> {
+    let output = git_output_allow(workdir, &["diff", "--numstat", "-z", base], &[0, 1]).await?;
     let mut files = 0i64;
     let mut additions = 0i64;
     let mut deletions = 0i64;
@@ -824,7 +826,15 @@ async fn diff_stats(
     for file in untracked {
         let output = git_output_allow(
             workdir,
-            &["diff", "--numstat", "-z", "--no-index", "--", "/dev/null", file],
+            &[
+                "diff",
+                "--numstat",
+                "-z",
+                "--no-index",
+                "--",
+                "/dev/null",
+                file,
+            ],
             &[0, 1],
         )
         .await?;

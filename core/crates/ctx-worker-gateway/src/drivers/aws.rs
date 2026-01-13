@@ -31,9 +31,6 @@ pub struct AwsConfig {
     pub data_device_name: String,
     pub delete_volume_on_pause: bool,
     pub wait_for_snapshot: bool,
-    pub worker_shim_url: String,
-    pub mount_path: String,
-    pub workdir: String,
     pub availability_zone: Option<String>,
 }
 
@@ -170,8 +167,12 @@ impl AwsDriver {
         // Use a tiny user-data script that fetches the full bootstrap from the gateway
         // to stay well under the 16KB EC2 user-data limit.
         let ca_b64 = spec.env.get("CTX_GATEWAY_CA_B64").map(|v| v.as_str());
-        let fetch_script =
-            render_fetch_bootstrap_script(worker_id, gateway_url, self.auth_token.as_deref(), ca_b64);
+        let fetch_script = render_fetch_bootstrap_script(
+            worker_id,
+            gateway_url,
+            self.auth_token.as_deref(),
+            ca_b64,
+        );
         let user_data_b64 = base64::engine::general_purpose::STANDARD.encode(fetch_script);
 
         let mut run = self

@@ -1001,7 +1001,8 @@ async fn patch_claude_code_acp_for_ask_user_question(script_path: &Path) -> Resu
     }
 
     if !patched.contains("CLAUDE_CODE_ENABLE_ASK_USER_QUESTION_TOOL") {
-        let allow_needle = "const disableBuiltInTools = params._meta?.disableBuiltInTools === true;";
+        let allow_needle =
+            "const disableBuiltInTools = params._meta?.disableBuiltInTools === true;";
         let allow_block = r#"
         if (!disableBuiltInTools && process.env.CLAUDE_CODE_ENABLE_ASK_USER_QUESTION_TOOL === "1") {
             allowedTools.push("AskUserQuestion");

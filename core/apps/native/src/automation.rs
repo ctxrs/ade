@@ -295,7 +295,7 @@ async fn wait_handler(
 ) -> (StatusCode, Json<ApiResponse<Value>>) {
     match wait_for_idle(&state, request).await {
         Ok(result) => ok(result),
-        Err(err) => err(StatusCode::INTERNAL_SERVER_ERROR, err.message),
+        Err(rpc_err) => err(StatusCode::INTERNAL_SERVER_ERROR, rpc_err.message),
     }
 }
 

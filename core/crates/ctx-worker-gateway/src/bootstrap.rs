@@ -30,7 +30,10 @@ pub fn render_fetch_bootstrap_script(
     script.push_str(&format!("CTX_WORKER_ID={}\n", shell_quote(worker_id)));
     script.push_str(&format!("CTX_GATEWAY_URL={}\n", shell_quote(gateway_url)));
     if let Some(token) = gateway_token {
-        script.push_str(&format!("CTX_WORKER_GATEWAY_TOKEN={}\n", shell_quote(token)));
+        script.push_str(&format!(
+            "CTX_WORKER_GATEWAY_TOKEN={}\n",
+            shell_quote(token)
+        ));
     }
     if let Some(ca) = gateway_ca_b64 {
         script.push_str(&format!("CTX_GATEWAY_CA_B64={}\n", shell_quote(ca)));

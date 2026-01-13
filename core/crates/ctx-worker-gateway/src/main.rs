@@ -639,9 +639,6 @@ async fn main() -> Result<()> {
                 data_device_name: resolved.aws_data_device_name.clone(),
                 delete_volume_on_pause: resolved.aws_delete_volume_on_pause,
                 wait_for_snapshot: resolved.aws_wait_for_snapshot,
-                worker_shim_url,
-                mount_path: resolved.session_mount_path.clone(),
-                workdir: resolved.workdir_path.clone(),
                 availability_zone: resolved.aws_availability_zone.clone(),
             };
             Arc::new(AwsDriver::new(config, auth_token.clone()).await?)
