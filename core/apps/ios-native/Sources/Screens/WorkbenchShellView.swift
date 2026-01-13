@@ -23,6 +23,25 @@ struct WorkbenchShellView: View {
     @State private var renameError: String?
     @State private var isRenaming = false
     @State private var archiveInFlight: Set<String> = []
+    @State private var markReadInFlight: Set<String> = []
+    @State private var streamTask: _Concurrency.Task<Void, Never>?
+    @State private var streamSocket: URLSessionWebSocketTask?
+    @State private var streamReconnectDelay: TimeInterval = 1
+    @State private var isStreamConnected = false
+    @State private var streamSecureContext: SecureConnectionContext?
+    @State private var lastStreamSnapshotRev: Int = 0
+
+    private let streamClient = DaemonStreamClient()
+    private let streamEncoder: JSONEncoder = {
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        return encoder
+    }()
+    private let streamDecoder: JSONDecoder = {
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return decoder
+    }()
 
     var body: some View {
         GeometryReader { proxy in
@@ -104,6 +123,7 @@ struct WorkbenchShellView: View {
         }
         .task(id: selectedWorkspace?.id) {
             await loadTasks()
+            await refreshWorkspaceStream()
         }
         .onAppear {
             if shouldAutoOpenDrawer {
@@ -111,14 +131,21 @@ struct WorkbenchShellView: View {
             }
         }
         .onChange(of: connection.isConnected) { connected in
-            guard connected else { return }
+            guard connected else {
+                stopWorkspaceStream()
+                return
+            }
             _Concurrency.Task {
                 await loadWorkspaces()
                 await loadTasks()
+                await refreshWorkspaceStream()
             }
         }
         .onChange(of: workbenchSelection.taskId) { _ in
             resolveSelectionForCurrentTask()
+        }
+        .onDisappear {
+            stopWorkspaceStream()
         }
         .sheet(isPresented: $isRenaming) {
             RenameSheet(
@@ -213,6 +240,7 @@ struct WorkbenchShellView: View {
         taskError = nil
         do {
             let snapshot = try await client.getWorkspaceCatchupSnapshot(workspaceId: workspaceId, includeArchived: true)
+            lastStreamSnapshotRev = snapshot.snapshotRev
             activeTasks = snapshot.active.tasks
             archivedTasks = snapshot.archived?.tasks ?? []
             resolveSelectionForCurrentTask()
@@ -235,6 +263,7 @@ struct WorkbenchShellView: View {
         if resolved.trackId != workbenchSelection.trackId || resolved.sessionId != workbenchSelection.sessionId {
             workbenchSelection.setSelection(taskId: taskId, trackId: resolved.trackId, sessionId: resolved.sessionId)
         }
+        _Concurrency.Task { await markTaskReadIfNeeded(task) }
         guard resolved.sessionId == nil, task.task.archivedAt == nil else { return }
         _Concurrency.Task { await ensurePrimarySession(taskId: taskId) }
     }
@@ -254,6 +283,7 @@ struct WorkbenchShellView: View {
             trackId: resolved.trackId,
             sessionId: resolved.sessionId
         )
+        _Concurrency.Task { await markTaskReadIfNeeded(task) }
         guard resolved.sessionId == nil, task.task.archivedAt == nil else { return }
         _Concurrency.Task { await ensurePrimarySession(taskId: task.task.id.stringValue) }
     }
@@ -361,6 +391,314 @@ struct WorkbenchShellView: View {
             await loadTasks()
         } catch {
             taskError = "Failed to update task."
+        }
+    }
+
+    @MainActor
+    private func markTaskReadIfNeeded(_ task: WorkspaceCatchupTaskSummary) async {
+        let taskId = task.task.id.stringValue
+        guard !taskId.isEmpty else { return }
+        guard !markReadInFlight.contains(taskId) else { return }
+        let isWorking = taskHasWorkingSession(task)
+        guard taskHasUnread(task, isWorking: isWorking) else { return }
+        guard let client = connection.apiClient else { return }
+        markReadInFlight.insert(taskId)
+        defer { markReadInFlight.remove(taskId) }
+        do {
+            let updated = try await client.markTaskRead(taskId: taskId)
+            applyTaskUpdate(updated)
+        } catch {
+            // ignore mark read failures
+        }
+    }
+
+    @MainActor
+    private func refreshWorkspaceStream() async {
+        stopWorkspaceStream()
+        guard connection.apiClient != nil, let workspaceId = selectedWorkspace?.id else { return }
+        streamTask = _Concurrency.Task { await streamLoop(workspaceId: workspaceId) }
+    }
+
+    @MainActor
+    private func stopWorkspaceStream() {
+        streamTask?.cancel()
+        streamTask = nil
+        if let streamSocket {
+            streamClient.disconnect(streamSocket)
+        }
+        streamSocket = nil
+        isStreamConnected = false
+        streamReconnectDelay = 1
+    }
+
+    @MainActor
+    private func streamLoop(workspaceId: String) async {
+        while !_Concurrency.Task.isCancelled {
+            guard workspaceId == selectedWorkspace?.id else { break }
+            guard connection.apiClient != nil else {
+                try? await _Concurrency.Task.sleep(nanoseconds: 1_000_000_000)
+                continue
+            }
+            do {
+                let socket = try await openWorkspaceStream(workspaceId: workspaceId)
+                await listenToWorkspaceStream(socket)
+                if let streamSocket {
+                    streamClient.disconnect(streamSocket)
+                }
+                streamSocket = nil
+                isStreamConnected = false
+            } catch {
+                isStreamConnected = false
+            }
+            if _Concurrency.Task.isCancelled { break }
+            let delay = min(streamReconnectDelay, 15)
+            streamReconnectDelay = min(streamReconnectDelay * 2, 15)
+            try? await _Concurrency.Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+        }
+    }
+
+    @MainActor
+    private func openWorkspaceStream(workspaceId: String) async throws -> URLSessionWebSocketTask {
+        guard let client = connection.apiClient else { throw DaemonStreamError.invalidURL }
+        let baseURL = await client.daemonBaseURL()
+        if let secure = await client.secureConnectionContext() {
+            let socket = try streamClient.connectSecureWorkspaceStream(
+                baseURL: baseURL,
+                workspaceId: workspaceId,
+                deviceId: secure.deviceId
+            )
+            streamSecureContext = secure
+            streamSocket = socket
+            streamReconnectDelay = 1
+            await sendWorkspaceSubscriptionIfNeeded()
+            isStreamConnected = true
+            return socket
+        }
+        let token = await client.authToken()
+        let socket = try streamClient.connectWorkspaceStream(baseURL: baseURL, workspaceId: workspaceId, token: token)
+        streamSecureContext = nil
+        streamSocket = socket
+        streamReconnectDelay = 1
+        await sendWorkspaceSubscriptionIfNeeded()
+        isStreamConnected = true
+        return socket
+    }
+
+    @MainActor
+    private func listenToWorkspaceStream(_ socket: URLSessionWebSocketTask) async {
+        while !_Concurrency.Task.isCancelled {
+            do {
+                let message = try await streamClient.receive(from: socket)
+                await handleWorkspaceStreamMessage(message)
+            } catch {
+                break
+            }
+        }
+    }
+
+    @MainActor
+    private func sendWorkspaceSubscriptionIfNeeded() async {
+        guard let socket = streamSocket else { return }
+        let message = WorkspaceCatchupClientMessage(type: "subscribe", sessionIds: nil, sessions: [])
+        if let secureContext = streamSecureContext {
+            let seq = await SecureSequenceStore.shared.next(for: secureContext.deviceId)
+            guard let payload = try? streamEncoder.encode(message) else { return }
+            guard let envelope = try? MobileE2EE.encryptPayload(
+                deviceId: secureContext.deviceId,
+                seq: seq,
+                key: secureContext.key,
+                plaintext: payload
+            ) else { return }
+            guard let wrapped = try? streamEncoder.encode(envelope),
+                  let text = String(data: wrapped, encoding: .utf8) else { return }
+            try? await streamClient.send(.string(text), via: socket)
+            return
+        }
+        guard let payload = try? streamEncoder.encode(message),
+              let text = String(data: payload, encoding: .utf8) else { return }
+        try? await streamClient.send(.string(text), via: socket)
+    }
+
+    @MainActor
+    private func handleWorkspaceStreamMessage(_ message: URLSessionWebSocketTask.Message) async {
+        let data: Data?
+        switch message {
+        case .data(let payload):
+            data = payload
+        case .string(let text):
+            data = text.data(using: .utf8)
+        @unknown default:
+            data = nil
+        }
+        guard let data else { return }
+        if let secureContext = streamSecureContext {
+            guard let envelope = try? streamDecoder.decode(SecureEnvelope.self, from: data) else { return }
+            guard envelope.deviceId == secureContext.deviceId else { return }
+            guard let decrypted = try? MobileE2EE.decryptEnvelope(envelope, key: secureContext.key) else { return }
+            guard let event = try? streamDecoder.decode(WorkspaceCatchupEvent.self, from: decrypted) else { return }
+            handleWorkspaceStreamEvent(event)
+            return
+        }
+        guard let event = try? streamDecoder.decode(WorkspaceCatchupEvent.self, from: data) else { return }
+        handleWorkspaceStreamEvent(event)
+    }
+
+    @MainActor
+    private func handleWorkspaceStreamEvent(_ event: WorkspaceCatchupEvent) {
+        let snapshotRev: Int
+        switch event {
+        case .ready(_, let rev):
+            snapshotRev = rev
+        case .taskUpsert(_, let rev, _):
+            snapshotRev = rev
+        case .taskDelete(_, let rev, _):
+            snapshotRev = rev
+        case .trackUpsert(_, let rev, _):
+            snapshotRev = rev
+        case .sessionSummary(_, let rev, _):
+            snapshotRev = rev
+        case .sessionHeadDelta(_, let rev, _):
+            snapshotRev = rev
+        case .sessionGap(_, let rev, _, _, _):
+            snapshotRev = rev
+        case .worktreeBootstrap(_, let rev, _):
+            snapshotRev = rev
+        }
+
+        if snapshotRev > lastStreamSnapshotRev + 1 {
+            _Concurrency.Task { await loadTasks() }
+        }
+        if case .ready = event, snapshotRev != lastStreamSnapshotRev {
+            _Concurrency.Task { await loadTasks() }
+        }
+        lastStreamSnapshotRev = max(lastStreamSnapshotRev, snapshotRev)
+
+        switch event {
+        case .taskUpsert(_, _, let task):
+            upsertTaskSummary(task)
+        case .taskDelete(_, _, let taskId):
+            removeTask(taskId: taskId.stringValue)
+        case .trackUpsert(_, _, let track):
+            applyTrackSummary(track)
+        case .sessionSummary(_, _, let summary):
+            applySessionSummary(summary)
+        case .sessionGap:
+            _Concurrency.Task { await loadTasks() }
+        default:
+            break
+        }
+    }
+
+    @MainActor
+    private func upsertTaskSummary(_ summary: WorkspaceCatchupTaskSummary) {
+        let taskId = summary.task.id.stringValue
+        activeTasks.removeAll { $0.task.id.stringValue == taskId }
+        archivedTasks.removeAll { $0.task.id.stringValue == taskId }
+        if summary.task.archivedAt == nil {
+            activeTasks = sortTasksBySortAt(activeTasks + [summary])
+        } else {
+            archivedTasks = sortTasksBySortAt(archivedTasks + [summary])
+        }
+        resolveSelectionForCurrentTask()
+    }
+
+    @MainActor
+    private func removeTask(taskId: String) {
+        activeTasks.removeAll { $0.task.id.stringValue == taskId }
+        archivedTasks.removeAll { $0.task.id.stringValue == taskId }
+        if workbenchSelection.taskId == taskId {
+            workbenchSelection.setSelection(taskId: nil, trackId: nil, sessionId: nil)
+        }
+    }
+
+    @MainActor
+    private func applyTrackSummary(_ summary: WorkspaceCatchupTrackSummary) {
+        let taskId = summary.track.taskId.stringValue
+        let trackId = summary.track.id.stringValue
+        func update(_ tasks: inout [WorkspaceCatchupTaskSummary]) -> Bool {
+            guard let index = tasks.firstIndex(where: { $0.task.id.stringValue == taskId }) else { return false }
+            let taskSummary = tasks[index]
+            var tracks = taskSummary.tracks
+            if let trackIndex = tracks.firstIndex(where: { $0.track.id.stringValue == trackId }) {
+                tracks[trackIndex] = summary
+            } else {
+                tracks.append(summary)
+            }
+            tasks[index] = WorkspaceCatchupTaskSummary(
+                task: taskSummary.task,
+                tracks: tracks,
+                sortAt: taskSummary.sortAt
+            )
+            return true
+        }
+        if !update(&activeTasks) {
+            _ = update(&archivedTasks)
+        }
+        resolveSelectionForCurrentTask()
+    }
+
+    @MainActor
+    private func applySessionSummary(_ summary: SessionCatchupSummary) {
+        let taskId = summary.session.taskId.stringValue
+        let trackId = summary.session.trackId.stringValue
+        let sessionId = summary.session.id.stringValue
+        func update(_ tasks: inout [WorkspaceCatchupTaskSummary]) -> Bool {
+            guard let taskIndex = tasks.firstIndex(where: { $0.task.id.stringValue == taskId }) else { return false }
+            let taskSummary = tasks[taskIndex]
+            guard let trackIndex = taskSummary.tracks.firstIndex(where: { $0.track.id.stringValue == trackId }) else { return false }
+            let trackSummary = taskSummary.tracks[trackIndex]
+            var sessions = trackSummary.sessions
+            if let sessionIndex = sessions.firstIndex(where: { $0.session.id.stringValue == sessionId }) {
+                sessions[sessionIndex] = summary
+            } else {
+                sessions.append(summary)
+            }
+            let updatedTrack = WorkspaceCatchupTrackSummary(
+                track: trackSummary.track,
+                primarySessionId: trackSummary.primarySessionId,
+                sessions: sessions,
+                diffSummary: trackSummary.diffSummary
+            )
+            var tracks = taskSummary.tracks
+            tracks[trackIndex] = updatedTrack
+            tasks[taskIndex] = WorkspaceCatchupTaskSummary(
+                task: taskSummary.task,
+                tracks: tracks,
+                sortAt: taskSummary.sortAt
+            )
+            return true
+        }
+        if !update(&activeTasks) {
+            _ = update(&archivedTasks)
+        }
+        resolveSelectionForCurrentTask()
+    }
+
+    @MainActor
+    private func applyTaskUpdate(_ task: Task) {
+        let taskId = task.id.stringValue
+        func update(_ tasks: inout [WorkspaceCatchupTaskSummary]) -> WorkspaceCatchupTaskSummary? {
+            guard let index = tasks.firstIndex(where: { $0.task.id.stringValue == taskId }) else { return nil }
+            let summary = tasks[index]
+            tasks.remove(at: index)
+            return WorkspaceCatchupTaskSummary(task: task, tracks: summary.tracks, sortAt: summary.sortAt)
+        }
+
+        if let updated = update(&activeTasks) {
+            if updated.task.archivedAt == nil {
+                activeTasks = sortTasksBySortAt(activeTasks + [updated])
+            } else {
+                archivedTasks = sortTasksBySortAt(archivedTasks + [updated])
+            }
+            return
+        }
+
+        if let updated = update(&archivedTasks) {
+            if updated.task.archivedAt == nil {
+                activeTasks = sortTasksBySortAt(activeTasks + [updated])
+            } else {
+                archivedTasks = sortTasksBySortAt(archivedTasks + [updated])
+            }
         }
     }
 }
@@ -1750,6 +2088,23 @@ private func filterTasks(_ tasks: [WorkspaceCatchupTaskSummary], matching query:
     return tasks.filter { task in
         let title = task.task.title.lowercased()
         return title.contains(query) || task.task.id.stringValue.lowercased().contains(query)
+    }
+}
+
+private func sortTasksBySortAt(_ tasks: [WorkspaceCatchupTaskSummary]) -> [WorkspaceCatchupTaskSummary] {
+    tasks.sorted { left, right in
+        let leftDate = parseIso(left.sortAt)
+        let rightDate = parseIso(right.sortAt)
+        switch (leftDate, rightDate) {
+        case let (lhs?, rhs?):
+            return lhs > rhs
+        case (.some, .none):
+            return true
+        case (.none, .some):
+            return false
+        case (.none, .none):
+            return left.task.id.stringValue > right.task.id.stringValue
+        }
     }
 }
 

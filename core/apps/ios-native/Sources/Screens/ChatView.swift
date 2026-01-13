@@ -171,6 +171,12 @@ struct ChatDetailView: View {
                 viewModel.setClient(connection.apiClient)
                 viewModel.selectSession(session.id, workspaceId: session.workspaceId)
             }
+            .onChange(of: session.id) { newSessionId in
+                viewModel.selectSession(newSessionId, workspaceId: session.workspaceId)
+            }
+            .onChange(of: session.workspaceId) { _ in
+                viewModel.selectSession(session.id, workspaceId: session.workspaceId)
+            }
             .navigationTitle(session.title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
