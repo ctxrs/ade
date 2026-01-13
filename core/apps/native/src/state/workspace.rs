@@ -266,6 +266,14 @@ impl ShellView {
                         if let Some(session_id) = view.selected_session_id() {
                             view.cache_session_thread_state(session_id);
                         }
+                        view.session_history_cursor =
+                            data.session_history.as_ref().and_then(|page| page.next_cursor);
+                        view.session_history_has_more = data
+                            .session_history
+                            .as_ref()
+                            .map(|page| page.has_more)
+                            .unwrap_or(false);
+                        view.session_history_loading = false;
                         if let Some(head) = data.session_head.as_ref() {
                             view.update_session_last_event_seq(head.session.id, head.last_event_seq);
                         } else if let Some(event) = view.session_events.last() {
@@ -316,6 +324,9 @@ impl ShellView {
         self.artifact_preview = ArtifactPreviewState::None;
         self.session_events.clear();
         self.selected_artifact = None;
+        self.session_history_cursor = None;
+        self.session_history_has_more = false;
+        self.session_history_loading = false;
         self.composer_attachments.clear();
         self.composer_notice = None;
         self.composer_provider_menu_open = false;

@@ -18,9 +18,9 @@ use ctx_client;
 
 use super::{ArtifactPreviewState, ShellView};
 use super::super::models::{
-    attachment_cache_key, build_message_items, build_thread_list_items, session_info_from_head,
-    session_info_from_summary, MessageAttachment, MessageItem, SessionInfo, ThreadItem,
-    ThreadListItem, TurnToolSnapshot, WorkbenchTurnHeader,
+    attachment_cache_key, build_message_items, build_thread_list_items, message_item_from_model,
+    session_info_from_head, session_info_from_summary, MessageAttachment, MessageItem,
+    SessionInfo, ThreadItem, ThreadListItem, TurnToolSnapshot, WorkbenchTurnHeader,
 };
 use super::SessionViewVerbosity;
 
@@ -41,6 +41,8 @@ pub(super) struct SessionThreadCache {
 }
 
 const COPIED_TIMEOUT: Duration = Duration::from_millis(1_000);
+const SESSION_HISTORY_PAGE_LIMIT: u32 = 60;
+const SESSION_HISTORY_PREFETCH_THRESHOLD: usize = 6;
 
 #[derive(Clone, Copy)]
 enum SessionControlAction {
@@ -164,9 +166,138 @@ impl ShellView {
                         cx.notify();
                     }
                     view.update_sticky_turn_header(event.visible_range.clone());
+                    view.maybe_load_more_session_history(event.visible_range.clone(), cx);
                 });
             });
         self.thread_list_handler_set = true;
+    }
+
+    fn maybe_load_more_session_history(
+        &mut self,
+        visible_range: std::ops::Range<usize>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.session_history_loading || !self.session_history_has_more {
+            return;
+        }
+        if visible_range.start > SESSION_HISTORY_PREFETCH_THRESHOLD {
+            return;
+        }
+        let Some(session_id) = self.selected_session_id() else {
+            return;
+        };
+        let Some(before_seq) = self.session_history_cursor else {
+            return;
+        };
+
+        self.session_history_loading = true;
+        let task = Tokio::spawn_result(cx, async move {
+            let config = ctx_client::resolve_daemon_config()?;
+            let client = ctx_client::Client::new(config)?;
+            let history = client
+                .get_session_history(session_id, Some(before_seq), Some(SESSION_HISTORY_PAGE_LIMIT))
+                .await?;
+            Ok(history)
+        });
+
+        cx.spawn(move |this: WeakEntity<ShellView>, cx: &mut AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                let result = task.await;
+                this.update(&mut cx, |view, cx| {
+                    if !view.is_session_selected(session_id) {
+                        return;
+                    }
+                    view.session_history_loading = false;
+                    match result {
+                        Ok(history) => {
+                            view.session_history_cursor = history.next_cursor;
+                            view.session_history_has_more = history.has_more;
+                            view.prepend_session_history(history, cx);
+                        }
+                        Err(_) => {}
+                    }
+                    cx.notify();
+                })
+                .ok();
+            }
+        })
+        .detach();
+    }
+
+    fn prepend_session_history(&mut self, history: SessionHistoryPage, cx: &mut Context<Self>) {
+        self.clear_placeholder_messages();
+
+        let mut message_ids = HashSet::new();
+        for message in &self.messages {
+            if let Some(id) = message.id {
+                message_ids.insert(id);
+            }
+        }
+        let mut new_messages = Vec::new();
+        for message in history.messages {
+            if message_ids.contains(&message.id) {
+                continue;
+            }
+            new_messages.push(message_item_from_model(&message));
+        }
+        if !new_messages.is_empty() {
+            let mut merged = new_messages;
+            merged.extend(self.messages.drain(..));
+            self.messages = merged;
+        }
+
+        let mut turn_ids = HashSet::new();
+        for turn in &self.session_turns {
+            turn_ids.insert(turn.turn_id);
+        }
+        let mut new_turns = history
+            .turns
+            .into_iter()
+            .filter(|turn| !turn_ids.contains(&turn.turn_id))
+            .collect::<Vec<_>>();
+        if !new_turns.is_empty() {
+            new_turns.sort_by(|a, b| {
+                a.started_at
+                    .cmp(&b.started_at)
+                    .then_with(|| a.updated_at.cmp(&b.updated_at))
+            });
+            let mut merged = new_turns;
+            merged.extend(self.session_turns.drain(..));
+            self.session_turns = merged;
+        }
+
+        if !new_messages.is_empty() {
+            self.prefetch_attachment_images(cx);
+        }
+
+        self.rebuild_thread_items_with_prepend();
+    }
+
+    fn rebuild_thread_items_with_prepend(&mut self) {
+        let items = build_thread_list_items(
+            &self.session_turns,
+            &self.messages,
+            &self.session_turn_tools,
+            &self.session_events,
+        );
+        let items = filter_thread_list_items(items, self.verbosity);
+        let old_len = self.thread_list_len;
+        self.thread_items = items;
+        let new_len = self.thread_items.len();
+        self.thread_list_len = new_len;
+
+        if new_len > old_len {
+            let added = new_len - old_len;
+            self.thread_list_state.splice(0..0, added);
+        } else if new_len < old_len {
+            self.thread_list_state.reset(new_len);
+        }
+
+        if new_len == 0 {
+            self.sticky_turn_header = None;
+            self.sticky_turn_header_at_top = true;
+        }
     }
 
     fn schedule_copied_reset(&self, key: String, cx: &mut Context<Self>) {
@@ -441,7 +572,7 @@ impl ShellView {
                 .await
                 .ok();
             let session_history = client
-                .get_session_history(session_id, None, Some(60))
+                .get_session_history(session_id, None, Some(SESSION_HISTORY_PAGE_LIMIT))
                 .await
                 .ok();
             let session_events = client
@@ -508,6 +639,14 @@ impl ShellView {
                                 "No messages yet. Create one to begin.",
                             ));
                         }
+                        view.session_history_cursor =
+                            data.session_history.as_ref().and_then(|page| page.next_cursor);
+                        view.session_history_has_more = data
+                            .session_history
+                            .as_ref()
+                            .map(|page| page.has_more)
+                            .unwrap_or(false);
+                        view.session_history_loading = false;
                         view.session_events = data.session_events;
                         view.session_turns = merge_session_turns(
                             data.session_head.as_ref(),
@@ -546,6 +685,9 @@ impl ShellView {
                         view.thread_list_len = 0;
                         view.sticky_turn_header = None;
                         view.sticky_turn_header_at_top = true;
+                        view.session_history_cursor = None;
+                        view.session_history_has_more = false;
+                        view.session_history_loading = false;
                         view.artifacts.clear();
                         view.selected_artifact = None;
                         view.artifact_preview = ArtifactPreviewState::None;
@@ -574,6 +716,9 @@ impl ShellView {
 
     fn reset_thread_state(&mut self) {
         self.session_turns.clear();
+        self.session_history_cursor = None;
+        self.session_history_has_more = false;
+        self.session_history_loading = false;
         self.session_turn_tools.clear();
         self.thread_items.clear();
         self.thread_list_state.reset(0);
