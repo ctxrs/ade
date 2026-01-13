@@ -126,15 +126,17 @@ impl ShellView {
     }
 
     fn build_stream_subscribe_message(&self) -> WorkspaceCatchupClientMessage {
-        let sessions = self
-            .sessions
-            .iter()
-            .map(|session| WorkspaceCatchupSessionSubscription {
-                session_id: session.session_id,
-                after_seq: self
-                    .session_last_event_seq
-                    .get(&session.session_id)
-                    .copied(),
+        let mut session_ids = self
+            .session_summary_map
+            .keys()
+            .copied()
+            .collect::<Vec<_>>();
+        session_ids.sort_by(|a, b| a.0.cmp(&b.0));
+        let sessions = session_ids
+            .into_iter()
+            .map(|session_id| WorkspaceCatchupSessionSubscription {
+                session_id,
+                after_seq: self.session_last_event_seq.get(&session_id).copied(),
             })
             .collect();
         WorkspaceCatchupClientMessage::Subscribe {
@@ -143,7 +145,7 @@ impl ShellView {
         }
     }
 
-    fn send_stream_subscribe(&self) {
+    pub(super) fn send_stream_subscribe(&self) {
         if let Some(tx) = &self.stream_subscribe_tx {
             let _ = tx.send(self.build_stream_subscribe_message());
         }

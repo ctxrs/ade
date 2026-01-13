@@ -411,6 +411,7 @@ impl ShellView {
                         for summary in snapshot.active.tasks {
                             view.upsert_task_summary(summary);
                         }
+                        view.send_stream_subscribe();
                         view.task_fetch_active = super::TaskFetchState::Idle;
                     }
                     Err(_) => {
@@ -716,6 +717,7 @@ impl ShellView {
         let mut sessions = Vec::new();
         let mut session_summary_map = HashMap::new();
         let mut session_last_event_seq = HashMap::new();
+        let prev_last_event_seq = std::mem::take(&mut self.session_last_event_seq);
 
         let task_ids = self.task_active_order.clone();
         for task_id in &task_ids {
@@ -725,7 +727,11 @@ impl ShellView {
             for track in &task.tracks {
                 for summary in &track.sessions {
                     session_summary_map.insert(summary.session.id, summary.clone());
-                    if let Some(seq) = summary.last_event_seq {
+                    let mut seq = summary.last_event_seq;
+                    if let Some(prev) = prev_last_event_seq.get(&summary.session.id) {
+                        seq = Some(seq.map_or(*prev, |current| current.max(*prev)));
+                    }
+                    if let Some(seq) = seq {
                         session_last_event_seq.insert(summary.session.id, seq);
                     }
                 }
