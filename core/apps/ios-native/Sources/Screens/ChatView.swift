@@ -864,6 +864,7 @@ final class ChatViewModel: ObservableObject {
     private var pendingAssistantResponse = false
     private var streamingAssistantState: StreamingAssistantState?
     private var consecutivePollFailures = 0
+    private var sessionGeneration = 0
 
     init(client: DaemonAPIClient? = nil, initialSessionId: String? = nil, initialWorkspaceId: String? = nil) {
         self.client = client
@@ -930,13 +931,20 @@ final class ChatViewModel: ObservableObject {
     }
 
     func selectSession(_ sessionId: String?, workspaceId: String? = nil) {
+        sessionGeneration += 1
         self.sessionId = sessionId
         self.workspaceId = workspaceId
         lastEventSeq = nil
         pendingAssistantResponse = false
         streamingAssistantState = nil
+        refreshInFlight = false
+        refreshPending = false
+        messages = []
+        errorMessage = nil
         artifacts = []
         artifactsError = nil
+        artifactsRefreshInFlight = false
+        artifactsRefreshPending = false
         _Concurrency.Task {
             await primeStreamCursor()
             _ = await refreshMessages()
@@ -990,10 +998,12 @@ final class ChatViewModel: ObservableObject {
         }
         refreshInFlight = true
         defer { refreshInFlight = false }
+        let generation = sessionGeneration
         let resolved = await resolveSessionId()
-        guard let resolved else { return .skipped }
+        guard let resolved, generation == sessionGeneration else { return .skipped }
         do {
             let items = try await client.listMessages(sessionId: resolved)
+            guard generation == sessionGeneration, resolved == sessionId else { return .skipped }
             let nextMessages = items.map { summary in
                 ChatMessage(
                     id: UUID(uuidString: summary.id) ?? UUID(),
@@ -1009,14 +1019,16 @@ final class ChatViewModel: ObservableObject {
                 streamingAssistantState = nil
             }
             errorMessage = nil
-            if refreshPending {
+            if refreshPending, generation == sessionGeneration {
                 refreshPending = false
                 _Concurrency.Task { _ = await refreshMessages() }
             }
             return .success
         } catch {
-            errorMessage = "Failed to load messages."
-            if refreshPending {
+            if generation == sessionGeneration {
+                errorMessage = "Failed to load messages."
+            }
+            if refreshPending, generation == sessionGeneration {
                 refreshPending = false
                 _Concurrency.Task { _ = await refreshMessages() }
             }
@@ -1036,18 +1048,21 @@ final class ChatViewModel: ObservableObject {
             artifactsRefreshInFlight = false
             isArtifactsLoading = false
         }
+        let generation = sessionGeneration
         let resolved = await resolveSessionId()
-        guard let resolved else { return }
+        guard let resolved, generation == sessionGeneration else { return }
         do {
             artifacts = try await client.listSessionArtifacts(sessionId: resolved)
             artifactsError = nil
-            if artifactsRefreshPending {
+            if artifactsRefreshPending, generation == sessionGeneration {
                 artifactsRefreshPending = false
                 _Concurrency.Task { await refreshArtifacts() }
             }
         } catch {
-            artifactsError = "Failed to load artifacts."
-            if artifactsRefreshPending {
+            if generation == sessionGeneration {
+                artifactsError = "Failed to load artifacts."
+            }
+            if artifactsRefreshPending, generation == sessionGeneration {
                 artifactsRefreshPending = false
                 _Concurrency.Task { await refreshArtifacts() }
             }

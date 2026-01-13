@@ -12,6 +12,7 @@ struct WorkbenchShellView: View {
     @State private var activeTasks: [WorkspaceCatchupTaskSummary] = []
     @State private var archivedTasks: [WorkspaceCatchupTaskSummary] = []
     @State private var isLoadingTasks = false
+    @State private var isRefreshingTasks = false
     @State private var taskError: String?
     @State private var lastWorkspaceId: String?
     @State private var sessionCreationTaskId: String?
@@ -92,6 +93,7 @@ struct WorkbenchShellView: View {
                     activeTasks: activeTasks,
                     archivedTasks: archivedTasks,
                     isLoadingTasks: isLoadingTasks,
+                    isRefreshingTasks: isRefreshingTasks,
                     taskError: taskError,
                     activeTaskId: workbenchSelection.taskId,
                     taskQuery: $taskQuery,
@@ -234,9 +236,16 @@ struct WorkbenchShellView: View {
             archivedTasks = []
             taskError = nil
             isLoadingTasks = false
+            isRefreshingTasks = false
             return
         }
-        isLoadingTasks = true
+        let hasTasks = !(activeTasks.isEmpty && archivedTasks.isEmpty)
+        let showBlocking = !hasTasks
+        if showBlocking {
+            isLoadingTasks = true
+        } else {
+            isRefreshingTasks = true
+        }
         taskError = nil
         do {
             let snapshot = try await client.getWorkspaceCatchupSnapshot(workspaceId: workspaceId, includeArchived: true)
@@ -245,11 +254,14 @@ struct WorkbenchShellView: View {
             archivedTasks = snapshot.archived?.tasks ?? []
             resolveSelectionForCurrentTask()
         } catch {
-            activeTasks = []
-            archivedTasks = []
+            if showBlocking {
+                activeTasks = []
+                archivedTasks = []
+            }
             taskError = "Failed to load tasks."
         }
         isLoadingTasks = false
+        isRefreshingTasks = false
     }
 
     private func resolveSelectionForCurrentTask() {
@@ -773,6 +785,7 @@ private struct WorkbenchDrawerView: View {
     let activeTasks: [WorkspaceCatchupTaskSummary]
     let archivedTasks: [WorkspaceCatchupTaskSummary]
     let isLoadingTasks: Bool
+    let isRefreshingTasks: Bool
     let taskError: String?
     let activeTaskId: String?
     @Binding var taskQuery: String
@@ -815,30 +828,33 @@ private struct WorkbenchDrawerView: View {
 
             ScrollView(showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 16) {
-                    WorkbenchSectionHeaderView(title: "Active")
+                    WorkbenchSectionHeaderView(title: "Active", isRefreshing: isRefreshingTasks)
 
                     if selectedWorkspace == nil {
                         Text("Select a workspace in settings to view tasks.")
                             .font(.caption)
                             .foregroundColor(.ctxTextMuted)
-                    } else if isLoadingTasks {
-                        ProgressView()
-                            .tint(.ctxAccent)
-                    } else if let taskError {
-                        Text(taskError)
-                            .font(.caption)
-                            .foregroundColor(.ctxError)
                     } else {
-                        if filteredActive.isEmpty {
+                        if let taskError {
+                            Text(taskError)
+                                .font(.caption)
+                                .foregroundColor(.ctxError)
+                        }
+
+                        if isLoadingTasks && filteredActive.isEmpty {
+                            Text("Loading tasks...")
+                                .font(.caption)
+                                .foregroundColor(.ctxTextMuted)
+                        } else if filteredActive.isEmpty {
                             Text("No active tasks.")
                                 .font(.caption)
                                 .foregroundColor(.ctxTextMuted)
                         } else {
-                                LazyVStack(spacing: 2) {
-                                    ForEach(filteredActive, id: \.task.id) { task in
-                                        Button {
-                                            onSelectTask(task)
-                                        } label: {
+                            LazyVStack(spacing: 2) {
+                                ForEach(filteredActive, id: \.task.id) { task in
+                                    Button {
+                                        onSelectTask(task)
+                                    } label: {
                                         WorkbenchTaskRowView(
                                             task: task,
                                             isSelected: activeTaskId == task.task.id.stringValue
@@ -1786,12 +1802,20 @@ private struct WorkbenchSearchField: View {
 
 private struct WorkbenchSectionHeaderView: View {
     let title: String
+    var isRefreshing: Bool = false
 
     var body: some View {
-        Text(title.uppercased())
-            .font(.system(size: 12, weight: .semibold))
-            .foregroundColor(.ctxTextMuted)
-            .kerning(0.6)
+        HStack(spacing: 8) {
+            Text(title.uppercased())
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(.ctxTextMuted)
+                .kerning(0.6)
+            if isRefreshing {
+                Text("Refreshing")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(.ctxTextSecondary)
+            }
+        }
     }
 }
 
