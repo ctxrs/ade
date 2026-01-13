@@ -1,3 +1,4 @@
+use std::io;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -6,8 +7,9 @@ use std::time::Duration;
 use anyhow::{anyhow, Result};
 use clap::{Parser, Subcommand};
 use chrono::{DateTime, Utc};
-use tracing::warn;
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, Layer};
+use tracing::{Metadata, warn};
+use tracing_subscriber::fmt::writer::MakeWriter;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use tokio::time::MissedTickBehavior;
 
 #[derive(Parser)]
@@ -50,6 +52,55 @@ const DEFAULT_DAEMON_LOG_RETENTION_DAYS: u64 = 14;
 const DEFAULT_DAEMON_LOG_MAX_BYTES: u64 = 50 * 1024 * 1024;
 const DEFAULT_DAEMON_LOG_CHECK_INTERVAL_SECS: u64 = 300;
 const DAEMON_LOG_PREFIX: &str = "daemon.log.";
+
+struct ConditionalWriter<W> {
+    inner: W,
+    blocked: Arc<AtomicBool>,
+}
+
+impl<W: io::Write> io::Write for ConditionalWriter<W> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        if self.blocked.load(Ordering::Relaxed) {
+            Ok(buf.len())
+        } else {
+            self.inner.write(buf)
+        }
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        if self.blocked.load(Ordering::Relaxed) {
+            Ok(())
+        } else {
+            self.inner.flush()
+        }
+    }
+}
+
+struct ConditionalMakeWriter<W> {
+    inner: W,
+    blocked: Arc<AtomicBool>,
+}
+
+impl<'a, W> MakeWriter<'a> for ConditionalMakeWriter<W>
+where
+    W: MakeWriter<'a>,
+{
+    type Writer = ConditionalWriter<W::Writer>;
+
+    fn make_writer(&'a self) -> Self::Writer {
+        ConditionalWriter {
+            inner: self.inner.make_writer(),
+            blocked: Arc::clone(&self.blocked),
+        }
+    }
+
+    fn make_writer_for(&'a self, meta: &Metadata<'_>) -> Self::Writer {
+        ConditionalWriter {
+            inner: self.inner.make_writer_for(meta),
+            blocked: Arc::clone(&self.blocked),
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 struct DaemonLogConfig {
@@ -185,27 +236,25 @@ async fn main() -> Result<()> {
         let appender = tracing_appender::rolling::daily(logs_dir, "daemon.log");
         let (file_writer, file_guard) = tracing_appender::non_blocking(appender);
         _file_guard = Some(file_guard);
+        let file_writer = ConditionalMakeWriter {
+            inner: file_writer,
+            blocked: Arc::clone(&file_blocked),
+        };
 
-        let env_filter = tracing_subscriber::EnvFilter::from_default_env();
-        let file_filter = tracing_subscriber::filter::filter_fn({
-            let file_blocked = Arc::clone(&file_blocked);
-            move |_| !file_blocked.load(Ordering::Relaxed)
-        });
         let file_layer = tracing_subscriber::fmt::layer()
             .with_ansi(false)
-            .with_writer(file_writer)
-            .with_filter(file_filter);
+            .with_writer(file_writer);
 
         if daemon_log_config.stdout_enabled {
             tracing_subscriber::registry()
-                .with(env_filter)
-                .with(tracing_subscriber::fmt::layer().with_ansi(true))
                 .with(file_layer)
+                .with(tracing_subscriber::fmt::layer().with_ansi(true))
+                .with(tracing_subscriber::EnvFilter::from_default_env())
                 .init();
         } else {
             tracing_subscriber::registry()
-                .with(env_filter)
                 .with(file_layer)
+                .with(tracing_subscriber::EnvFilter::from_default_env())
                 .init();
         }
 
