@@ -366,10 +366,10 @@ private func formatElapsedMs(_ ms: TimeInterval) -> String {
     let minutes = (totalSeconds / 60) % 60
     let hours = totalSeconds / 3600
     if hours > 0 {
-        return "\(hours)h \(String(minutes).padStart(2, "0"))m"
+        return "\(hours)h \(String(format: "%02d", minutes))m"
     }
     if minutes > 0 {
-        return "\(minutes)m \(String(seconds).padStart(2, "0"))s"
+        return "\(minutes)m \(String(format: "%02d", seconds))s"
     }
     return "\(seconds)s"
 }
