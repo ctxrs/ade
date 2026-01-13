@@ -19,8 +19,8 @@ ctx-core = { path = "../../crates/ctx-core" }
 ctx-providers = { path = "../../crates/ctx-providers" }
 directories = "5"
 futures-util = "0.3"
-gpui = { git = "https://github.com/zed-industries/zed", package = "gpui" }
-gpui_tokio = { git = "https://github.com/zed-industries/zed", package = "gpui_tokio" }
+gpui = { git = "https://github.com/ctxrs/zed", rev = "6dac6cd7983e1c2d92e460f757fe45e3a3ad9886", package = "gpui" }
+gpui_tokio = { git = "https://github.com/ctxrs/zed", rev = "6dac6cd7983e1c2d92e460f757fe45e3a3ad9886", package = "gpui_tokio" }
 gpui-component = { git = "https://github.com/ctxrs/gpui-component", rev = "76d64362a1c0bdf825f83efb0ae3f4cb93849bd7", version = "0.5.0" }
 image = { version = "0.25", default-features = false, features = ["png"] }
 qrcode = "0.14"
@@ -37,6 +37,23 @@ cargo-clippy = []
 
 [target.'cfg(not(target_os = "macos"))'.dependencies]
 scap = { git = "https://github.com/zed-industries/scap", rev = "4afea48c3b002197176fb19cd0f9b180dd36eaac", default-features = false, package = "zed-scap", version = "0.0.8-zed", features = ["x11"] }
+
+[patch."https://github.com/zed-industries/zed"]
+gpui = { git = "https://github.com/ctxrs/zed", rev = "6dac6cd7983e1c2d92e460f757fe45e3a3ad9886" }
+gpui_tokio = { git = "https://github.com/ctxrs/zed", rev = "6dac6cd7983e1c2d92e460f757fe45e3a3ad9886" }
+gpui_macros = { git = "https://github.com/ctxrs/zed", rev = "6dac6cd7983e1c2d92e460f757fe45e3a3ad9886" }
+collections = { git = "https://github.com/ctxrs/zed", rev = "6dac6cd7983e1c2d92e460f757fe45e3a3ad9886" }
+http_client = { git = "https://github.com/ctxrs/zed", rev = "6dac6cd7983e1c2d92e460f757fe45e3a3ad9886" }
+media = { git = "https://github.com/ctxrs/zed", rev = "6dac6cd7983e1c2d92e460f757fe45e3a3ad9886" }
+refineable = { git = "https://github.com/ctxrs/zed", rev = "6dac6cd7983e1c2d92e460f757fe45e3a3ad9886" }
+sum_tree = { git = "https://github.com/ctxrs/zed", rev = "6dac6cd7983e1c2d92e460f757fe45e3a3ad9886" }
+util = { git = "https://github.com/ctxrs/zed", rev = "6dac6cd7983e1c2d92e460f757fe45e3a3ad9886" }
+util_macros = { git = "https://github.com/ctxrs/zed", rev = "6dac6cd7983e1c2d92e460f757fe45e3a3ad9886" }
+zlog = { git = "https://github.com/ctxrs/zed", rev = "6dac6cd7983e1c2d92e460f757fe45e3a3ad9886" }
+ztracing = { git = "https://github.com/ctxrs/zed", rev = "6dac6cd7983e1c2d92e460f757fe45e3a3ad9886" }
+ztracing_macro = { git = "https://github.com/ctxrs/zed", rev = "6dac6cd7983e1c2d92e460f757fe45e3a3ad9886" }
+perf = { git = "https://github.com/ctxrs/zed", rev = "6dac6cd7983e1c2d92e460f757fe45e3a3ad9886" }
+
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation = "=0.10.0"
