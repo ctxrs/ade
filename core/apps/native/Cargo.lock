@@ -675,7 +675,7 @@ dependencies = [
  "bitflags 2.10.0",
  "cexpr",
  "clang-sys",
- "itertools 0.13.0",
+ "itertools 0.11.0",
  "log",
  "prettyplease",
  "proc-macro2",
@@ -1169,7 +1169,7 @@ dependencies = [
 [[package]]
 name = "collections"
 version = "0.1.0"
-source = "git+https://github.com/ctxrs/zed?rev=0a53617e04a4a1a3efaa40d036e22a9026ef83f3#0a53617e04a4a1a3efaa40d036e22a9026ef83f3"
+source = "git+https://github.com/ctxrs/zed?rev=5e76b0abdcf23ea91d97cadd3972765ca125703d#5e76b0abdcf23ea91d97cadd3972765ca125703d"
 dependencies = [
  "indexmap",
  "rustc-hash 2.1.1",
@@ -1624,7 +1624,7 @@ dependencies = [
 [[package]]
 name = "derive_refineable"
 version = "0.1.0"
-source = "git+https://github.com/ctxrs/zed?rev=0a53617e04a4a1a3efaa40d036e22a9026ef83f3#0a53617e04a4a1a3efaa40d036e22a9026ef83f3"
+source = "git+https://github.com/ctxrs/zed?rev=5e76b0abdcf23ea91d97cadd3972765ca125703d#5e76b0abdcf23ea91d97cadd3972765ca125703d"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1893,7 +1893,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2504,7 +2504,7 @@ dependencies = [
 [[package]]
 name = "gpui"
 version = "0.2.2"
-source = "git+https://github.com/ctxrs/zed?rev=0a53617e04a4a1a3efaa40d036e22a9026ef83f3#0a53617e04a4a1a3efaa40d036e22a9026ef83f3"
+source = "git+https://github.com/ctxrs/zed?rev=5e76b0abdcf23ea91d97cadd3972765ca125703d#5e76b0abdcf23ea91d97cadd3972765ca125703d"
 dependencies = [
  "anyhow",
  "as-raw-xcb-connection",
@@ -2665,7 +2665,7 @@ dependencies = [
 [[package]]
 name = "gpui_macros"
 version = "0.1.0"
-source = "git+https://github.com/ctxrs/zed?rev=0a53617e04a4a1a3efaa40d036e22a9026ef83f3#0a53617e04a4a1a3efaa40d036e22a9026ef83f3"
+source = "git+https://github.com/ctxrs/zed?rev=5e76b0abdcf23ea91d97cadd3972765ca125703d#5e76b0abdcf23ea91d97cadd3972765ca125703d"
 dependencies = [
  "heck 0.5.0",
  "proc-macro2",
@@ -2676,7 +2676,7 @@ dependencies = [
 [[package]]
 name = "gpui_tokio"
 version = "0.1.0"
-source = "git+https://github.com/ctxrs/zed?rev=0a53617e04a4a1a3efaa40d036e22a9026ef83f3#0a53617e04a4a1a3efaa40d036e22a9026ef83f3"
+source = "git+https://github.com/ctxrs/zed?rev=5e76b0abdcf23ea91d97cadd3972765ca125703d#5e76b0abdcf23ea91d97cadd3972765ca125703d"
 dependencies = [
  "anyhow",
  "gpui",
@@ -2860,7 +2860,7 @@ dependencies = [
 [[package]]
 name = "http_client"
 version = "0.1.0"
-source = "git+https://github.com/ctxrs/zed?rev=0a53617e04a4a1a3efaa40d036e22a9026ef83f3#0a53617e04a4a1a3efaa40d036e22a9026ef83f3"
+source = "git+https://github.com/ctxrs/zed?rev=5e76b0abdcf23ea91d97cadd3972765ca125703d#5e76b0abdcf23ea91d97cadd3972765ca125703d"
 dependencies = [
  "anyhow",
  "async-compression",
@@ -3694,7 +3694,7 @@ dependencies = [
 [[package]]
 name = "media"
 version = "0.1.0"
-source = "git+https://github.com/ctxrs/zed?rev=0a53617e04a4a1a3efaa40d036e22a9026ef83f3#0a53617e04a4a1a3efaa40d036e22a9026ef83f3"
+source = "git+https://github.com/ctxrs/zed?rev=5e76b0abdcf23ea91d97cadd3972765ca125703d#5e76b0abdcf23ea91d97cadd3972765ca125703d"
 dependencies = [
  "anyhow",
  "bindgen",
@@ -4387,7 +4387,7 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 [[package]]
 name = "perf"
 version = "0.1.0"
-source = "git+https://github.com/ctxrs/zed?rev=0a53617e04a4a1a3efaa40d036e22a9026ef83f3#0a53617e04a4a1a3efaa40d036e22a9026ef83f3"
+source = "git+https://github.com/ctxrs/zed?rev=5e76b0abdcf23ea91d97cadd3972765ca125703d#5e76b0abdcf23ea91d97cadd3972765ca125703d"
 dependencies = [
  "collections",
  "serde",
@@ -4747,7 +4747,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.60.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -4989,7 +4989,7 @@ dependencies = [
 [[package]]
 name = "refineable"
 version = "0.1.0"
-source = "git+https://github.com/ctxrs/zed?rev=0a53617e04a4a1a3efaa40d036e22a9026ef83f3#0a53617e04a4a1a3efaa40d036e22a9026ef83f3"
+source = "git+https://github.com/ctxrs/zed?rev=5e76b0abdcf23ea91d97cadd3972765ca125703d#5e76b0abdcf23ea91d97cadd3972765ca125703d"
 dependencies = [
  "derive_refineable",
 ]
@@ -5249,7 +5249,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.4.15",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -5262,7 +5262,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.11.0",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -5783,6 +5783,7 @@ dependencies = [
  "cfg-if",
  "libc",
  "psm",
+ "windows-sys 0.52.0",
  "windows-sys 0.59.0",
 ]
 
@@ -5917,7 +5918,7 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 [[package]]
 name = "sum_tree"
 version = "0.1.0"
-source = "git+https://github.com/ctxrs/zed?rev=0a53617e04a4a1a3efaa40d036e22a9026ef83f3#0a53617e04a4a1a3efaa40d036e22a9026ef83f3"
+source = "git+https://github.com/ctxrs/zed?rev=5e76b0abdcf23ea91d97cadd3972765ca125703d#5e76b0abdcf23ea91d97cadd3972765ca125703d"
 dependencies = [
  "arrayvec",
  "log",
@@ -6131,7 +6132,7 @@ dependencies = [
  "getrandom 0.3.4",
  "once_cell",
  "rustix 1.1.3",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -6863,7 +6864,7 @@ checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
 [[package]]
 name = "util"
 version = "0.1.0"
-source = "git+https://github.com/ctxrs/zed?rev=0a53617e04a4a1a3efaa40d036e22a9026ef83f3#0a53617e04a4a1a3efaa40d036e22a9026ef83f3"
+source = "git+https://github.com/ctxrs/zed?rev=5e76b0abdcf23ea91d97cadd3972765ca125703d#5e76b0abdcf23ea91d97cadd3972765ca125703d"
 dependencies = [
  "anyhow",
  "async-fs",
@@ -6902,7 +6903,7 @@ dependencies = [
 [[package]]
 name = "util_macros"
 version = "0.1.0"
-source = "git+https://github.com/ctxrs/zed?rev=0a53617e04a4a1a3efaa40d036e22a9026ef83f3#0a53617e04a4a1a3efaa40d036e22a9026ef83f3"
+source = "git+https://github.com/ctxrs/zed?rev=5e76b0abdcf23ea91d97cadd3972765ca125703d#5e76b0abdcf23ea91d97cadd3972765ca125703d"
 dependencies = [
  "perf",
  "quote",
@@ -7306,7 +7307,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -8123,7 +8124,7 @@ dependencies = [
 [[package]]
 name = "zlog"
 version = "0.1.0"
-source = "git+https://github.com/ctxrs/zed?rev=0a53617e04a4a1a3efaa40d036e22a9026ef83f3#0a53617e04a4a1a3efaa40d036e22a9026ef83f3"
+source = "git+https://github.com/ctxrs/zed?rev=5e76b0abdcf23ea91d97cadd3972765ca125703d#5e76b0abdcf23ea91d97cadd3972765ca125703d"
 dependencies = [
  "anyhow",
  "chrono",
@@ -8140,7 +8141,7 @@ checksum = "ac93432f5b761b22864c774aac244fa5c0fd877678a4c37ebf6cf42208f9c9ec"
 [[package]]
 name = "ztracing"
 version = "0.1.0"
-source = "git+https://github.com/ctxrs/zed?rev=0a53617e04a4a1a3efaa40d036e22a9026ef83f3#0a53617e04a4a1a3efaa40d036e22a9026ef83f3"
+source = "git+https://github.com/ctxrs/zed?rev=5e76b0abdcf23ea91d97cadd3972765ca125703d#5e76b0abdcf23ea91d97cadd3972765ca125703d"
 dependencies = [
  "tracing",
  "tracing-subscriber",
@@ -8151,7 +8152,7 @@ dependencies = [
 [[package]]
 name = "ztracing_macro"
 version = "0.1.0"
-source = "git+https://github.com/ctxrs/zed?rev=0a53617e04a4a1a3efaa40d036e22a9026ef83f3#0a53617e04a4a1a3efaa40d036e22a9026ef83f3"
+source = "git+https://github.com/ctxrs/zed?rev=5e76b0abdcf23ea91d97cadd3972765ca125703d#5e76b0abdcf23ea91d97cadd3972765ca125703d"
 
 [[package]]
 name = "zune-core"

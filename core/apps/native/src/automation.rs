@@ -493,7 +493,7 @@ fn mark_input(state: &AutomationState) {
 fn dispatch_click(window: &mut Window, cx: &mut App, x: f32, y: f32, button: MouseButton) {
     let position = point(px(x), px(y));
     let modifiers = Modifiers::none();
-    let _ = window.dispatch_event(
+    window.dispatch_platform_input(
         PlatformInput::MouseMove(MouseMoveEvent {
             position,
             modifiers,
@@ -501,7 +501,7 @@ fn dispatch_click(window: &mut Window, cx: &mut App, x: f32, y: f32, button: Mou
         }),
         cx,
     );
-    let _ = window.dispatch_event(
+    window.dispatch_platform_input(
         PlatformInput::MouseDown(MouseDownEvent {
             button,
             position,
@@ -511,7 +511,7 @@ fn dispatch_click(window: &mut Window, cx: &mut App, x: f32, y: f32, button: Mou
         }),
         cx,
     );
-    let _ = window.dispatch_event(
+    window.dispatch_platform_input(
         PlatformInput::MouseUp(MouseUpEvent {
             button,
             position,
