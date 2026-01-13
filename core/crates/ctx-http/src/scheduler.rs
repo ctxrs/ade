@@ -1415,7 +1415,7 @@ fn normalize_session_model_id(model_id: &str) -> Option<String> {
 }
 
 fn provider_supports_system_prompt_append(provider_id: &str) -> bool {
-    matches!(provider_id, "claude")
+    matches!(provider_id, "claude" | "codex")
 }
 
 #[derive(Default)]

@@ -238,13 +238,21 @@ pub async fn run_remote_prompt(
                     })
                 })
                 .collect::<Vec<_>>();
+            let mut new_payload =
+                json!({"cwd": workdir.to_string_lossy().to_string(), "mcpServers": mcp_servers});
+            if let Some(append) = client.system_prompt_append.as_deref() {
+                let trimmed = append.trim();
+                if !trimmed.is_empty() {
+                    if let Some(obj) = new_payload.as_object_mut() {
+                        obj.insert(
+                            "_meta".to_string(),
+                            json!({"systemPrompt": {"append": trimmed}}),
+                        );
+                    }
+                }
+            }
             let session_resp = request_ctx
-                .send_request(
-                    2,
-                    "session/new",
-                    json!({"cwd": workdir.to_string_lossy().to_string(), "mcpServers": mcp_servers}),
-                    false,
-                )
+                .send_request(2, "session/new", new_payload, false)
                 .await?;
 
             if let Some(err) = session_resp.get("error") {

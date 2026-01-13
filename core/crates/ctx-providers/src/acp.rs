@@ -65,6 +65,48 @@ pub struct AcpAgentConfig {
     pub args: Vec<String>,
 }
 
+fn encode_toml_basic_string(value: &str) -> String {
+    let mut out = String::with_capacity(value.len() + 2);
+    out.push('"');
+    for ch in value.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            _ => out.push(ch),
+        }
+    }
+    out.push('"');
+    out
+}
+
+fn apply_system_prompt_append_args(
+    mut agent: AcpAgentConfig,
+    client: &AcpClientConfig,
+) -> AcpAgentConfig {
+    if agent.provider_id != "codex" {
+        return agent;
+    }
+
+    let Some(append) = client.system_prompt_append.as_deref() else {
+        return agent;
+    };
+    let trimmed = append.trim();
+    if trimmed.is_empty() {
+        return agent;
+    }
+
+    // Codex ACP doesn't read ACP _meta systemPrompt, so pass the append via config overrides.
+    agent.args.push("-c".to_string());
+    agent.args.push(format!(
+        "developer_instructions={}",
+        encode_toml_basic_string(trimmed)
+    ));
+    agent
+}
+
 const ACP_MEMORY_MAX_FRACTION: f64 = 0.9;
 const ACP_MEMORY_MIN_MB: u64 = 256;
 
@@ -619,6 +661,8 @@ impl AcpProcess {
             },
             None => (None, None),
         };
+
+        let agent = apply_system_prompt_append_args(agent, &client);
 
         let spawned = spawn_acp_child(&agent, &workdir, &env)
             .await
