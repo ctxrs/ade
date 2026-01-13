@@ -168,6 +168,10 @@ actor DaemonAPIClient {
         return []
     }
 
+    func listWorktrees(workspaceId: String) async throws -> [WorktreeSummary] {
+        try await request("/api/workspaces/\(workspaceId)/worktrees")
+    }
+
     func listMessages(sessionId: String) async throws -> [MessageSummary] {
         let head = try await getSessionHead(sessionId: sessionId, limit: 200, includeEvents: false)
         return head.messages.map(MessageSummary.init)

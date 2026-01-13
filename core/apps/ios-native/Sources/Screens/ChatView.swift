@@ -6,18 +6,6 @@ import UniformTypeIdentifiers
 import UIKit
 import _Concurrency
 
-enum ComposerEffort: String, CaseIterable, Identifiable {
-    case low
-    case medium
-    case high
-
-    var id: String { rawValue }
-
-    var label: String {
-        rawValue.capitalized
-    }
-}
-
 enum ComposerMode: String, CaseIterable, Identifiable {
     case standard
     case plan
@@ -60,7 +48,7 @@ struct ChatView: View {
     var modelOptions: [String]
     var isModelLoading: Bool
     @Binding var selectedModelId: String
-    @Binding var selectedEffort: ComposerEffort
+    @Binding var selectedEffortId: String
     @Binding var selectedMode: ComposerMode
     @Binding var selectedVerbosity: ComposerVerbosity
     @State private var composerText = ""
@@ -75,7 +63,7 @@ struct ChatView: View {
         modelOptions: [String] = [],
         isModelLoading: Bool = false,
         selectedModelId: Binding<String> = .constant(""),
-        selectedEffort: Binding<ComposerEffort> = .constant(.high),
+        selectedEffortId: Binding<String> = .constant(""),
         selectedMode: Binding<ComposerMode> = .constant(.standard),
         selectedVerbosity: Binding<ComposerVerbosity> = .constant(.normal)
     ) {
@@ -85,7 +73,7 @@ struct ChatView: View {
         self.modelOptions = modelOptions
         self.isModelLoading = isModelLoading
         _selectedModelId = selectedModelId
-        _selectedEffort = selectedEffort
+        _selectedEffortId = selectedEffortId
         _selectedMode = selectedMode
         _selectedVerbosity = selectedVerbosity
     }
@@ -117,9 +105,10 @@ struct ChatView: View {
                     modelOptions: modelOptions,
                     isModelLoading: isModelLoading,
                     selectedModelId: $selectedModelId,
-                    selectedEffort: $selectedEffort,
+                    selectedEffortId: $selectedEffortId,
                     selectedMode: $selectedMode,
                     selectedVerbosity: $selectedVerbosity,
+                    contextWindowInfo: viewModel.contextWindowInfo,
                     onSend: sendMessage,
                     onInterrupt: interruptSession
                 )
@@ -129,10 +118,19 @@ struct ChatView: View {
             .padding(.bottom, 8)
             .background(Color.ctxBackground.ignoresSafeArea(edges: .bottom))
         }
-        .onAppear { viewModel.startPolling() }
+        .onAppear {
+            viewModel.startPolling()
+            syncEffortSelection()
+        }
         .onDisappear { viewModel.stopPolling() }
         .onChange(of: selectedPhotos) { newItems in
             _Concurrency.Task { await loadAttachments(from: newItems) }
+        }
+        .onChange(of: modelOptions) { _ in
+            syncEffortSelection()
+        }
+        .onChange(of: selectedModelId) { _ in
+            syncEffortSelection()
         }
     }
 
@@ -184,6 +182,46 @@ struct ChatView: View {
 
     private var isSendEnabled: Bool {
         !composerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !pendingAttachments.isEmpty
+    }
+
+    private func syncEffortSelection() {
+        let modelChoices = modelOptions.isEmpty ? ["default"] : modelOptions
+        let catalog = buildModelCatalog(modelChoices)
+        let fallbackModelId = modelChoices.first ?? ""
+        let currentModelId = selectedModelId.isEmpty ? fallbackModelId : selectedModelId
+        guard !currentModelId.isEmpty else { return }
+
+        let parsed = parseModelId(currentModelId, catalog: catalog)
+        let baseId = parsed.base.isEmpty ? currentModelId : parsed.base
+        let efforts = catalog.effortsByBase[baseId] ?? []
+
+        if efforts.isEmpty {
+            if !selectedEffortId.isEmpty {
+                selectedEffortId = ""
+            }
+            if selectedModelId.isEmpty, !fallbackModelId.isEmpty {
+                selectedModelId = fallbackModelId
+            }
+            return
+        }
+
+        var nextEffort = selectedEffortId
+        if nextEffort.isEmpty || !efforts.contains(nextEffort) {
+            if let parsedEffort = parsed.effort, efforts.contains(parsedEffort) {
+                nextEffort = parsedEffort
+            } else {
+                nextEffort = pickDefaultEffort(efforts) ?? ""
+            }
+        }
+
+        if selectedEffortId != nextEffort {
+            selectedEffortId = nextEffort
+        }
+
+        let resolvedModelId = deriveFullModelIdForBase(catalog: catalog, baseId: baseId, preferredEffort: nextEffort)
+        if !resolvedModelId.isEmpty, selectedModelId != resolvedModelId {
+            selectedModelId = resolvedModelId
+        }
     }
 
     private func sendMessage() {
@@ -251,7 +289,7 @@ struct ChatDetailView: View {
     @State private var availableModels: [String] = []
     @State private var isLoadingModels = false
     @State private var selectedModelId: String
-    @State private var selectedEffort: ComposerEffort = .high
+    @State private var selectedEffortId: String = ""
     @State private var selectedMode: ComposerMode = .standard
     @State private var selectedVerbosity: ComposerVerbosity = .normal
 
@@ -275,7 +313,7 @@ struct ChatDetailView: View {
             modelOptions: availableModels,
             isModelLoading: isLoadingModels,
             selectedModelId: $selectedModelId,
-            selectedEffort: $selectedEffort,
+            selectedEffortId: $selectedEffortId,
             selectedMode: $selectedMode,
             selectedVerbosity: $selectedVerbosity
         )
@@ -436,6 +474,13 @@ private struct ChatTurnStatusRow: View {
         .foregroundColor(.ctxTextSecondary)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
+}
+
+struct ContextWindowInfo: Equatable {
+    let windowTokens: Double?
+    let usedTokens: Double?
+    let remainingTokens: Double?
+    let remainingFraction: Double?
 }
 
 private struct MessageBubbleStyle: ViewModifier {
@@ -961,9 +1006,10 @@ struct ComposerBar: View {
     var modelOptions: [String]
     var isModelLoading: Bool
     @Binding var selectedModelId: String
-    @Binding var selectedEffort: ComposerEffort
+    @Binding var selectedEffortId: String
     @Binding var selectedMode: ComposerMode
     @Binding var selectedVerbosity: ComposerVerbosity
+    var contextWindowInfo: ContextWindowInfo?
     var onSend: () -> Void
     var onInterrupt: () -> Void
 
@@ -977,34 +1023,35 @@ struct ComposerBar: View {
     }
 
     var body: some View {
-        VStack(spacing: 10) {
+        let catalog = buildModelCatalog(modelChoices)
+        let parsedModel = parseModelId(resolvedModelId, catalog: catalog)
+        let baseId = parsedModel.base.isEmpty ? resolvedModelId : parsedModel.base
+        let baseOptions = catalog.baseIds.isEmpty ? [resolvedModelId] : catalog.baseIds
+        let modelLabel = isModelLoading ? "Loading..." : (catalog.displayNameByBase[baseId] ?? baseId)
+        let effortOptions = catalog.effortsByBase[baseId] ?? []
+        let resolvedEffortId = resolveEffortId(parsed: parsedModel, efforts: effortOptions)
+        let effortLabel = formatEffortLabel(resolvedEffortId)
+        let contextSummary = contextWindowSummary(from: contextWindowInfo)
+
+        VStack(spacing: 12) {
             HStack(spacing: 12) {
                 HStack(spacing: 8) {
                     ComposerHarnessIcon(providerId: providerId)
 
                     Menu {
-                        Section("Model") {
-                            ForEach(modelChoices, id: \.self) { modelId in
-                                Button(modelId) {
-                                    selectedModelId = modelId
-                                }
-                            }
-                        }
-                        Section("Effort") {
-                            ForEach(ComposerEffort.allCases) { effort in
-                                Button(effort.label) {
-                                    selectedEffort = effort
-                                }
+                        ForEach(baseOptions, id: \.self) { base in
+                            let label = catalog.displayNameByBase[base] ?? base
+                            Button(label) {
+                                selectBase(base, catalog: catalog)
                             }
                         }
                     } label: {
                         HStack(spacing: 6) {
-                            Text(isModelLoading ? "Loading..." : "\(resolvedModelId) - \(selectedEffort.label)")
+                            Text(modelLabel)
                                 .font(.footnote.weight(.semibold))
                                 .foregroundColor(.ctxTextPrimary)
                                 .lineLimit(1)
-                            Image(systemName: "chevron.down")
-                                .font(.caption)
+                            LucideIcon(name: .chevronDown, size: 12)
                                 .foregroundColor(.ctxTextMuted)
                         }
                         .padding(.horizontal, 10)
@@ -1016,54 +1063,45 @@ struct ComposerBar: View {
                         )
                     }
                     .accessibilityIdentifier("chat.composer.model")
+                    .disabled(isModelLoading || baseOptions.isEmpty)
+
+                    if !effortOptions.isEmpty {
+                        Menu {
+                            ForEach(effortOptions, id: \.self) { effort in
+                                Button(formatEffortLabel(effort)) {
+                                    selectEffort(effort, baseId: baseId, catalog: catalog)
+                                }
+                            }
+                        } label: {
+                            HStack(spacing: 6) {
+                                Text(effortLabel)
+                                    .font(.footnote.weight(.semibold))
+                                    .foregroundColor(.ctxTextPrimary)
+                                LucideIcon(name: .chevronDown, size: 12)
+                                    .foregroundColor(.ctxTextMuted)
+                            }
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                    .stroke(Color.ctxLine, lineWidth: 1)
+                            )
+                        }
+                        .accessibilityIdentifier("chat.composer.effort")
+                    }
                 }
 
                 Spacer(minLength: 0)
 
-                HStack(spacing: 12) {
-                    Menu {
-                        Section("Mode") {
-                            ForEach(ComposerMode.allCases) { mode in
-                                Button(mode.label) {
-                                    selectedMode = mode
-                                }
-                            }
-                        }
-                        Section("Verbosity") {
-                            ForEach(ComposerVerbosity.allCases) { verbosity in
-                                Button(verbosity.label) {
-                                    selectedVerbosity = verbosity
-                                }
-                            }
-                        }
-                    } label: {
-                        ComposerToolIcon(systemName: "ellipsis")
-                    }
-                    .accessibilityIdentifier("chat.composer.options")
-
-                    PhotosPicker(selection: $selectedPhotos, matching: .images) {
-                        ComposerToolIcon(systemName: "photo")
-                    }
-
-                    if isWorking {
-                        ComposerCircleButton(systemName: "stop.fill", accessibilityId: "chat.composer.stop") {
-                            onInterrupt()
-                        }
-                    } else if isSendEnabled {
-                        ComposerCircleButton(systemName: "arrow.up", accessibilityId: "chat.composer.send") {
-                            onSend()
-                        }
-                    } else {
-                        Button {} label: {
-                            ComposerToolIcon(systemName: "mic")
-                        }
-                    }
+                if let contextSummary {
+                    ContextWindowIndicator(summary: contextSummary)
                 }
             }
 
             ZStack(alignment: .topLeading) {
                 if text.isEmpty {
-                    Text("Ask anything")
+                    Text("@ for context, / for commands")
                         .font(CtxChatStyle.bodyFont)
                         .foregroundColor(.ctxTextMuted)
                         .padding(.top, 2)
@@ -1075,6 +1113,47 @@ struct ComposerBar: View {
                     .foregroundColor(.ctxTextPrimary)
                     .tint(.ctxAccent)
                     .focused(isFocused)
+            }
+
+            HStack(spacing: 12) {
+                Spacer(minLength: 0)
+
+                Menu {
+                    Picker("Mode", selection: $selectedMode) {
+                        ForEach(ComposerMode.allCases) { mode in
+                            Text(mode.label).tag(mode)
+                        }
+                    }
+                    .pickerStyle(.inline)
+
+                    Picker("Verbosity", selection: $selectedVerbosity) {
+                        ForEach(ComposerVerbosity.allCases) { verbosity in
+                            Text(verbosity.label).tag(verbosity)
+                        }
+                    }
+                    .pickerStyle(.inline)
+                } label: {
+                    ComposerToolIcon(name: .ellipsis)
+                }
+                .accessibilityIdentifier("chat.composer.options")
+
+                PhotosPicker(selection: $selectedPhotos, matching: .images) {
+                    ComposerToolIcon(name: .image)
+                }
+
+                if isWorking {
+                    ComposerCircleButton(icon: .square, accessibilityId: "chat.composer.stop") {
+                        onInterrupt()
+                    }
+                } else if isSendEnabled {
+                    ComposerCircleButton(icon: .arrowUp, accessibilityId: "chat.composer.send") {
+                        onSend()
+                    }
+                } else {
+                    Button {} label: {
+                        ComposerToolIcon(name: .mic)
+                    }
+                }
             }
         }
         .padding(.horizontal, CtxChatStyle.composerInnerHorizontalPadding)
@@ -1088,14 +1167,62 @@ struct ComposerBar: View {
                 .stroke(Color.ctxLine, lineWidth: 1)
         )
     }
+
+    private func resolveEffortId(parsed: ParsedModelId, efforts: [String]) -> String? {
+        guard !efforts.isEmpty else { return nil }
+        if !selectedEffortId.isEmpty, efforts.contains(selectedEffortId) {
+            return selectedEffortId
+        }
+        if let parsedEffort = parsed.effort, efforts.contains(parsedEffort) {
+            return parsedEffort
+        }
+        return pickDefaultEffort(efforts)
+    }
+
+    private func selectBase(_ baseId: String, catalog: ModelCatalog) {
+        let preferredEffort = selectedEffortId.isEmpty ? nil : selectedEffortId
+        let nextModelId = deriveFullModelIdForBase(catalog: catalog, baseId: baseId, preferredEffort: preferredEffort)
+        selectedModelId = nextModelId
+        let parsed = parseModelId(nextModelId, catalog: catalog)
+        let nextEffort = resolveEffortId(parsed: parsed, efforts: catalog.effortsByBase[baseId] ?? []) ?? ""
+        if selectedEffortId != nextEffort {
+            selectedEffortId = nextEffort
+        }
+    }
+
+    private func selectEffort(_ effortId: String, baseId: String, catalog: ModelCatalog) {
+        selectedEffortId = effortId
+        let nextModelId = catalog.fullIdByBaseEffort[baseId]?[effortId] ?? composeModelId(base: baseId, effort: effortId)
+        selectedModelId = nextModelId
+    }
+}
+
+private struct ContextWindowSummary: Equatable {
+    let percent: Int
+    let usedLabel: String
+    let windowLabel: String
+
+    var text: String {
+        "\(percent)% · \(usedLabel)/\(windowLabel)"
+    }
+}
+
+private struct ContextWindowIndicator: View {
+    let summary: ContextWindowSummary
+
+    var body: some View {
+        Text(summary.text)
+            .font(.caption2.weight(.semibold))
+            .foregroundColor(.ctxTextMuted)
+            .accessibilityLabel("Context Window: \(summary.text)")
+    }
 }
 
 struct ComposerToolIcon: View {
-    let systemName: String
+    let name: LucideIconName
 
     var body: some View {
-        Image(systemName: systemName)
-            .font(.system(size: 20, weight: .semibold))
+        LucideIcon(name: name, size: 20)
             .foregroundColor(.ctxTextPrimary)
             .frame(width: CtxChatStyle.composerToolSize, height: CtxChatStyle.composerToolSize)
             .contentShape(Rectangle())
@@ -1132,20 +1259,19 @@ struct ComposerHarnessIcon: View {
 }
 
 struct ComposerCircleButton: View {
-    let systemName: String
+    let icon: LucideIconName
     let accessibilityId: String?
     let action: () -> Void
 
-    init(systemName: String, accessibilityId: String? = nil, action: @escaping () -> Void) {
-        self.systemName = systemName
+    init(icon: LucideIconName, accessibilityId: String? = nil, action: @escaping () -> Void) {
+        self.icon = icon
         self.accessibilityId = accessibilityId
         self.action = action
     }
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: systemName)
-                .font(.system(size: 18, weight: .semibold))
+            LucideIcon(name: icon, size: 18)
                 .foregroundColor(.white)
                 .frame(width: CtxChatStyle.composerPrimarySize, height: CtxChatStyle.composerPrimarySize)
                 .background(
@@ -1177,6 +1303,7 @@ final class ChatViewModel: ObservableObject {
     @Published var artifactsError: String?
     @Published var turnStatus: TurnStatusSnapshot?
     @Published private(set) var isAssistantWorking = false
+    @Published private(set) var contextWindowInfo: ContextWindowInfo?
     @Published private(set) var assetBaseURL: URL?
     @Published private(set) var assetToken: String?
 
@@ -1254,6 +1381,7 @@ final class ChatViewModel: ObservableObject {
             artifactsError = nil
             isArtifactsLoading = false
             turnStatus = nil
+            contextWindowInfo = nil
             lastEventSeq = nil
             refreshAssetContext()
             _Concurrency.Task { @MainActor in
@@ -1279,6 +1407,7 @@ final class ChatViewModel: ObservableObject {
             artifactsError = nil
             isArtifactsLoading = false
             turnStatus = nil
+            contextWindowInfo = nil
             assetBaseURL = nil
             assetToken = nil
             secureContext = nil
@@ -1325,6 +1454,7 @@ final class ChatViewModel: ObservableObject {
         artifactsRefreshInFlight = false
         artifactsRefreshPending = false
         turnStatus = nil
+        contextWindowInfo = nil
         updateWorkingState()
         _Concurrency.Task {
             await primeStreamCursor()
@@ -1496,6 +1626,7 @@ final class ChatViewModel: ObservableObject {
         }
 
         updateTurnStatus(from: turn)
+        updateContextWindow(from: turn)
 
         guard let assistantPartial = turn.assistantPartial, !assistantPartial.isEmpty else {
             if !isActive, streamingAssistantState?.turnId == turnId {
@@ -1532,6 +1663,11 @@ final class ChatViewModel: ObservableObject {
             setPendingAssistantResponse(false)
         }
         updateWorkingState()
+    }
+
+    private func updateContextWindow(from turn: SessionTurn) {
+        guard let info = parseContextWindowInfo(from: turn.metricsJson) else { return }
+        contextWindowInfo = info
     }
 
     private func resolveSessionId() async -> String? {
@@ -1589,6 +1725,7 @@ final class ChatViewModel: ObservableObject {
             workspaceId = workspaceId ?? head.session.workspaceId.stringValue
             if let turn = mostRecentTurn(in: head.turns) {
                 updateTurnStatus(from: turn)
+                updateContextWindow(from: turn)
             }
         }
     }
@@ -1879,6 +2016,302 @@ private func uniqueTrimmed(_ values: [String]) -> [String] {
         out.append(trimmed)
     }
     return out
+}
+
+private let preferredEffortOrder: [String] = ["none", "minimal", "low", "medium", "high", "xhigh"]
+
+private struct ParsedModelId {
+    let full: String
+    let base: String
+    let effort: String?
+}
+
+private struct ModelCatalog {
+    let baseIds: [String]
+    let displayNameByBase: [String: String]
+    let effortsByBase: [String: [String]]
+    let fullIdByBaseEffort: [String: [String: String]]
+}
+
+private func splitOnLastSlash(_ fullModelId: String) -> (full: String, base: String, suffix: String?) {
+    let full = fullModelId.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !full.isEmpty else { return ("", "", nil) }
+    guard let idx = full.lastIndex(of: "/"), idx != full.startIndex else {
+        return (full, full, nil)
+    }
+    let base = String(full[..<idx])
+    let suffix = String(full[full.index(after: idx)...]).trimmingCharacters(in: .whitespacesAndNewlines)
+    return (full, base, suffix.isEmpty ? nil : suffix)
+}
+
+private func normalizeEffortIdForCompare(_ value: String) -> String {
+    value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+}
+
+private func isPreferredEffortId(_ value: String) -> Bool {
+    let normalized = normalizeEffortIdForCompare(value)
+    return preferredEffortOrder.contains(normalized)
+}
+
+private func hasTrailingParenSuffix(name: String, suffix: String) -> Bool {
+    let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard trimmed.hasSuffix(")") else { return false }
+    guard let openIdx = trimmed.lastIndex(of: "("),
+          openIdx < trimmed.index(before: trimmed.endIndex) else {
+        return false
+    }
+    let inner = String(trimmed[trimmed.index(after: openIdx)..<trimmed.index(before: trimmed.endIndex)])
+    return normalizeEffortIdForCompare(inner) == normalizeEffortIdForCompare(suffix)
+}
+
+private func stripTrailingParenIfEffort(_ name: String, effortIds: [String]) -> String {
+    let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard trimmed.hasSuffix(")") else { return trimmed }
+    guard let openIdx = trimmed.lastIndex(of: "("),
+          openIdx < trimmed.index(before: trimmed.endIndex) else {
+        return trimmed
+    }
+    let inner = String(trimmed[trimmed.index(after: openIdx)..<trimmed.index(before: trimmed.endIndex)])
+    let normalizedInner = normalizeEffortIdForCompare(inner)
+    let isEffort = effortIds.contains { normalizeEffortIdForCompare($0) == normalizedInner }
+    return isEffort ? String(trimmed[..<openIdx]).trimmingCharacters(in: .whitespacesAndNewlines) : trimmed
+}
+
+private func orderEffortIds(_ efforts: Set<String>) -> [String] {
+    let list = efforts.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+    let orderIndex: (String) -> Int = { value in
+        let normalized = normalizeEffortIdForCompare(value)
+        return preferredEffortOrder.firstIndex(of: normalized) ?? Int.max
+    }
+    return list.sorted { left, right in
+        let leftIndex = orderIndex(left)
+        let rightIndex = orderIndex(right)
+        if leftIndex != rightIndex {
+            return leftIndex < rightIndex
+        }
+        return left.localizedCaseInsensitiveCompare(right) == .orderedAscending
+    }
+}
+
+private func buildModelCatalog(_ modelIds: [String]) -> ModelCatalog {
+    var baseIdsSet = Set<String>()
+    var rawEffortsByBase: [String: Set<String>] = [:]
+    var rawNamesByBase: [String: [String]] = [:]
+    var displayNameByBase: [String: String] = [:]
+    var fullIdByBaseEffort: [String: [String: String]] = [:]
+
+    for id in modelIds {
+        let trimmedId = id.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedId.isEmpty else { continue }
+        let name = trimmedId
+        let parts = splitOnLastSlash(trimmedId)
+        guard !parts.base.isEmpty else { continue }
+
+        let effort = parts.suffix.flatMap { suffix in
+            (isPreferredEffortId(suffix) || hasTrailingParenSuffix(name: name, suffix: suffix)) ? suffix : nil
+        }
+        let base = effort == nil ? trimmedId : parts.base
+
+        baseIdsSet.insert(base)
+        rawNamesByBase[base, default: []].append(name)
+        if let effort {
+            rawEffortsByBase[base, default: []].insert(effort)
+            var map = fullIdByBaseEffort[base] ?? [:]
+            map[effort] = trimmedId
+            fullIdByBaseEffort[base] = map
+        }
+    }
+
+    let baseIds = baseIdsSet.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+    var effortsByBase: [String: [String]] = [:]
+    for base in baseIds {
+        let ordered = rawEffortsByBase[base].map(orderEffortIds) ?? []
+        let efforts = ordered.count >= 2 ? ordered : []
+        effortsByBase[base] = efforts
+
+        if !efforts.isEmpty {
+            displayNameByBase[base] = base
+            continue
+        }
+
+        let names = rawNamesByBase[base] ?? []
+        let stripped = names.map { stripTrailingParenIfEffort($0, effortIds: efforts) }
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        displayNameByBase[base] = stripped.first ?? base
+    }
+
+    return ModelCatalog(
+        baseIds: baseIds,
+        displayNameByBase: displayNameByBase,
+        effortsByBase: effortsByBase,
+        fullIdByBaseEffort: fullIdByBaseEffort
+    )
+}
+
+private func parseModelId(_ fullModelId: String, catalog: ModelCatalog?) -> ParsedModelId {
+    let parts = splitOnLastSlash(fullModelId)
+    guard !parts.full.isEmpty else { return ParsedModelId(full: "", base: "", effort: nil) }
+    guard let suffix = parts.suffix else {
+        return ParsedModelId(full: parts.full, base: parts.full, effort: nil)
+    }
+
+    if let catalog {
+        let options = catalog.effortsByBase[parts.base] ?? []
+        if options.contains(suffix) {
+            return ParsedModelId(full: parts.full, base: parts.base, effort: suffix)
+        }
+        if catalog.baseIds.contains(parts.full) {
+            return ParsedModelId(full: parts.full, base: parts.full, effort: nil)
+        }
+    }
+
+    if isPreferredEffortId(suffix) {
+        return ParsedModelId(full: parts.full, base: parts.base, effort: suffix)
+    }
+    return ParsedModelId(full: parts.full, base: parts.full, effort: nil)
+}
+
+private func composeModelId(base: String, effort: String?) -> String {
+    let trimmed = base.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return "" }
+    guard let effort, !effort.isEmpty else { return trimmed }
+    return "\(trimmed)/\(effort)"
+}
+
+private func formatEffortLabel(_ effort: String?) -> String {
+    let raw = effort?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    guard !raw.isEmpty else { return "" }
+    let normalized = raw.lowercased()
+    if normalized == "xhigh" || normalized == "extra_high" || normalized == "extra-high" {
+        return "Extra High"
+    }
+    return normalized.prefix(1).uppercased() + normalized.dropFirst()
+}
+
+private func pickDefaultEffort(_ efforts: [String]) -> String? {
+    if let medium = efforts.first(where: { normalizeEffortIdForCompare($0) == "medium" }) {
+        return medium
+    }
+    return efforts.first
+}
+
+private func deriveFullModelIdForBase(catalog: ModelCatalog, baseId: String, preferredEffort: String?) -> String {
+    let efforts = catalog.effortsByBase[baseId] ?? []
+    guard !efforts.isEmpty else { return baseId }
+    let resolvedEffort = preferredEffort.flatMap { pref in
+        efforts.first(where: { normalizeEffortIdForCompare($0) == normalizeEffortIdForCompare(pref) })
+    } ?? pickDefaultEffort(efforts)
+    guard let effort = resolvedEffort else { return baseId }
+    if let fullId = catalog.fullIdByBaseEffort[baseId]?[effort] {
+        return fullId
+    }
+    return composeModelId(base: baseId, effort: effort)
+}
+
+private func contextWindowSummary(from info: ContextWindowInfo?) -> ContextWindowSummary? {
+    guard let info, let windowTokensRaw = info.windowTokens, windowTokensRaw.isFinite else { return nil }
+    let windowTokens = max(1, Int(round(windowTokensRaw)))
+
+    let usedTokens: Double?
+    if let used = info.usedTokens, used.isFinite {
+        usedTokens = used
+    } else if let remaining = info.remainingTokens, remaining.isFinite {
+        usedTokens = Double(windowTokens) - remaining
+    } else if let remainingFraction = info.remainingFraction, remainingFraction.isFinite {
+        usedTokens = Double(windowTokens) * (1 - remainingFraction)
+    } else {
+        return nil
+    }
+
+    let clampedUsed = max(0, min(Double(windowTokens), round(usedTokens ?? 0)))
+    let percentValue = Int(round((clampedUsed / Double(windowTokens)) * 100))
+    let percent = max(0, min(100, percentValue))
+    let usedLabel = formatUsedTokenCount(clampedUsed)
+    let windowLabel = formatTokenCount(Double(windowTokens))
+    return ContextWindowSummary(percent: percent, usedLabel: usedLabel, windowLabel: windowLabel)
+}
+
+private func formatTokenCount(_ value: Double) -> String {
+    guard value.isFinite else { return "0" }
+    if value >= 1_000_000 {
+        let scaled = value / 1_000_000
+        let fixed = scaled >= 10 ? String(format: "%.0f", scaled) : String(format: "%.1f", scaled)
+        return "\(trimTrailingZero(fixed))m"
+    }
+    if value >= 1_000 {
+        let scaled = value / 1_000
+        let fixed = scaled >= 100 ? String(format: "%.0f", scaled) : String(format: "%.1f", scaled)
+        return "\(trimTrailingZero(fixed))k"
+    }
+    return "\(Int(round(value)))"
+}
+
+private func formatUsedTokenCount(_ value: Double) -> String {
+    guard value.isFinite else { return "0" }
+    if value >= 1_000_000 {
+        let scaled = value / 1_000_000
+        let fixed = scaled >= 10 ? String(format: "%.0f", scaled) : String(format: "%.1f", scaled)
+        return "\(trimTrailingZero(fixed))m"
+    }
+    if value >= 1_000 {
+        let rounded = Int(round(value / 1_000))
+        return "\(rounded)k"
+    }
+    return "\(Int(round(value)))"
+}
+
+private func trimTrailingZero(_ value: String) -> String {
+    value.hasSuffix(".0") ? String(value.dropLast(2)) : value
+}
+
+private func parseContextWindowInfo(from metrics: JSONValue?) -> ContextWindowInfo? {
+    guard let metrics else { return nil }
+    if let object = objectValue(from: metrics) {
+        if let nested = object["context_window"]
+            ?? object["contextWindow"]
+            ?? object["context_window_info"]
+            ?? object["contextWindowInfo"] {
+            return parseContextWindowObject(from: nested)
+        }
+        return parseContextWindowObject(from: metrics)
+    }
+    return nil
+}
+
+private func parseContextWindowObject(from value: JSONValue) -> ContextWindowInfo? {
+    guard let object = objectValue(from: value) else { return nil }
+    let windowTokens = numberValue(from: object["window_tokens"] ?? object["windowTokens"] ?? object["context_window_tokens"] ?? object["contextWindowTokens"])
+    let usedTokens = numberValue(from: object["used_tokens"] ?? object["usedTokens"])
+    let remainingTokens = numberValue(from: object["remaining_tokens"] ?? object["remainingTokens"])
+    let remainingFraction = numberValue(from: object["remaining_fraction"] ?? object["remainingFraction"])
+    if windowTokens == nil && usedTokens == nil && remainingTokens == nil && remainingFraction == nil {
+        return nil
+    }
+    return ContextWindowInfo(
+        windowTokens: windowTokens,
+        usedTokens: usedTokens,
+        remainingTokens: remainingTokens,
+        remainingFraction: remainingFraction
+    )
+}
+
+private func numberValue(from value: JSONValue?) -> Double? {
+    switch value {
+    case .number(let number):
+        return number
+    case .string(let string):
+        return Double(string)
+    default:
+        return nil
+    }
+}
+
+private func objectValue(from value: JSONValue?) -> [String: JSONValue]? {
+    if case .object(let object) = value {
+        return object
+    }
+    return nil
 }
 
 #Preview {

@@ -54,6 +54,14 @@ struct Worktree: Codable, Sendable, Identifiable {
     let bootstrapScriptPath: String?
 }
 
+struct WorktreeSummary: Codable, Sendable, Identifiable {
+    let id: CtxID
+    let workspaceId: CtxID?
+    let label: String?
+    let rootPath: String
+    let gitBranch: String?
+}
+
 struct Session: Codable, Sendable, Identifiable {
     let id: CtxID
     let trackId: CtxID

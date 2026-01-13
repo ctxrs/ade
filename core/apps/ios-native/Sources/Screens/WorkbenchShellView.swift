@@ -1,5 +1,6 @@
 import SwiftUI
 import _Concurrency
+import UIKit
 
 struct WorkbenchShellView: View {
     @EnvironmentObject private var connection: ConnectionStore
@@ -29,6 +30,7 @@ struct WorkbenchShellView: View {
     @State private var deleteAlert: WorkbenchDeleteAlert?
     @State private var isArtifactsPresented = false
     @State private var topBarAlert: WorkbenchTopBarAlert?
+    @State private var sharePayload: SharePayload?
     @State private var streamTask: _Concurrency.Task<Void, Never>?
     @State private var streamSocket: URLSessionWebSocketTask?
     @State private var streamReconnectDelay: TimeInterval = 1
@@ -52,7 +54,7 @@ struct WorkbenchShellView: View {
         GeometryReader { proxy in
             let drawerWidth = min(320, proxy.size.width * 0.78)
             let taskTitle = resolvedTaskTitle()
-            let taskMenuContext = resolvedTaskMenuContext()
+            let conversationMenuContext = resolvedConversationMenuContext()
 
             ZStack(alignment: .leading) {
                 CtxBackgroundView()
@@ -77,7 +79,7 @@ struct WorkbenchShellView: View {
                         onDiffTap: { handleTopBarAction(.diff) },
                         onSessionsTap: { handleTopBarAction(.sessions) },
                         onTerminalTap: { handleTopBarAction(.terminal) },
-                        taskMenuContext: taskMenuContext,
+                        conversationMenuContext: conversationMenuContext,
                         showsTaskActions: workbenchSelection.taskId != nil
                     )
                     .padding(.horizontal, 20)
@@ -121,6 +123,16 @@ struct WorkbenchShellView: View {
                     },
                     onArchiveToggle: { task in
                         _Concurrency.Task { await toggleArchive(task) }
+                    },
+                    markReadInFlight: markReadInFlight,
+                    deleteInFlight: deleteInFlight,
+                    onToggleReadState: { task in
+                        let isWorking = taskHasWorkingSession(task)
+                        let isUnread = taskHasUnread(task, isWorking: isWorking)
+                        _Concurrency.Task { await toggleReadState(taskId: task.task.id.stringValue, markRead: isUnread) }
+                    },
+                    onDeleteTask: { task in
+                        deleteAlert = WorkbenchDeleteAlert(taskId: task.task.id.stringValue, title: task.task.title)
                     }
                 )
                 .offset(x: isDrawerOpen ? 0 : -drawerWidth - 24)
@@ -171,6 +183,9 @@ struct WorkbenchShellView: View {
                 secondaryButton: .cancel()
             )
         }
+        .sheet(item: $sharePayload) { payload in
+            ShareSheet(items: payload.items)
+        }
         .sheet(isPresented: $isRenaming) {
             RenameSheet(
                 title: $renameText,
@@ -190,29 +205,27 @@ struct WorkbenchShellView: View {
     private func resolvedTaskTitle() -> String {
         guard let selectedTask else { return "New task" }
         let trimmed = selectedTask.task.title.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? "New Task" : trimmed
+        return trimmed.isEmpty ? "New task" : trimmed
     }
 
-    private func resolvedTaskMenuContext() -> WorkbenchTaskMenuContext? {
+    private func resolvedConversationMenuContext() -> WorkbenchConversationMenuContext? {
         guard let selectedTask else { return nil }
-        let title = resolvedTaskTitle()
         let taskId = selectedTask.task.id.stringValue
+        let session = resolvedSession
+        let hasSession = session != nil
+        let canCopyWorktree = session?.worktreeId?.isEmpty == false && selectedWorkspace?.id != nil
         let isArchived = selectedTask.task.archivedAt != nil
-        let hasAssistantMessages = selectedTask.task.lastAssistantMessageAt != nil
-        let isUnread = taskHasUnread(selectedTask, isWorking: false)
-        return WorkbenchTaskMenuContext(
-            title: title,
-            taskId: taskId,
+        return WorkbenchConversationMenuContext(
+            hasSession: hasSession,
+            canCopyWorktree: canCopyWorktree,
             isArchived: isArchived,
-            hasAssistantMessages: hasAssistantMessages,
-            isUnread: isUnread,
             isArchivePending: archiveInFlight.contains(taskId),
-            isMarkReadPending: markReadInFlight.contains(taskId),
-            isDeletePending: deleteInFlight.contains(taskId),
-            onRename: { beginRename(selectedTask) },
-            onArchiveToggle: { _Concurrency.Task { await toggleArchive(selectedTask) } },
-            onToggleReadState: { _Concurrency.Task { await toggleReadState(taskId: taskId, markRead: isUnread) } },
-            onDelete: { deleteAlert = WorkbenchDeleteAlert(taskId: taskId, title: title) }
+            onExportTranscript: { exportTranscript(sessionId: session?.id) },
+            onCopyTranscript: { copyTranscript(sessionId: session?.id) },
+            onExportSessionLog: { exportSessionLog(sessionId: session?.id) },
+            onCopySessionLog: { copySessionLog(sessionId: session?.id) },
+            onCopyWorktreeLocation: { copyWorktreeLocation(session: session) },
+            onArchiveConversation: { _Concurrency.Task { await archiveConversation(taskId: taskId) } }
         )
     }
 
@@ -242,6 +255,151 @@ struct WorkbenchShellView: View {
                 title: "Terminal",
                 message: "Terminal panel is stubbed for now."
             )
+        }
+    }
+
+    private func exportTranscript(sessionId: String?) {
+        guard let sessionId else {
+            topBarAlert = WorkbenchTopBarAlert(title: "Export Transcript", message: "Select a session first.")
+            return
+        }
+        guard let client = connection.apiClient else {
+            topBarAlert = WorkbenchTopBarAlert(title: "Export Transcript", message: "Connect to a daemon first.")
+            return
+        }
+        _Concurrency.Task {
+            do {
+                let messages = try await client.listMessages(sessionId: sessionId)
+                let transcript = formatTranscript(messages: messages)
+                await MainActor.run {
+                    sharePayload = SharePayload(items: [transcript])
+                }
+            } catch {
+                await MainActor.run {
+                    topBarAlert = WorkbenchTopBarAlert(title: "Export Transcript", message: "Failed to load transcript.")
+                }
+            }
+        }
+    }
+
+    private func copyTranscript(sessionId: String?) {
+        guard let sessionId else {
+            topBarAlert = WorkbenchTopBarAlert(title: "Copy Transcript", message: "Select a session first.")
+            return
+        }
+        guard let client = connection.apiClient else {
+            topBarAlert = WorkbenchTopBarAlert(title: "Copy Transcript", message: "Connect to a daemon first.")
+            return
+        }
+        _Concurrency.Task {
+            do {
+                let messages = try await client.listMessages(sessionId: sessionId)
+                let transcript = formatTranscript(messages: messages)
+                await MainActor.run {
+                    UIPasteboard.general.string = transcript
+                    topBarAlert = WorkbenchTopBarAlert(title: "Copy Transcript", message: "Transcript copied to clipboard.")
+                }
+            } catch {
+                await MainActor.run {
+                    topBarAlert = WorkbenchTopBarAlert(title: "Copy Transcript", message: "Failed to load transcript.")
+                }
+            }
+        }
+    }
+
+    private func exportSessionLog(sessionId: String?) {
+        guard let sessionId else {
+            topBarAlert = WorkbenchTopBarAlert(title: "Export Session Log", message: "Select a session first.")
+            return
+        }
+        guard let client = connection.apiClient else {
+            topBarAlert = WorkbenchTopBarAlert(title: "Export Session Log", message: "Connect to a daemon first.")
+            return
+        }
+        _Concurrency.Task {
+            do {
+                let head = try await client.getSessionHead(sessionId: sessionId, limit: 200, includeEvents: true)
+                let logText = formatSessionLog(head: head)
+                await MainActor.run {
+                    sharePayload = SharePayload(items: [logText])
+                }
+            } catch {
+                await MainActor.run {
+                    topBarAlert = WorkbenchTopBarAlert(title: "Export Session Log", message: "Failed to load session log.")
+                }
+            }
+        }
+    }
+
+    private func copySessionLog(sessionId: String?) {
+        guard let sessionId else {
+            topBarAlert = WorkbenchTopBarAlert(title: "Copy Session Log", message: "Select a session first.")
+            return
+        }
+        guard let client = connection.apiClient else {
+            topBarAlert = WorkbenchTopBarAlert(title: "Copy Session Log", message: "Connect to a daemon first.")
+            return
+        }
+        _Concurrency.Task {
+            do {
+                let head = try await client.getSessionHead(sessionId: sessionId, limit: 200, includeEvents: true)
+                let logText = formatSessionLog(head: head)
+                await MainActor.run {
+                    UIPasteboard.general.string = logText
+                    topBarAlert = WorkbenchTopBarAlert(title: "Copy Session Log", message: "Session log copied to clipboard.")
+                }
+            } catch {
+                await MainActor.run {
+                    topBarAlert = WorkbenchTopBarAlert(title: "Copy Session Log", message: "Failed to load session log.")
+                }
+            }
+        }
+    }
+
+    private func copyWorktreeLocation(session: SessionSummary?) {
+        guard let session, let worktreeId = session.worktreeId, !worktreeId.isEmpty else {
+            topBarAlert = WorkbenchTopBarAlert(title: "Copy Worktree Location", message: "Select a worktree-backed session first.")
+            return
+        }
+        guard let client = connection.apiClient, let workspaceId = selectedWorkspace?.id else {
+            topBarAlert = WorkbenchTopBarAlert(title: "Copy Worktree Location", message: "Connect to a daemon first.")
+            return
+        }
+        _Concurrency.Task {
+            do {
+                let worktrees = try await client.listWorktrees(workspaceId: workspaceId)
+                if let worktree = worktrees.first(where: { $0.id.stringValue == worktreeId }) {
+                    await MainActor.run {
+                        UIPasteboard.general.string = worktree.rootPath
+                        topBarAlert = WorkbenchTopBarAlert(title: "Copy Worktree Location", message: "Worktree path copied.")
+                    }
+                } else {
+                    await MainActor.run {
+                        topBarAlert = WorkbenchTopBarAlert(title: "Copy Worktree Location", message: "Worktree not found.")
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    topBarAlert = WorkbenchTopBarAlert(title: "Copy Worktree Location", message: "Failed to load worktrees.")
+                }
+            }
+        }
+    }
+
+    @MainActor
+    private func archiveConversation(taskId: String) async {
+        guard let client = connection.apiClient else {
+            topBarAlert = WorkbenchTopBarAlert(title: "Archive Conversation", message: "Connect to a daemon first.")
+            return
+        }
+        guard !archiveInFlight.contains(taskId) else { return }
+        archiveInFlight.insert(taskId)
+        defer { archiveInFlight.remove(taskId) }
+        do {
+            _ = try await client.archiveTask(taskId: taskId)
+            await loadTasks()
+        } catch {
+            topBarAlert = WorkbenchTopBarAlert(title: "Archive Conversation", message: "Failed to archive task.")
         }
     }
 
@@ -436,7 +594,7 @@ struct WorkbenchShellView: View {
     private func beginRename(_ task: WorkspaceCatchupTaskSummary) {
         renameTarget = task
         let current = task.task.title.trimmingCharacters(in: .whitespacesAndNewlines)
-        renameText = current.isEmpty ? "New Task" : current
+        renameText = current.isEmpty ? "New task" : current
         renameError = nil
         isRenaming = true
     }
@@ -850,6 +1008,21 @@ private struct WorkbenchTopBarAlert: Identifiable {
     let message: String
 }
 
+private struct SharePayload: Identifiable {
+    let id = UUID()
+    let items: [Any]
+}
+
+private struct ShareSheet: UIViewControllerRepresentable {
+    let items: [Any]
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: items, applicationActivities: nil)
+    }
+
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+}
+
 private struct WorkbenchDeleteAlert: Identifiable {
     let id = UUID()
     let taskId: String
@@ -894,19 +1067,17 @@ private enum WorkbenchTopBarAction {
     case terminal
 }
 
-private struct WorkbenchTaskMenuContext {
-    let title: String
-    let taskId: String
+private struct WorkbenchConversationMenuContext {
+    let hasSession: Bool
+    let canCopyWorktree: Bool
     let isArchived: Bool
-    let hasAssistantMessages: Bool
-    let isUnread: Bool
     let isArchivePending: Bool
-    let isMarkReadPending: Bool
-    let isDeletePending: Bool
-    let onRename: () -> Void
-    let onArchiveToggle: () -> Void
-    let onToggleReadState: () -> Void
-    let onDelete: () -> Void
+    let onExportTranscript: () -> Void
+    let onCopyTranscript: () -> Void
+    let onExportSessionLog: () -> Void
+    let onCopySessionLog: () -> Void
+    let onCopyWorktreeLocation: () -> Void
+    let onArchiveConversation: () -> Void
 }
 
 private struct WorkbenchTopBar: View {
@@ -916,7 +1087,7 @@ private struct WorkbenchTopBar: View {
     let onDiffTap: () -> Void
     let onSessionsTap: () -> Void
     let onTerminalTap: () -> Void
-    let taskMenuContext: WorkbenchTaskMenuContext?
+    let conversationMenuContext: WorkbenchConversationMenuContext?
     let showsTaskActions: Bool
 
     var body: some View {
@@ -958,14 +1129,19 @@ private struct WorkbenchTopBar: View {
                     .accessibilityIdentifier("topbar.terminal")
 
                     Menu {
-                        if let context = taskMenuContext {
-                            Button("Rename Task", action: context.onRename)
-                            Button(context.isArchived ? "Unarchive" : "Archive", action: context.onArchiveToggle)
-                                .disabled(context.isArchivePending)
-                            Button(context.isUnread ? "Mark as Read" : "Mark as Unread", action: context.onToggleReadState)
-                                .disabled(!context.hasAssistantMessages || context.isMarkReadPending)
-                            Button("Delete Task", role: .destructive, action: context.onDelete)
-                                .disabled(context.isDeletePending)
+                        if let context = conversationMenuContext {
+                            Button("Export Transcript", action: context.onExportTranscript)
+                                .disabled(!context.hasSession)
+                            Button("Copy Transcript", action: context.onCopyTranscript)
+                                .disabled(!context.hasSession)
+                            Button("Export Session Log", action: context.onExportSessionLog)
+                                .disabled(!context.hasSession)
+                            Button("Copy Session Log", action: context.onCopySessionLog)
+                                .disabled(!context.hasSession)
+                            Button("Copy Worktree Location", action: context.onCopyWorktreeLocation)
+                                .disabled(!context.canCopyWorktree)
+                            Button("Archive Conversation", action: context.onArchiveConversation)
+                                .disabled(context.isArchived || context.isArchivePending)
                         } else {
                             Text("Select a task to manage it.")
                         }
@@ -973,69 +1149,11 @@ private struct WorkbenchTopBar: View {
                         LucideIcon(name: .ellipsis, size: 16)
                     }
                     .accessibilityIdentifier("topbar.taskmenu")
-                    .disabled(taskMenuContext == nil)
+                    .disabled(conversationMenuContext == nil)
                 }
                 .foregroundColor(.ctxTextPrimary)
             }
         }
-    }
-}
-
-private enum LucideIconName {
-    case image
-    case gitBranch
-    case monitor
-    case terminal
-    case ellipsis
-}
-
-private struct LucideIcon: View {
-    let name: LucideIconName
-    var size: CGFloat = 16
-
-    var body: some View {
-        let scale = size / 24
-        let lineWidth = size * 2 / 24
-        lucidePath(name)
-            .applying(CGAffineTransform(scaleX: scale, y: scale))
-            .stroke(style: StrokeStyle(lineWidth: lineWidth, lineCap: .round, lineJoin: .round))
-            .frame(width: size, height: size)
-    }
-
-    private func lucidePath(_ name: LucideIconName) -> Path {
-        var path = Path()
-        switch name {
-        case .image:
-            path.addRoundedRect(in: CGRect(x: 3, y: 3, width: 18, height: 18), cornerSize: CGSize(width: 2, height: 2))
-            path.addEllipse(in: CGRect(x: 7, y: 7, width: 4, height: 4))
-            path.move(to: CGPoint(x: 21, y: 15))
-            path.addLine(to: CGPoint(x: 17.914, y: 11.914))
-            path.addLine(to: CGPoint(x: 6, y: 21))
-        case .gitBranch:
-            path.move(to: CGPoint(x: 6, y: 3))
-            path.addLine(to: CGPoint(x: 6, y: 15))
-            path.addEllipse(in: CGRect(x: 15, y: 3, width: 6, height: 6))
-            path.addEllipse(in: CGRect(x: 3, y: 15, width: 6, height: 6))
-            path.move(to: CGPoint(x: 18, y: 9))
-            path.addArc(center: CGPoint(x: 9, y: 9), radius: 9, startAngle: .degrees(0), endAngle: .degrees(90), clockwise: false)
-        case .monitor:
-            path.addRoundedRect(in: CGRect(x: 2, y: 3, width: 20, height: 14), cornerSize: CGSize(width: 2, height: 2))
-            path.move(to: CGPoint(x: 8, y: 21))
-            path.addLine(to: CGPoint(x: 16, y: 21))
-            path.move(to: CGPoint(x: 12, y: 17))
-            path.addLine(to: CGPoint(x: 12, y: 21))
-        case .terminal:
-            path.move(to: CGPoint(x: 12, y: 19))
-            path.addLine(to: CGPoint(x: 20, y: 19))
-            path.move(to: CGPoint(x: 4, y: 17))
-            path.addLine(to: CGPoint(x: 10, y: 11))
-            path.addLine(to: CGPoint(x: 4, y: 5))
-        case .ellipsis:
-            path.addEllipse(in: CGRect(x: 4, y: 11, width: 2, height: 2))
-            path.addEllipse(in: CGRect(x: 11, y: 11, width: 2, height: 2))
-            path.addEllipse(in: CGRect(x: 18, y: 11, width: 2, height: 2))
-        }
-        return path
     }
 }
 
@@ -1057,6 +1175,10 @@ private struct WorkbenchDrawerView: View {
     let onNewTask: () -> Void
     let onRenameTask: (WorkspaceCatchupTaskSummary) -> Void
     let onArchiveToggle: (WorkspaceCatchupTaskSummary) -> Void
+    let markReadInFlight: Set<String>
+    let deleteInFlight: Set<String>
+    let onToggleReadState: (WorkspaceCatchupTaskSummary) -> Void
+    let onDeleteTask: (WorkspaceCatchupTaskSummary) -> Void
     @State private var showArchived = false
 
     var body: some View {
@@ -1124,9 +1246,18 @@ private struct WorkbenchDrawerView: View {
                                     }
                                     .buttonStyle(.plain)
                                     .contextMenu {
-                                        Button("Rename") { onRenameTask(task) }
+                                        let taskId = task.task.id.stringValue
                                         let archived = task.task.archivedAt != nil
+                                        let hasAssistantMessages = task.task.lastAssistantMessageAt != nil
+                                        let isWorking = taskHasWorkingSession(task)
+                                        let isUnread = taskHasUnread(task, isWorking: isWorking)
+
+                                        Button("Rename Task") { onRenameTask(task) }
                                         Button(archived ? "Unarchive" : "Archive") { onArchiveToggle(task) }
+                                        Button(isUnread ? "Mark as Read" : "Mark as Unread") { onToggleReadState(task) }
+                                            .disabled(!hasAssistantMessages || markReadInFlight.contains(taskId))
+                                        Button("Delete Task", role: .destructive) { onDeleteTask(task) }
+                                            .disabled(deleteInFlight.contains(taskId))
                                     }
                                     .accessibilityIdentifier("drawer.task.\(task.task.id.stringValue)")
                                 }
@@ -1152,8 +1283,17 @@ private struct WorkbenchDrawerView: View {
                                         }
                                         .buttonStyle(.plain)
                                         .contextMenu {
-                                            Button("Rename") { onRenameTask(task) }
+                                            let taskId = task.task.id.stringValue
+                                            let hasAssistantMessages = task.task.lastAssistantMessageAt != nil
+                                            let isWorking = taskHasWorkingSession(task)
+                                            let isUnread = taskHasUnread(task, isWorking: isWorking)
+
+                                            Button("Rename Task") { onRenameTask(task) }
                                             Button("Unarchive") { onArchiveToggle(task) }
+                                            Button(isUnread ? "Mark as Read" : "Mark as Unread") { onToggleReadState(task) }
+                                                .disabled(!hasAssistantMessages || markReadInFlight.contains(taskId))
+                                            Button("Delete Task", role: .destructive) { onDeleteTask(task) }
+                                                .disabled(deleteInFlight.contains(taskId))
                                         }
                                         .accessibilityIdentifier("drawer.task.\(task.task.id.stringValue)")
                                     }
@@ -1604,7 +1744,7 @@ private struct WorkbenchNewTaskView: View {
             do {
                 let task = try await client.createTask(
                     workspaceId: workspace.id,
-                    title: "New Task",
+                    title: "New task",
                     description: nil,
                     createDefaultTrack: false,
                     defaultTrackLabel: nil
@@ -1748,9 +1888,8 @@ private struct WorkbenchMenuPicker: View {
                         .foregroundColor(.ctxTextPrimary)
                         .font(.subheadline.weight(.semibold))
                     Spacer()
-                    Image(systemName: "chevron.down")
+                    LucideIcon(name: .chevronDown, size: 12)
                         .foregroundColor(.ctxTextSecondary)
-                        .font(.caption)
                 }
             }
             .padding(12)
@@ -1789,9 +1928,8 @@ private struct WorkbenchHarnessPicker: View {
                         .foregroundColor(.ctxTextPrimary)
                         .font(.subheadline.weight(.semibold))
                     Spacer()
-                    Image(systemName: "chevron.down")
+                    LucideIcon(name: .chevronDown, size: 12)
                         .foregroundColor(.ctxTextSecondary)
-                        .font(.caption)
                 }
                 .padding(.vertical, 6)
             }
@@ -2164,7 +2302,7 @@ private struct WorkbenchTaskRowView: View {
 
     private var title: String {
         let trimmed = task.task.title.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? "New Task" : trimmed
+        return trimmed.isEmpty ? "New task" : trimmed
     }
 
     private var indicators: TaskRowIndicators {
@@ -2311,6 +2449,34 @@ private struct RenameSheet: View {
             }
         }
     }
+}
+
+private func formatTranscript(messages: [MessageSummary]) -> String {
+    var lines: [String] = []
+    for message in messages {
+        let roleLabel: String
+        switch message.role {
+        case .assistant:
+            roleLabel = "Assistant"
+        case .user:
+            roleLabel = "User"
+        case .system:
+            roleLabel = "System"
+        }
+        lines.append("\(roleLabel): \(message.content)")
+        lines.append("")
+    }
+    return lines.joined(separator: "\n")
+}
+
+private func formatSessionLog(head: SessionHead) -> String {
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+    guard let data = try? encoder.encode(head),
+          let text = String(data: data, encoding: .utf8) else {
+        return ""
+    }
+    return text
 }
 
 private struct TaskRowIndicators {
