@@ -68,6 +68,11 @@ struct ChatView: View {
                             )
                                 .id(message.id)
                         }
+                        if let status = viewModel.turnStatus {
+                            ChatTurnStatusRow(status: status)
+                                .padding(.top, 4)
+                                .padding(.bottom, 4)
+                        }
                     }
                     .padding(.horizontal, horizontalPadding)
                     .padding(.top, CtxChatStyle.messageTopPadding)
@@ -239,6 +244,39 @@ struct MessageRow: View {
     }
 }
 
+private struct ChatTurnStatusRow: View {
+    let status: ChatViewModel.TurnStatusSnapshot
+
+    var body: some View {
+        let isRunning = status.status == .queued || status.status == .running
+        if isRunning {
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                statusContent(now: context.date)
+            }
+        } else {
+            statusContent(now: nil)
+        }
+    }
+
+    @ViewBuilder
+    private func statusContent(now: Date?) -> some View {
+        let label = humanTurnStatus(status.status)
+        let elapsed = formatElapsed(
+            startedAt: status.startedAt,
+            updatedAt: status.updatedAt,
+            now: now
+        )
+        HStack(spacing: 6) {
+            Text(label)
+            Text("·")
+            Text(elapsed)
+        }
+        .font(.system(size: 12, weight: .semibold))
+        .foregroundColor(.ctxTextSecondary)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
 private struct MessageBubbleStyle: ViewModifier {
     let role: ChatMessage.Role
     let maxBubbleWidth: CGFloat
@@ -289,6 +327,51 @@ struct DaemonAssetContext {
         }
         return components.url
     }
+}
+
+private let chatIsoFormatter: ISO8601DateFormatter = {
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    return formatter
+}()
+
+private func parseIso(_ iso: String?) -> Date? {
+    guard let iso else { return nil }
+    return chatIsoFormatter.date(from: iso) ?? ISO8601DateFormatter().date(from: iso)
+}
+
+private func humanTurnStatus(_ status: SessionTurnStatus) -> String {
+    switch status {
+    case .completed:
+        return "Completed"
+    case .interrupted:
+        return "Interrupted"
+    case .failed:
+        return "Error"
+    case .queued, .running:
+        return "Working"
+    }
+}
+
+private func formatElapsed(startedAt: String, updatedAt: String, now: Date?) -> String {
+    guard let start = parseIso(startedAt) else { return "0s" }
+    let end = now ?? parseIso(updatedAt) ?? Date()
+    let elapsedMs = max(0, end.timeIntervalSince(start) * 1000)
+    return formatElapsedMs(elapsedMs)
+}
+
+private func formatElapsedMs(_ ms: TimeInterval) -> String {
+    let totalSeconds = max(0, Int(ms / 1000))
+    let seconds = totalSeconds % 60
+    let minutes = (totalSeconds / 60) % 60
+    let hours = totalSeconds / 3600
+    if hours > 0 {
+        return "\(hours)h \(String(minutes).padStart(2, "0"))m"
+    }
+    if minutes > 0 {
+        return "\(minutes)m \(String(seconds).padStart(2, "0"))s"
+    }
+    return "\(seconds)s"
 }
 
 struct ComposerAttachmentsRow: View {
@@ -819,6 +902,7 @@ final class ChatViewModel: ObservableObject {
     @Published var artifacts: [Artifact] = []
     @Published var isArtifactsLoading = false
     @Published var artifactsError: String?
+    @Published var turnStatus: TurnStatusSnapshot?
     @Published private(set) var assetBaseURL: URL?
     @Published private(set) var assetToken: String?
 
@@ -827,6 +911,12 @@ final class ChatViewModel: ObservableObject {
         let messageId: UUID
         var text: String
         var isActive: Bool
+    }
+
+    struct TurnStatusSnapshot: Equatable {
+        let status: SessionTurnStatus
+        let startedAt: String
+        let updatedAt: String
     }
 
     private enum RefreshResult {
@@ -889,6 +979,7 @@ final class ChatViewModel: ObservableObject {
             artifacts = []
             artifactsError = nil
             isArtifactsLoading = false
+            turnStatus = nil
             lastEventSeq = nil
             refreshAssetContext()
             _Concurrency.Task { @MainActor in
@@ -912,6 +1003,7 @@ final class ChatViewModel: ObservableObject {
             artifacts = []
             artifactsError = nil
             isArtifactsLoading = false
+            turnStatus = nil
             assetBaseURL = nil
             assetToken = nil
             secureContext = nil
@@ -945,6 +1037,7 @@ final class ChatViewModel: ObservableObject {
         artifactsError = nil
         artifactsRefreshInFlight = false
         artifactsRefreshPending = false
+        turnStatus = nil
         _Concurrency.Task {
             await primeStreamCursor()
             _ = await refreshMessages()
@@ -1100,6 +1193,8 @@ final class ChatViewModel: ObservableObject {
             pendingAssistantResponse = true
         }
 
+        updateTurnStatus(from: turn)
+
         guard let assistantPartial = turn.assistantPartial, !assistantPartial.isEmpty else {
             if !isActive, streamingAssistantState?.turnId == turnId {
                 streamingAssistantState?.isActive = false
@@ -1121,6 +1216,14 @@ final class ChatViewModel: ObservableObject {
         }
 
         messages = applyStreamingAssistantState(to: messages)
+    }
+
+    private func updateTurnStatus(from turn: SessionTurn) {
+        turnStatus = TurnStatusSnapshot(
+            status: turn.status,
+            startedAt: turn.startedAt,
+            updatedAt: turn.updatedAt
+        )
     }
 
     private func resolveSessionId() async -> String? {
@@ -1176,6 +1279,17 @@ final class ChatViewModel: ObservableObject {
         if let head = try? await client.getSessionHead(sessionId: sessionId, limit: 1, includeEvents: false) {
             lastEventSeq = head.lastEventSeq
             workspaceId = workspaceId ?? head.session.workspaceId.stringValue
+            if let turn = mostRecentTurn(in: head.turns) {
+                updateTurnStatus(from: turn)
+            }
+        }
+    }
+
+    private func mostRecentTurn(in turns: [SessionTurn]) -> SessionTurn? {
+        turns.max { left, right in
+            let leftDate = parseIso(left.updatedAt) ?? parseIso(left.startedAt) ?? .distantPast
+            let rightDate = parseIso(right.updatedAt) ?? parseIso(right.startedAt) ?? .distantPast
+            return leftDate < rightDate
         }
     }
 
