@@ -1,5 +1,4 @@
 import SwiftUI
-import UIKit
 import _Concurrency
 
 struct WorkbenchShellView: View {
@@ -26,6 +25,8 @@ struct WorkbenchShellView: View {
     @State private var isRenaming = false
     @State private var archiveInFlight: Set<String> = []
     @State private var markReadInFlight: Set<String> = []
+    @State private var deleteInFlight: Set<String> = []
+    @State private var deleteAlert: WorkbenchDeleteAlert?
     @State private var isArtifactsPresented = false
     @State private var topBarAlert: WorkbenchTopBarAlert?
     @State private var streamTask: _Concurrency.Task<Void, Never>?
@@ -159,6 +160,16 @@ struct WorkbenchShellView: View {
         .alert(item: $topBarAlert) { alert in
             Alert(title: Text(alert.title), message: Text(alert.message), dismissButton: .default(Text("OK")))
         }
+        .alert(item: $deleteAlert) { alert in
+            Alert(
+                title: Text("Delete Task"),
+                message: Text("Delete \"\(alert.title)\"? This removes the task and its worktree."),
+                primaryButton: .destructive(Text("Delete")) {
+                    _Concurrency.Task { await deleteTask(taskId: alert.taskId) }
+                },
+                secondaryButton: .cancel()
+            )
+        }
         .sheet(isPresented: $isRenaming) {
             RenameSheet(
                 title: $renameText,
@@ -186,15 +197,21 @@ struct WorkbenchShellView: View {
         let title = resolvedTaskTitle()
         let taskId = selectedTask.task.id.stringValue
         let isArchived = selectedTask.task.archivedAt != nil
+        let hasAssistantMessages = selectedTask.task.lastAssistantMessageAt != nil
+        let isUnread = taskHasUnread(selectedTask, isWorking: false)
         return WorkbenchTaskMenuContext(
             title: title,
             taskId: taskId,
             isArchived: isArchived,
+            hasAssistantMessages: hasAssistantMessages,
+            isUnread: isUnread,
+            isArchivePending: archiveInFlight.contains(taskId),
+            isMarkReadPending: markReadInFlight.contains(taskId),
+            isDeletePending: deleteInFlight.contains(taskId),
             onRename: { beginRename(selectedTask) },
             onArchiveToggle: { _Concurrency.Task { await toggleArchive(selectedTask) } },
-            onCopyTitle: { UIPasteboard.general.string = title },
-            onCopyId: { UIPasteboard.general.string = taskId },
-            onCopyTranscript: { copyTranscript(for: resolvedSession) }
+            onToggleReadState: { _Concurrency.Task { await toggleReadState(taskId: taskId, markRead: isUnread) } },
+            onDelete: { deleteAlert = WorkbenchDeleteAlert(taskId: taskId, title: title) }
         )
     }
 
@@ -224,41 +241,6 @@ struct WorkbenchShellView: View {
                 title: "Terminal",
                 message: "Terminal panel is stubbed for now."
             )
-        }
-    }
-
-    private func copyTranscript(for session: SessionSummary?) {
-        guard let session else {
-            topBarAlert = WorkbenchTopBarAlert(
-                title: "Export Transcript",
-                message: "Select a task session to export its transcript."
-            )
-            return
-        }
-        _Concurrency.Task {
-            guard let client = connection.apiClient else { return }
-            do {
-                let items = try await client.listMessages(sessionId: session.id)
-                let formatted = items.map { summary in
-                    let role = summary.role == .user ? "User" : "Assistant"
-                    return "\(role): \(summary.content)"
-                }
-                let transcript = formatted.joined(separator: "\n\n")
-                await MainActor.run {
-                    UIPasteboard.general.string = transcript
-                    topBarAlert = WorkbenchTopBarAlert(
-                        title: "Export Transcript",
-                        message: "Transcript copied to clipboard."
-                    )
-                }
-            } catch {
-                await MainActor.run {
-                    topBarAlert = WorkbenchTopBarAlert(
-                        title: "Export Transcript",
-                        message: "Failed to export transcript."
-                    )
-                }
-            }
         }
     }
 
@@ -500,6 +482,55 @@ struct WorkbenchShellView: View {
             await loadTasks()
         } catch {
             taskError = "Failed to update task."
+        }
+    }
+
+    @MainActor
+    private func toggleReadState(taskId: String, markRead: Bool) async {
+        guard let client = connection.apiClient else {
+            topBarAlert = WorkbenchTopBarAlert(
+                title: markRead ? "Mark as Read" : "Mark as Unread",
+                message: "Connect to a daemon to update task status."
+            )
+            return
+        }
+        guard !markReadInFlight.contains(taskId) else { return }
+        markReadInFlight.insert(taskId)
+        defer { markReadInFlight.remove(taskId) }
+        do {
+            let updated = try await (markRead ? client.markTaskRead(taskId: taskId) : client.markTaskUnread(taskId: taskId))
+            applyTaskUpdate(updated)
+        } catch {
+            topBarAlert = WorkbenchTopBarAlert(
+                title: markRead ? "Mark as Read" : "Mark as Unread",
+                message: "Failed to update task."
+            )
+        }
+    }
+
+    @MainActor
+    private func deleteTask(taskId: String) async {
+        guard let client = connection.apiClient else {
+            topBarAlert = WorkbenchTopBarAlert(
+                title: "Delete Task",
+                message: "Connect to a daemon to delete tasks."
+            )
+            return
+        }
+        guard !deleteInFlight.contains(taskId) else { return }
+        deleteInFlight.insert(taskId)
+        defer { deleteInFlight.remove(taskId) }
+        do {
+            try await client.deleteTask(taskId: taskId)
+            if workbenchSelection.taskId == taskId {
+                workbenchSelection.clearSelection()
+            }
+            await loadTasks()
+        } catch {
+            topBarAlert = WorkbenchTopBarAlert(
+                title: "Delete Task",
+                message: "Failed to delete task."
+            )
         }
     }
 
@@ -818,6 +849,12 @@ private struct WorkbenchTopBarAlert: Identifiable {
     let message: String
 }
 
+private struct WorkbenchDeleteAlert: Identifiable {
+    let id = UUID()
+    let taskId: String
+    let title: String
+}
+
 private struct WorkbenchHomeView: View {
     let selectedWorkspace: WorkspaceSummary?
     let isLoadingWorkspaces: Bool
@@ -860,11 +897,15 @@ private struct WorkbenchTaskMenuContext {
     let title: String
     let taskId: String
     let isArchived: Bool
+    let hasAssistantMessages: Bool
+    let isUnread: Bool
+    let isArchivePending: Bool
+    let isMarkReadPending: Bool
+    let isDeletePending: Bool
     let onRename: () -> Void
     let onArchiveToggle: () -> Void
-    let onCopyTitle: () -> Void
-    let onCopyId: () -> Void
-    let onCopyTranscript: () -> Void
+    let onToggleReadState: () -> Void
+    let onDelete: () -> Void
 }
 
 private struct WorkbenchTopBar: View {
@@ -894,49 +935,103 @@ private struct WorkbenchTopBar: View {
 
             HStack(spacing: 14) {
                 Button(action: onArtifactsTap) {
-                    Image(systemName: "photo.stack")
-                        .font(.system(size: 16, weight: .semibold))
+                    LucideIcon(name: .image, size: 16)
                 }
                 .accessibilityIdentifier("topbar.artifacts")
 
                 Button(action: onDiffTap) {
-                    Image(systemName: "doc.text.magnifyingglass")
-                        .font(.system(size: 16, weight: .semibold))
+                    LucideIcon(name: .gitBranch, size: 16)
                 }
                 .accessibilityIdentifier("topbar.diff")
 
                 Button(action: onSessionsTap) {
-                    Image(systemName: "rectangle.stack")
-                        .font(.system(size: 16, weight: .semibold))
+                    LucideIcon(name: .monitor, size: 16)
                 }
                 .accessibilityIdentifier("topbar.sessions")
 
                 Button(action: onTerminalTap) {
-                    Image(systemName: "terminal")
-                        .font(.system(size: 16, weight: .semibold))
+                    LucideIcon(name: .terminal, size: 16)
                 }
                 .accessibilityIdentifier("topbar.terminal")
 
                 Menu {
                     if let context = taskMenuContext {
-                        Button("Rename task", action: context.onRename)
-                        Button(context.isArchived ? "Unarchive task" : "Archive task", action: context.onArchiveToggle)
-                        Divider()
-                        Button("Copy task title", action: context.onCopyTitle)
-                        Button("Copy task ID", action: context.onCopyId)
-                        Button("Export transcript", action: context.onCopyTranscript)
+                        Button("Rename Task", action: context.onRename)
+                        Button(context.isArchived ? "Unarchive" : "Archive", action: context.onArchiveToggle)
+                            .disabled(context.isArchivePending)
+                        Button(context.isUnread ? "Mark as Read" : "Mark as Unread", action: context.onToggleReadState)
+                            .disabled(!context.hasAssistantMessages || context.isMarkReadPending)
+                        Button("Delete Task", role: .destructive, action: context.onDelete)
+                            .disabled(context.isDeletePending)
                     } else {
                         Text("Select a task to manage it.")
                     }
                 } label: {
-                    Image(systemName: "ellipsis.circle")
-                        .font(.system(size: 16, weight: .semibold))
+                    LucideIcon(name: .ellipsis, size: 16)
                 }
                 .accessibilityIdentifier("topbar.taskmenu")
                 .disabled(taskMenuContext == nil)
             }
             .foregroundColor(.ctxTextPrimary)
         }
+    }
+}
+
+private enum LucideIconName {
+    case image
+    case gitBranch
+    case monitor
+    case terminal
+    case ellipsis
+}
+
+private struct LucideIcon: View {
+    let name: LucideIconName
+    var size: CGFloat = 16
+
+    var body: some View {
+        let scale = size / 24
+        let lineWidth = size * 2 / 24
+        lucidePath(name)
+            .applying(CGAffineTransform(scaleX: scale, y: scale))
+            .stroke(style: StrokeStyle(lineWidth: lineWidth, lineCap: .round, lineJoin: .round))
+            .frame(width: size, height: size)
+    }
+
+    private func lucidePath(_ name: LucideIconName) -> Path {
+        var path = Path()
+        switch name {
+        case .image:
+            path.addRoundedRect(in: CGRect(x: 3, y: 3, width: 18, height: 18), cornerSize: CGSize(width: 2, height: 2))
+            path.addEllipse(in: CGRect(x: 7, y: 7, width: 4, height: 4))
+            path.move(to: CGPoint(x: 21, y: 15))
+            path.addLine(to: CGPoint(x: 17.914, y: 11.914))
+            path.addLine(to: CGPoint(x: 6, y: 21))
+        case .gitBranch:
+            path.move(to: CGPoint(x: 6, y: 3))
+            path.addLine(to: CGPoint(x: 6, y: 15))
+            path.addEllipse(in: CGRect(x: 15, y: 3, width: 6, height: 6))
+            path.addEllipse(in: CGRect(x: 3, y: 15, width: 6, height: 6))
+            path.move(to: CGPoint(x: 18, y: 9))
+            path.addArc(center: CGPoint(x: 9, y: 9), radius: 9, startAngle: .degrees(0), endAngle: .degrees(90), clockwise: false)
+        case .monitor:
+            path.addRoundedRect(in: CGRect(x: 2, y: 3, width: 20, height: 14), cornerSize: CGSize(width: 2, height: 2))
+            path.move(to: CGPoint(x: 8, y: 21))
+            path.addLine(to: CGPoint(x: 16, y: 21))
+            path.move(to: CGPoint(x: 12, y: 17))
+            path.addLine(to: CGPoint(x: 12, y: 21))
+        case .terminal:
+            path.move(to: CGPoint(x: 12, y: 19))
+            path.addLine(to: CGPoint(x: 20, y: 19))
+            path.move(to: CGPoint(x: 4, y: 17))
+            path.addLine(to: CGPoint(x: 10, y: 11))
+            path.addLine(to: CGPoint(x: 4, y: 5))
+        case .ellipsis:
+            path.addEllipse(in: CGRect(x: 4, y: 11, width: 2, height: 2))
+            path.addEllipse(in: CGRect(x: 11, y: 11, width: 2, height: 2))
+            path.addEllipse(in: CGRect(x: 18, y: 11, width: 2, height: 2))
+        }
+        return path
     }
 }
 
