@@ -19,8 +19,8 @@ ctx-core = { path = "../../crates/ctx-core" }
 ctx-providers = { path = "../../crates/ctx-providers" }
 directories = "5"
 futures-util = "0.3"
-gpui = { git = "https://github.com/ctxrs/zed", rev = "5e76b0abdcf23ea91d97cadd3972765ca125703d", package = "gpui" }
-gpui_tokio = { git = "https://github.com/ctxrs/zed", rev = "5e76b0abdcf23ea91d97cadd3972765ca125703d", package = "gpui_tokio" }
+gpui = { git = "https://github.com/ctxrs/zed", rev = "610b3d0ed59eae582d14a0857c059dc1281fcfa0", package = "gpui" }
+gpui_tokio = { git = "https://github.com/ctxrs/zed", rev = "610b3d0ed59eae582d14a0857c059dc1281fcfa0", package = "gpui_tokio" }
 gpui-component = { git = "https://github.com/ctxrs/gpui-component", rev = "76d64362a1c0bdf825f83efb0ae3f4cb93849bd7", version = "0.5.0" }
 image = { version = "0.25", default-features = false, features = ["png"] }
 qrcode = "0.14"
@@ -36,20 +36,20 @@ automation = ["gpui/test-support"]
 cargo-clippy = []
 
 [patch."https://github.com/zed-industries/zed"]
-gpui = { git = "https://github.com/ctxrs/zed", rev = "5e76b0abdcf23ea91d97cadd3972765ca125703d" }
-gpui_tokio = { git = "https://github.com/ctxrs/zed", rev = "5e76b0abdcf23ea91d97cadd3972765ca125703d" }
-gpui_macros = { git = "https://github.com/ctxrs/zed", rev = "5e76b0abdcf23ea91d97cadd3972765ca125703d" }
-collections = { git = "https://github.com/ctxrs/zed", rev = "5e76b0abdcf23ea91d97cadd3972765ca125703d" }
-http_client = { git = "https://github.com/ctxrs/zed", rev = "5e76b0abdcf23ea91d97cadd3972765ca125703d" }
-media = { git = "https://github.com/ctxrs/zed", rev = "5e76b0abdcf23ea91d97cadd3972765ca125703d" }
-refineable = { git = "https://github.com/ctxrs/zed", rev = "5e76b0abdcf23ea91d97cadd3972765ca125703d" }
-sum_tree = { git = "https://github.com/ctxrs/zed", rev = "5e76b0abdcf23ea91d97cadd3972765ca125703d" }
-util = { git = "https://github.com/ctxrs/zed", rev = "5e76b0abdcf23ea91d97cadd3972765ca125703d" }
-util_macros = { git = "https://github.com/ctxrs/zed", rev = "5e76b0abdcf23ea91d97cadd3972765ca125703d" }
-zlog = { git = "https://github.com/ctxrs/zed", rev = "5e76b0abdcf23ea91d97cadd3972765ca125703d" }
-ztracing = { git = "https://github.com/ctxrs/zed", rev = "5e76b0abdcf23ea91d97cadd3972765ca125703d" }
-ztracing_macro = { git = "https://github.com/ctxrs/zed", rev = "5e76b0abdcf23ea91d97cadd3972765ca125703d" }
-perf = { git = "https://github.com/ctxrs/zed", rev = "5e76b0abdcf23ea91d97cadd3972765ca125703d" }
+gpui = { git = "https://github.com/ctxrs/zed", rev = "610b3d0ed59eae582d14a0857c059dc1281fcfa0" }
+gpui_tokio = { git = "https://github.com/ctxrs/zed", rev = "610b3d0ed59eae582d14a0857c059dc1281fcfa0" }
+gpui_macros = { git = "https://github.com/ctxrs/zed", rev = "610b3d0ed59eae582d14a0857c059dc1281fcfa0" }
+collections = { git = "https://github.com/ctxrs/zed", rev = "610b3d0ed59eae582d14a0857c059dc1281fcfa0" }
+http_client = { git = "https://github.com/ctxrs/zed", rev = "610b3d0ed59eae582d14a0857c059dc1281fcfa0" }
+media = { git = "https://github.com/ctxrs/zed", rev = "610b3d0ed59eae582d14a0857c059dc1281fcfa0" }
+refineable = { git = "https://github.com/ctxrs/zed", rev = "610b3d0ed59eae582d14a0857c059dc1281fcfa0" }
+sum_tree = { git = "https://github.com/ctxrs/zed", rev = "610b3d0ed59eae582d14a0857c059dc1281fcfa0" }
+util = { git = "https://github.com/ctxrs/zed", rev = "610b3d0ed59eae582d14a0857c059dc1281fcfa0" }
+util_macros = { git = "https://github.com/ctxrs/zed", rev = "610b3d0ed59eae582d14a0857c059dc1281fcfa0" }
+zlog = { git = "https://github.com/ctxrs/zed", rev = "610b3d0ed59eae582d14a0857c059dc1281fcfa0" }
+ztracing = { git = "https://github.com/ctxrs/zed", rev = "610b3d0ed59eae582d14a0857c059dc1281fcfa0" }
+ztracing_macro = { git = "https://github.com/ctxrs/zed", rev = "610b3d0ed59eae582d14a0857c059dc1281fcfa0" }
+perf = { git = "https://github.com/ctxrs/zed", rev = "610b3d0ed59eae582d14a0857c059dc1281fcfa0" }
 
 
 [target.'cfg(target_os = "macos")'.dependencies]
