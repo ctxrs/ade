@@ -2,6 +2,7 @@
 mod automation;
 mod automation_tree;
 mod app_identity;
+mod app_menus;
 
 #[cfg(not(feature = "automation"))]
 mod automation {
