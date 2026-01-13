@@ -1731,6 +1731,17 @@ impl<'a> ComposerView<'a> {
             menu = menu.opacity(0.0);
         }
 
+        let (automation_id, automation_name) = Self::menu_automation_target(menu_id);
+        let menu = div()
+            .on_children_prepainted(automation_tree::track_children_bounds(
+                automation_id,
+                "menu",
+                Some(automation_name),
+                Some("app-shell"),
+            ))
+            .id(automation_id)
+            .child(menu);
+
         anchored()
             .position_mode(AnchoredPositionMode::Window)
             .anchor(anchor)
@@ -1872,6 +1883,17 @@ impl<'a> ComposerView<'a> {
             .position(placement.position)
             .child(preview)
             .into_any_element()
+    }
+
+    fn menu_automation_target(menu_id: ComposerMenuId) -> (&'static str, &'static str) {
+        match menu_id {
+            ComposerMenuId::Harness => ("composer-menu-harness", "Harness"),
+            ComposerMenuId::Model => ("composer-menu-model", "Model"),
+            ComposerMenuId::Effort => ("composer-menu-effort", "Effort"),
+            ComposerMenuId::Mode => ("composer-menu-mode", "Mode"),
+            ComposerMenuId::Isolation => ("composer-menu-isolation", "Isolation"),
+            ComposerMenuId::Verbosity => ("composer-menu-verbosity", "Verbosity"),
+        }
     }
 
     fn render_menu_shell(&self, menu_id: ComposerMenuId, body: gpui::Div) -> gpui::Div {
@@ -2071,28 +2093,38 @@ impl<'a> ComposerView<'a> {
                 cx,
             ))
             .child(
-                Input::new(&shell.composer_model_search)
-                    .appearance(false)
-                    .text_color(shell.colors.text)
-                    .text_size(px(12.0))
-                    .px(px(10.0))
-                    .py(px(6.0))
-                    .w_full()
-                    .border_1()
-                    .border_color(Rgba {
-                        r: 1.0,
-                        g: 1.0,
-                        b: 1.0,
-                        a: 0.10,
-                    })
-                    .bg(Rgba {
-                        r: 1.0,
-                        g: 1.0,
-                        b: 1.0,
-                        a: 0.04,
-                    })
-                    .rounded(px(10.0))
-                    .disabled(true),
+                div()
+                    .on_children_prepainted(automation_tree::track_children_bounds(
+                        "composer-model-search-input",
+                        "input",
+                        Some("Model search"),
+                        Some("composer-menu-model"),
+                    ))
+                    .id("composer-model-search-input")
+                    .child(
+                        Input::new(&shell.composer_model_search)
+                            .appearance(false)
+                            .text_color(shell.colors.text)
+                            .text_size(px(12.0))
+                            .px(px(10.0))
+                            .py(px(6.0))
+                            .w_full()
+                            .border_1()
+                            .border_color(Rgba {
+                                r: 1.0,
+                                g: 1.0,
+                                b: 1.0,
+                                a: 0.10,
+                            })
+                            .bg(Rgba {
+                                r: 1.0,
+                                g: 1.0,
+                                b: 1.0,
+                                a: 0.04,
+                            })
+                            .rounded(px(10.0))
+                            .disabled(true),
+                    ),
             );
 
         let body = if !list_empty {
@@ -2144,27 +2176,37 @@ impl<'a> ComposerView<'a> {
                         }),
                 )
                 .child(
-                    Input::new(&shell.composer_model_manual)
-                        .appearance(false)
-                        .text_color(shell.colors.text)
-                        .text_size(px(12.0))
-                        .px(px(10.0))
-                        .py(px(6.0))
-                        .w_full()
-                        .border_1()
-                        .border_color(Rgba {
-                            r: 1.0,
-                            g: 1.0,
-                            b: 1.0,
-                            a: 0.10,
-                        })
-                        .bg(Rgba {
-                            r: 1.0,
-                            g: 1.0,
-                            b: 1.0,
-                            a: 0.04,
-                        })
-                        .rounded(px(10.0)),
+                    div()
+                        .on_children_prepainted(automation_tree::track_children_bounds(
+                            "composer-model-manual-input",
+                            "input",
+                            Some("Model id"),
+                            Some("composer-menu-model"),
+                        ))
+                        .id("composer-model-manual-input")
+                        .child(
+                            Input::new(&shell.composer_model_manual)
+                                .appearance(false)
+                                .text_color(shell.colors.text)
+                                .text_size(px(12.0))
+                                .px(px(10.0))
+                                .py(px(6.0))
+                                .w_full()
+                                .border_1()
+                                .border_color(Rgba {
+                                    r: 1.0,
+                                    g: 1.0,
+                                    b: 1.0,
+                                    a: 0.10,
+                                })
+                                .bg(Rgba {
+                                    r: 1.0,
+                                    g: 1.0,
+                                    b: 1.0,
+                                    a: 0.04,
+                                })
+                                .rounded(px(10.0)),
+                        ),
                 )
         };
 
@@ -3387,27 +3429,37 @@ impl<'a> ComposerView<'a> {
                             cx,
                         ))
                         .child(
-                            Input::new(&shell.composer_harness_search)
-                                .appearance(false)
-                                .text_color(shell.colors.text)
-                                .text_size(px(12.0))
-                                .px(px(10.0))
-                                .py(px(6.0))
-                                .w_full()
-                                .border_1()
-                                .border_color(Rgba {
-                                    r: 1.0,
-                                    g: 1.0,
-                                    b: 1.0,
-                                    a: 0.10,
-                                })
-                                .bg(Rgba {
-                                    r: 1.0,
-                                    g: 1.0,
-                                    b: 1.0,
-                                    a: 0.04,
-                                })
-                                .rounded(px(10.0)),
+                            div()
+                                .on_children_prepainted(automation_tree::track_children_bounds(
+                                    "composer-harness-search-input",
+                                    "input",
+                                    Some("Harness search"),
+                                    Some("composer-menu-harness"),
+                                ))
+                                .id("composer-harness-search-input")
+                                .child(
+                                    Input::new(&shell.composer_harness_search)
+                                        .appearance(false)
+                                        .text_color(shell.colors.text)
+                                        .text_size(px(12.0))
+                                        .px(px(10.0))
+                                        .py(px(6.0))
+                                        .w_full()
+                                        .border_1()
+                                        .border_color(Rgba {
+                                            r: 1.0,
+                                            g: 1.0,
+                                            b: 1.0,
+                                            a: 0.10,
+                                        })
+                                        .bg(Rgba {
+                                            r: 1.0,
+                                            g: 1.0,
+                                            b: 1.0,
+                                            a: 0.04,
+                                        })
+                                        .rounded(px(10.0)),
+                                ),
                         )
                        .child(
                             div()

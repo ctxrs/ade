@@ -7,6 +7,7 @@ use gpui_component::{input::Input, select::Select};
 use gpui_component::scroll::ScrollableElement;
 use qrcode::{Color as QrColor, QrCode};
 
+use crate::automation_tree;
 use ctx_client::{MobileTunnelState, ResourceGovernanceMode, ResourceGovernanceStatusState};
 use ctx_core::models::WorkspaceAttachmentKind;
 use ctx_providers::adapters::ProviderHealth;
@@ -593,6 +594,13 @@ impl Render for SettingsState {
                             .cursor_pointer()
                             .hover(|style| style.text_color(white(0.75)))
                             .child("← Back to Workspace".to_string())
+                            .on_children_prepainted(automation_tree::track_children_bounds(
+                                "settings-back-to-workspace",
+                                "button",
+                                Some("Back to Workspace"),
+                                Some("settings-pane"),
+                            ))
+                            .id("settings-back-to-workspace")
                             .on_mouse_up(MouseButton::Left, cx.listener(|view, _: &MouseUpEvent, _window, cx| {
                                 if let Some(handle) = view.shell_handle.clone() {
                                     handle.update(cx, |shell, cx| {
@@ -613,6 +621,13 @@ impl Render for SettingsState {
                 div()
                     .mt(px(8.0))
                     .px(px(6.0))
+                    .on_children_prepainted(automation_tree::track_children_bounds(
+                        "settings-search-input",
+                        "input",
+                        Some("Search Settings"),
+                        Some("settings-pane"),
+                    ))
+                    .id("settings-search-input")
                     .child(
                         Input::new(&search_state)
                             .appearance(true)
@@ -634,6 +649,13 @@ impl Render for SettingsState {
                         div()
                             .grid()
                             .gap(px(2.0))
+                            .on_children_prepainted(automation_tree::track_children_bounds(
+                                "settings-nav-main-list",
+                                "list",
+                                Some("Settings"),
+                                Some("settings-pane"),
+                            ))
+                            .id("settings-nav-main-list")
                             .children(filtered_sections.iter().copied().filter(|s| s.group() == SettingsSectionGroup::Main).enumerate().map(|(ix, section)| {
                                 let is_active = section == active_section;
                                 let on_click = cx.listener(move |view, _: &ClickEvent, _window, cx| {
@@ -660,6 +682,13 @@ impl Render for SettingsState {
                         div()
                             .grid()
                             .gap(px(2.0))
+                            .on_children_prepainted(automation_tree::track_children_bounds(
+                                "settings-nav-advanced-list",
+                                "list",
+                                Some("Advanced"),
+                                Some("settings-pane"),
+                            ))
+                            .id("settings-nav-advanced-list")
                             .children(filtered_sections.iter().copied().filter(|s| s.group() == SettingsSectionGroup::Advanced).enumerate().map(|(ix, section)| {
                                 let is_active = section == active_section;
                                 let on_click = cx.listener(move |view, _: &ClickEvent, _window, cx| {
@@ -726,6 +755,13 @@ impl Render for SettingsState {
             );
 
         div()
+            .on_children_prepainted(automation_tree::track_children_bounds(
+                "settings-pane",
+                "pane",
+                Some("Settings"),
+                Some("app-shell"),
+            ))
+            .id("settings-pane")
             .flex()
             .flex_row()
             .flex_1()
@@ -886,7 +922,7 @@ impl SettingsState {
             settings_row(
                 "Default IDE",
                 Some("Used for open-in-editor links."),
-                editor_control,
+                div().id("settings-editor-select").child(editor_control),
                 false,
             )
             .into_any_element(),
@@ -986,15 +1022,19 @@ impl SettingsState {
             settings_row(
                 "Workspace",
                 Some("Choose the repo to edit."),
-                Select::new(&workspace_select)
-                    .appearance(true)
-                    .bg(white(0.06))
-                    .border_color(white(0.08))
-                    .rounded(px(8.0))
-                    .h(px(30.0))
-                    .px(px(10.0))
-                    .text_size(px(13.0))
-                    .disabled(!any_workspace),
+                div()
+                    .id("settings-worktree-workspace-select")
+                    .child(
+                        Select::new(&workspace_select)
+                            .appearance(true)
+                            .bg(white(0.06))
+                            .border_color(white(0.08))
+                            .rounded(px(8.0))
+                            .h(px(30.0))
+                            .px(px(10.0))
+                            .text_size(px(13.0))
+                            .disabled(!any_workspace),
+                    ),
                 true,
             )
             .into_any_element(),
@@ -1113,15 +1153,19 @@ impl SettingsState {
             settings_row(
                 "Workspace",
                 Some("Choose the repo to configure."),
-                Select::new(&workspace_select)
-                    .appearance(true)
-                    .bg(white(0.06))
-                    .border_color(white(0.08))
-                    .rounded(px(8.0))
-                    .h(px(30.0))
-                    .px(px(10.0))
-                    .text_size(px(13.0))
-                    .disabled(!any_workspace),
+                div()
+                    .id("settings-attachments-workspace-select")
+                    .child(
+                        Select::new(&workspace_select)
+                            .appearance(true)
+                            .bg(white(0.06))
+                            .border_color(white(0.08))
+                            .rounded(px(8.0))
+                            .h(px(30.0))
+                            .px(px(10.0))
+                            .text_size(px(13.0))
+                            .disabled(!any_workspace),
+                    ),
                 true,
             )
             .into_any_element(),
@@ -1585,7 +1629,7 @@ impl SettingsState {
             settings_row(
                 "Mode",
                 Some("Auto picks safe limits for this machine."),
-                mode_control,
+                div().id("settings-resource-mode-select").child(mode_control),
                 false,
             )
             .into_any_element(),
@@ -2549,15 +2593,19 @@ impl SettingsState {
             settings_row(
                 "Model",
                 Some("Transcription model used by the provider."),
-                Select::new(&model_select)
-                    .appearance(true)
-                    .bg(white(0.06))
-                    .border_color(white(0.08))
-                    .rounded(px(8.0))
-                    .h(px(30.0))
-                    .px(px(10.0))
-                    .text_size(px(13.0))
-                    .disabled(!self.dictation_enabled),
+                div()
+                    .id("settings-dictation-model-select")
+                    .child(
+                        Select::new(&model_select)
+                            .appearance(true)
+                            .bg(white(0.06))
+                            .border_color(white(0.08))
+                            .rounded(px(8.0))
+                            .h(px(30.0))
+                            .px(px(10.0))
+                            .text_size(px(13.0))
+                            .disabled(!self.dictation_enabled),
+                    ),
                 false,
             )
             .into_any_element(),
@@ -2940,15 +2988,19 @@ impl SettingsState {
             settings_row(
                 "Workspace",
                 Some("Used for authenticate/verify checks."),
-                Select::new(&workspace_select)
-                    .appearance(true)
-                    .bg(white(0.06))
-                    .border_color(white(0.08))
-                    .rounded(px(8.0))
-                    .h(px(30.0))
-                    .px(px(10.0))
-                    .text_size(px(13.0))
-                    .disabled(!any_workspace),
+                div()
+                    .id("settings-harness-workspace-select")
+                    .child(
+                        Select::new(&workspace_select)
+                            .appearance(true)
+                            .bg(white(0.06))
+                            .border_color(white(0.08))
+                            .rounded(px(8.0))
+                            .h(px(30.0))
+                            .px(px(10.0))
+                            .text_size(px(13.0))
+                            .disabled(!any_workspace),
+                    ),
                 false,
             )
             .into_any_element(),

@@ -46,6 +46,12 @@ impl<'a> SessionView<'a> {
                 Some("Sessions"),
                 Some("app-shell"),
             );
+            automation_tree::register_hidden(
+                "sessions-pane",
+                "pane",
+                Some("Sessions"),
+                Some("app-shell"),
+            );
         }
         if !shell.show_diff_pane {
             automation_tree::register_hidden(
@@ -376,6 +382,12 @@ impl<'a> SessionView<'a> {
             if shell.show_sessions_pane {
                 right_pane = right_pane.child(
                     div()
+                        .on_children_prepainted(automation_tree::track_children_bounds(
+                            "sessions-pane",
+                            "pane",
+                            Some("Sessions"),
+                            Some("app-shell"),
+                        ))
                         .id("sessions-pane")
                         .flex()
                         .flex_col()

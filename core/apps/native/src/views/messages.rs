@@ -16,6 +16,7 @@ use gpui::{
 use gpui_component::{Icon, IconName, StyledExt};
 use gpui_component::text::{InlineCodeStyle, TextView, TextViewStyle};
 
+use crate::automation_tree;
 use crate::theme::{ThemeColors, ThemeMetrics};
 
 use super::super::models::{
@@ -283,6 +284,12 @@ impl<'a> ThreadListView<'a> {
         };
 
         div()
+            .on_children_prepainted(automation_tree::track_children_bounds(
+                "thread-list",
+                "list",
+                Some("Messages"),
+                Some("app-shell"),
+            ))
             .id("thread-list")
             .flex()
             .flex_col()

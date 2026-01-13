@@ -181,7 +181,14 @@ impl<'a> SessionsPaneView<'a> {
                         .on_click(on_click),
                 )
             })
-        };
+        }
+        .on_children_prepainted(automation_tree::track_children_bounds(
+            "web-sessions-list",
+            "list",
+            Some("Web Sessions"),
+            Some("app-shell"),
+        ))
+        .id("web-sessions-list");
 
         let web_stream_section = if let Some(session) = selected_web_session {
             let viewer_message = if selected_web_stream.is_some() {
