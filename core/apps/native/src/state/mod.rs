@@ -35,6 +35,7 @@ use super::ui_state::UiStateStore;
 
 use super::models::{MessageItem, SessionInfo, ThreadListItem, TurnToolSnapshot, WorkbenchTurnHeader};
 use super::workspace_summary::{SessionSummaryItem, TaskSummaryItem};
+use session::SessionThreadCache;
 
 pub(crate) use artifacts::ArtifactPreviewState;
 pub(crate) use composer::{
@@ -193,6 +194,7 @@ pub(crate) struct ShellView {
     pub(crate) selected_artifact: Option<usize>,
     pub(crate) artifact_preview: ArtifactPreviewState,
     pub(crate) session_events: Vec<SessionEvent>,
+    pub(crate) session_thread_cache: HashMap<SessionId, SessionThreadCache>,
     pub(crate) session_summary_map: HashMap<SessionId, SessionCatchupSummary>,
     pub(crate) session: SessionInfo,
     pub(crate) data_state: DataLoadState,

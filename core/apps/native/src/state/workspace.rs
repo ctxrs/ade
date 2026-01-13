@@ -251,6 +251,7 @@ impl ShellView {
                                 .unwrap_or_else(SessionInfo::placeholder)
                         };
                         view.sync_composer_defaults();
+                        view.session_events = data.session_events;
                         let mut messages = build_message_items(
                             data.session_head.as_ref(),
                             data.session_history.as_ref(),
@@ -262,7 +263,9 @@ impl ShellView {
                             ));
                         }
                         view.replace_messages(messages, cx);
-                        view.session_events = data.session_events;
+                        if let Some(session_id) = view.selected_session_id() {
+                            view.cache_session_thread_state(session_id);
+                        }
                         if let Some(head) = data.session_head.as_ref() {
                             view.update_session_last_event_seq(head.session.id, head.last_event_seq);
                         } else if let Some(event) = view.session_events.last() {
@@ -318,6 +321,7 @@ impl ShellView {
         self.composer_provider_menu_open = false;
         self.composer_model_menu_open = false;
         self.session_summary_map.clear();
+        self.session_thread_cache.clear();
         self.session_last_event_seq.clear();
         self.resyncing_session = None;
         self.session = SessionInfo::placeholder();

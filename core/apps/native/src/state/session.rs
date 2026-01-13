@@ -32,6 +32,14 @@ struct SessionLoadResult {
     artifacts: Vec<Artifact>,
 }
 
+#[derive(Clone, Default)]
+pub(super) struct SessionThreadCache {
+    pub(super) messages: Vec<MessageItem>,
+    pub(super) session_turns: Vec<SessionTurn>,
+    pub(super) session_turn_tools: HashMap<TurnId, Vec<TurnToolSnapshot>>,
+    pub(super) session_events: Vec<SessionEvent>,
+}
+
 const COPIED_TIMEOUT: Duration = Duration::from_millis(1_000);
 
 #[derive(Clone, Copy)]
@@ -49,11 +57,23 @@ impl SessionControlAction {
     }
 }
 
-const MESSAGE_PLACEHOLDER_TEXTS: [&str; 3] = [
-    "Loading session messages...",
+const MESSAGE_PLACEHOLDER_TEXTS: [&str; 2] = [
     "No messages yet. Create one to begin.",
     "Unable to load session details.",
 ];
+
+pub(super) fn clear_placeholder_messages_in(messages: &mut Vec<MessageItem>) {
+    if messages.len() != 1 {
+        return;
+    }
+    let content = messages[0].content.as_str();
+    if MESSAGE_PLACEHOLDER_TEXTS
+        .iter()
+        .any(|placeholder| placeholder == &content)
+    {
+        messages.clear();
+    }
+}
 
 impl ShellView {
     pub(crate) fn on_interrupt_click(
@@ -223,6 +243,40 @@ impl ShellView {
         self.new_thread_item_count = 0;
     }
 
+    pub(super) fn cache_session_thread_state(&mut self, session_id: SessionId) {
+        self.session_thread_cache.insert(
+            session_id,
+            SessionThreadCache {
+                messages: self.messages.clone(),
+                session_turns: self.session_turns.clone(),
+                session_turn_tools: self.session_turn_tools.clone(),
+                session_events: self.session_events.clone(),
+            },
+        );
+    }
+
+    fn apply_cached_thread_state(
+        &mut self,
+        session_id: SessionId,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(cache) = self.session_thread_cache.get(&session_id) else {
+            return false;
+        };
+        self.session_turns = cache.session_turns.clone();
+        self.session_turn_tools = cache.session_turn_tools.clone();
+        self.session_events = cache.session_events.clone();
+        self.replace_messages(cache.messages.clone(), cx);
+        true
+    }
+
+    fn apply_empty_thread_state(&mut self, cx: &mut Context<Self>) {
+        self.session_turns.clear();
+        self.session_turn_tools.clear();
+        self.session_events.clear();
+        self.replace_messages(Vec::new(), cx);
+    }
+
     fn prefetch_attachment_images(&mut self, cx: &mut Context<Self>) {
         let attachments: Vec<MessageAttachment> = self
             .messages
@@ -306,16 +360,7 @@ impl ShellView {
     }
 
     fn clear_placeholder_messages(&mut self) {
-        if self.messages.len() != 1 {
-            return;
-        }
-        let content = self.messages[0].content.as_str();
-        if MESSAGE_PLACEHOLDER_TEXTS
-            .iter()
-            .any(|placeholder| placeholder == &content)
-        {
-            self.messages.clear();
-        }
+        clear_placeholder_messages_in(&mut self.messages);
     }
 
     pub(super) fn push_message(&mut self, message: MessageItem, cx: &mut Context<Self>) {
@@ -374,16 +419,15 @@ impl ShellView {
             self.composer_provider_id = Some(summary.session.provider_id.clone());
             self.composer_model_id = Some(summary.session.model_id.clone());
         }
-        self.replace_messages(vec![MessageItem::new(
-            MessageRole::Assistant,
-            "Loading session messages...",
-        )], cx);
         self.reset_thread_state();
         self.artifacts.clear();
         self.artifact_preview = ArtifactPreviewState::None;
         self.session_events.clear();
         self.selected_artifact = None;
         self.resyncing_session = None;
+        if !self.apply_cached_thread_state(session_id, cx) {
+            self.apply_empty_thread_state(cx);
+        }
         cx.notify();
         self.load_session_details(session_id, cx);
     }
@@ -472,6 +516,7 @@ impl ShellView {
                         view.session_turn_tools =
                             build_turn_tool_snapshots(data.session_head.as_ref());
                         view.replace_messages(messages, cx);
+                        view.cache_session_thread_state(data.session_id);
                         if let Some(head) = data.session_head.as_ref() {
                             view.update_session_last_event_seq(head.session.id, head.last_event_seq);
                         } else if let Some(event) = view.session_events.last() {

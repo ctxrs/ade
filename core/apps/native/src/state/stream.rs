@@ -17,6 +17,7 @@ use ctx_core::models::{
 };
 
 use super::ShellView;
+use super::session::{clear_placeholder_messages_in, SessionThreadCache};
 use super::super::models::{message_item_from_model, session_info_from_summary};
 
 #[derive(Clone)]
@@ -51,6 +52,42 @@ enum StreamUpdate {
 }
 
 const MAX_SESSION_EVENTS: usize = 200;
+
+fn push_session_event_with_limit(events: &mut Vec<SessionEvent>, event: SessionEvent) {
+    events.push(event);
+    if events.len() > MAX_SESSION_EVENTS {
+        let overflow = events.len() - MAX_SESSION_EVENTS;
+        events.drain(0..overflow);
+    }
+}
+
+fn apply_delta_to_cache(cache: &mut SessionThreadCache, delta: SessionHeadDelta) {
+    if let Some(turn) = delta.turn {
+        let mut found = false;
+        for existing in &mut cache.session_turns {
+            if existing.turn_id == turn.turn_id {
+                *existing = turn.clone();
+                found = true;
+                break;
+            }
+        }
+        if !found {
+            cache.session_turns.push(turn);
+            cache
+                .session_turns
+                .sort_by(|a, b| a.started_at.cmp(&b.started_at));
+        }
+    }
+
+    if let Some(event) = delta.event {
+        push_session_event_with_limit(&mut cache.session_events, event);
+    }
+
+    if let Some(message) = delta.message {
+        clear_placeholder_messages_in(&mut cache.messages);
+        cache.messages.push(message_item_from_model(&message));
+    }
+}
 
 impl ShellView {
     pub(super) fn stop_workspace_stream(&mut self) {
@@ -215,12 +252,23 @@ impl ShellView {
     }
 
     fn apply_session_head_delta(&mut self, delta: SessionHeadDelta, cx: &mut Context<Self>) {
-        self.update_session_last_event_seq(delta.session_id, delta.last_event_seq);
-        if !self.is_session_selected(delta.session_id) {
+        let session_id = delta.session_id;
+        self.update_session_last_event_seq(session_id, delta.last_event_seq);
+        if !self.is_session_selected(session_id) {
+            if let Some(cache) = self.session_thread_cache.get_mut(&session_id) {
+                apply_delta_to_cache(cache, delta);
+            }
             return;
         }
 
-        if let Some(turn) = delta.turn {
+        let SessionHeadDelta {
+            event,
+            turn,
+            message,
+            ..
+        } = delta;
+
+        if let Some(turn) = turn {
             let mut found = false;
             for existing in &mut self.session_turns {
                 if existing.turn_id == turn.turn_id {
@@ -236,16 +284,17 @@ impl ShellView {
             }
         }
 
-        if let Some(event) = delta.event {
+        if let Some(event) = event {
             self.push_session_event(event);
         }
 
-        if let Some(message) = delta.message {
+        if let Some(message) = message {
             self.push_message(message_item_from_model(&message), cx);
         } else {
             self.rebuild_thread_items();
         }
 
+        self.cache_session_thread_state(session_id);
         cx.notify();
     }
 

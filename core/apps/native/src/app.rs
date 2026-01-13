@@ -231,6 +231,7 @@ fn create_shell_view(
             selected_artifact: None,
             artifact_preview: ArtifactPreviewState::None,
             session_events: Vec::new(),
+            session_thread_cache: HashMap::new(),
             session_summary_map: HashMap::new(),
             session_last_event_seq: HashMap::new(),
             session: SessionInfo::placeholder(),
