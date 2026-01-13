@@ -13,6 +13,7 @@ pub mod lsp_catalog;
 pub mod merge_queue;
 pub mod mobile_e2ee;
 pub mod mobile_tunnel;
+pub mod ops_events;
 pub mod perf_telemetry;
 pub mod provider_guard;
 pub mod provider_matrix;

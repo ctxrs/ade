@@ -22,6 +22,7 @@ use ctx_store::store::SessionTurnToolCountDeltas;
 
 use crate::daemon::AppState;
 use crate::installer;
+use crate::ops_events::OpsEvent;
 use crate::perf_telemetry::{PerfMetric, PerfMetricKind};
 use crate::settings::{self, ProviderControlMode};
 use crate::telemetry::TelemetryEvent;
@@ -98,6 +99,16 @@ pub async fn session_worker(
     } else {
         "local".to_string()
     };
+    let mut worktree_event = OpsEvent::new("info", "worktree_resolved");
+    worktree_event.session_id = Some(session.id.0.to_string());
+    worktree_event.track_id = Some(session.track_id.0.to_string());
+    worktree_event.worktree_id = Some(session.worktree_id.0.to_string());
+    worktree_event.worktree_root = Some(workdir.to_string_lossy().to_string());
+    worktree_event.meta = Some(json!({
+        "env_target": env_target.clone(),
+        "git_branch": worktree.git_branch,
+    }));
+    state.ops_events.emit(worktree_event);
 
     loop {
         if running.is_none() && !suspend_queue {
@@ -222,6 +233,10 @@ async fn start_turn(
 ) -> Result<RunningTurn> {
     state.wait_for_worktree_bootstrap(session.worktree_id).await;
 
+    let workdir_root = workdir.to_path_buf();
+    let workdir_canonical = tokio::fs::canonicalize(&workdir_root).await.ok();
+    let workdir_str = workdir_root.to_string_lossy().to_string();
+
     let adapter = {
         let map = state.providers.lock().await;
         map.get(&session.provider_id)
@@ -250,6 +265,21 @@ async fn start_turn(
         .await;
     let run_id = message.run_id.get_or_insert_with(RunId::new).to_owned();
     let turn_id = message.turn_id.get_or_insert_with(TurnId::new).to_owned();
+
+    let mut run_event = OpsEvent::new("info", "provider_run_started");
+    run_event.session_id = Some(session.id.0.to_string());
+    run_event.track_id = Some(session.track_id.0.to_string());
+    run_event.worktree_id = Some(session.worktree_id.0.to_string());
+    run_event.run_id = Some(run_id.0.to_string());
+    run_event.turn_id = Some(turn_id.0.to_string());
+    run_event.provider_id = Some(session.provider_id.clone());
+    run_event.cwd = Some(workdir_str.clone());
+    run_event.worktree_root = Some(workdir_str.clone());
+    run_event.meta = Some(json!({
+        "model_id": session.model_id.clone(),
+        "env_target": env_target,
+    }));
+    state.ops_events.emit(run_event);
 
     if message.delivered_at.is_none() {
         state.store.mark_message_delivered(message.id).await?;
@@ -420,6 +450,21 @@ async fn start_turn(
                     duration_ms,
                 ))
                 .await;
+            let mut fail_event = OpsEvent::new("error", "provider_run_failed");
+            fail_event.session_id = Some(session.id.0.to_string());
+            fail_event.track_id = Some(session.track_id.0.to_string());
+            fail_event.worktree_id = Some(session.worktree_id.0.to_string());
+            fail_event.run_id = Some(run_id.0.to_string());
+            fail_event.turn_id = Some(turn_id.0.to_string());
+            fail_event.provider_id = Some(session.provider_id.clone());
+            fail_event.cwd = Some(workdir_str.clone());
+            fail_event.worktree_root = Some(workdir_str.clone());
+            fail_event.meta = Some(json!({
+                "model_id": session.model_id.clone(),
+                "env_target": env_target,
+                "error": err.to_string(),
+            }));
+            state.ops_events.emit(fail_event);
             return Err(err);
         }
     };
@@ -429,10 +474,14 @@ async fn start_turn(
     let session_id = session.id;
     let task_id = session.task_id;
     let track_id = session.track_id;
+    let worktree_id = session.worktree_id;
     let provider_id = session.provider_id.clone();
     let model_id = session.model_id.clone();
     let env_target = env_target.to_string();
     let perf_run_id = perf_run_id.clone();
+    let workdir_root = workdir_root.clone();
+    let workdir_canonical = workdir_canonical.clone();
+    let workdir_str = workdir_str.clone();
     let mut telemetry_emitted = false;
 
     tokio::spawn(async move {
@@ -506,6 +555,58 @@ async fn start_turn(
                         }
                     }
                     obj.entry("status").or_insert(json!("completed"));
+                }
+            }
+            if matches!(event_type, SessionEventType::ToolCall) {
+                let tool_meta = build_tool_ops_meta(&event_type, &raw_payload);
+                let mut meta = serde_json::Map::new();
+                if let Some(tool_call_id) = tool_meta.tool_call_id.clone() {
+                    meta.insert("tool_call_id".to_string(), json!(tool_call_id));
+                }
+                if let Some(title) = tool_meta.title.clone() {
+                    meta.insert("title".to_string(), json!(title));
+                }
+                if let Some(status) = tool_meta.status.clone() {
+                    meta.insert("status".to_string(), json!(status));
+                }
+                if let Some(input_preview) = tool_meta.input_preview.clone() {
+                    meta.insert("input".to_string(), input_preview);
+                }
+                let mut event = OpsEvent::new("info", "tool_exec");
+                event.session_id = Some(session_id.0.to_string());
+                event.track_id = Some(track_id.0.to_string());
+                event.worktree_id = Some(worktree_id.0.to_string());
+                event.run_id = Some(run_id.0.to_string());
+                event.turn_id = Some(turn_id.0.to_string());
+                event.provider_id = Some(provider_id.clone());
+                event.tool_kind = tool_meta.tool_kind.clone();
+                event.cwd = tool_meta.cwd.clone();
+                event.worktree_root = Some(workdir_str.clone());
+                event.meta = if meta.is_empty() {
+                    None
+                } else {
+                    Some(Value::Object(meta))
+                };
+                state_for_events.ops_events.emit(event);
+
+                if let Some(cwd) = tool_meta.cwd.as_deref() {
+                    if cwd_outside_worktree(cwd, &workdir_root, workdir_canonical.as_ref()) {
+                        let mut warn_event = OpsEvent::new("warn", "tool_exec_anomaly");
+                        warn_event.session_id = Some(session_id.0.to_string());
+                        warn_event.track_id = Some(track_id.0.to_string());
+                        warn_event.worktree_id = Some(worktree_id.0.to_string());
+                        warn_event.run_id = Some(run_id.0.to_string());
+                        warn_event.turn_id = Some(turn_id.0.to_string());
+                        warn_event.provider_id = Some(provider_id.clone());
+                        warn_event.tool_kind = tool_meta.tool_kind.clone();
+                        warn_event.cwd = Some(cwd.to_string());
+                        warn_event.worktree_root = Some(workdir_str.clone());
+                        warn_event.meta = Some(json!({
+                            "reason": "cwd_outside_worktree",
+                            "tool_call_id": tool_meta.tool_call_id,
+                        }));
+                        state_for_events.ops_events.emit(warn_event);
+                    }
                 }
             }
             if matches!(
@@ -1910,6 +2011,58 @@ fn tool_input_preview(
     }
 }
 
+fn tool_input_ops_preview(input: Option<&Value>) -> Option<Value> {
+    let mut out = serde_json::Map::new();
+    let obj = input.and_then(|value| value.as_object());
+    if let Some(obj) = obj {
+        for key in [
+            "cwd",
+            "root",
+            "path",
+            "file",
+            "filename",
+            "file_path",
+            "filePath",
+            "filepath",
+            "target",
+            "glob",
+            "paths",
+            "files",
+            "file_paths",
+            "filePaths",
+        ] {
+            if let Some(value) = obj.get(key) {
+                if value.is_string() || value.is_array() || value.is_object() {
+                    out.insert(key.to_string(), value.clone());
+                }
+            }
+        }
+    }
+
+    let mut paths = Vec::new();
+    if !out.is_empty() {
+        collect_paths_from_value(&Value::Object(out.clone()), &mut paths);
+    }
+    if let Some(input) = input {
+        if let Some(changes) = input.get("changes") {
+            collect_paths_from_changes(changes, &mut paths);
+        }
+    }
+    dedupe_paths(&mut paths);
+    if !paths.is_empty() {
+        out.insert(
+            "paths".to_string(),
+            Value::Array(paths.into_iter().map(Value::String).collect()),
+        );
+    }
+
+    if out.is_empty() {
+        None
+    } else {
+        Some(Value::Object(out))
+    }
+}
+
 fn extract_patch_text_owned(input: Option<&Value>, update: &Value) -> Option<String> {
     if let Some(input) = input {
         if let Some(patch) = extract_patch_text(input) {
@@ -2027,7 +2180,7 @@ fn sanitize_tool_event_payload(event_type: &SessionEventType, raw_payload: &Valu
     };
 
     let input = extract_tool_input(update);
-    let input_preview = tool_input_preview(input, update, tool_kind.as_deref(), title.as_deref());
+    let input_preview = tool_input_ops_preview(input);
 
     let patch_preview = if is_edit_tool(tool_kind.as_deref(), title.as_deref()) {
         extract_patch_text_owned(input, update).and_then(|t| {
@@ -2073,6 +2226,81 @@ fn sanitize_tool_event_payload(event_type: &SessionEventType, raw_payload: &Valu
         obj.insert("output_preview".to_string(), Value::String(v));
     }
     Value::Object(obj)
+}
+
+#[derive(Debug, Clone)]
+struct ToolOpsMeta {
+    tool_call_id: Option<String>,
+    tool_kind: Option<String>,
+    title: Option<String>,
+    status: Option<String>,
+    input_preview: Option<Value>,
+    cwd: Option<String>,
+}
+
+fn build_tool_ops_meta(event_type: &SessionEventType, raw_payload: &Value) -> ToolOpsMeta {
+    let update = extract_tool_update(raw_payload);
+    let tool_call_id = tool_call_id_from_payload(raw_payload);
+    let tool_kind = update
+        .get("kind")
+        .and_then(|v| v.as_str())
+        .or_else(|| update.pointer("/toolCall/kind").and_then(|v| v.as_str()))
+        .map(|s| s.to_string());
+    let title = update
+        .get("title")
+        .and_then(|v| v.as_str())
+        .or_else(|| update.pointer("/toolCall/title").and_then(|v| v.as_str()))
+        .or_else(|| update.pointer("/toolCall/name").and_then(|v| v.as_str()))
+        .map(|s| s.to_string());
+    let raw_status = update
+        .get("status")
+        .and_then(|v| v.as_str())
+        .or_else(|| update.pointer("/toolCall/status").and_then(|v| v.as_str()));
+    let status = if let Some(raw) = raw_status {
+        Some(normalize_tool_status(raw, event_type.clone()))
+    } else if matches!(event_type, SessionEventType::ToolResult) {
+        Some("completed".to_string())
+    } else {
+        Some("pending".to_string())
+    };
+    let input = extract_tool_input(update);
+    let input_preview = tool_input_preview(input, update, tool_kind.as_deref(), title.as_deref());
+    let cwd = input_preview
+        .as_ref()
+        .and_then(|preview| preview.get("cwd"))
+        .and_then(|value| value.as_str())
+        .map(|value| value.to_string());
+    ToolOpsMeta {
+        tool_call_id,
+        tool_kind,
+        title,
+        status,
+        input_preview,
+        cwd,
+    }
+}
+
+fn cwd_outside_worktree(
+    cwd: &str,
+    workdir_root: &Path,
+    workdir_canonical: Option<&PathBuf>,
+) -> bool {
+    if cwd.trim().is_empty() {
+        return false;
+    }
+    let cwd_path = Path::new(cwd);
+    if cwd_path.is_relative() {
+        return false;
+    }
+    if cwd_path.starts_with(workdir_root) {
+        return false;
+    }
+    if let Some(root) = workdir_canonical {
+        if cwd_path.starts_with(root) {
+            return false;
+        }
+    }
+    true
 }
 
 #[derive(Clone, Debug)]

@@ -34,6 +34,7 @@ use crate::api;
 use crate::installer;
 use crate::installs::{InstallId, InstallProgressEvent, InstallState, InstallStateKind};
 use crate::mobile_tunnel::MobileTunnelManager;
+use crate::ops_events::OpsEvents;
 use crate::perf_telemetry::PerfTelemetry;
 use crate::provider_guard;
 use crate::resource_governance::{self, ResourceGovernanceRuntime};
@@ -150,6 +151,7 @@ pub struct AppState {
     pub ask_user_question: Arc<AskUserQuestionBroker>,
     pub shutdown_tx: broadcast::Sender<()>,
     pub telemetry: Telemetry,
+    pub ops_events: OpsEvents,
     pub perf_telemetry: PerfTelemetry,
     pub resource_governance: Mutex<ResourceGovernanceRuntime>,
     pub provider_guard: Mutex<provider_guard::ProviderGuardRuntime>,
@@ -263,6 +265,7 @@ impl AppState {
         let ask_user_question = Arc::new(AskUserQuestionBroker::new());
         let lsp = Arc::new(LspManager::new(lsp_cfg.clone()));
         let telemetry = Telemetry::new(data_root.clone());
+        let ops_events = OpsEvents::new(data_root.clone());
         let perf_telemetry = PerfTelemetry::new(data_root.clone());
         let workspace_catchup = WorkspaceCatchupHub::new();
         let web_sessions = Arc::new(WebSessionManager::new());
@@ -289,6 +292,7 @@ impl AppState {
             ask_user_question,
             shutdown_tx,
             telemetry,
+            ops_events,
             perf_telemetry,
             resource_governance: Mutex::new(ResourceGovernanceRuntime::default()),
             provider_guard: Mutex::new(provider_guard::ProviderGuardRuntime::default()),

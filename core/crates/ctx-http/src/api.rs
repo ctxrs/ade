@@ -61,6 +61,7 @@ use crate::installer;
 use crate::installs::{InstallId, InstallInfo, InstallProgressEvent};
 use crate::logs;
 use crate::merge_queue;
+use crate::ops_events::OpsEvent;
 use crate::perf_telemetry::{PerfMetric, PerfMetricKind};
 use crate::provider_guard;
 use crate::resource_governance;
@@ -8392,6 +8393,18 @@ async fn create_session_for_track(
             Some(env_target.clone()),
         ))
         .await;
+    let mut ops_event = OpsEvent::new("info", "session_started");
+    ops_event.session_id = Some(session.id.0.to_string());
+    ops_event.track_id = Some(session.track_id.0.to_string());
+    ops_event.worktree_id = Some(session.worktree_id.0.to_string());
+    ops_event.provider_id = Some(session.provider_id.clone());
+    ops_event.meta = Some(serde_json::json!({
+        "model_id": session.model_id.clone(),
+        "env_target": env_target.clone(),
+        "parent_session_id": session.parent_session_id.map(|id| id.0.to_string()),
+        "relationship": session.relationship.clone(),
+    }));
+    state.ops_events.emit(ops_event);
     state.remember_session_meta(&session).await;
     if let Err(e) = state.emit_workspace_task_upsert(session.task_id).await {
         tracing::warn!(task_id = %session.task_id.0, "workspace catchup refresh failed: {e:?}");
