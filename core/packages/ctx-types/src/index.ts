@@ -81,6 +81,54 @@ export type Worktree = {
   bootstrap_script_path?: string | null;
 };
 
+export type MergeQueueEntryStatus =
+  | "queued"
+  | "running"
+  | "passed"
+  | "failed"
+  | "conflict"
+  | "cancelled";
+
+export type MergeQueuePatchSource = "generated" | "provided";
+
+export type MergeQueueEntry = {
+  id: { 0: string } | string;
+  workspace_id: { 0: string } | string;
+  worktree_id?: { 0: string } | string | null;
+  session_id?: { 0: string } | string | null;
+  target_branch: string;
+  message?: string | null;
+  patch_source: MergeQueuePatchSource;
+  base_commit_sha?: string | null;
+  head_commit_sha?: string | null;
+  patch_path: string;
+  patch_size: number;
+  status: MergeQueueEntryStatus;
+  result_commit_sha?: string | null;
+  error_message?: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type MergeQueueRunStatus =
+  | "running"
+  | "passed"
+  | "failed"
+  | "conflict"
+  | "cancelled";
+
+export type MergeQueueRun = {
+  id: { 0: string } | string;
+  entry_id: { 0: string } | string;
+  status: MergeQueueRunStatus;
+  started_at: string;
+  finished_at?: string | null;
+  exit_code?: number | null;
+  log_path?: string | null;
+  error_message?: string | null;
+  result_commit_sha?: string | null;
+};
+
 export type Session = {
   id: { 0: string } | string;
   track_id: { 0: string } | string;

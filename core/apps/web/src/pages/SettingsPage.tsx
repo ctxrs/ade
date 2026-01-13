@@ -18,12 +18,15 @@ import {
   AgentSystemPromptConfig,
   TelemetrySettings,
   TitleGenerationSettings,
+  MergeQueueEntry,
   WorkspaceAttachment,
+  cancelMergeQueueEntry,
   createWorkspaceAttachment,
   deleteWorkspaceAttachment,
   disableMobileAccess,
   enableMobileAccess,
   getAgentSystemPrompt,
+  getMergeQueueEntryLogs,
   getMobileAccessStatus,
   Workspace,
   authenticateProviderForWorkspace,
@@ -35,10 +38,12 @@ import {
   installAllProviders,
   installProvider,
   installStreamUrl,
+  listMergeQueueEntries,
   listWorkspaceAttachments,
   listInstallEvents,
   listProviders,
   listWorkspaces,
+  retryMergeQueueEntry,
   syncWorkspaceAttachments,
   updateSettings,
   updateAgentSystemPrompt,
@@ -47,6 +52,7 @@ import {
 import {
   type DesktopEditorSettings,
   desktopGetEditorSettings,
+  desktopSaveTextFile,
   desktopUpdateEditorSettings,
   isDesktopApp,
 } from "../utils/desktop";
@@ -91,6 +97,24 @@ const EDITOR_OPTIONS: Array<{ value: DesktopEditorSettings["target"]; label: str
   { value: "custom", label: "Custom command" },
 ];
 
+const saveTextFile = async (name: string, contents: string) => {
+  if (isDesktopApp()) {
+    await desktopSaveTextFile({ suggested_name: name, contents });
+    return;
+  }
+  const blob = new Blob([contents], { type: "text/plain" });
+  const url = URL.createObjectURL(blob);
+  try {
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = name;
+    a.rel = "noopener";
+    a.click();
+  } finally {
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+};
+
 type SectionId =
   | "general"
   | "agent_harnesses"
@@ -99,6 +123,7 @@ type SectionId =
   | "worktree_bootstrap"
   | "agent_system_prompt"
   | "workspace_attachments"
+  | "merge_queue"
   | "context_pack"
   | "resource_governance"
   | "mobile_access"
@@ -129,6 +154,7 @@ const SECTIONS: Array<{
   { id: "worktree_bootstrap", label: "Worktree Bootstrap", group: "main" },
   { id: "agent_system_prompt", label: "Agent System Prompt", group: "main" },
   { id: "workspace_attachments", label: "Workspace Attachments", group: "main" },
+  { id: "merge_queue", label: "Merge Queue", group: "main" },
   { id: "context_pack", label: "ctx pack", group: "main" },
   { id: "resource_governance", label: "Resource Limits", group: "main" },
   { id: "mobile_access", label: "Mobile Access", group: "main" },
@@ -417,6 +443,12 @@ export default function SettingsPage() {
   const [docsAttachmentBusy, setDocsAttachmentBusy] = useState(false);
   const [attachmentSyncBusy, setAttachmentSyncBusy] = useState(false);
   const [attachmentDeleteBusy, setAttachmentDeleteBusy] = useState<Record<string, boolean>>({});
+
+  const [mergeQueueEntries, setMergeQueueEntries] = useState<MergeQueueEntry[]>([]);
+  const [mergeQueueLoading, setMergeQueueLoading] = useState(false);
+  const [mergeQueueError, setMergeQueueError] = useState<string | null>(null);
+  const [mergeQueueActionBusy, setMergeQueueActionBusy] = useState<Record<string, boolean>>({});
+  const [mergeQueueLogBusy, setMergeQueueLogBusy] = useState<Record<string, boolean>>({});
 
   const [agentPromptConfig, setAgentPromptConfig] = useState<AgentSystemPromptConfig | null>(null);
   const [agentPromptLoading, setAgentPromptLoading] = useState(false);
@@ -932,6 +964,65 @@ export default function SettingsPage() {
     [workspaceId],
   );
 
+  const refreshMergeQueueEntries = useCallback(async () => {
+    if (!workspaceId) return;
+    setMergeQueueLoading(true);
+    setMergeQueueError(null);
+    try {
+      const next = await listMergeQueueEntries(workspaceId);
+      setMergeQueueEntries(next);
+    } catch (e: any) {
+      setMergeQueueError(e?.message ?? String(e));
+    } finally {
+      setMergeQueueLoading(false);
+    }
+  }, [workspaceId]);
+
+  const handleMergeQueueCancel = useCallback(
+    async (entryId: string) => {
+      setMergeQueueActionBusy((prev) => ({ ...prev, [entryId]: true }));
+      setMergeQueueError(null);
+      try {
+        await cancelMergeQueueEntry(entryId);
+        await refreshMergeQueueEntries();
+      } catch (e: any) {
+        setMergeQueueError(e?.message ?? String(e));
+      } finally {
+        setMergeQueueActionBusy((prev) => ({ ...prev, [entryId]: false }));
+      }
+    },
+    [refreshMergeQueueEntries],
+  );
+
+  const handleMergeQueueRetry = useCallback(
+    async (entryId: string) => {
+      setMergeQueueActionBusy((prev) => ({ ...prev, [entryId]: true }));
+      setMergeQueueError(null);
+      try {
+        await retryMergeQueueEntry(entryId);
+        await refreshMergeQueueEntries();
+      } catch (e: any) {
+        setMergeQueueError(e?.message ?? String(e));
+      } finally {
+        setMergeQueueActionBusy((prev) => ({ ...prev, [entryId]: false }));
+      }
+    },
+    [refreshMergeQueueEntries],
+  );
+
+  const handleMergeQueueLogs = useCallback(async (entryId: string) => {
+    setMergeQueueLogBusy((prev) => ({ ...prev, [entryId]: true }));
+    setMergeQueueError(null);
+    try {
+      const contents = await getMergeQueueEntryLogs(entryId);
+      await saveTextFile(`merge-queue-${entryId}.log`, contents);
+    } catch (e: any) {
+      setMergeQueueError(e?.message ?? String(e));
+    } finally {
+      setMergeQueueLogBusy((prev) => ({ ...prev, [entryId]: false }));
+    }
+  }, []);
+
   const refreshAgentSystemPrompt = useCallback(async () => {
     if (!workspaceId) return;
     if (!workspaces.some((ws) => idToString((ws as any).id) === workspaceId)) return;
@@ -1102,6 +1193,12 @@ export default function SettingsPage() {
     if (!workspaceId) return;
     refreshWorkspaceAttachments().catch(() => {});
   }, [active, workspaceId, refreshWorkspaceAttachments]);
+
+  useEffect(() => {
+    if (active !== "merge_queue") return;
+    if (!workspaceId) return;
+    refreshMergeQueueEntries().catch(() => {});
+  }, [active, workspaceId, refreshMergeQueueEntries]);
 
   useEffect(() => {
     return () => {
@@ -1828,6 +1925,134 @@ export default function SettingsPage() {
             </div>
           </Card>
           {attachmentsError ? <div className="settings-banner settings-banner-error">{attachmentsError}</div> : null}
+        </>
+      );
+    }
+
+    if (active === "merge_queue") {
+      const anyWorkspace = workspaces.length > 0;
+      const selectedWorkspace = workspaces.find((ws) => idToString((ws as any).id) === workspaceId) ?? null;
+      const configPath = selectedWorkspace ? `${selectedWorkspace.root_path}/.ctx/config.toml` : ".ctx/config.toml";
+
+      return (
+        <>
+          <Card title="Merge Queue">
+            <Row
+              title="Workspace"
+              description="Choose the repo to inspect."
+              control={
+                <select
+                  className="settings-control settings-select"
+                  value={workspaceId ?? ""}
+                  onChange={(e) => setWorkspaceId(e.target.value || null)}
+                  disabled={!anyWorkspace}
+                >
+                  {workspaces.map((ws) => {
+                    const id = idToString((ws as any).id);
+                    return (
+                      <option key={id} value={id}>
+                        {ws.name}
+                      </option>
+                    );
+                  })}
+                </select>
+              }
+            />
+            <Row
+              title="Config file"
+              description="Repo-scoped merge queue configuration."
+              control={<span className="settings-pill wb-mono">{configPath}</span>}
+            />
+            <Row
+              title="Actions"
+              control={
+                <button
+                  type="button"
+                  className="settings-btn"
+                  onClick={() => refreshMergeQueueEntries().catch(() => {})}
+                  disabled={!workspaceId || mergeQueueLoading}
+                >
+                  {mergeQueueLoading ? "Refreshing…" : "Refresh"}
+                </button>
+              }
+            />
+          </Card>
+
+          <Card title="Queue Entries">
+            <div className="settings-card-block">
+              {mergeQueueLoading ? <div className="settings-empty-compact">Loading merge queue…</div> : null}
+              {!mergeQueueLoading && mergeQueueEntries.length === 0 ? (
+                <div className="settings-empty-compact">No merge queue entries.</div>
+              ) : null}
+              {!mergeQueueLoading && mergeQueueEntries.length > 0 ? (
+                <div className="settings-table">
+                  <div className="settings-table-head">
+                    <div>Entry</div>
+                    <div>Status</div>
+                    <div>Target</div>
+                    <div>Updated</div>
+                    <div />
+                  </div>
+                  {mergeQueueEntries.map((entry) => {
+                    const entryId = idToString(entry.id as any);
+                    const updatedMs = Date.parse(entry.updated_at);
+                    const updatedLabel = Number.isFinite(updatedMs)
+                      ? `${formatAge(Date.now() - updatedMs)} ago`
+                      : "—";
+                    const actionBusy = mergeQueueActionBusy[entryId] ?? false;
+                    const logBusy = mergeQueueLogBusy[entryId] ?? false;
+                    const canCancel = entry.status === "queued";
+                    const canRetry = entry.status === "failed" || entry.status === "conflict";
+                    const subtitle = entry.error_message
+                      ? truncateText(entry.error_message, 64)
+                      : entry.result_commit_sha
+                        ? `commit ${entry.result_commit_sha.slice(0, 8)}`
+                        : entryId;
+                    return (
+                      <div key={entryId} className="settings-table-row">
+                        <div>
+                          <div className="settings-table-title">
+                            {entry.message?.trim() ? truncateText(entry.message, 48) : "Merge queue entry"}
+                          </div>
+                          <div className="settings-table-sub">{subtitle}</div>
+                        </div>
+                        <div className="settings-table-sub">{entry.status}</div>
+                        <div className="settings-table-mono">{entry.target_branch}</div>
+                        <div className="settings-table-sub">{updatedLabel}</div>
+                        <div className="settings-row-right">
+                          <button
+                            type="button"
+                            className="settings-btn settings-btn-secondary settings-btn-compact"
+                            onClick={() => handleMergeQueueRetry(entryId).catch(() => {})}
+                            disabled={!canRetry || actionBusy}
+                          >
+                            {actionBusy && canRetry ? "Retrying…" : "Retry"}
+                          </button>
+                          <button
+                            type="button"
+                            className="settings-btn settings-btn-secondary settings-btn-compact"
+                            onClick={() => handleMergeQueueCancel(entryId).catch(() => {})}
+                            disabled={!canCancel || actionBusy}
+                          >
+                            {actionBusy && canCancel ? "Cancelling…" : "Cancel"}
+                          </button>
+                          <button
+                            type="button"
+                            className="settings-btn settings-btn-secondary settings-btn-compact"
+                            onClick={() => handleMergeQueueLogs(entryId).catch(() => {})}
+                            disabled={logBusy}
+                          >
+                            {logBusy ? "Downloading…" : "Logs"}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : null}
+            </div>
+          </Card>
+          {mergeQueueError ? <div className="settings-banner settings-banner-error">{mergeQueueError}</div> : null}
         </>
       );
     }

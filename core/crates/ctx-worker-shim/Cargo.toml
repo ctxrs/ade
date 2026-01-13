@@ -8,6 +8,7 @@ anyhow.workspace = true
 base64.workspace = true
 chrono.workspace = true
 clap.workspace = true
+ctx-fs = { path = "../ctx-fs" }
 ctx-worker-protocol = { path = "../ctx-worker-protocol" }
 notify = "6"
 reqwest.workspace = true

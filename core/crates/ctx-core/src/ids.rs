@@ -48,3 +48,5 @@ id_type!(ConnectionProfileId);
 id_type!(MobileDeviceId);
 id_type!(WorkspaceAttachmentId);
 id_type!(TerminalId);
+id_type!(MergeQueueEntryId);
+id_type!(MergeQueueRunId);

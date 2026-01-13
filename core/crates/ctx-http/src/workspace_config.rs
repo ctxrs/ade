@@ -62,12 +62,59 @@ pub enum AgentSystemPromptAppendSource {
 struct WorkspaceConfigFile {
     #[serde(default)]
     agents: Option<WorkspaceAgentsConfig>,
+    #[serde(default)]
+    merge_queue: Option<WorkspaceMergeQueueConfig>,
 }
 
 #[derive(Debug, Deserialize)]
 struct WorkspaceAgentsConfig {
     #[serde(default)]
     system_prompt_append: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct WorkspaceMergeQueueConfig {
+    #[serde(default)]
+    enabled: Option<bool>,
+    #[serde(default)]
+    target_branch: Option<String>,
+    #[serde(default)]
+    verify_commands: Option<Vec<String>>,
+    #[serde(default)]
+    halt_on_fail: Option<bool>,
+    #[serde(default)]
+    push_on_success: Option<bool>,
+    #[serde(default)]
+    push_remote: Option<String>,
+    #[serde(default)]
+    push_branch: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct MergeQueueConfig {
+    pub config_path: PathBuf,
+    pub enabled: bool,
+    pub target_branch: String,
+    pub verify_commands: Vec<String>,
+    pub halt_on_fail: bool,
+    pub push_on_success: bool,
+    pub push_remote: String,
+    pub push_branch: String,
+}
+
+impl MergeQueueConfig {
+    pub fn new_default(root: &Path) -> Self {
+        Self {
+            config_path: root.join(WORKSPACE_CONFIG_REL_PATH),
+            enabled: false,
+            target_branch: "main".to_string(),
+            verify_commands: vec!["pnpm -C core verify:quick".to_string()],
+            halt_on_fail: true,
+            push_on_success: false,
+            push_remote: "origin".to_string(),
+            push_branch: "main".to_string(),
+        }
+    }
 }
 
 pub async fn load_agent_system_prompt_append(root: &Path) -> Result<AgentSystemPromptAppendConfig> {
@@ -87,6 +134,68 @@ pub async fn load_agent_system_prompt_append(root: &Path) -> Result<AgentSystemP
         configured_append,
         default_append: DEFAULT_SYSTEM_PROMPT_APPEND.to_string(),
     })
+}
+
+pub async fn load_merge_queue_config(root: &Path) -> Result<MergeQueueConfig> {
+    let config_path = root.join(WORKSPACE_CONFIG_REL_PATH);
+    let mut cfg = MergeQueueConfig::new_default(root);
+    let configured = match tokio::fs::read_to_string(&config_path).await {
+        Ok(text) => {
+            let parsed: WorkspaceConfigFile =
+                toml::from_str(&text).context("parsing .ctx/config.toml")?;
+            parsed.merge_queue
+        }
+        Err(err) if err.kind() == io::ErrorKind::NotFound => None,
+        Err(err) => return Err(err).context("reading .ctx/config.toml"),
+    };
+
+    let Some(configured) = configured else {
+        return Ok(cfg);
+    };
+
+    if let Some(enabled) = configured.enabled {
+        cfg.enabled = enabled;
+    }
+    if let Some(target_branch) = configured.target_branch {
+        let trimmed = target_branch.trim().to_string();
+        if !trimmed.is_empty() {
+            cfg.target_branch = trimmed;
+        }
+    }
+    if let Some(verify_commands) = configured.verify_commands {
+        let trimmed = verify_commands
+            .into_iter()
+            .map(|c| c.trim().to_string())
+            .filter(|c| !c.is_empty())
+            .collect::<Vec<_>>();
+        if !trimmed.is_empty() {
+            cfg.verify_commands = trimmed;
+        }
+    }
+    if let Some(halt_on_fail) = configured.halt_on_fail {
+        cfg.halt_on_fail = halt_on_fail;
+    }
+    if let Some(push_on_success) = configured.push_on_success {
+        cfg.push_on_success = push_on_success;
+    }
+    if let Some(push_remote) = configured.push_remote {
+        let trimmed = push_remote.trim().to_string();
+        if !trimmed.is_empty() {
+            cfg.push_remote = trimmed;
+        }
+    }
+    if let Some(push_branch) = configured.push_branch {
+        let trimmed = push_branch.trim().to_string();
+        cfg.push_branch = if trimmed.is_empty() {
+            cfg.target_branch.clone()
+        } else {
+            trimmed
+        };
+    } else {
+        cfg.push_branch = cfg.target_branch.clone();
+    }
+
+    Ok(cfg)
 }
 
 pub async fn update_agent_system_prompt_append(

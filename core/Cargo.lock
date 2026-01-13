@@ -1776,6 +1776,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "clap",
+ "ctx-fs",
  "ctx-worker-protocol",
  "futures-util",
  "http 1.4.0",

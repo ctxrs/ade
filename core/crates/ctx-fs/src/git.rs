@@ -38,6 +38,47 @@ pub async fn rev_parse_head(root_path: impl AsRef<Path>) -> Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
+pub async fn rev_parse_ref(root_path: impl AsRef<Path>, reference: &str) -> Result<String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root_path.as_ref())
+        .arg("rev-parse")
+        .arg(reference)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .await
+        .with_context(|| format!("running git rev-parse {reference}"))?;
+    if !output.status.success() {
+        bail!(
+            "git rev-parse {reference} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+pub async fn git_merge_base(root_path: impl AsRef<Path>, a: &str, b: &str) -> Result<String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root_path.as_ref())
+        .arg("merge-base")
+        .arg(a)
+        .arg(b)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .await
+        .context("running git merge-base")?;
+    if !output.status.success() {
+        bail!(
+            "git merge-base failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
 pub async fn git_diff(root_path: impl AsRef<Path>, base_commit_sha: &str) -> Result<String> {
     let output = Command::new("git")
         .arg("-C")
@@ -140,6 +181,35 @@ pub async fn list_untracked_files(root_path: impl AsRef<Path>) -> Result<Vec<Str
             continue;
         }
         out.push(String::from_utf8_lossy(part).to_string());
+    }
+    Ok(out)
+}
+
+pub async fn git_status_porcelain(root_path: impl AsRef<Path>) -> Result<Vec<String>> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root_path.as_ref())
+        .arg("status")
+        .arg("--porcelain")
+        .arg("-z")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .await
+        .context("running git status --porcelain")?;
+    if !output.status.success() {
+        bail!(
+            "git status failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let bytes = output.stdout;
+    let mut out = Vec::new();
+    for entry in bytes.split(|b| *b == 0) {
+        if entry.is_empty() {
+            continue;
+        }
+        out.push(String::from_utf8_lossy(entry).to_string());
     }
     Ok(out)
 }

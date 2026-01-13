@@ -99,6 +99,23 @@ async fn main() -> Result<()> {
                             "inputSchema": { "type": "object", "additionalProperties": false }
                         },
                         {
+                            "name": "merge_queue_submit",
+                            "title": "Merge Queue Submit",
+                            "description": "Submit the current worktree to the merge queue.",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
+                                    "target_branch": { "type": "string" },
+                                    "message": { "type": "string" },
+                                    "patch": { "type": "string" },
+                                    "base_commit_sha": { "type": "string" },
+                                    "head_commit_sha": { "type": "string" }
+                                },
+                                "additionalProperties": false
+                            }
+                        },
+                        {
                             "name": "agent_init",
                             "title": "Init Subagents",
                             "description": "Spawns one or more subagents (max configurable, default 10) for the current session. response_mode defaults to enqueue.",
@@ -1092,6 +1109,12 @@ async fn main() -> Result<()> {
                             ),
                         }
                     }
+                    "merge_queue_submit" => {
+                        match merge_queue_submit_call(&client, &daemon_url, &arguments).await {
+                            Ok(val) => ok(id.unwrap(), tool_ok(val)),
+                            Err(e) => ok(id.unwrap(), tool_err(e)),
+                        }
+                    }
                     "agent_init" => match agent_init_call(&client, &daemon_url, &arguments).await {
                         Ok(val) => ok(id.unwrap(), tool_ok(val)),
                         Err(e) => ok(id.unwrap(), tool_err(e)),
@@ -1874,6 +1897,78 @@ fn tool_call_id_from_params(params: &Value) -> Option<String> {
 
 async fn list_workspaces(client: &reqwest::Client, daemon_url: &str) -> Result<Value> {
     daemon_get_json(client, daemon_url, "/api/workspaces").await
+}
+
+async fn merge_queue_submit_call(
+    client: &reqwest::Client,
+    daemon_url: &str,
+    args: &Value,
+) -> Result<Value> {
+    let session_id = args
+        .get("session_id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .or_else(|| ctx_env_opt("SESSION_ID"));
+    let target_branch = args
+        .get("target_branch")
+        .and_then(|v| v.as_str())
+        .map(|v| v.to_string());
+    let message = args
+        .get("message")
+        .and_then(|v| v.as_str())
+        .map(|v| v.to_string());
+    let patch = args
+        .get("patch")
+        .and_then(|v| v.as_str())
+        .map(|v| v.to_string());
+    let base_commit_sha = args
+        .get("base_commit_sha")
+        .and_then(|v| v.as_str())
+        .map(|v| v.to_string());
+    let head_commit_sha = args
+        .get("head_commit_sha")
+        .and_then(|v| v.as_str())
+        .map(|v| v.to_string());
+
+    let mut body = json!({});
+    if let Some(session_id) = session_id {
+        if let Some(obj) = body.as_object_mut() {
+            obj.insert("session_id".to_string(), Value::String(session_id));
+        }
+    }
+    if let Some(target_branch) = target_branch {
+        if let Some(obj) = body.as_object_mut() {
+            obj.insert("target_branch".to_string(), Value::String(target_branch));
+        }
+    }
+    if let Some(message) = message {
+        if let Some(obj) = body.as_object_mut() {
+            obj.insert("message".to_string(), Value::String(message));
+        }
+    }
+    if let Some(patch) = patch {
+        if let Some(obj) = body.as_object_mut() {
+            obj.insert("patch".to_string(), Value::String(patch));
+        }
+    }
+    if let Some(base_commit_sha) = base_commit_sha {
+        if let Some(obj) = body.as_object_mut() {
+            obj.insert(
+                "base_commit_sha".to_string(),
+                Value::String(base_commit_sha),
+            );
+        }
+    }
+    if let Some(head_commit_sha) = head_commit_sha {
+        if let Some(obj) = body.as_object_mut() {
+            obj.insert(
+                "head_commit_sha".to_string(),
+                Value::String(head_commit_sha),
+            );
+        }
+    }
+
+    daemon_post_json(client, daemon_url, "/api/merge-queue/entries", &body).await
 }
 
 async fn agent_init_call(

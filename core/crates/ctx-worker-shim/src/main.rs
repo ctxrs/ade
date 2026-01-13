@@ -10,6 +10,7 @@ use anyhow::{Context, Result};
 use base64::Engine;
 use chrono::Utc;
 use clap::Parser;
+use ctx_fs::patch::{build_worktree_patch, should_ignore_path};
 use ctx_worker_protocol::{DiffArtifact, RelayMessage, TerminalControlMessage, WorkerRegistration};
 use futures_util::{SinkExt, StreamExt};
 use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
@@ -599,22 +600,6 @@ fn should_ignore_event(event: &Event) -> bool {
     event.paths.iter().all(|path| should_ignore_path(path))
 }
 
-fn should_ignore_path(path: &Path) -> bool {
-    for component in path.components() {
-        let name = component.as_os_str().to_string_lossy();
-        if name == ".git"
-            || name == ".ctx"
-            || name == "node_modules"
-            || name == "target"
-            || name == "dist"
-            || name == "build"
-        {
-            return true;
-        }
-    }
-    false
-}
-
 async fn register_worker(client: &reqwest::Client, args: &ResolvedArgs) -> Result<()> {
     let url = format!("{}/workers/{}/register", args.gateway_url, args.worker_id);
     let reg = WorkerRegistration {
@@ -639,60 +624,18 @@ async fn register_worker(client: &reqwest::Client, args: &ResolvedArgs) -> Resul
 
 async fn emit_diff(client: &reqwest::Client, args: &ResolvedArgs) -> Result<()> {
     let base = resolve_base_commit(&args.workdir, &args.base_commit).await?;
-    let head = git_rev_parse(&args.workdir, "HEAD")
-        .await?
-        .unwrap_or_else(|| base.clone());
-    let mut patch = git_output_allow(&args.workdir, &["diff", "--binary", &base], &[0, 1]).await?;
-    let changed_files_raw = git_output_allow(
-        &args.workdir,
-        &["diff", "--name-only", "-z", &base],
-        &[0, 1],
-    )
-    .await?;
-    let mut seen = std::collections::HashSet::new();
-    let mut changed_files = Vec::new();
-    for entry in changed_files_raw.split_terminator('\0') {
-        if entry.is_empty() {
-            continue;
-        }
-        if should_ignore_path(Path::new(entry)) {
-            continue;
-        }
-        if seen.insert(entry.to_string()) {
-            changed_files.push(entry.to_string());
-        }
-    }
-    let untracked = list_untracked_files(&args.workdir).await?;
-    for file in &untracked {
-        let diff = git_output_allow(
-            &args.workdir,
-            &["diff", "--binary", "--no-index", "--", "/dev/null", file],
-            &[0, 1],
-        )
-        .await?;
-        if !diff.is_empty() {
-            patch.push_str(&diff);
-        }
-        if should_ignore_path(Path::new(file)) {
-            continue;
-        }
-        if seen.insert(file.clone()) {
-            changed_files.push(file.clone());
-        }
-    }
-    let (file_count, line_additions, line_deletions) =
-        diff_stats(&args.workdir, &base, &untracked).await?;
+    let patch = build_worktree_patch(&args.workdir, &base).await?;
 
     let diff = DiffArtifact {
         worker_id: args.worker_id.clone(),
-        base_commit_sha: base.clone(),
-        head_commit_sha: head.trim().to_string(),
+        base_commit_sha: patch.base_commit_sha,
+        head_commit_sha: patch.head_commit_sha,
         generated_at: Utc::now(),
-        patch,
-        changed_files,
-        file_count,
-        line_additions,
-        line_deletions,
+        patch: patch.patch,
+        changed_files: patch.changed_files,
+        file_count: patch.file_count,
+        line_additions: patch.line_additions,
+        line_deletions: patch.line_deletions,
     };
 
     let url = format!("{}/workers/{}/diff", args.gateway_url, args.worker_id);
@@ -740,21 +683,6 @@ async fn git_rev_parse(workdir: &Path, rev: &str) -> Result<Option<String>> {
     ))
 }
 
-async fn git_output_allow(workdir: &Path, args: &[&str], allowed: &[i32]) -> Result<String> {
-    let output = Command::new("git")
-        .args(args)
-        .current_dir(workdir)
-        .output()
-        .await
-        .context("running git")?;
-    let code = output.status.code().unwrap_or(-1);
-    if !output.status.success() && !allowed.contains(&code) {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("git command failed: {stderr}");
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).to_string())
-}
-
 async fn resolve_base_commit(workdir: &Path, base: &str) -> Result<String> {
     if git_commit_exists(workdir, base).await? {
         return Ok(base.to_string());
@@ -777,76 +705,6 @@ async fn git_commit_exists(workdir: &Path, rev: &str) -> Result<bool> {
         .await
         .context("running git")?;
     Ok(output.status.success())
-}
-
-async fn list_untracked_files(workdir: &Path) -> Result<Vec<String>> {
-    let output = git_output(
-        workdir,
-        &["ls-files", "--others", "--exclude-standard", "-z"],
-    )
-    .await?;
-    let files = output
-        .split_terminator('\0')
-        .filter(|entry| !entry.is_empty())
-        .filter(|entry| !should_ignore_path(Path::new(entry)))
-        .map(|entry| entry.to_string())
-        .collect::<Vec<_>>();
-    Ok(files)
-}
-
-async fn diff_stats(workdir: &Path, base: &str, untracked: &[String]) -> Result<(i64, i64, i64)> {
-    let output = git_output_allow(workdir, &["diff", "--numstat", "-z", base], &[0, 1]).await?;
-    let mut files = 0i64;
-    let mut additions = 0i64;
-    let mut deletions = 0i64;
-
-    let mut apply_numstat = |record: &str| {
-        let mut parts = record.split('\t');
-        let adds = parts.next();
-        let dels = parts.next();
-        let path = parts.next();
-        if adds.is_none() || dels.is_none() || path.is_none() {
-            return;
-        }
-        if should_ignore_path(Path::new(path.unwrap())) {
-            return;
-        }
-        files += 1;
-        additions += adds.unwrap().parse::<i64>().unwrap_or(0);
-        deletions += dels.unwrap().parse::<i64>().unwrap_or(0);
-    };
-
-    for record in output.split_terminator('\0') {
-        if record.is_empty() {
-            continue;
-        }
-        apply_numstat(record);
-    }
-
-    for file in untracked {
-        let output = git_output_allow(
-            workdir,
-            &[
-                "diff",
-                "--numstat",
-                "-z",
-                "--no-index",
-                "--",
-                "/dev/null",
-                file,
-            ],
-            &[0, 1],
-        )
-        .await?;
-        for record in output.split_terminator('\0') {
-            if record.is_empty() {
-                continue;
-            }
-            apply_numstat(record);
-        }
-    }
-
-    Ok((files, additions, deletions))
 }
 
 #[derive(Clone)]

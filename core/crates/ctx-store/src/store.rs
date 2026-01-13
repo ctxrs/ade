@@ -1165,6 +1165,255 @@ impl Store {
         Ok(())
     }
 
+    pub async fn create_merge_queue_entry(&self, entry: &MergeQueueEntry) -> Result<()> {
+        sqlx::query(
+            r#"INSERT INTO merge_queue_entries (
+                   id, workspace_id, worktree_id, session_id, target_branch, message, patch_source,
+                   base_commit_sha, head_commit_sha, patch_path, patch_size, status,
+                   result_commit_sha, error_message, created_at, updated_at
+               )
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+        )
+        .bind(entry.id.0.to_string())
+        .bind(entry.workspace_id.0.to_string())
+        .bind(entry.worktree_id.map(|id| id.0.to_string()))
+        .bind(entry.session_id.map(|id| id.0.to_string()))
+        .bind(&entry.target_branch)
+        .bind(entry.message.as_deref())
+        .bind(merge_queue_patch_source_to_str(&entry.patch_source))
+        .bind(entry.base_commit_sha.as_deref())
+        .bind(entry.head_commit_sha.as_deref())
+        .bind(&entry.patch_path)
+        .bind(entry.patch_size)
+        .bind(merge_queue_entry_status_to_str(&entry.status))
+        .bind(entry.result_commit_sha.as_deref())
+        .bind(entry.error_message.as_deref())
+        .bind(entry.created_at.to_rfc3339())
+        .bind(entry.updated_at.to_rfc3339())
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn update_merge_queue_entry(&self, entry: &MergeQueueEntry) -> Result<()> {
+        sqlx::query(
+            r#"UPDATE merge_queue_entries
+               SET worktree_id = ?,
+                   session_id = ?,
+                   target_branch = ?,
+                   message = ?,
+                   patch_source = ?,
+                   base_commit_sha = ?,
+                   head_commit_sha = ?,
+                   patch_path = ?,
+                   patch_size = ?,
+                   status = ?,
+                   result_commit_sha = ?,
+                   error_message = ?,
+                   updated_at = ?
+               WHERE id = ?"#,
+        )
+        .bind(entry.worktree_id.map(|id| id.0.to_string()))
+        .bind(entry.session_id.map(|id| id.0.to_string()))
+        .bind(&entry.target_branch)
+        .bind(entry.message.as_deref())
+        .bind(merge_queue_patch_source_to_str(&entry.patch_source))
+        .bind(entry.base_commit_sha.as_deref())
+        .bind(entry.head_commit_sha.as_deref())
+        .bind(&entry.patch_path)
+        .bind(entry.patch_size)
+        .bind(merge_queue_entry_status_to_str(&entry.status))
+        .bind(entry.result_commit_sha.as_deref())
+        .bind(entry.error_message.as_deref())
+        .bind(entry.updated_at.to_rfc3339())
+        .bind(entry.id.0.to_string())
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn get_merge_queue_entry(
+        &self,
+        id: MergeQueueEntryId,
+    ) -> Result<Option<MergeQueueEntry>> {
+        let row = sqlx::query(
+            r#"SELECT id, workspace_id, worktree_id, session_id, target_branch, message,
+                      patch_source, base_commit_sha, head_commit_sha, patch_path, patch_size,
+                      status, result_commit_sha, error_message, created_at, updated_at
+               FROM merge_queue_entries WHERE id = ?"#,
+        )
+        .bind(id.0.to_string())
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.and_then(map_merge_queue_entry))
+    }
+
+    pub async fn list_merge_queue_entries(
+        &self,
+        workspace_id: WorkspaceId,
+        limit: Option<i64>,
+    ) -> Result<Vec<MergeQueueEntry>> {
+        let mut builder = QueryBuilder::new(
+            r#"SELECT id, workspace_id, worktree_id, session_id, target_branch, message,
+                      patch_source, base_commit_sha, head_commit_sha, patch_path, patch_size,
+                      status, result_commit_sha, error_message, created_at, updated_at
+               FROM merge_queue_entries WHERE workspace_id = "#,
+        );
+        builder.push_bind(workspace_id.0.to_string());
+        builder.push(" ORDER BY created_at DESC");
+        if let Some(limit) = limit {
+            builder.push(" LIMIT ");
+            builder.push_bind(limit);
+        }
+        let rows = builder.build().fetch_all(&self.pool).await?;
+        let mut out = Vec::new();
+        for row in rows {
+            if let Some(entry) = map_merge_queue_entry(row) {
+                out.push(entry);
+            }
+        }
+        Ok(out)
+    }
+
+    pub async fn list_queued_merge_queue_entries(&self) -> Result<Vec<MergeQueueEntry>> {
+        let rows = sqlx::query(
+            r#"SELECT id, workspace_id, worktree_id, session_id, target_branch, message,
+                      patch_source, base_commit_sha, head_commit_sha, patch_path, patch_size,
+                      status, result_commit_sha, error_message, created_at, updated_at
+               FROM merge_queue_entries
+               WHERE status = ?
+               ORDER BY created_at ASC"#,
+        )
+        .bind("queued")
+        .fetch_all(&self.pool)
+        .await?;
+        let mut out = Vec::new();
+        for row in rows {
+            if let Some(entry) = map_merge_queue_entry(row) {
+                out.push(entry);
+            }
+        }
+        Ok(out)
+    }
+
+    pub async fn claim_merge_queue_entry(
+        &self,
+        entry_id: MergeQueueEntryId,
+        updated_at: DateTime<Utc>,
+    ) -> Result<bool> {
+        let result = sqlx::query(
+            r#"UPDATE merge_queue_entries
+               SET status = ?, updated_at = ?
+               WHERE id = ? AND status = ?"#,
+        )
+        .bind("running")
+        .bind(updated_at.to_rfc3339())
+        .bind(entry_id.0.to_string())
+        .bind("queued")
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() == 1)
+    }
+
+    pub async fn has_merge_queue_blocking_failure(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> Result<bool> {
+        let row = sqlx::query(
+            r#"SELECT 1 FROM merge_queue_entries
+               WHERE workspace_id = ? AND status IN ("failed", "conflict")
+               LIMIT 1"#,
+        )
+        .bind(workspace_id.0.to_string())
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.is_some())
+    }
+
+    pub async fn create_merge_queue_run(&self, run: &MergeQueueRun) -> Result<()> {
+        sqlx::query(
+            r#"INSERT INTO merge_queue_runs (
+                   id, entry_id, status, started_at, finished_at, exit_code,
+                   log_path, error_message, result_commit_sha
+               )
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+        )
+        .bind(run.id.0.to_string())
+        .bind(run.entry_id.0.to_string())
+        .bind(merge_queue_run_status_to_str(&run.status))
+        .bind(run.started_at.to_rfc3339())
+        .bind(run.finished_at.map(|dt| dt.to_rfc3339()))
+        .bind(run.exit_code)
+        .bind(run.log_path.as_deref())
+        .bind(run.error_message.as_deref())
+        .bind(run.result_commit_sha.as_deref())
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn update_merge_queue_run(&self, run: &MergeQueueRun) -> Result<()> {
+        sqlx::query(
+            r#"UPDATE merge_queue_runs
+               SET status = ?,
+                   finished_at = ?,
+                   exit_code = ?,
+                   log_path = ?,
+                   error_message = ?,
+                   result_commit_sha = ?
+               WHERE id = ?"#,
+        )
+        .bind(merge_queue_run_status_to_str(&run.status))
+        .bind(run.finished_at.map(|dt| dt.to_rfc3339()))
+        .bind(run.exit_code)
+        .bind(run.log_path.as_deref())
+        .bind(run.error_message.as_deref())
+        .bind(run.result_commit_sha.as_deref())
+        .bind(run.id.0.to_string())
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn list_merge_queue_runs(
+        &self,
+        entry_id: MergeQueueEntryId,
+    ) -> Result<Vec<MergeQueueRun>> {
+        let rows = sqlx::query(
+            r#"SELECT id, entry_id, status, started_at, finished_at, exit_code,
+                      log_path, error_message, result_commit_sha
+               FROM merge_queue_runs WHERE entry_id = ?
+               ORDER BY started_at DESC"#,
+        )
+        .bind(entry_id.0.to_string())
+        .fetch_all(&self.pool)
+        .await?;
+        let mut out = Vec::new();
+        for row in rows {
+            if let Some(run) = map_merge_queue_run(row) {
+                out.push(run);
+            }
+        }
+        Ok(out)
+    }
+
+    pub async fn get_latest_merge_queue_run(
+        &self,
+        entry_id: MergeQueueEntryId,
+    ) -> Result<Option<MergeQueueRun>> {
+        let row = sqlx::query(
+            r#"SELECT id, entry_id, status, started_at, finished_at, exit_code,
+                      log_path, error_message, result_commit_sha
+               FROM merge_queue_runs WHERE entry_id = ?
+               ORDER BY started_at DESC
+               LIMIT 1"#,
+        )
+        .bind(entry_id.0.to_string())
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.and_then(map_merge_queue_run))
+    }
+
     // Session APIs
     #[allow(clippy::too_many_arguments)]
     pub async fn create_session(
@@ -4305,6 +4554,57 @@ fn build_mobile_device_from_row(row: sqlx::sqlite::SqliteRow) -> Result<MobileDe
     })
 }
 
+fn map_merge_queue_entry(row: sqlx::sqlite::SqliteRow) -> Option<MergeQueueEntry> {
+    let id: String = row.try_get("id").ok()?;
+    let workspace_id: String = row.try_get("workspace_id").ok()?;
+    let worktree_id: Option<String> = row.try_get("worktree_id").ok()?;
+    let session_id: Option<String> = row.try_get("session_id").ok()?;
+    let target_branch: String = row.try_get("target_branch").ok()?;
+    let patch_source: String = row.try_get("patch_source").ok()?;
+    let created_at: String = row.try_get("created_at").ok()?;
+    let updated_at: String = row.try_get("updated_at").ok()?;
+    let status: String = row.try_get("status").ok()?;
+    Some(MergeQueueEntry {
+        id: MergeQueueEntryId(uuid::Uuid::parse_str(&id).ok()?),
+        workspace_id: WorkspaceId(uuid::Uuid::parse_str(&workspace_id).ok()?),
+        worktree_id: worktree_id
+            .and_then(|value| uuid::Uuid::parse_str(&value).ok())
+            .map(WorktreeId),
+        session_id: parse_optional_session_id(session_id),
+        target_branch,
+        message: row.try_get("message").ok(),
+        patch_source: parse_merge_queue_patch_source(&patch_source),
+        base_commit_sha: row.try_get("base_commit_sha").ok(),
+        head_commit_sha: row.try_get("head_commit_sha").ok(),
+        patch_path: row.try_get("patch_path").ok()?,
+        patch_size: row.try_get("patch_size").ok()?,
+        status: parse_merge_queue_entry_status(&status),
+        result_commit_sha: row.try_get("result_commit_sha").ok(),
+        error_message: row.try_get("error_message").ok(),
+        created_at: parse_dt(&created_at).ok()?,
+        updated_at: parse_dt(&updated_at).ok()?,
+    })
+}
+
+fn map_merge_queue_run(row: sqlx::sqlite::SqliteRow) -> Option<MergeQueueRun> {
+    let id: String = row.try_get("id").ok()?;
+    let entry_id: String = row.try_get("entry_id").ok()?;
+    let status: String = row.try_get("status").ok()?;
+    let started_at: String = row.try_get("started_at").ok()?;
+    let finished_at: Option<String> = row.try_get("finished_at").ok()?;
+    Some(MergeQueueRun {
+        id: MergeQueueRunId(uuid::Uuid::parse_str(&id).ok()?),
+        entry_id: MergeQueueEntryId(uuid::Uuid::parse_str(&entry_id).ok()?),
+        status: parse_merge_queue_run_status(&status),
+        started_at: parse_dt(&started_at).ok()?,
+        finished_at: finished_at.as_deref().and_then(|v| parse_dt(v).ok()),
+        exit_code: row.try_get("exit_code").ok(),
+        log_path: row.try_get("log_path").ok(),
+        error_message: row.try_get("error_message").ok(),
+        result_commit_sha: row.try_get("result_commit_sha").ok(),
+    })
+}
+
 struct SessionCatchupRow {
     session: Session,
     last_message_at: Option<DateTime<Utc>>,
@@ -4399,6 +4699,65 @@ fn parse_session_status(value: &str) -> SessionStatus {
         "failed" => SessionStatus::Failed,
         "cancelled" => SessionStatus::Cancelled,
         _ => SessionStatus::Active,
+    }
+}
+
+fn merge_queue_entry_status_to_str(status: &MergeQueueEntryStatus) -> &'static str {
+    match status {
+        MergeQueueEntryStatus::Queued => "queued",
+        MergeQueueEntryStatus::Running => "running",
+        MergeQueueEntryStatus::Passed => "passed",
+        MergeQueueEntryStatus::Failed => "failed",
+        MergeQueueEntryStatus::Conflict => "conflict",
+        MergeQueueEntryStatus::Cancelled => "cancelled",
+    }
+}
+
+fn parse_merge_queue_entry_status(value: &str) -> MergeQueueEntryStatus {
+    match value {
+        "queued" => MergeQueueEntryStatus::Queued,
+        "running" => MergeQueueEntryStatus::Running,
+        "passed" => MergeQueueEntryStatus::Passed,
+        "failed" => MergeQueueEntryStatus::Failed,
+        "conflict" => MergeQueueEntryStatus::Conflict,
+        "cancelled" => MergeQueueEntryStatus::Cancelled,
+        _ => MergeQueueEntryStatus::Queued,
+    }
+}
+
+fn merge_queue_run_status_to_str(status: &MergeQueueRunStatus) -> &'static str {
+    match status {
+        MergeQueueRunStatus::Running => "running",
+        MergeQueueRunStatus::Passed => "passed",
+        MergeQueueRunStatus::Failed => "failed",
+        MergeQueueRunStatus::Conflict => "conflict",
+        MergeQueueRunStatus::Cancelled => "cancelled",
+    }
+}
+
+fn parse_merge_queue_run_status(value: &str) -> MergeQueueRunStatus {
+    match value {
+        "running" => MergeQueueRunStatus::Running,
+        "passed" => MergeQueueRunStatus::Passed,
+        "failed" => MergeQueueRunStatus::Failed,
+        "conflict" => MergeQueueRunStatus::Conflict,
+        "cancelled" => MergeQueueRunStatus::Cancelled,
+        _ => MergeQueueRunStatus::Running,
+    }
+}
+
+fn merge_queue_patch_source_to_str(source: &MergeQueuePatchSource) -> &'static str {
+    match source {
+        MergeQueuePatchSource::Generated => "generated",
+        MergeQueuePatchSource::Provided => "provided",
+    }
+}
+
+fn parse_merge_queue_patch_source(value: &str) -> MergeQueuePatchSource {
+    match value {
+        "provided" => MergeQueuePatchSource::Provided,
+        "generated" => MergeQueuePatchSource::Generated,
+        _ => MergeQueuePatchSource::Generated,
     }
 }
 

@@ -13,7 +13,7 @@ use directories::BaseDirs;
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use tokio::sync::{broadcast, mpsc, watch, Mutex};
+use tokio::sync::{broadcast, mpsc, watch, Mutex, Notify};
 
 use crate::buffers::BufferStore;
 use crate::edit_plans::{EditPlan, EditPlanId};
@@ -158,6 +158,7 @@ pub struct AppState {
     pub terminals: TerminalManager,
     pub mobile_tunnel: MobileTunnelManager,
     pub web_sessions: Arc<WebSessionManager>,
+    pub merge_queue_notify: Arc<Notify>,
     schedulers: Mutex<HashMap<SessionId, mpsc::Sender<SchedulerCommand>>>,
     broadcasters: Mutex<HashMap<SessionId, broadcast::Sender<SessionEvent>>>,
     session_event_heads: Mutex<HashMap<SessionId, watch::Sender<i64>>>,
@@ -265,6 +266,7 @@ impl AppState {
         let perf_telemetry = PerfTelemetry::new(data_root.clone());
         let workspace_catchup = WorkspaceCatchupHub::new();
         let web_sessions = Arc::new(WebSessionManager::new());
+        let merge_queue_notify = Arc::new(Notify::new());
         Self {
             data_root,
             store,
@@ -295,6 +297,7 @@ impl AppState {
             terminals: TerminalManager::default(),
             mobile_tunnel: MobileTunnelManager::default(),
             web_sessions,
+            merge_queue_notify,
             schedulers: Mutex::new(HashMap::new()),
             broadcasters: Mutex::new(HashMap::new()),
             session_event_heads: Mutex::new(HashMap::new()),
@@ -1095,6 +1098,7 @@ pub async fn serve(bind: String, data_dir: Option<String>) -> Result<()> {
 
     resource_telemetry::spawn_resource_telemetry(state.clone());
     provider_guard::spawn_provider_guard(state.clone());
+    crate::merge_queue::spawn_merge_queue_runner(state.clone());
 
     // Reconnect managed mobile access tunnel on daemon start when enabled.
     {

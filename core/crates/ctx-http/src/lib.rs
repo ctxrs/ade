@@ -10,6 +10,7 @@ pub mod installs;
 pub mod llm;
 pub mod logs;
 pub mod lsp_catalog;
+pub mod merge_queue;
 pub mod mobile_e2ee;
 pub mod mobile_tunnel;
 pub mod perf_telemetry;

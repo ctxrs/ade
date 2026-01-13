@@ -5,6 +5,7 @@ import type {
   Diagnostics,
   Message,
   MessageAttachment,
+  MergeQueueEntry,
   MobileConnectionProfile,
   MobileDeviceRegistration,
   ProviderStatus,
@@ -52,6 +53,7 @@ export type {
   Diagnostics,
   Message,
   MessageAttachment,
+  MergeQueueEntry,
   MobileConnectionProfile,
   MobileDeviceRegistration,
   ProviderStatus,
@@ -1002,6 +1004,42 @@ export const getWorktree = (worktreeId: string) =>
 
 export const getWorktreeBootstrapLogs = async (worktreeId: string): Promise<string> => {
   const resp = await daemonFetchRaw(`/api/worktrees/${worktreeId}/bootstrap/logs`);
+  if (resp.status >= 400) {
+    const msg = String(resp.body || "").trim();
+    throw new Error(msg || `Failed to download logs (${resp.status}).`);
+  }
+  return resp.body ?? "";
+};
+
+export const listMergeQueueEntries = (workspaceId: string, opts?: { limit?: number }) => {
+  const qs = new URLSearchParams({ workspace_id: workspaceId });
+  if (typeof opts?.limit === "number") qs.set("limit", String(opts.limit));
+  const suffix = qs.toString() ? `?${qs.toString()}` : "";
+  return apiAny<MergeQueueEntry[]>(`/api/merge-queue/entries${suffix}`);
+};
+
+export const submitMergeQueueEntry = (payload: {
+  session_id?: string;
+  worktree_id?: string;
+  target_branch?: string;
+  message?: string;
+  patch?: string;
+  base_commit_sha?: string;
+  head_commit_sha?: string;
+}) =>
+  apiAny<MergeQueueEntry>("/api/merge-queue/entries", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+
+export const cancelMergeQueueEntry = (entryId: string) =>
+  apiAny<MergeQueueEntry>(`/api/merge-queue/entries/${entryId}/cancel`, { method: "POST" });
+
+export const retryMergeQueueEntry = (entryId: string) =>
+  apiAny<MergeQueueEntry>(`/api/merge-queue/entries/${entryId}/retry`, { method: "POST" });
+
+export const getMergeQueueEntryLogs = async (entryId: string): Promise<string> => {
+  const resp = await daemonFetchRaw(`/api/merge-queue/entries/${entryId}/logs`);
   if (resp.status >= 400) {
     const msg = String(resp.body || "").trim();
     throw new Error(msg || `Failed to download logs (${resp.status}).`);
