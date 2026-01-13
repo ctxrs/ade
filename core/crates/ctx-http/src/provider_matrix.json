@@ -86,15 +86,15 @@
         },
         {
           "version": "0.7.4-ctx.8",
-          "status": "supported",
+          "status": "deprecated",
           "context_min": "0.1.0",
-          "notes": "Linux x86_64 only"
+          "notes": "Superseded by ctx.10 (Linux x86_64 only)"
         },
         {
           "version": "0.7.4-ctx.9",
           "status": "blocked",
           "context_min": "0.1.0",
-          "notes": "Rolled back to ctx.8 (Linux x86_64 only)"
+          "notes": "Bad release; use ctx.10 (Linux x86_64 only)"
         },
         {
           "version": "0.7.4-ctx.10",
