@@ -7,7 +7,7 @@ use anyhow::{anyhow, Result};
 use clap::{Parser, Subcommand};
 use chrono::{DateTime, Utc};
 use tracing::warn;
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, Layer};
 use tokio::time::MissedTickBehavior;
 
 #[derive(Parser)]
