@@ -77,7 +77,8 @@ struct WorkbenchShellView: View {
                         onDiffTap: { handleTopBarAction(.diff) },
                         onSessionsTap: { handleTopBarAction(.sessions) },
                         onTerminalTap: { handleTopBarAction(.terminal) },
-                        taskMenuContext: taskMenuContext
+                        taskMenuContext: taskMenuContext,
+                        showsTaskActions: workbenchSelection.taskId != nil
                     )
                     .padding(.horizontal, 20)
                     .padding(.top, 8)
@@ -187,7 +188,7 @@ struct WorkbenchShellView: View {
     }
 
     private func resolvedTaskTitle() -> String {
-        guard let selectedTask else { return "Select a task" }
+        guard let selectedTask else { return "New task" }
         let trimmed = selectedTask.task.title.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? "New Task" : trimmed
     }
@@ -916,6 +917,7 @@ private struct WorkbenchTopBar: View {
     let onSessionsTap: () -> Void
     let onTerminalTap: () -> Void
     let taskMenuContext: WorkbenchTaskMenuContext?
+    let showsTaskActions: Bool
 
     var body: some View {
         HStack(spacing: 12) {
@@ -933,46 +935,48 @@ private struct WorkbenchTopBar: View {
 
             Spacer(minLength: 0)
 
-            HStack(spacing: 14) {
-                Button(action: onArtifactsTap) {
-                    LucideIcon(name: .image, size: 16)
-                }
-                .accessibilityIdentifier("topbar.artifacts")
-
-                Button(action: onDiffTap) {
-                    LucideIcon(name: .gitBranch, size: 16)
-                }
-                .accessibilityIdentifier("topbar.diff")
-
-                Button(action: onSessionsTap) {
-                    LucideIcon(name: .monitor, size: 16)
-                }
-                .accessibilityIdentifier("topbar.sessions")
-
-                Button(action: onTerminalTap) {
-                    LucideIcon(name: .terminal, size: 16)
-                }
-                .accessibilityIdentifier("topbar.terminal")
-
-                Menu {
-                    if let context = taskMenuContext {
-                        Button("Rename Task", action: context.onRename)
-                        Button(context.isArchived ? "Unarchive" : "Archive", action: context.onArchiveToggle)
-                            .disabled(context.isArchivePending)
-                        Button(context.isUnread ? "Mark as Read" : "Mark as Unread", action: context.onToggleReadState)
-                            .disabled(!context.hasAssistantMessages || context.isMarkReadPending)
-                        Button("Delete Task", role: .destructive, action: context.onDelete)
-                            .disabled(context.isDeletePending)
-                    } else {
-                        Text("Select a task to manage it.")
+            if showsTaskActions {
+                HStack(spacing: 14) {
+                    Button(action: onArtifactsTap) {
+                        LucideIcon(name: .image, size: 16)
                     }
-                } label: {
-                    LucideIcon(name: .ellipsis, size: 16)
+                    .accessibilityIdentifier("topbar.artifacts")
+
+                    Button(action: onDiffTap) {
+                        LucideIcon(name: .gitBranch, size: 16)
+                    }
+                    .accessibilityIdentifier("topbar.diff")
+
+                    Button(action: onSessionsTap) {
+                        LucideIcon(name: .monitor, size: 16)
+                    }
+                    .accessibilityIdentifier("topbar.sessions")
+
+                    Button(action: onTerminalTap) {
+                        LucideIcon(name: .terminal, size: 16)
+                    }
+                    .accessibilityIdentifier("topbar.terminal")
+
+                    Menu {
+                        if let context = taskMenuContext {
+                            Button("Rename Task", action: context.onRename)
+                            Button(context.isArchived ? "Unarchive" : "Archive", action: context.onArchiveToggle)
+                                .disabled(context.isArchivePending)
+                            Button(context.isUnread ? "Mark as Read" : "Mark as Unread", action: context.onToggleReadState)
+                                .disabled(!context.hasAssistantMessages || context.isMarkReadPending)
+                            Button("Delete Task", role: .destructive, action: context.onDelete)
+                                .disabled(context.isDeletePending)
+                        } else {
+                            Text("Select a task to manage it.")
+                        }
+                    } label: {
+                        LucideIcon(name: .ellipsis, size: 16)
+                    }
+                    .accessibilityIdentifier("topbar.taskmenu")
+                    .disabled(taskMenuContext == nil)
                 }
-                .accessibilityIdentifier("topbar.taskmenu")
-                .disabled(taskMenuContext == nil)
+                .foregroundColor(.ctxTextPrimary)
             }
-            .foregroundColor(.ctxTextPrimary)
         }
     }
 }
@@ -1392,11 +1396,7 @@ private struct WorkbenchNewTaskView: View {
 
     var body: some View {
         ScrollView(showsIndicators: false) {
-            VStack(alignment: .leading, spacing: 18) {
-                Text("New task")
-                    .font(.title3.weight(.semibold))
-                    .foregroundColor(.ctxTextPrimary)
-
+            VStack(alignment: .leading, spacing: 16) {
                 if isLoadingTasks {
                     Text("Refreshing tasks...")
                         .font(.caption)
@@ -1405,8 +1405,8 @@ private struct WorkbenchNewTaskView: View {
                     WorkbenchInfoCard(text: taskError, tint: .ctxError)
                 }
 
-                GlassPanel {
-                    VStack(alignment: .leading, spacing: 14) {
+                GlassPanel(cornerRadius: 18, padding: 12) {
+                    VStack(alignment: .leading, spacing: 12) {
                         Text("Prompt")
                             .font(.caption.weight(.semibold))
                             .foregroundColor(.ctxTextMuted)
@@ -1417,11 +1417,13 @@ private struct WorkbenchNewTaskView: View {
                             isFocused: $isPromptFocused
                         )
 
-                        WorkbenchMenuPicker(
+                        WorkbenchHarnessPicker(
                             title: "Harness",
                             value: providerLabel,
+                            providerId: providerIconId,
                             isDisabled: providerOptionsDisabled,
                             options: availableProviderIds,
+                            displayName: formatProviderName,
                             onSelect: { id in
                                 selectedProviderId = id
                                 selectedModelId = ""
@@ -1495,6 +1497,11 @@ private struct WorkbenchNewTaskView: View {
     private var providerLabel: String {
         if isLoadingProviders { return "Loading..." }
         if availableProviderIds.isEmpty { return "No harnesses" }
+        return formatProviderName(effectiveProviderId)
+    }
+
+    private var providerIconId: String? {
+        if isLoadingProviders || availableProviderIds.isEmpty { return nil }
         return effectiveProviderId
     }
 
@@ -1525,6 +1532,13 @@ private struct WorkbenchNewTaskView: View {
 
     private var canSubmit: Bool {
         !promptTrimmed.isEmpty && !effectiveProviderId.isEmpty && !effectiveModelId.isEmpty && !isSubmitting
+    }
+
+    private func formatProviderName(_ providerId: String) -> String {
+        providerId
+            .replacingOccurrences(of: "_", with: " ")
+            .replacingOccurrences(of: "-", with: " ")
+            .capitalized
     }
 
     @MainActor
@@ -1747,6 +1761,72 @@ private struct WorkbenchMenuPicker: View {
             )
         }
         .disabled(isDisabled)
+    }
+}
+
+private struct WorkbenchHarnessPicker: View {
+    let title: String
+    let value: String
+    let providerId: String?
+    let isDisabled: Bool
+    let options: [String]
+    let displayName: (String) -> String
+    let onSelect: (String) -> Void
+
+    var body: some View {
+        Menu {
+            ForEach(options, id: \.self) { option in
+                Button(displayName(option)) { onSelect(option) }
+            }
+        } label: {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(title)
+                    .font(.caption.weight(.semibold))
+                    .foregroundColor(.ctxTextMuted)
+                HStack(spacing: 10) {
+                    HarnessLogoView(providerId: providerId)
+                    Text(value)
+                        .foregroundColor(.ctxTextPrimary)
+                        .font(.subheadline.weight(.semibold))
+                    Spacer()
+                    Image(systemName: "chevron.down")
+                        .foregroundColor(.ctxTextSecondary)
+                        .font(.caption)
+                }
+                .padding(.vertical, 6)
+            }
+            .contentShape(Rectangle())
+        }
+        .disabled(isDisabled)
+    }
+}
+
+private struct HarnessLogoView: View {
+    let providerId: String?
+
+    var body: some View {
+        let base = RoundedRectangle(cornerRadius: 8, style: .continuous)
+        if let providerId,
+           let harness = HarnessCatalog.entry(for: providerId) {
+            Image(harness.assetName)
+                .resizable()
+                .renderingMode(.original)
+                .scaledToFit()
+                .frame(width: 20, height: 20)
+                .clipShape(base)
+                .modifier(HarnessInvertModifier(shouldInvert: harness.invertInDark))
+                .background(
+                    base
+                        .fill(Color.white.opacity(0.08))
+                )
+        } else {
+            base
+                .fill(Color.white.opacity(0.10))
+                .frame(width: 20, height: 20)
+                .overlay(
+                    base.stroke(Color(red: 0.071, green: 0.071, blue: 0.071).opacity(0.8), lineWidth: 1)
+                )
+        }
     }
 }
 
