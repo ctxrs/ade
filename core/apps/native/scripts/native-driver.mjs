@@ -63,15 +63,58 @@ function normalizeTimeout(value, fallback) {
   return Math.trunc(number);
 }
 
-function parseSelector(selector) {
-  if (typeof selector !== "string") {
-    throw new Error("locator selector must be a string");
+function formatSelectorText(selector) {
+  if (typeof selector === "string") {
+    return selector;
   }
-  if (selector.startsWith("#") && selector.length > 1) {
-    return { kind: "id", value: selector.slice(1) };
+  if (!selector || typeof selector !== "object") {
+    return String(selector);
   }
-  throw new Error(`Unsupported selector "${selector}". Only "#id" is supported.`);
+  const { kind, value, name } = selector;
+  if (kind === "id") {
+    return `#${value}`;
+  }
+  if (kind === "role") {
+    if (name) {
+      return `role=${value} name=${name}`;
+    }
+    return `role=${value}`;
+  }
+  if (kind === "text") {
+    return `text=${value}`;
+  }
+  return `${kind}=${value}`;
 }
+
+function parseSelector(selector) {
+  if (typeof selector === "string") {
+    if (selector.startsWith("#") && selector.length > 1) {
+      return { kind: "id", value: selector.slice(1) };
+    }
+    throw new Error(
+      `Unsupported selector "${selector}". Use "#id" or page.getByRole()/getByText().`,
+    );
+  }
+  if (!selector || typeof selector !== "object") {
+    throw new Error("locator selector must be a string or selector object");
+  }
+  const { kind, value, name } = selector;
+  if (typeof kind !== "string" || !kind) {
+    throw new Error("selector.kind must be a string");
+  }
+  if (typeof value !== "string" || !value) {
+    throw new Error("selector.value must be a string");
+  }
+  const normalized = { kind, value };
+  if (name !== undefined && name !== null) {
+    if (typeof name !== "string" || !name) {
+      throw new Error("selector.name must be a string");
+    }
+    normalized.name = name;
+  }
+  return normalized;
+}
+
 
 async function callJson(baseUrl, path, options = {}) {
   const { method = "POST", body, timeoutMs = DEFAULT_HTTP_TIMEOUT_MS } = options;
@@ -290,7 +333,7 @@ class JsonRpcClient {
 class Locator {
   constructor(rpc, selectorText) {
     this.rpc = rpc;
-    this.selectorText = selectorText;
+    this.selectorText = formatSelectorText(selectorText);
     this.selector = parseSelector(selectorText);
   }
 
@@ -355,6 +398,22 @@ function createPage(rpc, httpUrl) {
   return {
     locator(selector) {
       return new Locator(rpc, selector);
+    },
+    getByRole(role, options = {}) {
+      if (role === undefined || role === null || role === "") {
+        throw new Error("getByRole requires a role");
+      }
+      const selector = { kind: "role", value: String(role) };
+      if (options.name !== undefined && options.name !== null) {
+        selector.name = String(options.name);
+      }
+      return new Locator(rpc, selector);
+    },
+    getByText(text) {
+      if (text === undefined || text === null || text === "") {
+        throw new Error("getByText requires text");
+      }
+      return new Locator(rpc, { kind: "text", value: String(text) });
     },
     async screenshot({ path, name } = {}) {
       return callJson(httpUrl, "/screenshot", {

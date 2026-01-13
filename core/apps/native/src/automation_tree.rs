@@ -92,13 +92,51 @@ impl AutomationRegistry {
         visible: bool,
         enabled: bool,
     ) {
+        self.update_target_with(
+            target.id.to_string(),
+            target.role.to_string(),
+            target.name.map(|name| name.to_string()),
+            target.parent.map(|parent| parent.to_string()),
+            bounds,
+            visible,
+            enabled,
+        );
+    }
+
+    pub fn update_target_dynamic(
+        &self,
+        id: String,
+        role: String,
+        name: Option<String>,
+        parent: Option<String>,
+        bounds: Option<AutomationBounds>,
+        visible: bool,
+        enabled: bool,
+    ) {
+        self.update_target_with(id, role, name, parent, bounds, visible, enabled);
+    }
+
+    pub fn clear_prefix(&self, prefix: &str) {
         let mut nodes = self.nodes.lock().expect("automation registry lock");
-        let id = target.id.to_string();
+        nodes.retain(|id, _| !id.starts_with(prefix));
+    }
+
+    fn update_target_with(
+        &self,
+        id: String,
+        role: String,
+        name: Option<String>,
+        parent: Option<String>,
+        bounds: Option<AutomationBounds>,
+        visible: bool,
+        enabled: bool,
+    ) {
+        let mut nodes = self.nodes.lock().expect("automation registry lock");
         let entry = nodes.entry(id.clone()).or_insert_with(|| AutomationNodeState {
             id,
-            role: target.role.to_string(),
-            name: target.name.map(|name| name.to_string()),
-            parent: target.parent.map(|parent| parent.to_string()),
+            role,
+            name,
+            parent,
             bounds: AutomationBounds::default(),
             visible: false,
             enabled: true,
@@ -142,6 +180,13 @@ impl AutomationRegistry {
         collect_by_role(&tree, role, name, &mut matches);
         matches
     }
+
+    pub fn get_by_text(&self, text: &str) -> Vec<AutomationNode> {
+        let tree = self.snapshot();
+        let mut matches = Vec::new();
+        collect_by_text(&tree, text, &mut matches);
+        matches
+    }
 }
 
 static AUTOMATION_REGISTRY: OnceLock<AutomationRegistry> = OnceLock::new();
@@ -152,6 +197,10 @@ pub fn registry() -> &'static AutomationRegistry {
 
 pub fn snapshot() -> AutomationNode {
     registry().snapshot()
+}
+
+pub fn get_by_text(text: &str) -> Vec<AutomationNode> {
+    registry().get_by_text(text)
 }
 
 pub fn track_children_bounds(
@@ -176,6 +225,32 @@ pub fn register_hidden(
     parent: Option<&'static str>,
 ) {
     registry().update_target(AutomationTarget::new(id, role, name, parent), None, false, true);
+}
+
+pub fn track_children_bounds_dynamic(
+    id: String,
+    role: String,
+    name: Option<String>,
+    parent: Option<String>,
+) -> impl Fn(Vec<Bounds<Pixels>>, &mut Window, &mut App) + 'static {
+    let registry = registry();
+    move |children_bounds, _window, _cx| {
+        let bounds = union_children_bounds(&children_bounds);
+        let visible = bounds.is_some();
+        registry.update_target_dynamic(
+            id.clone(),
+            role.clone(),
+            name.clone(),
+            parent.clone(),
+            bounds,
+            visible,
+            true,
+        );
+    }
+}
+
+pub fn clear_prefix(prefix: &str) {
+    registry().clear_prefix(prefix);
 }
 
 fn union_children_bounds(children_bounds: &[Bounds<Pixels>]) -> Option<AutomationBounds> {
@@ -258,6 +333,19 @@ fn collect_by_role(
     }
     for child in &node.children {
         collect_by_role(child, role, name, matches);
+    }
+}
+
+fn collect_by_text(
+    node: &AutomationNode,
+    text: &str,
+    matches: &mut Vec<AutomationNode>,
+) {
+    if node.name.as_deref() == Some(text) {
+        matches.push(node.clone());
+    }
+    for child in &node.children {
+        collect_by_text(child, text, matches);
     }
 }
 

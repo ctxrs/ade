@@ -14,6 +14,7 @@ use gpui_component::{checkbox::Checkbox, input::Input, tooltip::Tooltip, v_virtu
 use ctx_core::ids::{TaskId, WorkspaceId};
 use ctx_core::models::SessionStatus;
 
+use crate::automation_tree;
 use crate::theme::{ThemeColors, ThemeMetrics};
 
 use super::super::harness_catalog::harness_entry;
@@ -358,7 +359,7 @@ impl<'a> SidebarView<'a> {
     fn render_workbench_header(&self, cx: &mut Context<ShellView>) -> impl IntoElement {
         let shell = self.shell;
 
-        let new_task = div()
+        let new_task_button = div()
             .w_full()
             .px(px(10.0))
             .py(px(7.0))
@@ -373,6 +374,14 @@ impl<'a> SidebarView<'a> {
             .id("sidebar-new-task")
             .active(|style| style.opacity(0.85))
             .on_click(cx.listener(ShellView::focus_new_task));
+        let new_task = div()
+            .on_children_prepainted(automation_tree::track_children_bounds(
+                "sidebar-new-task",
+                "button",
+                Some("New Task"),
+                Some("app-shell"),
+            ))
+            .child(new_task_button);
 
         let collapse = div()
             .w(px(26.0))
@@ -435,6 +444,8 @@ impl<'a> SidebarView<'a> {
         let active_last_index = model.active_last_index;
         let list_len = items.len();
 
+        automation_tree::clear_prefix("task-row-");
+
         let list = v_virtual_list(
             cx.entity().clone(),
             "task-list",
@@ -467,6 +478,15 @@ impl<'a> SidebarView<'a> {
         .pr(px(4.0))
         .min_h(px(0.0))
         .w_full();
+
+        let list = div()
+            .on_children_prepainted(automation_tree::track_children_bounds(
+                "task-list",
+                "list",
+                Some("Tasks"),
+                Some("app-shell"),
+            ))
+            .child(list);
 
         div()
             .px(px(12.0))
@@ -688,6 +708,8 @@ fn render_task_row(
     } else {
         task.task.title.clone()
     };
+    let row_id = format!("task-row-{}", task_id.0);
+    let row_name = title.clone();
 
     let selected = view.selected_task == Some(task_id);
     let hovered = view.task_hovered == Some(task_id);
@@ -840,6 +862,12 @@ fn render_task_row(
 
     div()
         .h(px(TASK_ROW_HEIGHT + TASK_ROW_GAP))
+        .on_children_prepainted(automation_tree::track_children_bounds_dynamic(
+            row_id,
+            "listitem".to_string(),
+            Some(row_name),
+            Some("task-list".to_string()),
+        ))
         .child(row)
         .into_any_element()
 }

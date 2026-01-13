@@ -1036,6 +1036,8 @@ async fn handle_rpc_method(
 struct Selector {
     kind: String,
     value: String,
+    #[serde(default)]
+    name: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1052,8 +1054,28 @@ struct LocatorTypeParams {
 fn resolve_selector_node(selector: &Selector) -> Option<automation_tree::AutomationNode> {
     match selector.kind.as_str() {
         "id" => automation_tree::registry().get_by_id(&selector.value),
+        "role" => select_first_match(automation_tree::registry().get_by_role(
+            &selector.value,
+            selector.name.as_deref(),
+        )),
+        "text" => select_first_match(automation_tree::registry().get_by_text(&selector.value)),
         _ => None,
     }
+}
+
+fn select_first_match(
+    nodes: Vec<automation_tree::AutomationNode>,
+) -> Option<automation_tree::AutomationNode> {
+    let mut first = None;
+    for node in nodes {
+        if first.is_none() {
+            first = Some(node.clone());
+        }
+        if node.visible {
+            return Some(node);
+        }
+    }
+    first
 }
 
 fn focus_target_for_selector(selector: &Selector) -> Option<FocusTarget> {

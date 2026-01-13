@@ -65,11 +65,14 @@ function parseArgs(argv) {
 
 function printReplHelp() {
   console.log(`Examples:
+  const newTask = page.getByRole("button", { name: "New Task" });
+  await newTask.click();
   const composer = page.locator("#composer-input");
   await composer.click();
   await composer.type("hello");
   await page.keyboard.press("Enter");
   await expect(composer).toBeVisible();
+  await expect(page.getByText("New Task")).toBeVisible();
   await page.screenshot({ name: "workbench" });
 
 Use app.rpc("method", { ... }) for raw JSON-RPC calls.
