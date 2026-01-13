@@ -6,13 +6,89 @@ import UniformTypeIdentifiers
 import UIKit
 import _Concurrency
 
+enum ComposerEffort: String, CaseIterable, Identifiable {
+    case low
+    case medium
+    case high
+
+    var id: String { rawValue }
+
+    var label: String {
+        rawValue.capitalized
+    }
+}
+
+enum ComposerMode: String, CaseIterable, Identifiable {
+    case standard
+    case plan
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .standard:
+            return "Default"
+        case .plan:
+            return "Plan"
+        }
+    }
+}
+
+enum ComposerVerbosity: String, CaseIterable, Identifiable {
+    case terse
+    case normal
+    case verbose
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .terse:
+            return "Terse"
+        case .normal:
+            return "Default"
+        case .verbose:
+            return "Verbose"
+        }
+    }
+}
+
 struct ChatView: View {
     @ObservedObject var viewModel: ChatViewModel
     var showsBackground: Bool = true
+    var providerId: String?
+    var modelOptions: [String]
+    var isModelLoading: Bool
+    @Binding var selectedModelId: String
+    @Binding var selectedEffort: ComposerEffort
+    @Binding var selectedMode: ComposerMode
+    @Binding var selectedVerbosity: ComposerVerbosity
     @State private var composerText = ""
     @State private var pendingAttachments: [MessageAttachment] = []
     @State private var selectedPhotos: [PhotosPickerItem] = []
     @FocusState private var isComposerFocused: Bool
+
+    init(
+        viewModel: ChatViewModel,
+        showsBackground: Bool = true,
+        providerId: String? = nil,
+        modelOptions: [String] = [],
+        isModelLoading: Bool = false,
+        selectedModelId: Binding<String> = .constant(""),
+        selectedEffort: Binding<ComposerEffort> = .constant(.high),
+        selectedMode: Binding<ComposerMode> = .constant(.standard),
+        selectedVerbosity: Binding<ComposerVerbosity> = .constant(.normal)
+    ) {
+        self.viewModel = viewModel
+        self.showsBackground = showsBackground
+        self.providerId = providerId
+        self.modelOptions = modelOptions
+        self.isModelLoading = isModelLoading
+        _selectedModelId = selectedModelId
+        _selectedEffort = selectedEffort
+        _selectedMode = selectedMode
+        _selectedVerbosity = selectedVerbosity
+    }
 
     var body: some View {
         ZStack {
@@ -35,8 +111,17 @@ struct ChatView: View {
                     text: $composerText,
                     selectedPhotos: $selectedPhotos,
                     isSendEnabled: isSendEnabled,
+                    isWorking: viewModel.isAssistantWorking,
                     isFocused: $isComposerFocused,
-                    onSend: sendMessage
+                    providerId: providerId,
+                    modelOptions: modelOptions,
+                    isModelLoading: isModelLoading,
+                    selectedModelId: $selectedModelId,
+                    selectedEffort: $selectedEffort,
+                    selectedMode: $selectedMode,
+                    selectedVerbosity: $selectedVerbosity,
+                    onSend: sendMessage,
+                    onInterrupt: interruptSession
                 )
             }
             .padding(.horizontal, CtxChatStyle.composerOuterPadding)
@@ -109,6 +194,10 @@ struct ChatView: View {
         pendingAttachments = []
     }
 
+    private func interruptSession() {
+        viewModel.interrupt()
+    }
+
     @MainActor
     private func loadAttachments(from items: [PhotosPickerItem]) async {
         guard !items.isEmpty else { return }
@@ -158,10 +247,18 @@ struct ChatDetailView: View {
     @EnvironmentObject private var connection: ConnectionStore
     let session: SessionSummary
     @StateObject private var viewModel: ChatViewModel
-    @State private var isArtifactsPresented = false
+    @Binding var isArtifactsPresented: Bool
+    @State private var availableModels: [String] = []
+    @State private var isLoadingModels = false
+    @State private var selectedModelId: String
+    @State private var selectedEffort: ComposerEffort = .high
+    @State private var selectedMode: ComposerMode = .standard
+    @State private var selectedVerbosity: ComposerVerbosity = .normal
 
-    init(session: SessionSummary) {
+    init(session: SessionSummary, isArtifactsPresented: Binding<Bool>) {
         self.session = session
+        _isArtifactsPresented = isArtifactsPresented
+        _selectedModelId = State(initialValue: session.modelId)
         _viewModel = StateObject(
             wrappedValue: ChatViewModel(
                 initialSessionId: session.id,
@@ -171,26 +268,37 @@ struct ChatDetailView: View {
     }
 
     var body: some View {
-        ChatView(viewModel: viewModel, showsBackground: true)
+        ChatView(
+            viewModel: viewModel,
+            showsBackground: true,
+            providerId: session.providerId,
+            modelOptions: availableModels,
+            isModelLoading: isLoadingModels,
+            selectedModelId: $selectedModelId,
+            selectedEffort: $selectedEffort,
+            selectedMode: $selectedMode,
+            selectedVerbosity: $selectedVerbosity
+        )
             .onAppear {
                 viewModel.setClient(connection.apiClient)
                 viewModel.selectSession(session.id, workspaceId: session.workspaceId)
+                _Concurrency.Task { await loadModels() }
             }
             .onChange(of: session.id) { newSessionId in
                 viewModel.selectSession(newSessionId, workspaceId: session.workspaceId)
+                selectedModelId = session.modelId
+                _Concurrency.Task { await loadModels() }
             }
             .onChange(of: session.workspaceId) { _ in
                 viewModel.selectSession(session.id, workspaceId: session.workspaceId)
+                _Concurrency.Task { await loadModels() }
             }
-            .navigationTitle(session.title)
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button {
-                        isArtifactsPresented = true
-                    } label: {
-                        Image(systemName: "photo.stack")
-                    }
+            .onChange(of: session.providerId) { _ in
+                _Concurrency.Task { await loadModels() }
+            }
+            .onChange(of: session.modelId) { _, newModelId in
+                if !newModelId.isEmpty {
+                    selectedModelId = newModelId
                 }
             }
             .sheet(isPresented: $isArtifactsPresented) {
@@ -201,6 +309,30 @@ struct ChatDetailView: View {
                     errorMessage: viewModel.artifactsError
                 )
             }
+    }
+
+    @MainActor
+    private func loadModels() async {
+        guard let client = connection.apiClient,
+              let workspaceId = session.workspaceId else {
+            availableModels = []
+            isLoadingModels = false
+            return
+        }
+        isLoadingModels = true
+        do {
+            let options = try await client.getProviderOptions(workspaceId: workspaceId, providerId: session.providerId)
+            let models = extractModelIds(from: options.models)
+            availableModels = models
+            if !selectedModelId.isEmpty, models.contains(selectedModelId) {
+                isLoadingModels = false
+                return
+            }
+            selectedModelId = models.first ?? selectedModelId
+        } catch {
+            availableModels = []
+        }
+        isLoadingModels = false
     }
 }
 
@@ -226,11 +358,16 @@ struct MessageRow: View {
     private var bubble: some View {
         VStack(alignment: .leading, spacing: 8) {
             if !message.text.isEmpty {
-                Text(message.text)
-                    .font(CtxChatStyle.bodyFont)
-                    .foregroundColor(.ctxTextPrimary)
-                    .lineSpacing(CtxChatStyle.bodyLineSpacing)
-                    .accessibilityIdentifier("chat.message.text.\(message.role == .assistant ? "assistant" : "user")")
+                if message.role == .assistant {
+                    MarkdownText(text: message.text)
+                        .accessibilityIdentifier("chat.message.text.assistant")
+                } else {
+                    Text(message.text)
+                        .font(CtxChatStyle.bodyFont)
+                        .foregroundColor(.ctxTextPrimary)
+                        .lineSpacing(CtxChatStyle.bodyLineSpacing)
+                        .accessibilityIdentifier("chat.message.text.user")
+                }
             }
             if !message.attachments.isEmpty {
                 AttachmentStrip(
@@ -241,6 +378,30 @@ struct MessageRow: View {
         }
         .modifier(MessageBubbleStyle(role: message.role, maxBubbleWidth: maxBubbleWidth))
         .accessibilityElement(children: .contain)
+    }
+}
+
+private struct MarkdownText: View {
+    let text: String
+
+    var body: some View {
+        if let attributed = try? AttributedString(
+            markdown: text,
+            options: AttributedString.MarkdownParsingOptions(
+                interpretedSyntax: .full,
+                failurePolicy: .returnPartiallyParsedIfPossible
+            )
+        ) {
+            Text(attributed)
+                .font(CtxChatStyle.bodyFont)
+                .foregroundColor(.ctxTextPrimary)
+                .lineSpacing(CtxChatStyle.bodyLineSpacing)
+        } else {
+            Text(text)
+                .font(CtxChatStyle.bodyFont)
+                .foregroundColor(.ctxTextPrimary)
+                .lineSpacing(CtxChatStyle.bodyLineSpacing)
+        }
     }
 }
 
@@ -366,10 +527,10 @@ private func formatElapsedMs(_ ms: TimeInterval) -> String {
     let minutes = (totalSeconds / 60) % 60
     let hours = totalSeconds / 3600
     if hours > 0 {
-        return "\(hours)h \(String(format: "%02d", minutes))m"
+        return "\(hours)h \(minutes)m"
     }
     if minutes > 0 {
-        return "\(minutes)m \(String(format: "%02d", seconds))s"
+        return "\(minutes)m \(seconds)s"
     }
     return "\(seconds)s"
 }
@@ -794,11 +955,112 @@ struct ComposerBar: View {
     @Binding var text: String
     @Binding var selectedPhotos: [PhotosPickerItem]
     var isSendEnabled: Bool
+    var isWorking: Bool
     var isFocused: FocusState<Bool>.Binding
+    var providerId: String?
+    var modelOptions: [String]
+    var isModelLoading: Bool
+    @Binding var selectedModelId: String
+    @Binding var selectedEffort: ComposerEffort
+    @Binding var selectedMode: ComposerMode
+    @Binding var selectedVerbosity: ComposerVerbosity
     var onSend: () -> Void
+    var onInterrupt: () -> Void
+
+    private var modelChoices: [String] {
+        modelOptions.isEmpty ? ["default"] : modelOptions
+    }
+
+    private var resolvedModelId: String {
+        let fallback = modelChoices.first ?? "default"
+        return selectedModelId.isEmpty ? fallback : selectedModelId
+    }
 
     var body: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 10) {
+            HStack(spacing: 12) {
+                HStack(spacing: 8) {
+                    ComposerHarnessIcon(providerId: providerId)
+
+                    Menu {
+                        Section("Model") {
+                            ForEach(modelChoices, id: \.self) { modelId in
+                                Button(modelId) {
+                                    selectedModelId = modelId
+                                }
+                            }
+                        }
+                        Section("Effort") {
+                            ForEach(ComposerEffort.allCases) { effort in
+                                Button(effort.label) {
+                                    selectedEffort = effort
+                                }
+                            }
+                        }
+                    } label: {
+                        HStack(spacing: 6) {
+                            Text(isModelLoading ? "Loading..." : "\(resolvedModelId) - \(selectedEffort.label)")
+                                .font(.footnote.weight(.semibold))
+                                .foregroundColor(.ctxTextPrimary)
+                                .lineLimit(1)
+                            Image(systemName: "chevron.down")
+                                .font(.caption)
+                                .foregroundColor(.ctxTextMuted)
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .stroke(Color.ctxLine, lineWidth: 1)
+                        )
+                    }
+                    .accessibilityIdentifier("chat.composer.model")
+                }
+
+                Spacer(minLength: 0)
+
+                HStack(spacing: 12) {
+                    Menu {
+                        Section("Mode") {
+                            ForEach(ComposerMode.allCases) { mode in
+                                Button(mode.label) {
+                                    selectedMode = mode
+                                }
+                            }
+                        }
+                        Section("Verbosity") {
+                            ForEach(ComposerVerbosity.allCases) { verbosity in
+                                Button(verbosity.label) {
+                                    selectedVerbosity = verbosity
+                                }
+                            }
+                        }
+                    } label: {
+                        ComposerToolIcon(systemName: "ellipsis")
+                    }
+                    .accessibilityIdentifier("chat.composer.options")
+
+                    PhotosPicker(selection: $selectedPhotos, matching: .images) {
+                        ComposerToolIcon(systemName: "photo")
+                    }
+
+                    if isWorking {
+                        ComposerCircleButton(systemName: "stop.fill", accessibilityId: "chat.composer.stop") {
+                            onInterrupt()
+                        }
+                    } else if isSendEnabled {
+                        ComposerCircleButton(systemName: "arrow.up", accessibilityId: "chat.composer.send") {
+                            onSend()
+                        }
+                    } else {
+                        Button {} label: {
+                            ComposerToolIcon(systemName: "mic")
+                        }
+                    }
+                }
+            }
+
             ZStack(alignment: .topLeading) {
                 if text.isEmpty {
                     Text("Ask anything")
@@ -813,24 +1075,6 @@ struct ComposerBar: View {
                     .foregroundColor(.ctxTextPrimary)
                     .tint(.ctxAccent)
                     .focused(isFocused)
-            }
-
-            HStack(spacing: 14) {
-                PhotosPicker(selection: $selectedPhotos, matching: .images) {
-                    ComposerToolIcon(systemName: "plus")
-                }
-
-                Spacer(minLength: 0)
-
-                if isSendEnabled {
-                    ComposerCircleButton(systemName: "arrow.up", accessibilityId: "chat.composer.send") {
-                        onSend()
-                    }
-                } else {
-                    Button {} label: {
-                        ComposerToolIcon(systemName: "mic")
-                    }
-                }
             }
         }
         .padding(.horizontal, CtxChatStyle.composerInnerHorizontalPadding)
@@ -855,6 +1099,35 @@ struct ComposerToolIcon: View {
             .foregroundColor(.ctxTextPrimary)
             .frame(width: CtxChatStyle.composerToolSize, height: CtxChatStyle.composerToolSize)
             .contentShape(Rectangle())
+    }
+}
+
+struct ComposerHarnessIcon: View {
+    let providerId: String?
+
+    var body: some View {
+        let base = RoundedRectangle(cornerRadius: 8, style: .continuous)
+        if let providerId,
+           let harness = HarnessCatalog.entry(for: providerId) {
+            Image(harness.assetName)
+                .resizable()
+                .renderingMode(.original)
+                .scaledToFit()
+                .frame(width: 20, height: 20)
+                .clipShape(base)
+                .modifier(HarnessInvertModifier(shouldInvert: harness.invertInDark))
+                .background(
+                    base
+                        .fill(Color.white.opacity(0.08))
+                )
+        } else {
+            base
+                .fill(Color.white.opacity(0.10))
+                .frame(width: 20, height: 20)
+                .overlay(
+                    base.stroke(Color(red: 0.071, green: 0.071, blue: 0.071).opacity(0.8), lineWidth: 1)
+                )
+        }
     }
 }
 
@@ -903,6 +1176,7 @@ final class ChatViewModel: ObservableObject {
     @Published var isArtifactsLoading = false
     @Published var artifactsError: String?
     @Published var turnStatus: TurnStatusSnapshot?
+    @Published private(set) var isAssistantWorking = false
     @Published private(set) var assetBaseURL: URL?
     @Published private(set) var assetToken: String?
 
@@ -973,7 +1247,7 @@ final class ChatViewModel: ObservableObject {
         self.client = client
         if client != nil {
             messages = []
-            pendingAssistantResponse = false
+            setPendingAssistantResponse(false)
             streamingAssistantState = nil
             errorMessage = nil
             artifacts = []
@@ -992,13 +1266,14 @@ final class ChatViewModel: ObservableObject {
                 _ = await refreshMessages()
                 await refreshArtifacts()
             }
+            updateWorkingState()
         } else {
             stopStream()
             sessionId = nil
             workspaceId = nil
             lastEventSeq = nil
             messages = Self.sampleMessages
-            pendingAssistantResponse = false
+            setPendingAssistantResponse(false)
             streamingAssistantState = nil
             artifacts = []
             artifactsError = nil
@@ -1007,6 +1282,7 @@ final class ChatViewModel: ObservableObject {
             assetBaseURL = nil
             assetToken = nil
             secureContext = nil
+            updateWorkingState()
         }
     }
 
@@ -1022,12 +1298,23 @@ final class ChatViewModel: ObservableObject {
         }
     }
 
+    private func setPendingAssistantResponse(_ pending: Bool) {
+        pendingAssistantResponse = pending
+        updateWorkingState()
+    }
+
+    private func updateWorkingState() {
+        let statusWorking = turnStatus?.status == .queued || turnStatus?.status == .running
+        let streamingWorking = streamingAssistantState?.isActive == true
+        isAssistantWorking = pendingAssistantResponse || statusWorking || streamingWorking
+    }
+
     func selectSession(_ sessionId: String?, workspaceId: String? = nil) {
         sessionGeneration += 1
         self.sessionId = sessionId
         self.workspaceId = workspaceId
         lastEventSeq = nil
-        pendingAssistantResponse = false
+        setPendingAssistantResponse(false)
         streamingAssistantState = nil
         refreshInFlight = false
         refreshPending = false
@@ -1038,6 +1325,7 @@ final class ChatViewModel: ObservableObject {
         artifactsRefreshInFlight = false
         artifactsRefreshPending = false
         turnStatus = nil
+        updateWorkingState()
         _Concurrency.Task {
             await primeStreamCursor()
             _ = await refreshMessages()
@@ -1064,10 +1352,23 @@ final class ChatViewModel: ObservableObject {
         stopStream()
     }
 
+    func interrupt() {
+        guard let client else { return }
+        _Concurrency.Task {
+            let resolved = await resolveSessionId()
+            guard let resolved else { return }
+            do {
+                try await client.interruptSession(sessionId: resolved)
+            } catch {
+                // Best-effort interrupt; rely on stream updates to reflect status.
+            }
+        }
+    }
+
     func send(_ text: String, attachments: [MessageAttachment]) {
         let local = ChatMessage(id: UUID(), role: .user, text: text, attachments: attachments)
         appendMessage(local)
-        pendingAssistantResponse = true
+        setPendingAssistantResponse(true)
 
         _Concurrency.Task {
             guard let client else { return }
@@ -1077,7 +1378,7 @@ final class ChatViewModel: ObservableObject {
                 _ = try await client.postMessage(sessionId: resolved, content: text, delivery: .immediate, attachments: attachments)
                 _ = await refreshMessages()
             } catch {
-                pendingAssistantResponse = false
+                setPendingAssistantResponse(false)
                 errorMessage = "Failed to send message."
             }
         }
@@ -1108,8 +1409,9 @@ final class ChatViewModel: ObservableObject {
             let nextWithStreaming = applyStreamingAssistantState(to: nextMessages)
             messages = nextWithStreaming
             if pendingAssistantResponse, nextWithStreaming.contains(where: { $0.role == .assistant }) {
-                pendingAssistantResponse = false
+                setPendingAssistantResponse(false)
                 streamingAssistantState = nil
+                updateWorkingState()
             }
             errorMessage = nil
             if refreshPending, generation == sessionGeneration {
@@ -1190,7 +1492,7 @@ final class ChatViewModel: ObservableObject {
         let turnId = turn.turnId.stringValue
         let isActive = turn.status == .queued || turn.status == .running
         if isActive {
-            pendingAssistantResponse = true
+            setPendingAssistantResponse(true)
         }
 
         updateTurnStatus(from: turn)
@@ -1199,6 +1501,7 @@ final class ChatViewModel: ObservableObject {
             if !isActive, streamingAssistantState?.turnId == turnId {
                 streamingAssistantState?.isActive = false
             }
+            updateWorkingState()
             return
         }
 
@@ -1216,6 +1519,7 @@ final class ChatViewModel: ObservableObject {
         }
 
         messages = applyStreamingAssistantState(to: messages)
+        updateWorkingState()
     }
 
     private func updateTurnStatus(from turn: SessionTurn) {
@@ -1224,6 +1528,10 @@ final class ChatViewModel: ObservableObject {
             startedAt: turn.startedAt,
             updatedAt: turn.updatedAt
         )
+        if turn.status == .completed || turn.status == .failed || turn.status == .interrupted {
+            setPendingAssistantResponse(false)
+        }
+        updateWorkingState()
     }
 
     private func resolveSessionId() async -> String? {
@@ -1465,8 +1773,9 @@ final class ChatViewModel: ObservableObject {
                 }
                 if let message = delta.message {
                     if message.role == .assistant {
-                        pendingAssistantResponse = false
+                        setPendingAssistantResponse(false)
                         streamingAssistantState = nil
+                        updateWorkingState()
                     }
                     _Concurrency.Task { _ = await refreshMessages() }
                 } else if let turn = delta.turn, turn.status != .queued, turn.status != .running {
@@ -1488,6 +1797,7 @@ final class ChatViewModel: ObservableObject {
             if sessionId.stringValue == currentSessionId {
                 lastEventSeq = afterSeq
                 streamingAssistantState = nil
+                updateWorkingState()
                 _Concurrency.Task {
                     await primeStreamCursor(force: true)
                     _ = await refreshMessages()
@@ -1519,6 +1829,56 @@ final class ChatViewModel: ObservableObject {
             attachments: []
         ),
     ]
+}
+
+private func extractModelIds(from models: JSONValue?) -> [String] {
+    guard let models else { return [] }
+    switch models {
+    case .array(let values):
+        let rawIds: [String] = values.compactMap { value in
+            switch value {
+            case .string(let string):
+                return string
+            case .object(let object):
+                if case .string(let id) = object["modelId"] ?? object["id"] {
+                    return id
+                }
+                return nil
+            default:
+                return nil
+            }
+        }
+        return uniqueTrimmed(rawIds)
+    case .object(let object):
+        if let available = object["availableModels"] {
+            return extractModelIds(from: available)
+        }
+        if let models = object["models"] {
+            return extractModelIds(from: models)
+        }
+        if let choices = object["choices"] {
+            return extractModelIds(from: choices)
+        }
+        if case .string(let current) = object["currentModelId"] {
+            return uniqueTrimmed([current])
+        }
+        let keys = object.keys.filter { !$0.isEmpty && $0 != "choices" }.sorted()
+        return keys
+    default:
+        return []
+    }
+}
+
+private func uniqueTrimmed(_ values: [String]) -> [String] {
+    var seen = Set<String>()
+    var out: [String] = []
+    for value in values {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !seen.contains(trimmed) else { continue }
+        seen.insert(trimmed)
+        out.append(trimmed)
+    }
+    return out
 }
 
 #Preview {

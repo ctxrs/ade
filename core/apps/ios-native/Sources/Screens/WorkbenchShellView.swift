@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import _Concurrency
 
 struct WorkbenchShellView: View {
@@ -25,6 +26,8 @@ struct WorkbenchShellView: View {
     @State private var isRenaming = false
     @State private var archiveInFlight: Set<String> = []
     @State private var markReadInFlight: Set<String> = []
+    @State private var isArtifactsPresented = false
+    @State private var topBarAlert: WorkbenchTopBarAlert?
     @State private var streamTask: _Concurrency.Task<Void, Never>?
     @State private var streamSocket: URLSessionWebSocketTask?
     @State private var streamReconnectDelay: TimeInterval = 1
@@ -47,8 +50,8 @@ struct WorkbenchShellView: View {
     var body: some View {
         GeometryReader { proxy in
             let drawerWidth = min(320, proxy.size.width * 0.78)
-            let workspaceName = selectedWorkspace?.name ?? "Workspace"
-            let workspaceDetail = selectedWorkspace.map(workspaceDetailText) ?? "Select in drawer"
+            let taskTitle = resolvedTaskTitle()
+            let taskMenuContext = resolvedTaskMenuContext()
 
             ZStack(alignment: .leading) {
                 CtxBackgroundView()
@@ -60,16 +63,20 @@ struct WorkbenchShellView: View {
                     isLoadingTasks: isLoadingTasks,
                     taskError: taskError,
                     selectedSession: resolvedSession,
+                    isArtifactsPresented: $isArtifactsPresented,
                     hasTaskSelection: workbenchSelection.taskId != nil,
                     isPreparingSession: isPreparingSession,
                     onTaskCreated: { _Concurrency.Task { await loadTasks() } }
                 )
                 .safeAreaInset(edge: .top, spacing: 0) {
                     WorkbenchTopBar(
-                        workspaceName: workspaceName,
-                        workspaceDetail: workspaceDetail,
+                        title: taskTitle,
                         onMenuTap: { isDrawerOpen = true },
-                        onWorkspaceTap: { isDrawerOpen = true }
+                        onArtifactsTap: { handleTopBarAction(.artifacts) },
+                        onDiffTap: { handleTopBarAction(.diff) },
+                        onSessionsTap: { handleTopBarAction(.sessions) },
+                        onTerminalTap: { handleTopBarAction(.terminal) },
+                        taskMenuContext: taskMenuContext
                     )
                     .padding(.horizontal, 20)
                     .padding(.top, 8)
@@ -149,6 +156,9 @@ struct WorkbenchShellView: View {
         .onDisappear {
             stopWorkspaceStream()
         }
+        .alert(item: $topBarAlert) { alert in
+            Alert(title: Text(alert.title), message: Text(alert.message), dismissButton: .default(Text("OK")))
+        }
         .sheet(isPresented: $isRenaming) {
             RenameSheet(
                 title: $renameText,
@@ -163,6 +173,93 @@ struct WorkbenchShellView: View {
     private func workspaceDetailText(_ workspace: WorkspaceSummary) -> String {
         let url = URL(fileURLWithPath: workspace.rootPath)
         return url.lastPathComponent.isEmpty ? workspace.rootPath : url.lastPathComponent
+    }
+
+    private func resolvedTaskTitle() -> String {
+        guard let selectedTask else { return "Select a task" }
+        let trimmed = selectedTask.task.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "New Task" : trimmed
+    }
+
+    private func resolvedTaskMenuContext() -> WorkbenchTaskMenuContext? {
+        guard let selectedTask else { return nil }
+        let title = resolvedTaskTitle()
+        let taskId = selectedTask.task.id.stringValue
+        let isArchived = selectedTask.task.archivedAt != nil
+        return WorkbenchTaskMenuContext(
+            title: title,
+            taskId: taskId,
+            isArchived: isArchived,
+            onRename: { beginRename(selectedTask) },
+            onArchiveToggle: { _Concurrency.Task { await toggleArchive(selectedTask) } },
+            onCopyTitle: { UIPasteboard.general.string = title },
+            onCopyId: { UIPasteboard.general.string = taskId },
+            onCopyTranscript: { copyTranscript(for: resolvedSession) }
+        )
+    }
+
+    private func handleTopBarAction(_ action: WorkbenchTopBarAction) {
+        switch action {
+        case .artifacts:
+            if resolvedSession != nil {
+                isArtifactsPresented = true
+            } else {
+                topBarAlert = WorkbenchTopBarAlert(
+                    title: "Artifacts",
+                    message: "Select a task session to view artifacts."
+                )
+            }
+        case .diff:
+            topBarAlert = WorkbenchTopBarAlert(
+                title: "Diff",
+                message: "Diff view is stubbed for now."
+            )
+        case .sessions:
+            topBarAlert = WorkbenchTopBarAlert(
+                title: "Sessions",
+                message: "Sessions panel is stubbed for now."
+            )
+        case .terminal:
+            topBarAlert = WorkbenchTopBarAlert(
+                title: "Terminal",
+                message: "Terminal panel is stubbed for now."
+            )
+        }
+    }
+
+    private func copyTranscript(for session: SessionSummary?) {
+        guard let session else {
+            topBarAlert = WorkbenchTopBarAlert(
+                title: "Export Transcript",
+                message: "Select a task session to export its transcript."
+            )
+            return
+        }
+        _Concurrency.Task {
+            guard let client = connection.apiClient else { return }
+            do {
+                let items = try await client.listMessages(sessionId: session.id)
+                let formatted = items.map { summary in
+                    let role = summary.role == .user ? "User" : "Assistant"
+                    return "\(role): \(summary.content)"
+                }
+                let transcript = formatted.joined(separator: "\n\n")
+                await MainActor.run {
+                    UIPasteboard.general.string = transcript
+                    topBarAlert = WorkbenchTopBarAlert(
+                        title: "Export Transcript",
+                        message: "Transcript copied to clipboard."
+                    )
+                }
+            } catch {
+                await MainActor.run {
+                    topBarAlert = WorkbenchTopBarAlert(
+                        title: "Export Transcript",
+                        message: "Failed to export transcript."
+                    )
+                }
+            }
+        }
     }
 
     private var selectedWorkspace: WorkspaceSummary? {
@@ -715,6 +812,12 @@ struct WorkbenchShellView: View {
     }
 }
 
+private struct WorkbenchTopBarAlert: Identifiable {
+    let id = UUID()
+    let title: String
+    let message: String
+}
+
 private struct WorkbenchHomeView: View {
     let selectedWorkspace: WorkspaceSummary?
     let isLoadingWorkspaces: Bool
@@ -722,6 +825,7 @@ private struct WorkbenchHomeView: View {
     let isLoadingTasks: Bool
     let taskError: String?
     let selectedSession: SessionSummary?
+    @Binding var isArtifactsPresented: Bool
     let hasTaskSelection: Bool
     let isPreparingSession: Bool
     let onTaskCreated: () -> Void
@@ -735,6 +839,7 @@ private struct WorkbenchHomeView: View {
                 isLoadingTasks: isLoadingTasks,
                 taskError: taskError,
                 selectedSession: selectedSession,
+                isArtifactsPresented: $isArtifactsPresented,
                 hasTaskSelection: hasTaskSelection,
                 isPreparingSession: isPreparingSession,
                 onTaskCreated: onTaskCreated
@@ -744,11 +849,32 @@ private struct WorkbenchHomeView: View {
     }
 }
 
+private enum WorkbenchTopBarAction {
+    case artifacts
+    case diff
+    case sessions
+    case terminal
+}
+
+private struct WorkbenchTaskMenuContext {
+    let title: String
+    let taskId: String
+    let isArchived: Bool
+    let onRename: () -> Void
+    let onArchiveToggle: () -> Void
+    let onCopyTitle: () -> Void
+    let onCopyId: () -> Void
+    let onCopyTranscript: () -> Void
+}
+
 private struct WorkbenchTopBar: View {
-    let workspaceName: String
-    let workspaceDetail: String
+    let title: String
     let onMenuTap: () -> Void
-    let onWorkspaceTap: () -> Void
+    let onArtifactsTap: () -> Void
+    let onDiffTap: () -> Void
+    let onSessionsTap: () -> Void
+    let onTerminalTap: () -> Void
+    let taskMenuContext: WorkbenchTaskMenuContext?
 
     var body: some View {
         HStack(spacing: 12) {
@@ -759,20 +885,57 @@ private struct WorkbenchTopBar: View {
             .foregroundColor(.ctxTextPrimary)
             .accessibilityIdentifier("drawer.open")
 
-            Button(action: onWorkspaceTap) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(workspaceName)
-                        .font(.headline)
-                        .foregroundColor(.ctxTextPrimary)
-                    Text(workspaceDetail)
-                        .font(.caption)
-                        .foregroundColor(.ctxTextMuted)
+            Text(title)
+                .font(.headline)
+                .foregroundColor(.ctxTextPrimary)
+                .lineLimit(1)
+
+            Spacer(minLength: 0)
+
+            HStack(spacing: 14) {
+                Button(action: onArtifactsTap) {
+                    Image(systemName: "photo.stack")
+                        .font(.system(size: 16, weight: .semibold))
                 }
+                .accessibilityIdentifier("topbar.artifacts")
+
+                Button(action: onDiffTap) {
+                    Image(systemName: "doc.text.magnifyingglass")
+                        .font(.system(size: 16, weight: .semibold))
+                }
+                .accessibilityIdentifier("topbar.diff")
+
+                Button(action: onSessionsTap) {
+                    Image(systemName: "rectangle.stack")
+                        .font(.system(size: 16, weight: .semibold))
+                }
+                .accessibilityIdentifier("topbar.sessions")
+
+                Button(action: onTerminalTap) {
+                    Image(systemName: "terminal")
+                        .font(.system(size: 16, weight: .semibold))
+                }
+                .accessibilityIdentifier("topbar.terminal")
+
+                Menu {
+                    if let context = taskMenuContext {
+                        Button("Rename task", action: context.onRename)
+                        Button(context.isArchived ? "Unarchive task" : "Archive task", action: context.onArchiveToggle)
+                        Divider()
+                        Button("Copy task title", action: context.onCopyTitle)
+                        Button("Copy task ID", action: context.onCopyId)
+                        Button("Export transcript", action: context.onCopyTranscript)
+                    } else {
+                        Text("Select a task to manage it.")
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                        .font(.system(size: 16, weight: .semibold))
+                }
+                .accessibilityIdentifier("topbar.taskmenu")
+                .disabled(taskMenuContext == nil)
             }
-
-            Spacer()
-
-            GlassPill(text: "Connected", tint: .ctxAccent)
+            .foregroundColor(.ctxTextPrimary)
         }
     }
 }
@@ -1059,6 +1222,7 @@ private struct WorkbenchNavigationFlowView: View {
     let isLoadingTasks: Bool
     let taskError: String?
     let selectedSession: SessionSummary?
+    @Binding var isArtifactsPresented: Bool
     let hasTaskSelection: Bool
     let isPreparingSession: Bool
     let onTaskCreated: () -> Void
@@ -1079,7 +1243,7 @@ private struct WorkbenchNavigationFlowView: View {
         } else if let workspace = selectedWorkspace {
             NavigationStack {
                 if let selectedSession {
-                    ChatDetailView(session: selectedSession)
+                    ChatDetailView(session: selectedSession, isArtifactsPresented: $isArtifactsPresented)
                 } else if hasTaskSelection {
                     if isPreparingSession {
                         WorkbenchEmptyStateView(
@@ -2001,58 +2165,6 @@ private enum TaskRowDotKind {
     case error
 }
 
-private struct HarnessCatalogEntry {
-    let id: String
-    let assetName: String
-    let invertInDark: Bool
-}
-
-private enum HarnessCatalog {
-    static let entries: [String: HarnessCatalogEntry] = [
-        "claude": .init(id: "claude", assetName: "harness_claude", invertInDark: false),
-        "codex": .init(id: "codex", assetName: "harness_codex", invertInDark: true),
-        "qwen": .init(id: "qwen", assetName: "harness_qwen", invertInDark: false),
-        "cursor": .init(id: "cursor", assetName: "harness_cursor", invertInDark: true),
-        "amp": .init(id: "amp", assetName: "harness_amp", invertInDark: false),
-        "droid": .init(id: "droid", assetName: "harness_droid", invertInDark: true),
-        "gemini": .init(id: "gemini", assetName: "harness_gemini", invertInDark: false),
-        "copilot": .init(id: "copilot", assetName: "harness_copilot", invertInDark: true),
-        "opencode": .init(id: "opencode", assetName: "harness_opencode", invertInDark: true),
-        "cline": .init(id: "cline", assetName: "harness_cline", invertInDark: false),
-        "mistral": .init(id: "mistral", assetName: "harness_mistral", invertInDark: false),
-        "auggie": .init(id: "auggie", assetName: "harness_auggie", invertInDark: true),
-        "goose": .init(id: "goose", assetName: "harness_goose", invertInDark: false),
-        "kimi": .init(id: "kimi", assetName: "harness_kimi", invertInDark: false),
-        "kiro": .init(id: "kiro", assetName: "harness_kiro", invertInDark: false),
-        "codebuff": .init(id: "codebuff", assetName: "harness_codebuff", invertInDark: false),
-        "charm": .init(id: "charm", assetName: "harness_charm", invertInDark: false),
-        "rovo": .init(id: "rovo", assetName: "harness_rovo", invertInDark: false),
-        "aider": .init(id: "aider", assetName: "harness_aider", invertInDark: false),
-        "continue": .init(id: "continue", assetName: "harness_continue", invertInDark: false),
-        "openhands": .init(id: "openhands", assetName: "harness_openhands", invertInDark: false),
-        "swe-agent": .init(id: "swe-agent", assetName: "harness_swe-agent", invertInDark: false),
-        "cagent": .init(id: "cagent", assetName: "harness_cagent", invertInDark: false),
-        "kilo": .init(id: "kilo", assetName: "harness_kilo", invertInDark: false),
-        "cody": .init(id: "cody", assetName: "harness_cody", invertInDark: false),
-        "junie": .init(id: "junie", assetName: "harness_junie", invertInDark: false)
-    ]
-
-    static func entry(for id: String) -> HarnessCatalogEntry? {
-        entries[id.lowercased()]
-    }
-}
-
-private struct HarnessInvertModifier: ViewModifier {
-    let shouldInvert: Bool
-
-    func body(content: Content) -> some View {
-        if shouldInvert {
-            content.colorInvert()
-        } else {
-            content
-        }
-    }
-}
 
 private func taskHasWorkingSession(_ task: WorkspaceCatchupTaskSummary) -> Bool {
     for track in task.tracks {

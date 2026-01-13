@@ -67,6 +67,7 @@ actor DaemonAPIClient {
     }
 
     private struct EmptyResponse: Decodable {}
+    private struct EmptyPayload: Encodable {}
 
     private let baseURL: URL
     private let session: URLSession
@@ -190,6 +191,11 @@ actor DaemonAPIClient {
 
     func listSessionArtifacts(sessionId: String) async throws -> [Artifact] {
         try await request("/api/sessions/\(sessionId)/artifacts")
+    }
+
+    func interruptSession(sessionId: String) async throws {
+        let request = try buildRequest(path: "/api/sessions/\(sessionId)/interrupt", method: .post, body: EmptyPayload())
+        try await performVoid(request)
     }
 
     func fetchTrackDiff(trackId: String) async throws -> TrackDiffResponse {
