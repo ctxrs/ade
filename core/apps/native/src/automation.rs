@@ -15,7 +15,9 @@ use axum::{
     Json, Router,
 };
 use gpui::{
-    App, AppContext, ClickEvent, Context, Keystroke, Modifiers, ScrollStrategy, Window, WindowHandle, px, size,
+    App, AppContext, ClickEvent, Context, Keystroke, Modifiers, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, PlatformInput, ScrollStrategy, Window, WindowHandle, px, size,
+    point,
 };
 use gpui_component::Root;
 use image::{ColorType, ImageFormat};
@@ -142,6 +144,7 @@ async fn run_http_server(addr: SocketAddr, state: Arc<AutomationState>) {
         .route("/ready", get(ready_handler))
         .route("/focus", post(focus_handler))
         .route("/screenshot", post(screenshot_handler))
+        .route("/wait", post(wait_handler))
         .route("/exit", post(exit_handler))
         .route("/ws", get(ws_handler))
         .with_state(state);
@@ -286,6 +289,16 @@ async fn screenshot_handler(
     }
 }
 
+async fn wait_handler(
+    State(state): State<Arc<AutomationState>>,
+    Json(request): Json<WaitIdleParams>,
+) -> (StatusCode, Json<ApiResponse<Value>>) {
+    match wait_for_idle(&state, request).await {
+        Ok(result) => ok(result),
+        Err(err) => err(StatusCode::INTERNAL_SERVER_ERROR, err.message),
+    }
+}
+
 async fn exit_handler(
     State(state): State<Arc<AutomationState>>,
 ) -> (StatusCode, Json<ApiResponse<Value>>) {
@@ -364,6 +377,8 @@ enum AutomationCommand {
     Focus { target: FocusTarget },
     Screenshot { path: PathBuf },
     Resize { width: f32, height: f32 },
+    Click { x: f32, y: f32, button: MouseButton },
+    SelectSession { index: usize },
     Type { text: String },
     KeyPress { keystroke: Keystroke },
     Exit,
@@ -409,6 +424,30 @@ async fn run_command_loop(
                     .map_err(|err| err.to_string())
                     .and_then(|result| result)
             }
+            AutomationCommand::Click { x, y, button } => {
+                let mut cx = cx.clone();
+                window
+                    .update(&mut cx, |_, window, cx| {
+                        dispatch_click(window, cx, x, y, button);
+                        mark_input(&state);
+                        Ok(json!({ "x": x, "y": y }))
+                    })
+                    .map_err(|err| err.to_string())
+                    .and_then(|result| result)
+            }
+            AutomationCommand::SelectSession { index } => {
+                let mut cx = cx.clone();
+                window
+                    .update(&mut cx, |root, window, cx| {
+                        with_shell_view(root, cx, |view, cx| {
+                            view.select_session(index, window, cx);
+                        })?;
+                        mark_input(&state);
+                        Ok(json!({ "index": index }))
+                    })
+                    .map_err(|err| err.to_string())
+                    .and_then(|result| result)
+            }
             AutomationCommand::Type { text } => {
                 let mut cx = cx.clone();
                 cx.update_window(any_window, |_, window, cx| {
@@ -449,6 +488,38 @@ async fn run_command_loop(
 fn mark_input(state: &AutomationState) {
     let current = state.render_counter.load(Ordering::SeqCst);
     state.last_input_frame.store(current, Ordering::SeqCst);
+}
+
+fn dispatch_click(window: &mut Window, cx: &mut App, x: f32, y: f32, button: MouseButton) {
+    let position = point(px(x), px(y));
+    let modifiers = Modifiers::none();
+    let _ = window.dispatch_event(
+        PlatformInput::MouseMove(MouseMoveEvent {
+            position,
+            modifiers,
+            pressed_button: None,
+        }),
+        cx,
+    );
+    let _ = window.dispatch_event(
+        PlatformInput::MouseDown(MouseDownEvent {
+            button,
+            position,
+            modifiers,
+            click_count: 1,
+            first_mouse: true,
+        }),
+        cx,
+    );
+    let _ = window.dispatch_event(
+        PlatformInput::MouseUp(MouseUpEvent {
+            button,
+            position,
+            modifiers,
+            click_count: 1,
+        }),
+        cx,
+    );
 }
 
 fn keystroke_for_char(ch: char) -> Keystroke {
@@ -830,11 +901,28 @@ async fn handle_rpc_method(
         }
         "automation.locator.click" => {
             let params: LocatorParams = parse_params(params)?;
-            let target = focus_target_for_selector(&params.selector)
-                .ok_or_else(|| RpcError::server_error("locator click not supported"))?;
-            dispatch_command(state, AutomationCommand::Focus { target })
-                .await
-                .map_err(RpcError::server_error)
+            if let Some(node) = resolve_selector_node(&params.selector) {
+                if node.visible && node.bounds.width > 0.0 && node.bounds.height > 0.0 {
+                    let x = node.bounds.x + node.bounds.width / 2.0;
+                    let y = node.bounds.y + node.bounds.height / 2.0;
+                    return dispatch_command(
+                        state,
+                        AutomationCommand::Click {
+                            x,
+                            y,
+                            button: MouseButton::Left,
+                        },
+                    )
+                    .await
+                    .map_err(RpcError::server_error);
+                }
+            }
+            if let Some(target) = focus_target_for_selector(&params.selector) {
+                return dispatch_command(state, AutomationCommand::Focus { target })
+                    .await
+                    .map_err(RpcError::server_error);
+            }
+            Err(RpcError::server_error("locator click not supported"))
         }
         "automation.locator.type" => {
             let params: LocatorTypeParams = parse_params(params)?;
@@ -897,9 +985,24 @@ async fn handle_rpc_method(
             .map_err(RpcError::server_error)
         }
         "ctx.input.click" => {
-            Err(RpcError::server_error(
-                "ctx.input.click is not supported (no in-process mouse injection yet)",
-            ))
+            let params: ClickParams = parse_params(params)?;
+            let button = parse_mouse_button(params.button)?;
+            dispatch_command(
+                state,
+                AutomationCommand::Click {
+                    x: params.x,
+                    y: params.y,
+                    button,
+                },
+            )
+            .await
+            .map_err(RpcError::server_error)
+        }
+        "ctx.sessions.select" => {
+            let params: SelectSessionParams = parse_params(params)?;
+            dispatch_command(state, AutomationCommand::SelectSession { index: params.index })
+                .await
+                .map_err(RpcError::server_error)
         }
         "ctx.input.type" => {
             let params: TypeParams = parse_params(params)?;
@@ -983,6 +1086,18 @@ struct ResizeParams {
 }
 
 #[derive(Debug, Deserialize)]
+struct ClickParams {
+    x: f32,
+    y: f32,
+    button: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SelectSessionParams {
+    index: usize,
+}
+
+#[derive(Debug, Deserialize)]
 struct TypeParams {
     text: String,
 }
@@ -990,6 +1105,22 @@ struct TypeParams {
 #[derive(Debug, Deserialize)]
 struct KeyPressParams {
     key: String,
+}
+
+fn parse_mouse_button(button: Option<String>) -> Result<MouseButton, RpcError> {
+    let normalized = button
+        .as_deref()
+        .unwrap_or("left")
+        .trim()
+        .to_ascii_lowercase();
+    match normalized.as_str() {
+        "" | "left" => Ok(MouseButton::Left),
+        "right" => Ok(MouseButton::Right),
+        "middle" => Ok(MouseButton::Middle),
+        "back" => Ok(MouseButton::Navigate(gpui::NavigationDirection::Back)),
+        "forward" => Ok(MouseButton::Navigate(gpui::NavigationDirection::Forward)),
+        _ => Err(RpcError::invalid_params("unsupported mouse button")),
+    }
 }
 
 #[derive(Debug, Deserialize)]

@@ -12,6 +12,7 @@ const RPC_METHODS = {
   locatorText: "automation.locator.text",
   locatorVisible: "automation.locator.visible",
   keyboardPress: "automation.keyboard.press",
+  sessionSelect: "ctx.sessions.select",
 };
 
 function normalizeHttpUrl(value) {
@@ -369,6 +370,12 @@ function createPage(rpc, httpUrl) {
         return rpc.call(RPC_METHODS.keyboardPress, { key: String(key) });
       },
     },
+    async clickSession(index) {
+      if (!Number.isInteger(index) || index < 0) {
+        throw new Error("clickSession requires a non-negative integer index");
+      }
+      return rpc.call(RPC_METHODS.sessionSelect, { index });
+    },
     rpc(method, params, options) {
       return rpc.call(method, params, options);
     },
@@ -502,4 +509,3 @@ export async function connect(options = {}) {
     wsUrl: wsUrl.href,
   };
 }
-

@@ -165,7 +165,7 @@ async function main() {
     { target: "terminal_panel", name: "terminal-panel" },
     { target: "main", name: "web-workbench-task-list" },
     { target: "archived_tasks", name: "web-workbench-archived-tasks" },
-    { target: "composer_new_task", name: "web-workbench-new-task" },
+    { target: "composer", name: "web-workbench-new-task" },
     { target: "composer_provider_menu", name: "web-workbench-harness-menu" },
     { target: "composer_model_menu", name: "web-workbench-model-menu" },
   ];
@@ -189,7 +189,7 @@ async function main() {
         try {
           await callJson(args.addr, "/wait", {
             method: "POST",
-            body: { target: "archived_loaded", timeout_ms: archivedWaitMs },
+            body: { frames: 2, timeout_ms: archivedWaitMs },
             timeoutMs: archivedWaitMs + 10000,
           });
         } catch (err) {
