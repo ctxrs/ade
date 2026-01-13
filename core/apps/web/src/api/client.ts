@@ -30,6 +30,7 @@ import type {
   TrackDiffSummary,
   TrackDiffSummaryResponse,
   TrackSummary,
+  TrackWorker,
   Workspace,
   WorkspaceCatchupCursor,
   WorkspaceCatchupClientMessage,
@@ -76,6 +77,7 @@ export type {
   TrackDiffSummary,
   TrackDiffSummaryResponse,
   TrackSummary,
+  TrackWorker,
   Workspace,
   WorkspaceCatchupCursor,
   WorkspaceCatchupClientMessage,
@@ -952,12 +954,39 @@ export const markTaskRead = (taskId: string) =>
 export const markTaskUnread = (taskId: string) =>
   apiAny<Task>(`/api/tasks/${taskId}/mark_unread`, { method: "POST" });
 
-export const createTrack = (taskId: string, label?: string, opts?: { env_target?: "worktree" | "local" }) =>
+export const createTrack = (
+  taskId: string,
+  label?: string,
+  opts?: { env_target?: "worktree" | "local" | "cloud" },
+) =>
   apiAny<Track>(`/api/tasks/${taskId}/tracks`, {
     method: "POST",
     body: JSON.stringify({
       label,
       ...(opts?.env_target ? { env_target: opts.env_target } : {}),
+    }),
+  });
+
+export const startTrackCloudWorker = (
+  trackId: string,
+  opts?: {
+    provider_id?: string;
+    model_id?: string;
+    diff_debounce_ms?: number;
+    ttl_seconds?: number;
+    snapshot_ttl_seconds?: number;
+  },
+) =>
+  apiAny<TrackWorker>(`/api/tracks/${trackId}/cloud_worker`, {
+    method: "POST",
+    body: JSON.stringify({
+      ...(opts?.provider_id ? { provider_id: opts.provider_id } : {}),
+      ...(opts?.model_id ? { model_id: opts.model_id } : {}),
+      ...(opts?.diff_debounce_ms !== undefined ? { diff_debounce_ms: opts.diff_debounce_ms } : {}),
+      ...(opts?.ttl_seconds !== undefined ? { ttl_seconds: opts.ttl_seconds } : {}),
+      ...(opts?.snapshot_ttl_seconds !== undefined
+        ? { snapshot_ttl_seconds: opts.snapshot_ttl_seconds }
+        : {}),
     }),
   });
 

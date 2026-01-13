@@ -4,6 +4,12 @@ use std::process::Stdio;
 use std::sync::Arc;
 
 use anyhow::{bail, Context};
+use aws_config::Region;
+use aws_credential_types::Credentials;
+use aws_sdk_ec2::Client as Ec2Client;
+use aws_sdk_s3::presigning::PresigningConfig;
+use aws_sdk_s3::Client as S3Client;
+use aws_sdk_sts::Client as StsClient;
 use axum::body::{Body, Bytes};
 use axum::extract::ws::{Message as WsMessage, WebSocket, WebSocketUpgrade};
 use axum::extract::{Extension, MatchedPath, Multipart, Path, Query, State};
@@ -454,6 +460,10 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
             get(get_track_worker)
                 .post(start_track_worker)
                 .delete(delete_track_worker),
+        )
+        .route(
+            "/api/tracks/:id/cloud_worker",
+            post(start_track_cloud_worker),
         )
         .route(
             "/api/dictation/livekit/stream",
@@ -6034,6 +6044,11 @@ async fn create_workspace_terminal(
                     gateway_url: worker.gateway_url,
                     worker_id: worker.worker_id,
                     token: gateway_token,
+                    gateway_ca_pem: user_settings::load_settings(&state.data_root)
+                        .await
+                        .cloud_workers
+                        .and_then(|cw| cw.gateway)
+                        .and_then(|gateway| gateway.gateway_ca_pem),
                 },
             )
             .await
@@ -7868,7 +7883,7 @@ async fn create_track(
         .trim()
         .to_lowercase();
     let worktree_id = match env_target.as_str() {
-        "worktree" => {
+        "worktree" | "cloud" => {
             let worktree_id = WorktreeId::new();
             let wt_path = managed_worktree_path(&state.data_root, task.workspace_id, worktree_id);
             if let Some(parent) = wt_path.parent() {
@@ -7988,7 +8003,7 @@ async fn create_track(
             return Err((
                 StatusCode::BAD_REQUEST,
                 Json(ApiErrorResp {
-                    error: "env_target must be worktree or local".to_string(),
+                    error: "env_target must be worktree, local, or cloud".to_string(),
                 }),
             ));
         }
@@ -12662,8 +12677,6 @@ struct TrackWorkerStartReq {
     snapshot_ttl_seconds: Option<u64>,
 }
 
- HEAD
-
 #[derive(Debug, Deserialize)]
 struct TrackCloudWorkerStartReq {
     #[serde(default)]
@@ -12679,16 +12692,19 @@ struct TrackCloudWorkerStartReq {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct AwsGatewayLaunchReq {
     #[serde(default)]
     workspace_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
+#[allow(dead_code)]
 struct AwsGatewayLaunchResp {
     gateway: user_settings::CloudGatewaySettings,
 }
 
+#[allow(dead_code)]
 async fn launch_aws_gateway(
     State(state): State<Arc<AppState>>,
     Json(req): Json<AwsGatewayLaunchReq>,
@@ -12705,6 +12721,7 @@ async fn launch_aws_gateway(
     Ok(Json(AwsGatewayLaunchResp { gateway }))
 }
 
+#[allow(dead_code)]
 async fn launch_aws_gateway_inner(
     state: Arc<AppState>,
     req: AwsGatewayLaunchReq,
@@ -12860,6 +12877,7 @@ async fn launch_aws_gateway_inner(
         instance_id: Some(instance_id),
         region: Some(region.clone()),
         public_ip: Some(public_ip),
+        gateway_ca_pem: None,
     };
 
     cloud.gateway = Some(gateway.clone());
@@ -12870,7 +12888,7 @@ async fn launch_aws_gateway_inner(
             if let Ok(Some(workspace)) = state.store.get_workspace(WorkspaceId(workspace_id)).await
             {
                 if let Err(err) = update_workspace_cloud_workers_config(
-                    &workspace.root_path,
+                    StdPath::new(&workspace.root_path),
                     &gateway_url,
                     &region,
                     &worker_instance_type,
@@ -12886,7 +12904,7 @@ async fn launch_aws_gateway_inner(
     Ok(gateway)
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 struct StartWorkerOptions {
     provider_id: Option<String>,
     model_id: Option<String>,
@@ -12909,6 +12927,12 @@ struct WorkspaceCloudWorkersConfig {
     idle_timeout_minutes: Option<u64>,
     #[serde(default)]
     snapshot_ttl_days: Option<u64>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    region: Option<String>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    worker_instance_type: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -12918,25 +12942,110 @@ struct WorkspaceConfigFile {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 struct RepoArchive {
     _dir: tempfile::TempDir,
     path: PathBuf,
 }
 
-e25f248 (Fix gateway clippy and migration numbering)
-async fn start_track_worker(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-    Json(req): Json<TrackWorkerStartReq>,
-) -> Result<Json<TrackWorker>, (StatusCode, Json<ApiErrorResp>)> {
-    let track_id = TrackId(uuid::Uuid::parse_str(&id).map_err(|_| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(ApiErrorResp {
-                error: "invalid track id".to_string(),
-            }),
-        )
-    })?);
+async fn load_workspace_cloud_workers_config(
+    root: &StdPath,
+) -> anyhow::Result<WorkspaceCloudWorkersConfig> {
+    let config_path = root.join(workspace_config::WORKSPACE_CONFIG_REL_PATH);
+    let text = match tokio::fs::read_to_string(&config_path).await {
+        Ok(text) => text,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(WorkspaceCloudWorkersConfig::default())
+        }
+        Err(err) => return Err(err).context("reading .ctx/config.toml"),
+    };
+    let cfg: WorkspaceConfigFile = toml::from_str(&text).context("parsing .ctx/config.toml")?;
+    Ok(cfg.cloud_workers.unwrap_or_default())
+}
+
+#[allow(dead_code)]
+async fn update_workspace_cloud_workers_config(
+    root: &StdPath,
+    gateway_url: &str,
+    region: &str,
+    worker_instance_type: &str,
+) -> anyhow::Result<()> {
+    let config_path = root.join(workspace_config::WORKSPACE_CONFIG_REL_PATH);
+    let mut root_table = if config_path.exists() {
+        let text = tokio::fs::read_to_string(&config_path)
+            .await
+            .context("reading .ctx/config.toml")?;
+        match toml::from_str::<toml::Value>(&text).context("parsing .ctx/config.toml")? {
+            toml::Value::Table(table) => table,
+            _ => anyhow::bail!(".ctx/config.toml must contain a TOML table at the root"),
+        }
+    } else {
+        toml::value::Table::new()
+    };
+
+    let cloud_value = root_table
+        .entry("cloud_workers".to_string())
+        .or_insert_with(|| toml::Value::Table(toml::value::Table::new()));
+    let cloud_table = cloud_value
+        .as_table_mut()
+        .ok_or_else(|| anyhow::anyhow!(".ctx/config.toml [cloud_workers] must be a TOML table"))?;
+    cloud_table.insert(
+        "gateway_url".to_string(),
+        toml::Value::String(gateway_url.trim().to_string()),
+    );
+    if !region.trim().is_empty() {
+        cloud_table.insert(
+            "region".to_string(),
+            toml::Value::String(region.trim().to_string()),
+        );
+    }
+    if !worker_instance_type.trim().is_empty() {
+        cloud_table.insert(
+            "worker_instance_type".to_string(),
+            toml::Value::String(worker_instance_type.trim().to_string()),
+        );
+    }
+
+    if let Some(parent) = config_path.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .context("creating .ctx directory")?;
+    }
+    let serialized = toml::to_string_pretty(&toml::Value::Table(root_table))
+        .context("serializing .ctx/config.toml")?;
+    tokio::fs::write(&config_path, serialized)
+        .await
+        .context("writing .ctx/config.toml")?;
+    Ok(())
+}
+
+async fn git_remote_origin_url(root: &StdPath) -> anyhow::Result<String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["remote", "get-url", "origin"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .await
+        .context("running git remote get-url origin")?;
+    if !output.status.success() {
+        bail!(
+            "git remote get-url origin failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let url = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if url.is_empty() {
+        bail!("git remote origin is empty");
+    }
+    Ok(url)
+}
+
+async fn load_track_and_worktree(
+    state: &Arc<AppState>,
+    track_id: TrackId,
+) -> Result<(Track, Worktree), (StatusCode, Json<ApiErrorResp>)> {
     let track = state
         .store
         .get_track(track_id)
@@ -12973,21 +13082,96 @@ async fn start_track_worker(
                 error: "worktree not found".to_string(),
             }),
         ))?;
+    Ok((track, worktree))
+}
 
-    let base_commit = req
+async fn resolve_cloud_worker_gateway_url(
+    state: &Arc<AppState>,
+    workspace_root: &str,
+) -> Result<String, (StatusCode, Json<ApiErrorResp>)> {
+    let workspace_cfg = load_workspace_cloud_workers_config(StdPath::new(workspace_root))
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: e.to_string(),
+                }),
+            )
+        })?;
+    if let Some(url) = workspace_cfg.gateway_url.as_ref().filter(|v| !v.trim().is_empty()) {
+        return Ok(url.trim().to_string());
+    }
+
+    let settings = user_settings::load_settings(&state.data_root).await;
+    let url = settings
+        .cloud_workers
+        .and_then(|cw| cw.gateway)
+        .map(|gateway| gateway.gateway_url)
+        .unwrap_or_default();
+    if url.trim().is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "cloud worker gateway url is not configured".to_string(),
+            }),
+        ));
+    }
+    Ok(url)
+}
+
+async fn resolve_cloud_worker_repo_spec(
+    worktree: &Worktree,
+    reference: &str,
+) -> Result<RepoSpec, (StatusCode, Json<ApiErrorResp>)> {
+    assert_git_repo(&worktree.root_path).await.map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: e.to_string(),
+            }),
+        )
+    })?;
+    let url = git_remote_origin_url(StdPath::new(&worktree.root_path))
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: e.to_string(),
+                }),
+            )
+        })?;
+    Ok(RepoSpec::Git {
+        url,
+        reference: reference.to_string(),
+    })
+}
+
+async fn start_track_worker_inner(
+    state: Arc<AppState>,
+    track: Track,
+    worktree: Worktree,
+    req: TrackWorkerStartReq,
+    opts: StartWorkerOptions,
+) -> Result<TrackWorker, (StatusCode, Json<ApiErrorResp>)> {
+    let base_commit = opts
         .base_commit_sha
+        .or(req.base_commit_sha)
         .unwrap_or_else(|| worktree.base_commit_sha.clone());
 
     let start_req = StartWorkerRequest {
         task_id: track.task_id.0.to_string(),
         track_id: track.id.0.to_string(),
-        provider_id: None,
-        model_id: None,
+        provider_id: opts.provider_id,
+        model_id: opts.model_id,
         repo: req.repo,
         base_commit_sha: Some(base_commit),
-        diff_debounce_ms: req.diff_debounce_ms,
-        ttl_seconds: req.ttl_seconds,
-        snapshot_ttl_seconds: req.snapshot_ttl_seconds,
+        diff_debounce_ms: opts.diff_debounce_ms.or(req.diff_debounce_ms),
+        ttl_seconds: opts.ttl_seconds.or(req.ttl_seconds),
+        snapshot_ttl_seconds: opts
+            .snapshot_ttl_seconds
+            .or(req.snapshot_ttl_seconds),
         env: HashMap::new(),
     };
 
@@ -13046,6 +13230,240 @@ async fn start_track_worker(
                 }),
             )
         })?;
+
+    Ok(worker)
+}
+
+#[derive(Debug)]
+#[allow(dead_code)]
+struct GatewayUserDataSpec<'a> {
+    gateway_download_url: &'a str,
+    shim_download_url: &'a str,
+    aws_region: &'a str,
+    aws_access_key_id: &'a str,
+    aws_secret_access_key: &'a str,
+    worker_ami_id: &'a str,
+    worker_instance_type: &'a str,
+    subnet_id: &'a str,
+    security_group_id: &'a str,
+    ssh_key_name: Option<&'a str>,
+    ssh_user: Option<&'a str>,
+}
+
+#[allow(dead_code, deprecated)]
+async fn aws_sdk_config(
+    region: &str,
+    access_key_id: &str,
+    secret_access_key: &str,
+) -> anyhow::Result<aws_config::SdkConfig> {
+    let credentials = Credentials::new(
+        access_key_id,
+        secret_access_key,
+        None,
+        None,
+        "ctx",
+    );
+    let config = aws_config::from_env()
+        .region(Region::new(region.to_string()))
+        .credentials_provider(credentials)
+        .load()
+        .await;
+    Ok(config)
+}
+
+#[allow(dead_code)]
+async fn resolve_subnet_and_vpc(
+    _ec2: &Ec2Client,
+    _subnet_id: Option<&str>,
+) -> anyhow::Result<(String, String)> {
+    anyhow::bail!("aws subnet resolution is not implemented")
+}
+
+#[allow(dead_code)]
+async fn ensure_security_group(
+    _ec2: &Ec2Client,
+    _vpc_id: &str,
+    _allow_ssh: bool,
+) -> anyhow::Result<String> {
+    anyhow::bail!("aws security group provisioning is not implemented")
+}
+
+#[allow(dead_code)]
+async fn resolve_latest_amazon_linux_2023_ami(_ec2: &Ec2Client) -> anyhow::Result<String> {
+    anyhow::bail!("aws ami resolution is not implemented")
+}
+
+#[allow(dead_code)]
+async fn default_bucket_name(_sts: &StsClient, _region: &str) -> anyhow::Result<String> {
+    anyhow::bail!("aws bucket naming is not implemented")
+}
+
+#[allow(dead_code)]
+async fn ensure_bucket(_s3: &S3Client, _bucket: &str, _region: &str) -> anyhow::Result<()> {
+    anyhow::bail!("aws bucket provisioning is not implemented")
+}
+
+#[allow(dead_code)]
+fn resolve_binary_path(_env_key: &str, _binary_name: &str) -> anyhow::Result<PathBuf> {
+    anyhow::bail!("resolving worker binaries is not implemented")
+}
+
+#[allow(dead_code)]
+async fn upload_file_to_s3(
+    _s3: &S3Client,
+    _bucket: &str,
+    _key: &str,
+    _path: &PathBuf,
+) -> anyhow::Result<()> {
+    anyhow::bail!("aws s3 upload is not implemented")
+}
+
+#[allow(dead_code)]
+async fn presign_get_url(
+    _s3: &S3Client,
+    _bucket: &str,
+    _key: &str,
+    _config: PresigningConfig,
+) -> anyhow::Result<String> {
+    anyhow::bail!("aws s3 presign is not implemented")
+}
+
+#[allow(dead_code)]
+fn render_gateway_user_data(_spec: &GatewayUserDataSpec<'_>) -> String {
+    String::new()
+}
+
+#[allow(dead_code)]
+async fn run_gateway_instance(
+    _ec2: &Ec2Client,
+    _ami_id: &str,
+    _instance_type: &str,
+    _subnet_id: &str,
+    _security_group_id: &str,
+    _user_data_b64: &str,
+) -> anyhow::Result<String> {
+    anyhow::bail!("aws gateway launch is not implemented")
+}
+
+#[allow(dead_code)]
+async fn wait_instance_ips(
+    _ec2: &Ec2Client,
+    _instance_id: &str,
+) -> anyhow::Result<(Option<String>, Option<String>)> {
+    anyhow::bail!("aws instance ip lookup is not implemented")
+}
+async fn start_track_worker(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(req): Json<TrackWorkerStartReq>,
+) -> Result<Json<TrackWorker>, (StatusCode, Json<ApiErrorResp>)> {
+    let track_id = TrackId(uuid::Uuid::parse_str(&id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid track id".to_string(),
+            }),
+        )
+    })?);
+    let (track, worktree) = load_track_and_worktree(&state, track_id).await?;
+    let worker = start_track_worker_inner(state, track, worktree, req, StartWorkerOptions::default())
+        .await?;
+    Ok(Json(worker))
+}
+
+async fn start_track_cloud_worker(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(req): Json<TrackCloudWorkerStartReq>,
+) -> Result<Json<TrackWorker>, (StatusCode, Json<ApiErrorResp>)> {
+    let track_id = TrackId(uuid::Uuid::parse_str(&id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid track id".to_string(),
+            }),
+        )
+    })?);
+    let (track, worktree) = load_track_and_worktree(&state, track_id).await?;
+    let workspace = state
+        .store
+        .get_workspace(track.workspace_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: e.to_string(),
+                }),
+            )
+        })?
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "workspace not found".to_string(),
+            }),
+        ))?;
+    let workspace_cfg =
+        load_workspace_cloud_workers_config(StdPath::new(&workspace.root_path)).await.map_err(
+            |e| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(ApiErrorResp {
+                        error: e.to_string(),
+                    }),
+                )
+            },
+        )?;
+
+    let gateway_url = resolve_cloud_worker_gateway_url(&state, &workspace.root_path).await?;
+    let base_commit = if worktree.base_commit_sha.trim().is_empty() {
+        rev_parse_head(&worktree.root_path).await.map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: e.to_string(),
+                }),
+            )
+        })?
+    } else {
+        worktree.base_commit_sha.clone()
+    };
+    let reference = worktree
+        .git_branch
+        .clone()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| base_commit.clone());
+    let repo = resolve_cloud_worker_repo_spec(&worktree, &reference).await?;
+    let diff_debounce_ms = req.diff_debounce_ms.or(workspace_cfg.diff_debounce_ms);
+    let ttl_seconds = req.ttl_seconds.or(workspace_cfg.idle_timeout_minutes.map(|m| m * 60));
+    let snapshot_ttl_seconds = req.snapshot_ttl_seconds.or_else(|| {
+        workspace_cfg
+            .snapshot_ttl_days
+            .map(|d| d.saturating_mul(24 * 60 * 60))
+    });
+
+    let worker = start_track_worker_inner(
+        state,
+        track,
+        worktree,
+        TrackWorkerStartReq {
+            gateway_url,
+            repo,
+            base_commit_sha: Some(base_commit),
+            diff_debounce_ms,
+            ttl_seconds,
+            snapshot_ttl_seconds,
+        },
+        StartWorkerOptions {
+            provider_id: req.provider_id,
+            model_id: req.model_id,
+            diff_debounce_ms,
+            ttl_seconds,
+            snapshot_ttl_seconds,
+            base_commit_sha: None,
+        },
+    )
+    .await?;
 
     Ok(Json(worker))
 }
