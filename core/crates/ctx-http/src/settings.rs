@@ -20,6 +20,8 @@ pub struct Settings {
     pub subagents: Option<SubagentSettings>,
     #[serde(default)]
     pub sandboxing: Option<SandboxingSettings>,
+    #[serde(default)]
+    pub cloud_workers: Option<CloudWorkersSettings>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -127,6 +129,56 @@ pub struct ProviderGuardSettings {
     pub interval_ms: Option<u64>,
     #[serde(default)]
     pub grace_period_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct CloudWorkersSettings {
+    #[serde(default)]
+    pub gateway: Option<CloudGatewaySettings>,
+    #[serde(default)]
+    pub aws: Option<AwsCloudWorkersSettings>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct CloudGatewaySettings {
+    pub provider: String,
+    pub gateway_url: String,
+    #[serde(default)]
+    pub instance_id: Option<String>,
+    #[serde(default)]
+    pub region: Option<String>,
+    #[serde(default)]
+    pub public_ip: Option<String>,
+    #[serde(default)]
+    pub gateway_ca_pem: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct AwsCloudWorkersSettings {
+    #[serde(default)]
+    pub access_key_id: String,
+    #[serde(default)]
+    pub secret_access_key: String,
+    #[serde(default)]
+    pub region: String,
+    #[serde(default)]
+    pub gateway_instance_type: String,
+    #[serde(default)]
+    pub worker_instance_type: String,
+    #[serde(default)]
+    pub subnet_id: Option<String>,
+    #[serde(default)]
+    pub security_group_id: Option<String>,
+    #[serde(default)]
+    pub ssh_key_name: Option<String>,
+    #[serde(default)]
+    pub worker_ami_id: Option<String>,
+    #[serde(default)]
+    pub gateway_ami_id: Option<String>,
+    #[serde(default)]
+    pub ssh_user: Option<String>,
+    #[serde(default)]
+    pub artifact_bucket: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -616,6 +668,7 @@ pub fn apply_update(mut current: Settings, req: UpdateSettingsReq) -> Settings {
         let mut next = current.subagents.unwrap_or_default();
         next.max_per_call = s.max_per_call;
         current.subagents = Some(next);
+    }
     if let Some(s) = req.sandboxing {
         let mut next = current.sandboxing.unwrap_or_default();
         next.provider_control_mode = s.provider_control_mode;
