@@ -38,6 +38,10 @@ use ctx_core::models::*;
 use ctx_fs::git::{assert_git_repo, list_tracked_files, list_untracked_files, rev_parse_head};
 use ctx_fs::worktrees::{create_worktree, diff_worktree_summary, managed_worktree_path};
 use ctx_store::store::MobileDeviceUpsert;
+use chrono::Utc;
+use ctx_worker_protocol::{
+    DiffArtifact, RepoSpec, StartWorkerRequest, StartWorkerResponse, TerminalOpenRequest,
+};
 
 use crate::attachments;
 use crate::buffers::{
@@ -57,7 +61,9 @@ use crate::resource_utilization;
 use crate::scheduler::SchedulerCommand;
 use crate::settings as user_settings;
 use crate::telemetry::{TelemetryConfig, TelemetryEvent};
-use crate::terminals::TerminalCreateRequest;
+use crate::terminals::{
+    RemoteTerminalRequest, TerminalClientMessage, TerminalCreateRequest, TerminalServerMessage,
+};
 use crate::title_generation;
 use crate::updates;
 use crate::web_sessions::{
@@ -443,6 +449,12 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
         .route("/api/tracks/:id/diff", get(track_diff))
         .route("/api/tracks/:id/diff_summary", get(track_diff_summary))
         .route("/api/tracks/:id/diff/apply", post(track_diff_apply))
+        .route(
+            "/api/tracks/:id/worker",
+            get(get_track_worker)
+                .post(start_track_worker)
+                .delete(delete_track_worker),
+        )
         .route(
             "/api/dictation/livekit/stream",
             get(dictation_livekit_stream_ws),
@@ -5860,6 +5872,22 @@ async fn create_workspace_terminal(
         )?)),
         None => None,
     };
+    let track_worker = if let Some(track_id) = track_id {
+        state
+            .store
+            .get_track_worker(track_id)
+            .await
+            .map_err(|_| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiErrorResp {
+                        error: "failed to load track worker".to_string(),
+                    }),
+                )
+            })?
+    } else {
+        None
+    };
 
     let workspace_root = PathBuf::from(&workspace.root_path);
     let workspace_root = tokio::fs::canonicalize(&workspace_root)
@@ -5939,17 +5967,86 @@ async fn create_workspace_terminal(
         ));
     }
 
-    let shell = req
-        .shell
-        .and_then(|v| {
-            let trimmed = v.trim();
-            if trimmed.is_empty() {
-                None
-            } else {
-                Some(trimmed.to_string())
-            }
-        })
+    let requested_shell = req.shell.as_deref().and_then(|v| {
+        let trimmed = v.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        }
+    });
+    let shell = requested_shell
+        .map(|value| value.to_string())
         .unwrap_or_else(default_shell);
+    let remote_shell = requested_shell
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "/bin/bash".to_string());
+
+    if let Some(worker) = track_worker {
+        let terminal_id = TerminalId::new();
+        let remote_cwd = worktree_root
+            .as_ref()
+            .and_then(|root| cwd.strip_prefix(root).ok())
+            .and_then(|rel| {
+                let rel = rel.to_string_lossy().to_string();
+                if rel.is_empty() {
+                    None
+                } else {
+                    Some(rel)
+                }
+            });
+        let open_req = TerminalOpenRequest {
+            terminal_id: terminal_id.0.to_string(),
+            shell: remote_shell.clone(),
+            cwd: remote_cwd,
+            cols: 80,
+            rows: 24,
+        };
+        let gateway_token = std::env::var("CTX_WORKER_GATEWAY_TOKEN")
+            .ok()
+            .filter(|value| !value.trim().is_empty());
+        open_remote_terminal(&worker, &open_req, gateway_token.as_deref())
+            .await
+            .map_err(|_| {
+                (
+                    StatusCode::BAD_GATEWAY,
+                    Json(ApiErrorResp {
+                        error: "failed to open remote terminal".to_string(),
+                    }),
+                )
+            })?;
+        let session = state
+            .terminals
+            .create_remote(
+                TerminalCreateRequest {
+                    workspace_id,
+                    task_id,
+                    track_id,
+                    session_id,
+                    worktree_id,
+                    cwd,
+                    shell: remote_shell,
+                    cols: None,
+                    rows: None,
+                },
+                RemoteTerminalRequest {
+                    terminal_id,
+                    gateway_url: worker.gateway_url,
+                    worker_id: worker.worker_id,
+                    token: gateway_token,
+                },
+            )
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiErrorResp {
+                        error: format!("failed to create remote terminal: {e}"),
+                    }),
+                )
+            })?;
+        return Ok(Json(session.snapshot()));
+    }
 
     let session = state
         .terminals
@@ -5984,27 +6081,20 @@ async fn delete_terminal(
     let terminal_id = TerminalId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
     let session = state.terminals.remove(terminal_id).await;
     if let Some(session) = session {
+        let snapshot = session.snapshot();
+        if let Some(track_id) = snapshot.track_id {
+            if let Ok(Some(worker)) = state.store.get_track_worker(track_id).await {
+                let gateway_token = std::env::var("CTX_WORKER_GATEWAY_TOKEN")
+                    .ok()
+                    .filter(|value| !value.trim().is_empty());
+                let _ = close_remote_terminal(&worker, &terminal_id, gateway_token.as_deref()).await;
+            }
+        }
         let _ = session.kill();
         session.mark_exited(None);
         return Ok(StatusCode::NO_CONTENT);
     }
     Err(StatusCode::NOT_FOUND)
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-enum TerminalClientMessage {
-    Resize { cols: u16, rows: u16 },
-    Input { data: String },
-}
-
-#[derive(Debug, Serialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-enum TerminalServerMessage {
-    Status {
-        status: TerminalStatus,
-        exit_code: Option<i32>,
-    },
 }
 
 async fn terminal_stream_ws(
@@ -12144,6 +12234,40 @@ async fn track_diff_summary(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
 
+    if let Ok(Some(worker)) = state.store.get_track_worker(track_id).await {
+        let diff = fetch_remote_diff(&worker).await?;
+        let (summary, too_large) =
+            build_diff_summary(diff.file_count, diff.line_additions, diff.line_deletions);
+        let entry = write_diff_summary_cache(&state, track_id, summary.clone(), too_large).await;
+
+        if let Ok(Some(mut catchup_summary)) = state
+            .store
+            .get_workspace_catchup_track_summary(track_id)
+            .await
+        {
+            catchup_summary.diff_summary = summary.clone();
+            state
+                .workspace_catchup
+                .publish_track_upsert(track.workspace_id, catchup_summary)
+                .await;
+        }
+
+        if perf {
+            tracing::info!(
+                target: "ctx_perf",
+                endpoint = "track_diff_summary",
+                track_id = %track_id.0,
+                cache_hit = false,
+                ms = %t0.elapsed().as_millis(),
+            );
+        }
+
+        return Ok(Json(TrackDiffSummaryResponse {
+            summary: entry.summary,
+            too_large: entry.too_large,
+        }));
+    }
+
     if let Some(entry) = read_cached_diff_summary(&state, track_id).await {
         if perf {
             tracing::info!(
@@ -12281,6 +12405,61 @@ async fn track_diff(
         .record_metric(metric, None, None, None)
         .await;
     Ok(Json(DiffResponse { diff }))
+}
+
+async fn fetch_remote_diff(worker: &TrackWorker) -> Result<DiffArtifact, StatusCode> {
+    let base = worker.gateway_url.trim_end_matches('/');
+    let url = format!("{base}/workers/{}/diff", worker.worker_id);
+    let resp = reqwest::get(url)
+        .await
+        .map_err(|_| StatusCode::BAD_GATEWAY)?;
+    if !resp.status().is_success() {
+        return Err(StatusCode::BAD_GATEWAY);
+    }
+    resp.json::<DiffArtifact>()
+        .await
+        .map_err(|_| StatusCode::BAD_GATEWAY)
+}
+
+async fn open_remote_terminal(
+    worker: &TrackWorker,
+    req: &TerminalOpenRequest,
+    token: Option<&str>,
+) -> Result<(), StatusCode> {
+    let base = worker.gateway_url.trim_end_matches('/');
+    let url = format!("{base}/workers/{}/terminals", worker.worker_id);
+    let client = reqwest::Client::new();
+    let mut request = client.post(url).json(req);
+    if let Some(token) = token {
+        request = request.header("x-ctx-gateway-token", token);
+    }
+    let resp = request.send().await.map_err(|_| StatusCode::BAD_GATEWAY)?;
+    if !resp.status().is_success() {
+        return Err(StatusCode::BAD_GATEWAY);
+    }
+    Ok(())
+}
+
+async fn close_remote_terminal(
+    worker: &TrackWorker,
+    terminal_id: &TerminalId,
+    token: Option<&str>,
+) -> Result<(), StatusCode> {
+    let base = worker.gateway_url.trim_end_matches('/');
+    let url = format!(
+        "{base}/workers/{}/terminals/{}/close",
+        worker.worker_id, terminal_id.0
+    );
+    let client = reqwest::Client::new();
+    let mut request = client.post(url);
+    if let Some(token) = token {
+        request = request.header("x-ctx-gateway-token", token);
+    }
+    let resp = request.send().await.map_err(|_| StatusCode::BAD_GATEWAY)?;
+    if !resp.status().is_success() {
+        return Err(StatusCode::BAD_GATEWAY);
+    }
+    Ok(())
 }
 
 #[derive(Debug, Deserialize)]
@@ -12467,6 +12646,469 @@ async fn track_diff_apply(
         .record_metric(metric, None, None, None)
         .await;
     Ok(Json(DiffResponse { diff }))
+}
+
+#[derive(Debug, Deserialize)]
+struct TrackWorkerStartReq {
+    gateway_url: String,
+    repo: RepoSpec,
+    #[serde(default)]
+    base_commit_sha: Option<String>,
+    #[serde(default)]
+    diff_debounce_ms: Option<u64>,
+    #[serde(default)]
+    ttl_seconds: Option<u64>,
+    #[serde(default)]
+    snapshot_ttl_seconds: Option<u64>,
+}
+
+ HEAD
+
+#[derive(Debug, Deserialize)]
+struct TrackCloudWorkerStartReq {
+    #[serde(default)]
+    provider_id: Option<String>,
+    #[serde(default)]
+    model_id: Option<String>,
+    #[serde(default)]
+    diff_debounce_ms: Option<u64>,
+    #[serde(default)]
+    ttl_seconds: Option<u64>,
+    #[serde(default)]
+    snapshot_ttl_seconds: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AwsGatewayLaunchReq {
+    #[serde(default)]
+    workspace_id: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct AwsGatewayLaunchResp {
+    gateway: user_settings::CloudGatewaySettings,
+}
+
+async fn launch_aws_gateway(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<AwsGatewayLaunchReq>,
+) -> Result<Json<AwsGatewayLaunchResp>, (StatusCode, Json<ApiErrorResp>)> {
+    let gateway = launch_aws_gateway_inner(state, req).await.map_err(|err| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&err.to_string()),
+            }),
+        )
+    })?;
+
+    Ok(Json(AwsGatewayLaunchResp { gateway }))
+}
+
+async fn launch_aws_gateway_inner(
+    state: Arc<AppState>,
+    req: AwsGatewayLaunchReq,
+) -> anyhow::Result<user_settings::CloudGatewaySettings> {
+    let mut settings = user_settings::load_settings(&state.data_root).await;
+    let cloud = settings.cloud_workers.get_or_insert_default();
+    let aws = cloud.aws.get_or_insert_default();
+
+    if aws.access_key_id.trim().is_empty() || aws.secret_access_key.trim().is_empty() {
+        anyhow::bail!("AWS access key id and secret are required");
+    }
+    if aws.region.trim().is_empty() {
+        aws.region = "us-east-1".to_string();
+    }
+    if aws.gateway_instance_type.trim().is_empty() {
+        aws.gateway_instance_type = "t3.small".to_string();
+    }
+    if aws.worker_instance_type.trim().is_empty() {
+        aws.worker_instance_type = "t3.small".to_string();
+    }
+
+    let sdk_config =
+        aws_sdk_config(&aws.region, &aws.access_key_id, &aws.secret_access_key).await?;
+    let ec2 = Ec2Client::new(&sdk_config);
+    let s3 = S3Client::new(&sdk_config);
+    let sts = StsClient::new(&sdk_config);
+
+    let (subnet_id, vpc_id) = resolve_subnet_and_vpc(&ec2, aws.subnet_id.as_deref()).await?;
+    aws.subnet_id = Some(subnet_id.clone());
+
+    let allow_ssh = aws
+        .ssh_key_name
+        .as_ref()
+        .map(|v| !v.trim().is_empty())
+        .unwrap_or(false);
+    let security_group_id = match aws
+        .security_group_id
+        .as_ref()
+        .filter(|v| !v.trim().is_empty())
+    {
+        Some(existing) => existing.to_string(),
+        None => ensure_security_group(&ec2, &vpc_id, allow_ssh).await?,
+    };
+    aws.security_group_id = Some(security_group_id.clone());
+
+    let ami_id = match aws.gateway_ami_id.as_ref().filter(|v| !v.trim().is_empty()) {
+        Some(id) => id.to_string(),
+        None => resolve_latest_amazon_linux_2023_ami(&ec2).await?,
+    };
+    if aws
+        .gateway_ami_id
+        .as_ref()
+        .map(|v| v.trim().is_empty())
+        .unwrap_or(true)
+    {
+        aws.gateway_ami_id = Some(ami_id.clone());
+    }
+    if aws
+        .worker_ami_id
+        .as_ref()
+        .map(|v| v.trim().is_empty())
+        .unwrap_or(true)
+    {
+        aws.worker_ami_id = Some(ami_id.clone());
+    }
+    if aws
+        .ssh_user
+        .as_ref()
+        .map(|v| v.trim().is_empty())
+        .unwrap_or(true)
+    {
+        aws.ssh_user = Some("ec2-user".to_string());
+    }
+
+    let bucket = if let Some(existing) = aws
+        .artifact_bucket
+        .as_ref()
+        .filter(|v| !v.trim().is_empty())
+    {
+        ensure_bucket(&s3, existing, &aws.region).await?;
+        existing.to_string()
+    } else {
+        let name = default_bucket_name(&sts, &aws.region).await?;
+        ensure_bucket(&s3, &name, &aws.region).await?;
+        aws.artifact_bucket = Some(name.clone());
+        name
+    };
+
+    let gateway_bin = resolve_binary_path("CTX_WORKER_GATEWAY_BIN", "ctx-worker-gateway")
+        .context("ctx-worker-gateway binary not found")?;
+    let shim_bin = resolve_binary_path("CTX_WORKER_SHIM_BIN", "ctx-worker-shim")
+        .context("ctx-worker-shim binary not found")?;
+
+    let gateway_key = format!(
+        "ctx-cloud-workers/binaries/{}/ctx-worker-gateway",
+        uuid::Uuid::new_v4()
+    );
+    let shim_key = format!(
+        "ctx-cloud-workers/binaries/{}/ctx-worker-shim",
+        uuid::Uuid::new_v4()
+    );
+    upload_file_to_s3(&s3, &bucket, &gateway_key, &gateway_bin).await?;
+    upload_file_to_s3(&s3, &bucket, &shim_key, &shim_bin).await?;
+
+    let gateway_download_url = presign_get_url(
+        &s3,
+        &bucket,
+        &gateway_key,
+        PresigningConfig::expires_in(Duration::from_secs(3600))?,
+    )
+    .await?;
+    let shim_download_url = presign_get_url(
+        &s3,
+        &bucket,
+        &shim_key,
+        PresigningConfig::expires_in(Duration::from_secs(3600))?,
+    )
+    .await?;
+
+    let user_data = render_gateway_user_data(&GatewayUserDataSpec {
+        gateway_download_url: &gateway_download_url,
+        shim_download_url: &shim_download_url,
+        aws_region: &aws.region,
+        aws_access_key_id: &aws.access_key_id,
+        aws_secret_access_key: &aws.secret_access_key,
+        worker_ami_id: aws.worker_ami_id.as_deref().unwrap_or(&ami_id),
+        worker_instance_type: &aws.worker_instance_type,
+        subnet_id: &subnet_id,
+        security_group_id: &security_group_id,
+        ssh_key_name: aws.ssh_key_name.as_deref(),
+        ssh_user: aws.ssh_user.as_deref(),
+    });
+    let user_data_b64 = base64::engine::general_purpose::STANDARD.encode(user_data.as_bytes());
+
+    let instance_id = run_gateway_instance(
+        &ec2,
+        &ami_id,
+        &aws.gateway_instance_type,
+        &subnet_id,
+        &security_group_id,
+        &user_data_b64,
+    )
+    .await?;
+    let (public_ip, _) = wait_instance_ips(&ec2, &instance_id).await?;
+    let public_ip = public_ip.context("gateway instance missing public IP")?;
+
+    let gateway_url = format!("http://{public_ip}:8787");
+    let region = aws.region.clone();
+    let worker_instance_type = aws.worker_instance_type.clone();
+    let gateway = user_settings::CloudGatewaySettings {
+        provider: "aws".to_string(),
+        gateway_url: gateway_url.clone(),
+        instance_id: Some(instance_id),
+        region: Some(region.clone()),
+        public_ip: Some(public_ip),
+    };
+
+    cloud.gateway = Some(gateway.clone());
+    user_settings::save_settings(&state.data_root, &settings).await?;
+
+    if let Some(workspace_id) = req.workspace_id.as_deref() {
+        if let Ok(workspace_id) = uuid::Uuid::parse_str(workspace_id) {
+            if let Ok(Some(workspace)) = state.store.get_workspace(WorkspaceId(workspace_id)).await
+            {
+                if let Err(err) = update_workspace_cloud_workers_config(
+                    &workspace.root_path,
+                    &gateway_url,
+                    &region,
+                    &worker_instance_type,
+                )
+                .await
+                {
+                    tracing::warn!("failed to update cloud worker config: {err:#}");
+                }
+            }
+        }
+    }
+
+    Ok(gateway)
+}
+
+#[derive(Debug, Clone)]
+struct StartWorkerOptions {
+    provider_id: Option<String>,
+    model_id: Option<String>,
+    diff_debounce_ms: Option<u64>,
+    ttl_seconds: Option<u64>,
+    snapshot_ttl_seconds: Option<u64>,
+    base_commit_sha: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct WorkspaceCloudWorkersConfig {
+    #[serde(default)]
+    gateway_url: Option<String>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    default_profile: Option<String>,
+    #[serde(default)]
+    diff_debounce_ms: Option<u64>,
+    #[serde(default)]
+    idle_timeout_minutes: Option<u64>,
+    #[serde(default)]
+    snapshot_ttl_days: Option<u64>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct WorkspaceConfigFile {
+    #[serde(default)]
+    cloud_workers: Option<WorkspaceCloudWorkersConfig>,
+}
+
+#[derive(Debug)]
+struct RepoArchive {
+    _dir: tempfile::TempDir,
+    path: PathBuf,
+}
+
+e25f248 (Fix gateway clippy and migration numbering)
+async fn start_track_worker(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(req): Json<TrackWorkerStartReq>,
+) -> Result<Json<TrackWorker>, (StatusCode, Json<ApiErrorResp>)> {
+    let track_id = TrackId(uuid::Uuid::parse_str(&id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid track id".to_string(),
+            }),
+        )
+    })?);
+    let track = state
+        .store
+        .get_track(track_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: e.to_string(),
+                }),
+            )
+        })?
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "track not found".to_string(),
+            }),
+        ))?;
+    let worktree = state
+        .store
+        .get_worktree(track.worktree_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: e.to_string(),
+                }),
+            )
+        })?
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "worktree not found".to_string(),
+            }),
+        ))?;
+
+    let base_commit = req
+        .base_commit_sha
+        .unwrap_or_else(|| worktree.base_commit_sha.clone());
+
+    let start_req = StartWorkerRequest {
+        task_id: track.task_id.0.to_string(),
+        track_id: track.id.0.to_string(),
+        provider_id: None,
+        model_id: None,
+        repo: req.repo,
+        base_commit_sha: Some(base_commit),
+        diff_debounce_ms: req.diff_debounce_ms,
+        ttl_seconds: req.ttl_seconds,
+        snapshot_ttl_seconds: req.snapshot_ttl_seconds,
+        env: HashMap::new(),
+    };
+
+    let url = format!("{}/workers", req.gateway_url.trim_end_matches('/'));
+    let resp = reqwest::Client::new()
+        .post(url)
+        .json(&start_req)
+        .send()
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_GATEWAY,
+                Json(ApiErrorResp {
+                    error: e.to_string(),
+                }),
+            )
+        })?
+        .error_for_status()
+        .map_err(|e| {
+            (
+                StatusCode::BAD_GATEWAY,
+                Json(ApiErrorResp {
+                    error: e.to_string(),
+                }),
+            )
+        })?
+        .json::<StartWorkerResponse>()
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_GATEWAY,
+                Json(ApiErrorResp {
+                    error: e.to_string(),
+                }),
+            )
+        })?;
+
+    let now = Utc::now();
+    let worker = TrackWorker {
+        track_id: track.id,
+        worker_id: resp.worker_id,
+        gateway_url: req.gateway_url,
+        created_at: now,
+        updated_at: now,
+    };
+
+    state
+        .store
+        .upsert_track_worker(&worker)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: e.to_string(),
+                }),
+            )
+        })?;
+
+    Ok(Json(worker))
+}
+
+async fn get_track_worker(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<TrackWorker>, StatusCode> {
+    let track_id = TrackId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
+    let worker = state
+        .store
+        .get_track_worker(track_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    Ok(Json(worker))
+}
+
+async fn delete_track_worker(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<StatusCode, (StatusCode, Json<ApiErrorResp>)> {
+    let track_id = TrackId(uuid::Uuid::parse_str(&id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid track id".to_string(),
+            }),
+        )
+    })?);
+    let worker = state
+        .store
+        .get_track_worker(track_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: e.to_string(),
+                }),
+            )
+        })?;
+    if let Some(worker) = worker {
+        let url = format!(
+            "{}/workers/{}/stop",
+            worker.gateway_url.trim_end_matches('/'),
+            worker.worker_id
+        );
+        let _ = reqwest::Client::new().post(url).send().await;
+        state
+            .store
+            .delete_track_worker(track_id)
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiErrorResp {
+                        error: e.to_string(),
+                    }),
+                )
+            })?;
+    }
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn dictation_livekit_stream_ws(

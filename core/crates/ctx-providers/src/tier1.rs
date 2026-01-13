@@ -17,6 +17,7 @@ use crate::adapters::{
 };
 use crate::ask_user_question::AskUserQuestionBroker;
 use crate::events::NormalizedEvent;
+use crate::remote_acp::run_remote_prompt;
 
 pub struct Tier1AcpAdapter {
     pub id: String,
@@ -187,6 +188,9 @@ impl ProviderAdapter for Tier1AcpAdapter {
         env: HashMap<String, String>,
         event_sink: mpsc::Sender<NormalizedEvent>,
     ) -> Result<RunHandle> {
+        if env.contains_key("CTX_WORKER_GATEWAY_URL") && env.contains_key("CTX_WORKER_ID") {
+            return run_remote_prompt(self.id.clone(), input, workdir, env, event_sink).await;
+        }
         let (cancel_tx, cancel_rx) = oneshot::channel::<()>();
         let (done_tx, done_rx) = oneshot::channel::<()>();
 
@@ -365,9 +369,8 @@ impl ProviderAdapter for Tier1AcpAdapter {
     }
 }
 
-fn build_acp_client_config(env: &HashMap<String, String>) -> AcpClientConfig {
+pub(crate) fn build_acp_client_config(env: &HashMap<String, String>) -> AcpClientConfig {
     const DEFAULT_CTX_MCP_TOOL_TIMEOUT_SECS: u64 = 2 * 60 * 60;
-
     let mut mcp_env = HashMap::new();
     if let Some(url) = env.get("CTX_DAEMON_URL") {
         mcp_env.insert("CTX_DAEMON_URL".to_string(), url.clone());

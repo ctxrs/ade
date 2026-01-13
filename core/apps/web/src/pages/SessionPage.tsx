@@ -107,7 +107,6 @@ type ThreadItem =
     started_at: string;
     updated_at: string;
     custom_status?: string | null;
-    status_text?: string | null;
     assistant_messages_content?: string;
   }
   | {
@@ -4374,7 +4373,6 @@ function buildWorkbenchThreadViewModelFromTurns(
       started_at: turn.started_at,
       updated_at: turn.updated_at ?? turn.started_at,
       custom_status: statusText,
-      status_text: statusText,
       assistant_messages_content: assistantMessagesContent,
     });
 

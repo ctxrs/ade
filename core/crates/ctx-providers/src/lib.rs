@@ -3,6 +3,7 @@ pub mod adapters;
 pub mod ask_user_question;
 pub mod events;
 pub mod fake;
+pub mod remote_acp;
 pub mod tier1;
 
 #[cfg(test)]

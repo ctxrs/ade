@@ -72,10 +72,10 @@ const ACP_MEMORY_MIN_MB: u64 = 256;
 const SYSTEMD_TIMEOUT: Duration = Duration::from_secs(3);
 
 #[derive(Debug, Default)]
-struct StreamState {
-    assistant_buf: String,
-    saw_assistant_complete: bool,
-    saw_done: bool,
+pub(crate) struct StreamState {
+    pub(crate) assistant_buf: String,
+    pub(crate) saw_assistant_complete: bool,
+    pub(crate) saw_done: bool,
 }
 
 pub struct AcpSessionPool {
@@ -2435,7 +2435,7 @@ fn add_update_meta_fields(
     }
 }
 
-fn normalize_session_update(
+pub(crate) fn normalize_session_update(
     msg: &serde_json::Value,
     state: &mut StreamState,
 ) -> Vec<NormalizedEvent> {
@@ -2586,6 +2586,7 @@ fn normalize_session_update(
             }]
         }
         "available_commands_update" => {
+            state.saw_done = true;
             let mut payload = Map::new();
             payload.insert("acp_update".to_string(), update.clone());
             add_update_meta_fields(&mut payload, &context_window, &usage);

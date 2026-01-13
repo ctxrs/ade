@@ -49,6 +49,7 @@ import {
   markTaskRead as markTaskReadApi,
   markTaskUnread as markTaskUnreadApi,
   postMessage,
+  startTrackCloudWorker,
   trackDiff,
   unarchiveTask,
   updateTaskTitle,
@@ -2546,12 +2547,15 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
           );
         }
         const label = workbenchLabelForTrack(dt);
-        const env_target = execTarget === "local" ? "local" : "worktree";
+        const env_target = execTarget === "local" ? "local" : execTarget === "cloud" ? "cloud" : "worktree";
         const tr = await createTrack(taskId, label, { env_target });
         const trackId = idToString(tr.id);
         const opts = await ensureProviderOptions(dt.providerId).catch(() => undefined);
         const modelIds = modelIdsFromOptions(opts ?? providerOptions[dt.providerId]);
         const modelId = dt.modelId || modelIds[0] || (dt.providerId === "fake" ? "fake-model" : "default");
+        if (env_target === "cloud") {
+          await startTrackCloudWorker(trackId, { provider_id: dt.providerId, model_id: modelId });
+        }
         const session = await createSession(trackId, dt.providerId, modelId);
         const sessionId = idToString(session.id);
         if (!firstTrackId) firstTrackId = trackId;
@@ -2789,14 +2793,17 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     const inferredWorktree =
       Boolean(worktreeRoot) &&
       (Boolean(activeWorktree?.git_branch) || (Boolean(workspaceRoot) && worktreeRoot !== workspaceRoot));
-    const isWorktree = envTarget === "worktree" || (envTarget !== "local" && inferredWorktree);
-    const worktreePath = isWorktree ? worktreeRoot : "";
-    const worktreeLabel = worktreePath ? formatWorktreeLabel(worktreePath) : "";
+    const isCloud = envTarget === "cloud";
+    const isWorktree = envTarget === "worktree" || (!isCloud && envTarget !== "local" && inferredWorktree);
+    const worktreePath = (isWorktree || isCloud) ? worktreeRoot : "";
+    const worktreeLabel = isCloud ? "Cloud worker" : worktreePath ? formatWorktreeLabel(worktreePath) : "";
 
     return {
       worktreeLabel,
       worktreePath,
-      canCopyWorktree: Boolean(worktreePath),
+      canCopyWorktree: Boolean(worktreePath) && !isCloud,
+      canOpenTerminal: Boolean(worktreePath),
+      copyPath: isCloud ? "" : worktreePath,
     };
   }, [activeEntry, activeWorktree?.git_branch, activeWorktree?.root_path, workspace?.root_path]);
   const singleTrackHeader = useMemo(() => {
@@ -2877,8 +2884,8 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   }, [worktreeCopied]);
 
   const copyWorktreeLocation = useCallback(async () => {
-    const path = String(worktreeChip.worktreePath ?? "").trim();
-    if (!path) return;
+    const path = String(worktreeChip.copyPath ?? "").trim();
+    if (!path || !worktreeChip.canCopyWorktree) return;
     const ok = await copyTextToClipboard(path);
     if (!ok) {
       window.alert("Clipboard access is blocked; use HTTPS/desktop app or copy manually.");
@@ -2889,7 +2896,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
 
   const openWorktreeTerminal = useCallback(async () => {
     const path = String(worktreeChip.worktreePath ?? "").trim();
-    if (!path) return;
+    if (!path || !worktreeChip.canOpenTerminal) return;
     if (!terminalPanelRef.current) return;
     terminalPanelRef.current.setScope("task");
     setTerminalOpen(true);
@@ -3381,7 +3388,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
                             <button
                               type="button"
                               className="wb-worktree-action"
-                              disabled={!worktreeChip.canCopyWorktree}
+                              disabled={!worktreeChip.canOpenTerminal}
                               onClick={() => void openWorktreeTerminal()}
                               title="Open worktree terminal"
                               aria-label="Open worktree terminal"

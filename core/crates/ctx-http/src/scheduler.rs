@@ -292,6 +292,9 @@ async fn start_turn(
         provider_env.insert("CTX_PROVIDER_SESSION_REF".to_string(), provider_ref);
     }
     provider_env.insert("CTX_SESSION_ID".to_string(), session.id.0.to_string());
+    provider_env.insert("CTX_MODEL_ID".to_string(), session.model_id.clone());
+    let mcp_token = uuid::Uuid::new_v4().to_string();
+    provider_env.insert("CTX_MCP_TOKEN".to_string(), mcp_token);
     let provider_control_mode = settings::load_settings(&state.data_root)
         .await
         .sandboxing
@@ -330,6 +333,7 @@ async fn start_turn(
         }
     }
 
+
     let prompt_config = workspace_config::load_agent_system_prompt_append(workdir)
         .await
         .unwrap_or_else(|_| workspace_config::AgentSystemPromptAppendConfig::new_default(workdir));
@@ -340,6 +344,37 @@ async fn start_turn(
             context_blocks.push(json!({"type":"text","text": append}));
         }
         provider_env.insert("CTX_SYSTEM_PROMPT_APPEND".to_string(), append.to_string());
+    }
+
+    if let Ok(Some(worker)) = state.store.get_track_worker(session.track_id).await {
+        provider_env.insert("CTX_WORKER_GATEWAY_URL".to_string(), worker.gateway_url);
+        provider_env.insert("CTX_WORKER_ID".to_string(), worker.worker_id);
+    if let Ok(Some(worker)) = state.store.get_track_worker(session.track_id).await {
+        provider_env.insert("CTX_WORKER_GATEWAY_URL".to_string(), worker.gateway_url);
+        provider_env.insert("CTX_WORKER_ID".to_string(), worker.worker_id);
+        provider_env
+            .entry("CTX_MCP_DISABLED".to_string())
+            .or_insert_with(|| "1".to_string());
+        if let Ok(token) = std::env::var("CTX_WORKER_GATEWAY_TOKEN") {
+            let trimmed = token.trim();
+            if !trimmed.is_empty() {
+                provider_env.insert("CTX_WORKER_GATEWAY_TOKEN".to_string(), trimmed.to_string());
+            }
+        }
+        let settings = user_settings::load_settings(&state.data_root).await;
+        if let Some(pem) = settings
+            .cloud_workers
+            .and_then(|cw| cw.gateway)
+            .and_then(|gateway| gateway.gateway_ca_pem)
+        {
+            let trimmed = pem.trim();
+            if !trimmed.is_empty() {
+                let encoded = base64::engine::general_purpose::STANDARD.encode(trimmed.as_bytes());
+                provider_env.insert("CTX_WORKER_GATEWAY_CA_B64".to_string(), encoded);
+            }
+        }
+    }
+464d871 (Gateway: fetch bootstrap to avoid EC2 user-data limit; doc creds/setup)
     }
 
     let run_started_at = Instant::now();

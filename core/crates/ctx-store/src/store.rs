@@ -1116,6 +1116,55 @@ impl Store {
         }))
     }
 
+    pub async fn get_track_worker(&self, track_id: TrackId) -> Result<Option<TrackWorker>> {
+        let row = sqlx::query(
+            r#"SELECT track_id, worker_id, gateway_url, created_at, updated_at
+               FROM track_workers WHERE track_id = ?"#,
+        )
+        .bind(track_id.0.to_string())
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.and_then(|r| {
+            let track_id: String = r.try_get("track_id").ok()?;
+            let created_at: String = r.try_get("created_at").ok()?;
+            let updated_at: String = r.try_get("updated_at").ok()?;
+            Some(TrackWorker {
+                track_id: TrackId(uuid::Uuid::parse_str(&track_id).ok()?),
+                worker_id: r.try_get("worker_id").ok()?,
+                gateway_url: r.try_get("gateway_url").ok()?,
+                created_at: parse_dt(&created_at).ok()?,
+                updated_at: parse_dt(&updated_at).ok()?,
+            })
+        }))
+    }
+
+    pub async fn upsert_track_worker(&self, worker: &TrackWorker) -> Result<()> {
+        sqlx::query(
+            r#"INSERT INTO track_workers (track_id, worker_id, gateway_url, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?)
+               ON CONFLICT(track_id) DO UPDATE SET worker_id = excluded.worker_id,
+                                                   gateway_url = excluded.gateway_url,
+                                                   updated_at = excluded.updated_at"#,
+        )
+        .bind(worker.track_id.0.to_string())
+        .bind(&worker.worker_id)
+        .bind(&worker.gateway_url)
+        .bind(worker.created_at.to_rfc3339())
+        .bind(worker.updated_at.to_rfc3339())
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn delete_track_worker(&self, track_id: TrackId) -> Result<()> {
+        sqlx::query(r#"DELETE FROM track_workers WHERE track_id = ?"#)
+            .bind(track_id.0.to_string())
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
     // Session APIs
     #[allow(clippy::too_many_arguments)]
     pub async fn create_session(
