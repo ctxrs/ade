@@ -1,4 +1,4 @@
-use gpui::{Context, div, prelude::*, px};
+use gpui::{ClickEvent, Context, div, prelude::*, px};
 
 use crate::{automation_tree, theme::ThemeMetrics};
 
@@ -249,48 +249,133 @@ impl<'a> SessionView<'a> {
             .text_color(shell.colors.muted)
             .child(shell.session.status.clone());
 
-        let header_row = div()
+        let selected_session_id = shell
+            .selected_session
+            .and_then(|index| shell.sessions.get(index))
+            .map(|summary| summary.session_id);
+        let mut provider_id = None;
+        let mut model_id = None;
+        let mut agent_role = None;
+        let mut track_label = None;
+        let mut worktree_id = None;
+        if let Some(session_id) = selected_session_id {
+            if let Some(summary) = shell.session_summary_map.get(&session_id) {
+                provider_id = Some(summary.session.provider_id.clone());
+                model_id = Some(summary.session.model_id.clone());
+                agent_role = Some(summary.session.agent_role.clone());
+                worktree_id = Some(summary.session.worktree_id.0.to_string());
+                if let Some(task) = shell.tasks_by_id.get(&summary.session.task_id) {
+                    if let Some(track) = task
+                        .tracks
+                        .iter()
+                        .find(|track| track.track.id == summary.session.track_id)
+                    {
+                        track_label = Some(track.track.label.clone());
+                    }
+                }
+            }
+        }
+
+        let mut meta_items = Vec::new();
+        if let Some(provider_id) = provider_id.as_ref() {
+            if !provider_id.trim().is_empty() {
+                meta_items.push(provider_id.clone());
+            }
+        }
+        if let Some(model_id) = model_id.as_ref() {
+            if !model_id.trim().is_empty() {
+                meta_items.push(model_id.clone());
+            }
+        }
+        if let Some(agent_role) = agent_role.as_ref() {
+            if !agent_role.trim().is_empty() {
+                meta_items.push(agent_role.clone());
+            }
+        }
+        if let Some(track_label) = track_label.as_ref() {
+            if !track_label.trim().is_empty() {
+                meta_items.push(format!("Track: {track_label}"));
+            }
+        }
+
+        let meta_text = if meta_items.is_empty() {
+            shell.session.detail.clone()
+        } else {
+            meta_items.join(" / ")
+        };
+
+        let worktree_chip = worktree_id.as_ref().map(|worktree_id| {
+            let short_id = worktree_id.chars().take(8).collect::<String>();
+            let copy_key = format!("worktree:{worktree_id}");
+            let copy_value = worktree_id.clone();
+            div()
+                .flex()
+                .items_center()
+                .gap(px(metrics.spacing.xs))
+                .px(px(metrics.spacing.sm))
+                .py(px(metrics.spacing.xxs))
+                .rounded_full()
+                .border_1()
+                .border_color(shell.colors.border)
+                .bg(shell.colors.panel)
+                .text_sm()
+                .text_color(shell.colors.text)
+                .child(Icon::new(IconName::Folder, 12.0, shell.colors.text))
+                .child(format!("Worktree {short_id}"))
+                .cursor_pointer()
+                .id("session-worktree-chip")
+                .active(|style| style.opacity(0.85))
+                .on_click(cx.listener(move |view, _: &ClickEvent, _window, cx| {
+                    view.copy_text_with_key(copy_key.clone(), copy_value.clone(), cx);
+                }))
+        });
+
+        let title_row = div()
             .flex()
             .items_center()
-            .justify_between()
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    // Tighten to web gap 8px between title and pill
-                    .gap(px(metrics.spacing.md))
-                    .child(div().text_lg().child(shell.session.title.clone()))
-                    .child(status_pill),
-            )
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(metrics.spacing.lg))
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(metrics.spacing.md))
-                            .child(artifacts_toggle)
-                            .child(diff_toggle)
-                            .child(sessions_toggle)
-                            .child(terminal_toggle),
-                    )
-                    .child(interrupt_button)
-                    .child(cancel_button),
-            );
+            // Tighten to web gap 8px between title and pill
+            .gap(px(metrics.spacing.md))
+            .child(div().text_lg().child(shell.session.title.clone()))
+            .child(status_pill);
+
+        let pane_toggle_row = div()
+            .flex()
+            .items_center()
+            .gap(px(metrics.spacing.md))
+            .child(artifacts_toggle)
+            .child(diff_toggle)
+            .child(sessions_toggle)
+            .child(terminal_toggle);
+
+        let control_row = div()
+            .flex()
+            .items_center()
+            .gap(px(metrics.spacing.lg))
+            .child(pane_toggle_row)
+            .child(interrupt_button)
+            .child(cancel_button);
 
         let header_block = div()
             .flex()
             .flex_col()
             .gap(px(metrics.spacing.sm))
-            .child(header_row)
+            .child(title_row)
             .child(
                 div()
-                    .text_sm()
-                    .text_color(shell.colors.muted)
-                    .child(shell.session.detail.clone()),
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(metrics.spacing.md))
+                            .text_sm()
+                            .text_color(shell.colors.muted)
+                            .child(meta_text)
+                            .when_some(worktree_chip, |row, chip| row.child(chip)),
+                    )
+                    .child(control_row),
             );
 
         let notice_block = match &shell.data_state {

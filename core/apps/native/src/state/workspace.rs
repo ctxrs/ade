@@ -232,6 +232,7 @@ impl ShellView {
                                 .or_else(|| view.task_active_order.first().copied())
                         };
                         view.new_task_mode = keep_new_task || view.selected_session.is_none();
+                        view.hydrate_pane_state();
                         view.composer_needs_apply = true;
                         view.session = if keep_new_task {
                             SessionInfo::placeholder()
@@ -316,6 +317,9 @@ impl ShellView {
         self.task_active_order.clear();
         self.task_archived_order.clear();
         self.task_query.clear();
+        self.show_sessions_pane = false;
+        self.show_diff_pane = false;
+        self.show_artifacts_pane = false;
         self.selected_task = None;
         self.sessions.clear();
         self.selected_session = None;
@@ -797,6 +801,9 @@ impl ShellView {
         self.new_task_mode = true;
         self.new_task_mode_locked = true;
         self.composer_needs_apply = true;
+        self.show_sessions_pane = false;
+        self.show_diff_pane = false;
+        self.show_artifacts_pane = false;
         self.session = SessionInfo::placeholder();
         self.replace_messages(
             vec![MessageItem::new(MessageRole::Assistant, message)],

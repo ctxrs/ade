@@ -402,6 +402,14 @@ impl<'a> SidebarView<'a> {
             .on_click(cx.listener(|view, _: &ClickEvent, _window, cx| {
                 view.set_sidebar_collapsed(true, cx);
             }));
+        let collapse = div()
+            .on_children_prepainted(automation_tree::track_children_bounds(
+                "sidebar-collapse",
+                "button",
+                Some("Collapse"),
+                Some("app-shell"),
+            ))
+            .child(collapse);
 
         let search = Input::new(&shell.task_search_input)
             .appearance(false)

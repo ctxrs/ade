@@ -2,11 +2,12 @@ use gpui::{
     ClickEvent, Context, ElementId, MouseButton, MouseDownEvent, Rgba, div, prelude::*, px,
 };
 
-use crate::theme::{ThemeColors, ThemeMetrics};
+use crate::{automation_tree, theme::{ThemeColors, ThemeMetrics}};
 
 use super::diagnostics::DiagnosticsPanelView;
 use super::session::SessionView;
 use super::sidebar::SidebarView;
+use super::super::icons::{Icon, IconName};
 use super::super::state::{ShellRoute, ShellView, SidebarResizeState};
 
 pub(crate) struct RouterView<'a> {
@@ -32,6 +33,11 @@ impl<'a> RouterView<'a> {
         } else {
             div().into_any_element()
         };
+        let sidebar_expand = if self.shell.route == ShellRoute::Workbench && self.shell.sidebar_collapsed {
+            self.render_sidebar_expand(cx).into_any_element()
+        } else {
+            div().into_any_element()
+        };
 
         div()
             .flex()
@@ -41,6 +47,7 @@ impl<'a> RouterView<'a> {
             .child(sidebar)
             .child(main)
             .child(resizer)
+            .child(sidebar_expand)
     }
 
     fn render_sidebar_resizer(&self, cx: &mut Context<ShellView>) -> impl IntoElement {
@@ -90,6 +97,42 @@ impl<'a> RouterView<'a> {
                     .rounded_full()
                     .bg(bar_color),
             )
+    }
+
+    fn render_sidebar_expand(&self, cx: &mut Context<ShellView>) -> impl IntoElement {
+        let metrics = ThemeMetrics::default();
+        let expand_button = div()
+            .id("sidebar-expand")
+            .absolute()
+            .top(px(metrics.spacing.xl))
+            .left_0()
+            .w(px(24.0))
+            .h(px(36.0))
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded_lg()
+            .border_1()
+            .border_color(self.shell.colors.border)
+            .bg(self.shell.colors.panel_2)
+            .cursor_pointer()
+            .active(|style| style.opacity(0.85))
+            .on_click(cx.listener(|view, _: &ClickEvent, _window, cx| {
+                view.set_sidebar_collapsed(false, cx);
+            }))
+            .child(Icon::new(
+                IconName::ChevronRight,
+                14.0,
+                self.shell.colors.text,
+            ));
+        div()
+            .on_children_prepainted(automation_tree::track_children_bounds(
+                "sidebar-expand",
+                "button",
+                Some("Expand"),
+                Some("app-shell"),
+            ))
+            .child(expand_button)
     }
 
     fn render_workbench(&self, cx: &mut Context<ShellView>) -> impl IntoElement {
