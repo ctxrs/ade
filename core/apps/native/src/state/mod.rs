@@ -51,6 +51,7 @@ pub(crate) use stream::StreamStatus;
 pub(crate) use terminal::{TerminalContext, TerminalPanelState};
 pub(crate) use workspace::{DataLoadState, ProviderItem, WorkspaceItem};
 
+#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ShellRoute {
     Workbench,

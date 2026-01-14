@@ -202,78 +202,6 @@ pub(crate) struct SidebarView<'a> {
     pub(super) shell: &'a ShellView,
 }
 
-pub(super) struct NavigationListView {
-    pub(super) colors: ThemeColors,
-    pub(super) current_route: ShellRoute,
-}
-
-impl NavigationListView {
-    pub(super) fn render(&self, cx: &mut Context<ShellView>) -> impl IntoElement {
-        let routes = [
-            (ShellRoute::Workbench, "Workbench"),
-            (ShellRoute::Workspaces, "Workspaces"),
-            (ShellRoute::Settings, "Settings"),
-            (ShellRoute::Providers, "Agent Harnesses"),
-            (ShellRoute::Diagnostics, "Diagnostics"),
-            (ShellRoute::AppSettings, "Launcher"),
-        ];
-
-        automation_tree::clear_prefix("nav-item-");
-
-        let list = routes
-            .iter()
-            .enumerate()
-            .fold(div().flex().flex_col(), |list, (index, (route, label))| {
-                let active = self.current_route == *route;
-                let next_route = *route;
-                let on_click = cx.listener(move |view, _: &ClickEvent, _window, cx| {
-                    view.set_route(next_route, cx);
-                });
-                let item_id = format!("nav-item-{}", index);
-                let item_label = (*label).to_string();
-                let item = div()
-                    .px(px(12.0))
-                    .py(px(6.0))
-                    .rounded_lg()
-                    .border_1()
-                    .border_color(if active {
-                        self.colors.border_strong
-                    } else {
-                        self.colors.border
-                    })
-                    .bg(if active { self.colors.panel } else { self.colors.panel_2 })
-                    .text_sm()
-                    .child(item_label.clone())
-                    .cursor_pointer()
-                    .id(ElementId::named_usize("nav-item", index))
-                    .on_click(on_click);
-                let tracked = div()
-                    .on_children_prepainted(automation_tree::track_children_bounds_dynamic(
-                        item_id,
-                        "button".to_string(),
-                        Some(item_label),
-                        Some("navigation-list".to_string()),
-                    ))
-                    .child(item);
-                list.child(tracked)
-            });
-
-        div()
-            .on_children_prepainted(automation_tree::track_children_bounds(
-                "navigation-list",
-                "list",
-                Some("Navigation"),
-                Some("app-shell"),
-            ))
-            .id("navigation-list")
-            .flex()
-            .flex_col()
-            .child(div().text_sm().text_color(self.colors.muted).child("Navigation"))
-            .child(div().h(px(10.0)))
-            .child(list)
-    }
-}
-
 impl<'a> SidebarView<'a> {
     pub(super) fn render(&self, cx: &mut Context<ShellView>) -> impl IntoElement {
         let metrics = ThemeMetrics::default();
@@ -298,14 +226,6 @@ impl<'a> SidebarView<'a> {
                 .child(self.render_workbench_header(cx))
                 .child(self.render_task_list(cx));
         } else {
-            root = root.child(
-                NavigationListView {
-                    colors: shell.colors,
-                    current_route: shell.route,
-                }
-                .render(cx),
-            );
-
             match shell.route {
                 ShellRoute::Workspaces => {
                     root = root.child(
