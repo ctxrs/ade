@@ -16,6 +16,14 @@ pub(crate) struct NativeUiState {
     #[serde(default)]
     pub(crate) archived_collapsed_by_workspace: HashMap<String, bool>,
     #[serde(default)]
+    pub(crate) sessions_pane_open_by_scope: HashMap<String, bool>,
+    #[serde(default)]
+    pub(crate) diff_pane_open_by_scope: HashMap<String, bool>,
+    #[serde(default)]
+    pub(crate) artifacts_pane_open_by_scope: HashMap<String, bool>,
+    #[serde(default)]
+    pub(crate) terminal_panel_open_by_workspace: HashMap<String, bool>,
+    #[serde(default)]
     pub(crate) archive_confirm_dismissed: bool,
 }
 
@@ -80,6 +88,89 @@ impl UiStateStore {
         self.state.archive_confirm_dismissed
     }
 
+    pub(crate) fn sessions_pane_open(
+        &self,
+        workspace_id: WorkspaceId,
+        scope: &str,
+    ) -> Option<bool> {
+        self.state
+            .sessions_pane_open_by_scope
+            .get(&workspace_scope_key(workspace_id, scope))
+            .copied()
+    }
+
+    pub(crate) fn set_sessions_pane_open(
+        &mut self,
+        workspace_id: WorkspaceId,
+        scope: &str,
+        open: bool,
+    ) {
+        self.state
+            .sessions_pane_open_by_scope
+            .insert(workspace_scope_key(workspace_id, scope), open);
+        self.save();
+    }
+
+    pub(crate) fn diff_pane_open(
+        &self,
+        workspace_id: WorkspaceId,
+        scope: &str,
+    ) -> Option<bool> {
+        self.state
+            .diff_pane_open_by_scope
+            .get(&workspace_scope_key(workspace_id, scope))
+            .copied()
+    }
+
+    pub(crate) fn set_diff_pane_open(
+        &mut self,
+        workspace_id: WorkspaceId,
+        scope: &str,
+        open: bool,
+    ) {
+        self.state
+            .diff_pane_open_by_scope
+            .insert(workspace_scope_key(workspace_id, scope), open);
+        self.save();
+    }
+
+    pub(crate) fn artifacts_pane_open(
+        &self,
+        workspace_id: WorkspaceId,
+        scope: &str,
+    ) -> Option<bool> {
+        self.state
+            .artifacts_pane_open_by_scope
+            .get(&workspace_scope_key(workspace_id, scope))
+            .copied()
+    }
+
+    pub(crate) fn set_artifacts_pane_open(
+        &mut self,
+        workspace_id: WorkspaceId,
+        scope: &str,
+        open: bool,
+    ) {
+        self.state
+            .artifacts_pane_open_by_scope
+            .insert(workspace_scope_key(workspace_id, scope), open);
+        self.save();
+    }
+
+    pub(crate) fn terminal_panel_open(&self, workspace_id: WorkspaceId) -> Option<bool> {
+        self.state
+            .terminal_panel_open_by_workspace
+            .get(&workspace_key(workspace_id))
+            .copied()
+    }
+
+    pub(crate) fn set_terminal_panel_open(&mut self, workspace_id: WorkspaceId, open: bool) {
+        self.state
+            .terminal_panel_open_by_workspace
+            .insert(workspace_key(workspace_id), open);
+        self.save();
+    }
+
     #[allow(dead_code)]
     pub(crate) fn set_archive_confirm_dismissed(&mut self, dismissed: bool) {
         self.state.archive_confirm_dismissed = dismissed;
@@ -108,6 +199,10 @@ impl UiStateStore {
 
 fn workspace_key(workspace_id: WorkspaceId) -> String {
     workspace_id.0.to_string()
+}
+
+fn workspace_scope_key(workspace_id: WorkspaceId, scope: &str) -> String {
+    format!("{}::{scope}", workspace_id.0)
 }
 
 fn ui_state_path() -> PathBuf {

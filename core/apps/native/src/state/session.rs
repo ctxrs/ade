@@ -547,6 +547,7 @@ impl ShellView {
             .get(&session_id)
             .map(session_info_from_summary)
             .unwrap_or_else(SessionInfo::placeholder);
+        self.hydrate_pane_state();
         if let Some(summary) = self.session_summary_map.get(&session_id) {
             self.composer_provider_id = Some(summary.session.provider_id.clone());
             self.composer_model_id = Some(summary.session.model_id.clone());
