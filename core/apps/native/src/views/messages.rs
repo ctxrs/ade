@@ -24,6 +24,9 @@ use super::super::models::{
 };
 use super::super::state::ShellView;
 
+const COLLAPSED_MESSAGE_MAX_LINES: usize = 8;
+const COLLAPSED_MESSAGE_MAX_CHARS: usize = 1000;
+
 fn markdown_view(
     id: impl Into<ElementId>,
     text: impl Into<SharedString>,
@@ -104,6 +107,13 @@ fn markdown_view(
                 .child(button)
                 .into_any_element()
         })
+}
+
+fn plain_text_view(text: impl Into<SharedString>, colors: ThemeColors) -> AnyElement {
+    div()
+        .text_color(colors.text)
+        .child(text.into())
+        .into_any_element()
 }
 
 fn click_handler(
@@ -452,6 +462,7 @@ fn render_thread_item(
                 .px(px(metrics.spacing.sm))
                 .pt(px(metrics.spacing.sm))
                 .pb(px(metrics.spacing.md))
+                .overflow_hidden()
                 .child(container)
                 .into_any_element()
         }
@@ -498,24 +509,38 @@ fn render_thread_item(
                     },
                 ),
             };
-            let text = markdown_view(
-                format!("msg-{id}"),
-                content.clone(),
-                colors,
-                is_dark,
-                format!("msg:{id}"),
-                weak_view.clone(),
-            )
-            .selectable(true);
-            let message_max_height = 1.45 * 8.0 * 16.0;
+            let message_max_height =
+                1.45_f32 * COLLAPSED_MESSAGE_MAX_LINES as f32 * 16.0;
+            let visible_text = if expanded {
+                content.clone()
+            } else {
+                truncate_plain_text(
+                    &content,
+                    COLLAPSED_MESSAGE_MAX_LINES,
+                    COLLAPSED_MESSAGE_MAX_CHARS,
+                )
+            };
+            let content_view = match role {
+                MessageRole::User => plain_text_view(visible_text, colors),
+                _ => markdown_view(
+                    format!("msg-{id}"),
+                    visible_text,
+                    colors,
+                    is_dark,
+                    format!("msg:{id}"),
+                    weak_view.clone(),
+                )
+                .selectable(true)
+                .into_any_element(),
+            };
             let body = if expanded {
-                text.into_any_element()
+                content_view
             } else {
                 div()
                     .relative()
                     .max_h(px(message_max_height))
                     .overflow_hidden()
-                    .child(text)
+                    .child(content_view)
                     .child(fade_overlay(px(message_max_height * 0.25), bubble_bg))
                     .into_any_element()
             };
@@ -574,6 +599,7 @@ fn render_thread_item(
                 .id(id.clone())
                 .px(px(metrics.spacing.md))
                 .py(px(metrics.spacing.sm))
+                .overflow_hidden()
                 .child(bubble)
                 .into_any_element()
         }
@@ -581,6 +607,7 @@ fn render_thread_item(
             .id(id.clone())
             .px(px(metrics.spacing.md))
             .py(px(metrics.spacing.sm))
+            .overflow_hidden()
             .child(
                 markdown_view(
                     format!("assistant-{id}"),
@@ -597,6 +624,7 @@ fn render_thread_item(
             .id(id.clone())
             .px(px(metrics.spacing.md))
             .py(px(metrics.spacing.sm))
+            .overflow_hidden()
             .child(
                 div()
                     .px(px(metrics.spacing.xs))
@@ -680,6 +708,7 @@ fn render_thread_item(
                 .id(id)
                 .px(px(metrics.spacing.md))
                 .py(px(metrics.spacing.xs))
+                .overflow_hidden()
                 .child(
                     div()
                         .flex()
@@ -742,6 +771,7 @@ fn render_thread_item(
                 .id(id.clone())
                 .px(px(metrics.spacing.md))
                 .py(px(metrics.spacing.xs))
+                .overflow_hidden()
                 .flex()
                 .flex_col()
                 .gap(px(metrics.spacing.xs))
@@ -797,7 +827,9 @@ fn render_thread_item(
                 )
                 .into_any_element()
         }
-        ThreadListItem::Item(ThreadItem::Spacer { id, .. }) => div().id(id).into_any_element(),
+        ThreadListItem::Item(ThreadItem::Spacer { id, .. }) => {
+            div().id(id).overflow_hidden().into_any_element()
+        }
     }
 }
 
@@ -996,6 +1028,7 @@ fn render_tool_item(
         .id(tool.id.clone())
         .px(px(metrics.spacing.sm))
         .py(px(metrics.spacing.sm))
+        .overflow_hidden()
         .flex()
         .flex_col()
         .gap(px(metrics.spacing.xxs))
@@ -1153,4 +1186,38 @@ fn inline_attachment_image(mime_type: &str, data_base64: &str) -> Option<Arc<Ima
     let format = ImageFormat::from_mime_type(mime_type).unwrap_or(ImageFormat::Png);
     let bytes = STANDARD.decode(data_base64).ok()?;
     Some(Arc::new(Image::from_bytes(format, bytes)))
+}
+
+fn truncate_plain_text(input: &str, max_lines: usize, max_chars: usize) -> String {
+    if input.is_empty() {
+        return String::new();
+    }
+
+    let mut out = String::new();
+    let mut lines = 1usize;
+    let mut chars = 0usize;
+    let mut truncated = false;
+
+    for ch in input.chars() {
+        if ch == '\n' {
+            if lines >= max_lines {
+                truncated = true;
+                break;
+            }
+            lines += 1;
+        }
+        if chars >= max_chars {
+            truncated = true;
+            break;
+        }
+        out.push(ch);
+        chars += 1;
+    }
+
+    if truncated && out != input {
+        let trimmed = out.trim_end_matches(|ch: char| ch == '\n' || ch == '\r' || ch == ' ');
+        format!("{trimmed}...")
+    } else {
+        out
+    }
 }

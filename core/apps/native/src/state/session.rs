@@ -432,9 +432,12 @@ impl ShellView {
                     if let Some(image) = inline_attachment_image(&mime_type, &data_base64) {
                         self.composer_attachment_images
                             .insert(cache_key.clone(), image);
+                        self.invalidate_thread_items_for_attachment(&cache_key);
                         cx.notify();
                     } else {
-                        self.attachment_fetch_failed.insert(cache_key);
+                        self.attachment_fetch_failed.insert(cache_key.clone());
+                        self.invalidate_thread_items_for_attachment(&cache_key);
+                        cx.notify();
                     }
                 }
                 MessageAttachment::ImageRef {
@@ -475,6 +478,7 @@ impl ShellView {
                                         );
                                     }
                                 }
+                                view.invalidate_thread_items_for_attachment(&blob_id_for_update);
                                 cx.notify();
                             })
                             .ok();
@@ -794,6 +798,24 @@ impl ShellView {
         self.thread_list_state.splice(index..index + 1, 1);
     }
 
+    fn invalidate_thread_items_for_attachment(&mut self, cache_key: &str) {
+        let indexes = self
+            .thread_items
+            .iter()
+            .enumerate()
+            .filter_map(|(index, item)| {
+                if thread_item_contains_attachment(item, cache_key) {
+                    Some(index)
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+        for index in indexes {
+            self.thread_list_state.splice(index..index + 1, 1);
+        }
+    }
+
     fn update_sticky_turn_header(&mut self, visible_range: std::ops::Range<usize>) {
         if self.thread_items.is_empty() {
             self.sticky_turn_header = None;
@@ -870,6 +892,19 @@ fn filter_thread_list_items(
             _ => true,
         })
         .collect()
+}
+
+fn thread_item_contains_attachment(item: &ThreadListItem, cache_key: &str) -> bool {
+    match item {
+        ThreadListItem::TurnHeader { header, .. } => header
+            .attachments
+            .iter()
+            .any(|attachment| attachment_cache_key(attachment) == cache_key),
+        ThreadListItem::Item(ThreadItem::Message { attachments, .. }) => attachments
+            .iter()
+            .any(|attachment| attachment_cache_key(attachment) == cache_key),
+        _ => false,
+    }
 }
 
 fn inline_attachment_image(mime_type: &str, data_base64: &str) -> Option<Arc<Image>> {
