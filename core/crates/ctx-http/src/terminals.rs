@@ -486,6 +486,7 @@ fn push_output(
 struct GatewayCertVerifier {
     inner: Arc<WebPkiServerVerifier>,
     server_name: ServerName<'static>,
+    pinned_der: Option<Vec<u8>>,
 }
 
 impl ServerCertVerifier for GatewayCertVerifier {
@@ -497,6 +498,11 @@ impl ServerCertVerifier for GatewayCertVerifier {
         ocsp_response: &[u8],
         now: UnixTime,
     ) -> Result<ServerCertVerified, rustls::Error> {
+        if let Some(pinned) = &self.pinned_der {
+            if end_entity.as_ref() == pinned.as_slice() {
+                return Ok(ServerCertVerified::assertion());
+            }
+        }
         self.inner.verify_server_cert(
             end_entity,
             intermediates,
@@ -531,8 +537,12 @@ impl ServerCertVerifier for GatewayCertVerifier {
 
 fn gateway_ws_connector(pem: &str) -> Result<Connector> {
     let mut roots = RootCertStore::empty();
+    let mut pinned_der: Option<Vec<u8>> = None;
     for cert in CertificateDer::pem_slice_iter(pem.as_bytes()) {
         let cert = cert.context("parsing gateway CA")?;
+        if pinned_der.is_none() {
+            pinned_der = Some(cert.as_ref().to_vec());
+        }
         roots.add(cert).context("adding gateway CA")?;
     }
     let verifier = WebPkiServerVerifier::builder(Arc::new(roots.clone()))
@@ -543,10 +553,12 @@ fn gateway_ws_connector(pem: &str) -> Result<Connector> {
     let verifier = GatewayCertVerifier {
         inner: verifier,
         server_name,
+        pinned_der,
     };
     let mut config = ClientConfig::builder()
         .with_root_certificates(roots)
         .with_no_client_auth();
+    config.alpn_protocols = vec![b"http/1.1".to_vec()];
     config
         .dangerous()
         .set_certificate_verifier(Arc::new(verifier));

@@ -6200,16 +6200,28 @@ async fn create_workspace_terminal(
         let gateway_token = std::env::var("CTX_WORKER_GATEWAY_TOKEN")
             .ok()
             .filter(|value| !value.trim().is_empty());
-        open_remote_terminal(&worker, &open_req, gateway_token.as_deref())
+        let gateway_ca_pem = user_settings::load_settings(&state.data_root)
             .await
-            .map_err(|_| {
-                (
-                    StatusCode::BAD_GATEWAY,
-                    Json(ApiErrorResp {
-                        error: "failed to open remote terminal".to_string(),
-                    }),
-                )
-            })?;
+            .cloud_workers
+            .and_then(|cw| cw.gateway)
+            .and_then(|gateway| gateway.gateway_ca_pem)
+            .map(|pem| pem.trim().to_string())
+            .filter(|pem| !pem.is_empty());
+        open_remote_terminal(
+            &worker,
+            &open_req,
+            gateway_token.as_deref(),
+            gateway_ca_pem.as_deref(),
+        )
+        .await
+        .map_err(|_| {
+            (
+                StatusCode::BAD_GATEWAY,
+                Json(ApiErrorResp {
+                    error: "failed to open remote terminal".to_string(),
+                }),
+            )
+        })?;
         let session = state
             .terminals
             .create_remote(
@@ -6287,8 +6299,20 @@ async fn delete_terminal(
                 let gateway_token = std::env::var("CTX_WORKER_GATEWAY_TOKEN")
                     .ok()
                     .filter(|value| !value.trim().is_empty());
-                let _ =
-                    close_remote_terminal(&worker, &terminal_id, gateway_token.as_deref()).await;
+                let gateway_ca_pem = user_settings::load_settings(&state.data_root)
+                    .await
+                    .cloud_workers
+                    .and_then(|cw| cw.gateway)
+                    .and_then(|gateway| gateway.gateway_ca_pem)
+                    .map(|pem| pem.trim().to_string())
+                    .filter(|pem| !pem.is_empty());
+                let _ = close_remote_terminal(
+                    &worker,
+                    &terminal_id,
+                    gateway_token.as_deref(),
+                    gateway_ca_pem.as_deref(),
+                )
+                .await;
             }
         }
         let _ = session.kill();
@@ -12638,10 +12662,11 @@ async fn open_remote_terminal(
     worker: &TrackWorker,
     req: &TerminalOpenRequest,
     token: Option<&str>,
+    gateway_ca_pem: Option<&str>,
 ) -> Result<(), StatusCode> {
     let base = worker.gateway_url.trim_end_matches('/');
     let url = format!("{base}/workers/{}/terminals", worker.worker_id);
-    let client = reqwest::Client::new();
+    let client = build_gateway_client(gateway_ca_pem).map_err(|_| StatusCode::BAD_GATEWAY)?;
     let mut request = client.post(url).json(req);
     if let Some(token) = token {
         request = request.header("x-ctx-gateway-token", token);
@@ -12657,13 +12682,14 @@ async fn close_remote_terminal(
     worker: &TrackWorker,
     terminal_id: &TerminalId,
     token: Option<&str>,
+    gateway_ca_pem: Option<&str>,
 ) -> Result<(), StatusCode> {
     let base = worker.gateway_url.trim_end_matches('/');
     let url = format!(
         "{base}/workers/{}/terminals/{}/close",
         worker.worker_id, terminal_id.0
     );
-    let client = reqwest::Client::new();
+    let client = build_gateway_client(gateway_ca_pem).map_err(|_| StatusCode::BAD_GATEWAY)?;
     let mut request = client.post(url);
     if let Some(token) = token {
         request = request.header("x-ctx-gateway-token", token);
@@ -13350,6 +13376,59 @@ async fn resolve_cloud_worker_repo_spec(
     })
 }
 
+async fn load_codex_auth_b64() -> Option<String> {
+    let path = if let Ok(path) = std::env::var("CTX_CODEX_AUTH_PATH") {
+        PathBuf::from(path)
+    } else {
+        let base = directories::BaseDirs::new()?;
+        base.home_dir().join(".codex").join("auth.json")
+    };
+    let bytes = tokio::fs::read(&path).await.ok()?;
+    if bytes.is_empty() {
+        return None;
+    }
+    Some(base64::engine::general_purpose::STANDARD.encode(bytes))
+}
+
+async fn load_codex_config_b64() -> Option<String> {
+    let path = if let Ok(path) = std::env::var("CTX_CODEX_CONFIG_PATH") {
+        PathBuf::from(path)
+    } else {
+        let base = directories::BaseDirs::new()?;
+        base.home_dir().join(".codex").join("config.toml")
+    };
+    let bytes = tokio::fs::read(&path).await.ok()?;
+    if bytes.is_empty() {
+        return None;
+    }
+    Some(base64::engine::general_purpose::STANDARD.encode(bytes))
+}
+
+async fn load_codex_compact_prompt_b64() -> Option<String> {
+    let path = if let Ok(path) = std::env::var("CTX_CODEX_COMPACT_PROMPT_PATH") {
+        PathBuf::from(path)
+    } else {
+        let base = directories::BaseDirs::new()?;
+        base.home_dir().join(".codex").join("compact_prompt.txt")
+    };
+    let bytes = tokio::fs::read(&path).await.ok()?;
+    if bytes.is_empty() {
+        return None;
+    }
+    Some(base64::engine::general_purpose::STANDARD.encode(bytes))
+}
+
+fn build_gateway_client(gateway_ca_pem: Option<&str>) -> Result<reqwest::Client, reqwest::Error> {
+    let mut builder = reqwest::Client::builder();
+    if let Some(pem) = gateway_ca_pem {
+        let cert = reqwest::Certificate::from_pem(pem.as_bytes())?;
+        builder = builder
+            .add_root_certificate(cert)
+            .danger_accept_invalid_hostnames(true);
+    }
+    builder.build()
+}
+
 async fn start_track_worker_inner(
     state: Arc<AppState>,
     track: Track,
@@ -13362,6 +13441,44 @@ async fn start_track_worker_inner(
         .or(req.base_commit_sha)
         .unwrap_or_else(|| worktree.base_commit_sha.clone());
 
+    let mut env = HashMap::new();
+    let gateway_token = std::env::var("CTX_WORKER_GATEWAY_TOKEN")
+        .ok()
+        .map(|token| token.trim().to_string())
+        .filter(|token| !token.is_empty());
+    if let Some(token) = gateway_token.as_deref() {
+        env.insert("CTX_WORKER_GATEWAY_TOKEN".to_string(), token.to_string());
+    }
+    let settings = user_settings::load_settings(&state.data_root).await;
+    let gateway_ca_pem = settings
+        .cloud_workers
+        .and_then(|cw| cw.gateway)
+        .and_then(|gateway| gateway.gateway_ca_pem)
+        .map(|pem| pem.trim().to_string())
+        .filter(|pem| !pem.is_empty());
+    if let Some(pem) = gateway_ca_pem.as_deref() {
+        let encoded = base64::engine::general_purpose::STANDARD.encode(pem.as_bytes());
+        env.insert("CTX_GATEWAY_CA_B64".to_string(), encoded);
+    }
+    if let Some(codex_auth_b64) = load_codex_auth_b64().await {
+        env.insert("CTX_CODEX_AUTH_B64".to_string(), codex_auth_b64);
+    }
+    if let Some(codex_config_b64) = load_codex_config_b64().await {
+        env.insert("CTX_CODEX_CONFIG_B64".to_string(), codex_config_b64);
+    }
+    if let Some(codex_compact_prompt_b64) = load_codex_compact_prompt_b64().await {
+        env.insert(
+            "CTX_CODEX_COMPACT_PROMPT_B64".to_string(),
+            codex_compact_prompt_b64,
+        );
+    }
+    if let Ok(token) = std::env::var("CTX_REPO_TOKEN") {
+        let trimmed = token.trim();
+        if !trimmed.is_empty() {
+            env.insert("CTX_REPO_TOKEN".to_string(), trimmed.to_string());
+        }
+    }
+
     let start_req = StartWorkerRequest {
         task_id: track.task_id.0.to_string(),
         track_id: track.id.0.to_string(),
@@ -13372,13 +13489,23 @@ async fn start_track_worker_inner(
         diff_debounce_ms: opts.diff_debounce_ms.or(req.diff_debounce_ms),
         ttl_seconds: opts.ttl_seconds.or(req.ttl_seconds),
         snapshot_ttl_seconds: opts.snapshot_ttl_seconds.or(req.snapshot_ttl_seconds),
-        env: HashMap::new(),
+        env,
     };
 
     let url = format!("{}/workers", req.gateway_url.trim_end_matches('/'));
-    let resp = reqwest::Client::new()
-        .post(url)
-        .json(&start_req)
+    let client = build_gateway_client(gateway_ca_pem.as_deref()).map_err(|e| {
+        (
+            StatusCode::BAD_GATEWAY,
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&e.to_string()),
+            }),
+        )
+    })?;
+    let mut request = client.post(url).json(&start_req);
+    if let Some(token) = gateway_token.as_deref() {
+        request = request.header("x-ctx-gateway-token", token);
+    }
+    let resp = request
         .send()
         .await
         .map_err(|e| {
@@ -13704,7 +13831,28 @@ async fn delete_track_worker(
             worker.gateway_url.trim_end_matches('/'),
             worker.worker_id
         );
-        let _ = reqwest::Client::new().post(url).send().await;
+        let gateway_ca_pem = user_settings::load_settings(&state.data_root)
+            .await
+            .cloud_workers
+            .and_then(|cw| cw.gateway)
+            .and_then(|gateway| gateway.gateway_ca_pem)
+            .map(|pem| pem.trim().to_string())
+            .filter(|pem| !pem.is_empty());
+        let client = match build_gateway_client(gateway_ca_pem.as_deref()) {
+            Ok(client) => client,
+            Err(err) => {
+                tracing::warn!("gateway client init failed: {err:?}");
+                reqwest::Client::new()
+            }
+        };
+        let mut request = client.post(url);
+        if let Ok(token) = std::env::var("CTX_WORKER_GATEWAY_TOKEN") {
+            let trimmed = token.trim();
+            if !trimmed.is_empty() {
+                request = request.header("x-ctx-gateway-token", trimmed);
+            }
+        }
+        let _ = request.send().await;
         state
             .store
             .delete_track_worker(track_id)

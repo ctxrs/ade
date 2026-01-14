@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use base64::Engine;
@@ -19,7 +20,7 @@ use tokio_tungstenite::{connect_async, connect_async_tls_with_config, Connector}
 use ctx_core::models::SessionEventType;
 use ctx_worker_protocol::RelayMessage;
 
-use crate::acp::{normalize_session_update, StreamState};
+use crate::acp::{build_request_permission_response, normalize_session_update, StreamState};
 use crate::adapters::{RunHandle, TurnInput};
 use crate::events::NormalizedEvent;
 use crate::tier1::build_acp_client_config;
@@ -38,6 +39,7 @@ type WsSink = futures_util::stream::SplitSink<
 struct GatewayCertVerifier {
     inner: Arc<WebPkiServerVerifier>,
     server_name: ServerName<'static>,
+    pinned_der: Option<Vec<u8>>,
 }
 
 impl ServerCertVerifier for GatewayCertVerifier {
@@ -49,6 +51,11 @@ impl ServerCertVerifier for GatewayCertVerifier {
         ocsp_response: &[u8],
         now: UnixTime,
     ) -> Result<ServerCertVerified, rustls::Error> {
+        if let Some(pinned) = &self.pinned_der {
+            if end_entity.as_ref() == pinned.as_slice() {
+                return Ok(ServerCertVerified::assertion());
+            }
+        }
         self.inner.verify_server_cert(
             end_entity,
             intermediates,
@@ -83,8 +90,12 @@ impl ServerCertVerifier for GatewayCertVerifier {
 
 fn gateway_ws_connector(pem: &[u8]) -> Result<Connector> {
     let mut roots = RootCertStore::empty();
+    let mut pinned_der: Option<Vec<u8>> = None;
     for cert in CertificateDer::pem_slice_iter(pem) {
         let cert = cert.context("parsing gateway CA")?;
+        if pinned_der.is_none() {
+            pinned_der = Some(cert.as_ref().to_vec());
+        }
         roots.add(cert).context("adding gateway CA")?;
     }
     let verifier = WebPkiServerVerifier::builder(Arc::new(roots.clone()))
@@ -95,10 +106,12 @@ fn gateway_ws_connector(pem: &[u8]) -> Result<Connector> {
     let verifier = GatewayCertVerifier {
         inner: verifier,
         server_name,
+        pinned_der,
     };
     let mut config = ClientConfig::builder()
         .with_root_certificates(roots)
         .with_no_client_auth();
+    config.alpn_protocols = vec![b"http/1.1".to_vec()];
     config
         .dangerous()
         .set_certificate_verifier(Arc::new(verifier));
@@ -150,15 +163,40 @@ pub async fn run_remote_prompt(
     let join: tokio::task::JoinHandle<Result<()>> = tokio::spawn(async move {
         let client = build_acp_client_config(&env);
         let token = env.get(GATEWAY_ENV_TOKEN).map(|v| v.as_str());
-        let (ws_write, mut inbound) = connect_gateway(
-            &gateway_url,
-            &worker_id,
-            &session_id,
-            token,
-            gateway_ca_pem.as_deref(),
+        let connect_result = tokio::time::timeout(
+            Duration::from_secs(15),
+            connect_gateway(
+                &gateway_url,
+                &worker_id,
+                &session_id,
+                token,
+                gateway_ca_pem.as_deref(),
+            ),
         )
-        .await
-        .context("connect_gateway")?;
+        .await;
+        let (ws_write, mut inbound) = match connect_result {
+            Ok(Ok(result)) => result,
+            Ok(Err(err)) => {
+                tracing::error!(
+                    error = ?err,
+                    gateway_url = %gateway_url,
+                    worker_id = %worker_id,
+                    session_id = %session_id,
+                    "remote_acp: failed to connect to gateway"
+                );
+                return Err(err).context("connect_gateway");
+            }
+            Err(_) => {
+                tracing::error!(
+                    gateway_url = %gateway_url,
+                    worker_id = %worker_id,
+                    session_id = %session_id,
+                    "remote_acp: gateway connection timed out"
+                );
+                return Err(anyhow::anyhow!("gateway connection timed out"))
+                    .context("connect_gateway");
+            }
+        };
         tracing::info!(
             "remote_acp: connected to gateway url={} worker_id={} session_id={}",
             gateway_url,
@@ -337,7 +375,7 @@ pub async fn run_remote_prompt(
             (acp_session_id, prompt_resp, cancel_task)
         };
 
-        let _ = cancel_task.await;
+        cancel_task.abort();
 
         if let Some(done_events) = drain_pending_updates(&mut inbound, &mut stream_state) {
             for ev in done_events {
@@ -429,13 +467,24 @@ async fn connect_gateway(
     tokio::spawn(async move {
         while let Some(msg) = ws_read.next().await {
             if let Ok(Message::Text(text)) = msg {
-                if let Ok(RelayMessage::Acp {
-                    session_id: sid,
-                    payload,
-                }) = serde_json::from_str::<RelayMessage>(&text)
-                {
-                    if sid == session_id {
-                        let _ = tx.send(payload);
+                if tracing::enabled!(tracing::Level::DEBUG) {
+                    tracing::debug!(payload_len = text.len(), "acp relay from gateway");
+                }
+                match serde_json::from_str::<RelayMessage>(&text) {
+                    Ok(RelayMessage::Acp { session_id: sid, payload }) => {
+                        if sid == session_id {
+                            let _ = tx.send(payload);
+                        } else if tracing::enabled!(tracing::Level::DEBUG) {
+                            tracing::debug!(
+                                expected = session_id.as_str(),
+                                received = sid.as_str(),
+                                "acp relay for different session"
+                            );
+                        }
+                    }
+                    Ok(_) => {}
+                    Err(err) => {
+                        tracing::debug!(error = ?err, "acp relay decode failed");
                     }
                 }
             }
@@ -506,7 +555,70 @@ impl<'a> RequestContext<'a> {
                 }
                 continue;
             }
-            if jsonrpc_id(&msg) == Some(id) {
+            let method = msg.get("method").and_then(|v| v.as_str());
+            if method == Some("session/request_permission") {
+                if let Ok(Some(resp_line)) =
+                    build_request_permission_response(self.provider_id, &msg)
+                {
+                    if let Ok(resp) = serde_json::from_str::<Value>(&resp_line) {
+                        let _ = send_notification(self.ws_write, self.session_id, resp).await;
+                    }
+                }
+                continue;
+            }
+            if matches!(
+                method,
+                Some("_claude_code_acp/ask_user_question")
+                    | Some("__claude_code_acp/ask_user_question")
+            ) {
+                if let Some(req_id) = jsonrpc_id(&msg) {
+                    let resp = json!({
+                        "jsonrpc": "2.0",
+                        "id": req_id,
+                        "result": {
+                            "outcome": "cancelled",
+                            "answers": {}
+                        }
+                    });
+                    let _ = send_notification(self.ws_write, self.session_id, resp).await;
+                }
+                continue;
+            }
+            if tracing::enabled!(tracing::Level::DEBUG) {
+                let method = msg.get("method").and_then(|v| v.as_str());
+                if method.is_some() && method != Some("session/update") {
+                    let msg_id = msg
+                        .get("id")
+                        .map(|v| v.to_string())
+                        .unwrap_or_else(|| "null".to_string());
+                    tracing::debug!(
+                        method,
+                        msg_id = msg_id.as_str(),
+                        "remote_acp non-update message"
+                    );
+                }
+            }
+            if let Some(msg_id) = jsonrpc_id(&msg) {
+                if msg_id == id {
+                    return Ok(msg);
+                }
+                if msg.get("method").is_none()
+                    && (msg.get("result").is_some() || msg.get("error").is_some())
+                {
+                    tracing::warn!(
+                        requested_id = id,
+                        response_id = msg_id,
+                        "gateway response id mismatch; using response anyway"
+                    );
+                    return Ok(msg);
+                }
+            } else if msg.get("method").is_none()
+                && (msg.get("result").is_some() || msg.get("error").is_some())
+            {
+                tracing::warn!(
+                    requested_id = id,
+                    "gateway response missing id; using response anyway"
+                );
                 return Ok(msg);
             }
         }

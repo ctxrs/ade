@@ -2410,7 +2410,7 @@ fn select_permission_option_id(
     options.first().map(|opt| opt.option_id.clone())
 }
 
-fn build_request_permission_response(
+pub(crate) fn build_request_permission_response(
     provider_id: &str,
     msg: &serde_json::Value,
 ) -> Result<Option<String>> {
@@ -2630,7 +2630,6 @@ pub(crate) fn normalize_session_update(
             }]
         }
         "available_commands_update" => {
-            state.saw_done = true;
             let mut payload = Map::new();
             payload.insert("acp_update".to_string(), update.clone());
             add_update_meta_fields(&mut payload, &context_window, &usage);

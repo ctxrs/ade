@@ -235,7 +235,33 @@ pub fn render_bootstrap_script(spec: &BootstrapSpec<'_>) -> String {
         .push_str("      echo \"$CTX_CODEX_CONFIG_B64\" | base64 -d > /root/.codex/config.toml\n");
     script.push_str("    fi\n");
     script.push_str("    chmod 600 /root/.codex/config.toml\n");
+    script.push_str("    if [ -n \"${CTX_CODEX_COMPACT_PROMPT_B64:-}\" ]; then\n");
+    script.push_str(
+        "      if grep -q '^experimental_compact_prompt_file' /root/.codex/config.toml; then\n",
+    );
+    script.push_str("        sed -i 's|^experimental_compact_prompt_file = .*|experimental_compact_prompt_file = \"/root/.codex/compact_prompt.txt\"|' /root/.codex/config.toml\n");
+    script.push_str("      else\n");
+    script.push_str("        echo 'experimental_compact_prompt_file = \"/root/.codex/compact_prompt.txt\"' >> /root/.codex/config.toml\n");
+    script.push_str("      fi\n");
+    script.push_str("    fi\n");
     script.push_str("    unset CTX_CODEX_CONFIG_B64\n");
+    script.push_str("  fi\n");
+    script.push_str("}\n\n");
+
+    script.push_str("install_codex_compact_prompt() {\n");
+    script.push_str("  if [ -n \"${CTX_CODEX_COMPACT_PROMPT_B64:-}\" ]; then\n");
+    script.push_str("    mkdir -p /root/.codex\n");
+    script.push_str("    if base64 --help 2>&1 | grep -q -- '--decode'; then\n");
+    script.push_str(
+        "      echo \"$CTX_CODEX_COMPACT_PROMPT_B64\" | base64 --decode > /root/.codex/compact_prompt.txt\n",
+    );
+    script.push_str("    else\n");
+    script.push_str(
+        "      echo \"$CTX_CODEX_COMPACT_PROMPT_B64\" | base64 -d > /root/.codex/compact_prompt.txt\n",
+    );
+    script.push_str("    fi\n");
+    script.push_str("    chmod 600 /root/.codex/compact_prompt.txt\n");
+    script.push_str("    unset CTX_CODEX_COMPACT_PROMPT_B64\n");
     script.push_str("  fi\n");
     script.push_str("}\n\n");
 
@@ -353,6 +379,13 @@ pub fn render_bootstrap_script(spec: &BootstrapSpec<'_>) -> String {
     script.push_str("  case \"$CTX_REPO_TYPE\" in\n");
     script.push_str("    git)\n");
     script.push_str("      if [ ! -d \"$CTX_WORKDIR/.git\" ]; then\n");
+    script.push_str("        if [ -n \"${CTX_REPO_TOKEN:-}\" ]; then\n");
+    script.push_str("          case \"$CTX_REPO_URL\" in\n");
+    script.push_str("            https://github.com/*)\n");
+    script.push_str("              CTX_REPO_URL=\"https://x-access-token:${CTX_REPO_TOKEN}@${CTX_REPO_URL#https://}\"\n");
+    script.push_str("              ;;\n");
+    script.push_str("          esac\n");
+    script.push_str("        fi\n");
     script.push_str("        git clone \"$CTX_REPO_URL\" \"$CTX_WORKDIR\"\n");
     script.push_str("      fi\n");
     script.push_str("      cd \"$CTX_WORKDIR\"\n");
@@ -420,9 +453,28 @@ pub fn render_bootstrap_script(spec: &BootstrapSpec<'_>) -> String {
     script.push_str("  fi\n");
     script.push_str("}\n\n");
 
+    script.push_str("with_gateway_token() {\n");
+    script.push_str("  local url=\"$1\"\n");
+    script.push_str("  if [ -n \"${CTX_WORKER_GATEWAY_TOKEN:-}\" ]; then\n");
+    script.push_str("    case \"$url\" in\n");
+    script.push_str("      *token=*)\n");
+    script.push_str("        ;;\n");
+    script.push_str("      *\\?*)\n");
+    script.push_str("        url=\"${url}&token=${CTX_WORKER_GATEWAY_TOKEN}\"\n");
+    script.push_str("        ;;\n");
+    script.push_str("      *)\n");
+    script.push_str("        url=\"${url}?token=${CTX_WORKER_GATEWAY_TOKEN}\"\n");
+    script.push_str("        ;;\n");
+    script.push_str("    esac\n");
+    script.push_str("  fi\n");
+    script.push_str("  echo \"$url\"\n");
+    script.push_str("}\n\n");
+
     script.push_str("install_shim() {\n");
     script.push_str("  if [ ! -x /usr/local/bin/ctx-worker-shim ]; then\n");
-    script.push_str("    curl_gateway \"$CTX_SHIM_URL\" /usr/local/bin/ctx-worker-shim\n");
+    script.push_str("    local shim_url\n");
+    script.push_str("    shim_url=$(with_gateway_token \"$CTX_SHIM_URL\")\n");
+    script.push_str("    curl_gateway \"$shim_url\" /usr/local/bin/ctx-worker-shim\n");
     script.push_str("    chmod +x /usr/local/bin/ctx-worker-shim\n");
     script.push_str("  fi\n");
     script.push_str("}\n\n");
@@ -454,6 +506,7 @@ pub fn render_bootstrap_script(spec: &BootstrapSpec<'_>) -> String {
     script.push_str("  install_gateway_ca\n");
     script.push_str("  install_codex_auth\n");
     script.push_str("  install_codex_config\n");
+    script.push_str("  install_codex_compact_prompt\n");
     script.push_str("  install_providers\n");
     script.push_str("  mount_session_disk\n");
     script.push_str("  hydrate_repo\n");

@@ -42,6 +42,8 @@ pub struct WorkerInfo {
     pub updated_at: DateTime<Utc>,
     pub last_diff_at: Option<DateTime<Utc>>,
     pub ssh: Option<SshInfo>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acp_log_dir: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -49,6 +51,8 @@ pub struct WorkerRegistration {
     pub worker_id: String,
     pub agent_endpoint: Option<String>,
     pub ssh: Option<SshInfo>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acp_log_dir: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

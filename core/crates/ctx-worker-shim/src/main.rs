@@ -518,6 +518,7 @@ fn websocket_base(url: &str) -> String {
 struct GatewayCertVerifier {
     inner: Arc<WebPkiServerVerifier>,
     server_name: ServerName<'static>,
+    pinned_der: Option<Vec<u8>>,
 }
 
 impl ServerCertVerifier for GatewayCertVerifier {
@@ -529,6 +530,11 @@ impl ServerCertVerifier for GatewayCertVerifier {
         ocsp_response: &[u8],
         now: UnixTime,
     ) -> Result<ServerCertVerified, rustls::Error> {
+        if let Some(pinned) = &self.pinned_der {
+            if end_entity.as_ref() == pinned.as_slice() {
+                return Ok(ServerCertVerified::assertion());
+            }
+        }
         self.inner.verify_server_cert(
             end_entity,
             intermediates,
@@ -563,8 +569,12 @@ impl ServerCertVerifier for GatewayCertVerifier {
 
 fn gateway_ws_connector(pem: &[u8]) -> Result<Connector> {
     let mut roots = RootCertStore::empty();
+    let mut pinned_der: Option<Vec<u8>> = None;
     for cert in CertificateDer::pem_slice_iter(pem) {
         let cert = cert.context("parsing gateway CA")?;
+        if pinned_der.is_none() {
+            pinned_der = Some(cert.as_ref().to_vec());
+        }
         roots.add(cert).context("adding gateway CA")?;
     }
     let verifier = WebPkiServerVerifier::builder(Arc::new(roots.clone()))
@@ -575,10 +585,12 @@ fn gateway_ws_connector(pem: &[u8]) -> Result<Connector> {
     let verifier = GatewayCertVerifier {
         inner: verifier,
         server_name,
+        pinned_der,
     };
     let mut config = ClientConfig::builder()
         .with_root_certificates(roots)
         .with_no_client_auth();
+    config.alpn_protocols = vec![b"http/1.1".to_vec()];
     config
         .dangerous()
         .set_certificate_verifier(Arc::new(verifier));
@@ -600,12 +612,43 @@ fn should_ignore_event(event: &Event) -> bool {
     event.paths.iter().all(|path| should_ignore_path(path))
 }
 
+fn acp_log_dir(workdir: &Path) -> PathBuf {
+    workdir.join(".ctx").join("worker-logs").join("acp")
+}
+
+async fn open_log_writer(path: &Path) -> Option<BufWriter<tokio::fs::File>> {
+    if let Some(parent) = path.parent() {
+        if let Err(err) = tokio::fs::create_dir_all(parent).await {
+            warn!("failed to create log directory {}: {err}", parent.display());
+            return None;
+        }
+    }
+    match tokio::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .await
+    {
+        Ok(file) => Some(BufWriter::new(file)),
+        Err(err) => {
+            warn!("failed to open log file {}: {err}", path.display());
+            None
+        }
+    }
+}
 async fn register_worker(client: &reqwest::Client, args: &ResolvedArgs) -> Result<()> {
     let url = format!("{}/workers/{}/register", args.gateway_url, args.worker_id);
+    let acp_log_path = acp_log_dir(&args.workdir);
+    let acp_log_dir = if tokio::fs::create_dir_all(&acp_log_path).await.is_ok() {
+        Some(acp_log_path.to_string_lossy().to_string())
+    } else {
+        None
+    };
     let reg = WorkerRegistration {
         worker_id: args.worker_id.clone(),
         agent_endpoint: None,
         ssh: None,
+        acp_log_dir,
     };
 
     let mut req = client.post(url).json(&reg);
@@ -706,7 +749,6 @@ async fn git_commit_exists(workdir: &Path, rev: &str) -> Result<bool> {
         .context("running git")?;
     Ok(output.status.success())
 }
-
 #[derive(Clone)]
 struct ResolvedArgs {
     gateway_url: String,
@@ -835,11 +877,18 @@ async fn spawn_acp_session(
     command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::inherit());
+        .stderr(Stdio::piped());
 
     let mut child = command.spawn().context("spawning acp provider")?;
     let stdin = child.stdin.take().context("missing stdin")?;
     let stdout = child.stdout.take().context("missing stdout")?;
+    let stderr = child.stderr.take().context("missing stderr")?;
+
+    let log_dir = acp_log_dir(&workdir);
+    let stdout_path = log_dir.join(format!("{session_id}.stdout.log"));
+    let stderr_path = log_dir.join(format!("{session_id}.stderr.log"));
+    let stdout_log = open_log_writer(&stdout_path).await;
+    let stderr_log = open_log_writer(&stderr_path).await;
 
     let (line_tx, mut line_rx) = mpsc::unbounded_channel::<String>();
     let (shutdown_tx, mut shutdown_rx) = mpsc::unbounded_channel::<()>();
@@ -848,15 +897,67 @@ async fn spawn_acp_session(
     let ws_write_clone = ws_write.clone();
     tokio::spawn(async move {
         let mut reader = BufReader::new(stdout).lines();
+        let mut log_writer = stdout_log;
         while let Ok(Some(line)) = reader.next_line().await {
+            if let Some(writer) = log_writer.as_mut() {
+                let _ = writer.write_all(line.as_bytes()).await;
+                let _ = writer.write_all(b"\n").await;
+                let _ = writer.flush().await;
+            }
+            if tracing::enabled!(tracing::Level::DEBUG) {
+                let payload_len = line.len();
+                if let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) {
+                    let method = value
+                        .get("method")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown");
+                    let update_kind = value
+                        .pointer("/params/update/sessionUpdate")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    debug!(
+                        session_id = %session_id_clone,
+                        method,
+                        update_kind,
+                        payload_len,
+                        "acp stdout relay"
+                    );
+                } else {
+                    debug!(
+                        session_id = %session_id_clone,
+                        payload_len,
+                        "acp stdout relay (unparseable)"
+                    );
+                }
+            }
             let relay = RelayMessage::Acp {
                 session_id: session_id_clone.clone(),
                 payload: line,
             };
             if let Ok(text) = serde_json::to_string(&relay) {
                 let mut sink = ws_write_clone.lock().await;
-                let _ = sink.send(Message::Text(text.into())).await;
+                if let Err(err) = sink.send(Message::Text(text.into())).await {
+                    warn!(
+                        session_id = %session_id_clone,
+                        error = ?err,
+                        "acp relay send failed"
+                    );
+                    break;
+                }
             }
+        }
+    });
+
+    tokio::spawn(async move {
+        let mut reader = BufReader::new(stderr).lines();
+        let mut log_writer = stderr_log;
+        while let Ok(Some(line)) = reader.next_line().await {
+            if let Some(writer) = log_writer.as_mut() {
+                let _ = writer.write_all(line.as_bytes()).await;
+                let _ = writer.write_all(b"\n").await;
+                let _ = writer.flush().await;
+            }
+            eprintln!("{line}");
         }
     });
 

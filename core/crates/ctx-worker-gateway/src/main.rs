@@ -526,6 +526,7 @@ struct RelayState {
     worker_tx: Option<mpsc::UnboundedSender<RelayMessage>>,
     sessions: HashMap<String, mpsc::UnboundedSender<RelayMessage>>,
     pending_for_worker: VecDeque<RelayMessage>,
+    pending_for_daemon: HashMap<String, VecDeque<RelayMessage>>,
 }
 
 impl RelayState {
@@ -534,6 +535,7 @@ impl RelayState {
             worker_tx: None,
             sessions: HashMap::new(),
             pending_for_worker: VecDeque::new(),
+            pending_for_daemon: HashMap::new(),
         }
     }
 }
@@ -571,6 +573,7 @@ struct WorkerRecord {
     last_diff_at: Option<DateTime<Utc>>,
     last_diff: Option<DiffArtifact>,
     ssh: Option<ctx_worker_protocol::SshInfo>,
+    acp_log_dir: Option<String>,
 }
 
 #[tokio::main]
@@ -890,7 +893,7 @@ async fn auth_middleware(
         .and_then(|v| v.to_str().ok());
     let mut token_ok = header_token == Some(expected);
 
-    if !token_ok && path == "/shim" {
+    if !token_ok && (path == "/shim" || path.contains("/bootstrap")) {
         if let Some(query) = req.uri().query() {
             for part in query.split('&') {
                 let Some((key, value)) = part.split_once('=') else {
@@ -940,6 +943,7 @@ async fn start_worker(
         last_diff_at: None,
         last_diff: None,
         ssh: None,
+        acp_log_dir: None,
     };
 
     {
@@ -997,6 +1001,7 @@ async fn get_worker(
         updated_at: record.updated_at,
         last_diff_at: record.last_diff_at,
         ssh: record.ssh.clone(),
+        acp_log_dir: record.acp_log_dir.clone(),
     }))
 }
 
@@ -1116,7 +1121,10 @@ async fn register_worker(
 ) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
     let mut workers = state.store.workers.write().await;
     let record = workers.get_mut(&id).ok_or_else(not_found)?;
-    record.ssh = reg.ssh;
+    if reg.ssh.is_some() {
+        record.ssh = reg.ssh;
+    }
+    record.acp_log_dir = reg.acp_log_dir;
     record.updated_at = Utc::now();
     Ok(StatusCode::NO_CONTENT)
 }
@@ -1175,6 +1183,18 @@ async fn handle_worker_socket(state: AppState, worker_id: String, socket: WebSoc
             let Ok(relay_msg) = serde_json::from_str::<RelayMessage>(&text) else {
                 continue;
             };
+            if let RelayMessage::Acp {
+                session_id,
+                payload,
+            } = &relay_msg
+            {
+                debug!(
+                    worker_id = %worker_id,
+                    session_id = %session_id,
+                    payload_len = payload.len(),
+                    "acp relay from worker"
+                );
+            }
             let session_id = match &relay_msg {
                 RelayMessage::Acp { session_id, .. }
                 | RelayMessage::Close { session_id }
@@ -1184,10 +1204,20 @@ async fn handle_worker_socket(state: AppState, worker_id: String, socket: WebSoc
             if let Some(session_tx) = relay_guard.sessions.get(session_id) {
                 let _ = session_tx.send(relay_msg);
             } else {
-                info!(
-                    "worker relay message dropped; no daemon session for worker={} session={}",
-                    worker_id_for_sender, session_id
-                );
+                drop(relay_guard);
+                let mut relay_guard = relay.lock().await;
+                let queue = relay_guard
+                    .pending_for_daemon
+                    .entry(session_id.clone())
+                    .or_insert_with(VecDeque::new);
+                if queue.len() < MAX_PENDING_RELAY_MESSAGES {
+                    queue.push_back(relay_msg);
+                } else {
+                    info!(
+                        "worker relay message dropped; no daemon session for worker={} session={}",
+                        worker_id_for_sender, session_id
+                    );
+                }
             }
         }
     }
@@ -1216,6 +1246,13 @@ async fn handle_daemon_socket(state: AppState, worker_id: String, socket: WebSoc
             relay_guard.sessions.insert(sid.clone(), tx.clone());
             if let Some(worker_tx) = relay_guard.worker_tx.as_ref() {
                 let _ = worker_tx.send(relay_msg.clone());
+            } else if relay_guard.pending_for_worker.len() < MAX_PENDING_RELAY_MESSAGES {
+                relay_guard.pending_for_worker.push_back(relay_msg.clone());
+            }
+            if let Some(mut pending) = relay_guard.pending_for_daemon.remove(sid) {
+                while let Some(msg) = pending.pop_front() {
+                    let _ = tx.send(msg);
+                }
             }
             info!(
                 worker_id = %worker_id,
