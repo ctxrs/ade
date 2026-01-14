@@ -14,6 +14,8 @@ extension Color {
     static let ctxAccentMuted = Color(red: 0.17, green: 0.44, blue: 0.84)
     static let ctxWarning = Color(red: 0.984, green: 0.749, blue: 0.141) // #fbbf24
     static let ctxError = Color(red: 0.937, green: 0.267, blue: 0.267) // #ef4444
+    static let ctxDiffAdded = Color(red: 0.733, green: 0.969, blue: 0.816) // #bbf7d0
+    static let ctxDiffRemoved = Color(red: 0.996, green: 0.792, blue: 0.792) // #fecaca
     static let ctxLine = Color.white.opacity(0.08)
     static let ctxGlassStroke = Color.white.opacity(0.14)
     static let ctxShadow = Color.black.opacity(0.2)

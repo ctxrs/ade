@@ -210,6 +210,34 @@ actor DaemonAPIClient {
         try await request("/api/workspaces/\(workspaceId)/terminals")
     }
 
+    func createWorkspaceTerminal(
+        workspaceId: String,
+        taskId: String?,
+        trackId: String?,
+        sessionId: String?,
+        worktreeId: String?,
+        cwd: String?,
+        shell: String?
+    ) async throws -> TerminalSession {
+        struct Payload: Encodable {
+            let taskId: String?
+            let trackId: String?
+            let sessionId: String?
+            let worktreeId: String?
+            let cwd: String?
+            let shell: String?
+        }
+        let payload = Payload(
+            taskId: taskId,
+            trackId: trackId,
+            sessionId: sessionId,
+            worktreeId: worktreeId,
+            cwd: cwd,
+            shell: shell
+        )
+        return try await request("/api/workspaces/\(workspaceId)/terminals", method: .post, body: payload)
+    }
+
     func deleteMessage(messageId: String) async throws {
         let request = try buildRequest(path: "/api/messages/\(messageId)", method: .delete, body: EmptyPayload())
         try await performVoid(request)

@@ -17,6 +17,7 @@ enum LucideIconName {
     case copy
     case check
     case settings
+    case plus
 }
 
 struct LucideIcon: View {
@@ -149,6 +150,11 @@ struct LucideIcon: View {
             }
             path.closeSubpath()
             path.addEllipse(in: CGRect(x: 9, y: 9, width: 6, height: 6))
+        case .plus:
+            path.move(to: CGPoint(x: 12, y: 5))
+            path.addLine(to: CGPoint(x: 12, y: 19))
+            path.move(to: CGPoint(x: 5, y: 12))
+            path.addLine(to: CGPoint(x: 19, y: 12))
         }
         return path
     }

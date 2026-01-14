@@ -127,11 +127,7 @@ struct WorkbenchDiffPanelView: View {
                         .font(.caption)
                         .foregroundColor(.ctxTextMuted)
                 } else {
-                    Text(diffText)
-                        .font(.system(size: 12, weight: .regular, design: .monospaced))
-                        .foregroundColor(.ctxTextPrimary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .textSelection(.enabled)
+                    DiffTextView(diffText: diffText)
                 }
             }
         }
@@ -162,6 +158,42 @@ struct WorkbenchDiffPanelView: View {
             errorMessage = "Failed to load diff."
         }
         isLoading = false
+    }
+}
+
+private struct DiffTextView: View {
+    let diffText: String
+
+    private var attributedDiff: AttributedString {
+        var output = AttributedString()
+        let lines = diffText.split(omittingEmptySubsequences: false) { $0.isNewline }
+        for (index, line) in lines.enumerated() {
+            let text = String(line)
+            var fragment = AttributedString(text)
+            fragment.font = .system(size: 12, weight: .regular, design: .monospaced)
+            fragment.foregroundColor = diffLineColor(text)
+            output.append(fragment)
+            if index < lines.count - 1 {
+                output.append(AttributedString("\n"))
+            }
+        }
+        return output
+    }
+
+    var body: some View {
+        Text(attributedDiff)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .textSelection(.enabled)
+    }
+
+    private func diffLineColor(_ line: String) -> Color {
+        if line.hasPrefix("+"), !line.hasPrefix("+++") {
+            return .ctxDiffAdded
+        }
+        if line.hasPrefix("-"), !line.hasPrefix("---") {
+            return .ctxDiffRemoved
+        }
+        return .ctxTextPrimary
     }
 }
 
@@ -370,6 +402,132 @@ private struct WebSessionStreamView: UIViewRepresentable {
     }
 }
 
+private struct TerminalWebView: UIViewRepresentable {
+    let wsURL: URL
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    func makeUIView(context: Context) -> WKWebView {
+        let config = WKWebViewConfiguration()
+        config.allowsInlineMediaPlayback = true
+        if #available(iOS 14.0, *) {
+            config.defaultWebpagePreferences.allowsContentJavaScript = true
+        }
+        let webView = WKWebView(frame: .zero, configuration: config)
+        webView.isOpaque = false
+        webView.backgroundColor = .clear
+        webView.scrollView.isScrollEnabled = false
+        return webView
+    }
+
+    func updateUIView(_ webView: WKWebView, context: Context) {
+        let html = terminalHTML(wsURL: wsURL)
+        if context.coordinator.lastHTML == html { return }
+        context.coordinator.lastHTML = html
+        webView.loadHTMLString(html, baseURL: nil)
+    }
+
+    private func terminalHTML(wsURL: URL) -> String {
+        let wsLiteral = jsStringLiteral(wsURL.absoluteString)
+        return """
+        <!doctype html>
+        <html>
+          <head>
+            <meta name="viewport" content="width=device-width, height=device-height, initial-scale=1, maximum-scale=1, user-scalable=no" />
+            <link rel="stylesheet" href="https://unpkg.com/xterm@5.5.0/css/xterm.css" />
+            <style>
+              html, body {
+                height: 100%;
+                width: 100%;
+                margin: 0;
+                background: #252526;
+              }
+              #terminal {
+                height: 100%;
+                width: 100%;
+                padding: 8px;
+                box-sizing: border-box;
+              }
+            </style>
+          </head>
+          <body>
+            <div id="terminal"></div>
+            <script src="https://unpkg.com/xterm@5.5.0/lib/xterm.js"></script>
+            <script src="https://unpkg.com/xterm-addon-fit@0.10.0/lib/xterm-addon-fit.js"></script>
+            <script>
+              const wsUrl = \(wsLiteral);
+              const term = new Terminal({
+                fontFamily: "SFMono-Regular, Menlo, Monaco, Consolas, \\"Liberation Mono\\", monospace",
+                fontSize: 12,
+                allowTransparency: true,
+                theme: {
+                  background: "#252526",
+                  foreground: "#d4d4d4",
+                  cursor: "#d4d4d4",
+                  selectionBackground: "rgba(255, 255, 255, 0.2)"
+                },
+                scrollback: 2000
+              });
+              const fitAddon = new FitAddon.FitAddon();
+              term.loadAddon(fitAddon);
+              term.open(document.getElementById("terminal"));
+              const ws = new WebSocket(wsUrl);
+              ws.binaryType = "arraybuffer";
+              const sendResize = () => {
+                if (ws.readyState !== WebSocket.OPEN) return;
+                ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
+              };
+              term.onData((data) => {
+                if (ws.readyState === WebSocket.OPEN) {
+                  ws.send(data);
+                }
+              });
+              term.onResize(() => {
+                sendResize();
+              });
+              ws.onopen = () => {
+                fitAddon.fit();
+                sendResize();
+                term.focus();
+              };
+              ws.onmessage = (event) => {
+                if (typeof event.data === "string") {
+                  return;
+                }
+                term.write(new Uint8Array(event.data));
+              };
+              ws.onclose = () => {
+                term.write("\\r\\n[connection closed]\\r\\n");
+              };
+              window.addEventListener("resize", () => {
+                fitAddon.fit();
+                sendResize();
+              });
+              setTimeout(() => {
+                fitAddon.fit();
+                sendResize();
+                term.focus();
+              }, 0);
+            </script>
+          </body>
+        </html>
+        """
+    }
+
+    private func jsStringLiteral(_ value: String) -> String {
+        let escaped = value
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        return "\"\(escaped)\""
+    }
+
+    final class Coordinator {
+        var lastHTML: String?
+    }
+}
+
 struct WorkbenchTerminalPanelView: View {
     @EnvironmentObject private var connection: ConnectionStore
     let workspaceId: String?
@@ -382,6 +540,10 @@ struct WorkbenchTerminalPanelView: View {
     @State private var isLoading = false
     @State private var errorMessage: String?
     @State private var scope: TerminalScope = .workspace
+    @State private var selectedTerminalId: String?
+    @State private var daemonBaseURL: URL?
+    @State private var authToken: String?
+    @State private var isCreatingTerminal = false
 
     private var availableScopes: [TerminalScope] {
         taskId == nil ? [.workspace] : [.task, .workspace]
@@ -397,6 +559,17 @@ struct WorkbenchTerminalPanelView: View {
         }
     }
 
+    private var isSecureConnection: Bool {
+        connection.secureConfig != nil
+    }
+
+    private var selectedTerminal: TerminalSession? {
+        if let selectedTerminalId, let match = filteredTerminals.first(where: { $0.id.stringValue == selectedTerminalId }) {
+            return match
+        }
+        return filteredTerminals.first
+    }
+
     var body: some View {
         WorkbenchPanelScaffold(
             title: "Terminal",
@@ -410,13 +583,13 @@ struct WorkbenchTerminalPanelView: View {
                         .font(.caption)
                         .foregroundColor(.ctxTextMuted)
                 }
-            } else {
+            } else if isSecureConnection {
                 GlassPanel {
-                    Text("Terminal streaming is not available on iOS yet.")
+                    Text("Terminal streaming is unavailable over secure pairing right now.")
                         .font(.caption)
                         .foregroundColor(.ctxTextMuted)
                 }
-
+            } else {
                 if availableScopes.count > 1 {
                     Picker("Scope", selection: $scope) {
                         ForEach(availableScopes) { scope in
@@ -424,6 +597,24 @@ struct WorkbenchTerminalPanelView: View {
                         }
                     }
                     .pickerStyle(.segmented)
+                }
+
+                HStack(spacing: 8) {
+                    Button(action: { _Concurrency.Task { await createTerminal() } }) {
+                        HStack(spacing: 6) {
+                            LucideIcon(name: .plus, size: 14)
+                            Text("New terminal")
+                        }
+                    }
+                    .buttonStyle(CtxGhostButtonStyle())
+                    .disabled(isCreatingTerminal)
+
+                    if isCreatingTerminal {
+                        ProgressView()
+                            .tint(.ctxTextPrimary)
+                    }
+
+                    Spacer()
                 }
 
                 if isLoading && terminals.isEmpty {
@@ -438,11 +629,43 @@ struct WorkbenchTerminalPanelView: View {
                         .font(.caption)
                         .foregroundColor(.ctxTextMuted)
                 } else {
-                    GlassPanel {
-                        VStack(alignment: .leading, spacing: 12) {
-                            ForEach(filteredTerminals) { terminal in
-                                WorkbenchTerminalRow(terminal: terminal)
+                    if filteredTerminals.count > 1 {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 8) {
+                                ForEach(filteredTerminals) { terminal in
+                                    Button(action: { selectedTerminalId = terminal.id.stringValue }) {
+                                        Text(terminalLabel(terminal))
+                                            .font(.caption.weight(.semibold))
+                                            .foregroundColor(.ctxTextPrimary)
+                                            .padding(.vertical, 6)
+                                            .padding(.horizontal, 10)
+                                            .background(
+                                                Color.ctxSurface.opacity(selectedTerminal?.id == terminal.id ? 0.8 : 0.35),
+                                                in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                            )
+                                            .overlay(
+                                                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                                    .stroke(Color.ctxLine, lineWidth: 1)
+                                            )
+                                    }
+                                    .buttonStyle(.plain)
+                                }
                             }
+                        }
+                    }
+
+                    GlassPanel {
+                        if let selectedTerminal,
+                           let streamURL = terminalWebSocketURL(for: selectedTerminal) {
+                            VStack(alignment: .leading, spacing: 12) {
+                                WorkbenchTerminalRow(terminal: selectedTerminal)
+                                TerminalWebView(wsURL: streamURL)
+                                    .frame(minHeight: 320)
+                            }
+                        } else {
+                            Text("Terminal unavailable.")
+                                .font(.caption)
+                                .foregroundColor(.ctxTextMuted)
                         }
                     }
                 }
@@ -452,6 +675,9 @@ struct WorkbenchTerminalPanelView: View {
             if taskId != nil {
                 scope = .task
             }
+        }
+        .onChange(of: scope) { _ in
+            updateSelection()
         }
         .task(id: workspaceId) {
             await loadTerminals()
@@ -475,11 +701,79 @@ struct WorkbenchTerminalPanelView: View {
         do {
             let items = try await client.listWorkspaceTerminals(workspaceId: workspaceId)
             terminals = items.sorted { $0.updatedAt > $1.updatedAt }
+            daemonBaseURL = await client.daemonBaseURL()
+            authToken = await client.authToken()
+            updateSelection()
         } catch {
             terminals = []
             errorMessage = "Failed to load terminals."
         }
         isLoading = false
+    }
+
+    @MainActor
+    private func createTerminal() async {
+        guard let workspaceId, !workspaceId.isEmpty else {
+            errorMessage = "Select a workspace to create a terminal."
+            return
+        }
+        guard let client = connection.apiClient else {
+            errorMessage = "Connect to a daemon first."
+            return
+        }
+        let targetScope: TerminalScope = scope == .task && taskId != nil ? .task : .workspace
+        isCreatingTerminal = true
+        errorMessage = nil
+        do {
+            let terminal = try await client.createWorkspaceTerminal(
+                workspaceId: workspaceId,
+                taskId: targetScope == .task ? taskId : nil,
+                trackId: targetScope == .task ? trackId : nil,
+                sessionId: targetScope == .task ? sessionId : nil,
+                worktreeId: targetScope == .task ? worktreeId : nil,
+                cwd: nil,
+                shell: nil
+            )
+            terminals.insert(terminal, at: 0)
+            selectedTerminalId = terminal.id.stringValue
+        } catch {
+            errorMessage = "Failed to create terminal."
+        }
+        isCreatingTerminal = false
+    }
+
+    private func updateSelection() {
+        if let selectedTerminalId,
+           filteredTerminals.contains(where: { $0.id.stringValue == selectedTerminalId }) {
+            return
+        }
+        selectedTerminalId = filteredTerminals.first?.id.stringValue
+    }
+
+    private func terminalLabel(_ terminal: TerminalSession) -> String {
+        let trimmed = terminal.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty { return trimmed }
+        let shell = terminal.shell.trimmingCharacters(in: .whitespacesAndNewlines)
+        return shell.isEmpty ? "Terminal" : shell
+    }
+
+    private func terminalWebSocketURL(for terminal: TerminalSession) -> URL? {
+        guard let base = daemonBaseURL else { return nil }
+        guard var components = URLComponents(url: base, resolvingAgainstBaseURL: true) else { return nil }
+        if components.scheme == "http" {
+            components.scheme = "ws"
+        } else if components.scheme == "https" {
+            components.scheme = "wss"
+        }
+        let basePath = components.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let streamPath = "api/terminals/\(terminal.id.stringValue)/stream"
+        components.path = basePath.isEmpty ? "/\(streamPath)" : "/\(basePath)/\(streamPath)"
+        var items = components.queryItems ?? []
+        if let token = authToken, !token.isEmpty, !items.contains(where: { $0.name == "token" }) {
+            items.append(URLQueryItem(name: "token", value: token))
+        }
+        components.queryItems = items.isEmpty ? nil : items
+        return components.url
     }
 
     private enum TerminalScope: String, CaseIterable, Identifiable {
