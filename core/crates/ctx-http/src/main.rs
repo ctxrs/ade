@@ -5,12 +5,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{anyhow, Result};
-use clap::{Parser, Subcommand};
 use chrono::{DateTime, Utc};
-use tracing::{Metadata, warn};
+use clap::{Parser, Subcommand};
+use tokio::time::MissedTickBehavior;
+use tracing::{warn, Metadata};
 use tracing_subscriber::fmt::writer::MakeWriter;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-use tokio::time::MissedTickBehavior;
 
 #[derive(Parser)]
 #[command(name = "ctx")]
@@ -128,12 +128,16 @@ impl DaemonLogConfig {
 fn env_bool(key: &str) -> Option<bool> {
     std::env::var(key).ok().map(|raw| {
         let trimmed = raw.trim();
-        trimmed == "1" || trimmed.eq_ignore_ascii_case("true") || trimmed.eq_ignore_ascii_case("yes")
+        trimmed == "1"
+            || trimmed.eq_ignore_ascii_case("true")
+            || trimmed.eq_ignore_ascii_case("yes")
     })
 }
 
 fn env_u64(key: &str) -> Option<u64> {
-    std::env::var(key).ok().and_then(|raw| raw.trim().parse().ok())
+    std::env::var(key)
+        .ok()
+        .and_then(|raw| raw.trim().parse().ok())
 }
 
 fn daemon_log_path_for_date(logs_dir: &Path, date: &str) -> std::path::PathBuf {

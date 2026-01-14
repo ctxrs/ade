@@ -203,10 +203,14 @@ async fn cleanup_old_logs(data_root: &Path, retention_days: u64) -> Result<()> {
 fn env_bool(key: &str) -> Option<bool> {
     std::env::var(key).ok().map(|raw| {
         let trimmed = raw.trim();
-        trimmed == "1" || trimmed.eq_ignore_ascii_case("true") || trimmed.eq_ignore_ascii_case("yes")
+        trimmed == "1"
+            || trimmed.eq_ignore_ascii_case("true")
+            || trimmed.eq_ignore_ascii_case("yes")
     })
 }
 
 fn env_u64(key: &str) -> Option<u64> {
-    std::env::var(key).ok().and_then(|raw| raw.trim().parse().ok())
+    std::env::var(key)
+        .ok()
+        .and_then(|raw| raw.trim().parse().ok())
 }
