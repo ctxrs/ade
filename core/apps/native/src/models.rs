@@ -379,6 +379,16 @@ pub(crate) enum ThreadListItem {
     Item(ThreadItem),
 }
 
+impl ThreadListItem {
+    pub(crate) fn id(&self) -> &str {
+        match self {
+            ThreadListItem::TurnHeader { id, .. } => id,
+            ThreadListItem::Item(item) => thread_item_id(item),
+        }
+    }
+}
+
+
 #[derive(Clone, Serialize)]
 pub(crate) struct TurnToolSnapshot {
     pub(crate) tool_call_id: String,

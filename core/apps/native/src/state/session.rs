@@ -283,17 +283,8 @@ impl ShellView {
             &self.session_events,
         );
         let items = filter_thread_list_items(items, self.verbosity);
-        let old_len = self.thread_list_len;
-        self.thread_items = items;
-        let new_len = self.thread_items.len();
-        self.thread_list_len = new_len;
-
-        if new_len > old_len {
-            let added = new_len - old_len;
-            self.thread_list_state.splice(0..0, added);
-        } else if new_len < old_len {
-            self.thread_list_state.reset(new_len);
-        }
+        self.apply_thread_items(items);
+        let new_len = self.thread_list_len;
 
         if new_len == 0 {
             self.sticky_turn_header = None;
@@ -345,25 +336,29 @@ impl ShellView {
 
     pub(crate) fn on_toggle_turn_header(&mut self, id: String, cx: &mut Context<Self>) {
         let expanded = self.expanded_turn_headers.get(&id).copied().unwrap_or(false);
-        self.expanded_turn_headers.insert(id, !expanded);
+        self.expanded_turn_headers.insert(id.clone(), !expanded);
+        self.invalidate_thread_item(&id);
         cx.notify();
     }
 
     pub(crate) fn on_toggle_message(&mut self, id: String, cx: &mut Context<Self>) {
         let expanded = self.expanded_messages.get(&id).copied().unwrap_or(false);
-        self.expanded_messages.insert(id, !expanded);
+        self.expanded_messages.insert(id.clone(), !expanded);
+        self.invalidate_thread_item(&id);
         cx.notify();
     }
 
     pub(crate) fn on_toggle_turn_details(&mut self, id: String, cx: &mut Context<Self>) {
         let expanded = self.expanded_turn_details.get(&id).copied().unwrap_or(false);
-        self.expanded_turn_details.insert(id, !expanded);
+        self.expanded_turn_details.insert(id.clone(), !expanded);
+        self.invalidate_thread_item(&id);
         cx.notify();
     }
 
     pub(crate) fn on_toggle_tool(&mut self, id: String, cx: &mut Context<Self>) {
         let expanded = self.expanded_tools.get(&id).copied().unwrap_or(false);
-        self.expanded_tools.insert(id, !expanded);
+        self.expanded_tools.insert(id.clone(), !expanded);
+        self.invalidate_thread_item(&id);
         cx.notify();
     }
 
@@ -745,10 +740,8 @@ impl ShellView {
         );
         let items = filter_thread_list_items(items, self.verbosity);
         let old_len = self.thread_list_len;
-        self.thread_items = items;
-        let new_len = self.thread_items.len();
-        self.thread_list_len = new_len;
-        self.thread_list_state.reset(new_len);
+        self.apply_thread_items(items);
+        let new_len = self.thread_list_len;
         if self.thread_auto_follow {
             self.new_thread_item_count = 0;
             self.scroll_thread_to_bottom();
@@ -760,6 +753,45 @@ impl ShellView {
             self.sticky_turn_header = None;
             self.sticky_turn_header_at_top = true;
         }
+    }
+
+    fn apply_thread_items(&mut self, items: Vec<ThreadListItem>) {
+        let old_items = std::mem::take(&mut self.thread_items);
+        let old_len = old_items.len();
+        let new_len = items.len();
+
+        let mut start = 0;
+        while start < old_len
+            && start < new_len
+            && old_items[start].id() == items[start].id()
+        {
+            start += 1;
+        }
+
+        let mut end_old = old_len;
+        let mut end_new = new_len;
+        while end_old > start
+            && end_new > start
+            && old_items[end_old - 1].id() == items[end_new - 1].id()
+        {
+            end_old -= 1;
+            end_new -= 1;
+        }
+
+        if !(start == end_old && start == end_new) {
+            self.thread_list_state
+                .splice(start..end_old, end_new - start);
+        }
+
+        self.thread_items = items;
+        self.thread_list_len = new_len;
+    }
+
+    fn invalidate_thread_item(&mut self, id: &str) {
+        let Some(index) = self.thread_items.iter().position(|item| item.id() == id) else {
+            return;
+        };
+        self.thread_list_state.splice(index..index + 1, 1);
     }
 
     fn update_sticky_turn_header(&mut self, visible_range: std::ops::Range<usize>) {
