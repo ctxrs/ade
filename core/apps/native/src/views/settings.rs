@@ -556,6 +556,9 @@ impl Render for SettingsState {
             })
             .collect();
 
+        automation_tree::clear_prefix("settings-nav-main-item-");
+        automation_tree::clear_prefix("settings-nav-advanced-item-");
+
         let active_section = self.active_section;
         let header_label = active_section.label();
         let any_saving = self.saving || self.editor_saving;
@@ -661,20 +664,30 @@ impl Render for SettingsState {
                                 let on_click = cx.listener(move |view, _: &ClickEvent, _window, cx| {
                                     view.set_active_section(section, cx);
                                 });
-                                div()
+                                let item_id = format!("settings-nav-main-item-{}", ix);
+                                let item_label = section.label().to_string();
+                                let item = div()
                                     .h(px(28.0))
                                     .px(px(10.0))
                                     .flex()
                                     .items_center()
                                     .rounded(px(8.0))
                                     .text_size(px(13.0))
-                                    .child(section.label().to_string())
+                                    .child(item_label.clone())
                                     .text_color(if is_active { white(0.9) } else { white(0.55) })
                                     .bg(if is_active { white(0.1) } else { rgba_u8(0, 0, 0, 0.0) })
                                     .when(!is_active, |this| this.hover(|style| style.bg(white(0.06)).text_color(white(0.82))))
                                     .cursor_pointer()
                                     .id(ElementId::named_usize("settings-nav-main", ix))
-                                    .on_click(on_click)
+                                    .on_click(on_click);
+                                div()
+                                    .on_children_prepainted(automation_tree::track_children_bounds_dynamic(
+                                        item_id,
+                                        "button".to_string(),
+                                        Some(item_label),
+                                        Some("settings-nav-main-list".to_string()),
+                                    ))
+                                    .child(item)
                             }))
                     )
                     .child(div().my(px(10.0)).h(px(1.0)).bg(white(0.06)))
@@ -694,20 +707,30 @@ impl Render for SettingsState {
                                 let on_click = cx.listener(move |view, _: &ClickEvent, _window, cx| {
                                     view.set_active_section(section, cx);
                                 });
-                                div()
+                                let item_id = format!("settings-nav-advanced-item-{}", ix);
+                                let item_label = section.label().to_string();
+                                let item = div()
                                     .h(px(28.0))
                                     .px(px(10.0))
                                     .flex()
                                     .items_center()
                                     .rounded(px(8.0))
                                     .text_size(px(13.0))
-                                    .child(section.label().to_string())
+                                    .child(item_label.clone())
                                     .text_color(if is_active { white(0.9) } else { white(0.55) })
                                     .bg(if is_active { white(0.1) } else { rgba_u8(0, 0, 0, 0.0) })
                                     .when(!is_active, |this| this.hover(|style| style.bg(white(0.06)).text_color(white(0.82))))
                                     .cursor_pointer()
                                     .id(ElementId::named_usize("settings-nav-advanced", ix))
-                                    .on_click(on_click)
+                                    .on_click(on_click);
+                                div()
+                                    .on_children_prepainted(automation_tree::track_children_bounds_dynamic(
+                                        item_id,
+                                        "button".to_string(),
+                                        Some(item_label),
+                                        Some("settings-nav-advanced-list".to_string()),
+                                    ))
+                                    .child(item)
                             }))
                     ),
             );
@@ -791,20 +814,20 @@ impl SettingsState {
 
         match active {
             SettingsSection::General => self.render_general(window, cx),
+            SettingsSection::ModelsRouting => self.render_models_routing(window, cx),
+            SettingsSection::Sandboxing => self.render_sandboxing(window, cx),
             SettingsSection::WorktreeBootstrap => self.render_worktree_bootstrap(window, cx),
             SettingsSection::WorkspaceAttachments => self.render_workspace_attachments(window, cx),
+            SettingsSection::ContextPack => self.render_context_pack(window, cx),
             SettingsSection::ResourceGovernance => self.render_resource_governance(window, cx),
             SettingsSection::MobileAccess => self.render_mobile_access(window, cx),
             SettingsSection::ResourceUtilization => self.render_resource_utilization(window, cx),
             SettingsSection::Dictation => self.render_dictation(window, cx),
             SettingsSection::TitleGeneration => self.render_title_generation(window, cx),
             SettingsSection::Billing => self.render_billing(window, cx),
+            SettingsSection::TeamEnterprise => self.render_team_enterprise(window, cx),
+            SettingsSection::UsageAnalytics => self.render_usage_analytics(window, cx),
             SettingsSection::AgentHarnesses => self.render_agent_harnesses(window, cx),
-            SettingsSection::ModelsRouting
-            | SettingsSection::Sandboxing
-            | SettingsSection::ContextPack
-            | SettingsSection::TeamEnterprise
-            | SettingsSection::UsageAnalytics => div().into_any_element(),
         }
     }
 
@@ -980,6 +1003,101 @@ impl SettingsState {
             content = content.child(settings_banner(&error, true));
         }
         content.into_any_element()
+    }
+
+    fn render_models_routing(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let colors = self.colors;
+        let provider_count = self.providers.len();
+        let catalog_count = self
+            .provider_options
+            .values()
+            .filter(|opts| opts.models.is_some())
+            .count();
+        let provider_label = if provider_count == 0 {
+            "No providers".to_string()
+        } else {
+            format!("{provider_count} detected")
+        };
+        let catalog_label = if catalog_count == 0 {
+            "No catalogs yet".to_string()
+        } else {
+            format!("{catalog_count} catalogs")
+        };
+        let can_jump = self.shell_handle.is_some();
+        let jump_button = settings_button_compact(
+            "Open Workbench",
+            ButtonVariant::Secondary,
+            !can_jump,
+            None,
+        )
+        .id("settings-models-open-workbench")
+        .when(can_jump, |this| {
+            this.on_click(cx.listener(|view, _: &ClickEvent, _window, cx| {
+                if let Some(handle) = view.shell_handle.clone() {
+                    handle.update(cx, |shell, cx| {
+                        shell.set_route(ShellRoute::Workbench, cx);
+                    });
+                }
+            }))
+        });
+
+        let rows = vec![
+            settings_row(
+                "Routing policy",
+                Some("Model selection is configured per task in the composer."),
+                settings_pill("Per-task", PillVariant::Default, false),
+                true,
+            )
+            .into_any_element(),
+            settings_row(
+                "Providers",
+                Some("Providers available for routing."),
+                settings_pill(&provider_label, PillVariant::Default, false),
+                false,
+            )
+            .into_any_element(),
+            settings_row(
+                "Model catalogs",
+                Some("Latest model lists fetched from providers."),
+                settings_pill(&catalog_label, PillVariant::Default, false),
+                false,
+            )
+            .into_any_element(),
+            settings_row(
+                "Jump to Workbench",
+                Some("Use the composer to pick models and routing options."),
+                jump_button,
+                false,
+            )
+            .into_any_element(),
+        ];
+
+        div()
+            .grid()
+            .gap(px(14.0))
+            .child(settings_card(colors, None, settings_rows(rows)))
+            .into_any_element()
+    }
+
+    fn render_sandboxing(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> AnyElement {
+        let colors = self.colors;
+        let rows = vec![settings_row(
+            "Provider control",
+            Some("Default is full capability. Harness-native controls are not yet available here."),
+            settings_pill("Full capability", PillVariant::Default, false),
+            true,
+        )
+        .into_any_element()];
+
+        div()
+            .grid()
+            .gap(px(12.0))
+            .child(settings_card(colors, None, settings_rows(rows)))
+            .child(settings_banner(
+                "Sandboxing settings are read-only in native for now.",
+                false,
+            ))
+            .into_any_element()
     }
 
     fn render_worktree_bootstrap(
@@ -1543,6 +1661,112 @@ impl SettingsState {
         }
 
         content.into_any_element()
+    }
+
+    fn render_context_pack(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> AnyElement {
+        let colors = self.colors;
+        let selected_workspace = self
+            .selected_workspace
+            .and_then(|id| self.workspaces.iter().find(|ws| ws.id == id));
+        let pack_path = selected_workspace
+            .map(|ws| format!("{}/.ctx/ctx-pack", ws.root_path))
+            .unwrap_or_else(|| ".ctx/ctx-pack".to_string());
+        let mut body = div()
+            .grid()
+            .gap(px(10.0))
+            .child(
+                div()
+                    .text_size(px(13.0))
+                    .text_color(white(0.7))
+                    .child("ctx pack stores specs, skills, and prompts for this workspace."),
+            )
+            .child(settings_code_block(&pack_path));
+        if selected_workspace.is_none() {
+            body = body.child(settings_empty_compact("Select a workspace to see the exact path."));
+        }
+
+        div()
+            .grid()
+            .gap(px(14.0))
+            .child(settings_card(colors, None, body))
+            .into_any_element()
+    }
+
+    fn render_team_enterprise(
+        &mut self,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let colors = self.colors;
+        let body = div()
+            .grid()
+            .gap(px(10.0))
+            .child(
+                div()
+                    .text_size(px(13.0))
+                    .text_color(white(0.7))
+                    .child("Team and Enterprise features are managed through ctx Cloud."),
+            )
+            .child(
+                div()
+                    .text_size(px(12.0))
+                    .text_color(white(0.45))
+                    .child("Contact sales to enable SSO, org policies, and managed deployments."),
+            )
+            .child(settings_button(
+                "Contact sales",
+                ButtonVariant::Secondary,
+                true,
+                None,
+            ));
+
+        div()
+            .grid()
+            .gap(px(14.0))
+            .child(settings_card(colors, None, body))
+            .into_any_element()
+    }
+
+    fn render_usage_analytics(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> AnyElement {
+        let colors = self.colors;
+        let status_label = if self.telemetry_enabled {
+            "Enabled"
+        } else {
+            "Disabled"
+        };
+        let status_variant = if self.telemetry_enabled {
+            PillVariant::Ok
+        } else {
+            PillVariant::Warn
+        };
+        let endpoint_label = if self.telemetry_endpoint.trim().is_empty() {
+            "Default endpoint".to_string()
+        } else {
+            self.telemetry_endpoint.clone()
+        };
+
+        let rows = vec![
+            settings_row(
+                "Telemetry status",
+                Some("Matches the General telemetry setting."),
+                settings_pill(status_label, status_variant, false),
+                true,
+            )
+            .into_any_element(),
+            settings_row(
+                "Endpoint",
+                Some("Where anonymous usage data is sent."),
+                settings_code_block(&endpoint_label),
+                false,
+            )
+            .into_any_element(),
+        ];
+
+        div()
+            .grid()
+            .gap(px(14.0))
+            .child(settings_card(colors, None, settings_rows(rows)))
+            .into_any_element()
     }
 
     fn render_resource_governance(
