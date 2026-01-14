@@ -16,6 +16,7 @@ import {
   SandboxingSettings,
   Settings,
   AgentSystemPromptConfig,
+  SubagentSystemPromptConfig,
   TelemetrySettings,
   TitleGenerationSettings,
   MergeQueueEntry,
@@ -26,6 +27,7 @@ import {
   disableMobileAccess,
   enableMobileAccess,
   getAgentSystemPrompt,
+  getSubagentSystemPrompt,
   getMergeQueueEntryLogs,
   getMobileAccessStatus,
   Workspace,
@@ -47,6 +49,7 @@ import {
   syncWorkspaceAttachments,
   updateSettings,
   updateAgentSystemPrompt,
+  updateSubagentSystemPrompt,
   verifyProviderForWorkspace,
 } from "../api/client";
 import {
@@ -67,6 +70,7 @@ import {
 import { getSupabaseClient } from "../utils/supabaseClient";
 
 const AGENT_PROMPT_DEFAULT = "You are working inside ctx, an agent development environment. Use ctx MCP tools to attach photos/videos as artifacts, start persistent web sessions (Playwright REPL/scripts), and run sub-agents for research or well-scoped implementations. Check `.ctx/.refs/` and `.ctx/docs/` for extra reference repos and docs." as const;
+const SUBAGENT_PROMPT_DEFAULT = "Subagents may use rg/grep and other token-heavy commands the main agent avoids." as const;
 
 const MODEL_OPTIONS: Array<{ value: string; label: string }> = [
   { value: "auto", label: "Default (Deepgram Nova-3)" },
@@ -455,6 +459,11 @@ export default function SettingsPage() {
   const [agentPromptError, setAgentPromptError] = useState<string | null>(null);
   const [agentPromptSaving, setAgentPromptSaving] = useState(false);
   const [agentPromptText, setAgentPromptText] = useState("");
+  const [subagentPromptConfig, setSubagentPromptConfig] = useState<SubagentSystemPromptConfig | null>(null);
+  const [subagentPromptLoading, setSubagentPromptLoading] = useState(false);
+  const [subagentPromptError, setSubagentPromptError] = useState<string | null>(null);
+  const [subagentPromptSaving, setSubagentPromptSaving] = useState(false);
+  const [subagentPromptText, setSubagentPromptText] = useState("");
 
   const [resourceSnapshot, setResourceSnapshot] = useState<ResourceUtilization | null>(null);
   const [resourceLoading, setResourceLoading] = useState(false);
@@ -1067,6 +1076,50 @@ export default function SettingsPage() {
     }
   }, [workspaceId, workspaces]);
 
+  const refreshSubagentSystemPrompt = useCallback(async () => {
+    if (!workspaceId) return;
+    if (!workspaces.some((ws) => idToString((ws as any).id) === workspaceId)) return;
+    setSubagentPromptLoading(true);
+    setSubagentPromptError(null);
+    try {
+      const next = await getSubagentSystemPrompt(workspaceId);
+      setSubagentPromptConfig(next);
+      const baseText = next.configured_append ?? next.default_append ?? SUBAGENT_PROMPT_DEFAULT;
+      setSubagentPromptText(baseText);
+    } catch (e: any) {
+      const message = e?.message ?? String(e);
+      const lower = message.toLowerCase();
+      const first = workspaces[0];
+      const isNotFound = lower.includes("404") || lower.includes("workspace not found");
+      if (isNotFound && first) {
+        const firstId = idToString((first as any).id);
+        if (workspaceId !== firstId) {
+          setWorkspaceId(firstId);
+          setSubagentPromptError(null);
+          setSubagentPromptLoading(false);
+          return;
+        }
+      }
+      if (isNotFound) {
+        const fallbackWs = workspaces.find((ws) => idToString((ws as any).id) === workspaceId) ?? workspaces[0];
+        const fallbackPath = fallbackWs ? `${fallbackWs.root_path}/.ctx/config.toml` : ".ctx/config.toml";
+        setSubagentPromptConfig({
+          config_path: fallbackPath,
+          default_append: SUBAGENT_PROMPT_DEFAULT,
+          configured_append: null,
+          effective_append: SUBAGENT_PROMPT_DEFAULT,
+          source: "default",
+        });
+        setSubagentPromptText(SUBAGENT_PROMPT_DEFAULT);
+        setSubagentPromptError(null);
+      } else {
+        setSubagentPromptError(message);
+      }
+    } finally {
+      setSubagentPromptLoading(false);
+    }
+  }, [workspaceId, workspaces]);
+
   const handleSaveAgentPrompt = useCallback(async () => {
     if (!workspaceId) return;
     setAgentPromptSaving(true);
@@ -1084,6 +1137,24 @@ export default function SettingsPage() {
       setAgentPromptSaving(false);
     }
   }, [workspaceId, agentPromptText]);
+
+  const handleSaveSubagentPrompt = useCallback(async () => {
+    if (!workspaceId) return;
+    setSubagentPromptSaving(true);
+    setSubagentPromptError(null);
+    try {
+      const trimmed = subagentPromptText.trim();
+      const payload = trimmed.length ? trimmed : null;
+      const next = await updateSubagentSystemPrompt(workspaceId, { system_prompt_append: payload });
+      setSubagentPromptConfig(next);
+      const baseText = next.configured_append ?? next.default_append ?? "";
+      setSubagentPromptText(baseText);
+    } catch (e: any) {
+      setSubagentPromptError(e?.message ?? String(e));
+    } finally {
+      setSubagentPromptSaving(false);
+    }
+  }, [workspaceId, subagentPromptText]);
 
   const syncWorkspaceAttachmentsNow = useCallback(async () => {
     if (!workspaceId) return;
@@ -1182,10 +1253,15 @@ export default function SettingsPage() {
     if (!workspaceId) return;
     if (!workspaces.some((ws) => idToString((ws as any).id) === workspaceId)) return;
     refreshAgentSystemPrompt().catch(() => {});
-  }, [active, workspaceId, workspaces, refreshAgentSystemPrompt]);
+    refreshSubagentSystemPrompt().catch(() => {});
+  }, [active, workspaceId, workspaces, refreshAgentSystemPrompt, refreshSubagentSystemPrompt]);
 
   useEffect(() => {
     setAgentPromptError(null);
+  }, [workspaceId]);
+
+  useEffect(() => {
+    setSubagentPromptError(null);
   }, [workspaceId]);
 
   useEffect(() => {
@@ -1503,6 +1579,34 @@ export default function SettingsPage() {
     return trimmed ? trimmed : null;
   }, [location.search]);
 
+  const agentPromptBase = useMemo(
+    () => agentPromptConfig?.configured_append ?? agentPromptConfig?.default_append ?? AGENT_PROMPT_DEFAULT,
+    [agentPromptConfig],
+  );
+  const subagentPromptBase = useMemo(
+    () => subagentPromptConfig?.configured_append ?? subagentPromptConfig?.default_append ?? SUBAGENT_PROMPT_DEFAULT,
+    [subagentPromptConfig],
+  );
+  const agentPromptDirty = useMemo(
+    () => (agentPromptConfig ? agentPromptText.trim() !== agentPromptBase.trim() : false),
+    [agentPromptConfig, agentPromptText, agentPromptBase],
+  );
+  const subagentPromptDirty = useMemo(
+    () => (subagentPromptConfig ? subagentPromptText.trim() !== subagentPromptBase.trim() : false),
+    [subagentPromptConfig, subagentPromptText, subagentPromptBase],
+  );
+
+  const handleSavePromptAppends = useCallback(async () => {
+    if (!workspaceId) return;
+    if (!agentPromptDirty && !subagentPromptDirty) return;
+    if (agentPromptDirty) {
+      await handleSaveAgentPrompt();
+    }
+    if (subagentPromptDirty) {
+      await handleSaveSubagentPrompt();
+    }
+  }, [workspaceId, agentPromptDirty, subagentPromptDirty, handleSaveAgentPrompt, handleSaveSubagentPrompt]);
+
   const backLink = useMemo(() => {
     const ws = new URLSearchParams(location.search).get("ws");
     if (ws && ws.trim()) {
@@ -1519,7 +1623,7 @@ export default function SettingsPage() {
     }
   }, [workspaceFromQuery, workspaceId]);
 
-  const anySaving = saving || editorSaving || agentPromptSaving;
+  const anySaving = saving || editorSaving || agentPromptSaving || subagentPromptSaving;
 
   const vscodeRemoteTargets: DesktopEditorSettings["target"][] = [
     "vscode",
@@ -1656,9 +1760,10 @@ export default function SettingsPage() {
         agentPromptConfig?.config_path ??
         (selectedWorkspace ? `${selectedWorkspace.root_path}/.ctx/config.toml` : ".ctx/config.toml");
       const statusLabel = agentPromptConfig?.source === "config" ? "Custom" : "Default";
-      const baseCustom = agentPromptConfig?.configured_append ?? agentPromptConfig?.default_append ?? AGENT_PROMPT_DEFAULT;
-      const promptDirty = agentPromptConfig ? agentPromptText.trim() !== baseCustom.trim() : false;
-      const canSave = Boolean(workspaceId) && !agentPromptSaving && promptDirty;
+      const promptDirty = agentPromptDirty;
+      const subagentDirty = subagentPromptDirty;
+      const canSave = Boolean(workspaceId) && !agentPromptSaving && !subagentPromptSaving && (promptDirty || subagentDirty);
+      const promptSaving = agentPromptSaving || subagentPromptSaving;
 
       return (
         <>
@@ -1704,21 +1809,37 @@ export default function SettingsPage() {
               }
             />
             <Row
+              title="Subagent prompt append"
+              description="Saved to .ctx/config.toml. Pre-filled with the default; edit to override."
+              control={
+                <textarea
+                  className="settings-control settings-control-wide"
+                  rows={4}
+                  value={subagentPromptText}
+                  onChange={(e) => setSubagentPromptText(e.target.value)}
+                  disabled={!workspaceId || subagentPromptLoading}
+                  placeholder="Add a custom subagent system prompt append."
+                />
+              }
+            />
+            <Row
               title="Actions"
               control={
                 <button
                   type="button"
                   className="settings-btn"
-                  onClick={() => handleSaveAgentPrompt().catch(() => {})}
+                  onClick={() => handleSavePromptAppends().catch(() => {})}
                   disabled={!canSave}
                 >
-                  {agentPromptSaving ? "Saving…" : "Save"}
+                  {promptSaving ? "Saving…" : "Save"}
                 </button>
               }
             />
           </Card>
           {agentPromptLoading ? <div className="settings-banner">Loading agent prompt…</div> : null}
           {agentPromptError ? <div className="settings-banner settings-banner-error">{agentPromptError}</div> : null}
+          {subagentPromptLoading ? <div className="settings-banner">Loading subagent prompt…</div> : null}
+          {subagentPromptError ? <div className="settings-banner settings-banner-error">{subagentPromptError}</div> : null}
         </>
       );
     }

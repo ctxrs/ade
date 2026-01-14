@@ -403,6 +403,10 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
             "/api/workspaces/:id/agent_system_prompt",
             get(get_agent_system_prompt).post(update_agent_system_prompt),
         )
+        .route(
+            "/api/workspaces/:id/subagent_system_prompt",
+            get(get_subagent_system_prompt).post(update_subagent_system_prompt),
+        )
         .route("/api/workspaces/:id/tasks", post(create_task))
         .route("/api/tasks/:id", delete(delete_task))
         .route("/api/tasks/:id/title", post(update_task_title))
@@ -6920,6 +6924,21 @@ struct UpdateAgentSystemPromptConfigReq {
     system_prompt_append: Option<String>,
 }
 
+#[derive(Debug, Serialize)]
+struct SubagentSystemPromptConfigResponse {
+    config_path: String,
+    default_append: String,
+    configured_append: Option<String>,
+    effective_append: Option<String>,
+    source: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct UpdateSubagentSystemPromptConfigReq {
+    #[serde(default)]
+    system_prompt_append: Option<String>,
+}
+
 async fn get_agent_system_prompt(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
@@ -7051,6 +7070,149 @@ async fn update_agent_system_prompt(
         workspace_config::AgentSystemPromptAppendSource::Disabled => "disabled".to_string(),
     };
     let response = AgentSystemPromptConfigResponse {
+        config_path: cfg.config_path.to_string_lossy().to_string(),
+        default_append: cfg.default_append.clone(),
+        configured_append,
+        effective_append,
+        source,
+    };
+
+    Ok(Json(response))
+}
+
+async fn get_subagent_system_prompt(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<SubagentSystemPromptConfigResponse>, (StatusCode, Json<ApiErrorResp>)> {
+    let ws_id = WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid workspace id".to_string(),
+            }),
+        )
+    })?);
+    let workspace = state
+        .store
+        .get_workspace(ws_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "workspace not found".to_string(),
+            }),
+        ))?;
+
+    let cfg =
+        workspace_config::load_subagent_system_prompt_append(StdPath::new(&workspace.root_path))
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(ApiErrorResp {
+                        error: logs::redact_sensitive(&e.to_string()),
+                    }),
+                )
+            })?;
+
+    let configured_append = cfg
+        .configured_append
+        .as_ref()
+        .map(|value| value.trim().to_string());
+    let effective_append = cfg.effective_append();
+    let source = match cfg.source() {
+        workspace_config::AgentSystemPromptAppendSource::Default => "default".to_string(),
+        workspace_config::AgentSystemPromptAppendSource::Config => "config".to_string(),
+        workspace_config::AgentSystemPromptAppendSource::Disabled => "disabled".to_string(),
+    };
+    let response = SubagentSystemPromptConfigResponse {
+        config_path: cfg.config_path.to_string_lossy().to_string(),
+        default_append: cfg.default_append.clone(),
+        configured_append,
+        effective_append,
+        source,
+    };
+
+    Ok(Json(response))
+}
+
+async fn update_subagent_system_prompt(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(req): Json<UpdateSubagentSystemPromptConfigReq>,
+) -> Result<Json<SubagentSystemPromptConfigResponse>, (StatusCode, Json<ApiErrorResp>)> {
+    let ws_id = WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid workspace id".to_string(),
+            }),
+        )
+    })?);
+    let workspace = state
+        .store
+        .get_workspace(ws_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "workspace not found".to_string(),
+            }),
+        ))?;
+
+    workspace_config::update_subagent_system_prompt_append(
+        StdPath::new(&workspace.root_path),
+        req.system_prompt_append,
+    )
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&e.to_string()),
+            }),
+        )
+    })?;
+
+    let cfg =
+        workspace_config::load_subagent_system_prompt_append(StdPath::new(&workspace.root_path))
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(ApiErrorResp {
+                        error: logs::redact_sensitive(&e.to_string()),
+                    }),
+                )
+            })?;
+
+    let configured_append = cfg
+        .configured_append
+        .as_ref()
+        .map(|value| value.trim().to_string());
+    let effective_append = cfg.effective_append();
+    let source = match cfg.source() {
+        workspace_config::AgentSystemPromptAppendSource::Default => "default".to_string(),
+        workspace_config::AgentSystemPromptAppendSource::Config => "config".to_string(),
+        workspace_config::AgentSystemPromptAppendSource::Disabled => "disabled".to_string(),
+    };
+    let response = SubagentSystemPromptConfigResponse {
         config_path: cfg.config_path.to_string_lossy().to_string(),
         default_append: cfg.default_append.clone(),
         configured_append,

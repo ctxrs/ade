@@ -367,7 +367,24 @@ async fn start_turn(
     let prompt_config = workspace_config::load_agent_system_prompt_append(workdir)
         .await
         .unwrap_or_else(|_| workspace_config::AgentSystemPromptAppendConfig::new_default(workdir));
-    let system_prompt_append = prompt_config.effective_append();
+    let mut system_prompt_append = prompt_config.effective_append();
+    if session.relationship.as_deref() == Some("sub_agent") {
+        let subagent_config = workspace_config::load_subagent_system_prompt_append(workdir)
+            .await
+            .unwrap_or_else(|_| {
+                workspace_config::SubagentSystemPromptAppendConfig::new_default(workdir)
+            });
+        if let Some(subagent_append) = subagent_config.effective_append() {
+            system_prompt_append = Some(match system_prompt_append {
+                Some(mut append) => {
+                    append.push_str("\n\n");
+                    append.push_str(&subagent_append);
+                    append
+                }
+                None => subagent_append,
+            });
+        }
+    }
     let mut context_blocks = Vec::new();
     if let Some(append) = system_prompt_append.as_deref() {
         if !provider_supports_system_prompt_append(&session.provider_id) {

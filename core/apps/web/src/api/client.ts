@@ -819,6 +819,14 @@ export type AgentSystemPromptConfig = {
   source: "default" | "config" | "disabled";
 };
 
+export type SubagentSystemPromptConfig = {
+  config_path: string;
+  default_append: string;
+  configured_append?: string | null;
+  effective_append?: string | null;
+  source: "default" | "config" | "disabled";
+};
+
 export const createWorkspace = (root_path: string, name?: string) =>
   apiAny<Workspace>("/api/workspaces", {
     method: "POST",
@@ -870,6 +878,15 @@ export const getAgentSystemPrompt = (workspaceId: string) =>
 
 export const updateAgentSystemPrompt = (workspaceId: string, req: { system_prompt_append?: string | null }) =>
   apiAny<AgentSystemPromptConfig>(`/api/workspaces/${workspaceId}/agent_system_prompt`, {
+    method: "POST",
+    body: JSON.stringify(req),
+  });
+
+export const getSubagentSystemPrompt = (workspaceId: string) =>
+  apiAny<SubagentSystemPromptConfig>(`/api/workspaces/${workspaceId}/subagent_system_prompt`);
+
+export const updateSubagentSystemPrompt = (workspaceId: string, req: { system_prompt_append?: string | null }) =>
+  apiAny<SubagentSystemPromptConfig>(`/api/workspaces/${workspaceId}/subagent_system_prompt`, {
     method: "POST",
     body: JSON.stringify(req),
   });
