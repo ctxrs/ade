@@ -1,0 +1,142 @@
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+
+use anyhow::Result;
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CodexAccountEntry {
+    pub id: String,
+    pub label: String,
+    #[serde(default)]
+    pub email: Option<String>,
+    #[serde(default)]
+    pub plan_type: Option<String>,
+    pub created_at: DateTime<Utc>,
+    #[serde(default)]
+    pub last_used_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct CodexAccountRegistry {
+    #[serde(default)]
+    pub active_account_id: Option<String>,
+    #[serde(default)]
+    pub accounts: Vec<CodexAccountEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CodexLoginStatus {
+    pub account_id: String,
+    pub auth_url: String,
+    pub status: String,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+pub fn codex_accounts_root(data_root: &Path) -> PathBuf {
+    data_root.join("providers").join("codex").join("accounts")
+}
+
+pub fn codex_registry_path(data_root: &Path) -> PathBuf {
+    codex_accounts_root(data_root).join("index.json")
+}
+
+pub fn codex_account_dir(data_root: &Path, account_id: &str) -> PathBuf {
+    codex_accounts_root(data_root).join(account_id)
+}
+
+pub async fn load_codex_registry(data_root: &Path) -> CodexAccountRegistry {
+    let path = codex_registry_path(data_root);
+    match tokio::fs::read_to_string(&path).await {
+        Ok(contents) => serde_json::from_str(&contents).unwrap_or_default(),
+        Err(_) => CodexAccountRegistry::default(),
+    }
+}
+
+pub async fn save_codex_registry(data_root: &Path, registry: &CodexAccountRegistry) -> Result<()> {
+    let path = codex_registry_path(data_root);
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+    let payload = serde_json::to_vec_pretty(registry)?;
+    tokio::fs::write(path, payload).await?;
+    Ok(())
+}
+
+pub async fn upsert_codex_account(
+    data_root: &Path,
+    entry: CodexAccountEntry,
+) -> Result<CodexAccountRegistry> {
+    let mut registry = load_codex_registry(data_root).await;
+    if let Some(existing) = registry.accounts.iter_mut().find(|a| a.id == entry.id) {
+        *existing = entry;
+    } else {
+        registry.accounts.push(entry);
+    }
+    save_codex_registry(data_root, &registry).await?;
+    Ok(registry)
+}
+
+pub async fn remove_codex_account(
+    data_root: &Path,
+    account_id: &str,
+) -> Result<CodexAccountRegistry> {
+    let mut registry = load_codex_registry(data_root).await;
+    registry.accounts.retain(|a| a.id != account_id);
+    if registry.active_account_id.as_deref() == Some(account_id) {
+        registry.active_account_id = None;
+    }
+    save_codex_registry(data_root, &registry).await?;
+    let account_dir = codex_account_dir(data_root, account_id);
+    if account_dir.exists() {
+        tokio::fs::remove_dir_all(account_dir).await?;
+    }
+    Ok(registry)
+}
+
+pub async fn set_active_codex_account(
+    data_root: &Path,
+    account_id: Option<String>,
+) -> Result<CodexAccountRegistry> {
+    let mut registry = load_codex_registry(data_root).await;
+    registry.active_account_id = account_id.clone();
+    if let Some(active_id) = account_id {
+        let now = Utc::now();
+        if let Some(entry) = registry.accounts.iter_mut().find(|a| a.id == active_id) {
+            entry.last_used_at = Some(now);
+        }
+    }
+    save_codex_registry(data_root, &registry).await?;
+    Ok(registry)
+}
+
+pub async fn ensure_codex_account_dir(data_root: &Path, account_id: &str) -> Result<PathBuf> {
+    let dir = codex_account_dir(data_root, account_id);
+    tokio::fs::create_dir_all(&dir).await?;
+    Ok(dir)
+}
+
+pub fn codex_env_for_account(data_root: &Path, account_id: &str) -> HashMap<String, String> {
+    let mut env = HashMap::new();
+    let dir = codex_account_dir(data_root, account_id);
+    env.insert("CODEX_HOME".to_string(), dir.to_string_lossy().to_string());
+    env
+}
+
+pub async fn codex_env_for_active_account(data_root: &Path) -> Result<HashMap<String, String>> {
+    let registry = load_codex_registry(data_root).await;
+    if let Some(active) = registry.active_account_id.as_deref() {
+        Ok(codex_env_for_account(data_root, active))
+    } else {
+        Ok(HashMap::new())
+    }
+}
+
+pub fn normalize_label(label: Option<String>, account_id: &str) -> String {
+    label
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| format!("Codex Account {account_id}"))
+}

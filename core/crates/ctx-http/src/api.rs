@@ -19,7 +19,7 @@ use axum::middleware::{self, Next};
 use axum::response::sse::{Event as SseEvent, KeepAlive, Sse};
 use axum::response::IntoResponse;
 use axum::response::Response;
-use axum::routing::{delete, get, post};
+use axum::routing::{delete, get, post, put};
 use axum::Json;
 use base64::Engine;
 use futures::{SinkExt, Stream, StreamExt};
@@ -29,7 +29,7 @@ use rand_core::RngCore;
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
 use std::time::{Duration, Instant};
-use tokio::io::{AsyncReadExt, AsyncSeekExt, SeekFrom};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, AsyncWriteExt, BufReader, SeekFrom};
 use tokio::process::Command;
 use tokio::sync::mpsc;
 use tokio::task::JoinSet;
@@ -39,7 +39,7 @@ use tower::util::ServiceExt;
 use tower_http::services::{ServeDir, ServeFile};
 use url::Url;
 
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use ctx_core::ids::*;
 use ctx_core::models::*;
 use ctx_fs::git::{assert_git_repo, list_tracked_files, list_untracked_files, rev_parse_head};
@@ -62,7 +62,9 @@ use crate::installs::{InstallId, InstallInfo, InstallProgressEvent};
 use crate::logs;
 use crate::merge_queue;
 use crate::perf_telemetry::{PerfMetric, PerfMetricKind};
+use crate::provider_accounts;
 use crate::provider_guard;
+use crate::provider_usage;
 use crate::resource_governance;
 use crate::resource_utilization;
 use crate::scheduler::SchedulerCommand;
@@ -205,6 +207,28 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
         .route("/api/providers", get(list_providers))
         .route("/api/providers/install_all", post(install_all_providers))
         .route("/api/providers/:id", get(get_provider))
+        .route("/api/providers/:id/usage", get(get_provider_usage))
+        .route("/api/providers/codex/accounts", get(list_codex_accounts))
+        .route(
+            "/api/providers/codex/accounts/usage",
+            get(get_codex_accounts_usage),
+        )
+        .route(
+            "/api/providers/codex/accounts/login/start",
+            post(start_codex_login),
+        )
+        .route(
+            "/api/providers/codex/accounts/login/:id",
+            get(get_codex_login),
+        )
+        .route(
+            "/api/providers/codex/active-account",
+            put(set_codex_active_account),
+        )
+        .route(
+            "/api/providers/codex/accounts/:id",
+            delete(delete_codex_account),
+        )
         .route("/api/providers/:id/install", post(install_provider))
         .route("/api/providers/install/:install_id", get(get_install))
         .route(
@@ -5297,6 +5321,569 @@ async fn get_provider(
     Ok(Json(status))
 }
 
+#[derive(Debug, Deserialize)]
+struct ProviderUsageQuery {
+    refresh: Option<bool>,
+}
+
+async fn get_provider_usage(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Query(query): Query<ProviderUsageQuery>,
+) -> Result<Json<provider_usage::ProviderUsageSnapshot>, (StatusCode, Json<ApiErrorResp>)> {
+    let refresh = query.refresh.unwrap_or(false);
+    let snapshot = if !refresh {
+        let cache = state.provider_usage_cache.lock().await;
+        cache.get(&id).cloned()
+    } else {
+        None
+    };
+    let snapshot = match snapshot {
+        Some(snapshot) => snapshot,
+        None => {
+            let env = if id == "codex" {
+                provider_accounts::codex_env_for_active_account(&state.data_root)
+                    .await
+                    .map_err(|e| {
+                        (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            Json(ApiErrorResp {
+                                error: e.to_string(),
+                            }),
+                        )
+                    })?
+            } else {
+                HashMap::new()
+            };
+            provider_usage::refresh_provider_usage_for(&state, &id, env)
+                .await
+                .map_err(|e| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(ApiErrorResp {
+                            error: e.to_string(),
+                        }),
+                    )
+                })?
+        }
+    };
+    Ok(Json(snapshot))
+}
+
+#[derive(Debug, Serialize)]
+struct CodexAccountsResponse {
+    active_account_id: Option<String>,
+    accounts: Vec<provider_accounts::CodexAccountEntry>,
+    logins: Vec<provider_accounts::CodexLoginStatus>,
+}
+
+#[derive(Debug, Serialize)]
+struct CodexAccountUsageEntry {
+    account_id: Option<String>,
+    label: String,
+    email: Option<String>,
+    plan_type: Option<String>,
+    last_used_at: Option<DateTime<Utc>>,
+    usage: provider_usage::ProviderUsageSnapshot,
+}
+
+#[derive(Debug, Serialize)]
+struct CodexAccountsUsageResponse {
+    entries: Vec<CodexAccountUsageEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CodexLoginStartReq {
+    label: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct CodexLoginStartResp {
+    account_id: String,
+    auth_url: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct CodexActiveAccountReq {
+    account_id: Option<String>,
+}
+
+struct CodexLoginProcess {
+    login_id: String,
+    auth_url: String,
+    account_dir: PathBuf,
+    child: tokio::process::Child,
+    stdin: tokio::process::ChildStdin,
+    reader: tokio::io::Lines<BufReader<tokio::process::ChildStdout>>,
+}
+
+struct CodexLoginCompletion {
+    success: bool,
+    error: Option<String>,
+}
+
+const CODEX_LOGIN_RPC_TIMEOUT: Duration = Duration::from_secs(30);
+
+async fn list_codex_accounts(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<CodexAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
+    let registry = provider_accounts::load_codex_registry(&state.data_root).await;
+    let logins = {
+        let map = state.codex_login_sessions.lock().await;
+        map.values().cloned().collect::<Vec<_>>()
+    };
+    Ok(Json(CodexAccountsResponse {
+        active_account_id: registry.active_account_id,
+        accounts: registry.accounts,
+        logins,
+    }))
+}
+
+async fn get_codex_accounts_usage(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<ProviderUsageQuery>,
+) -> Result<Json<CodexAccountsUsageResponse>, (StatusCode, Json<ApiErrorResp>)> {
+    let refresh = query.refresh.unwrap_or(false);
+    let registry = provider_accounts::load_codex_registry(&state.data_root).await;
+    let active_id = registry.active_account_id.clone();
+    let cached_active = if !refresh {
+        let cache = state.provider_usage_cache.lock().await;
+        cache.get("codex").cloned()
+    } else {
+        None
+    };
+
+    let to_err = |e: anyhow::Error| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResp {
+                error: e.to_string(),
+            }),
+        )
+    };
+
+    let mut entries = Vec::new();
+    let default_usage = if active_id.is_none() {
+        if let Some(snapshot) = cached_active.clone() {
+            snapshot
+        } else {
+            provider_usage::fetch_codex_usage_snapshot(HashMap::new())
+                .await
+                .map_err(to_err)?
+        }
+    } else {
+        provider_usage::fetch_codex_usage_snapshot(HashMap::new())
+            .await
+            .map_err(to_err)?
+    };
+    entries.push(CodexAccountUsageEntry {
+        account_id: None,
+        label: "Default (~/.codex)".to_string(),
+        email: None,
+        plan_type: None,
+        last_used_at: None,
+        usage: default_usage,
+    });
+
+    for account in registry.accounts {
+        let env = provider_accounts::codex_env_for_account(&state.data_root, &account.id);
+        let usage = if active_id.as_deref() == Some(&account.id) {
+            if let Some(snapshot) = cached_active.clone() {
+                snapshot
+            } else {
+                provider_usage::fetch_codex_usage_snapshot(env)
+                    .await
+                    .map_err(to_err)?
+            }
+        } else {
+            provider_usage::fetch_codex_usage_snapshot(env)
+                .await
+                .map_err(to_err)?
+        };
+        entries.push(CodexAccountUsageEntry {
+            account_id: Some(account.id),
+            label: account.label,
+            email: account.email,
+            plan_type: account.plan_type,
+            last_used_at: account.last_used_at,
+            usage,
+        });
+    }
+
+    Ok(Json(CodexAccountsUsageResponse { entries }))
+}
+
+async fn start_codex_login(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<CodexLoginStartReq>,
+) -> Result<Json<CodexLoginStartResp>, (StatusCode, Json<ApiErrorResp>)> {
+    let account_id = uuid::Uuid::new_v4().to_string();
+    let label = provider_accounts::normalize_label(req.label, &account_id);
+    let account_dir = provider_accounts::ensure_codex_account_dir(&state.data_root, &account_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: e.to_string(),
+                }),
+            )
+        })?;
+    let login = match start_codex_login_process(&account_dir).await {
+        Ok(login) => login,
+        Err(e) => {
+            let _ = tokio::fs::remove_dir_all(&account_dir).await;
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: e.to_string(),
+                }),
+            ));
+        }
+    };
+    let status = provider_accounts::CodexLoginStatus {
+        account_id: account_id.clone(),
+        auth_url: login.auth_url.clone(),
+        status: "pending".to_string(),
+        error: None,
+    };
+    {
+        let mut map = state.codex_login_sessions.lock().await;
+        map.insert(account_id.clone(), status);
+    }
+    let state_clone = Arc::clone(&state);
+    let account_id_for_task = account_id.clone();
+    let auth_url = login.auth_url.clone();
+    tokio::spawn(async move {
+        monitor_codex_login(state_clone, account_id_for_task, label, login).await;
+    });
+
+    Ok(Json(CodexLoginStartResp {
+        account_id,
+        auth_url,
+    }))
+}
+
+async fn get_codex_login(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<provider_accounts::CodexLoginStatus>, (StatusCode, Json<ApiErrorResp>)> {
+    let map = state.codex_login_sessions.lock().await;
+    let status = map.get(&id).cloned().ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "login not found".to_string(),
+            }),
+        )
+    })?;
+    Ok(Json(status))
+}
+
+async fn set_codex_active_account(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<CodexActiveAccountReq>,
+) -> Result<Json<CodexAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
+    if let Some(ref account_id) = req.account_id {
+        let registry = provider_accounts::load_codex_registry(&state.data_root).await;
+        if !registry.accounts.iter().any(|a| a.id == *account_id) {
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(ApiErrorResp {
+                    error: "unknown account".to_string(),
+                }),
+            ));
+        }
+    }
+    let registry = provider_accounts::set_active_codex_account(&state.data_root, req.account_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: e.to_string(),
+                }),
+            )
+        })?;
+    let logins = {
+        let map = state.codex_login_sessions.lock().await;
+        map.values().cloned().collect::<Vec<_>>()
+    };
+    Ok(Json(CodexAccountsResponse {
+        active_account_id: registry.active_account_id,
+        accounts: registry.accounts,
+        logins,
+    }))
+}
+
+async fn delete_codex_account(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<CodexAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
+    let registry = provider_accounts::remove_codex_account(&state.data_root, &id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: e.to_string(),
+                }),
+            )
+        })?;
+    let logins = {
+        let mut map = state.codex_login_sessions.lock().await;
+        map.remove(&id);
+        map.values().cloned().collect::<Vec<_>>()
+    };
+    Ok(Json(CodexAccountsResponse {
+        active_account_id: registry.active_account_id,
+        accounts: registry.accounts,
+        logins,
+    }))
+}
+
+async fn start_codex_login_process(account_dir: &PathBuf) -> anyhow::Result<CodexLoginProcess> {
+    let mut child = spawn_codex_app_server(account_dir)?;
+    let stdout = child
+        .stdout
+        .take()
+        .context("codex app-server stdout unavailable")?;
+    let mut reader = BufReader::new(stdout).lines();
+    let mut stdin = child
+        .stdin
+        .take()
+        .context("codex app-server stdin unavailable")?;
+
+    let init_request = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "clientInfo": {
+                "name": "ctx",
+                "title": "ctx",
+                "version": env!("CARGO_PKG_VERSION")
+            }
+        }
+    });
+    send_codex_jsonrpc(&mut stdin, &init_request).await?;
+    wait_for_codex_response(&mut reader, 1, CODEX_LOGIN_RPC_TIMEOUT).await?;
+    send_codex_jsonrpc(
+        &mut stdin,
+        &serde_json::json!({"jsonrpc": "2.0", "method": "initialized"}),
+    )
+    .await?;
+
+    let login_request = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "account/login/start",
+        "params": { "type": "chatgpt" }
+    });
+    send_codex_jsonrpc(&mut stdin, &login_request).await?;
+    let response = wait_for_codex_response(&mut reader, 2, CODEX_LOGIN_RPC_TIMEOUT).await?;
+    let result = response
+        .get("result")
+        .and_then(|v| v.as_object())
+        .context("codex login missing result")?;
+    let auth_url = result
+        .get("authUrl")
+        .or_else(|| result.get("auth_url"))
+        .and_then(|v| v.as_str())
+        .context("codex login missing auth_url")?
+        .to_string();
+    let login_id = result
+        .get("loginId")
+        .or_else(|| result.get("login_id"))
+        .and_then(|v| v.as_str())
+        .context("codex login missing login_id")?
+        .to_string();
+
+    Ok(CodexLoginProcess {
+        login_id,
+        auth_url,
+        account_dir: account_dir.clone(),
+        child,
+        stdin,
+        reader,
+    })
+}
+
+async fn monitor_codex_login(
+    state: Arc<AppState>,
+    account_id: String,
+    label: String,
+    mut login: CodexLoginProcess,
+) {
+    let completion = wait_for_codex_login_completion(&mut login.reader, &login.login_id).await;
+    let status = match completion {
+        Ok(completion) => completion,
+        Err(err) => CodexLoginCompletion {
+            success: false,
+            error: Some(err.to_string()),
+        },
+    };
+
+    if status.success {
+        let (email, plan_type) = fetch_codex_account_details(&mut login.stdin, &mut login.reader)
+            .await
+            .unwrap_or((None, None));
+        let entry = provider_accounts::CodexAccountEntry {
+            id: account_id.clone(),
+            label,
+            email,
+            plan_type,
+            created_at: Utc::now(),
+            last_used_at: Some(Utc::now()),
+        };
+        if provider_accounts::upsert_codex_account(&state.data_root, entry)
+            .await
+            .is_ok()
+        {
+            let _ = provider_accounts::set_active_codex_account(
+                &state.data_root,
+                Some(account_id.clone()),
+            )
+            .await;
+        }
+    } else {
+        let _ = tokio::fs::remove_dir_all(&login.account_dir).await;
+    }
+
+    {
+        let mut map = state.codex_login_sessions.lock().await;
+        if let Some(entry) = map.get_mut(&account_id) {
+            entry.status = if status.success {
+                "success".to_string()
+            } else {
+                "failed".to_string()
+            };
+            entry.error = status.error;
+        }
+    }
+
+    let _ = login.child.kill().await;
+}
+
+fn spawn_codex_app_server(account_dir: &PathBuf) -> anyhow::Result<tokio::process::Child> {
+    let mut cmd = Command::new("codex");
+    cmd.args(["-s", "read-only", "-a", "untrusted", "app-server"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    cmd.env("CODEX_HOME", account_dir);
+    cmd.spawn().context("spawning codex app-server")
+}
+
+async fn send_codex_jsonrpc(
+    stdin: &mut tokio::process::ChildStdin,
+    value: &serde_json::Value,
+) -> anyhow::Result<()> {
+    let mut bytes = serde_json::to_vec(value)?;
+    bytes.push(b'\n');
+    stdin.write_all(&bytes).await?;
+    stdin.flush().await?;
+    Ok(())
+}
+
+async fn wait_for_codex_response(
+    reader: &mut tokio::io::Lines<BufReader<tokio::process::ChildStdout>>,
+    request_id: i64,
+    timeout: Duration,
+) -> anyhow::Result<serde_json::Value> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            bail!("codex rpc timeout waiting for response");
+        }
+        let line = tokio::time::timeout(remaining, reader.next_line())
+            .await
+            .context("codex rpc read timeout")??;
+        let line = line.ok_or_else(|| anyhow::anyhow!("codex rpc stdout closed"))?;
+        let value: serde_json::Value = serde_json::from_str(&line)?;
+        if let Some(id) = value.get("id").and_then(|v| v.as_i64()) {
+            if id == request_id {
+                if value.get("error").is_some() {
+                    bail!("codex rpc error: {value}");
+                }
+                return Ok(value);
+            }
+        }
+    }
+}
+
+async fn wait_for_codex_login_completion(
+    reader: &mut tokio::io::Lines<BufReader<tokio::process::ChildStdout>>,
+    login_id: &str,
+) -> anyhow::Result<CodexLoginCompletion> {
+    loop {
+        let line = reader
+            .next_line()
+            .await
+            .context("codex login read failed")?;
+        let line = line.ok_or_else(|| anyhow::anyhow!("codex login stdout closed"))?;
+        let value: serde_json::Value = serde_json::from_str(&line)?;
+        let method = value.get("method").and_then(|v| v.as_str());
+        if method != Some("account/login/completed") {
+            continue;
+        }
+        let params = value.get("params").unwrap_or(&serde_json::Value::Null);
+        let found_login_id = params
+            .get("loginId")
+            .or_else(|| params.get("login_id"))
+            .and_then(|v| v.as_str());
+        if let Some(found) = found_login_id {
+            if found != login_id {
+                continue;
+            }
+        }
+        let success = params
+            .get("success")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let error = params
+            .get("error")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        return Ok(CodexLoginCompletion { success, error });
+    }
+}
+
+async fn fetch_codex_account_details(
+    stdin: &mut tokio::process::ChildStdin,
+    reader: &mut tokio::io::Lines<BufReader<tokio::process::ChildStdout>>,
+) -> anyhow::Result<(Option<String>, Option<String>)> {
+    let request = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 3,
+        "method": "account/read",
+        "params": { "refreshToken": false }
+    });
+    send_codex_jsonrpc(stdin, &request).await?;
+    let response = wait_for_codex_response(reader, 3, CODEX_LOGIN_RPC_TIMEOUT).await?;
+    let account = response
+        .get("result")
+        .and_then(|v| v.get("account"))
+        .and_then(|v| v.as_object());
+    let Some(account) = account else {
+        return Ok((None, None));
+    };
+    if account.get("type").and_then(|v| v.as_str()) != Some("chatgpt") {
+        return Ok((None, None));
+    }
+    let email = account
+        .get("email")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let plan_type = account
+        .get("planType")
+        .or_else(|| account.get("plan_type"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    Ok((email, plan_type))
+}
+
 #[derive(Debug, Serialize)]
 struct InstallStartResponse {
     provider_id: String,
@@ -5606,6 +6193,13 @@ async fn authenticate_provider_for_workspace(
         env.insert("CTX_AUTH_TOKEN".to_string(), token.clone());
     }
     env.insert("CTX_MCP_DISABLED".to_string(), "1".to_string());
+    if provider_id == "codex" {
+        if let Ok(extra) = provider_accounts::codex_env_for_active_account(&state.data_root).await {
+            for (key, value) in extra {
+                env.insert(key, value);
+            }
+        }
+    }
 
     let probe = authenticate_provider(
         agent,
@@ -12094,6 +12688,13 @@ async fn authenticate_session(
     }
     if let Ok(v) = std::env::var("CTX_MCP_DISABLED") {
         provider_env.insert("CTX_MCP_DISABLED".to_string(), v);
+    }
+    if session.provider_id == "codex" {
+        if let Ok(extra) = provider_accounts::codex_env_for_active_account(&state.data_root).await {
+            for (key, value) in extra {
+                provider_env.insert(key, value);
+            }
+        }
     }
 
     let (ev_tx, mut ev_rx) = mpsc::channel::<NormalizedEvent>(128);

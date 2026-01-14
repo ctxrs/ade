@@ -9,6 +9,7 @@ import {
   EnableMobileAccessResponse,
   ProviderOptions,
   ProviderStatus,
+  ProviderUsageSnapshot,
   ResourceGovernanceLimits,
   ResourceGovernanceSettings,
   ResourceGovernanceStatus,
@@ -21,13 +22,17 @@ import {
   MergeQueueEntry,
   WorkspaceAttachment,
   cancelMergeQueueEntry,
+  CodexAccountsResponse,
+  CodexAccountUsageResponse,
   createWorkspaceAttachment,
+  deleteCodexAccount,
   deleteWorkspaceAttachment,
   disableMobileAccess,
   enableMobileAccess,
   getAgentSystemPrompt,
   getMergeQueueEntryLogs,
   getMobileAccessStatus,
+  getCodexAccountUsage,
   Workspace,
   authenticateProviderForWorkspace,
   getInstall,
@@ -39,11 +44,14 @@ import {
   installProvider,
   installStreamUrl,
   listMergeQueueEntries,
+  listCodexAccounts,
   listWorkspaceAttachments,
   listInstallEvents,
   listProviders,
   listWorkspaces,
   retryMergeQueueEntry,
+  setCodexActiveAccount,
+  startCodexLogin,
   syncWorkspaceAttachments,
   updateSettings,
   updateAgentSystemPrompt,
@@ -118,6 +126,7 @@ const saveTextFile = async (name: string, contents: string) => {
 type SectionId =
   | "general"
   | "agent_harnesses"
+  | "harness_subscriptions"
   | "models_routing"
   | "sandboxing"
   | "worktree_bootstrap"
@@ -149,6 +158,7 @@ const SECTIONS: Array<{
 }> = [
   { id: "general", label: "General", group: "main" },
   { id: "agent_harnesses", label: "Agent Harnesses", group: "main" },
+  { id: "harness_subscriptions", label: "Harness Subscriptions", group: "main" },
   { id: "models_routing", label: "Models & Routing", group: "main" },
   { id: "sandboxing", label: "Sandboxing", group: "main" },
   { id: "worktree_bootstrap", label: "Worktree Bootstrap", group: "main" },
@@ -202,6 +212,79 @@ function formatAge(ms?: number | null): string {
   const mins = Math.floor(totalSeconds / 60);
   const secs = totalSeconds % 60;
   return `${mins}m ${secs}s`;
+}
+
+function codexResetAfterSeconds(window?: any): number | null {
+  if (!window) return null;
+  if (Number.isFinite(window.reset_after_seconds)) return window.reset_after_seconds as number;
+  if (Number.isFinite(window.resetAfterSeconds)) return window.resetAfterSeconds as number;
+  if (Number.isFinite(window.reset_at)) return window.reset_at - Math.floor(Date.now() / 1000);
+  if (Number.isFinite(window.resetAt)) return window.resetAt - Math.floor(Date.now() / 1000);
+  return null;
+}
+
+type CodexUsageSummary = {
+  planType: string | null;
+  primaryUsed: number | null;
+  secondaryUsed: number | null;
+  primaryReset: number | null;
+  secondaryReset: number | null;
+  creditsValue: string;
+  creditsSub: string;
+  updatedLabel: string;
+  source: string | null;
+  error: string | null;
+};
+
+function summarizeCodexUsage(snapshot?: ProviderUsageSnapshot | null): CodexUsageSummary {
+  const payload = (snapshot?.payload ?? null) as any;
+  const planType = payload?.plan_type ?? payload?.planType ?? null;
+  const rateLimit = payload?.rate_limit ?? payload?.rateLimit ?? null;
+  const primaryWindow = rateLimit?.primary_window ?? rateLimit?.primaryWindow ?? null;
+  const secondaryWindow = rateLimit?.secondary_window ?? rateLimit?.secondaryWindow ?? null;
+  const credits = payload?.credits ?? null;
+  const primaryUsed = Number.isFinite(primaryWindow?.used_percent)
+    ? (primaryWindow.used_percent as number)
+    : null;
+  const secondaryUsed = Number.isFinite(secondaryWindow?.used_percent)
+    ? (secondaryWindow.used_percent as number)
+    : null;
+  const primaryReset = codexResetAfterSeconds(primaryWindow);
+  const secondaryReset = codexResetAfterSeconds(secondaryWindow);
+  const creditsValue = (() => {
+    if (!credits) return "—";
+    if (credits.unlimited) return "Unlimited";
+    if (credits.balance !== undefined && credits.balance !== null) {
+      return String(credits.balance);
+    }
+    if (credits.has_credits === false) return "None";
+    return "—";
+  })();
+  const creditsSub = (() => {
+    if (!credits) return "Credits unavailable";
+    if (credits.unlimited) return "No spend cap";
+    if (credits.has_credits === false) return "Credits exhausted";
+    return "Credits balance";
+  })();
+  const updatedLabel = (() => {
+    if (!snapshot?.fetched_at) return "";
+    const ts = Date.parse(snapshot.fetched_at);
+    if (!Number.isFinite(ts)) return "";
+    return `Updated ${formatAge(Date.now() - ts)} ago`;
+  })();
+
+  return {
+    planType,
+    primaryUsed,
+    secondaryUsed,
+    primaryReset,
+    secondaryReset,
+    creditsValue,
+    creditsSub,
+    updatedLabel,
+    source: snapshot?.source ?? null,
+    error: snapshot?.error ?? null,
+  };
 }
 
 function formatGiB(mb?: number | null): string {
@@ -449,6 +532,13 @@ export default function SettingsPage() {
   const [mergeQueueError, setMergeQueueError] = useState<string | null>(null);
   const [mergeQueueActionBusy, setMergeQueueActionBusy] = useState<Record<string, boolean>>({});
   const [mergeQueueLogBusy, setMergeQueueLogBusy] = useState<Record<string, boolean>>({});
+  const [codexAccounts, setCodexAccounts] = useState<CodexAccountsResponse | null>(null);
+  const [codexAccountsBusy, setCodexAccountsBusy] = useState(false);
+  const [codexAccountsError, setCodexAccountsError] = useState<string | null>(null);
+  const [codexUsage, setCodexUsage] = useState<CodexAccountUsageResponse | null>(null);
+  const [codexUsageBusy, setCodexUsageBusy] = useState(false);
+  const [codexUsageError, setCodexUsageError] = useState<string | null>(null);
+  const [codexNewLabel, setCodexNewLabel] = useState("");
 
   const [agentPromptConfig, setAgentPromptConfig] = useState<AgentSystemPromptConfig | null>(null);
   const [agentPromptLoading, setAgentPromptLoading] = useState(false);
@@ -945,6 +1035,40 @@ export default function SettingsPage() {
       .then(setProviders)
       .catch((e: any) => setProviderError(e?.message ?? String(e)));
 
+  const refreshCodexAccounts = useCallback(async () => {
+    setCodexAccountsBusy(true);
+    setCodexAccountsError(null);
+    try {
+      const next = await listCodexAccounts();
+      setCodexAccounts(next);
+      return next;
+    } catch (e: any) {
+      setCodexAccountsError(e?.message ?? String(e));
+      return null;
+    } finally {
+      setCodexAccountsBusy(false);
+    }
+  }, []);
+
+  const refreshCodexUsage = useCallback(async (opts?: { refresh?: boolean; silent?: boolean }) => {
+    if (!opts?.silent) {
+      setCodexUsageBusy(true);
+    }
+    setCodexUsageError(null);
+    try {
+      const next = await getCodexAccountUsage(opts?.refresh);
+      setCodexUsage(next);
+      return next;
+    } catch (e: any) {
+      setCodexUsageError(e?.message ?? String(e));
+      return null;
+    } finally {
+      if (!opts?.silent) {
+        setCodexUsageBusy(false);
+      }
+    }
+  }, []);
+
   const refreshWorkspaceAttachments = useCallback(
     async (opts?: { refresh?: boolean }) => {
       if (!workspaceId) return;
@@ -1102,6 +1226,26 @@ export default function SettingsPage() {
       .catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (active !== "harness_subscriptions") return;
+    refreshCodexAccounts();
+    refreshCodexUsage({ refresh: false, silent: true });
+  }, [active, refreshCodexAccounts, refreshCodexUsage]);
+
+  useEffect(() => {
+    const pending = codexAccounts?.logins?.some((login) => login.status === "pending");
+    if (!pending) return;
+    const t = window.setInterval(() => {
+      refreshCodexAccounts();
+    }, 2000);
+    return () => window.clearInterval(t);
+  }, [codexAccounts, refreshCodexAccounts]);
+
+  useEffect(() => {
+    if (!codexAccounts) return;
+    refreshCodexUsage({ refresh: true, silent: true });
+  }, [codexAccounts?.active_account_id, codexAccounts?.accounts?.length, refreshCodexUsage]);
 
   useEffect(() => {
     setProviderOptions({});
@@ -1396,6 +1540,55 @@ export default function SettingsPage() {
       setProviderError(e?.message ?? String(e));
     } finally {
       setInstallBusy(null);
+    }
+  };
+
+  const openCodexAuthUrl = (url: string) => {
+    if (!url) return;
+    window.open(url, "_blank", "noopener,noreferrer");
+  };
+
+  const onCodexLogin = async () => {
+    setCodexAccountsBusy(true);
+    setCodexAccountsError(null);
+    try {
+      const label = codexNewLabel.trim();
+      const res = await startCodexLogin(label ? label : undefined);
+      openCodexAuthUrl(res.auth_url);
+      setCodexNewLabel("");
+      await refreshCodexAccounts();
+    } catch (e: any) {
+      setCodexAccountsError(e?.message ?? String(e));
+    } finally {
+      setCodexAccountsBusy(false);
+    }
+  };
+
+  const onCodexSetActive = async (accountId: string | null) => {
+    setCodexAccountsBusy(true);
+    setCodexAccountsError(null);
+    try {
+      const next = await setCodexActiveAccount(accountId);
+      setCodexAccounts(next);
+      refreshCodexUsage({ refresh: true, silent: true }).catch(() => {});
+    } catch (e: any) {
+      setCodexAccountsError(e?.message ?? String(e));
+    } finally {
+      setCodexAccountsBusy(false);
+    }
+  };
+
+  const onCodexDelete = async (accountId: string) => {
+    setCodexAccountsBusy(true);
+    setCodexAccountsError(null);
+    try {
+      const next = await deleteCodexAccount(accountId);
+      setCodexAccounts(next);
+      refreshCodexUsage({ refresh: true, silent: true }).catch(() => {});
+    } catch (e: any) {
+      setCodexAccountsError(e?.message ?? String(e));
+    } finally {
+      setCodexAccountsBusy(false);
     }
   };
 
@@ -3035,6 +3228,251 @@ export default function SettingsPage() {
           </div>
 
           {providerError ? <div className="settings-banner settings-banner-error">{providerError}</div> : null}
+        </>
+      );
+    }
+
+    if (active === "harness_subscriptions") {
+      const codexProvider = providers.find((p) => p.provider_id === "codex");
+      const codexAccountsList = codexAccounts?.accounts ?? [];
+      const codexActiveId = codexAccounts?.active_account_id ?? null;
+      const codexLogins = codexAccounts?.logins ?? [];
+      const codexPendingLogins = codexLogins.filter((login) => login.status === "pending");
+      const codexFailedLogins = codexLogins.filter((login) => login.status === "failed");
+      const usageEntries = codexUsage?.entries ?? [];
+      const usageById = new Map<string, ProviderUsageSnapshot>();
+      for (const entry of usageEntries) {
+        usageById.set(entry.account_id ?? "__default__", entry.usage);
+      }
+
+      const accountRows = [
+        {
+          account_id: null,
+          label: "Default (~/.codex)",
+          email: null,
+          plan_type: null,
+          last_used_at: null,
+        },
+        ...codexAccountsList.map((account) => ({
+          account_id: account.id,
+          label: account.label,
+          email: account.email ?? null,
+          plan_type: account.plan_type ?? null,
+          last_used_at: account.last_used_at ?? null,
+        })),
+      ];
+
+      return (
+        <>
+          {codexProvider ? (
+            <Card title="Codex">
+              <Row
+                title="Usage"
+                description={codexUsageBusy ? "Refreshing usage…" : "Usage for each saved Codex account."}
+                control={
+                  <button
+                    type="button"
+                    className="settings-btn settings-btn-secondary"
+                    onClick={() => refreshCodexUsage({ refresh: true })}
+                    disabled={codexUsageBusy}
+                  >
+                    {codexUsageBusy ? "Refreshing…" : "Refresh"}
+                  </button>
+                }
+              />
+              <div className="settings-card-block">
+                {accountRows.length ? (
+                  <div className="settings-table settings-table-codex-usage">
+                    <div className="settings-table-head">
+                      <div>Account</div>
+                      <div>Session (5h)</div>
+                      <div>Weekly</div>
+                      <div>Credits</div>
+                      <div>Updated</div>
+                      <div />
+                    </div>
+                    {accountRows.map((account) => {
+                      const key = account.account_id ?? "__default__";
+                      const accountId = account.account_id;
+                      const usage = usageById.get(key) ?? null;
+                      const summary = summarizeCodexUsage(usage);
+                      const planLabel = account.plan_type ?? summary.planType;
+                      const primaryResetLabel =
+                        summary.primaryReset !== null
+                          ? `Resets in ${formatAge(summary.primaryReset * 1000)}`
+                          : "Reset time unavailable";
+                      const secondaryResetLabel =
+                        summary.secondaryReset !== null
+                          ? `Resets in ${formatAge(summary.secondaryReset * 1000)}`
+                          : "Reset time unavailable";
+                      const accountSub = (() => {
+                        if (!account.account_id) {
+                          return summary.planType
+                            ? `Uses ~/.codex/auth.json · ${summary.planType}`
+                            : "Uses ~/.codex/auth.json";
+                        }
+                        const base = account.email ?? account.account_id;
+                        return planLabel ? `${base} · ${planLabel}` : base;
+                      })();
+                      const isActive = accountId ? accountId === codexActiveId : !codexActiveId;
+                      return (
+                        <div key={key} className="settings-table-row">
+                          <div>
+                            <div className="settings-table-title">
+                              {account.label}
+                              {isActive ? (
+                                <span className="settings-pill settings-pill-ok" style={{ marginLeft: 8 }}>
+                                  Active
+                                </span>
+                              ) : null}
+                            </div>
+                            <div className="settings-table-sub">{accountSub}</div>
+                          </div>
+                          <div>
+                            <div className="settings-table-mono">{formatPct(summary.primaryUsed)}</div>
+                            <div className="settings-table-sub">{primaryResetLabel}</div>
+                          </div>
+                          <div>
+                            <div className="settings-table-mono">{formatPct(summary.secondaryUsed)}</div>
+                            <div className="settings-table-sub">{secondaryResetLabel}</div>
+                          </div>
+                          <div>
+                            <div className="settings-table-mono">{summary.creditsValue}</div>
+                            <div className="settings-table-sub">{summary.creditsSub}</div>
+                          </div>
+                          <div>
+                            <div className="settings-table-mono">
+                              {summary.updatedLabel ? summary.updatedLabel : "—"}
+                            </div>
+                            {summary.source ? (
+                              <div className="settings-table-sub">Source: {summary.source}</div>
+                            ) : null}
+                            {summary.error ? (
+                              <div className="settings-table-sub settings-table-sub-error">{summary.error}</div>
+                            ) : null}
+                          </div>
+                          <div>
+                            {accountId ? (
+                              <button
+                                type="button"
+                                className="settings-btn settings-btn-secondary settings-btn-compact"
+                                onClick={() => onCodexDelete(accountId)}
+                                disabled={codexAccountsBusy}
+                              >
+                                Remove
+                              </button>
+                            ) : null}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="settings-empty-compact">No Codex usage data yet.</div>
+                )}
+                {codexUsageError ? (
+                  <div className="settings-banner settings-banner-error">{codexUsageError}</div>
+                ) : null}
+              </div>
+              <Row
+                title="Active account"
+                description="All Codex sessions use this account until changed."
+                control={
+                  <select
+                    className="settings-control settings-select"
+                    value={codexActiveId ?? ""}
+                    onChange={(e) => onCodexSetActive(e.target.value || null)}
+                    disabled={codexAccountsBusy}
+                  >
+                    <option value="">Default (~/.codex)</option>
+                    {codexAccountsList.map((account) => (
+                      <option key={account.id} value={account.id}>
+                        {account.label}
+                        {account.email ? ` · ${account.email}` : ""}
+                      </option>
+                    ))}
+                  </select>
+                }
+              />
+              <Row
+                title="Add account"
+                description="Starts the Codex login flow on this daemon."
+                control={
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                    <input
+                      className="settings-control"
+                      value={codexNewLabel}
+                      onChange={(e) => setCodexNewLabel(e.target.value)}
+                      placeholder="Label (optional)"
+                    />
+                    <button
+                      type="button"
+                      className="settings-btn settings-btn-secondary"
+                      onClick={onCodexLogin}
+                      disabled={codexAccountsBusy}
+                    >
+                      {codexAccountsBusy ? "Starting…" : "Log in"}
+                    </button>
+                  </div>
+                }
+              />
+              <div className="settings-card-block">
+                {codexPendingLogins.length ? (
+                  <div className="settings-table settings-table-codex-logins">
+                    <div className="settings-table-head">
+                      <div>Pending logins</div>
+                      <div />
+                    </div>
+                    {codexPendingLogins.map((login) => (
+                      <div key={login.account_id} className="settings-table-row">
+                        <div className="settings-table-sub">
+                          Login in progress for {login.account_id}
+                        </div>
+                        <div>
+                          <button
+                            type="button"
+                            className="settings-btn settings-btn-secondary settings-btn-compact"
+                            onClick={() => openCodexAuthUrl(login.auth_url)}
+                          >
+                            Open login
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+                {codexFailedLogins.length ? (
+                  <div className="settings-table settings-table-codex-logins">
+                    <div className="settings-table-head">
+                      <div>Failed logins</div>
+                      <div />
+                    </div>
+                    {codexFailedLogins.map((login) => (
+                      <div key={login.account_id} className="settings-table-row">
+                        <div className="settings-table-sub">
+                          {login.error ?? "Login failed."}
+                        </div>
+                        <div>
+                          <button
+                            type="button"
+                            className="settings-btn settings-btn-secondary settings-btn-compact"
+                            onClick={() => openCodexAuthUrl(login.auth_url)}
+                          >
+                            Retry
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+                {codexAccountsError ? (
+                  <div className="settings-banner settings-banner-error">{codexAccountsError}</div>
+                ) : null}
+              </div>
+            </Card>
+          ) : (
+            <div className="settings-empty">Codex is not installed on this host.</div>
+          )}
         </>
       );
     }

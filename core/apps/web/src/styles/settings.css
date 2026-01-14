@@ -652,6 +652,20 @@
   grid-template-columns: 2fr 0.7fr 0.9fr 0.6fr;
 }
 
+.settings-table-codex-usage .settings-table-head,
+.settings-table-codex-usage .settings-table-row {
+  grid-template-columns: 1.6fr 0.7fr 0.7fr 0.8fr 1fr auto;
+}
+
+.settings-table-codex-logins .settings-table-head,
+.settings-table-codex-logins .settings-table-row {
+  grid-template-columns: 1fr auto;
+}
+
+.settings-table-sub-error {
+  color: rgba(255, 120, 120, 0.8);
+}
+
 .settings-process-cell {
   display: flex;
   align-items: flex-start;

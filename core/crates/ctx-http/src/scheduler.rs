@@ -23,6 +23,7 @@ use ctx_store::store::SessionTurnToolCountDeltas;
 use crate::daemon::AppState;
 use crate::installer;
 use crate::perf_telemetry::{PerfMetric, PerfMetricKind};
+use crate::provider_accounts;
 use crate::settings::{self, ProviderControlMode};
 use crate::telemetry::TelemetryEvent;
 use crate::workspace_config;
@@ -310,6 +311,13 @@ async fn start_turn(
     }
     if let Ok(v) = std::env::var("CTX_MCP_DISABLED") {
         provider_env.insert("CTX_MCP_DISABLED".to_string(), v);
+    }
+    if session.provider_id == "codex" {
+        if let Ok(env) = provider_accounts::codex_env_for_active_account(&state.data_root).await {
+            for (key, value) in env {
+                provider_env.insert(key, value);
+            }
+        }
     }
 
     if let Ok(cfg) = installer::load_agent_server_config(&state.data_root).await {
