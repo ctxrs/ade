@@ -60,11 +60,8 @@ struct SettingsView: View {
                         .font(.largeTitle.weight(.semibold))
                         .foregroundColor(.ctxTextPrimary)
 
-                    GlassPanel {
+                    SettingsSectionView(title: "Account") {
                         VStack(alignment: .leading, spacing: 16) {
-                            Text("Account")
-                                .font(.headline)
-                                .foregroundColor(.ctxTextPrimary)
                             SettingsRowView(title: "User", value: userLabel)
                             NavigationLink {
                                 WorkspaceSwitchView()
@@ -91,11 +88,8 @@ struct SettingsView: View {
                             .foregroundColor(.ctxTextMuted)
                     }
 
-                    GlassPanel {
+                    SettingsSectionView(title: "Daemon Settings") {
                         VStack(alignment: .leading, spacing: 16) {
-                            Text("Daemon Settings")
-                                .font(.headline)
-                                .foregroundColor(.ctxTextPrimary)
                             Toggle("Usage analytics", isOn: telemetryBinding)
                                 .tint(.ctxAccent)
                                 .disabled(!telemetryReady || telemetrySaving)
@@ -116,11 +110,8 @@ struct SettingsView: View {
                             .foregroundColor(.ctxError)
                     }
 
-                    GlassPanel {
+                    SettingsSectionView(title: "Mobile Access") {
                         VStack(alignment: .leading, spacing: 14) {
-                            Text("Mobile Access")
-                                .font(.headline)
-                                .foregroundColor(.ctxTextPrimary)
                             NavigationLink {
                                 MobileAccessView()
                             } label: {
@@ -147,11 +138,8 @@ struct SettingsView: View {
                         }
                     }
 
-                    GlassPanel {
+                    SettingsSectionView(title: "Notifications") {
                         VStack(alignment: .leading, spacing: 14) {
-                            Text("Notifications")
-                                .font(.headline)
-                                .foregroundColor(.ctxTextPrimary)
                             Toggle("Push approvals", isOn: pushBinding)
                                 .tint(.ctxAccent)
                                 .disabled(pushToggleDisabled)
@@ -182,11 +170,8 @@ struct SettingsView: View {
                         }
                     }
 
-                    GlassPanel {
+                    SettingsSectionView(title: "Model Routing") {
                         VStack(alignment: .leading, spacing: 14) {
-                            Text("Model routing")
-                                .font(.headline)
-                                .foregroundColor(.ctxTextPrimary)
                             if !routingEnabled {
                                 Text("Select a workspace to set routing defaults.")
                                     .font(.caption)
@@ -250,11 +235,8 @@ struct SettingsView: View {
                         }
                     }
 
-                    GlassPanel {
+                    SettingsSectionView(title: "Providers") {
                         VStack(alignment: .leading, spacing: 14) {
-                            Text("Providers")
-                                .font(.headline)
-                                .foregroundColor(.ctxTextPrimary)
                             if isLoadingProviders {
                                 ProgressView()
                                     .tint(.ctxAccent)
@@ -1242,6 +1224,22 @@ private struct SettingsRowView: View {
     }
 }
 
+private struct SettingsSectionView<Content: View>: View {
+    let title: String
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(title)
+                .font(.headline)
+                .foregroundColor(.ctxTextPrimary)
+            GlassPanel {
+                content()
+            }
+        }
+    }
+}
+
 private struct SettingsLinkRowView: View {
     let title: String
     let value: String
@@ -1254,9 +1252,8 @@ private struct SettingsLinkRowView: View {
             Text(value)
                 .foregroundColor(.ctxTextPrimary)
                 .multilineTextAlignment(.trailing)
-            Image(systemName: "chevron.right")
+            LucideIcon(name: .chevronRight, size: 12)
                 .foregroundColor(.ctxTextSecondary)
-                .font(.caption)
         }
         .font(.subheadline)
         .padding(12)
@@ -1280,9 +1277,8 @@ private struct SettingsMenuRowView: View {
             Text(value)
                 .foregroundColor(.ctxTextPrimary)
                 .multilineTextAlignment(.trailing)
-            Image(systemName: "chevron.down")
+            LucideIcon(name: .chevronDown, size: 12)
                 .foregroundColor(.ctxTextSecondary)
-                .font(.caption)
         }
         .font(.subheadline)
         .padding(12)

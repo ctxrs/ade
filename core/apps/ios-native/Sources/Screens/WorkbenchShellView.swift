@@ -1368,12 +1368,12 @@ private struct WorkbenchDrawerView: View {
                                 Text("\(filteredArchived.count)")
                                     .font(.system(size: 12))
                                     .foregroundColor(.ctxTextSecondary)
-                                Image(systemName: "chevron.down")
-                                    .font(.caption)
+                                LucideIcon(name: .chevronDown, size: 12)
                                     .foregroundColor(.ctxTextSecondary)
                                     .rotationEffect(.degrees(showArchived ? 0 : -90))
                             }
                         }
+                        .disclosureGroupStyle(WorkbenchDisclosureGroupStyle())
                         .accessibilityIdentifier("drawer.archived.toggle")
                         .accentColor(.ctxTextSecondary)
                     }
@@ -1409,31 +1409,6 @@ private struct WorkbenchDrawerView: View {
     }
 }
 
-private struct DrawerLinkRowView: View {
-    let title: String
-    let icon: String
-
-    var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: icon)
-                .foregroundColor(.ctxAccent)
-            Text(title)
-                .foregroundColor(.ctxTextPrimary)
-                .font(.subheadline.weight(.semibold))
-            Spacer()
-            Image(systemName: "chevron.right")
-                .foregroundColor(.ctxTextSecondary)
-                .font(.caption)
-        }
-        .padding(12)
-        .background(Color.ctxSurface.opacity(0.6), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(Color.ctxLine, lineWidth: 1)
-        )
-    }
-}
-
 private struct WorkbenchWorkspaceSwitcherView: View {
     let workspaces: [WorkspaceSummary]
     let selectedWorkspace: WorkspaceSummary?
@@ -1442,22 +1417,35 @@ private struct WorkbenchWorkspaceSwitcherView: View {
     let onRefresh: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("Workspace")
-                    .font(.caption.weight(.semibold))
-                    .foregroundColor(.ctxTextMuted)
-                Spacer()
-                Button(action: onRefresh) {
-                    Image(systemName: "arrow.clockwise")
+        VStack(alignment: .leading, spacing: 8) {
+            NavigationLink {
+                SettingsView(selectedWorkspace: selectedWorkspace)
+            } label: {
+                HStack(spacing: 12) {
+                    LucideIcon(name: .settings, size: 16)
+                        .foregroundColor(.ctxAccent)
+                    Text(selectedWorkspace?.name ?? "No workspace")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundColor(.ctxTextPrimary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    Spacer()
+                    LucideIcon(name: .chevronRight, size: 12)
                         .foregroundColor(.ctxTextSecondary)
-                        .font(.caption)
                 }
+                .padding(.vertical, 10)
             }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("drawer.workspace.switch")
 
             if isLoadingWorkspaces {
-                ProgressView()
-                    .tint(.ctxAccent)
+                HStack(spacing: 8) {
+                    ProgressView()
+                        .tint(.ctxAccent)
+                    Text("Loading workspaces...")
+                        .foregroundColor(.ctxTextMuted)
+                }
+                .font(.caption)
             } else if let workspaceError {
                 Text(workspaceError)
                     .font(.caption)
@@ -1466,60 +1454,30 @@ private struct WorkbenchWorkspaceSwitcherView: View {
                 Text("No workspaces connected yet.")
                     .font(.caption)
                     .foregroundColor(.ctxTextMuted)
-            } else {
-                NavigationLink {
-                    WorkspaceSwitchView()
-                } label: {
-                    HStack(spacing: 12) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(selectedWorkspace?.name ?? "No workspace")
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundColor(.ctxTextPrimary)
-                            if let detail = selectedWorkspace?.rootPath {
-                                Text(workspaceDetailText(detail))
-                                    .font(.caption)
-                                    .foregroundColor(.ctxTextMuted)
-                            }
-                        }
-                        Spacer()
-                        HStack(spacing: 6) {
-                            Text("Switch")
-                                .font(.subheadline.weight(.semibold))
-                            Image(systemName: "chevron.right")
-                                .font(.caption)
-                        }
-                        .foregroundColor(.ctxAccent)
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(Color.ctxSurfaceRaised, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("drawer.workspace.switch")
             }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
 
-            NavigationLink {
-                SettingsView(selectedWorkspace: selectedWorkspace)
+private struct WorkbenchDisclosureGroupStyle: DisclosureGroupStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    configuration.isExpanded.toggle()
+                }
             } label: {
-                DrawerLinkRowView(title: "Settings", icon: "gearshape")
-                    .accessibilityIdentifier("drawer.settings")
+                configuration.label
             }
             .buttonStyle(.plain)
-        }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.ctxSurface.opacity(0.6), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(Color.ctxLine, lineWidth: 1)
-        )
-        .padding(.horizontal, 16)
-        .padding(.bottom, 16)
-    }
 
-    private func workspaceDetailText(_ rootPath: String) -> String {
-        let url = URL(fileURLWithPath: rootPath)
-        return url.lastPathComponent.isEmpty ? rootPath : url.lastPathComponent
+            if configuration.isExpanded {
+                configuration.content
+            }
+        }
     }
 }
 

@@ -159,13 +159,19 @@ final class CtxIOSUITests: XCTestCase {
         if drawerButton.waitForExistence(timeout: 10) {
             drawerButton.tap()
         }
-        var settingsLink = app.buttons["drawer.settings"]
+        var settingsLink = app.buttons["drawer.workspace.switch"]
         if !settingsLink.waitForExistence(timeout: 6) {
-            settingsLink = app.otherElements["drawer.settings"]
+            settingsLink = app.otherElements["drawer.workspace.switch"]
             let scrollView = app.scrollViews.firstMatch
             if scrollView.exists {
                 scrollView.swipeUp()
             }
+        }
+        if !settingsLink.exists {
+            settingsLink = app.buttons["drawer.settings"]
+        }
+        if !settingsLink.exists {
+            settingsLink = app.otherElements["drawer.settings"]
         }
         if !settingsLink.exists {
             settingsLink = app.staticTexts["Settings"]

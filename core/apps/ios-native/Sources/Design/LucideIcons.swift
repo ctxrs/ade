@@ -7,6 +7,7 @@ enum LucideIconName {
     case terminal
     case ellipsis
     case chevronDown
+    case chevronRight
     case mic
     case arrowDown
     case arrowUp
@@ -15,6 +16,7 @@ enum LucideIconName {
     case x
     case copy
     case check
+    case settings
 }
 
 struct LucideIcon: View {
@@ -66,6 +68,10 @@ struct LucideIcon: View {
             path.move(to: CGPoint(x: 6, y: 9))
             path.addLine(to: CGPoint(x: 12, y: 15))
             path.addLine(to: CGPoint(x: 18, y: 9))
+        case .chevronRight:
+            path.move(to: CGPoint(x: 9, y: 6))
+            path.addLine(to: CGPoint(x: 15, y: 12))
+            path.addLine(to: CGPoint(x: 9, y: 18))
         case .mic:
             path.move(to: CGPoint(x: 12, y: 19))
             path.addLine(to: CGPoint(x: 12, y: 22))
@@ -121,6 +127,28 @@ struct LucideIcon: View {
             path.move(to: CGPoint(x: 4, y: 12))
             path.addLine(to: CGPoint(x: 9, y: 17))
             path.addLine(to: CGPoint(x: 20, y: 6))
+        case .settings:
+            let center = CGPoint(x: 12, y: 12)
+            let teeth = 8
+            let outerRadius: CGFloat = 9
+            let innerRadius: CGFloat = 6.5
+            let angleStep = CGFloat.pi * 2 / CGFloat(teeth * 2)
+
+            for index in 0..<(teeth * 2) {
+                let radius = index.isMultiple(of: 2) ? outerRadius : innerRadius
+                let angle = CGFloat(index) * angleStep - (.pi / 2)
+                let point = CGPoint(
+                    x: center.x + cos(angle) * radius,
+                    y: center.y + sin(angle) * radius
+                )
+                if index == 0 {
+                    path.move(to: point)
+                } else {
+                    path.addLine(to: point)
+                }
+            }
+            path.closeSubpath()
+            path.addEllipse(in: CGRect(x: 9, y: 9, width: 6, height: 6))
         }
         return path
     }
