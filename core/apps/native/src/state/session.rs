@@ -33,7 +33,7 @@ struct SessionLoadResult {
 }
 
 #[derive(Clone, Default)]
-pub(super) struct SessionThreadCache {
+pub(crate) struct SessionThreadCache {
     pub(super) messages: Vec<MessageItem>,
     pub(super) session_turns: Vec<SessionTurn>,
     pub(super) session_turn_tools: HashMap<TurnId, Vec<TurnToolSnapshot>>,
@@ -241,7 +241,8 @@ impl ShellView {
             }
             new_messages.push(message_item_from_model(&message));
         }
-        if !new_messages.is_empty() {
+        let has_new_messages = !new_messages.is_empty();
+        if has_new_messages {
             let mut merged = new_messages;
             merged.extend(self.messages.drain(..));
             self.messages = merged;
@@ -267,7 +268,7 @@ impl ShellView {
             self.session_turns = merged;
         }
 
-        if !new_messages.is_empty() {
+        if has_new_messages {
             self.prefetch_attachment_images(cx);
         }
 

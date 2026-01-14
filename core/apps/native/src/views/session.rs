@@ -325,7 +325,12 @@ impl<'a> SessionView<'a> {
             DataLoadState::Loaded => None,
         };
 
-        let mut thread_stack = div().flex().flex_col().gap(px(metrics.spacing.gutter)).flex_1();
+        let mut thread_stack = div()
+            .flex()
+            .flex_col()
+            .gap(px(metrics.spacing.gutter))
+            .flex_1()
+            .min_h(px(0.0));
         if let Some(notice_block) = notice_block {
             thread_stack = thread_stack.child(notice_block);
         }
@@ -350,13 +355,20 @@ impl<'a> SessionView<'a> {
             .flex_col()
             .gap(px(metrics.spacing.xxl))
             .flex_1()
+            .min_h(px(0.0))
             .child(header_block)
             .child(thread_stack)
             .child(composer);
 
         let show_right_pane =
             shell.show_sessions_pane || shell.show_diff_pane || shell.show_artifacts_pane;
-        let mut content_row = div().flex().flex_row().gap(px(metrics.spacing.gutter)).flex_1().child(center_column);
+        let mut content_row = div()
+            .flex()
+            .flex_row()
+            .gap(px(metrics.spacing.gutter))
+            .flex_1()
+            .min_h(px(0.0))
+            .child(center_column);
 
         if show_right_pane {
             let right_pane_handle = div()
