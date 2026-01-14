@@ -1033,72 +1033,17 @@ struct ComposerBar: View {
         let effortLabel = formatEffortLabel(resolvedEffortId)
         let contextSummary = contextWindowSummary(from: contextWindowInfo)
 
+        let combinedModelLabel = effortLabel.isEmpty ? modelLabel : "\(modelLabel) · \(effortLabel)"
+        let baseBinding = Binding<String>(
+            get: { baseId },
+            set: { selectBase($0, catalog: catalog) }
+        )
+        let effortBinding = Binding<String>(
+            get: { resolvedEffortId ?? "" },
+            set: { selectEffort($0, baseId: baseId, catalog: catalog) }
+        )
+
         VStack(spacing: 12) {
-            HStack(spacing: 12) {
-                HStack(spacing: 8) {
-                    ComposerHarnessIcon(providerId: providerId)
-
-                    Menu {
-                        ForEach(baseOptions, id: \.self) { base in
-                            let label = catalog.displayNameByBase[base] ?? base
-                            Button(label) {
-                                selectBase(base, catalog: catalog)
-                            }
-                        }
-                    } label: {
-                        HStack(spacing: 6) {
-                            Text(modelLabel)
-                                .font(.footnote.weight(.semibold))
-                                .foregroundColor(.ctxTextPrimary)
-                                .lineLimit(1)
-                            LucideIcon(name: .chevronDown, size: 12)
-                                .foregroundColor(.ctxTextMuted)
-                        }
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                .stroke(Color.ctxLine, lineWidth: 1)
-                        )
-                    }
-                    .accessibilityIdentifier("chat.composer.model")
-                    .disabled(isModelLoading || baseOptions.isEmpty)
-
-                    if !effortOptions.isEmpty {
-                        Menu {
-                            ForEach(effortOptions, id: \.self) { effort in
-                                Button(formatEffortLabel(effort)) {
-                                    selectEffort(effort, baseId: baseId, catalog: catalog)
-                                }
-                            }
-                        } label: {
-                            HStack(spacing: 6) {
-                                Text(effortLabel)
-                                    .font(.footnote.weight(.semibold))
-                                    .foregroundColor(.ctxTextPrimary)
-                                LucideIcon(name: .chevronDown, size: 12)
-                                    .foregroundColor(.ctxTextMuted)
-                            }
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 6)
-                            .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                    .stroke(Color.ctxLine, lineWidth: 1)
-                            )
-                        }
-                        .accessibilityIdentifier("chat.composer.effort")
-                    }
-                }
-
-                Spacer(minLength: 0)
-
-                if let contextSummary {
-                    ContextWindowIndicator(summary: contextSummary)
-                }
-            }
-
             ZStack(alignment: .topLeading) {
                 if text.isEmpty {
                     Text("@ for context, / for commands")
@@ -1116,6 +1061,44 @@ struct ComposerBar: View {
             }
 
             HStack(spacing: 12) {
+                HStack(spacing: 8) {
+                    ComposerHarnessIcon(providerId: providerId)
+
+                    Menu {
+                        Section("Model") {
+                            Picker("Model", selection: baseBinding) {
+                                ForEach(baseOptions, id: \.self) { base in
+                                    let label = catalog.displayNameByBase[base] ?? base
+                                    Text(label).tag(base)
+                                }
+                            }
+                            .pickerStyle(.inline)
+                        }
+
+                        if !effortOptions.isEmpty {
+                            Section("Effort") {
+                                Picker("Effort", selection: effortBinding) {
+                                    ForEach(effortOptions, id: \.self) { effort in
+                                        Text(formatEffortLabel(effort)).tag(effort)
+                                    }
+                                }
+                                .pickerStyle(.inline)
+                            }
+                        }
+                    } label: {
+                        HStack(spacing: 6) {
+                            Text(combinedModelLabel)
+                                .font(.footnote.weight(.semibold))
+                                .foregroundColor(.ctxTextPrimary)
+                                .lineLimit(1)
+                            LucideIcon(name: .chevronDown, size: 12)
+                                .foregroundColor(.ctxTextMuted)
+                        }
+                    }
+                    .accessibilityIdentifier("chat.composer.model")
+                    .disabled(isModelLoading || baseOptions.isEmpty)
+                }
+
                 Spacer(minLength: 0)
 
                 Menu {
@@ -1166,6 +1149,14 @@ struct ComposerBar: View {
             RoundedRectangle(cornerRadius: CtxChatStyle.composerCornerRadius, style: .continuous)
                 .stroke(Color.ctxLine, lineWidth: 1)
         )
+        .overlay(alignment: .topTrailing) {
+            if let contextSummary {
+                ContextWindowIndicator(summary: contextSummary)
+                    .padding(.top, 4)
+                    .padding(.trailing, 6)
+                    .allowsHitTesting(false)
+            }
+        }
     }
 
     private func resolveEffortId(parsed: ParsedModelId, efforts: [String]) -> String? {
