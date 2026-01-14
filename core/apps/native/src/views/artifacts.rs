@@ -88,6 +88,16 @@ impl<'a> ArtifactsView<'a> {
             let is_video = is_video_artifact(artifact);
             let is_pdf = is_pdf_artifact(artifact);
             let preview_height = px(PREVIEW_HEIGHT);
+            let can_open = !is_missing;
+            let can_open_in_app = !is_missing && is_absolute_path(&artifact.absolute_path);
+            let can_download = !is_missing;
+            let action_hint = if can_open_in_app {
+                "Use Open or Open in app below."
+            } else if can_open {
+                "Use Open or Download below."
+            } else {
+                "Artifact unavailable."
+            };
 
             let preview_content = if is_missing {
                 div()
@@ -208,10 +218,17 @@ impl<'a> ArtifactsView<'a> {
                         .child("Preview unavailable."),
                 }
             } else {
-                let fallback_message = if is_video {
-                    "Video preview unavailable. Use Open to play."
+                let fallback_title = if is_video {
+                    "Video preview unavailable"
                 } else if is_pdf {
-                    "PDF preview unavailable. Use Open to view."
+                    "PDF preview unavailable"
+                } else {
+                    "Preview unavailable"
+                };
+                let fallback_message = if is_video {
+                    "Native video previews are not available yet."
+                } else if is_pdf {
+                    "Native PDF previews are not available yet."
                 } else {
                     "No preview available for this artifact type."
                 };
@@ -231,9 +248,32 @@ impl<'a> ArtifactsView<'a> {
                     .w_full()
                     .child(
                         div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(Icon::new(
+                                IconName::Artifact,
+                                16.0,
+                                self.colors.muted,
+                            ))
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(self.colors.text)
+                                    .child(fallback_title),
+                            ),
+                    )
+                    .child(
+                        div()
                             .text_sm()
                             .text_color(self.colors.muted)
                             .child(fallback_message),
+                    )
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(self.colors.muted)
+                            .child(action_hint),
                     )
                     .child(fallback_meta)
             };
@@ -252,9 +292,6 @@ impl<'a> ArtifactsView<'a> {
                         .child(preview_content),
                 );
 
-            let can_open = !is_missing;
-            let can_open_in_app = !is_missing && is_absolute_path(&artifact.absolute_path);
-            let can_download = !is_missing;
             let open_artifact = artifact.clone();
             let open_in_app_artifact = artifact.clone();
             let download_artifact = artifact.clone();

@@ -1,10 +1,14 @@
-use gpui::{ClickEvent, Context, Rgba, div, prelude::*, px};
+use gpui::{
+    ClickEvent, Context, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Rgba, div,
+    prelude::*, px,
+};
+use gpui_component::scroll::ScrollableElement;
 
 use crate::theme::{ThemeColors, ThemeMetrics};
 
 use super::super::icons::{Icon, IconName};
 use super::super::state::diff_review::{
-    DiffFile, DiffLineKind, DiffPatchAction, DiffReviewState,
+    DiffFile, DiffLineKind, DiffListResizeState, DiffPatchAction, DiffReviewState,
 };
 
 const MONO_FONT_FAMILY: &str =
@@ -20,7 +24,37 @@ impl<'a> DiffReviewView<'a> {
         let metrics = ThemeMetrics::default();
         let has_changes = !self.state.diff.trim().is_empty();
         let is_loading = self.state.busy_key.as_deref() == Some("diff:load");
-        let mut root = div().flex().flex_col().gap_2();
+        let mut root = div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .on_mouse_move(cx.listener(|view, event: &MouseMoveEvent, _window, cx| {
+                let Some(state) = view.list_resize_state else {
+                    return;
+                };
+                let delta = f32::from(event.position.x) - state.start_x;
+                view.set_list_width(state.start_width + delta, cx);
+            }))
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|view, _: &MouseUpEvent, _window, cx| {
+                    if view.list_resize_state.is_some() || view.list_resizing {
+                        view.list_resizing = false;
+                        view.list_resize_state = None;
+                        cx.notify();
+                    }
+                }),
+            )
+            .on_mouse_up_out(
+                MouseButton::Left,
+                cx.listener(|view, _: &MouseUpEvent, _window, cx| {
+                    if view.list_resize_state.is_some() || view.list_resizing {
+                        view.list_resizing = false;
+                        view.list_resize_state = None;
+                        cx.notify();
+                    }
+                }),
+            );
 
         if let Some(error) = &self.state.error {
             root = root.child(
@@ -141,6 +175,86 @@ impl<'a> DiffReviewView<'a> {
                 .child(reject_button)
         };
 
+        let can_refresh = self.state.track_id.is_some() && self.state.busy_key.is_none();
+        let on_refresh = cx.listener(|view, _: &ClickEvent, _window, cx| {
+            view.reload_diff(cx);
+        });
+        let refresh_icon_color = if can_refresh {
+            self.colors.text
+        } else {
+            self.colors.muted
+        };
+        let refresh_label = div()
+            .flex()
+            .items_center()
+            .gap_1()
+            .child(Icon::new(IconName::Refresh, 12.0, refresh_icon_color))
+            .child("Refresh");
+        let mut refresh_button = div()
+            .px(px(metrics.spacing.lg))
+            .py(px(metrics.spacing.xs))
+            .text_sm()
+            .border_1()
+            .border_color(self.colors.border)
+            .rounded_full()
+            .child(refresh_label)
+            .id("diff-refresh");
+        if can_refresh {
+            refresh_button = refresh_button
+                .bg(self.colors.panel)
+                .text_color(self.colors.text)
+                .cursor_pointer()
+                .active(|style| style.opacity(0.92))
+                .on_click(on_refresh);
+        } else {
+            refresh_button = refresh_button
+                .bg(self.colors.panel_2)
+                .text_color(self.colors.muted);
+        }
+
+        let file_count = self.state.files.len();
+        let total_added: usize = self.state.files.iter().map(|file| file.added_lines).sum();
+        let total_deleted: usize = self.state.files.iter().map(|file| file.deleted_lines).sum();
+        let pending_label = format!(
+            "{} Pending Change{}",
+            file_count,
+            if file_count == 1 { "" } else { "s" }
+        );
+        let totals_pill = div()
+            .px(px(metrics.spacing.lg))
+            .py(px(metrics.spacing.xxs))
+            .text_sm()
+            .border_1()
+            .border_color(self.colors.border)
+            .rounded_full()
+            .bg(self.colors.panel)
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .child(
+                        div()
+                            .text_color(self.colors.success)
+                            .child(format!("+{total_added}")),
+                    )
+                    .child(
+                        div()
+                            .text_color(self.colors.error)
+                            .child(format!("-{total_deleted}")),
+                    ),
+            );
+        let pending_pill = div()
+            .px(px(metrics.spacing.lg))
+            .py(px(metrics.spacing.xxs))
+            .text_sm()
+            .border_1()
+            .border_color(self.colors.border)
+            .rounded_full()
+            .bg(self.colors.panel)
+            .text_color(self.colors.text)
+            .child(pending_label);
+
         let header = div()
             .flex()
             .items_center()
@@ -158,20 +272,17 @@ impl<'a> DiffReviewView<'a> {
                     .gap_2()
                     .child(Icon::new(IconName::Diff, 14.0, self.colors.muted))
                     .child(div().text_color(self.colors.text).child("All changes"))
-                    .child(
-                        div()
-                            .px(px(metrics.spacing.lg))
-                            .py(px(metrics.spacing.xxs))
-                            .text_sm()
-                            .border_1()
-                            .border_color(self.colors.border)
-                            .rounded_full()
-                            .bg(self.colors.panel)
-                            .text_color(self.colors.text)
-                            .child(format!("{}", self.state.files.len())),
-                    ),
+                    .child(pending_pill)
+                    .child(totals_pill),
             )
-            .child(apply_all_actions);
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(refresh_button)
+                    .child(apply_all_actions),
+            );
 
         let list = if self.state.files.is_empty() {
             div()
@@ -358,30 +469,73 @@ impl<'a> DiffReviewView<'a> {
                 .child("Select a file to review.")
         };
 
+        let resizer_color = if self.state.list_resizing {
+            self.colors.accent
+        } else {
+            self.colors.border
+        };
+        let resizer = div()
+            .w(px(6.0))
+            .flex_none()
+            .cursor_col_resize()
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|view, event: &MouseDownEvent, window, cx| {
+                    window.prevent_default();
+                    if event.click_count >= 2 {
+                        view.reset_list_width(cx);
+                        view.list_resizing = false;
+                        view.list_resize_state = None;
+                        cx.notify();
+                        return;
+                    }
+                    view.list_resizing = true;
+                    view.list_resize_state = Some(DiffListResizeState {
+                        start_x: f32::from(event.position.x),
+                        start_width: view.list_width,
+                    });
+                    cx.notify();
+                }),
+            )
+            .child(
+                div()
+                    .w(px(2.0))
+                    .h_full()
+                    .rounded_full()
+                    .bg(resizer_color)
+                    .hover(|style| style.bg(self.colors.accent)),
+            );
+
+        let list_container = div()
+            .flex()
+            .flex_col()
+            .w(px(self.state.list_width))
+            .min_w(px(0.0))
+            .p(px(metrics.spacing.xl))
+            .gap_2()
+            .overflow_y_scrollbar()
+            .child(list);
+        let detail_container = div()
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_w(px(0.0))
+            .min_h(px(0.0))
+            .border_l_1()
+            .border_color(self.colors.border)
+            .bg(self.colors.panel_2)
+            .overflow_y_scrollbar()
+            .child(detail);
+
         root.child(header).child(
             div()
                 .flex()
                 .flex_row()
-                .gap_3()
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .w(px(320.0))
-                        .p(px(metrics.spacing.xl))
-                        .gap_2()
-                        .child(list),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .flex_1()
-                        .border_l_1()
-                        .border_color(self.colors.border)
-                        .bg(self.colors.panel_2)
-                        .child(detail),
-                ),
+                .gap_0()
+                .min_h(px(0.0))
+                .child(list_container)
+                .child(resizer)
+                .child(detail_container),
         )
     }
 }

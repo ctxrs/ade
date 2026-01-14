@@ -474,7 +474,8 @@ impl<'a> SessionView<'a> {
                 .flex_col()
                 .gap(px(metrics.spacing.gutter))
                 .w(px(360.0))
-                .pl(px(metrics.spacing.sm));
+                .pl(px(metrics.spacing.sm))
+                .min_h(px(0.0));
 
             if shell.show_sessions_pane {
                 right_pane = right_pane.child(
@@ -529,6 +530,8 @@ impl<'a> SessionView<'a> {
                         .flex()
                         .flex_col()
                         .gap(px(metrics.spacing.xl))
+                        .flex_1()
+                        .min_h(px(0.0))
                         .border_1()
                         .border_color(shell.colors.border)
                         .rounded_sm()
@@ -551,6 +554,8 @@ impl<'a> SessionView<'a> {
                         .flex()
                         .flex_col()
                         .gap(px(metrics.spacing.xl))
+                        .flex_1()
+                        .min_h(px(0.0))
                         .border_1()
                         .border_color(shell.colors.border)
                         .rounded_sm()

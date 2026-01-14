@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
-use gpui::{ClickEvent, Context, FocusHandle, KeyDownEvent, Window};
+use gpui::{ClickEvent, ClipboardItem, Context, FocusHandle, KeyDownEvent, Window};
 use gpui_tokio::Tokio;
 use tokio::sync::{mpsc, watch};
 use tokio_tungstenite::{connect_async, tungstenite::Message as WsMessage};
@@ -372,6 +372,33 @@ impl TerminalPanelState {
         };
         self.last_error = None;
         self.start_terminal_stream(terminal_id, true, cx);
+    }
+
+    pub(crate) fn on_clear_output_click(
+        &mut self,
+        _: &ClickEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.stream_output.is_empty() {
+            return;
+        }
+        self.stream_output.clear();
+        cx.notify();
+    }
+
+    pub(crate) fn on_copy_output_click(
+        &mut self,
+        _: &ClickEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let output = self.stream_output.trim_end();
+        if output.is_empty() {
+            return;
+        }
+        cx.write_to_clipboard(ClipboardItem::new_string(output.to_string()));
+        cx.notify();
     }
 
     pub(crate) fn focus_input(

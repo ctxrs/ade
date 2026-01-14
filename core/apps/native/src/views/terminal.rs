@@ -1,12 +1,17 @@
 use gpui::{CursorStyle, div, prelude::*, px, Window};
+use gpui_component::scroll::ScrollableElement;
 
 use ctx_core::models::TerminalStatus;
 
 use crate::automation_tree;
 
+use super::super::icons::{Icon, IconName};
 use super::super::state::terminal::{
     TerminalLoadState, TerminalPanelState, TerminalScope, TerminalStreamState,
 };
+
+const MONO_FONT_FAMILY: &str =
+    "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, \"Liberation Mono\", \"Courier New\", monospace";
 
 fn terminal_status_text(terminal: &ctx_core::models::TerminalSession) -> String {
     match terminal.status {
@@ -275,6 +280,54 @@ impl Render for TerminalPanelState {
         } else {
             self.stream_output.clone()
         };
+        let output_is_empty = selected_terminal.is_none() || self.stream_output.is_empty();
+        let output_color = if output_is_empty {
+            colors.muted
+        } else {
+            colors.text
+        };
+        let can_clear_output = !self.stream_output.is_empty();
+        let can_copy_output = !self.stream_output.trim().is_empty();
+        let mut copy_button = div()
+            .px(px(metrics.spacing.md))
+            .py(px(metrics.spacing.sm))
+            .text_sm()
+            .border_1()
+            .border_color(colors.border)
+            .rounded_sm()
+            .child("Copy")
+            .id("terminal-copy");
+        if can_copy_output {
+            copy_button = copy_button
+                .bg(colors.panel)
+                .cursor_pointer()
+                .active(|style| style.opacity(0.85))
+                .on_click(cx.listener(TerminalPanelState::on_copy_output_click));
+        } else {
+            copy_button = copy_button
+                .bg(colors.panel_2)
+                .text_color(colors.muted);
+        }
+        let mut clear_button = div()
+            .px(px(metrics.spacing.md))
+            .py(px(metrics.spacing.sm))
+            .text_sm()
+            .border_1()
+            .border_color(colors.border)
+            .rounded_sm()
+            .child("Clear")
+            .id("terminal-clear");
+        if can_clear_output {
+            clear_button = clear_button
+                .bg(colors.panel)
+                .cursor_pointer()
+                .active(|style| style.opacity(0.85))
+                .on_click(cx.listener(TerminalPanelState::on_clear_output_click));
+        } else {
+            clear_button = clear_button
+                .bg(colors.panel_2)
+                .text_color(colors.muted);
+        }
         let input_placeholder = if selected_terminal.is_some() {
             "Type input and press Enter..."
         } else {
@@ -303,13 +356,26 @@ impl Render for TerminalPanelState {
         let input_field = div()
             .flex_1()
             .text_sm()
+            .font_family(MONO_FONT_FAMILY)
             .text_color(input_color)
+            .whitespace_nowrap()
             .cursor(CursorStyle::IBeam)
             .track_focus(&self.input_focus)
             .id("terminal-input")
             .on_click(cx.listener(TerminalPanelState::focus_input))
             .on_key_down(cx.listener(TerminalPanelState::on_input_key_down))
             .child(input_text);
+        let send_icon_color = if can_send_input {
+            colors.text
+        } else {
+            colors.muted
+        };
+        let send_label = div()
+            .flex()
+            .items_center()
+            .gap_1()
+            .child(Icon::new(IconName::Send, 12.0, send_icon_color))
+            .child("Send");
         let mut send_button = div()
             .px(px(metrics.spacing.md))
             .py(px(metrics.spacing.sm))
@@ -317,7 +383,7 @@ impl Render for TerminalPanelState {
             .border_1()
             .border_color(colors.border)
             .rounded_full()
-            .child("Send")
+            .child(send_label)
             .id("terminal-send");
         if can_send_input {
             send_button = send_button
@@ -330,6 +396,38 @@ impl Render for TerminalPanelState {
                 .bg(colors.panel_2)
                 .text_color(colors.muted);
         }
+
+        let output_header = div()
+            .flex()
+            .items_center()
+            .justify_between()
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(colors.muted)
+                    .child("Output"),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(copy_button)
+                    .child(clear_button),
+            );
+        let output_view = div()
+            .text_sm()
+            .font_family(MONO_FONT_FAMILY)
+            .text_color(output_color)
+            .whitespace_nowrap()
+            .overflow_scrollbar()
+            .border_1()
+            .border_color(colors.border)
+            .rounded_sm()
+            .bg(colors.panel)
+            .p(px(metrics.spacing.md))
+            .h(px(220.0))
+            .child(output_text);
 
         let header = div()
             .flex()
@@ -346,6 +444,7 @@ impl Render for TerminalPanelState {
                     .items_center()
                     .gap_2()
                     .text_sm()
+                    .child(Icon::new(IconName::Terminal, 14.0, colors.muted))
                     .child("Terminals")
                     .child(
                         div()
@@ -429,22 +528,8 @@ impl Render for TerminalPanelState {
                     .flex()
                     .flex_col()
                     .gap_1()
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(colors.muted)
-                            .child("Output"),
-                    )
-                    .child(
-                        div()
-                            .text_sm()
-                            .border_1()
-                            .border_color(colors.border)
-                            .rounded_sm()
-                            .bg(colors.panel)
-                            .p(px(metrics.spacing.md))
-                            .child(output_text),
-                    ),
+                    .child(output_header)
+                    .child(output_view),
             )
             .child(
                 div()
