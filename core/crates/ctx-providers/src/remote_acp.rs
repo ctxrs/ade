@@ -471,7 +471,10 @@ async fn connect_gateway(
                     tracing::debug!(payload_len = text.len(), "acp relay from gateway");
                 }
                 match serde_json::from_str::<RelayMessage>(&text) {
-                    Ok(RelayMessage::Acp { session_id: sid, payload }) => {
+                    Ok(RelayMessage::Acp {
+                        session_id: sid,
+                        payload,
+                    }) => {
                         if sid == session_id {
                             let _ = tx.send(payload);
                         } else if tracing::enabled!(tracing::Level::DEBUG) {
