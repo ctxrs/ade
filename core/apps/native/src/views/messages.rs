@@ -293,6 +293,8 @@ impl<'a> ThreadListView<'a> {
             .id("thread-list")
             .flex()
             .flex_col()
+            .flex_1()
+            .min_h(px(0.0))
             .relative()
             .overflow_hidden()
             .child(sticky)
@@ -301,6 +303,7 @@ impl<'a> ThreadListView<'a> {
                     .flex()
                     .flex_col()
                     .flex_1()
+                    .min_h(px(0.0))
                     .overflow_hidden()
                     .child(list.w_full().h_full()),
             )
