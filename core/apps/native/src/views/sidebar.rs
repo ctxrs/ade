@@ -476,8 +476,7 @@ impl<'a> SidebarView<'a> {
         )
         .track_scroll(&shell.task_list_scroll_handle)
         .pr(px(4.0))
-        .min_h(px(0.0))
-        .w_full();
+        .min_h(px(0.0));
 
         let list = div()
             .on_children_prepainted(automation_tree::track_children_bounds(
@@ -486,7 +485,11 @@ impl<'a> SidebarView<'a> {
                 Some("Tasks"),
                 Some("app-shell"),
             ))
-            .child(list);
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_h(px(0.0))
+            .child(list.w_full().h_full());
 
         div()
             .px(px(12.0))
