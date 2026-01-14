@@ -108,7 +108,7 @@ impl MergeQueueConfig {
             config_path: root.join(WORKSPACE_CONFIG_REL_PATH),
             enabled: false,
             target_branch: "main".to_string(),
-            verify_commands: vec!["pnpm -C core verify:quick".to_string()],
+            verify_commands: Vec::new(),
             halt_on_fail: true,
             push_on_success: false,
             push_remote: "origin".to_string(),
