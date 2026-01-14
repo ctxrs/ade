@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -28,12 +29,29 @@ pub(crate) struct SessionsPaneView<'a> {
 impl<'a> SessionsPaneView<'a> {
     pub(super) fn render(&self, cx: &mut Context<ShellView>) -> impl IntoElement {
         let metrics = ThemeMetrics::default();
-        maybe_refresh_web_sessions(cx);
-        let (web_sessions, selected_web_id, web_loading, web_error) = web_sessions_snapshot();
+        let selected_session_id = self
+            .selected_session
+            .and_then(|index| self.sessions.get(index))
+            .map(|summary| summary.session_id.0.to_string());
+        maybe_refresh_web_sessions(cx, selected_session_id);
+        let (web_sessions, selected_web_id, active_web_kind, web_loading, web_error) =
+            web_sessions_snapshot();
+        let web_sections = web_session_sections(&web_sessions);
+        let visible_web_sections = web_sections
+            .iter()
+            .filter(|section| !section.sessions.is_empty())
+            .collect::<Vec<_>>();
+        let active_section = active_web_kind
+            .as_ref()
+            .and_then(|key| web_sections.iter().find(|section| section.key == *key))
+            .or_else(|| visible_web_sections.first().copied());
+        let active_sessions = active_section
+            .map(|section| section.sessions.as_slice())
+            .unwrap_or(&[]);
         let selected_web_session = selected_web_id
             .as_ref()
-            .and_then(|id| web_sessions.iter().find(|session| session.id == *id))
-            .or_else(|| web_sessions.first());
+            .and_then(|id| active_sessions.iter().find(|session| session.id == *id))
+            .or_else(|| active_sessions.first());
         let selected_web_stream = selected_web_session.and_then(build_stream_url);
 
         let list = if self.sessions.is_empty() {
@@ -119,87 +137,130 @@ impl<'a> SessionsPaneView<'a> {
             .text_color(self.colors.text)
             .child(format!("{}", self.sessions.len()));
 
-        let web_list = if web_sessions.is_empty() {
+        let web_kind_tabs = if visible_web_sections.len() > 1 {
+            visible_web_sections
+                .iter()
+                .enumerate()
+                .fold(div().flex().items_center().gap_1(), |tabs, (index, section)| {
+                    let is_active = active_section
+                        .map(|active| active.key == section.key)
+                        .unwrap_or(false);
+                    let tab_bg = if is_active {
+                        self.colors.panel
+                    } else {
+                        self.colors.panel_2
+                    };
+                    let tab_border = if is_active {
+                        self.colors.border_strong
+                    } else {
+                        self.colors.border
+                    };
+                    let tab_color = if is_active {
+                        self.colors.text
+                    } else {
+                        self.colors.muted
+                    };
+                    let section_key = section.key.clone();
+                    let selected_id = section.sessions.first().map(|session| session.id.clone());
+                    let on_click = cx.listener(move |_, _: &ClickEvent, _window, cx| {
+                        if let Ok(mut state) = web_sessions_state().lock() {
+                            state.active_kind = Some(section_key.clone());
+                            state.selected_id = selected_id.clone();
+                        }
+                        cx.notify();
+                    });
+                    tabs.child(
+                        div()
+                            .px(px(metrics.spacing.md))
+                            .py(px(metrics.spacing.xs))
+                            .border_1()
+                            .border_color(tab_border)
+                            .rounded_full()
+                            .bg(tab_bg)
+                            .text_sm()
+                            .text_color(tab_color)
+                            .child(section.label.clone())
+                            .cursor_pointer()
+                            .id(ElementId::named_usize("web-session-kind", index))
+                            .on_click(on_click),
+                    )
+                })
+        } else {
+            div()
+        };
+
+        let web_session_tabs = if active_sessions.len() > 1 {
+            active_sessions
+                .iter()
+                .enumerate()
+                .fold(div().flex().items_center().gap_1(), |tabs, (index, session)| {
+                    let is_selected = selected_web_session
+                        .map(|selected| selected.id == session.id)
+                        .unwrap_or(false);
+                    let tab_bg = if is_selected {
+                        self.colors.panel
+                    } else {
+                        self.colors.panel_2
+                    };
+                    let tab_border = if is_selected {
+                        self.colors.border_strong
+                    } else {
+                        self.colors.border
+                    };
+                    let tab_color = if is_selected {
+                        self.colors.text
+                    } else {
+                        self.colors.muted
+                    };
+                    let session_id = session.id.clone();
+                    let label = web_session_label(session);
+                    let on_click = cx.listener(move |_, _: &ClickEvent, _window, cx| {
+                        if let Ok(mut state) = web_sessions_state().lock() {
+                            state.selected_id = Some(session_id.clone());
+                        }
+                        cx.notify();
+                    });
+                    tabs.child(
+                        div()
+                            .px(px(metrics.spacing.md))
+                            .py(px(metrics.spacing.xs))
+                            .border_1()
+                            .border_color(tab_border)
+                            .rounded_full()
+                            .bg(tab_bg)
+                            .text_sm()
+                            .text_color(tab_color)
+                            .child(label)
+                            .cursor_pointer()
+                            .id(ElementId::named_usize("web-session-tab", index))
+                            .on_click(on_click),
+                    )
+                })
+        } else {
+            div()
+        };
+
+        let web_stream_section = if active_sessions.is_empty() {
             let message = if web_loading {
-                "Loading web sessions..."
+                "Loading sessions..."
             } else {
-                "No web sessions available."
+                "No sessions available for this run."
             };
             div()
                 .text_sm()
                 .text_color(self.colors.muted)
                 .child(message)
-        } else {
-            web_sessions
-                .iter()
-                .enumerate()
-                .fold(div().flex().flex_col().gap_2(), |list, (index, session)| {
-                let is_selected = selected_web_session
-                    .map(|selected| selected.id == session.id)
-                    .unwrap_or(false);
-                let item_bg = if is_selected {
-                    self.colors.panel
-                } else {
-                    self.colors.panel_2
-                };
-                let item_border = if is_selected {
-                    self.colors.border_strong
-                } else {
-                    self.colors.border
-                };
-                let session_id = session.id.clone();
-                let label = web_session_label(session);
-                let on_click = cx.listener(move |_, _: &ClickEvent, _window, cx| {
-                    if let Ok(mut state) = web_sessions_state().lock() {
-                        state.selected_id = Some(session_id.clone());
-                    }
-                    cx.notify();
-                });
-                list.child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .px(px(metrics.spacing.xl))
-                        .py(px(metrics.spacing.md))
-                        .border_1()
-                        .border_color(item_border)
-                        .rounded_sm()
-                        .bg(item_bg)
-                        .text_sm()
-                        .child(label)
-                        .child(
-                            div()
-                                .px(px(metrics.spacing.md))
-                                .py(px(0.0))
-                                .text_sm()
-                                .text_color(self.colors.muted)
-                                .child(session.status.clone()),
-                        )
-                        .cursor_pointer()
-                        .id(ElementId::named_usize("web-session", index))
-                        .on_click(on_click),
-                )
-            })
-        }
-        .on_children_prepainted(automation_tree::track_children_bounds(
-            "web-sessions-list",
-            "list",
-            Some("Web Sessions"),
-            Some("app-shell"),
-        ))
-        .id("web-sessions-list");
-
-        let web_stream_section = if let Some(session) = selected_web_session {
+        } else if let Some(session) = selected_web_session {
             let viewer_message = if selected_web_stream.is_some() {
                 div()
                     .flex()
                     .flex_col()
                     .gap_1()
+                    .items_center()
                     .text_sm()
                     .text_color(self.colors.muted)
-                    .child("Embedded web stream viewer is not available in GPUI yet.")
-                    .child("Next steps: add a WebView component or render stream frames as images.")
+                    .child("Embedded web stream viewer isn't available in GPUI yet.")
+                    .child("Open the stream in a browser to interact.")
             } else {
                 div()
                     .text_sm()
@@ -213,7 +274,10 @@ impl<'a> SessionsPaneView<'a> {
                 .rounded_sm()
                 .bg(self.colors.panel_2)
                 .p(px(metrics.spacing.xl))
-                .h(px(220.0))
+                .min_h(px(220.0))
+                .flex()
+                .items_center()
+                .justify_center()
                 .child(viewer_message);
 
             let mut details = div().flex().flex_col().gap_1();
@@ -222,6 +286,15 @@ impl<'a> SessionsPaneView<'a> {
                     .text_sm()
                     .text_color(self.colors.muted)
                     .child(format!("Status: {}", session.status)),
+            );
+            details = details.child(
+                div()
+                    .text_sm()
+                    .text_color(self.colors.muted)
+                    .child(format!(
+                        "Viewers: {} · {}x{} @ {}fps",
+                        session.viewers, session.viewport.width, session.viewport.height, session.fps
+                    )),
             );
             if let Some(stream_url) = selected_web_stream.as_ref() {
                 details = details.child(
@@ -276,22 +349,12 @@ impl<'a> SessionsPaneView<'a> {
                 .flex()
                 .flex_col()
                 .gap_2()
+                .child(web_session_tabs)
                 .child(viewer)
                 .child(details)
         } else {
             div()
         };
-
-        let web_count = div()
-            .px(px(metrics.spacing.md))
-            .py(px(0.0))
-            .text_sm()
-            .border_1()
-            .border_color(self.colors.border)
-            .rounded_full()
-            .bg(self.colors.panel)
-            .text_color(self.colors.text)
-            .child(format!("{}", web_sessions.len()));
 
         div()
             .id("sessions-pane-body")
@@ -332,11 +395,23 @@ impl<'a> SessionsPaneView<'a> {
                     .border_color(self.colors.border)
                     .bg(self.colors.panel)
                     .text_sm()
-                    .text_color(self.colors.muted)
-                    .child("Web Sessions")
-                    .child(web_count),
+                    .child(div().text_color(self.colors.text).child("Web Sessions"))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(web_kind_tabs)
+                            .child(if let Some(active) = active_section {
+                                div()
+                                    .text_sm()
+                                    .text_color(self.colors.muted)
+                                    .child(format!("{} · {}", active.label, active.sessions.len()))
+                            } else {
+                                div()
+                            }),
+                    ),
             )
-            .child(web_list)
             .child(web_stream_section)
             .child(if let Some(error) = web_error {
                 div()
@@ -349,6 +424,13 @@ impl<'a> SessionsPaneView<'a> {
     }
 }
 
+#[derive(Clone)]
+struct WebSessionSection {
+    key: String,
+    label: String,
+    sessions: Vec<WebSessionInfo>,
+}
+
 #[derive(Default)]
 struct WebSessionsCache {
     sessions: Vec<WebSessionInfo>,
@@ -356,6 +438,8 @@ struct WebSessionsCache {
     last_error: Option<String>,
     last_fetch: Option<Instant>,
     selected_id: Option<String>,
+    active_kind: Option<String>,
+    session_scope: Option<String>,
 }
 
 fn web_sessions_state() -> &'static Mutex<WebSessionsCache> {
@@ -363,29 +447,51 @@ fn web_sessions_state() -> &'static Mutex<WebSessionsCache> {
     STATE.get_or_init(|| Mutex::new(WebSessionsCache::default()))
 }
 
-fn web_sessions_snapshot() -> (Vec<WebSessionInfo>, Option<String>, bool, Option<String>) {
+fn web_sessions_snapshot() -> (Vec<WebSessionInfo>, Option<String>, Option<String>, bool, Option<String>) {
     if let Ok(state) = web_sessions_state().lock() {
         (
             state.sessions.clone(),
             state.selected_id.clone(),
+            state.active_kind.clone(),
             state.loading,
             state.last_error.clone(),
         )
     } else {
-        (Vec::new(), None, false, Some("Web sessions unavailable.".to_string()))
+        (
+            Vec::new(),
+            None,
+            None,
+            false,
+            Some("Web sessions unavailable.".to_string()),
+        )
     }
 }
 
-fn maybe_refresh_web_sessions(cx: &mut Context<ShellView>) {
+fn maybe_refresh_web_sessions(cx: &mut Context<ShellView>, active_session_id: Option<String>) {
+    let mut session_scope = None;
     let should_refresh = if let Ok(mut state) = web_sessions_state().lock() {
+        if state.session_scope != active_session_id {
+            state.session_scope = active_session_id.clone();
+            state.sessions.clear();
+            state.selected_id = None;
+            state.active_kind = None;
+            state.last_error = None;
+            state.last_fetch = None;
+        }
+        if state.session_scope.is_none() {
+            state.loading = false;
+            return;
+        }
         let stale = state
             .last_fetch
             .map(|last| last.elapsed() >= WEB_SESSIONS_REFRESH)
             .unwrap_or(true);
         if !state.loading && stale {
             state.loading = true;
+            session_scope = state.session_scope.clone();
             true
         } else {
+            session_scope = state.session_scope.clone();
             false
         }
     } else {
@@ -395,6 +501,10 @@ fn maybe_refresh_web_sessions(cx: &mut Context<ShellView>) {
     if !should_refresh {
         return;
     }
+
+    let Some(session_scope) = session_scope else {
+        return;
+    };
 
     let task = Tokio::spawn_result(cx, async move {
         let config = ctx_client::resolve_daemon_config()?;
@@ -408,24 +518,56 @@ fn maybe_refresh_web_sessions(cx: &mut Context<ShellView>) {
         async move {
             let result = task.await;
             if let Ok(mut state) = web_sessions_state().lock() {
-                state.loading = false;
-                state.last_fetch = Some(Instant::now());
-                match result {
-                    Ok(sessions) => {
-                        state.sessions = sessions;
-                        state.last_error = None;
-                        if let Some(selected) = state.selected_id.as_ref() {
-                            if !state.sessions.iter().any(|session| &session.id == selected) {
-                                state.selected_id =
-                                    state.sessions.first().map(|session| session.id.clone());
+                if state.session_scope.as_deref() != Some(session_scope.as_str()) {
+                    state.loading = false;
+                } else {
+                    state.loading = false;
+                    state.last_fetch = Some(Instant::now());
+                    match result {
+                        Ok(sessions) => {
+                            let filtered = sessions
+                                .into_iter()
+                                .filter(|session| {
+                                    session.session_id.as_deref() == Some(session_scope.as_str())
+                                })
+                                .filter(web_session_is_running)
+                                .collect::<Vec<_>>();
+                            state.sessions = filtered;
+                            state.last_error = None;
+                            let sections = web_session_sections(&state.sessions);
+                            if sections.is_empty() {
+                                state.active_kind = None;
+                                state.selected_id = None;
+                            } else {
+                                let next_kind = state
+                                    .active_kind
+                                    .clone()
+                                    .filter(|key| sections.iter().any(|section| &section.key == key))
+                                    .or_else(|| sections.first().map(|section| section.key.clone()));
+                                state.active_kind = next_kind.clone();
+                                let active_sessions = next_kind
+                                    .as_ref()
+                                    .and_then(|key| {
+                                        sections
+                                            .iter()
+                                            .find(|section| &section.key == key)
+                                            .map(|section| section.sessions.as_slice())
+                                    })
+                                    .unwrap_or(&[]);
+                                let has_selected = state.selected_id.as_ref().and_then(|id| {
+                                    active_sessions
+                                        .iter()
+                                        .find(|session| &session.id == id)
+                                });
+                                if has_selected.is_none() {
+                                    state.selected_id =
+                                        active_sessions.first().map(|session| session.id.clone());
+                                }
                             }
-                        } else {
-                            state.selected_id =
-                                state.sessions.first().map(|session| session.id.clone());
                         }
-                    }
-                    Err(err) => {
-                        state.last_error = Some(err.to_string());
+                        Err(err) => {
+                            state.last_error = Some(err.to_string());
+                        }
                     }
                 }
             }
@@ -435,6 +577,55 @@ fn maybe_refresh_web_sessions(cx: &mut Context<ShellView>) {
         }
     })
     .detach();
+}
+
+fn web_session_sections(sessions: &[WebSessionInfo]) -> Vec<WebSessionSection> {
+    let mut grouped: BTreeMap<String, Vec<WebSessionInfo>> = BTreeMap::new();
+    for session in sessions {
+        grouped
+            .entry(session.kind.clone())
+            .or_default()
+            .push(session.clone());
+    }
+    let mut sections = Vec::new();
+    for kind in ["web", "ios", "android"] {
+        if let Some(sessions) = grouped.remove(kind) {
+            sections.push(WebSessionSection {
+                key: kind.to_string(),
+                label: web_session_kind_label(kind),
+                sessions,
+            });
+        }
+    }
+    for (kind, sessions) in grouped {
+        sections.push(WebSessionSection {
+            key: kind.clone(),
+            label: web_session_kind_label(&kind),
+            sessions,
+        });
+    }
+    sections
+}
+
+fn web_session_kind_label(kind: &str) -> String {
+    match kind {
+        "web" => "Web Sessions".to_string(),
+        "ios" => "iOS Sessions".to_string(),
+        "android" => "Android Sessions".to_string(),
+        _ => {
+            let mut chars = kind.chars();
+            let Some(first) = chars.next() else {
+                return "Sessions".to_string();
+            };
+            let first = first.to_uppercase().collect::<String>();
+            let rest = chars.collect::<String>();
+            format!("{}{} Sessions", first, rest)
+        }
+    }
+}
+
+fn web_session_is_running(session: &WebSessionInfo) -> bool {
+    session.status.eq_ignore_ascii_case("running")
 }
 
 fn web_session_label(session: &WebSessionInfo) -> String {
