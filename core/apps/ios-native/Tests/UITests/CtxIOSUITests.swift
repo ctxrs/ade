@@ -98,6 +98,154 @@ final class CtxIOSUITests: XCTestCase {
         add(attachment)
     }
 
+    private func tapElement(_ element: XCUIElement, in app: XCUIApplication) {
+        if element.isHittable {
+            element.tap()
+        } else {
+            let coordinate = element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            coordinate.tap()
+        }
+    }
+
+    private func startNewTask(app: XCUIApplication, prompt: String) {
+        let promptField = waitForPromptInput(in: app, timeout: 30)
+        app.activate()
+        tapElement(promptField, in: app)
+        if app.keyboards.firstMatch.waitForExistence(timeout: 2) {
+            app.typeText(prompt)
+        } else {
+            tapElement(promptField, in: app)
+            app.typeText(prompt)
+        }
+
+        let startButton = app.buttons["newtask.start"]
+        XCTAssertTrue(startButton.waitForExistence(timeout: 10))
+        let startEnabled = NSPredicate(format: "isEnabled == true")
+        expectation(for: startEnabled, evaluatedWith: startButton)
+        waitForExpectations(timeout: 20)
+        startButton.tap()
+
+        let messageList = app.scrollViews["chat.messages"]
+        XCTAssertTrue(messageList.waitForExistence(timeout: 30))
+    }
+
+    func testConnectionScreenshot() {
+        let app = XCUIApplication()
+        app.launchEnvironment["CTX_UI_TEST_MODE"] = "1"
+        app.launchEnvironment["CTX_AUTO_CONNECT"] = "0"
+        app.launch()
+
+        let connectButton = app.buttons["connection.connect"]
+        XCTAssertTrue(connectButton.waitForExistence(timeout: 10))
+        attachScreenshot("connection-view")
+    }
+
+    func testSettingsScreenshot() throws {
+        guard let config = resolveConfig() else {
+            throw XCTSkip("Pass CTX_IOS_BASE_URL + CTX_IOS_TOKEN (or --ctx-base-url/--ctx-token) to run settings screenshot.")
+        }
+
+        let app = XCUIApplication()
+        app.launchEnvironment["CTX_IOS_BASE_URL"] = config.baseURL
+        app.launchEnvironment["CTX_IOS_TOKEN"] = config.token
+        app.launchEnvironment["CTX_AUTO_CONNECT"] = "1"
+        app.launchEnvironment["CTX_RESET_SELECTION"] = "1"
+        app.launchEnvironment["CTX_UI_TEST_MODE"] = "1"
+        app.launch()
+
+        connectIfNeeded(app: app, config: config)
+
+        let drawerButton = app.buttons["drawer.open"]
+        if drawerButton.waitForExistence(timeout: 10) {
+            drawerButton.tap()
+        }
+        var settingsLink = app.buttons["drawer.settings"]
+        if !settingsLink.waitForExistence(timeout: 6) {
+            settingsLink = app.otherElements["drawer.settings"]
+            let scrollView = app.scrollViews.firstMatch
+            if scrollView.exists {
+                scrollView.swipeUp()
+            }
+        }
+        if !settingsLink.exists {
+            settingsLink = app.staticTexts["Settings"]
+        }
+        XCTAssertTrue(settingsLink.waitForExistence(timeout: 20))
+        settingsLink.tap()
+
+        let settingsTitle = app.staticTexts["Settings"]
+        XCTAssertTrue(settingsTitle.waitForExistence(timeout: 10))
+        attachScreenshot("settings-view")
+    }
+
+    func testNewTaskScreenshot() throws {
+        guard let config = resolveConfig() else {
+            throw XCTSkip("Pass CTX_IOS_BASE_URL + CTX_IOS_TOKEN (or --ctx-base-url/--ctx-token) to run new task screenshot.")
+        }
+
+        let app = XCUIApplication()
+        app.launchEnvironment["CTX_IOS_BASE_URL"] = config.baseURL
+        app.launchEnvironment["CTX_IOS_TOKEN"] = config.token
+        app.launchEnvironment["CTX_AUTO_CONNECT"] = "1"
+        app.launchEnvironment["CTX_RESET_SELECTION"] = "1"
+        app.launchEnvironment["CTX_UI_TEST_MODE"] = "1"
+        app.launch()
+
+        connectIfNeeded(app: app, config: config)
+        _ = waitForPromptInput(in: app, timeout: 30)
+        attachScreenshot("new-task-view")
+    }
+
+    func testTaskListScreenshot() throws {
+        guard let config = resolveConfig() else {
+            throw XCTSkip("Pass CTX_IOS_BASE_URL + CTX_IOS_TOKEN (or --ctx-base-url/--ctx-token) to run task list screenshot.")
+        }
+
+        let app = XCUIApplication()
+        app.launchEnvironment["CTX_IOS_BASE_URL"] = config.baseURL
+        app.launchEnvironment["CTX_IOS_TOKEN"] = config.token
+        app.launchEnvironment["CTX_AUTO_CONNECT"] = "1"
+        app.launchEnvironment["CTX_RESET_SELECTION"] = "1"
+        app.launchEnvironment["CTX_UI_TEST_MODE"] = "1"
+        app.launchEnvironment["CTX_OPEN_DRAWER_ON_LAUNCH"] = "1"
+        app.launch()
+
+        connectIfNeeded(app: app, config: config)
+        let drawer = app.descendants(matching: .any).matching(identifier: "drawer.container").firstMatch
+        XCTAssertTrue(drawer.waitForExistence(timeout: 20))
+        attachScreenshot("task-list")
+    }
+
+    func testDiffPanelScreenshot() throws {
+        guard let config = resolveConfig() else {
+            throw XCTSkip("Pass CTX_IOS_BASE_URL + CTX_IOS_TOKEN (or --ctx-base-url/--ctx-token) to run diff panel screenshot.")
+        }
+
+        let app = XCUIApplication()
+        app.launchEnvironment["CTX_IOS_BASE_URL"] = config.baseURL
+        app.launchEnvironment["CTX_IOS_TOKEN"] = config.token
+        app.launchEnvironment["CTX_AUTO_CONNECT"] = "1"
+        app.launchEnvironment["CTX_RESET_SELECTION"] = "1"
+        app.launchEnvironment["CTX_UI_TEST_MODE"] = "1"
+        app.launchEnvironment["CTX_OPEN_DRAWER_ON_LAUNCH"] = "1"
+        app.launch()
+
+        connectIfNeeded(app: app, config: config)
+        let taskButtons = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "drawer.task."))
+        if taskButtons.firstMatch.waitForExistence(timeout: 10) {
+            taskButtons.firstMatch.tap()
+        } else {
+            startNewTask(app: app, prompt: "Diff panel \(Int(Date().timeIntervalSince1970))")
+        }
+        let diffButton = app.buttons["topbar.diff"]
+        XCTAssertTrue(diffButton.waitForExistence(timeout: 10))
+        diffButton.tap()
+
+        let diffTitle = app.staticTexts["Diff"]
+        XCTAssertTrue(diffTitle.waitForExistence(timeout: 10))
+        attachScreenshot("diff-panel")
+    }
+
     func testSendAndReceiveMessage() throws {
         guard let config = resolveConfig() else {
             throw XCTSkip("Pass CTX_IOS_BASE_URL + CTX_IOS_TOKEN (or --ctx-base-url/--ctx-token) to run UI tests.")

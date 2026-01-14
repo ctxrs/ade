@@ -172,6 +172,11 @@ actor DaemonAPIClient {
         try await request("/api/workspaces/\(workspaceId)/worktrees")
     }
 
+    func deleteWorkspace(workspaceId: String) async throws {
+        let request = try buildRequest(path: "/api/workspaces/\(workspaceId)", method: .delete)
+        try await performVoid(request)
+    }
+
     func listMessages(sessionId: String) async throws -> [MessageSummary] {
         let head = try await getSessionHead(sessionId: sessionId, limit: 200, includeEvents: false)
         return head.messages.map(MessageSummary.init)
@@ -197,8 +202,54 @@ actor DaemonAPIClient {
         try await request("/api/sessions/\(sessionId)/artifacts")
     }
 
+    func listWebSessions() async throws -> [WebSessionInfo] {
+        try await request("/api/sessions/web")
+    }
+
+    func listWorkspaceTerminals(workspaceId: String) async throws -> [TerminalSession] {
+        try await request("/api/workspaces/\(workspaceId)/terminals")
+    }
+
+    func deleteMessage(messageId: String) async throws {
+        let request = try buildRequest(path: "/api/messages/\(messageId)", method: .delete, body: EmptyPayload())
+        try await performVoid(request)
+    }
+
     func interruptSession(sessionId: String) async throws {
         let request = try buildRequest(path: "/api/sessions/\(sessionId)/interrupt", method: .post, body: EmptyPayload())
+        try await performVoid(request)
+    }
+
+    func setSessionModel(sessionId: String, modelId: String) async throws -> Session {
+        struct Payload: Encodable {
+            let modelId: String
+        }
+        let payload = Payload(modelId: modelId)
+        return try await request("/api/sessions/\(sessionId)/model", method: .post, body: payload)
+    }
+
+    func setSessionMode(sessionId: String, modeId: String) async throws {
+        struct Payload: Encodable {
+            let modeId: String
+        }
+        let payload = Payload(modeId: modeId)
+        let request = try buildRequest(path: "/api/sessions/\(sessionId)/mode", method: .post, body: payload)
+        try await performVoid(request)
+    }
+
+    func submitAskUserQuestion(
+        sessionId: String,
+        toolCallId: String,
+        outcome: String,
+        answers: [String: String]
+    ) async throws {
+        struct Payload: Encodable {
+            let toolCallId: String
+            let outcome: String
+            let answers: [String: String]
+        }
+        let payload = Payload(toolCallId: toolCallId, outcome: outcome, answers: answers)
+        let request = try buildRequest(path: "/api/sessions/\(sessionId)/ask_user_question", method: .post, body: payload)
         try await performVoid(request)
     }
 
@@ -208,6 +259,18 @@ actor DaemonAPIClient {
 
     func listProviders() async throws -> [ProviderStatus] {
         try await request("/api/providers")
+    }
+
+    func installProvider(providerId: String) async throws -> InstallStartResponse {
+        try await request("/api/providers/\(providerId)/install", method: .post)
+    }
+
+    func installAllProviders() async throws -> [InstallStartResponse] {
+        try await request("/api/providers/install_all", method: .post)
+    }
+
+    func getInstall(installId: String) async throws -> InstallInfo {
+        try await request("/api/providers/install/\(installId)")
     }
 
     func getSettings() async throws -> PublicSettings {
@@ -356,6 +419,22 @@ actor DaemonAPIClient {
 
     func getProviderOptions(workspaceId: String, providerId: String) async throws -> ProviderOptions {
         try await request("/api/workspaces/\(workspaceId)/providers/\(providerId)/options")
+    }
+
+    func authenticateProviderForWorkspace(workspaceId: String, providerId: String, methodId: String? = nil) async throws -> JSONValue {
+        struct Payload: Encodable {
+            let methodId: String?
+        }
+        let payload = Payload(methodId: methodId)
+        return try await request(
+            "/api/workspaces/\(workspaceId)/providers/\(providerId)/authenticate",
+            method: .post,
+            body: payload
+        )
+    }
+
+    func verifyProviderForWorkspace(workspaceId: String, providerId: String) async throws -> JSONValue {
+        try await request("/api/workspaces/\(workspaceId)/providers/\(providerId)/verify", method: .post)
     }
 
     func getWorkspaceCatchupSnapshot(workspaceId: String, includeArchived: Bool) async throws -> WorkspaceCatchupSnapshot {

@@ -80,6 +80,44 @@ struct Session: Codable, Sendable, Identifiable {
     let updatedAt: String?
 }
 
+struct WebSessionViewport: Codable, Sendable {
+    let width: Int
+    let height: Int
+}
+
+struct WebSessionInfo: Codable, Sendable, Identifiable {
+    let id: String
+    let kind: String
+    let sessionId: String?
+    let worktreeId: String?
+    let status: String
+    let createdAt: String
+    let updatedAt: String
+    let lastActivity: String
+    let url: String
+    let viewport: WebSessionViewport?
+    let fps: Int?
+    let viewers: Int?
+    let streamPath: String?
+    let streamUrl: String?
+}
+
+struct TerminalSession: Codable, Sendable, Identifiable {
+    let id: CtxID
+    let workspaceId: CtxID
+    let taskId: CtxID?
+    let trackId: CtxID?
+    let sessionId: CtxID?
+    let worktreeId: CtxID?
+    let cwd: String
+    let shell: String
+    let title: String
+    let status: String
+    let exitCode: Int?
+    let createdAt: String
+    let updatedAt: String
+}
+
 enum MessageRole: String, Codable, Sendable {
     case user
     case assistant
@@ -433,6 +471,46 @@ struct ProviderStatus: Codable, Sendable {
     let health: String
     let diagnostics: [String]
     let details: [String: String]?
+}
+
+enum InstallStateKind: String, Codable, Sendable {
+    case running
+    case succeeded
+    case failed
+}
+
+enum InstallEventLevel: String, Codable, Sendable {
+    case info
+    case warning
+    case error
+    case success
+}
+
+struct InstallProgressEvent: Codable, Sendable {
+    let installId: String
+    let providerId: String
+    let at: String
+    let stage: String
+    let message: String
+    let level: InstallEventLevel
+    let bytes: Int?
+    let totalBytes: Int?
+    let attempt: Int?
+}
+
+struct InstallInfo: Codable, Sendable {
+    let installId: String
+    let providerId: String
+    let state: InstallStateKind
+    let startedAt: String
+    let finishedAt: String?
+    let error: String?
+    let lastEvent: InstallProgressEvent?
+}
+
+struct InstallStartResponse: Codable, Sendable {
+    let providerId: String
+    let installId: String
 }
 
 struct Diagnostics: Codable, Sendable {

@@ -1,8 +1,10 @@
 import SwiftUI
+import UIKit
 import _Concurrency
 
 struct SettingsView: View {
     @EnvironmentObject private var connection: ConnectionStore
+    @EnvironmentObject private var pushManager: PushNotificationManager
     let selectedWorkspace: WorkspaceSummary?
 
     @State private var settings: PublicSettings?
@@ -25,8 +27,25 @@ struct SettingsView: View {
     @State private var providers: [ProviderStatus] = []
     @State private var isLoadingProviders = false
     @State private var providersError: String?
+    @State private var providerOptions: [String: DaemonAPIClient.ProviderOptions] = [:]
+    @State private var providerCheckBusy: Set<String> = []
+    @State private var providerAuthBusy: Set<String> = []
+    @State private var providerVerifyBusy: Set<String> = []
+    @State private var providerInstallBusy: Set<String> = []
+    @State private var providerInstallInfo: [String: InstallInfo] = [:]
+    @State private var providerVerifyResults: [String: JSONValue] = [:]
+
+    @State private var routingEntry: ModelRoutingEntry?
+    @State private var routingProviderId = ""
+    @State private var routingModelId = ""
+    @State private var routingError: String?
+
+    @State private var pushError: String?
+    @State private var pushStatusMessage: String?
+    @State private var pushWorking = false
 
     private let supabaseTokenStore = KeychainTokenStore(service: "rs.ctx.mobile", account: "supabaseToken")
+    private let deviceIdentityStore = DeviceIdentityStore()
 
     init(selectedWorkspace: WorkspaceSummary? = nil) {
         self.selectedWorkspace = selectedWorkspace
@@ -130,6 +149,109 @@ struct SettingsView: View {
 
                     GlassPanel {
                         VStack(alignment: .leading, spacing: 14) {
+                            Text("Notifications")
+                                .font(.headline)
+                                .foregroundColor(.ctxTextPrimary)
+                            Toggle("Push approvals", isOn: pushBinding)
+                                .tint(.ctxAccent)
+                                .disabled(pushToggleDisabled)
+                            SettingsStatusRowView(
+                                title: "Entitlement",
+                                value: pushEntitlementLabel,
+                                tint: pushEntitlementTint
+                            )
+                            SettingsStatusRowView(
+                                title: "Status",
+                                value: pushStatusLabel,
+                                tint: pushStatusTint
+                            )
+                            if let pushStatusMessage {
+                                Text(pushStatusMessage)
+                                    .font(.caption)
+                                    .foregroundColor(.ctxTextSecondary)
+                            }
+                            if let pushError {
+                                Text(pushError)
+                                    .font(.caption)
+                                    .foregroundColor(.ctxError)
+                            } else if let managerError = pushManager.lastError {
+                                Text(managerError)
+                                    .font(.caption)
+                                    .foregroundColor(.ctxError)
+                            }
+                        }
+                    }
+
+                    GlassPanel {
+                        VStack(alignment: .leading, spacing: 14) {
+                            Text("Model routing")
+                                .font(.headline)
+                                .foregroundColor(.ctxTextPrimary)
+                            if !routingEnabled {
+                                Text("Select a workspace to set routing defaults.")
+                                    .font(.caption)
+                                    .foregroundColor(.ctxTextMuted)
+                            }
+                            Menu {
+                                ForEach(routingProviderChoices, id: \.self) { providerId in
+                                    Button(providerLabel(providerId)) {
+                                        routingProviderId = providerId
+                                        routingModelId = ""
+                                        routingError = nil
+                                    }
+                                }
+                            } label: {
+                                SettingsMenuRowView(title: "Harness", value: routingProviderLabel)
+                            }
+                            .disabled(!routingEnabled || routingProviderChoices.isEmpty)
+
+                            Menu {
+                                ForEach(routingModelChoices, id: \.self) { modelId in
+                                    Button(modelId) {
+                                        routingModelId = modelId
+                                        routingError = nil
+                                    }
+                                }
+                            } label: {
+                                SettingsMenuRowView(title: "Model", value: routingModelLabel)
+                            }
+                            .disabled(!routingEnabled || routingModelChoices.isEmpty || routingProviderId.isEmpty)
+
+                            if let routingEntry, !routingEntry.updatedAt.isEmpty {
+                                Text("Updated \(routingEntry.updatedAt)")
+                                    .font(.caption)
+                                    .foregroundColor(.ctxTextMuted)
+                            }
+                            if let routingError {
+                                Text(routingError)
+                                    .font(.caption)
+                                    .foregroundColor(.ctxError)
+                            }
+
+                            HStack(spacing: 12) {
+                                Button {
+                                    _Concurrency.Task { await saveRoutingDefaults() }
+                                } label: {
+                                    Text("Save routing")
+                                }
+                                .buttonStyle(CtxPrimaryButtonStyle())
+                                .disabled(!routingCanSave)
+
+                                if routingEntry != nil {
+                                    Button {
+                                        _Concurrency.Task { await clearRoutingDefaults() }
+                                    } label: {
+                                        Text("Clear")
+                                    }
+                                    .buttonStyle(CtxGhostButtonStyle())
+                                    .disabled(!routingEnabled)
+                                }
+                            }
+                        }
+                    }
+
+                    GlassPanel {
+                        VStack(alignment: .leading, spacing: 14) {
                             Text("Providers")
                                 .font(.headline)
                                 .foregroundColor(.ctxTextPrimary)
@@ -140,13 +262,20 @@ struct SettingsView: View {
                                 Text(providersError)
                                     .font(.caption)
                                     .foregroundColor(.ctxError)
-                            } else if providers.isEmpty {
+                            } else if visibleProviders.isEmpty {
                                 Text("No providers detected.")
                                     .font(.caption)
                                     .foregroundColor(.ctxTextMuted)
                             } else {
-                                ForEach(providers, id: \.providerId) { provider in
-                                    ProviderRowView(provider: provider)
+                                SettingsRowView(title: "Workspace", value: workspaceLabel)
+                                ForEach(visibleProviders, id: \.providerId) { provider in
+                                    ProviderRowView(
+                                        provider: provider,
+                                        detailText: providerDetailText(provider),
+                                        statusPill: providerStatusPill(provider)
+                                    ) {
+                                        providerActions(for: provider)
+                                    }
                                 }
                             }
                         }
@@ -167,6 +296,14 @@ struct SettingsView: View {
         .onChange(of: connection.isConnected) { _ in
             _Concurrency.Task { await refreshAll() }
         }
+        .onChange(of: pushManager.pushToken) { _ in
+            guard pushManager.isEnabled else { return }
+            _Concurrency.Task { await syncPushRegistration(enabled: true) }
+        }
+        .onChange(of: routingProviderId) { newValue in
+            guard let workspaceId = selectedWorkspaceId, !newValue.isEmpty else { return }
+            _Concurrency.Task { await ensureProviderOptions(newValue, workspaceId: workspaceId, force: false) }
+        }
     }
 
     private var userLabel: String {
@@ -178,6 +315,16 @@ struct SettingsView: View {
 
     private var workspaceLabel: String {
         selectedWorkspace?.name ?? "No workspace"
+    }
+
+    private var selectedWorkspaceId: String? {
+        selectedWorkspace?.id
+    }
+
+    private var daemonKey: String? {
+        let raw = connection.secureConfig?.baseURL ?? connection.baseURLText
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     private var planLabel: String {
@@ -281,6 +428,98 @@ struct SettingsView: View {
         return .ctxTextMuted
     }
 
+    private var visibleProviders: [ProviderStatus] {
+        providers.filter { $0.details?["ui_hidden"] != "true" }
+    }
+
+    private var routingEnabled: Bool {
+        connection.apiClient != nil && selectedWorkspaceId != nil && daemonKey != nil
+    }
+
+    private var routingProviderChoices: [String] {
+        let installed = visibleProviders.filter { $0.installed && $0.health == "ok" }
+        return installed.map { $0.providerId }.filter { !$0.isEmpty }
+    }
+
+    private var routingProviderLabel: String {
+        routingProviderId.isEmpty ? "Select…" : providerLabel(routingProviderId)
+    }
+
+    private var routingModelChoices: [String] {
+        extractModelIds(from: providerOptions[routingProviderId]?.models)
+    }
+
+    private var routingModelLabel: String {
+        routingModelId.isEmpty ? "Select…" : routingModelId
+    }
+
+    private var routingCanSave: Bool {
+        routingEnabled && !routingProviderId.isEmpty && !routingModelId.isEmpty
+    }
+
+    private var pushToggleDisabled: Bool {
+        if connection.apiClient == nil { return true }
+        if pushWorking { return true }
+        if let entitlements, !entitlements.isFeatureEnabled("push_notifications") { return true }
+        return false
+    }
+
+    private var pushStatusLabel: String {
+        if !pushManager.isEnabled {
+            return "Disabled"
+        }
+        if pushManager.authorizationStatus == .denied {
+            return "Permission denied"
+        }
+        if pushManager.pushToken == nil {
+            return "Waiting for token"
+        }
+        return "Enabled"
+    }
+
+    private var pushStatusTint: Color {
+        if !pushManager.isEnabled {
+            return .ctxTextMuted
+        }
+        if pushManager.authorizationStatus == .denied {
+            return .ctxWarning
+        }
+        if pushManager.pushToken == nil {
+            return .ctxAccent
+        }
+        return .ctxAccent
+    }
+
+    private var pushBinding: Binding<Bool> {
+        Binding(
+            get: { pushManager.isEnabled },
+            set: { newValue in
+                pushManager.setEnabled(newValue)
+                _Concurrency.Task { await syncPushRegistration(enabled: newValue) }
+            }
+        )
+    }
+
+    private var pushEntitlementLabel: String {
+        if entitlementsLoading {
+            return "Loading"
+        }
+        if let entitlements {
+            return entitlements.isFeatureEnabled("push_notifications") ? "Pro enabled" : "Pro required"
+        }
+        return hasSupabaseToken ? "Unknown" : "Sign in required"
+    }
+
+    private var pushEntitlementTint: Color {
+        if entitlementsLoading {
+            return .ctxAccent
+        }
+        if let entitlements {
+            return entitlements.isFeatureEnabled("push_notifications") ? .ctxAccent : .ctxWarning
+        }
+        return .ctxTextMuted
+    }
+
     private func planLabel(for plan: EntitlementsSnapshot.PlanType) -> String {
         switch plan {
         case .freeLocal:
@@ -311,6 +550,11 @@ struct SettingsView: View {
         await refreshProviders()
         await refreshMobileStatus()
         await refreshEntitlements()
+        await pushManager.refreshAuthorizationStatus()
+        refreshRoutingDefaults()
+        if pushManager.isEnabled {
+            await syncPushRegistration(enabled: true)
+        }
     }
 
     @MainActor
@@ -365,6 +609,13 @@ struct SettingsView: View {
         providersError = nil
         do {
             providers = try await client.listProviders()
+            if let workspaceId = selectedWorkspaceId {
+                for provider in providers {
+                    _Concurrency.Task {
+                        await ensureProviderOptions(provider.providerId, workspaceId: workspaceId, force: false)
+                    }
+                }
+            }
         } catch {
             providers = []
             providersError = "Unable to load providers."
@@ -430,6 +681,542 @@ struct SettingsView: View {
         }
         entitlementsLoading = false
     }
+
+    private func refreshRoutingDefaults() {
+        routingEntry = nil
+        routingProviderId = ""
+        routingModelId = ""
+        routingError = nil
+        guard let daemonKey, let workspaceId = selectedWorkspaceId else { return }
+        guard let entry = ModelRoutingDefaults.load(daemonKey: daemonKey, workspaceId: workspaceId) else { return }
+        routingEntry = entry
+        routingProviderId = entry.providerId
+        routingModelId = entry.modelId
+    }
+
+    @MainActor
+    private func ensureProviderOptions(_ providerId: String, workspaceId: String, force: Bool) async {
+        guard let client = connection.apiClient else { return }
+        if !force, providerOptions[providerId] != nil { return }
+        if providerCheckBusy.contains(providerId) { return }
+        providerCheckBusy.insert(providerId)
+        defer { providerCheckBusy.remove(providerId) }
+        do {
+            let options = try await client.getProviderOptions(workspaceId: workspaceId, providerId: providerId)
+            providerOptions[providerId] = options
+        } catch {
+            providersError = "Unable to load provider details."
+        }
+    }
+
+    @MainActor
+    private func saveRoutingDefaults() async {
+        routingError = nil
+        guard let daemonKey, let workspaceId = selectedWorkspaceId else {
+            routingError = "Select a workspace to save routing."
+            return
+        }
+        guard !routingProviderId.isEmpty, !routingModelId.isEmpty else {
+            routingError = "Select a harness and model."
+            return
+        }
+        ModelRoutingDefaults.save(
+            daemonKey: daemonKey,
+            workspaceId: workspaceId,
+            providerId: routingProviderId,
+            modelId: routingModelId
+        )
+        refreshRoutingDefaults()
+    }
+
+    @MainActor
+    private func clearRoutingDefaults() async {
+        routingError = nil
+        guard let daemonKey, let workspaceId = selectedWorkspaceId else { return }
+        ModelRoutingDefaults.clear(daemonKey: daemonKey, workspaceId: workspaceId)
+        refreshRoutingDefaults()
+    }
+
+    private func providerLabel(_ providerId: String) -> String {
+        providerId
+            .replacingOccurrences(of: "_", with: " ")
+            .replacingOccurrences(of: "-", with: " ")
+            .capitalized
+    }
+
+    private func providerDetailText(_ provider: ProviderStatus) -> String {
+        let providerId = provider.providerId
+        if let installInfo = providerInstallInfo[providerId] {
+            switch installInfo.state {
+            case .running:
+                if let lastEvent = installInfo.lastEvent?.message, !lastEvent.isEmpty {
+                    return lastEvent
+                }
+                return "Installing..."
+            case .failed:
+                if let error = installInfo.error, !error.isEmpty {
+                    return "Install failed: \(error)"
+                }
+                return "Install failed."
+            case .succeeded:
+                break
+            }
+        }
+
+        if provider.installed == false {
+            return "Not installed."
+        }
+
+        if let options = providerOptions[providerId] {
+            if options.probeOk == false {
+                return options.probeError?.isEmpty == false ? options.probeError! : "Probe failed."
+            }
+            if options.authRequired {
+                return "Auth required."
+            }
+        }
+
+        if let version = provider.version, !version.isEmpty {
+            return version
+        }
+        if let path = provider.detectedPath, !path.isEmpty {
+            return path
+        }
+        return "Installed."
+    }
+
+    private func providerStatusPill(_ provider: ProviderStatus) -> StatusPill {
+        let providerId = provider.providerId
+        if let installInfo = providerInstallInfo[providerId] {
+            switch installInfo.state {
+            case .running:
+                return StatusPill(text: "Installing", tint: .ctxAccent)
+            case .failed:
+                return StatusPill(text: "Install failed", tint: .ctxError)
+            case .succeeded:
+                break
+            }
+        }
+
+        if provider.installed == false {
+            return StatusPill(text: "Not installed", tint: .ctxWarning)
+        }
+
+        if providerCheckBusy.contains(providerId) {
+            return StatusPill(text: "Checking", tint: .ctxAccent)
+        }
+        if providerAuthBusy.contains(providerId) {
+            return StatusPill(text: "Authenticating", tint: .ctxAccent)
+        }
+        if providerVerifyBusy.contains(providerId) {
+            return StatusPill(text: "Verifying", tint: .ctxAccent)
+        }
+
+        if let options = providerOptions[providerId] {
+            if options.probeOk == false {
+                return StatusPill(text: "Probe failed", tint: .ctxError)
+            }
+            if options.authRequired {
+                return StatusPill(text: "Auth required", tint: .ctxWarning)
+            }
+        }
+
+        if let verifyStatus = verifyStatus(for: providerId) {
+            return verifyStatus
+        }
+
+        return StatusPill(text: provider.health.replacingOccurrences(of: "_", with: " ").capitalized, tint: healthTint(for: provider))
+    }
+
+    @ViewBuilder
+    private func providerActions(for provider: ProviderStatus) -> some View {
+        let providerId = provider.providerId
+        let isInstalled = provider.installed
+        let workspaceId = selectedWorkspaceId
+        let options = providerOptions[providerId]
+        let authMethods = extractAuthMethods(from: options?.authMethods)
+        let authRequired = options?.authRequired == true || !authMethods.isEmpty
+        let installBusy = providerInstallBusy.contains(providerId) || providerInstallInfo[providerId]?.state == .running
+        let authBusy = providerAuthBusy.contains(providerId)
+        let verifyBusy = providerVerifyBusy.contains(providerId)
+        let checkBusy = providerCheckBusy.contains(providerId)
+
+        if !isInstalled || authRequired || workspaceId != nil {
+            HStack(spacing: 10) {
+                if !isInstalled {
+                    Button {
+                        _Concurrency.Task { await installProvider(providerId) }
+                    } label: {
+                        Text(installBusy ? "Installing..." : "Install")
+                    }
+                    .buttonStyle(CtxGhostButtonStyle())
+                    .disabled(installBusy || connection.apiClient == nil)
+                } else {
+                    if authRequired {
+                        if authMethods.count > 1 {
+                            Menu {
+                                ForEach(authMethods) { method in
+                                    Button(method.label) {
+                                        _Concurrency.Task { await authenticateProvider(providerId, methodId: method.id) }
+                                    }
+                                }
+                            } label: {
+                                Text(authBusy ? "Authenticating..." : "Authenticate")
+                            }
+                            .disabled(authBusy || workspaceId == nil)
+                            .buttonStyle(CtxGhostButtonStyle())
+                        } else {
+                            Button {
+                                _Concurrency.Task { await authenticateProvider(providerId, methodId: authMethods.first?.id) }
+                            } label: {
+                                Text(authBusy ? "Authenticating..." : "Authenticate")
+                            }
+                            .buttonStyle(CtxGhostButtonStyle())
+                            .disabled(authBusy || workspaceId == nil)
+                        }
+                    }
+
+                    Button {
+                        _Concurrency.Task { await verifyProvider(providerId) }
+                    } label: {
+                        Text(verifyBusy ? "Verifying..." : "Verify")
+                    }
+                    .buttonStyle(CtxGhostButtonStyle())
+                    .disabled(verifyBusy || workspaceId == nil)
+                }
+
+                if let workspaceId {
+                    Button {
+                        _Concurrency.Task { await ensureProviderOptions(providerId, workspaceId: workspaceId, force: true) }
+                    } label: {
+                        Text(checkBusy ? "Checking..." : "Refresh")
+                    }
+                    .buttonStyle(CtxGhostButtonStyle())
+                    .disabled(checkBusy)
+                }
+            }
+        }
+    }
+
+    @MainActor
+    private func installProvider(_ providerId: String) async {
+        guard let client = connection.apiClient else {
+            providersError = "Connect to a daemon to install providers."
+            return
+        }
+        if providerInstallBusy.contains(providerId) { return }
+        providerInstallBusy.insert(providerId)
+        defer { providerInstallBusy.remove(providerId) }
+        providersError = nil
+        do {
+            let response = try await client.installProvider(providerId: providerId)
+            await pollInstallStatus(installId: response.installId, providerId: providerId)
+            await refreshProviders()
+        } catch {
+            providersError = "Failed to start install."
+        }
+    }
+
+    @MainActor
+    private func pollInstallStatus(installId: String, providerId: String) async {
+        guard let client = connection.apiClient else { return }
+        for _ in 0..<30 {
+            do {
+                let info = try await client.getInstall(installId: installId)
+                providerInstallInfo[providerId] = info
+                if info.state != .running {
+                    return
+                }
+            } catch {
+                providersError = "Failed to check install status."
+                return
+            }
+            try? await _Concurrency.Task.sleep(nanoseconds: 1_000_000_000)
+        }
+    }
+
+    @MainActor
+    private func authenticateProvider(_ providerId: String, methodId: String?) async {
+        guard let client = connection.apiClient else {
+            providersError = "Connect to a daemon to authenticate providers."
+            return
+        }
+        guard let workspaceId = selectedWorkspaceId else {
+            providersError = "Select a workspace to authenticate."
+            return
+        }
+        if providerAuthBusy.contains(providerId) { return }
+        providerAuthBusy.insert(providerId)
+        defer { providerAuthBusy.remove(providerId) }
+        providersError = nil
+        do {
+            let response = try await client.authenticateProviderForWorkspace(
+                workspaceId: workspaceId,
+                providerId: providerId,
+                methodId: methodId
+            )
+            _ = handleAuthResponse(response)
+            await ensureProviderOptions(providerId, workspaceId: workspaceId, force: true)
+        } catch {
+            providersError = "Failed to authenticate provider."
+        }
+    }
+
+    @MainActor
+    private func verifyProvider(_ providerId: String) async {
+        guard let client = connection.apiClient else {
+            providersError = "Connect to a daemon to verify providers."
+            return
+        }
+        guard let workspaceId = selectedWorkspaceId else {
+            providersError = "Select a workspace to verify."
+            return
+        }
+        if providerVerifyBusy.contains(providerId) { return }
+        providerVerifyBusy.insert(providerId)
+        defer { providerVerifyBusy.remove(providerId) }
+        providersError = nil
+        do {
+            let response = try await client.verifyProviderForWorkspace(workspaceId: workspaceId, providerId: providerId)
+            providerVerifyResults[providerId] = response
+            await ensureProviderOptions(providerId, workspaceId: workspaceId, force: true)
+        } catch {
+            providersError = "Failed to verify provider."
+        }
+    }
+
+    @MainActor
+    private func syncPushRegistration(enabled: Bool) async {
+        guard let client = connection.apiClient else {
+            pushError = "Connect to a daemon to manage push approvals."
+            return
+        }
+        pushWorking = true
+        pushError = nil
+        pushStatusMessage = nil
+        do {
+            let identity = try await deviceIdentityStore.loadOrCreate()
+            if enabled, pushManager.authorizationStatus == .denied {
+                pushError = "Notification permission denied."
+                pushWorking = false
+                return
+            }
+            if enabled, pushManager.pushToken == nil {
+                pushStatusMessage = "Waiting for APNs token."
+                pushWorking = false
+                return
+            }
+            let payload = DaemonAPIClient.RegisterMobileDeviceRequest(
+                deviceId: identity.deviceId,
+                deviceLabel: UIDevice.current.name,
+                platform: UIDevice.current.systemName,
+                pushToken: enabled ? pushManager.pushToken : nil,
+                pushProvider: enabled && pushManager.pushToken != nil ? "apns" : nil,
+                publicKey: identity.publicKey,
+                appVersion: appVersionString()
+            )
+            _ = try await client.registerMobileDevice(payload)
+            pushStatusMessage = enabled ? "Push approvals enabled." : "Push approvals disabled."
+        } catch {
+            pushError = "Failed to update push registration."
+        }
+        pushWorking = false
+    }
+
+    private func appVersionString() -> String? {
+        let info = Bundle.main.infoDictionary
+        return info?["CFBundleShortVersionString"] as? String
+    }
+
+    private func extractModelIds(from models: JSONValue?) -> [String] {
+        guard let models else { return [] }
+        switch models {
+        case .array(let values):
+            let rawIds: [String] = values.compactMap { value in
+                switch value {
+                case .string(let string):
+                    return string
+                case .object(let object):
+                    if case .string(let id) = object["modelId"] ?? object["id"] {
+                        return id
+                    }
+                    return nil
+                default:
+                    return nil
+                }
+            }
+            return uniqueTrimmed(rawIds)
+        case .object(let object):
+            if let available = object["availableModels"] {
+                return extractModelIds(from: available)
+            }
+            if let models = object["models"] {
+                return extractModelIds(from: models)
+            }
+            if let choices = object["choices"] {
+                return extractModelIds(from: choices)
+            }
+            if case .string(let current) = object["currentModelId"] {
+                return uniqueTrimmed([current])
+            }
+            let keys = object.keys.filter { !$0.isEmpty && $0 != "choices" }.sorted()
+            return keys
+        default:
+            return []
+        }
+    }
+
+    private func uniqueTrimmed(_ values: [String]) -> [String] {
+        var seen = Set<String>()
+        var out: [String] = []
+        for value in values {
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty, !seen.contains(trimmed) else { continue }
+            seen.insert(trimmed)
+            out.append(trimmed)
+        }
+        return out
+    }
+
+    private struct ProviderAuthMethod: Identifiable {
+        let id: String
+        let label: String
+    }
+
+    private func extractAuthMethods(from value: JSONValue?) -> [ProviderAuthMethod] {
+        guard let value else { return [] }
+        switch value {
+        case .array(let items):
+            let methods = items.compactMap { item -> ProviderAuthMethod? in
+                switch item {
+                case .string(let id):
+                    let trimmed = id.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !trimmed.isEmpty else { return nil }
+                    return ProviderAuthMethod(id: trimmed, label: trimmed)
+                case .object(let object):
+                    let id = stringValue(from: object, keys: ["methodId", "method_id", "id", "type", "name"])
+                    let label = stringValue(from: object, keys: ["label", "name"]) ?? id
+                    guard let id, !id.isEmpty else { return nil }
+                    return ProviderAuthMethod(id: id, label: label ?? id)
+                default:
+                    return nil
+                }
+            }
+            return uniqueAuthMethods(methods)
+        case .object(let object):
+            if let choices = object["choices"] {
+                return extractAuthMethods(from: choices)
+            }
+            if let id = stringValue(from: object, keys: ["methodId", "method_id", "id", "type", "name"]) {
+                let label = stringValue(from: object, keys: ["label", "name"]) ?? id
+                return [ProviderAuthMethod(id: id, label: label)]
+            }
+            return []
+        default:
+            return []
+        }
+    }
+
+    private func uniqueAuthMethods(_ methods: [ProviderAuthMethod]) -> [ProviderAuthMethod] {
+        var seen = Set<String>()
+        var out: [ProviderAuthMethod] = []
+        for method in methods {
+            let trimmed = method.id.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty, !seen.contains(trimmed) else { continue }
+            seen.insert(trimmed)
+            out.append(method)
+        }
+        return out
+    }
+
+    private func verifyStatus(for providerId: String) -> StatusPill? {
+        let value = providerVerifyResults[providerId] ?? providerOptions[providerId]?.verify
+        guard let value else { return nil }
+        if case .bool(let ok) = value {
+            return StatusPill(text: ok ? "Verified" : "Verify failed", tint: ok ? .ctxAccent : .ctxError)
+        }
+        if case .string(let status) = value {
+            let trimmed = status.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return nil }
+            let lower = trimmed.lowercased()
+            if ["ok", "success", "verified", "healthy"].contains(lower) {
+                return StatusPill(text: "Verified", tint: .ctxAccent)
+            }
+            if ["failed", "error", "invalid"].contains(lower) {
+                return StatusPill(text: "Verify failed", tint: .ctxError)
+            }
+            return StatusPill(text: trimmed, tint: .ctxTextSecondary)
+        }
+        if case .object(let object) = value {
+            if let ok = boolValue(from: object, keys: ["ok", "success", "verified"]) {
+                return StatusPill(text: ok ? "Verified" : "Verify failed", tint: ok ? .ctxAccent : .ctxError)
+            }
+            if let status = stringValue(from: object, keys: ["status", "state", "result"]) {
+                let lower = status.lowercased()
+                if ["ok", "success", "verified", "healthy"].contains(lower) {
+                    return StatusPill(text: "Verified", tint: .ctxAccent)
+                }
+                if ["failed", "error", "invalid"].contains(lower) {
+                    return StatusPill(text: "Verify failed", tint: .ctxError)
+                }
+                return StatusPill(text: status, tint: .ctxTextSecondary)
+            }
+            if let message = stringValue(from: object, keys: ["message", "error"]) {
+                return StatusPill(text: message, tint: .ctxWarning)
+            }
+        }
+        return nil
+    }
+
+    private func handleAuthResponse(_ response: JSONValue) -> Bool {
+        guard let urlString = extractAuthURL(from: response),
+              let url = URL(string: urlString) else {
+            return false
+        }
+        UIApplication.shared.open(url)
+        return true
+    }
+
+    private func extractAuthURL(from response: JSONValue) -> String? {
+        switch response {
+        case .string(let value):
+            return value
+        case .object(let object):
+            return stringValue(from: object, keys: ["url", "authUrl", "auth_url", "openUrl", "open_url"])
+        default:
+            return nil
+        }
+    }
+
+    private func stringValue(from object: [String: JSONValue], keys: [String]) -> String? {
+        for key in keys {
+            if let value = object[key], case .string(let string) = value {
+                let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty { return trimmed }
+            }
+        }
+        return nil
+    }
+
+    private func boolValue(from object: [String: JSONValue], keys: [String]) -> Bool? {
+        for key in keys {
+            if let value = object[key], case .bool(let bool) = value {
+                return bool
+            }
+        }
+        return nil
+    }
+
+    private func healthTint(for provider: ProviderStatus) -> Color {
+        let health = provider.health.lowercased()
+        if health == "ok" || health == "healthy" {
+            return .ctxAccent
+        }
+        if health == "warning" || health == "unsupported version" || health == "unsupported_version" || health == "degraded" {
+            return .ctxWarning
+        }
+        return .ctxError
+    }
 }
 
 private struct SettingsRowView: View {
@@ -481,6 +1268,54 @@ private struct SettingsLinkRowView: View {
     }
 }
 
+private struct SettingsMenuRowView: View {
+    let title: String
+    let value: String
+
+    var body: some View {
+        HStack {
+            Text(title)
+                .foregroundColor(.ctxTextSecondary)
+            Spacer()
+            Text(value)
+                .foregroundColor(.ctxTextPrimary)
+                .multilineTextAlignment(.trailing)
+            Image(systemName: "chevron.down")
+                .foregroundColor(.ctxTextSecondary)
+                .font(.caption)
+        }
+        .font(.subheadline)
+        .padding(12)
+        .background(Color.ctxSurface.opacity(0.6), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(Color.ctxLine, lineWidth: 1)
+        )
+    }
+}
+
+private struct SettingsStatusRowView: View {
+    let title: String
+    let value: String
+    let tint: Color
+
+    var body: some View {
+        HStack {
+            Text(title)
+                .foregroundColor(.ctxTextSecondary)
+            Spacer()
+            GlassPill(text: value, tint: tint)
+        }
+        .font(.subheadline)
+        .padding(12)
+        .background(Color.ctxSurface.opacity(0.6), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(Color.ctxLine, lineWidth: 1)
+        )
+    }
+}
+
 struct WorkspaceSwitchView: View {
     @EnvironmentObject private var connection: ConnectionStore
     @EnvironmentObject private var workspaceSelection: WorkspaceSelectionStore
@@ -490,6 +1325,12 @@ struct WorkspaceSwitchView: View {
     @State private var workspaces: [WorkspaceSummary] = []
     @State private var isLoading = false
     @State private var errorMessage: String?
+    @State private var newWorkspacePath = ""
+    @State private var newWorkspaceName = ""
+    @State private var isCreating = false
+    @State private var createError: String?
+    @State private var deleteAlert: WorkspaceDeleteAlert?
+    @State private var deleteInFlight: Set<String> = []
 
     var body: some View {
         ZStack {
@@ -518,16 +1359,36 @@ struct WorkspaceSwitchView: View {
                     } else {
                         VStack(spacing: 12) {
                             ForEach(workspaces) { workspace in
-                                Button {
-                                    selectWorkspace(workspace)
-                                } label: {
-                                    WorkspaceSwitchRowView(
-                                        workspace: workspace,
-                                        isSelected: workspace.id == workspaceSelection.workspaceId
-                                    )
-                                }
-                                .buttonStyle(.plain)
+                                WorkspaceSwitchRowView(
+                                    workspace: workspace,
+                                    isSelected: workspace.id == workspaceSelection.workspaceId,
+                                    deleteDisabled: deleteInFlight.contains(workspace.id),
+                                    onSelect: { selectWorkspace(workspace) },
+                                    onDelete: { deleteAlert = WorkspaceDeleteAlert(workspace: workspace) }
+                                )
                             }
+                        }
+                    }
+
+                    GlassPanel {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("Create workspace")
+                                .font(.headline)
+                                .foregroundColor(.ctxTextPrimary)
+                            CtxField(title: "Root path", placeholder: "/path/to/repo", text: $newWorkspacePath)
+                            CtxField(title: "Name (optional)", placeholder: "Workspace name", text: $newWorkspaceName)
+                            if let createError {
+                                Text(createError)
+                                    .font(.caption)
+                                    .foregroundColor(.ctxError)
+                            }
+                            Button {
+                                _Concurrency.Task { await createWorkspace() }
+                            } label: {
+                                Text(isCreating ? "Creating..." : "Create workspace")
+                            }
+                            .buttonStyle(CtxPrimaryButtonStyle())
+                            .disabled(isCreating || newWorkspacePath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                         }
                     }
                 }
@@ -538,6 +1399,16 @@ struct WorkspaceSwitchView: View {
         .navigationTitle("Workspace")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.visible, for: .navigationBar)
+        .alert(item: $deleteAlert) { alert in
+            Alert(
+                title: Text("Remove Workspace"),
+                message: Text("Remove \"\(alert.name)\"? This deletes the workspace and its worktrees."),
+                primaryButton: .destructive(Text("Remove")) {
+                    _Concurrency.Task { await deleteWorkspace(alert.workspace) }
+                },
+                secondaryButton: .cancel()
+            )
+        }
         .task {
             await loadWorkspaces()
         }
@@ -570,11 +1441,62 @@ struct WorkspaceSwitchView: View {
         workbenchSelection.setSelection(taskId: nil, trackId: nil, sessionId: nil)
         dismiss()
     }
+
+    @MainActor
+    private func createWorkspace() async {
+        guard let client = connection.apiClient else {
+            createError = "Connect to a daemon to create workspaces."
+            return
+        }
+        let rootPath = newWorkspacePath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !rootPath.isEmpty else {
+            createError = "Root path is required."
+            return
+        }
+        let name = newWorkspaceName.trimmingCharacters(in: .whitespacesAndNewlines)
+        isCreating = true
+        createError = nil
+        do {
+            let workspace = try await client.createWorkspace(rootPath: rootPath, name: name.isEmpty ? nil : name)
+            newWorkspacePath = ""
+            newWorkspaceName = ""
+            await loadWorkspaces()
+            selectWorkspace(workspace)
+        } catch {
+            createError = "Failed to create workspace."
+        }
+        isCreating = false
+    }
+
+    @MainActor
+    private func deleteWorkspace(_ workspace: WorkspaceSummary) async {
+        guard let client = connection.apiClient else {
+            errorMessage = "Connect to a daemon to manage workspaces."
+            return
+        }
+        if deleteInFlight.contains(workspace.id) { return }
+        deleteInFlight.insert(workspace.id)
+        defer { deleteInFlight.remove(workspace.id) }
+        do {
+            try await client.deleteWorkspace(workspaceId: workspace.id)
+            await loadWorkspaces()
+            if workspace.id == workspaceSelection.workspaceId {
+                workspaceSelection.clear(daemonKey: connection.baseURLText)
+                workbenchSelection.setContext(daemonKey: connection.baseURLText, workspaceId: nil)
+                workbenchSelection.clearSelection()
+            }
+        } catch {
+            errorMessage = "Failed to remove workspace."
+        }
+    }
 }
 
 private struct WorkspaceSwitchRowView: View {
     let workspace: WorkspaceSummary
     let isSelected: Bool
+    let deleteDisabled: Bool
+    let onSelect: () -> Void
+    let onDelete: () -> Void
 
     var body: some View {
         HStack(spacing: 12) {
@@ -601,6 +1523,15 @@ private struct WorkspaceSwitchRowView: View {
                 Image(systemName: "checkmark.circle.fill")
                     .foregroundColor(.ctxAccent)
             }
+
+            Button {
+                onDelete()
+            } label: {
+                Image(systemName: "trash")
+                    .foregroundColor(.ctxTextSecondary)
+            }
+            .buttonStyle(.plain)
+            .disabled(deleteDisabled)
         }
         .padding(12)
         .background(Color.ctxSurface.opacity(isSelected ? 0.75 : 0.6), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
@@ -608,6 +1539,10 @@ private struct WorkspaceSwitchRowView: View {
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .stroke(isSelected ? Color.ctxAccent.opacity(0.6) : Color.ctxLine, lineWidth: 1)
         )
+        .contentShape(Rectangle())
+        .onTapGesture {
+            onSelect()
+        }
     }
 
     private var workspaceDetailText: String {
@@ -616,23 +1551,35 @@ private struct WorkspaceSwitchRowView: View {
     }
 }
 
-private struct ProviderRowView: View {
+private struct WorkspaceDeleteAlert: Identifiable {
+    let id = UUID()
+    let workspace: WorkspaceSummary
+    var name: String { workspace.name }
+}
+
+private struct ProviderRowView<Actions: View>: View {
     let provider: ProviderStatus
+    let detailText: String
+    let statusPill: StatusPill
+    @ViewBuilder let actions: () -> Actions
 
     var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: "bolt.circle")
-                .foregroundColor(.ctxAccent)
-            VStack(alignment: .leading, spacing: 4) {
-                Text(displayName)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundColor(.ctxTextPrimary)
-                Text(detailText)
-                    .font(.caption)
-                    .foregroundColor(.ctxTextMuted)
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 12) {
+                Image(systemName: "bolt.circle")
+                    .foregroundColor(.ctxAccent)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(displayName)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundColor(.ctxTextPrimary)
+                    Text(detailText)
+                        .font(.caption)
+                        .foregroundColor(.ctxTextMuted)
+                }
+                Spacer()
+                GlassPill(text: statusPill.text, tint: statusPill.tint)
             }
-            Spacer()
-            GlassPill(text: healthLabel, tint: healthTint)
+            actions()
         }
         .padding(12)
         .background(Color.ctxSurface.opacity(0.6), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
@@ -646,33 +1593,6 @@ private struct ProviderRowView: View {
         provider.providerId.replacingOccurrences(of: "_", with: " ").capitalized
     }
 
-    private var detailText: String {
-        if provider.installed == false {
-            return "Not installed"
-        }
-        if let version = provider.version, !version.isEmpty {
-            return version
-        }
-        if let path = provider.detectedPath, !path.isEmpty {
-            return path
-        }
-        return "Installed"
-    }
-
-    private var healthLabel: String {
-        provider.health.replacingOccurrences(of: "_", with: " ").capitalized
-    }
-
-    private var healthTint: Color {
-        let health = provider.health.lowercased()
-        if health == "ok" || health == "healthy" {
-            return .ctxAccent
-        }
-        if health == "warning" || health == "unsupported version" || health == "unsupported_version" || health == "degraded" {
-            return .ctxWarning
-        }
-        return .ctxError
-    }
 }
 
 private struct StatusPill {
@@ -720,4 +1640,7 @@ private struct SettingsNavigationRowView: View {
 #Preview {
     SettingsView()
         .environmentObject(ConnectionStore())
+        .environmentObject(PushNotificationManager.shared)
+        .environmentObject(WorkspaceSelectionStore())
+        .environmentObject(WorkbenchSelectionStore())
 }

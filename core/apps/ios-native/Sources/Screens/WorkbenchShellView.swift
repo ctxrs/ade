@@ -29,6 +29,7 @@ struct WorkbenchShellView: View {
     @State private var deleteInFlight: Set<String> = []
     @State private var deleteAlert: WorkbenchDeleteAlert?
     @State private var isArtifactsPresented = false
+    @State private var activePanel: WorkbenchPanel?
     @State private var topBarAlert: WorkbenchTopBarAlert?
     @State private var sharePayload: SharePayload?
     @State private var streamTask: _Concurrency.Task<Void, Never>?
@@ -79,6 +80,8 @@ struct WorkbenchShellView: View {
                         onDiffTap: { handleTopBarAction(.diff) },
                         onSessionsTap: { handleTopBarAction(.sessions) },
                         onTerminalTap: { handleTopBarAction(.terminal) },
+                        activePanel: activePanel,
+                        isSessionsEnabled: resolvedSession != nil,
                         conversationMenuContext: conversationMenuContext,
                         showsTaskActions: workbenchSelection.taskId != nil
                     )
@@ -186,6 +189,25 @@ struct WorkbenchShellView: View {
         .sheet(item: $sharePayload) { payload in
             ShareSheet(items: payload.items)
         }
+        .sheet(item: $activePanel) { panel in
+            switch panel {
+            case .diff:
+                WorkbenchDiffPanelView(
+                    trackId: activeTrackId,
+                    diffSummary: activeTrackSummary?.diffSummary
+                )
+            case .sessions:
+                WorkbenchSessionsPanelView(sessionId: resolvedSession?.id)
+            case .terminal:
+                WorkbenchTerminalPanelView(
+                    workspaceId: selectedWorkspace?.id,
+                    taskId: workbenchSelection.taskId,
+                    trackId: workbenchSelection.trackId,
+                    sessionId: resolvedSession?.id,
+                    worktreeId: resolvedSession?.worktreeId
+                )
+            }
+        }
         .sheet(isPresented: $isRenaming) {
             RenameSheet(
                 title: $renameText,
@@ -241,20 +263,26 @@ struct WorkbenchShellView: View {
                 )
             }
         case .diff:
-            topBarAlert = WorkbenchTopBarAlert(
-                title: "Diff",
-                message: "Diff view is stubbed for now."
-            )
+            togglePanel(.diff)
         case .sessions:
-            topBarAlert = WorkbenchTopBarAlert(
-                title: "Sessions",
-                message: "Sessions panel is stubbed for now."
-            )
+            guard resolvedSession != nil else {
+                topBarAlert = WorkbenchTopBarAlert(
+                    title: "Sessions",
+                    message: "Select a task session to view sessions."
+                )
+                return
+            }
+            togglePanel(.sessions)
         case .terminal:
-            topBarAlert = WorkbenchTopBarAlert(
-                title: "Terminal",
-                message: "Terminal panel is stubbed for now."
-            )
+            togglePanel(.terminal)
+        }
+    }
+
+    private func togglePanel(_ panel: WorkbenchPanel) {
+        if activePanel == panel {
+            activePanel = nil
+        } else {
+            activePanel = panel
         }
     }
 
@@ -431,6 +459,22 @@ struct WorkbenchShellView: View {
             preferredTrackId: workbenchSelection.trackId,
             preferredSessionId: workbenchSelection.sessionId
         ).session
+    }
+
+    private var activeTrackSummary: WorkspaceCatchupTrackSummary? {
+        guard let selectedTask else { return nil }
+        let resolved = resolvePrimarySession(
+            for: selectedTask,
+            preferredTrackId: workbenchSelection.trackId,
+            preferredSessionId: workbenchSelection.sessionId
+        )
+        let trackId = resolved.trackId ?? workbenchSelection.trackId
+        guard let trackId else { return nil }
+        return selectedTask.tracks.first(where: { $0.track.id.stringValue == trackId })
+    }
+
+    private var activeTrackId: String? {
+        activeTrackSummary?.track.id.stringValue
     }
 
     @MainActor
@@ -1087,6 +1131,8 @@ private struct WorkbenchTopBar: View {
     let onDiffTap: () -> Void
     let onSessionsTap: () -> Void
     let onTerminalTap: () -> Void
+    let activePanel: WorkbenchPanel?
+    let isSessionsEnabled: Bool
     let conversationMenuContext: WorkbenchConversationMenuContext?
     let showsTaskActions: Bool
 
@@ -1115,16 +1161,24 @@ private struct WorkbenchTopBar: View {
 
                     Button(action: onDiffTap) {
                         LucideIcon(name: .gitBranch, size: 16)
+                            .foregroundColor(activePanel == .diff ? .ctxAccent : .ctxTextPrimary)
                     }
                     .accessibilityIdentifier("topbar.diff")
 
                     Button(action: onSessionsTap) {
                         LucideIcon(name: .monitor, size: 16)
+                            .foregroundColor(
+                                isSessionsEnabled
+                                ? (activePanel == .sessions ? .ctxAccent : .ctxTextPrimary)
+                                : .ctxTextMuted
+                            )
                     }
                     .accessibilityIdentifier("topbar.sessions")
+                    .disabled(!isSessionsEnabled)
 
                     Button(action: onTerminalTap) {
                         LucideIcon(name: .terminal, size: 16)
+                            .foregroundColor(activePanel == .terminal ? .ctxAccent : .ctxTextPrimary)
                     }
                     .accessibilityIdentifier("topbar.terminal")
 
@@ -1436,6 +1490,14 @@ private struct WorkbenchWorkspaceSwitcherView: View {
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("drawer.workspace.switch")
             }
+
+            NavigationLink {
+                SettingsView(selectedWorkspace: selectedWorkspace)
+            } label: {
+                DrawerLinkRowView(title: "Settings", icon: "gearshape")
+                    .accessibilityIdentifier("drawer.settings")
+            }
+            .buttonStyle(.plain)
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1532,11 +1594,16 @@ private struct WorkbenchNewTaskView: View {
     @State private var isLoadingModels = false
     @State private var errorMessage: String?
     @State private var isSubmitting = false
+    @State private var routingEntry: ModelRoutingEntry?
     @FocusState private var isPromptFocused: Bool
 
     var body: some View {
         ScrollView(showsIndicators: false) {
             VStack(alignment: .leading, spacing: 16) {
+                Text("New task")
+                    .font(.title3.weight(.semibold))
+                    .foregroundColor(.ctxTextPrimary)
+
                 if isLoadingTasks {
                     Text("Refreshing tasks...")
                         .font(.caption)
@@ -1545,42 +1612,39 @@ private struct WorkbenchNewTaskView: View {
                     WorkbenchInfoCard(text: taskError, tint: .ctxError)
                 }
 
-                GlassPanel(cornerRadius: 18, padding: 12) {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("Prompt")
-                            .font(.caption.weight(.semibold))
-                            .foregroundColor(.ctxTextMuted)
-                        CtxTextArea(
-                            placeholder: "Describe what you want...",
-                            text: $prompt,
-                            accessibilityId: "newtask.prompt",
-                            isFocused: $isPromptFocused
-                        )
-
-                        WorkbenchHarnessPicker(
-                            title: "Harness",
-                            value: providerLabel,
-                            providerId: providerIconId,
-                            isDisabled: providerOptionsDisabled,
-                            options: availableProviderIds,
-                            displayName: formatProviderName,
-                            onSelect: { id in
-                                selectedProviderId = id
-                                selectedModelId = ""
-                            }
-                        )
-
-                        WorkbenchMenuPicker(
-                            title: "Model",
-                            value: modelLabel,
-                            isDisabled: modelOptionsDisabled,
-                            options: modelChoices,
-                            onSelect: { id in
-                                selectedModelId = id
-                            }
-                        )
-                    }
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Prompt")
+                        .font(.caption.weight(.semibold))
+                        .foregroundColor(.ctxTextMuted)
+                    CtxTextArea(
+                        placeholder: "Describe what you want...",
+                        text: $prompt,
+                        accessibilityId: "newtask.prompt",
+                        isFocused: $isPromptFocused
+                    )
                 }
+
+                WorkbenchInlineHarnessPicker(
+                    value: providerLabel,
+                    providerId: providerIconId,
+                    isDisabled: providerOptionsDisabled,
+                    options: availableProviderIds,
+                    displayName: formatProviderName,
+                    onSelect: { id in
+                        selectedProviderId = id
+                        selectedModelId = ""
+                    }
+                )
+
+                WorkbenchInlineMenuPicker(
+                    title: "Model",
+                    value: modelLabel,
+                    isDisabled: modelOptionsDisabled,
+                    options: modelChoices,
+                    onSelect: { id in
+                        selectedModelId = id
+                    }
+                )
 
                 if let errorMessage {
                     WorkbenchInfoCard(text: errorMessage, tint: .ctxError)
@@ -1597,6 +1661,7 @@ private struct WorkbenchNewTaskView: View {
             .padding(.bottom, 20)
         }
         .task(id: workspace.id) {
+            loadRoutingDefaults()
             await loadProviders()
         }
         .task(id: effectiveProviderId) {
@@ -1619,6 +1684,12 @@ private struct WorkbenchNewTaskView: View {
         prompt.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    private var daemonKey: String? {
+        let raw = connection.secureConfig?.baseURL ?? connection.baseURLText
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
     private var availableProviderIds: [String] {
         let installed = providers.filter { $0.installed && $0.health == "ok" }
         return installed.map { $0.providerId }.filter { !$0.isEmpty }
@@ -1627,6 +1698,9 @@ private struct WorkbenchNewTaskView: View {
     private var effectiveProviderId: String {
         if !selectedProviderId.isEmpty {
             return selectedProviderId
+        }
+        if let routingEntry, availableProviderIds.contains(routingEntry.providerId) {
+            return routingEntry.providerId
         }
         if availableProviderIds.contains("codex") {
             return "codex"
@@ -1652,6 +1726,11 @@ private struct WorkbenchNewTaskView: View {
     private var effectiveModelId: String {
         if !selectedModelId.isEmpty {
             return selectedModelId
+        }
+        if let routingEntry, routingEntry.providerId == effectiveProviderId {
+            if modelChoices.isEmpty || modelChoices.contains(routingEntry.modelId) {
+                return routingEntry.modelId
+            }
         }
         return modelChoices.first ?? "default"
     }
@@ -1689,6 +1768,7 @@ private struct WorkbenchNewTaskView: View {
             isLoadingProviders = false
             return
         }
+        loadRoutingDefaults()
         isLoadingProviders = true
         errorMessage = nil
         do {
@@ -1701,6 +1781,15 @@ private struct WorkbenchNewTaskView: View {
             errorMessage = "Failed to load harnesses."
         }
         isLoadingProviders = false
+    }
+
+    @MainActor
+    private func loadRoutingDefaults() {
+        guard let daemonKey else {
+            routingEntry = nil
+            return
+        }
+        routingEntry = ModelRoutingDefaults.load(daemonKey: daemonKey, workspaceId: workspace.id)
     }
 
     @MainActor
@@ -1903,6 +1992,36 @@ private struct WorkbenchMenuPicker: View {
     }
 }
 
+private struct WorkbenchInlineMenuPicker: View {
+    let title: String
+    let value: String
+    let isDisabled: Bool
+    let options: [String]
+    let onSelect: (String) -> Void
+
+    var body: some View {
+        Menu {
+            ForEach(options, id: \.self) { option in
+                Button(option) { onSelect(option) }
+            }
+        } label: {
+            HStack(spacing: 10) {
+                Text(title)
+                    .font(.caption.weight(.semibold))
+                    .foregroundColor(.ctxTextMuted)
+                Spacer()
+                Text(value)
+                    .foregroundColor(.ctxTextPrimary)
+                    .font(.subheadline.weight(.semibold))
+                LucideIcon(name: .chevronDown, size: 12)
+                    .foregroundColor(.ctxTextSecondary)
+            }
+            .padding(.vertical, 6)
+        }
+        .disabled(isDisabled)
+    }
+}
+
 private struct WorkbenchHarnessPicker: View {
     let title: String
     let value: String
@@ -1934,6 +2053,35 @@ private struct WorkbenchHarnessPicker: View {
                 .padding(.vertical, 6)
             }
             .contentShape(Rectangle())
+        }
+        .disabled(isDisabled)
+    }
+}
+
+private struct WorkbenchInlineHarnessPicker: View {
+    let value: String
+    let providerId: String?
+    let isDisabled: Bool
+    let options: [String]
+    let displayName: (String) -> String
+    let onSelect: (String) -> Void
+
+    var body: some View {
+        Menu {
+            ForEach(options, id: \.self) { option in
+                Button(displayName(option)) { onSelect(option) }
+            }
+        } label: {
+            HStack(spacing: 10) {
+                HarnessLogoView(providerId: providerId)
+                Text(value)
+                    .foregroundColor(.ctxTextPrimary)
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+                LucideIcon(name: .chevronDown, size: 12)
+                    .foregroundColor(.ctxTextSecondary)
+            }
+            .padding(.vertical, 6)
         }
         .disabled(isDisabled)
     }
@@ -2240,6 +2388,19 @@ private func resolveDefaultSessionConfig(
 ) async throws -> (providerId: String, modelId: String) {
     let providers = try await client.listProviders()
     let installed = providers.filter { $0.installed && $0.health == "ok" }
+    let daemonKey = await client.daemonBaseURL().absoluteString
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+    if !daemonKey.isEmpty,
+       let entry = ModelRoutingDefaults.load(daemonKey: daemonKey, workspaceId: workspaceId),
+       !entry.providerId.isEmpty,
+       !entry.modelId.isEmpty,
+       installed.contains(where: { $0.providerId == entry.providerId }) {
+        let options = try await client.getProviderOptions(workspaceId: workspaceId, providerId: entry.providerId)
+        let modelIds = extractModelIds(from: options.models)
+        if modelIds.isEmpty || modelIds.contains(entry.modelId) {
+            return (entry.providerId, entry.modelId)
+        }
+    }
     guard let preferred = installed.first(where: { $0.providerId == "codex" }) ?? installed.first else {
         throw DaemonAPIError.requestFailed(statusCode: 400, message: "No available harnesses.")
     }
@@ -2310,33 +2471,40 @@ private struct WorkbenchTaskRowView: View {
     }
 
     var body: some View {
-        HStack(spacing: 8) {
-            TaskHarnessView(
-                providerIds: indicators.providerIds
-            )
-            .frame(width: 18, height: 18)
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                TaskHarnessView(providerIds: indicators.providerIds)
 
-            Text(title)
-                .font(.system(size: 12.5))
-                .foregroundColor(.ctxTextPrimary)
-                .lineLimit(1)
-                .truncationMode(.tail)
+                Text(title)
+                    .font(.system(size: 12.5))
+                    .foregroundColor(.ctxTextPrimary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
 
-            Spacer()
+                Spacer()
 
-            HStack(spacing: 6) {
-                Text(indicators.ageLabel)
-                    .font(.system(size: 12))
-                    .foregroundColor(.ctxTextMuted)
-                    .frame(minWidth: 28, alignment: .trailing)
+                HStack(spacing: 6) {
+                    Text(indicators.ageLabel)
+                        .font(.system(size: 12))
+                        .foregroundColor(.ctxTextMuted)
+                        .frame(minWidth: 28, alignment: .trailing)
 
-                TaskSpinnerView(isActive: indicators.isWorking)
+                    TaskSpinnerView(isActive: indicators.isWorking)
 
-                if indicators.dotKind == .unread {
-                    TaskStatusDot(color: Color.ctxAccent)
-                } else if indicators.dotKind == .error {
-                    TaskStatusDot(color: Color.ctxError)
+                    if indicators.dotKind == .unread {
+                        TaskStatusDot(color: Color.ctxAccent)
+                    } else if indicators.dotKind == .error {
+                        TaskStatusDot(color: Color.ctxError)
+                    }
                 }
+            }
+
+            if let preview = indicators.previewText {
+                Text(preview)
+                    .font(.system(size: 11))
+                    .foregroundColor(.ctxTextMuted)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
             }
         }
         .padding(.vertical, 6)
@@ -2352,14 +2520,41 @@ private struct WorkbenchTaskRowView: View {
 private struct TaskHarnessView: View {
     let providerIds: [String]
 
-    private var primaryProviderId: String? {
-        providerIds.first
+    private var displayIds: [String] {
+        Array(providerIds.prefix(2))
+    }
+
+    private var overflowCount: Int {
+        max(0, providerIds.count - displayIds.count)
     }
 
     var body: some View {
+        HStack(spacing: -6) {
+            ForEach(displayIds, id: \.self) { providerId in
+                TaskHarnessIcon(providerId: providerId)
+            }
+            if overflowCount > 0 {
+                Text("+\(overflowCount)")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(.ctxTextSecondary)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.ctxSurface.opacity(0.7), in: Capsule())
+                    .overlay(
+                        Capsule()
+                            .stroke(Color.ctxLine, lineWidth: 1)
+                    )
+            }
+        }
+    }
+}
+
+private struct TaskHarnessIcon: View {
+    let providerId: String
+
+    var body: some View {
         let base = RoundedRectangle(cornerRadius: 6, style: .continuous)
-        if let providerId = primaryProviderId,
-           let harness = HarnessCatalog.entry(for: providerId) {
+        if let harness = HarnessCatalog.entry(for: providerId) {
             Image(harness.assetName)
                 .resizable()
                 .renderingMode(.original)
@@ -2374,6 +2569,7 @@ private struct TaskHarnessView: View {
         } else {
             base
                 .fill(Color.white.opacity(0.10))
+                .frame(width: 16, height: 16)
                 .overlay(
                     base.stroke(Color(red: 0.071, green: 0.071, blue: 0.071).opacity(0.8), lineWidth: 1)
                 )
@@ -2484,6 +2680,7 @@ private struct TaskRowIndicators {
     let isWorking: Bool
     let dotKind: TaskRowDotKind?
     let ageLabel: String
+    let previewText: String?
 
     init(task: WorkspaceCatchupTaskSummary) {
         providerIds = resolveProviderIds(for: task)
@@ -2498,12 +2695,33 @@ private struct TaskRowIndicators {
             dotKind = nil
         }
         ageLabel = formatRelativeAgeShort(task.task.lastActivityAt ?? task.task.updatedAt ?? task.task.createdAt)
+        previewText = resolveTaskPreview(task)
     }
 }
 
 private enum TaskRowDotKind {
     case unread
     case error
+}
+
+private func resolveTaskPreview(_ task: WorkspaceCatchupTaskSummary) -> String? {
+    for track in task.tracks {
+        if let primaryId = track.primarySessionId,
+           let summary = track.sessions.first(where: { $0.session.id == primaryId }),
+           let preview = summary.lastMessagePreview?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !preview.isEmpty {
+            return preview
+        }
+    }
+    for track in task.tracks {
+        for summary in track.sessions {
+            if let preview = summary.lastMessagePreview?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !preview.isEmpty {
+                return preview
+            }
+        }
+    }
+    return nil
 }
 
 

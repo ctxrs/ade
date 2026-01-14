@@ -44,6 +44,7 @@ final class ConnectionStore: ObservableObject {
     func connect() async {
         lastError = nil
         let baseValue = secureConfig?.baseURL ?? baseURLText
+        let baseString = baseValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let baseURL = URL(string: baseValue) else {
             lastError = "Invalid daemon URL."
             return
@@ -63,6 +64,7 @@ final class ConnectionStore: ObservableObject {
                 let context = SecureConnectionContext(deviceId: secureConfig.deviceId, key: key)
                 apiClient = DaemonAPIClient(baseURL: baseURL, tokenStore: tokenStore, secureContext: context)
                 isConnected = true
+                ConnectionHistoryStore.add(baseURL: baseString, tokenPrefix: "secure")
                 return
             } catch {
                 lastError = "Failed to establish secure connection."
@@ -71,14 +73,19 @@ final class ConnectionStore: ObservableObject {
         }
 
         let client = DaemonAPIClient(baseURL: baseURL, tokenStore: tokenStore)
+        var tokenPrefix: String?
         do {
-            if tokenText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                _ = try await client.loadToken()
+            let trimmedToken = tokenText.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmedToken.isEmpty {
+                let stored = try await client.loadToken()
+                tokenPrefix = stored.map { String($0.prefix(6)) }
             } else {
                 try await client.setToken(tokenText)
+                tokenPrefix = String(trimmedToken.prefix(6))
             }
             apiClient = client
             isConnected = true
+            ConnectionHistoryStore.add(baseURL: baseString, tokenPrefix: tokenPrefix)
         } catch {
             lastError = "Failed to store token."
         }

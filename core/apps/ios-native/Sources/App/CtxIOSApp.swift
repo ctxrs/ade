@@ -3,9 +3,11 @@ import _Concurrency
 
 @main
 struct CtxIOSApp: App {
+    @UIApplicationDelegateAdaptor(PushNotificationAppDelegate.self) private var appDelegate
     @StateObject private var connectionStore: ConnectionStore
     @StateObject private var workspaceSelectionStore = WorkspaceSelectionStore()
     @StateObject private var workbenchSelectionStore = WorkbenchSelectionStore()
+    @StateObject private var pushManager = PushNotificationManager.shared
 
     init() {
         let store = ConnectionStore()
@@ -26,6 +28,7 @@ struct CtxIOSApp: App {
                 .environmentObject(connectionStore)
                 .environmentObject(workspaceSelectionStore)
                 .environmentObject(workbenchSelectionStore)
+                .environmentObject(pushManager)
         }
     }
 }

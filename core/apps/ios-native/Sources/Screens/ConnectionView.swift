@@ -10,6 +10,7 @@ struct ConnectionView: View {
     @State private var isConnecting = false
     @State private var shouldNavigate = false
     @State private var isShowingScanner = false
+    @State private var recentConnections: [ConnectionHistoryEntry] = []
 
     private let deviceIdentityStore = DeviceIdentityStore()
 
@@ -73,6 +74,7 @@ struct ConnectionView: View {
                                     connection.tokenText = accessToken
                                     await connection.connect()
                                     isConnecting = false
+                                    recentConnections = ConnectionHistoryStore.load()
                                     if connection.isConnected {
                                         shouldNavigate = true
                                     }
@@ -104,12 +106,41 @@ struct ConnectionView: View {
 
                     GlassPanel {
                         VStack(alignment: .leading, spacing: 12) {
-                            Text("Recent connections")
-                                .font(.headline)
-                                .foregroundColor(.ctxTextPrimary)
-                            VStack(spacing: 10) {
-                                ConnectionRowView(title: "Example Mac", subtitle: "https://192.0.2.21:8443", status: "Healthy")
-                                ConnectionRowView(title: "Remote Devbox", subtitle: "https://example.test", status: "Idle")
+                            HStack {
+                                Text("Recent connections")
+                                    .font(.headline)
+                                    .foregroundColor(.ctxTextPrimary)
+                                Spacer()
+                                if !recentConnections.isEmpty {
+                                    Button("Clear") {
+                                        ConnectionHistoryStore.clear()
+                                        recentConnections = []
+                                    }
+                                    .buttonStyle(.plain)
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundColor(.ctxTextSecondary)
+                                }
+                            }
+
+                            if recentConnections.isEmpty {
+                                Text("No recent connections yet.")
+                                    .font(.caption)
+                                    .foregroundColor(.ctxTextMuted)
+                            } else {
+                                VStack(spacing: 10) {
+                                    ForEach(recentConnections) { entry in
+                                        Button {
+                                            applyConnection(entry)
+                                        } label: {
+                                            ConnectionRowView(
+                                                title: connectionTitle(entry),
+                                                subtitle: connectionSubtitle(entry),
+                                                status: connectionStatus(entry)
+                                            )
+                                        }
+                                        .buttonStyle(.plain)
+                                    }
+                                }
                             }
                         }
                     }
@@ -123,6 +154,7 @@ struct ConnectionView: View {
             if daemonURL.isEmpty {
                 daemonURL = connection.baseURLText
             }
+            recentConnections = ConnectionHistoryStore.load()
         }
         .onChange(of: connection.isConnected) { connected in
             if connected {
@@ -156,6 +188,40 @@ struct ConnectionView: View {
             }
         }
         .toolbar(.hidden, for: .navigationBar)
+    }
+
+    private func applyConnection(_ entry: ConnectionHistoryEntry) {
+        daemonURL = entry.baseURL
+        connection.baseURLText = entry.baseURL
+        accessToken = ""
+        connection.tokenText = ""
+    }
+
+    private func connectionTitle(_ entry: ConnectionHistoryEntry) -> String {
+        let host = URL(string: entry.baseURL)?.host
+        return host?.isEmpty == false ? host! : entry.baseURL
+    }
+
+    private func connectionSubtitle(_ entry: ConnectionHistoryEntry) -> String {
+        if let detail = tokenDetail(entry) {
+            return "\(entry.baseURL) · \(detail)"
+        }
+        return entry.baseURL
+    }
+
+    private func connectionStatus(_ entry: ConnectionHistoryEntry) -> String {
+        guard let date = entry.lastUsedDate else { return "Recent" }
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .short
+        return formatter.localizedString(for: date, relativeTo: Date())
+    }
+
+    private func tokenDetail(_ entry: ConnectionHistoryEntry) -> String? {
+        guard let prefix = entry.tokenPrefix, !prefix.isEmpty else { return nil }
+        if prefix == "secure" {
+            return "Secure pairing"
+        }
+        return "Token \(prefix)…"
     }
 
     @MainActor

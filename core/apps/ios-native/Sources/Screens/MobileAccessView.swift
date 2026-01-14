@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import CoreImage.CIFilterBuiltins
 import _Concurrency
 
 struct MobileAccessView: View {
@@ -163,6 +164,19 @@ struct MobileAccessView: View {
                                     .font(.headline)
                                     .foregroundColor(.ctxTextPrimary)
                                 StatusValueRow(title: "Expires", value: response.pairingExpiresAt)
+                                if let payload = qrPayloadString(response.qrPayload) {
+                                    HStack(alignment: .center, spacing: 16) {
+                                        QRCodeView(payload: payload)
+                                            .frame(width: 180, height: 180)
+                                        Text("Scan this QR code with another ctx mobile device to pair securely.")
+                                            .font(.footnote)
+                                            .foregroundColor(.ctxTextSecondary)
+                                    }
+                                } else {
+                                    Text("QR payload unavailable.")
+                                        .font(.footnote)
+                                        .foregroundColor(.ctxTextMuted)
+                                }
                                 Button {
                                     copyPayload(response.qrPayload)
                                 } label: {
@@ -356,6 +370,14 @@ struct MobileAccessView: View {
         didCopyPayload = true
     }
 
+    private func qrPayloadString(_ payload: JSONValue) -> String? {
+        guard let data = try? JSONEncoder().encode(payload),
+              let string = String(data: data, encoding: .utf8) else {
+            return nil
+        }
+        return string
+    }
+
     private func describeError(_ error: Error, fallback: String) -> String {
         if let apiError = error as? DaemonAPIError {
             switch apiError {
@@ -371,6 +393,32 @@ struct MobileAccessView: View {
         }
         let message = error.localizedDescription
         return message.isEmpty ? fallback : message
+    }
+}
+
+private struct QRCodeView: View {
+    let payload: String
+    private let context = CIContext()
+    private let filter = CIFilter.qrCodeGenerator()
+
+    var body: some View {
+        if let image = qrImage() {
+            Image(uiImage: image)
+                .interpolation(.none)
+                .resizable()
+                .scaledToFit()
+        } else {
+            Color.ctxSurfaceRaised
+        }
+    }
+
+    private func qrImage() -> UIImage? {
+        filter.message = Data(payload.utf8)
+        filter.correctionLevel = "M"
+        guard let outputImage = filter.outputImage else { return nil }
+        let scaled = outputImage.transformed(by: CGAffineTransform(scaleX: 8, y: 8))
+        guard let cgImage = context.createCGImage(scaled, from: scaled.extent) else { return nil }
+        return UIImage(cgImage: cgImage)
     }
 }
 

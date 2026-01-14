@@ -7,24 +7,30 @@ import UIKit
 import _Concurrency
 
 enum ComposerMode: String, CaseIterable, Identifiable {
-    case standard
+    case `default`
+    case research
     case plan
+    case review
 
     var id: String { rawValue }
 
     var label: String {
         switch self {
-        case .standard:
+        case .default:
             return "Default"
+        case .research:
+            return "Research"
         case .plan:
             return "Plan"
+        case .review:
+            return "Review"
         }
     }
 }
 
 enum ComposerVerbosity: String, CaseIterable, Identifiable {
     case terse
-    case normal
+    case `default`
     case verbose
 
     var id: String { rawValue }
@@ -33,7 +39,7 @@ enum ComposerVerbosity: String, CaseIterable, Identifiable {
         switch self {
         case .terse:
             return "Terse"
-        case .normal:
+        case .default:
             return "Default"
         case .verbose:
             return "Verbose"
@@ -54,6 +60,8 @@ struct ChatView: View {
     @State private var composerText = ""
     @State private var pendingAttachments: [MessageAttachment] = []
     @State private var selectedPhotos: [PhotosPickerItem] = []
+    @State private var expandedToolGroups: Set<String> = []
+    @State private var expandedTools: Set<String> = []
     @FocusState private var isComposerFocused: Bool
 
     init(
@@ -64,8 +72,8 @@ struct ChatView: View {
         isModelLoading: Bool = false,
         selectedModelId: Binding<String> = .constant(""),
         selectedEffortId: Binding<String> = .constant(""),
-        selectedMode: Binding<ComposerMode> = .constant(.standard),
-        selectedVerbosity: Binding<ComposerVerbosity> = .constant(.normal)
+        selectedMode: Binding<ComposerMode> = .constant(.default),
+        selectedVerbosity: Binding<ComposerVerbosity> = .constant(.default)
     ) {
         self.viewModel = viewModel
         self.showsBackground = showsBackground
@@ -129,8 +137,12 @@ struct ChatView: View {
         .onChange(of: modelOptions) { _ in
             syncEffortSelection()
         }
-        .onChange(of: selectedModelId) { _ in
+        .onChange(of: selectedModelId) { _, newValue in
             syncEffortSelection()
+            viewModel.updateSessionModel(newValue)
+        }
+        .onChange(of: selectedMode) { _, newValue in
+            viewModel.updateSessionMode(newValue)
         }
     }
 
@@ -140,16 +152,76 @@ struct ChatView: View {
             let availableWidth = max(0, geometry.size.width - (horizontalPadding * 2))
             let maxBubbleWidth = min(CtxChatStyle.userBubbleMaxWidth, availableWidth * CtxChatStyle.userBubbleWidthFraction)
             let assetContext = viewModel.assetContext
+            let displayItems = viewModel.threadItems.filter { item in
+                if case .toolGroup = item.kind {
+                    return selectedVerbosity != .terse
+                }
+                return true
+            }
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(spacing: CtxChatStyle.messageSpacing) {
-                        ForEach(viewModel.messages) { message in
-                            MessageRow(
-                                message: message,
-                                maxBubbleWidth: maxBubbleWidth,
-                                assetContext: assetContext
+                        if !viewModel.queueMessages.isEmpty {
+                            QueuePanel(
+                                messages: viewModel.queueMessages,
+                                onRemove: { messageId in
+                                    viewModel.removeQueuedMessage(messageId)
+                                }
                             )
-                                .id(message.id)
+                            .padding(.top, 2)
+                        }
+
+                        ForEach(displayItems) { item in
+                            switch item.kind {
+                            case .message(let message):
+                                MessageRow(
+                                    message: message,
+                                    maxBubbleWidth: maxBubbleWidth,
+                                    assetContext: assetContext
+                                )
+                                    .id(item.id)
+                            case .toolGroup(let group):
+                                let expanded = selectedVerbosity == .verbose || expandedToolGroups.contains(group.id)
+                                ToolGroupRow(
+                                    group: group,
+                                    expanded: expanded,
+                                    toolsLoading: viewModel.toolLoadingTurnIds.contains(group.turnId),
+                                    toolDetails: viewModel.toolDetailsByCallId,
+                                    verbosity: selectedVerbosity,
+                                    expandedTools: expandedTools,
+                                    onToggleGroup: {
+                                        if selectedVerbosity == .verbose { return }
+                                        if expandedToolGroups.contains(group.id) {
+                                            expandedToolGroups.remove(group.id)
+                                        } else {
+                                            expandedToolGroups.insert(group.id)
+                                        }
+                                    },
+                                    onToggleTool: { toolId in
+                                        if expandedTools.contains(toolId) {
+                                            expandedTools.remove(toolId)
+                                        } else {
+                                            expandedTools.insert(toolId)
+                                        }
+                                    },
+                                    onRequestTools: {
+                                        viewModel.loadTools(for: group.turnId)
+                                    }
+                                )
+                                .id(item.id)
+                            case .askUser(let question):
+                                AskUserQuestionCard(
+                                    question: question,
+                                    active: question.toolCallId == viewModel.activeAskToolCallId,
+                                    onSubmit: { answers in
+                                        await viewModel.submitAskUserQuestion(toolCallId: question.toolCallId, answers: answers)
+                                    },
+                                    onCancel: {
+                                        await viewModel.cancelAskUserQuestion(toolCallId: question.toolCallId)
+                                    }
+                                )
+                                .id(item.id)
+                            }
                         }
                         if let status = viewModel.turnStatus {
                             ChatTurnStatusRow(status: status)
@@ -166,10 +238,7 @@ struct ChatView: View {
                 .onAppear {
                     scrollToBottom(proxy: proxy, animated: false)
                 }
-                .onChange(of: viewModel.messages.last?.id) { _, _ in
-                    scrollToBottom(proxy: proxy, animated: true)
-                }
-                .onChange(of: viewModel.messages.last?.text) { _, _ in
+                .onChange(of: viewModel.threadItemsRevision) { _, _ in
                     scrollToBottom(proxy: proxy, animated: true)
                 }
                 .onChange(of: isComposerFocused) { _, focused in
@@ -269,7 +338,7 @@ struct ChatView: View {
     }
 
     private func scrollToBottom(proxy: ScrollViewProxy, animated: Bool) {
-        guard let target = viewModel.messages.last?.id else { return }
+        guard let target = viewModel.threadItems.last?.id else { return }
         if animated {
             withAnimation(.easeOut(duration: 0.2)) {
                 proxy.scrollTo(target, anchor: .bottom)
@@ -290,8 +359,8 @@ struct ChatDetailView: View {
     @State private var isLoadingModels = false
     @State private var selectedModelId: String
     @State private var selectedEffortId: String = ""
-    @State private var selectedMode: ComposerMode = .standard
-    @State private var selectedVerbosity: ComposerVerbosity = .normal
+    @State private var selectedMode: ComposerMode = .default
+    @State private var selectedVerbosity: ComposerVerbosity = .default
 
     init(session: SessionSummary, isArtifactsPresented: Binding<Bool>) {
         self.session = session
@@ -380,31 +449,37 @@ struct MessageRow: View {
     let assetContext: DaemonAssetContext
 
     var body: some View {
+        let isAssistantSide = message.role == .assistant || message.role == .system
         HStack {
-            if message.role == .assistant {
+            if isAssistantSide {
                 bubble
             } else {
                 Spacer(minLength: 0)
                 bubble
             }
         }
-        .frame(maxWidth: .infinity, alignment: message.role == .assistant ? .leading : .trailing)
+        .frame(maxWidth: .infinity, alignment: isAssistantSide ? .leading : .trailing)
         .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("chat.message.\(message.role == .assistant ? "assistant" : "user")")
+        .accessibilityIdentifier("chat.message.\(isAssistantSide ? "assistant" : "user")")
     }
 
     private var bubble: some View {
         VStack(alignment: .leading, spacing: 8) {
+            if message.role == .system {
+                Text("System")
+                    .font(.caption.weight(.semibold))
+                    .foregroundColor(.ctxTextMuted)
+            }
             if !message.text.isEmpty {
-                if message.role == .assistant {
-                    MarkdownText(text: message.text)
-                        .accessibilityIdentifier("chat.message.text.assistant")
-                } else {
+                if message.role == .user {
                     Text(message.text)
                         .font(CtxChatStyle.bodyFont)
                         .foregroundColor(.ctxTextPrimary)
                         .lineSpacing(CtxChatStyle.bodyLineSpacing)
                         .accessibilityIdentifier("chat.message.text.user")
+                } else {
+                    MarkdownContentView(text: message.text, isMuted: message.role == .system)
+                        .accessibilityIdentifier("chat.message.text.assistant")
                 }
             }
             if !message.attachments.isEmpty {
@@ -419,10 +494,31 @@ struct MessageRow: View {
     }
 }
 
-private struct MarkdownText: View {
+private struct MarkdownContentView: View {
     let text: String
+    var isMuted: Bool = false
 
     var body: some View {
+        let segments = parseMarkdownSegments(text)
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(segments) { segment in
+                switch segment.kind {
+                case .text(let value):
+                    MarkdownTextBlock(text: value, isMuted: isMuted)
+                case .code(let code, let language):
+                    CodeBlockView(code: code, language: language)
+                }
+            }
+        }
+    }
+}
+
+private struct MarkdownTextBlock: View {
+    let text: String
+    let isMuted: Bool
+
+    var body: some View {
+        let color = isMuted ? Color.ctxTextMuted : Color.ctxTextPrimary
         if let attributed = try? AttributedString(
             markdown: text,
             options: AttributedString.MarkdownParsingOptions(
@@ -432,14 +528,74 @@ private struct MarkdownText: View {
         ) {
             Text(attributed)
                 .font(CtxChatStyle.bodyFont)
-                .foregroundColor(.ctxTextPrimary)
+                .foregroundColor(color)
                 .lineSpacing(CtxChatStyle.bodyLineSpacing)
         } else {
             Text(text)
                 .font(CtxChatStyle.bodyFont)
-                .foregroundColor(.ctxTextPrimary)
+                .foregroundColor(color)
                 .lineSpacing(CtxChatStyle.bodyLineSpacing)
         }
+    }
+}
+
+private struct MarkdownSegment: Identifiable {
+    enum Kind {
+        case text(String)
+        case code(String, String?)
+    }
+
+    let id = UUID()
+    let kind: Kind
+}
+
+private struct CodeBlockView: View {
+    let code: String
+    let language: String?
+    @State private var copied = false
+
+    var body: some View {
+        let trimmedCode = code.trimmingCharacters(in: .newlines)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                if let language, !language.isEmpty {
+                    Text(language.uppercased())
+                        .font(.caption.weight(.semibold))
+                        .foregroundColor(.ctxTextMuted)
+                } else {
+                    Text("CODE")
+                        .font(.caption.weight(.semibold))
+                        .foregroundColor(.ctxTextMuted)
+                }
+                Spacer(minLength: 0)
+                Button {
+                    UIPasteboard.general.string = trimmedCode
+                    copied = true
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                        copied = false
+                    }
+                } label: {
+                    Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                        .font(.caption.weight(.semibold))
+                        .foregroundColor(.ctxTextPrimary)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(copied ? "Copied" : "Copy code")
+            }
+            ScrollView(.horizontal, showsIndicators: false) {
+                Text(trimmedCode.isEmpty ? " " : trimmedCode)
+                    .font(.system(size: 14, weight: .regular, design: .monospaced))
+                    .foregroundColor(.ctxTextPrimary)
+                    .lineSpacing(4)
+                    .padding(.bottom, 2)
+            }
+        }
+        .padding(12)
+        .background(Color.ctxSurfaceRaised, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(Color.ctxLine, lineWidth: 1)
+        )
     }
 }
 
@@ -489,7 +645,7 @@ private struct MessageBubbleStyle: ViewModifier {
 
     func body(content: Content) -> some View {
         switch role {
-        case .assistant:
+        case .assistant, .system:
             content
                 .padding(.vertical, 2)
         case .user:
@@ -502,6 +658,454 @@ private struct MessageBubbleStyle: ViewModifier {
                 )
                 .frame(maxWidth: maxBubbleWidth, alignment: .trailing)
         }
+    }
+}
+
+private struct QueuePanel: View {
+    let messages: [MessageSummary]
+    let onRemove: (String) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Queued messages (\(messages.count))")
+                .font(.caption.weight(.semibold))
+                .foregroundColor(.ctxTextSecondary)
+            ForEach(messages) { message in
+                HStack(alignment: .top, spacing: 8) {
+                    Text(message.content)
+                        .font(.footnote)
+                        .foregroundColor(.ctxTextPrimary)
+                        .lineLimit(2)
+                    Spacer(minLength: 0)
+                    Button("Remove") {
+                        onRemove(message.id)
+                    }
+                    .font(.caption.weight(.semibold))
+                    .foregroundColor(.ctxAccent)
+                }
+            }
+        }
+        .padding(12)
+        .background(Color.ctxSurface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(Color.ctxLine, lineWidth: 1)
+        )
+    }
+}
+
+private struct ToolGroupRow: View {
+    let group: ChatToolGroup
+    let expanded: Bool
+    let toolsLoading: Bool
+    let toolDetails: [String: SessionTurnTool]
+    let verbosity: ComposerVerbosity
+    let expandedTools: Set<String>
+    let onToggleGroup: () -> Void
+    let onToggleTool: (String) -> Void
+    let onRequestTools: () -> Void
+
+    var body: some View {
+        let total = max(group.toolTotal, group.tools.count)
+        let label = toolGroupLabel(total: total, running: group.toolRunning, failed: group.toolFailed, thought: group.thought)
+        let hasDetails = total > 0 || !group.thought.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+
+        VStack(alignment: .leading, spacing: 8) {
+            Button(action: {
+                if hasDetails {
+                    onToggleGroup()
+                }
+            }) {
+                HStack(spacing: 8) {
+                    Text(label)
+                        .font(.footnote.weight(.semibold))
+                        .foregroundColor(.ctxTextPrimary)
+                    Spacer(minLength: 0)
+                    if hasDetails {
+                        Image(systemName: expanded ? "chevron.up" : "chevron.down")
+                            .font(.caption.weight(.semibold))
+                            .foregroundColor(.ctxTextMuted)
+                    }
+                }
+            }
+            .buttonStyle(.plain)
+
+            if hasDetails && expanded {
+                VStack(alignment: .leading, spacing: 12) {
+                    if total > 0 && group.tools.isEmpty && toolsLoading {
+                        ProgressView()
+                            .tint(.ctxAccent)
+                    }
+                    ForEach(group.tools) { tool in
+                        let detail = toolDetails[tool.toolCallId]
+                        let isExpanded = verbosity == .verbose || expandedTools.contains(tool.id)
+                        ToolRow(
+                            tool: tool,
+                            detail: detail,
+                            expanded: isExpanded,
+                            onToggle: {
+                                if verbosity == .verbose { return }
+                                onToggleTool(tool.id)
+                            }
+                        )
+                    }
+                    if !group.thought.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Thought")
+                                .font(.caption.weight(.semibold))
+                                .foregroundColor(.ctxTextMuted)
+                            Text(group.thought)
+                                .font(.footnote)
+                                .foregroundColor(.ctxTextPrimary)
+                                .lineSpacing(3)
+                        }
+                        .padding(10)
+                        .background(Color.ctxSurfaceRaised, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    }
+                }
+            }
+        }
+        .padding(12)
+        .background(Color.ctxSurface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(Color.ctxLine, lineWidth: 1)
+        )
+        .task(id: expanded) {
+            if expanded && total > 0 {
+                onRequestTools()
+            }
+        }
+    }
+}
+
+private struct ToolRow: View {
+    let tool: ChatToolSummary
+    let detail: SessionTurnTool?
+    let expanded: Bool
+    let onToggle: () -> Void
+
+    var body: some View {
+        let title = tool.title ?? humanToolKind(tool.toolKind)
+        let statusLabel = humanToolStatus(tool.status)
+        let statusColor = toolStatusColor(tool.status)
+        let summary = toolSummaryLine(tool.toolKind, input: detail?.inputJson ?? tool.inputPreview)
+        let inputPayload = detail?.inputJson ?? tool.inputPreview
+        let output = detail?.outputText ?? ""
+
+        VStack(alignment: .leading, spacing: 8) {
+            Button(action: onToggle) {
+                HStack(alignment: .top, spacing: 10) {
+                    ToolIcon(kind: tool.toolKind)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(title.isEmpty ? "Tool" : title)
+                            .font(.footnote.weight(.semibold))
+                            .foregroundColor(.ctxTextPrimary)
+                        HStack(spacing: 6) {
+                            ToolStatusBadge(text: statusLabel, tint: statusColor)
+                            if !summary.isEmpty {
+                                Text(summary)
+                                    .font(.caption)
+                                    .foregroundColor(.ctxTextMuted)
+                                    .lineLimit(1)
+                            }
+                        }
+                    }
+                    Spacer(minLength: 0)
+                    Text(formatShortTime(tool.updatedAt))
+                        .font(.caption2)
+                        .foregroundColor(.ctxTextMuted)
+                    Image(systemName: expanded ? "chevron.up" : "chevron.down")
+                        .font(.caption.weight(.semibold))
+                        .foregroundColor(.ctxTextMuted)
+                }
+            }
+            .buttonStyle(.plain)
+
+            if expanded {
+                VStack(alignment: .leading, spacing: 8) {
+                    if let inputPayload, !formatJSONValue(inputPayload).isEmpty {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Input")
+                                .font(.caption.weight(.semibold))
+                                .foregroundColor(.ctxTextMuted)
+                            Text(formatJSONValue(inputPayload))
+                                .font(.system(size: 12, weight: .regular, design: .monospaced))
+                                .foregroundColor(.ctxTextPrimary)
+                                .lineSpacing(3)
+                        }
+                    }
+                    if !output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Output")
+                                .font(.caption.weight(.semibold))
+                                .foregroundColor(.ctxTextMuted)
+                            if looksLikeMarkdown(output) {
+                                MarkdownContentView(text: output)
+                            } else {
+                                Text(output)
+                                    .font(.footnote)
+                                    .foregroundColor(.ctxTextPrimary)
+                                    .lineSpacing(3)
+                            }
+                        }
+                    }
+                }
+                .padding(.top, 4)
+            }
+        }
+        .padding(10)
+        .background(Color.ctxSurfaceRaised, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(Color.ctxLine, lineWidth: 1)
+        )
+    }
+}
+
+private struct ToolIcon: View {
+    let kind: String?
+
+    var body: some View {
+        let normalized = (kind ?? "").lowercased()
+        let icon: LucideIconName = normalized.contains("image") ? .image : .terminal
+        LucideIcon(name: icon, size: 16)
+            .foregroundColor(.ctxTextPrimary)
+            .frame(width: 28, height: 28)
+            .background(Color.ctxBackgroundDeep, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+}
+
+private struct ToolStatusBadge: View {
+    let text: String
+    let tint: Color
+
+    var body: some View {
+        Text(text)
+            .font(.caption2.weight(.semibold))
+            .foregroundColor(tint)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(tint.opacity(0.12), in: Capsule())
+    }
+}
+
+private struct AskUserQuestionOption: Identifiable {
+    let id = UUID()
+    let label: String
+    let description: String?
+    let isOther: Bool
+}
+
+private struct AskUserQuestionItem: Identifiable {
+    let id = UUID()
+    let header: String
+    let question: String
+    let options: [AskUserQuestionOption]
+    let multiSelect: Bool
+    let otherLabel: String?
+}
+
+private struct AskUserQuestionCard: View {
+    let question: AskUserQuestionCardModel
+    let active: Bool
+    let onSubmit: ([String: String]) async -> Void
+    let onCancel: () async -> Void
+
+    @State private var selectedByQuestion: [String: Set<String>] = [:]
+    @State private var otherByQuestion: [String: String] = [:]
+    @State private var busy = false
+    @State private var error: String?
+
+    var body: some View {
+        let questions = normalizeAskUserQuestions(question.input)
+        if questions.isEmpty { return AnyView(EmptyView()) }
+
+        let answersSignature = answersKey(question.answers)
+        let draftAnswers = buildAskUserAnswers(questions, selectedByQuestion: selectedByQuestion, otherByQuestion: otherByQuestion)
+        let canSubmit = questions.allSatisfy { draftAnswers[$0.question]?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false }
+        let outcomeLabel = question.outcome == "cancelled" ? "Cancelled" : question.answered ? "Submitted" : "Submit"
+
+        return AnyView(
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Text("Approval Needed")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundColor(active ? .ctxAccent : .ctxTextSecondary)
+                    Spacer()
+                    if question.answered {
+                        Text(outcomeLabel)
+                            .font(.caption.weight(.semibold))
+                            .foregroundColor(.ctxTextMuted)
+                    }
+                }
+
+                ForEach(questions) { q in
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(q.header)
+                            .font(.caption.weight(.semibold))
+                            .foregroundColor(.ctxTextMuted)
+                        Text(q.question)
+                            .font(.footnote)
+                            .foregroundColor(.ctxTextPrimary)
+                        ForEach(q.options) { option in
+                            AskUserOptionRow(
+                                option: option,
+                                selected: selectedByQuestion[q.question]?.contains(option.label) == true,
+                                disabled: question.answered || busy,
+                                onToggle: {
+                                    toggleOption(option.label, for: q)
+                                }
+                            )
+                            if option.isOther, selectedByQuestion[q.question]?.contains(option.label) == true {
+                                TextField(option.label, text: Binding(
+                                    get: { otherByQuestion[q.question] ?? "" },
+                                    set: { otherByQuestion[q.question] = $0 }
+                                ))
+                                .textFieldStyle(.roundedBorder)
+                                .disabled(question.answered || busy)
+                            }
+                        }
+                    }
+                }
+
+                if let error {
+                    Text(error)
+                        .font(.caption)
+                        .foregroundColor(.ctxError)
+                }
+
+                if !question.answered {
+                    HStack(spacing: 12) {
+                        Button("Cancel") {
+                            _Concurrency.Task {
+                                await handleCancel()
+                            }
+                        }
+                        .buttonStyle(CompactGhostButtonStyle())
+                        .disabled(busy)
+
+                        Button(outcomeLabel) {
+                            _Concurrency.Task {
+                                await handleSubmit(answers: draftAnswers, canSubmit: canSubmit)
+                            }
+                        }
+                        .buttonStyle(CompactPrimaryButtonStyle())
+                        .disabled(!canSubmit || busy)
+                    }
+                }
+            }
+            .padding(14)
+            .background(Color.ctxSurface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(Color.ctxLine, lineWidth: 1)
+            )
+            .onAppear {
+                applyAnswers(questions: questions, answers: question.answers)
+            }
+            .onChange(of: answersSignature) { _, _ in
+                applyAnswers(questions: questions, answers: question.answers)
+            }
+        )
+    }
+
+    private func handleSubmit(answers: [String: String], canSubmit: Bool) async {
+        guard canSubmit else { return }
+        busy = true
+        error = nil
+        await onSubmit(answers)
+        busy = false
+    }
+
+    private func handleCancel() async {
+        busy = true
+        error = nil
+        await onCancel()
+        busy = false
+    }
+
+    private func toggleOption(_ label: String, for questionItem: AskUserQuestionItem) {
+        var selected = selectedByQuestion[questionItem.question] ?? []
+        if questionItem.multiSelect {
+            if selected.contains(label) {
+                selected.remove(label)
+            } else {
+                selected.insert(label)
+            }
+        } else {
+            selected = [label]
+        }
+        selectedByQuestion[questionItem.question] = selected
+        if let otherLabel = questionItem.otherLabel, !selected.contains(otherLabel) {
+            otherByQuestion[questionItem.question] = ""
+        }
+    }
+
+    private func applyAnswers(questions: [AskUserQuestionItem], answers: [String: String]?) {
+        guard let answers else { return }
+        let derived = deriveAskUserSelection(questions: questions, answers: answers)
+        selectedByQuestion = derived.selectedByQuestion
+        otherByQuestion = derived.otherByQuestion
+    }
+}
+
+private struct AskUserOptionRow: View {
+    let option: AskUserQuestionOption
+    let selected: Bool
+    let disabled: Bool
+    let onToggle: () -> Void
+
+    var body: some View {
+        Button(action: onToggle) {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                    .foregroundColor(selected ? .ctxAccent : .ctxTextMuted)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(option.label)
+                        .font(.footnote)
+                        .foregroundColor(.ctxTextPrimary)
+                    if let description = option.description, !description.isEmpty {
+                        Text(description)
+                            .font(.caption)
+                            .foregroundColor(.ctxTextMuted)
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+        }
+        .buttonStyle(.plain)
+        .disabled(disabled)
+    }
+}
+
+private struct CompactPrimaryButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.footnote.weight(.semibold))
+            .foregroundColor(.white)
+            .padding(.vertical, 8)
+            .padding(.horizontal, 12)
+            .frame(maxWidth: .infinity)
+            .background(Color.ctxAccent, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .opacity(configuration.isPressed ? 0.8 : 1)
+    }
+}
+
+private struct CompactGhostButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.footnote.weight(.semibold))
+            .foregroundColor(.ctxTextPrimary)
+            .padding(.vertical, 8)
+            .padding(.horizontal, 12)
+            .frame(maxWidth: .infinity)
+            .background(Color.ctxSurfaceRaised, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .stroke(Color.ctxLine, lineWidth: 1)
+            )
+            .opacity(configuration.isPressed ? 0.8 : 1)
     }
 }
 
@@ -541,9 +1145,25 @@ private let chatIsoFormatter: ISO8601DateFormatter = {
     return formatter
 }()
 
+private let chatTimeFormatter: DateFormatter = {
+    let formatter = DateFormatter()
+    formatter.dateStyle = .none
+    formatter.timeStyle = .short
+    return formatter
+}()
+
 private func parseIso(_ iso: String?) -> Date? {
     guard let iso else { return nil }
     return chatIsoFormatter.date(from: iso) ?? ISO8601DateFormatter().date(from: iso)
+}
+
+private func formatIsoTimestamp(_ date: Date) -> String {
+    chatIsoFormatter.string(from: date)
+}
+
+private func formatShortTime(_ iso: String) -> String {
+    guard let date = parseIso(iso) else { return "" }
+    return chatTimeFormatter.string(from: date)
 }
 
 private func humanTurnStatus(_ status: SessionTurnStatus) -> String {
@@ -578,6 +1198,397 @@ private func formatElapsedMs(_ ms: TimeInterval) -> String {
         return "\(minutes)m \(seconds)s"
     }
     return "\(seconds)s"
+}
+
+private func parseMarkdownSegments(_ text: String) -> [MarkdownSegment] {
+    var segments: [MarkdownSegment] = []
+    var cursor = text.startIndex
+    while let fenceRange = text.range(of: "```", range: cursor..<text.endIndex) {
+        let before = String(text[cursor..<fenceRange.lowerBound])
+        if !before.isEmpty {
+            segments.append(MarkdownSegment(kind: .text(before)))
+        }
+
+        let afterFence = fenceRange.upperBound
+        let newlineRange = text.range(of: "\n", range: afterFence..<text.endIndex)
+        let language: String?
+        let codeStart: String.Index
+        if let newlineRange {
+            let langCandidate = text[afterFence..<newlineRange.lowerBound]
+            let trimmed = langCandidate.trimmingCharacters(in: .whitespacesAndNewlines)
+            language = trimmed.isEmpty ? nil : trimmed
+            codeStart = newlineRange.upperBound
+        } else {
+            language = nil
+            codeStart = afterFence
+        }
+
+        guard let endRange = text.range(of: "```", range: codeStart..<text.endIndex) else {
+            let code = String(text[codeStart..<text.endIndex])
+            segments.append(MarkdownSegment(kind: .code(code, language)))
+            cursor = text.endIndex
+            break
+        }
+
+        let code = String(text[codeStart..<endRange.lowerBound])
+        segments.append(MarkdownSegment(kind: .code(code, language)))
+        cursor = endRange.upperBound
+    }
+
+    if cursor < text.endIndex {
+        let tail = String(text[cursor..<text.endIndex])
+        if !tail.isEmpty {
+            segments.append(MarkdownSegment(kind: .text(tail)))
+        }
+    }
+
+    if segments.isEmpty {
+        segments.append(MarkdownSegment(kind: .text(text)))
+    }
+    return segments
+}
+
+private func looksLikeMarkdown(_ text: String) -> Bool {
+    if text.contains("```") { return true }
+    if text.range(of: #"^#{1,6}\s"#, options: .regularExpression) != nil { return true }
+    if text.range(of: #"^\s*[-*]\s+"#, options: .regularExpression) != nil { return true }
+    if text.range(of: #"\[[^\]]+\]\([^)]+\)"#, options: .regularExpression) != nil { return true }
+    return false
+}
+
+private func roleForMessage(_ role: MessageRole) -> ChatMessage.Role {
+    switch role {
+    case .assistant:
+        return .assistant
+    case .user:
+        return .user
+    case .system:
+        return .system
+    }
+}
+
+private func toolGroupLabel(total: Int, running: Int, failed: Int, thought: String) -> String {
+    var parts: [String] = []
+    if total > 0 {
+        parts.append("\(total) tool\(total == 1 ? "" : "s")")
+    }
+    if running > 0 {
+        parts.append("\(running) running")
+    }
+    if failed > 0 {
+        parts.append("\(failed) failed")
+    }
+    if parts.isEmpty && !thought.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        parts.append("Thought")
+    }
+    let joined = parts.joined(separator: " · ")
+    return joined.isEmpty ? "Activity" : joined
+}
+
+private func humanToolKind(_ toolKind: String?) -> String {
+    let raw = toolKind?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    guard !raw.isEmpty else { return "Tool" }
+    let cleaned = raw.replacingOccurrences(of: "_", with: " ")
+    return cleaned.split(separator: " ").map { $0.capitalized }.joined(separator: " ")
+}
+
+private func humanToolStatus(_ status: String?) -> String {
+    let normalized = (status ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    switch normalized {
+    case "pending", "queued":
+        return "Pending"
+    case "running", "in_progress", "inprogress":
+        return "Running"
+    case "failed", "error":
+        return "Failed"
+    case "completed", "success", "done":
+        return "Completed"
+    default:
+        return normalized.isEmpty ? "Unknown" : normalized.capitalized
+    }
+}
+
+private func toolStatusColor(_ status: String?) -> Color {
+    let normalized = (status ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    switch normalized {
+    case "failed", "error":
+        return .ctxError
+    case "running", "in_progress", "inprogress":
+        return .ctxWarning
+    case "completed", "success", "done":
+        return .ctxAccent
+    case "pending", "queued":
+        return .ctxTextMuted
+    default:
+        return .ctxTextMuted
+    }
+}
+
+private func toolSummaryLine(_ toolKind: String?, input: JSONValue?) -> String {
+    let kind = (toolKind ?? "").lowercased()
+    let object = objectValue(from: input)
+
+    if kind == "execute" {
+        if let command = stringValue(from: object?["command"]) {
+            return truncateMiddle(command, maxLen: 120)
+        }
+        if let commandArray = arrayValue(from: object?["command"]) {
+            let parts = commandArray.compactMap { stringValue(from: $0) }
+            if !parts.isEmpty {
+                return truncateMiddle(parts.joined(separator: " "), maxLen: 120)
+            }
+        }
+    }
+
+    if kind == "search" {
+        let query = stringValue(from: object?["query"] ?? object?["pattern"] ?? object?["regex"] ?? object?["text"]) ?? ""
+        let path = formatToolPathSummary(input)
+        if !query.isEmpty && !path.isEmpty {
+            return truncateMiddle("\(query) in \(path)", maxLen: 120)
+        }
+        return truncateMiddle(query.isEmpty ? path : query, maxLen: 120)
+    }
+
+    if kind == "list" || kind == "list_files" || kind == "read" || kind == "read_file" {
+        return formatToolPathSummary(input)
+    }
+
+    if kind == "edit" || kind == "write" || kind == "apply_patch" {
+        return formatToolPathSummary(input)
+    }
+
+    if kind == "fetch" || kind == "http" || kind == "curl" {
+        let method = stringValue(from: object?["method"])?.uppercased() ?? "GET"
+        let url = stringValue(from: object?["url"] ?? object?["uri"] ?? object?["href"]) ?? ""
+        if url.isEmpty { return method }
+        return truncateMiddle("\(method) \(url)", maxLen: 120)
+    }
+
+    return ""
+}
+
+private func formatToolPathSummary(_ input: JSONValue?) -> String {
+    let result = extractToolPaths(input)
+    guard !result.paths.isEmpty else { return "" }
+    let total = result.total ?? result.paths.count
+    let head = truncateMiddle(result.paths[0], maxLen: 120)
+    let more = max(0, total - 1)
+    return more > 0 ? "\(head) +\(more) more" : head
+}
+
+private func extractToolPaths(_ input: JSONValue?) -> (paths: [String], total: Int?) {
+    guard let object = objectValue(from: input) else { return ([], nil) }
+    var paths: [String] = []
+
+    if let path = stringValue(from: object["path"]) {
+        paths.append(path)
+    }
+    if let pathArray = arrayValue(from: object["paths"]) {
+        paths.append(contentsOf: pathArray.compactMap { stringValue(from: $0) })
+    }
+    let total = numberValue(from: object["paths_total"] ?? object["pathsTotal"]).map { Int($0) }
+    return (paths: paths, total: total)
+}
+
+private func truncateMiddle(_ text: String, maxLen: Int) -> String {
+    if text.count <= maxLen { return text }
+    let head = max(10, Int(Double(maxLen) * 0.6))
+    let tail = max(10, maxLen - head - 3)
+    let startIdx = text.index(text.startIndex, offsetBy: head)
+    let endIdx = text.index(text.endIndex, offsetBy: -tail)
+    return "\(text[text.startIndex..<startIdx])...\(text[endIdx..<text.endIndex])"
+}
+
+private func formatJSONValue(_ value: JSONValue) -> String {
+    switch value {
+    case .string(let string):
+        return string
+    case .number(let number):
+        return String(number)
+    case .bool(let flag):
+        return flag ? "true" : "false"
+    case .null:
+        return "null"
+    default:
+        guard let data = try? JSONEncoder().encode(value),
+              let obj = try? JSONSerialization.jsonObject(with: data),
+              let pretty = try? JSONSerialization.data(withJSONObject: obj, options: [.prettyPrinted]),
+              let text = String(data: pretty, encoding: .utf8) else {
+            return ""
+        }
+        return text
+    }
+}
+
+private func normalizeAskUserQuestions(_ input: JSONValue) -> [AskUserQuestionItem] {
+    let rawQuestions = extractAskUserQuestions(from: input)
+    guard !rawQuestions.isEmpty else { return [] }
+    var items: [AskUserQuestionItem] = []
+    for (idx, raw) in rawQuestions.enumerated() {
+        guard let object = objectValue(from: raw) else { continue }
+        let question = stringValue(from: object["question"]) ?? ""
+        if question.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { continue }
+        let header = stringValue(from: object["header"]) ?? "Question \(idx + 1)"
+        let options = normalizeAskUserOptions(object["options"])
+        let multiSelect = boolValue(from: object["multiSelect"] ?? object["multi_select"]) ?? false
+        let otherResult = extractOtherOption(questionObject: object, options: options)
+        var displayOptions = otherResult.options
+        if let otherLabel = otherResult.otherLabel {
+            displayOptions.append(AskUserQuestionOption(label: otherLabel, description: nil, isOther: true))
+        }
+        items.append(
+            AskUserQuestionItem(
+                header: header,
+                question: question,
+                options: displayOptions,
+                multiSelect: multiSelect,
+                otherLabel: otherResult.otherLabel
+            )
+        )
+    }
+    return items
+}
+
+private func extractAskUserQuestions(from input: JSONValue) -> [JSONValue] {
+    if case .array(let array) = input {
+        return array
+    }
+    if let object = objectValue(from: input) {
+        if case .array(let questions) = object["questions"] {
+            return questions
+        }
+        if let nested = objectValue(from: object["input"]),
+           case .array(let questions) = nested["questions"] {
+            return questions
+        }
+    }
+    return []
+}
+
+private func normalizeAskUserOptions(_ value: JSONValue?) -> [AskUserQuestionOption] {
+    guard let value, case .array(let array) = value else { return [] }
+    var options: [AskUserQuestionOption] = []
+    for item in array {
+        switch item {
+        case .string(let label):
+            let trimmed = label.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                options.append(AskUserQuestionOption(label: trimmed, description: nil, isOther: false))
+            }
+        case .object(let object):
+            let label = stringValue(from: object["label"])?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if label.isEmpty { continue }
+            let description = stringValue(from: object["description"])
+            options.append(AskUserQuestionOption(label: label, description: description, isOther: false))
+        default:
+            continue
+        }
+    }
+    return options
+}
+
+private func extractOtherOption(
+    questionObject: [String: JSONValue],
+    options: [AskUserQuestionOption]
+) -> (options: [AskUserQuestionOption], otherLabel: String?) {
+    let allowOther = boolValue(from: questionObject["allowOther"] ?? questionObject["allow_other"] ?? questionObject["allowOtherOption"]) ?? false
+    let explicitLabel = stringValue(from: questionObject["otherOptionLabel"] ?? questionObject["other_option_label"] ?? questionObject["otherLabel"])
+    var otherLabel = explicitLabel?.trimmingCharacters(in: .whitespacesAndNewlines)
+    var cleanedOptions: [AskUserQuestionOption] = []
+
+    for option in options {
+        let label = option.label.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lower = label.lowercased()
+        if otherLabel == nil && (lower == "other" || lower == "type something" || lower == "type something.") {
+            otherLabel = label
+            continue
+        }
+        cleanedOptions.append(option)
+    }
+
+    if otherLabel == nil && allowOther {
+        otherLabel = "Type something."
+    }
+    return (cleanedOptions, otherLabel)
+}
+
+private func splitAnswerParts(_ answer: String, multiSelect: Bool) -> [String] {
+    let trimmed = answer.trimmingCharacters(in: .whitespacesAndNewlines)
+    if trimmed.isEmpty { return [] }
+    if !multiSelect { return [trimmed] }
+    return trimmed.split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+}
+
+private func deriveAskUserSelection(
+    questions: [AskUserQuestionItem],
+    answers: [String: String]
+) -> (selectedByQuestion: [String: Set<String>], otherByQuestion: [String: String]) {
+    var selectedByQuestion: [String: Set<String>] = [:]
+    var otherByQuestion: [String: String] = [:]
+
+    for q in questions {
+        let answer = answers[q.question] ?? ""
+        let parts = splitAnswerParts(answer, multiSelect: q.multiSelect)
+        if parts.isEmpty { continue }
+        let optionLabels = Set(q.options.map { $0.label })
+        var selected = Set<String>()
+        var otherParts: [String] = []
+
+        for part in parts {
+            if optionLabels.contains(part) {
+                selected.insert(part)
+            } else {
+                otherParts.append(part)
+            }
+        }
+
+        if !otherParts.isEmpty {
+            otherByQuestion[q.question] = q.multiSelect ? otherParts.joined(separator: ", ") : otherParts[0]
+            if let otherLabel = q.otherLabel {
+                selected.insert(otherLabel)
+            }
+        }
+        if !selected.isEmpty {
+            selectedByQuestion[q.question] = selected
+        }
+    }
+    return (selectedByQuestion, otherByQuestion)
+}
+
+private func buildAskUserAnswers(
+    _ questions: [AskUserQuestionItem],
+    selectedByQuestion: [String: Set<String>],
+    otherByQuestion: [String: String]
+) -> [String: String] {
+    var out: [String: String] = [:]
+    for q in questions {
+        let selected = selectedByQuestion[q.question] ?? []
+        let other = otherByQuestion[q.question]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let trimmedSelected: [String]
+        if let otherLabel = q.otherLabel {
+            trimmedSelected = selected.filter { $0 != otherLabel }
+        } else {
+            trimmedSelected = Array(selected)
+        }
+
+        if q.multiSelect {
+            var combined = trimmedSelected
+            if !other.isEmpty { combined.append(other) }
+            if !combined.isEmpty { out[q.question] = combined.joined(separator: ", ") }
+        } else {
+            if !other.isEmpty {
+                out[q.question] = other
+            } else if let first = trimmedSelected.first {
+                out[q.question] = first
+            }
+        }
+    }
+    return out
+}
+
+private func answersKey(_ answers: [String: String]?) -> String {
+    guard let answers else { return "" }
+    return answers.keys.sorted().map { "\($0)=\(answers[$0] ?? "")" }.joined(separator: "|")
 }
 
 struct ComposerAttachmentsRow: View {
@@ -1123,6 +2134,7 @@ struct ComposerBar: View {
                 PhotosPicker(selection: $selectedPhotos, matching: .images) {
                     ComposerToolIcon(name: .image)
                 }
+                .accessibilityIdentifier("chat.composer.attach")
 
                 if isWorking {
                     ComposerCircleButton(icon: .square, accessibilityId: "chat.composer.stop") {
@@ -1136,6 +2148,7 @@ struct ComposerBar: View {
                     Button {} label: {
                         ComposerToolIcon(name: .mic)
                     }
+                    .accessibilityIdentifier("chat.composer.mic")
                 }
             }
         }
@@ -1277,17 +2290,78 @@ struct ChatMessage: Identifiable {
     enum Role {
         case assistant
         case user
+        case system
     }
 
-    let id: UUID
+    let id: String
     let role: Role
     let text: String
     let attachments: [MessageAttachment]
+    let createdAt: String
+}
+
+struct ChatToolSummary: Identifiable {
+    let id: String
+    let toolCallId: String
+    let turnId: String
+    let toolKind: String?
+    let title: String?
+    let status: String?
+    let inputPreview: JSONValue?
+    let outputText: String?
+    let createdAt: String
+    let updatedAt: String
+}
+
+struct ChatToolGroup: Identifiable {
+    let id: String
+    let turnId: String
+    let createdAt: String
+    let toolTotal: Int
+    let toolPending: Int
+    let toolRunning: Int
+    let toolCompleted: Int
+    let toolFailed: Int
+    let thought: String
+    let tools: [ChatToolSummary]
+}
+
+struct AskUserQuestionCardModel: Identifiable {
+    let id: String
+    let turnId: String
+    let toolCallId: String
+    let createdAt: String
+    let input: JSONValue
+    let answers: [String: String]?
+    let outcome: String?
+    let answered: Bool
+}
+
+struct ChatThreadItem: Identifiable {
+    enum Kind {
+        case message(ChatMessage)
+        case toolGroup(ChatToolGroup)
+        case askUser(AskUserQuestionCardModel)
+    }
+
+    let id: String
+    let createdAt: String
+    let orderSeq: Int?
+    let kind: Kind
+}
+
+private struct AskUserAnswerState {
+    let outcome: String
+    let answers: [String: String]
 }
 
 @MainActor
 final class ChatViewModel: ObservableObject {
     @Published var messages: [ChatMessage] = []
+    @Published var threadItems: [ChatThreadItem] = []
+    @Published var queueMessages: [MessageSummary] = []
+    @Published var toolLoadingTurnIds: Set<String> = []
+    @Published var toolDetailsByCallId: [String: SessionTurnTool] = [:]
     @Published var errorMessage: String?
     @Published var artifacts: [Artifact] = []
     @Published var isArtifactsLoading = false
@@ -1297,12 +2371,15 @@ final class ChatViewModel: ObservableObject {
     @Published private(set) var contextWindowInfo: ContextWindowInfo?
     @Published private(set) var assetBaseURL: URL?
     @Published private(set) var assetToken: String?
+    @Published private(set) var threadItemsRevision: Int = 0
+    @Published private(set) var activeAskToolCallId: String?
 
     private struct StreamingAssistantState {
         let turnId: String
-        let messageId: UUID
+        let messageId: String
         var text: String
         var isActive: Bool
+        let createdAt: String
     }
 
     struct TurnStatusSnapshot: Equatable {
@@ -1347,6 +2424,12 @@ final class ChatViewModel: ObservableObject {
     private var streamingAssistantState: StreamingAssistantState?
     private var consecutivePollFailures = 0
     private var sessionGeneration = 0
+    private var latestTurns: [SessionTurn] = []
+    private var latestEvents: [SessionEvent] = []
+    private var latestToolSummaries: [SessionTurnToolSummary] = []
+    private var optimisticAskAnswers: [String: AskUserAnswerState] = [:]
+    private var lastSetModelId: String?
+    private var lastSetModeId: String?
 
     init(client: DaemonAPIClient? = nil, initialSessionId: String? = nil, initialWorkspaceId: String? = nil) {
         self.client = client
@@ -1354,6 +2437,10 @@ final class ChatViewModel: ObservableObject {
         self.workspaceId = initialWorkspaceId
         if client == nil {
             messages = Self.sampleMessages
+            latestTurns = []
+            latestEvents = []
+            latestToolSummaries = []
+            rebuildThreadItems()
         }
     }
 
@@ -1365,6 +2452,18 @@ final class ChatViewModel: ObservableObject {
         self.client = client
         if client != nil {
             messages = []
+            threadItems = []
+            queueMessages = []
+            toolDetailsByCallId = [:]
+            toolLoadingTurnIds = []
+            latestTurns = []
+            latestEvents = []
+            latestToolSummaries = []
+            optimisticAskAnswers = [:]
+            activeAskToolCallId = nil
+            threadItemsRevision = 0
+            lastSetModelId = nil
+            lastSetModeId = nil
             setPendingAssistantResponse(false)
             streamingAssistantState = nil
             errorMessage = nil
@@ -1383,6 +2482,7 @@ final class ChatViewModel: ObservableObject {
             }
             _Concurrency.Task {
                 _ = await refreshMessages()
+                await refreshQueue()
                 await refreshArtifacts()
             }
             updateWorkingState()
@@ -1392,6 +2492,18 @@ final class ChatViewModel: ObservableObject {
             workspaceId = nil
             lastEventSeq = nil
             messages = Self.sampleMessages
+            latestTurns = []
+            latestEvents = []
+            latestToolSummaries = []
+            optimisticAskAnswers = [:]
+            threadItems = []
+            queueMessages = []
+            toolDetailsByCallId = [:]
+            toolLoadingTurnIds = []
+            threadItemsRevision = 0
+            activeAskToolCallId = nil
+            lastSetModelId = nil
+            lastSetModeId = nil
             setPendingAssistantResponse(false)
             streamingAssistantState = nil
             artifacts = []
@@ -1402,6 +2514,7 @@ final class ChatViewModel: ObservableObject {
             assetBaseURL = nil
             assetToken = nil
             secureContext = nil
+            rebuildThreadItems()
             updateWorkingState()
         }
     }
@@ -1439,6 +2552,18 @@ final class ChatViewModel: ObservableObject {
         refreshInFlight = false
         refreshPending = false
         messages = []
+        threadItems = []
+        queueMessages = []
+        toolDetailsByCallId = [:]
+        toolLoadingTurnIds = []
+        latestTurns = []
+        latestEvents = []
+        latestToolSummaries = []
+        optimisticAskAnswers = [:]
+        activeAskToolCallId = nil
+        threadItemsRevision = 0
+        lastSetModelId = nil
+        lastSetModeId = nil
         errorMessage = nil
         artifacts = []
         artifactsError = nil
@@ -1450,6 +2575,7 @@ final class ChatViewModel: ObservableObject {
         _Concurrency.Task {
             await primeStreamCursor()
             _ = await refreshMessages()
+            await refreshQueue()
             await refreshArtifacts()
             await sendStreamSubscriptionIfNeeded()
         }
@@ -1487,7 +2613,13 @@ final class ChatViewModel: ObservableObject {
     }
 
     func send(_ text: String, attachments: [MessageAttachment]) {
-        let local = ChatMessage(id: UUID(), role: .user, text: text, attachments: attachments)
+        let local = ChatMessage(
+            id: UUID().uuidString,
+            role: .user,
+            text: text,
+            attachments: attachments,
+            createdAt: formatIsoTimestamp(Date())
+        )
         appendMessage(local)
         setPendingAssistantResponse(true)
 
@@ -1498,6 +2630,7 @@ final class ChatViewModel: ObservableObject {
             do {
                 _ = try await client.postMessage(sessionId: resolved, content: text, delivery: .immediate, attachments: attachments)
                 _ = await refreshMessages()
+                await refreshQueue()
             } catch {
                 setPendingAssistantResponse(false)
                 errorMessage = "Failed to send message."
@@ -1517,18 +2650,29 @@ final class ChatViewModel: ObservableObject {
         let resolved = await resolveSessionId()
         guard let resolved, generation == sessionGeneration else { return .skipped }
         do {
-            let items = try await client.listMessages(sessionId: resolved)
+            let head = try await client.getSessionHead(sessionId: resolved, limit: 200, includeEvents: true)
             guard generation == sessionGeneration, resolved == sessionId else { return .skipped }
-            let nextMessages = items.map { summary in
+            let nextMessages = head.messages.map { message in
                 ChatMessage(
-                    id: UUID(uuidString: summary.id) ?? UUID(),
-                    role: summary.role == .user ? .user : .assistant,
-                    text: summary.content,
-                    attachments: summary.attachments ?? []
+                    id: message.id.stringValue,
+                    role: roleForMessage(message.role),
+                    text: message.content,
+                    attachments: message.attachments ?? [],
+                    createdAt: message.createdAt
                 )
             }
             let nextWithStreaming = applyStreamingAssistantState(to: nextMessages)
             messages = nextWithStreaming
+            latestTurns = head.turns
+            latestEvents = head.events ?? []
+            latestToolSummaries = head.toolSummaries ?? []
+            if let turn = mostRecentTurn(in: head.turns) {
+                updateTurnStatus(from: turn)
+                updateContextWindow(from: turn)
+            }
+            lastSetModelId = head.session.modelId
+            rebuildThreadItems()
+            await refreshQueue()
             if pendingAssistantResponse, nextWithStreaming.contains(where: { $0.role == .assistant }) {
                 setPendingAssistantResponse(false)
                 streamingAssistantState = nil
@@ -1549,6 +2693,17 @@ final class ChatViewModel: ObservableObject {
                 _Concurrency.Task { _ = await refreshMessages() }
             }
             return .failed
+        }
+    }
+
+    private func refreshQueue() async {
+        guard let client else { return }
+        let resolved = await resolveSessionId()
+        guard let resolved else { return }
+        do {
+            queueMessages = try await client.listQueue(sessionId: resolved)
+        } catch {
+            queueMessages = []
         }
     }
 
@@ -1589,6 +2744,105 @@ final class ChatViewModel: ObservableObject {
         var next = messages
         next.append(message)
         messages = next
+        rebuildThreadItems()
+    }
+
+    func updateSessionModel(_ modelId: String) {
+        guard let client else { return }
+        let trimmed = modelId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        if lastSetModelId == trimmed { return }
+        lastSetModelId = trimmed
+        _Concurrency.Task {
+            let resolved = await resolveSessionId()
+            guard let resolved else { return }
+            _ = try? await client.setSessionModel(sessionId: resolved, modelId: trimmed)
+        }
+    }
+
+    func updateSessionMode(_ mode: ComposerMode) {
+        guard let client else { return }
+        let next = mode.rawValue
+        if lastSetModeId == next { return }
+        lastSetModeId = next
+        _Concurrency.Task {
+            let resolved = await resolveSessionId()
+            guard let resolved else { return }
+            try? await client.setSessionMode(sessionId: resolved, modeId: next)
+        }
+    }
+
+    func loadTools(for turnId: String) {
+        guard let client else { return }
+        if toolLoadingTurnIds.contains(turnId) { return }
+        toolLoadingTurnIds.insert(turnId)
+        _Concurrency.Task {
+            defer { toolLoadingTurnIds.remove(turnId) }
+            do {
+                let resolved = await resolveSessionId()
+                guard let resolved else { return }
+                let tools = try await client.listTurnTools(sessionId: resolved, turnId: turnId)
+                var next = toolDetailsByCallId
+                for tool in tools {
+                    next[tool.toolCallId] = tool
+                }
+                toolDetailsByCallId = next
+            } catch {
+                // Best-effort; keep existing detail cache.
+            }
+        }
+    }
+
+    func removeQueuedMessage(_ messageId: String) {
+        guard let client else { return }
+        _Concurrency.Task {
+            do {
+                try await client.deleteMessage(messageId: messageId)
+                await refreshQueue()
+            } catch {
+                // Best-effort removal; ignore errors.
+            }
+        }
+    }
+
+    func submitAskUserQuestion(toolCallId: String, answers: [String: String]) async {
+        guard let client else { return }
+        let resolved = await resolveSessionId()
+        guard let resolved else { return }
+        optimisticAskAnswers[toolCallId] = AskUserAnswerState(outcome: "submitted", answers: answers)
+        rebuildThreadItems()
+        do {
+            try await client.submitAskUserQuestion(
+                sessionId: resolved,
+                toolCallId: toolCallId,
+                outcome: "submitted",
+                answers: answers
+            )
+            _ = await refreshMessages()
+        } catch {
+            optimisticAskAnswers.removeValue(forKey: toolCallId)
+            rebuildThreadItems()
+        }
+    }
+
+    func cancelAskUserQuestion(toolCallId: String) async {
+        guard let client else { return }
+        let resolved = await resolveSessionId()
+        guard let resolved else { return }
+        optimisticAskAnswers[toolCallId] = AskUserAnswerState(outcome: "cancelled", answers: [:])
+        rebuildThreadItems()
+        do {
+            try await client.submitAskUserQuestion(
+                sessionId: resolved,
+                toolCallId: toolCallId,
+                outcome: "cancelled",
+                answers: [:]
+            )
+            _ = await refreshMessages()
+        } catch {
+            optimisticAskAnswers.removeValue(forKey: toolCallId)
+            rebuildThreadItems()
+        }
     }
 
     private func applyStreamingAssistantState(to base: [ChatMessage]) -> [ChatMessage] {
@@ -1600,13 +2854,249 @@ final class ChatViewModel: ObservableObject {
                 return next
             }
             if state.text.count >= last.text.count || state.isActive {
-                next[next.count - 1] = ChatMessage(id: last.id, role: .assistant, text: state.text, attachments: last.attachments)
+                next[next.count - 1] = ChatMessage(
+                    id: last.id,
+                    role: .assistant,
+                    text: state.text,
+                    attachments: last.attachments,
+                    createdAt: last.createdAt
+                )
             }
             return next
         }
 
-        next.append(ChatMessage(id: state.messageId, role: .assistant, text: state.text, attachments: []))
+        next.append(
+            ChatMessage(
+                id: state.messageId,
+                role: .assistant,
+                text: state.text,
+                attachments: [],
+                createdAt: state.createdAt
+            )
+        )
         return next
+    }
+
+    private func rebuildThreadItems() {
+        let answersByToolCallId = collectAskUserQuestionAnswers(events: latestEvents, optimistic: optimisticAskAnswers)
+        let toolSummaries = buildToolSummaries(from: latestToolSummaries, events: latestEvents)
+        let toolsByTurn = Dictionary(grouping: toolSummaries, by: { $0.turnId })
+
+        var items: [ChatThreadItem] = []
+
+        for message in messages {
+            let item = ChatThreadItem(
+                id: "msg-\(message.id)",
+                createdAt: message.createdAt,
+                orderSeq: nil,
+                kind: .message(message)
+            )
+            items.append(item)
+        }
+
+        for turn in latestTurns {
+            let turnId = turn.turnId.stringValue
+            let tools = toolsByTurn[turnId] ?? []
+            let thought = turn.thoughtPartial ?? ""
+            let hasTools = turn.toolTotal > 0 || !tools.isEmpty
+            let hasThought = !thought.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            if !hasTools && !hasThought {
+                continue
+            }
+            let group = ChatToolGroup(
+                id: "turn-\(turnId)",
+                turnId: turnId,
+                createdAt: turn.startedAt,
+                toolTotal: turn.toolTotal,
+                toolPending: turn.toolPending,
+                toolRunning: turn.toolRunning,
+                toolCompleted: turn.toolCompleted,
+                toolFailed: turn.toolFailed,
+                thought: thought,
+                tools: tools
+            )
+            let item = ChatThreadItem(
+                id: group.id,
+                createdAt: group.createdAt,
+                orderSeq: turn.startSeq,
+                kind: .toolGroup(group)
+            )
+            items.append(item)
+        }
+
+        for event in latestEvents {
+            if let askItem = buildAskUserQuestionItem(event: event, answersByToolCallId: answersByToolCallId) {
+                let item = ChatThreadItem(
+                    id: askItem.id,
+                    createdAt: askItem.createdAt,
+                    orderSeq: event.seq,
+                    kind: .askUser(askItem)
+                )
+                items.append(item)
+            }
+        }
+
+        items.sort { left, right in
+            let leftDate = parseIso(left.createdAt) ?? .distantPast
+            let rightDate = parseIso(right.createdAt) ?? .distantPast
+            if leftDate != rightDate {
+                return leftDate < rightDate
+            }
+            let leftSeq = left.orderSeq ?? 0
+            let rightSeq = right.orderSeq ?? 0
+            if leftSeq != rightSeq {
+                return leftSeq < rightSeq
+            }
+            return left.id < right.id
+        }
+
+        threadItems = items
+        activeAskToolCallId = items.compactMap { item -> String? in
+            if case .askUser(let ask) = item.kind, !ask.answered {
+                return ask.toolCallId
+            }
+            return nil
+        }.first
+        threadItemsRevision += 1
+    }
+
+    private func buildToolSummaries(
+        from summaries: [SessionTurnToolSummary],
+        events: [SessionEvent]
+    ) -> [ChatToolSummary] {
+        if !summaries.isEmpty {
+            return summaries.map { summary in
+                ChatToolSummary(
+                    id: "tool-\(summary.turnId.stringValue)-\(summary.toolCallId)",
+                    toolCallId: summary.toolCallId,
+                    turnId: summary.turnId.stringValue,
+                    toolKind: summary.toolKind,
+                    title: summary.title,
+                    status: summary.status,
+                    inputPreview: summary.inputPreview,
+                    outputText: nil,
+                    createdAt: summary.createdAt,
+                    updatedAt: summary.updatedAt
+                )
+            }
+        }
+        return buildToolSummariesFromEvents(events)
+    }
+
+    private func buildToolSummariesFromEvents(_ events: [SessionEvent]) -> [ChatToolSummary] {
+        var byId: [String: ChatToolSummary] = [:]
+        for event in events {
+            guard event.eventType == "tool_call" || event.eventType == "tool_call_update" || event.eventType == "tool_result" else {
+                continue
+            }
+            guard let turnId = event.turnId?.stringValue else { continue }
+            guard let payload = objectValue(from: event.payloadJson) else { continue }
+            let update = objectValue(from: payload["acp_update"]) ?? payload
+            guard let toolCallId = extractToolCallId(payload: payload, update: update) else { continue }
+
+            let toolCall = objectValue(from: update["toolCall"] ?? update["tool_call"]) ?? [:]
+            let toolKind = stringValue(from: update["kind"] ?? toolCall["kind"])
+            let title = stringValue(from: update["title"] ?? toolCall["title"] ?? toolCall["name"])
+            let rawStatus = stringValue(from: update["status"] ?? toolCall["status"])
+            let status = rawStatus ?? (event.eventType == "tool_result" ? "completed" : nil)
+            let inputPreview = update["input_preview"] ?? update["input"] ?? update["rawInput"] ?? update["raw_input"] ?? toolCall["input"]
+            let outputText = stringValue(from: update["output_text"] ?? update["output"] ?? update["result"] ?? payload["output_text"] ?? payload["output"])
+
+            let existing = byId[toolCallId]
+            let summary = ChatToolSummary(
+                id: existing?.id ?? "tool-\(turnId)-\(toolCallId)",
+                toolCallId: toolCallId,
+                turnId: existing?.turnId ?? turnId,
+                toolKind: toolKind ?? existing?.toolKind,
+                title: title ?? existing?.title,
+                status: status ?? existing?.status,
+                inputPreview: inputPreview ?? existing?.inputPreview,
+                outputText: outputText ?? existing?.outputText,
+                createdAt: existing?.createdAt ?? event.createdAt,
+                updatedAt: event.createdAt
+            )
+            byId[toolCallId] = summary
+        }
+        return Array(byId.values)
+    }
+
+    private func extractToolCallId(payload: [String: JSONValue], update: [String: JSONValue]) -> String? {
+        if let id = stringValue(from: payload["tool_call_id"]) { return id }
+        if let id = stringValue(from: update["toolCallId"] ?? update["tool_call_id"]) { return id }
+        if let rawInput = objectValue(from: update["rawInput"] ?? update["raw_input"]),
+           let id = stringValue(from: rawInput["call_id"]) {
+            return id
+        }
+        if let toolCall = objectValue(from: update["toolCall"] ?? update["tool_call"]),
+           let id = stringValue(from: toolCall["id"] ?? toolCall["tool_call_id"]) {
+            return id
+        }
+        return nil
+    }
+
+    private func buildAskUserQuestionItem(
+        event: SessionEvent,
+        answersByToolCallId: [String: AskUserAnswerState]
+    ) -> AskUserQuestionCardModel? {
+        guard event.eventType == "notice" else { return nil }
+        guard let payload = objectValue(from: event.payloadJson) else { return nil }
+        guard stringValue(from: payload["kind"]) == "ask_user_question" else { return nil }
+        guard let toolCallId = stringValue(from: payload["tool_call_id"]), !toolCallId.isEmpty else { return nil }
+        let input = payload["input"] ?? payload["input_json"] ?? event.payloadJson
+        let answerState = answersByToolCallId[toolCallId]
+        let turnId = event.turnId?.stringValue ?? "unknown"
+
+        return AskUserQuestionCardModel(
+            id: "ask-\(turnId)-\(toolCallId)",
+            turnId: turnId,
+            toolCallId: toolCallId,
+            createdAt: event.createdAt,
+            input: input,
+            answers: answerState?.answers,
+            outcome: answerState?.outcome,
+            answered: answerState != nil
+        )
+    }
+
+    private func collectAskUserQuestionAnswers(
+        events: [SessionEvent],
+        optimistic: [String: AskUserAnswerState]
+    ) -> [String: AskUserAnswerState] {
+        var map: [String: AskUserAnswerState] = [:]
+        for event in events {
+            guard let parsed = extractAskUserQuestionAnswer(event) else { continue }
+            map[parsed.toolCallId] = parsed.state
+        }
+        for (toolCallId, state) in optimistic {
+            if map[toolCallId] == nil {
+                map[toolCallId] = state
+            } else if (map[toolCallId]?.answers.isEmpty ?? true) && !state.answers.isEmpty {
+                map[toolCallId] = state
+            }
+        }
+        return map
+    }
+
+    private func extractAskUserQuestionAnswer(_ event: SessionEvent) -> (toolCallId: String, state: AskUserAnswerState)? {
+        guard event.eventType == "notice" else { return nil }
+        guard let payload = objectValue(from: event.payloadJson) else { return nil }
+        guard stringValue(from: payload["kind"]) == "ask_user_question_answered" else { return nil }
+        guard let toolCallId = stringValue(from: payload["tool_call_id"]), !toolCallId.isEmpty else { return nil }
+        let outcome = stringValue(from: payload["outcome"]) ?? "submitted"
+        let answers = normalizeAskUserAnswerMap(payload["answers"] ?? payload["answer"])
+        let normalizedOutcome = outcome == "cancelled" ? "cancelled" : "submitted"
+        return (toolCallId, AskUserAnswerState(outcome: normalizedOutcome, answers: answers))
+    }
+
+    private func normalizeAskUserAnswerMap(_ value: JSONValue?) -> [String: String] {
+        guard let object = objectValue(from: value) else { return [:] }
+        var out: [String: String] = [:]
+        for (key, val) in object {
+            let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty, let text = stringValue(from: val) else { continue }
+            out[trimmed] = text
+        }
+        return out
     }
 
     private func applyTurnDelta(_ turn: SessionTurn) {
@@ -1628,12 +3118,12 @@ final class ChatViewModel: ObservableObject {
         }
 
         if streamingAssistantState?.turnId != turnId {
-            let stableId = UUID(uuidString: turnId) ?? UUID()
             streamingAssistantState = StreamingAssistantState(
                 turnId: turnId,
-                messageId: stableId,
+                messageId: turnId,
                 text: assistantPartial,
-                isActive: isActive
+                isActive: isActive,
+                createdAt: turn.updatedAt
             )
         } else {
             streamingAssistantState?.text = assistantPartial
@@ -1641,6 +3131,7 @@ final class ChatViewModel: ObservableObject {
         }
 
         messages = applyStreamingAssistantState(to: messages)
+        rebuildThreadItems()
         updateWorkingState()
     }
 
@@ -1905,8 +3396,13 @@ final class ChatViewModel: ObservableObject {
                         streamingAssistantState = nil
                         updateWorkingState()
                     }
-                    _Concurrency.Task { _ = await refreshMessages() }
+                    _Concurrency.Task {
+                        _ = await refreshMessages()
+                        await refreshQueue()
+                    }
                 } else if let turn = delta.turn, turn.status != .queued, turn.status != .running {
+                    _Concurrency.Task { _ = await refreshMessages() }
+                } else if let event = delta.event, event.eventType == "notice" {
                     _Concurrency.Task { _ = await refreshMessages() }
                 }
             }
@@ -1918,6 +3414,7 @@ final class ChatViewModel: ObservableObject {
                 }
                 _Concurrency.Task {
                     _ = await refreshMessages()
+                    await refreshQueue()
                     await refreshArtifacts()
                 }
             }
@@ -1929,6 +3426,7 @@ final class ChatViewModel: ObservableObject {
                 _Concurrency.Task {
                     await primeStreamCursor(force: true)
                     _ = await refreshMessages()
+                    await refreshQueue()
                     await refreshArtifacts()
                 }
             }
@@ -1939,22 +3437,25 @@ final class ChatViewModel: ObservableObject {
 
     private static let sampleMessages: [ChatMessage] = [
         ChatMessage(
-            id: UUID(),
+            id: UUID().uuidString,
             role: .assistant,
             text: "Welcome to ctx. What would you like to build today?",
-            attachments: []
+            attachments: [],
+            createdAt: formatIsoTimestamp(Date().addingTimeInterval(-240))
         ),
         ChatMessage(
-            id: UUID(),
+            id: UUID().uuidString,
             role: .user,
             text: "A native chat screen with SwiftUI components.",
-            attachments: []
+            attachments: [],
+            createdAt: formatIsoTimestamp(Date().addingTimeInterval(-180))
         ),
         ChatMessage(
-            id: UUID(),
+            id: UUID().uuidString,
             role: .assistant,
             text: "Great. I will set up message bubbles and a composer that feels like ChatGPT.",
-            attachments: []
+            attachments: [],
+            createdAt: formatIsoTimestamp(Date().addingTimeInterval(-120))
         ),
     ]
 }
@@ -2296,6 +3797,42 @@ private func numberValue(from value: JSONValue?) -> Double? {
     default:
         return nil
     }
+}
+
+private func stringValue(from value: JSONValue?) -> String? {
+    switch value {
+    case .string(let string):
+        return string
+    case .number(let number):
+        return String(number)
+    case .bool(let flag):
+        return flag ? "true" : "false"
+    default:
+        return nil
+    }
+}
+
+private func boolValue(from value: JSONValue?) -> Bool? {
+    switch value {
+    case .bool(let flag):
+        return flag
+    case .string(let string):
+        let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if trimmed == "true" { return true }
+        if trimmed == "false" { return false }
+        return nil
+    case .number(let number):
+        return number != 0
+    default:
+        return nil
+    }
+}
+
+private func arrayValue(from value: JSONValue?) -> [JSONValue]? {
+    if case .array(let array) = value {
+        return array
+    }
+    return nil
 }
 
 private func objectValue(from value: JSONValue?) -> [String: JSONValue]? {
