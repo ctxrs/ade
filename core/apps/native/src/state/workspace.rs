@@ -138,6 +138,10 @@ impl ShellView {
     pub(crate) fn load_workspace(&mut self, workspace_id: WorkspaceId, cx: &mut Context<Self>) {
         self.apply_workspace_ui_state(workspace_id);
         self.selected_workspace = Some(workspace_id);
+        if let Some(workspace) = self.workspaces.iter().find(|ws| ws.id == workspace_id) {
+            self.ui_state
+                .record_recent_workspace(&workspace.name, &workspace.root_path);
+        }
         self.stop_workspace_stream();
         self.data_state = DataLoadState::Loading;
         self.reset_workspace_view("Loading workspace data...", cx);

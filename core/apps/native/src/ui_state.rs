@@ -2,10 +2,18 @@ use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
 use ctx_core::ids::WorkspaceId;
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub(crate) struct RecentWorkspaceEntry {
+    pub(crate) name: String,
+    pub(crate) root_path: String,
+    pub(crate) updated_at_ms: u64,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub(crate) struct NativeUiState {
@@ -25,6 +33,8 @@ pub(crate) struct NativeUiState {
     pub(crate) terminal_panel_open_by_workspace: HashMap<String, bool>,
     #[serde(default)]
     pub(crate) archive_confirm_dismissed: bool,
+    #[serde(default)]
+    pub(crate) recent_workspaces: Vec<RecentWorkspaceEntry>,
 }
 
 pub(crate) struct UiStateStore {
@@ -177,6 +187,42 @@ impl UiStateStore {
         self.save();
     }
 
+    pub(crate) fn recent_workspaces(&self) -> Vec<RecentWorkspaceEntry> {
+        self.state.recent_workspaces.clone()
+    }
+
+    pub(crate) fn record_recent_workspace(&mut self, name: &str, root_path: &str) {
+        if name.trim().is_empty() || root_path.trim().is_empty() {
+            return;
+        }
+        let mut entries = self.state.recent_workspaces.clone();
+        if let Some(pos) = entries
+            .iter()
+            .position(|entry| entry.root_path == root_path)
+        {
+            entries.remove(pos);
+        }
+        entries.insert(
+            0,
+            RecentWorkspaceEntry {
+                name: name.to_string(),
+                root_path: root_path.to_string(),
+                updated_at_ms: now_ms(),
+            },
+        );
+        entries.truncate(50);
+        self.state.recent_workspaces = entries;
+        self.save();
+    }
+
+    pub(crate) fn clear_recent_workspaces(&mut self) {
+        if self.state.recent_workspaces.is_empty() {
+            return;
+        }
+        self.state.recent_workspaces.clear();
+        self.save();
+    }
+
     fn save(&self) {
         if let Some(parent) = self.path.parent() {
             if let Err(err) = fs::create_dir_all(parent) {
@@ -219,4 +265,11 @@ fn ui_state_path() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."));
 
     base.join(".ctx").join("native_ui_state.json")
+}
+
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(0)
 }

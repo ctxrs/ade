@@ -218,6 +218,8 @@ impl NavigationListView {
             (ShellRoute::AppSettings, "Launcher"),
         ];
 
+        automation_tree::clear_prefix("nav-item-");
+
         let list = routes
             .iter()
             .enumerate()
@@ -227,27 +229,42 @@ impl NavigationListView {
                 let on_click = cx.listener(move |view, _: &ClickEvent, _window, cx| {
                     view.set_route(next_route, cx);
                 });
-                list.child(
-                    div()
-                        .px(px(12.0))
-                        .py(px(6.0))
-                        .rounded_lg()
-                        .border_1()
-                        .border_color(if active {
-                            self.colors.border_strong
-                        } else {
-                            self.colors.border
-                        })
-                        .bg(if active { self.colors.panel } else { self.colors.panel_2 })
-                        .text_sm()
-                        .child(*label)
-                        .cursor_pointer()
-                        .id(ElementId::named_usize("nav-item", index))
-                        .on_click(on_click),
-                )
+                let item_id = format!("nav-item-{}", index);
+                let item_label = (*label).to_string();
+                let item = div()
+                    .px(px(12.0))
+                    .py(px(6.0))
+                    .rounded_lg()
+                    .border_1()
+                    .border_color(if active {
+                        self.colors.border_strong
+                    } else {
+                        self.colors.border
+                    })
+                    .bg(if active { self.colors.panel } else { self.colors.panel_2 })
+                    .text_sm()
+                    .child(item_label.clone())
+                    .cursor_pointer()
+                    .id(ElementId::named_usize("nav-item", index))
+                    .on_click(on_click);
+                let tracked = div()
+                    .on_children_prepainted(automation_tree::track_children_bounds_dynamic(
+                        item_id,
+                        "button".to_string(),
+                        Some(item_label),
+                        Some("navigation-list".to_string()),
+                    ))
+                    .child(item);
+                list.child(tracked)
             });
 
         div()
+            .on_children_prepainted(automation_tree::track_children_bounds(
+                "navigation-list",
+                "list",
+                Some("Navigation"),
+                Some("app-shell"),
+            ))
             .id("navigation-list")
             .flex()
             .flex_col()

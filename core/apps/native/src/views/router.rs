@@ -8,7 +8,7 @@ use super::diagnostics::DiagnosticsPanelView;
 use super::session::SessionView;
 use super::sidebar::SidebarView;
 use super::super::icons::{Icon, IconName};
-use super::super::state::{ShellRoute, ShellView, SidebarResizeState};
+use super::super::state::{DataLoadState, ShellRoute, ShellView, SidebarResizeState};
 
 pub(crate) struct RouterView<'a> {
     pub(crate) shell: &'a ShellView,
@@ -155,6 +155,7 @@ impl<'a> RouterView<'a> {
     fn render_workspaces(&self, cx: &mut Context<ShellView>) -> impl IntoElement {
         let colors = self.shell.colors;
         let metrics = ThemeMetrics::default();
+        automation_tree::clear_prefix("workspace-item-");
         let refresh_button = self
             .action_button(colors, "Refresh")
             .h(px(metrics.controls.h_sm))
@@ -200,23 +201,38 @@ impl<'a> RouterView<'a> {
                         view.select_workspace(index, cx);
                         view.set_route(ShellRoute::Workbench, cx);
                     });
-                    list.child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .px_3()
-                            .py_2()
-                            .border_1()
-                            .border_color(item_border)
-                            .rounded_sm()
-                            .bg(item_bg)
-                            .text_sm()
-                            .child(workspace.name.clone())
-                            .cursor_pointer()
-                            .id(ElementId::named_usize("workspace", index))
-                            .on_click(on_click),
-                    )
+                    let item_id = format!("workspace-item-{}", index);
+                    let item_label = workspace.name.clone();
+                    let item = div()
+                        .flex()
+                        .items_center()
+                        .px_3()
+                        .py_2()
+                        .border_1()
+                        .border_color(item_border)
+                        .rounded_sm()
+                        .bg(item_bg)
+                        .text_sm()
+                        .child(item_label.clone())
+                        .cursor_pointer()
+                        .id(ElementId::named_usize("workspace", index))
+                        .on_click(on_click);
+                    let tracked = div()
+                        .on_children_prepainted(automation_tree::track_children_bounds_dynamic(
+                            item_id,
+                            "button".to_string(),
+                            Some(item_label),
+                            Some("workspaces-list".to_string()),
+                        ))
+                        .child(item);
+                    list.child(tracked)
                 })
+                .on_children_prepainted(automation_tree::track_children_bounds(
+                    "workspaces-list",
+                    "list",
+                    Some("Workspaces"),
+                    Some("app-shell"),
+                ))
         };
 
         div()
@@ -230,7 +246,7 @@ impl<'a> RouterView<'a> {
             .child(list)
     }
 
-    fn render_diagnostics(&self, _cx: &mut Context<ShellView>) -> impl IntoElement {
+    fn render_diagnostics(&self, cx: &mut Context<ShellView>) -> impl IntoElement {
         let colors = self.shell.colors;
         let metrics = ThemeMetrics::default();
         let panel = DiagnosticsPanelView {
@@ -242,6 +258,87 @@ impl<'a> RouterView<'a> {
         }
         .render();
 
+        let base_url = if self.shell.base_url == "unknown" {
+            "Not connected".to_string()
+        } else {
+            format!("Connected to {}", self.shell.base_url)
+        };
+        let stream_label = self.shell.stream_status.label();
+        let stream_detail = self.shell.stream_status.detail();
+        let stream_text = stream_detail
+            .map(|detail| format!("{stream_label} ({detail})"))
+            .unwrap_or_else(|| stream_label.to_string());
+        let data_state = match &self.shell.data_state {
+            DataLoadState::Loading => "Loading",
+            DataLoadState::Loaded => "Loaded",
+            DataLoadState::Error(_) => "Error",
+        };
+        let selected_workspace = self
+            .shell
+            .selected_workspace
+            .and_then(|id| self.shell.workspaces.iter().find(|ws| ws.id == id));
+        let workspace_name = selected_workspace
+            .map(|ws| ws.name.clone())
+            .unwrap_or_else(|| "No workspace selected".to_string());
+        let workspace_path = selected_workspace
+            .map(|ws| ws.root_path.clone())
+            .unwrap_or_else(|| "—".to_string());
+        let tasks_active = self.shell.task_active_order.len();
+        let tasks_archived = self.shell.task_archived_order.len();
+        let sessions = self.shell.sessions.len();
+        let artifacts = self.shell.artifacts.len();
+        let providers = self.shell.providers.len();
+
+        let refresh_button = self
+            .action_button(colors, "Refresh data")
+            .h(px(metrics.controls.h_sm))
+            .flex()
+            .items_center()
+            .cursor_pointer()
+            .id("diagnostics-refresh")
+            .active(|style| style.opacity(0.85))
+            .on_click(cx.listener(|view, _: &ClickEvent, _window, cx| {
+                view.start_data_load(cx);
+            }));
+
+        let header = div()
+            .flex()
+            .items_center()
+            .justify_between()
+            .child(div().text_lg().child("Diagnostics"))
+            .child(refresh_button);
+
+        let connection_card = self.section_card(
+            colors,
+            "Connection",
+            div()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .child(div().text_sm().text_color(colors.muted).child(base_url))
+                .child(div().text_sm().child(format!("Stream: {stream_text}")))
+                .child(div().text_sm().child(format!("Data: {data_state}"))),
+        );
+
+        let workspace_card = self.section_card(
+            colors,
+            "Workspace",
+            div()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .child(div().text_sm().text_color(colors.muted).child(workspace_name))
+                .child(div().text_sm().text_color(colors.muted).child(workspace_path))
+                .child(
+                    div()
+                        .text_sm()
+                        .child(format!("Tasks: {tasks_active} active / {tasks_archived} archived")),
+                )
+                .child(div().text_sm().child(format!("Sessions: {sessions}")))
+                .child(div().text_sm().child(format!("Artifacts: {artifacts}")))
+                .child(div().text_sm().child(format!("Providers: {providers}"))),
+        );
+
         div()
             .flex()
             .flex_col()
@@ -249,13 +346,15 @@ impl<'a> RouterView<'a> {
             .gap_3()
             .p(px(metrics.spacing.gutter))
             .bg(colors.panel)
-            .child(div().text_lg().child("Diagnostics"))
+            .child(header)
+            .child(connection_card)
+            .child(workspace_card)
             .child(panel)
             .child(
                 div()
                     .text_sm()
                     .text_color(colors.muted)
-                    .child("Detailed diagnostics are available in the web UI."),
+                    .child("Full diagnostics and logs are available in the web UI."),
             )
     }
 
@@ -297,6 +396,24 @@ impl<'a> RouterView<'a> {
                 .child(div().flex().items_center().gap_2().child(workspaces_button)),
         );
 
+        let recents = self.shell.ui_state.recent_workspaces();
+        let recents_count = recents.len();
+        let recents_label = format!("{recents_count} saved entries");
+        let mut clear_button = self
+            .action_button(colors, "Clear recents")
+            .id("app-settings-clear-recents");
+        if recents_count > 0 {
+            clear_button = clear_button
+                .cursor_pointer()
+                .active(|style| style.opacity(0.85))
+                .on_click(cx.listener(|view, _: &ClickEvent, _window, cx| {
+                    view.ui_state.clear_recent_workspaces();
+                    cx.notify();
+                }));
+        } else {
+            clear_button = clear_button.opacity(0.6);
+        }
+
         let recents_card = self.section_card(
             colors,
             "Recents",
@@ -308,9 +425,9 @@ impl<'a> RouterView<'a> {
                     div()
                         .text_sm()
                         .text_color(colors.muted)
-                        .child("Recents are managed in the web launcher."),
+                        .child(recents_label),
                 )
-                .child(div().flex().items_center().gap_2().child(settings_button)),
+                .child(div().flex().items_center().gap_2().child(clear_button)),
         );
 
         div()
@@ -323,6 +440,19 @@ impl<'a> RouterView<'a> {
             .child(div().text_lg().child("App Settings"))
             .child(connection_card)
             .child(recents_card)
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(colors.muted)
+                            .child("Daemon-specific settings live in Settings."),
+                    )
+                    .child(div().flex().items_center().gap_2().child(settings_button)),
+            )
     }
 
     fn section_card<E: IntoElement>(
