@@ -62,6 +62,7 @@ struct ChatView: View {
     @State private var selectedPhotos: [PhotosPickerItem] = []
     @State private var expandedToolGroups: Set<String> = []
     @State private var expandedTools: Set<String> = []
+    @State private var isNearBottom = true
     @FocusState private var isComposerFocused: Bool
 
     init(
@@ -152,6 +153,7 @@ struct ChatView: View {
             let availableWidth = max(0, geometry.size.width - (horizontalPadding * 2))
             let maxBubbleWidth = min(CtxChatStyle.userBubbleMaxWidth, availableWidth * CtxChatStyle.userBubbleWidthFraction)
             let assetContext = viewModel.assetContext
+            let scrollViewHeight = geometry.size.height
             let displayItems = viewModel.threadItems.filter { item in
                 if case .toolGroup = item.kind {
                     return selectedVerbosity != .terse
@@ -159,91 +161,118 @@ struct ChatView: View {
                 return true
             }
             ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(spacing: CtxChatStyle.messageSpacing) {
-                        if !viewModel.queueMessages.isEmpty {
-                            QueuePanel(
-                                messages: viewModel.queueMessages,
-                                onRemove: { messageId in
-                                    viewModel.removeQueuedMessage(messageId)
-                                }
-                            )
-                            .padding(.top, 2)
-                        }
+                ZStack(alignment: .bottomTrailing) {
+                    ScrollView {
+                        LazyVStack(spacing: CtxChatStyle.messageSpacing) {
+                            if !viewModel.queueMessages.isEmpty {
+                                QueuePanel(
+                                    messages: viewModel.queueMessages,
+                                    onRemove: { messageId in
+                                        viewModel.removeQueuedMessage(messageId)
+                                    }
+                                )
+                                .padding(.top, 2)
+                            }
 
-                        ForEach(displayItems) { item in
-                            switch item.kind {
-                            case .message(let message):
-                                MessageRow(
-                                    message: message,
-                                    maxBubbleWidth: maxBubbleWidth,
-                                    assetContext: assetContext
-                                )
+                            ForEach(displayItems) { item in
+                                switch item.kind {
+                                case .message(let message):
+                                    MessageRow(
+                                        message: message,
+                                        maxBubbleWidth: maxBubbleWidth,
+                                        assetContext: assetContext
+                                    )
+                                        .id(item.id)
+                                case .toolGroup(let group):
+                                    let expanded = selectedVerbosity == .verbose || expandedToolGroups.contains(group.id)
+                                    ToolGroupRow(
+                                        group: group,
+                                        expanded: expanded,
+                                        toolsLoading: viewModel.toolLoadingTurnIds.contains(group.turnId),
+                                        toolDetails: viewModel.toolDetailsByCallId,
+                                        verbosity: selectedVerbosity,
+                                        expandedTools: expandedTools,
+                                        onToggleGroup: {
+                                            if selectedVerbosity == .verbose { return }
+                                            if expandedToolGroups.contains(group.id) {
+                                                expandedToolGroups.remove(group.id)
+                                            } else {
+                                                expandedToolGroups.insert(group.id)
+                                            }
+                                        },
+                                        onToggleTool: { toolId in
+                                            if expandedTools.contains(toolId) {
+                                                expandedTools.remove(toolId)
+                                            } else {
+                                                expandedTools.insert(toolId)
+                                            }
+                                        },
+                                        onRequestTools: {
+                                            viewModel.loadTools(for: group.turnId)
+                                        }
+                                    )
                                     .id(item.id)
-                            case .toolGroup(let group):
-                                let expanded = selectedVerbosity == .verbose || expandedToolGroups.contains(group.id)
-                                ToolGroupRow(
-                                    group: group,
-                                    expanded: expanded,
-                                    toolsLoading: viewModel.toolLoadingTurnIds.contains(group.turnId),
-                                    toolDetails: viewModel.toolDetailsByCallId,
-                                    verbosity: selectedVerbosity,
-                                    expandedTools: expandedTools,
-                                    onToggleGroup: {
-                                        if selectedVerbosity == .verbose { return }
-                                        if expandedToolGroups.contains(group.id) {
-                                            expandedToolGroups.remove(group.id)
-                                        } else {
-                                            expandedToolGroups.insert(group.id)
+                                case .askUser(let question):
+                                    AskUserQuestionCard(
+                                        question: question,
+                                        active: question.toolCallId == viewModel.activeAskToolCallId,
+                                        onSubmit: { answers in
+                                            await viewModel.submitAskUserQuestion(toolCallId: question.toolCallId, answers: answers)
+                                        },
+                                        onCancel: {
+                                            await viewModel.cancelAskUserQuestion(toolCallId: question.toolCallId)
                                         }
-                                    },
-                                    onToggleTool: { toolId in
-                                        if expandedTools.contains(toolId) {
-                                            expandedTools.remove(toolId)
-                                        } else {
-                                            expandedTools.insert(toolId)
-                                        }
-                                    },
-                                    onRequestTools: {
-                                        viewModel.loadTools(for: group.turnId)
-                                    }
-                                )
-                                .id(item.id)
-                            case .askUser(let question):
-                                AskUserQuestionCard(
-                                    question: question,
-                                    active: question.toolCallId == viewModel.activeAskToolCallId,
-                                    onSubmit: { answers in
-                                        await viewModel.submitAskUserQuestion(toolCallId: question.toolCallId, answers: answers)
-                                    },
-                                    onCancel: {
-                                        await viewModel.cancelAskUserQuestion(toolCallId: question.toolCallId)
-                                    }
-                                )
-                                .id(item.id)
+                                    )
+                                    .id(item.id)
+                                }
+                            }
+                            if let status = viewModel.turnStatus {
+                                ChatTurnStatusRow(status: status)
+                                    .padding(.top, 4)
+                                    .padding(.bottom, 4)
                             }
                         }
-                        if let status = viewModel.turnStatus {
-                            ChatTurnStatusRow(status: status)
-                                .padding(.top, 4)
-                                .padding(.bottom, 4)
+                        .padding(.horizontal, horizontalPadding)
+                        .padding(.top, CtxChatStyle.messageTopPadding)
+                        .padding(.bottom, CtxChatStyle.messageBottomPadding)
+
+                        GeometryReader { proxy in
+                            Color.clear.preference(
+                                key: ScrollToBottomPreferenceKey.self,
+                                value: proxy.frame(in: .named("chatScroll")).maxY
+                            )
+                        }
+                        .frame(height: 1)
+                    }
+                    .coordinateSpace(name: "chatScroll")
+                    .scrollDismissesKeyboard(.interactively)
+                    .accessibilityIdentifier("chat.messages")
+                    .onPreferenceChange(ScrollToBottomPreferenceKey.self) { bottomY in
+                        let threshold: CGFloat = 24
+                        let nearBottom = bottomY <= scrollViewHeight + threshold
+                        if nearBottom != isNearBottom {
+                            isNearBottom = nearBottom
                         }
                     }
-                    .padding(.horizontal, horizontalPadding)
-                    .padding(.top, CtxChatStyle.messageTopPadding)
-                    .padding(.bottom, CtxChatStyle.messageBottomPadding)
-                }
-                .scrollDismissesKeyboard(.interactively)
-                .accessibilityIdentifier("chat.messages")
-                .onAppear {
-                    scrollToBottom(proxy: proxy, animated: false)
-                }
-                .onChange(of: viewModel.threadItemsRevision) { _, _ in
-                    scrollToBottom(proxy: proxy, animated: true)
-                }
-                .onChange(of: isComposerFocused) { _, focused in
-                    guard focused else { return }
-                    scrollToBottom(proxy: proxy, animated: true)
+                    .onAppear {
+                        scrollToBottom(proxy: proxy, animated: false)
+                    }
+                    .onChange(of: viewModel.threadItemsRevision) { _, _ in
+                        scrollToBottom(proxy: proxy, animated: true)
+                    }
+                    .onChange(of: isComposerFocused) { _, focused in
+                        guard focused else { return }
+                        scrollToBottom(proxy: proxy, animated: true)
+                    }
+
+                    if !isNearBottom {
+                        ScrollToBottomButton {
+                            scrollToBottom(proxy: proxy, animated: true)
+                        }
+                        .padding(.trailing, CtxChatStyle.composerOuterPadding)
+                        .padding(.bottom, scrollToBottomButtonBottomPadding)
+                        .transition(.opacity)
+                    }
                 }
             }
         }
@@ -251,6 +280,10 @@ struct ChatView: View {
 
     private var isSendEnabled: Bool {
         !composerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !pendingAttachments.isEmpty
+    }
+
+    private var scrollToBottomButtonBottomPadding: CGFloat {
+        CtxChatStyle.composerOuterPadding + CtxChatStyle.composerPrimarySize + 28
     }
 
     private func syncEffortSelection() {
@@ -2023,6 +2056,8 @@ struct ComposerBar: View {
     var contextWindowInfo: ContextWindowInfo?
     var onSend: () -> Void
     var onInterrupt: () -> Void
+    @State private var textFieldWidth: CGFloat = 0
+    @State private var isFullscreenPresented = false
 
     private var modelChoices: [String] {
         modelOptions.isEmpty ? ["default"] : modelOptions
@@ -2031,6 +2066,26 @@ struct ComposerBar: View {
     private var resolvedModelId: String {
         let fallback = modelChoices.first ?? "default"
         return selectedModelId.isEmpty ? fallback : selectedModelId
+    }
+
+    private var estimatedLineCount: Int {
+        let fallback = max(1, text.components(separatedBy: .newlines).count)
+        let width = max(0, textFieldWidth - 4)
+        guard width > 0 else { return fallback }
+        let font = UIFont.systemFont(ofSize: 16)
+        let textToMeasure = text.isEmpty ? " " : text
+        let bounding = (textToMeasure as NSString).boundingRect(
+            with: CGSize(width: width, height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            attributes: [.font: font],
+            context: nil
+        )
+        let lineHeight = font.lineHeight
+        return max(1, Int(ceil(bounding.height / lineHeight)))
+    }
+
+    private var showsFullscreenToggle: Bool {
+        estimatedLineCount >= 3
     }
 
     var body: some View {
@@ -2069,6 +2124,16 @@ struct ComposerBar: View {
                     .foregroundColor(.ctxTextPrimary)
                     .tint(.ctxAccent)
                     .focused(isFocused)
+                    .background(
+                        GeometryReader { proxy in
+                            Color.clear.preference(key: ComposerTextFieldWidthKey.self, value: proxy.size.width)
+                        }
+                    )
+                    .onPreferenceChange(ComposerTextFieldWidthKey.self) { width in
+                        if width > 0, width != textFieldWidth {
+                            textFieldWidth = width
+                        }
+                    }
             }
 
             HStack(spacing: 12) {
@@ -2112,43 +2177,46 @@ struct ComposerBar: View {
 
                 Spacer(minLength: 0)
 
-                Menu {
-                    Picker("Mode", selection: $selectedMode) {
-                        ForEach(ComposerMode.allCases) { mode in
-                            Text(mode.label).tag(mode)
+                HStack(spacing: 6) {
+                    Menu {
+                        Picker("Mode", selection: $selectedMode) {
+                            ForEach(ComposerMode.allCases) { mode in
+                                Text(mode.label).tag(mode)
+                            }
                         }
-                    }
-                    .pickerStyle(.inline)
+                        .pickerStyle(.inline)
 
-                    Picker("Verbosity", selection: $selectedVerbosity) {
-                        ForEach(ComposerVerbosity.allCases) { verbosity in
-                            Text(verbosity.label).tag(verbosity)
+                        Picker("Verbosity", selection: $selectedVerbosity) {
+                            ForEach(ComposerVerbosity.allCases) { verbosity in
+                                Text(verbosity.label).tag(verbosity)
+                            }
                         }
+                        .pickerStyle(.inline)
+                    } label: {
+                        ComposerToolIcon(name: .ellipsis)
                     }
-                    .pickerStyle(.inline)
-                } label: {
-                    ComposerToolIcon(name: .ellipsis)
-                }
-                .accessibilityIdentifier("chat.composer.options")
+                    .accessibilityIdentifier("chat.composer.options")
 
-                PhotosPicker(selection: $selectedPhotos, matching: .images) {
-                    ComposerToolIcon(name: .image)
-                }
-                .accessibilityIdentifier("chat.composer.attach")
+                    PhotosPicker(selection: $selectedPhotos, matching: .images) {
+                        ComposerToolIcon(name: .image)
+                    }
+                    .accessibilityIdentifier("chat.composer.attach")
 
-                if isWorking {
-                    ComposerCircleButton(icon: .square, accessibilityId: "chat.composer.stop") {
-                        onInterrupt()
+                    if isWorking {
+                        ComposerCircleButton(icon: .square, accessibilityId: "chat.composer.stop") {
+                            onInterrupt()
+                        }
+                    } else if isSendEnabled {
+                        ComposerCircleButton(icon: .arrowUp, accessibilityId: "chat.composer.send") {
+                            onSend()
+                        }
+                    } else {
+                        Button {} label: {
+                            ComposerToolIcon(name: .mic)
+                        }
+                        .frame(width: CtxChatStyle.composerPrimarySize, height: CtxChatStyle.composerPrimarySize)
+                        .accessibilityIdentifier("chat.composer.mic")
                     }
-                } else if isSendEnabled {
-                    ComposerCircleButton(icon: .arrowUp, accessibilityId: "chat.composer.send") {
-                        onSend()
-                    }
-                } else {
-                    Button {} label: {
-                        ComposerToolIcon(name: .mic)
-                    }
-                    .accessibilityIdentifier("chat.composer.mic")
                 }
             }
         }
@@ -2163,12 +2231,34 @@ struct ComposerBar: View {
                 .stroke(Color.ctxLine, lineWidth: 1)
         )
         .overlay(alignment: .topTrailing) {
-            if let contextSummary {
-                ContextWindowIndicator(summary: contextSummary)
-                    .padding(.top, 4)
-                    .padding(.trailing, 6)
-                    .allowsHitTesting(false)
+            if showsFullscreenToggle || contextSummary != nil {
+                HStack(spacing: 6) {
+                    if showsFullscreenToggle {
+                        Button(action: { isFullscreenPresented = true }) {
+                            LucideIcon(name: .expand, size: 14)
+                                .foregroundColor(.ctxTextMuted)
+                                .frame(width: 22, height: 22)
+                                .contentShape(Rectangle())
+                        }
+                        .accessibilityIdentifier("chat.composer.expand")
+                    }
+
+                    if let contextSummary {
+                        ContextWindowIndicator(summary: contextSummary)
+                            .allowsHitTesting(false)
+                    }
+                }
+                .padding(.top, 3)
+                .padding(.trailing, 10)
             }
+        }
+        .fullScreenCover(isPresented: $isFullscreenPresented) {
+            ComposerFullscreenView(
+                text: $text,
+                isSendEnabled: isSendEnabled,
+                onSend: onSend,
+                onClose: { isFullscreenPresented = false }
+            )
         }
     }
 
@@ -2219,6 +2309,100 @@ private struct ContextWindowIndicator: View {
             .font(.caption2.weight(.semibold))
             .foregroundColor(.ctxTextMuted)
             .accessibilityLabel("Context Window: \(summary.text)")
+    }
+}
+
+private struct ComposerFullscreenView: View {
+    @Binding var text: String
+    var isSendEnabled: Bool
+    var onSend: () -> Void
+    var onClose: () -> Void
+    @FocusState private var isFocused: Bool
+
+    var body: some View {
+        VStack(spacing: 16) {
+            HStack {
+                Button(action: onClose) {
+                    LucideIcon(name: .x, size: 18)
+                        .foregroundColor(.ctxTextPrimary)
+                        .frame(width: 32, height: 32)
+                        .contentShape(Rectangle())
+                }
+                .accessibilityIdentifier("chat.composer.fullscreen.close")
+
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 12)
+
+            TextEditor(text: $text)
+                .font(CtxChatStyle.bodyFont)
+                .foregroundColor(.ctxTextPrimary)
+                .tint(.ctxAccent)
+                .scrollContentBackground(.hidden)
+                .focused($isFocused)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+                .background(
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .fill(Color.ctxSurfaceRaised)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .stroke(Color.ctxLine, lineWidth: 1)
+                )
+                .padding(.horizontal, 16)
+
+            HStack {
+                Spacer(minLength: 0)
+                ComposerCircleButton(icon: .arrowUp, accessibilityId: "chat.composer.fullscreen.send") {
+                    onSend()
+                }
+                .disabled(!isSendEnabled)
+                .opacity(isSendEnabled ? 1 : 0.4)
+            }
+            .padding(.horizontal, 20)
+            .padding(.bottom, 24)
+        }
+        .background(Color.ctxBackground.ignoresSafeArea())
+        .onAppear {
+            isFocused = true
+        }
+    }
+}
+
+private struct ScrollToBottomButton: View {
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            LucideIcon(name: .arrowDown, size: 16)
+                .foregroundColor(.ctxTextPrimary)
+                .frame(width: 36, height: 36)
+                .background(Circle().fill(Color.ctxSurfaceRaised))
+                .overlay(
+                    Circle().stroke(Color.ctxLine, lineWidth: 1)
+                )
+        }
+        .accessibilityIdentifier("chat.scrollToBottom")
+        .shadow(color: Color.ctxShadow, radius: 6, x: 0, y: 3)
+    }
+}
+
+private struct ComposerTextFieldWidthKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
+    }
+}
+
+private struct ScrollToBottomPreferenceKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
     }
 }
 

@@ -8,8 +8,11 @@ enum LucideIconName {
     case ellipsis
     case chevronDown
     case mic
+    case arrowDown
     case arrowUp
     case square
+    case expand
+    case x
 }
 
 struct LucideIcon: View {
@@ -69,6 +72,12 @@ struct LucideIcon: View {
             path.addArc(center: CGPoint(x: 12, y: 12), radius: 7, startAngle: .degrees(0), endAngle: .degrees(180), clockwise: false)
             path.addLine(to: CGPoint(x: 5, y: 10))
             path.addRoundedRect(in: CGRect(x: 9, y: 2, width: 6, height: 13), cornerSize: CGSize(width: 3, height: 3))
+        case .arrowDown:
+            path.move(to: CGPoint(x: 5, y: 12))
+            path.addLine(to: CGPoint(x: 12, y: 19))
+            path.addLine(to: CGPoint(x: 19, y: 12))
+            path.move(to: CGPoint(x: 12, y: 5))
+            path.addLine(to: CGPoint(x: 12, y: 19))
         case .arrowUp:
             path.move(to: CGPoint(x: 5, y: 12))
             path.addLine(to: CGPoint(x: 12, y: 5))
@@ -77,6 +86,32 @@ struct LucideIcon: View {
             path.addLine(to: CGPoint(x: 12, y: 5))
         case .square:
             path.addRoundedRect(in: CGRect(x: 3, y: 3, width: 18, height: 18), cornerSize: CGSize(width: 2, height: 2))
+        case .expand:
+            path.move(to: CGPoint(x: 15, y: 15))
+            path.addLine(to: CGPoint(x: 21, y: 21))
+            path.move(to: CGPoint(x: 15, y: 9))
+            path.addLine(to: CGPoint(x: 21, y: 3))
+            path.move(to: CGPoint(x: 21, y: 16))
+            path.addLine(to: CGPoint(x: 21, y: 21))
+            path.addLine(to: CGPoint(x: 16, y: 21))
+            path.move(to: CGPoint(x: 21, y: 8))
+            path.addLine(to: CGPoint(x: 21, y: 3))
+            path.addLine(to: CGPoint(x: 16, y: 3))
+            path.move(to: CGPoint(x: 3, y: 16))
+            path.addLine(to: CGPoint(x: 3, y: 21))
+            path.addLine(to: CGPoint(x: 8, y: 21))
+            path.move(to: CGPoint(x: 3, y: 21))
+            path.addLine(to: CGPoint(x: 9, y: 15))
+            path.move(to: CGPoint(x: 3, y: 8))
+            path.addLine(to: CGPoint(x: 3, y: 3))
+            path.addLine(to: CGPoint(x: 8, y: 3))
+            path.move(to: CGPoint(x: 9, y: 9))
+            path.addLine(to: CGPoint(x: 3, y: 3))
+        case .x:
+            path.move(to: CGPoint(x: 6, y: 6))
+            path.addLine(to: CGPoint(x: 18, y: 18))
+            path.move(to: CGPoint(x: 6, y: 18))
+            path.addLine(to: CGPoint(x: 18, y: 6))
         }
         return path
     }

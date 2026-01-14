@@ -75,7 +75,10 @@ struct WorkbenchShellView: View {
                 .safeAreaInset(edge: .top, spacing: 0) {
                     WorkbenchTopBar(
                         title: taskTitle,
-                        onMenuTap: { isDrawerOpen = true },
+                        onMenuTap: {
+                            dismissKeyboard()
+                            isDrawerOpen = true
+                        },
                         onArtifactsTap: { handleTopBarAction(.artifacts) },
                         onDiffTap: { handleTopBarAction(.diff) },
                         onSessionsTap: { handleTopBarAction(.sessions) },
@@ -249,6 +252,10 @@ struct WorkbenchShellView: View {
             onCopyWorktreeLocation: { copyWorktreeLocation(session: session) },
             onArchiveConversation: { _Concurrency.Task { await archiveConversation(taskId: taskId) } }
         )
+    }
+
+    private func dismissKeyboard() {
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
     }
 
     private func handleTopBarAction(_ action: WorkbenchTopBarAction) {
