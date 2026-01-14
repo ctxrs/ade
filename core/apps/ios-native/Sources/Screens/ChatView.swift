@@ -393,6 +393,7 @@ struct ChatDetailView: View {
     let session: SessionSummary
     @StateObject private var viewModel: ChatViewModel
     @Binding var isArtifactsPresented: Bool
+    @Binding var artifactCount: Int
     @State private var availableModels: [String] = []
     @State private var isLoadingModels = false
     @State private var selectedModelId: String
@@ -400,9 +401,10 @@ struct ChatDetailView: View {
     @State private var selectedMode: ComposerMode = .default
     @State private var selectedVerbosity: ComposerVerbosity = .default
 
-    init(session: SessionSummary, isArtifactsPresented: Binding<Bool>) {
+    init(session: SessionSummary, isArtifactsPresented: Binding<Bool>, artifactCount: Binding<Int>) {
         self.session = session
         _isArtifactsPresented = isArtifactsPresented
+        _artifactCount = artifactCount
         _selectedModelId = State(initialValue: session.modelId)
         _viewModel = StateObject(
             wrappedValue: ChatViewModel(
@@ -427,9 +429,11 @@ struct ChatDetailView: View {
             .onAppear {
                 viewModel.setClient(connection.apiClient)
                 viewModel.selectSession(session.id, workspaceId: session.workspaceId)
+                artifactCount = viewModel.artifacts.count
                 _Concurrency.Task { await loadModels() }
             }
             .onChange(of: session.id) { newSessionId in
+                artifactCount = 0
                 viewModel.selectSession(newSessionId, workspaceId: session.workspaceId)
                 selectedModelId = session.modelId
                 _Concurrency.Task { await loadModels() }
@@ -445,6 +449,9 @@ struct ChatDetailView: View {
                 if !newModelId.isEmpty {
                     selectedModelId = newModelId
                 }
+            }
+            .onChange(of: viewModel.artifacts.count) { _, newCount in
+                artifactCount = newCount
             }
             .sheet(isPresented: $isArtifactsPresented) {
                 ArtifactsListView(
@@ -633,16 +640,9 @@ private struct MarkdownTextBlock: View {
 
     var body: some View {
         let color = isMuted ? Color.ctxTextMuted : Color.ctxTextPrimary
-        if let attributed = try? AttributedString(
-            markdown: text,
-            options: AttributedString.MarkdownParsingOptions(
-                interpretedSyntax: .full,
-                failurePolicy: .returnPartiallyParsedIfPossible
-            )
-        ) {
+        if let attributed = styledMarkdownAttributedString(text, isMuted: isMuted) {
             Text(attributed)
                 .font(CtxChatStyle.bodyFont)
-                .foregroundColor(color)
                 .lineSpacing(CtxChatStyle.bodyLineSpacing)
         } else {
             Text(text)
@@ -651,6 +651,39 @@ private struct MarkdownTextBlock: View {
                 .lineSpacing(CtxChatStyle.bodyLineSpacing)
         }
     }
+}
+
+private func styledMarkdownAttributedString(_ text: String, isMuted: Bool) -> AttributedString? {
+    let normalized = text
+        .replacingOccurrences(of: "\r\n", with: "\n")
+        .replacingOccurrences(of: "\n", with: "  \n")
+    guard var attributed = try? AttributedString(
+        markdown: normalized,
+        options: AttributedString.MarkdownParsingOptions(
+            interpretedSyntax: .full,
+            failurePolicy: .returnPartiallyParsedIfPossible
+        )
+    ) else {
+        return nil
+    }
+    let inlineColor = UIColor(isMuted ? Color.ctxTextMuted : Color.ctxTextPrimary)
+    var baseContainer = AttributeContainer()
+    baseContainer.foregroundColor = inlineColor
+    attributed.mergeAttributes(baseContainer)
+    let background = UIColor(Color.ctxSurfaceRaised)
+    let monoFont = UIFont.monospacedSystemFont(ofSize: 14, weight: .regular)
+
+    for run in attributed.runs {
+        guard let intent = run.inlinePresentationIntent, intent.contains(.code) else {
+            continue
+        }
+        var container = AttributeContainer()
+        container.foregroundColor = inlineColor
+        container.backgroundColor = background
+        container.font = monoFont
+        attributed[run.range].mergeAttributes(container)
+    }
+    return attributed
 }
 
 private struct MarkdownSegment: Identifiable {
@@ -1797,18 +1830,17 @@ struct AttachmentPreview: View {
             } else if attachment.kind == .imageRef,
                       let blobId = attachment.blobId,
                       let url = assetContext.blobURL(blobId) {
-                AsyncImage(url: url) { phase in
-                    switch phase {
-                    case .success(let image):
+                RemoteAssetImage(
+                    url: url,
+                    token: assetContext.token,
+                    content: { image in
                         image
                             .resizable()
                             .scaledToFill()
-                    case .failure:
-                        placeholder
-                    default:
-                        loading
-                    }
-                }
+                    },
+                    placeholder: { placeholder },
+                    loading: { loading }
+                )
             } else {
                 placeholder
             }
@@ -1842,6 +1874,66 @@ struct AttachmentPreview: View {
             Color.ctxSurfaceRaised
             Image(systemName: "photo")
                 .foregroundColor(.ctxTextMuted)
+        }
+    }
+}
+
+private enum RemoteAssetImagePhase {
+    case empty
+    case success(UIImage)
+    case failure
+}
+
+private struct RemoteAssetImage<Content: View, Placeholder: View, Loading: View>: View {
+    let url: URL
+    let token: String?
+    let content: (Image) -> Content
+    let placeholder: () -> Placeholder
+    let loading: () -> Loading
+
+    @State private var phase: RemoteAssetImagePhase = .empty
+
+    var body: some View {
+        Group {
+            switch phase {
+            case .success(let image):
+                content(Image(uiImage: image))
+            case .failure:
+                placeholder()
+            case .empty:
+                loading()
+            }
+        }
+        .task(id: cacheKey) {
+            await load()
+        }
+    }
+
+    private var cacheKey: String {
+        let tokenPart = token ?? ""
+        return "\(url.absoluteString)|\(tokenPart)"
+    }
+
+    private func load() async {
+        await MainActor.run {
+            phase = .empty
+        }
+        var request = URLRequest(url: url)
+        if let token, !token.isEmpty {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse,
+                  (200..<300).contains(http.statusCode),
+                  let image = UIImage(data: data) else {
+                await MainActor.run { phase = .failure }
+                return
+            }
+            await MainActor.run { phase = .success(image) }
+        } catch {
+            await MainActor.run { phase = .failure }
         }
     }
 }
@@ -1994,18 +2086,17 @@ struct ArtifactDetailMedia: View {
                     .aspectRatio(16 / 9, contentMode: .fit)
             } else if isImageArtifact(artifact),
                       let url = assetContext.artifactURL(artifact.id.stringValue) {
-                AsyncImage(url: url) { phase in
-                    switch phase {
-                    case .success(let image):
+                RemoteAssetImage(
+                    url: url,
+                    token: assetContext.token,
+                    content: { image in
                         image
                             .resizable()
                             .scaledToFit()
-                    case .failure:
-                        placeholder
-                    default:
-                        loading
-                    }
-                }
+                    },
+                    placeholder: { placeholder },
+                    loading: { loading }
+                )
                 .padding(12)
             } else {
                 placeholder
@@ -2088,18 +2179,17 @@ struct ArtifactPreview: View {
             } else if isVideo {
                 videoPreview
             } else if isImage, let url = assetContext.artifactURL(artifact.id.stringValue) {
-                AsyncImage(url: url) { phase in
-                    switch phase {
-                    case .success(let image):
-                        image
-                            .resizable()
-                            .scaledToFill()
-                    case .failure:
-                        placeholder
-                    default:
-                        loading
-                    }
-                }
+                RemoteAssetImage(
+                url: url,
+                token: assetContext.token,
+                content: { image in
+                    image
+                        .resizable()
+                        .scaledToFill()
+                },
+                placeholder: { placeholder },
+                loading: { loading }
+            )
             } else {
                 placeholder
             }
@@ -2284,7 +2374,7 @@ struct ComposerBar: View {
 
                 Spacer(minLength: 0)
 
-                HStack(spacing: 6) {
+                HStack(spacing: 4) {
                     Menu {
                         Picker("Mode", selection: $selectedMode) {
                             ForEach(ComposerMode.allCases) { mode in
@@ -2355,8 +2445,8 @@ struct ComposerBar: View {
                             .allowsHitTesting(false)
                     }
                 }
-                .padding(.top, 3)
-                .padding(.trailing, 10)
+                .padding(.top, 2)
+                .padding(.trailing, 12)
             }
         }
         .fullScreenCover(isPresented: $isFullscreenPresented) {

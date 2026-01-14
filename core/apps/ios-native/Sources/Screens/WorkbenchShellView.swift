@@ -29,6 +29,7 @@ struct WorkbenchShellView: View {
     @State private var deleteInFlight: Set<String> = []
     @State private var deleteAlert: WorkbenchDeleteAlert?
     @State private var isArtifactsPresented = false
+    @State private var artifactsCount = 0
     @State private var activePanel: WorkbenchPanel?
     @State private var topBarAlert: WorkbenchTopBarAlert?
     @State private var sharePayload: SharePayload?
@@ -68,6 +69,7 @@ struct WorkbenchShellView: View {
                     taskError: taskError,
                     selectedSession: resolvedSession,
                     isArtifactsPresented: $isArtifactsPresented,
+                    artifactsCount: $artifactsCount,
                     hasTaskSelection: workbenchSelection.taskId != nil,
                     isPreparingSession: isPreparingSession,
                     onTaskCreated: { _Concurrency.Task { await loadTasks() } }
@@ -80,6 +82,7 @@ struct WorkbenchShellView: View {
                             isDrawerOpen = true
                         },
                         onArtifactsTap: { handleTopBarAction(.artifacts) },
+                        artifactsCount: artifactsCount,
                         onDiffTap: { handleTopBarAction(.diff) },
                         onSessionsTap: { handleTopBarAction(.sessions) },
                         onTerminalTap: { handleTopBarAction(.terminal) },
@@ -172,6 +175,11 @@ struct WorkbenchShellView: View {
         }
         .onChange(of: workbenchSelection.taskId) { _ in
             resolveSelectionForCurrentTask()
+        }
+        .onChange(of: resolvedSession?.id) { _, newId in
+            if newId == nil {
+                artifactsCount = 0
+            }
         }
         .onDisappear {
             stopWorkspaceStream()
@@ -1088,6 +1096,7 @@ private struct WorkbenchHomeView: View {
     let taskError: String?
     let selectedSession: SessionSummary?
     @Binding var isArtifactsPresented: Bool
+    @Binding var artifactsCount: Int
     let hasTaskSelection: Bool
     let isPreparingSession: Bool
     let onTaskCreated: () -> Void
@@ -1102,6 +1111,7 @@ private struct WorkbenchHomeView: View {
                 taskError: taskError,
                 selectedSession: selectedSession,
                 isArtifactsPresented: $isArtifactsPresented,
+                artifactsCount: $artifactsCount,
                 hasTaskSelection: hasTaskSelection,
                 isPreparingSession: isPreparingSession,
                 onTaskCreated: onTaskCreated
@@ -1135,6 +1145,7 @@ private struct WorkbenchTopBar: View {
     let title: String
     let onMenuTap: () -> Void
     let onArtifactsTap: () -> Void
+    let artifactsCount: Int
     let onDiffTap: () -> Void
     let onSessionsTap: () -> Void
     let onTerminalTap: () -> Void
@@ -1162,7 +1173,13 @@ private struct WorkbenchTopBar: View {
             if showsTaskActions {
                 HStack(spacing: 14) {
                     Button(action: onArtifactsTap) {
-                        LucideIcon(name: .image, size: 16)
+                        ZStack(alignment: .topTrailing) {
+                            LucideIcon(name: .image, size: 16)
+                            if artifactsCount > 0 {
+                                WorkbenchIconBadge(count: artifactsCount)
+                                    .offset(x: 8, y: -6)
+                            }
+                        }
                     }
                     .accessibilityIdentifier("topbar.artifacts")
 
@@ -1215,6 +1232,20 @@ private struct WorkbenchTopBar: View {
                 .foregroundColor(.ctxTextPrimary)
             }
         }
+    }
+}
+
+private struct WorkbenchIconBadge: View {
+    let count: Int
+
+    var body: some View {
+        let label = count > 99 ? "99+" : "\(count)"
+        Text(label)
+            .font(.caption2.weight(.bold))
+            .foregroundColor(.white)
+            .padding(.horizontal, 4)
+            .padding(.vertical, 1)
+            .background(Capsule().fill(Color.ctxAccent))
     }
 }
 
@@ -1489,6 +1520,7 @@ private struct WorkbenchNavigationFlowView: View {
     let taskError: String?
     let selectedSession: SessionSummary?
     @Binding var isArtifactsPresented: Bool
+    @Binding var artifactsCount: Int
     let hasTaskSelection: Bool
     let isPreparingSession: Bool
     let onTaskCreated: () -> Void
@@ -1509,7 +1541,7 @@ private struct WorkbenchNavigationFlowView: View {
         } else if let workspace = selectedWorkspace {
             NavigationStack {
                 if let selectedSession {
-                    ChatDetailView(session: selectedSession, isArtifactsPresented: $isArtifactsPresented)
+                    ChatDetailView(session: selectedSession, isArtifactsPresented: $isArtifactsPresented, artifactCount: $artifactsCount)
                 } else if hasTaskSelection {
                     if isPreparingSession {
                         WorkbenchEmptyStateView(
