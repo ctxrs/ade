@@ -305,7 +305,7 @@ impl<'a> ThreadListView<'a> {
                     .flex_1()
                     .min_h(px(0.0))
                     .overflow_hidden()
-                    .child(list.w_full().h_full()),
+                    .child(list.w_full().h_full().pb(px(metrics.spacing.md))),
             )
             .child(overlay)
     }
@@ -332,6 +332,19 @@ fn render_thread_item(
             let is_long =
                 header.plain_text.split('\n').count() > 4 || header.plain_text.len() > 280;
             let expanded = expanded_turn_headers.get(&id).copied().unwrap_or(!is_long);
+            let has_copy_button = !header.content.trim().is_empty();
+            let copy_inset = if has_copy_button {
+                metrics.spacing.xxl
+            } else {
+                0.0
+            };
+            let header_max_height = 1.45 * 3.5 * 16.0;
+            let header_bg = Rgba {
+                r: 1.0,
+                g: 1.0,
+                b: 1.0,
+                a: 0.02,
+            };
             let copy_key = format!("turn-header:{id}");
             let copied = copied_flags.contains_key(&copy_key);
             let content = markdown_view(
@@ -344,14 +357,18 @@ fn render_thread_item(
             )
             .selectable(true);
             let content = if expanded {
-                content.into_any_element()
+                div()
+                    .when(copy_inset > 0.0, |this| this.pr(px(copy_inset)))
+                    .child(content)
+                    .into_any_element()
             } else {
                 div()
                     .relative()
-                    .max_h(px(1.45 * 3.5 * 16.0))
+                    .max_h(px(header_max_height))
                     .overflow_hidden()
+                    .when(copy_inset > 0.0, |this| this.pr(px(copy_inset)))
                     .child(content)
-                    .child(fade_overlay(px(36.0), colors.bg))
+                    .child(fade_overlay(px(header_max_height * 0.25), header_bg))
                     .into_any_element()
             };
             let attachments = render_attachments(
@@ -362,15 +379,15 @@ fn render_thread_item(
                 &attachment_failed,
                 AttachmentVariant::Header,
             );
-            let copy_button = if header.content.trim().is_empty() {
+            let copy_button = if !has_copy_button {
                 div().into_any_element()
             } else {
                 let copy_text = header.content.clone();
                 let button = div()
                     .absolute()
-                    .top(px(6.0))
-                    .right(px(6.0))
-                    .p(px(4.0))
+                    .top(px(metrics.spacing.sm))
+                    .right(px(metrics.spacing.sm))
+                    .p(px(metrics.spacing.xs))
                     .rounded(px(4.0))
                     .bg(Rgba {
                         r: 1.0,
@@ -414,14 +431,10 @@ fn render_thread_item(
                         a: 0.08,
                         ..colors.border
                     })
-                    .bg(Rgba {
-                        r: 1.0,
-                        g: 1.0,
-                        b: 1.0,
-                        a: 0.02,
-                    })
+                    .bg(header_bg)
                     .rounded(px(10.0))
-                    .p(px(8.0))
+                    .px(px(metrics.spacing.lg))
+                    .py(px(metrics.spacing.md))
                     .cursor_pointer()
                     .id(format!("turn-header-container-{id}"))
                     .child(copy_button)
@@ -437,7 +450,7 @@ fn render_thread_item(
             div()
                 .id(id)
                 .px(px(metrics.spacing.sm))
-                .pt(px(metrics.spacing.xs))
+                .pt(px(metrics.spacing.sm))
                 .pb(px(metrics.spacing.md))
                 .child(container)
                 .into_any_element()
@@ -494,15 +507,16 @@ fn render_thread_item(
                 weak_view.clone(),
             )
             .selectable(true);
+            let message_max_height = 1.45 * 8.0 * 16.0;
             let body = if expanded {
                 text.into_any_element()
             } else {
                 div()
                     .relative()
-                    .max_h(px(1.45 * 8.0 * 16.0))
+                    .max_h(px(message_max_height))
                     .overflow_hidden()
                     .child(text)
-                    .child(fade_overlay(px(48.0), bubble_bg))
+                    .child(fade_overlay(px(message_max_height * 0.25), bubble_bg))
                     .into_any_element()
             };
             let toggle_id = id.clone();
@@ -541,7 +555,8 @@ fn render_thread_item(
                 .border_1()
                 .border_color(bubble_border)
                 .rounded(px(6.0))
-                .p(px(10.0))
+                .px(px(metrics.spacing.xl))
+                .py(px(metrics.spacing.lg))
                 .max_w(px(1200.0))
                 .flex()
                 .flex_col()
@@ -896,14 +911,11 @@ fn render_tool_item(
         let copy_key = format!("tool:{}", tool.id);
         let copied = copied_flags.contains_key(&copy_key);
         let copy_button = if tool.output_text.trim().is_empty() {
-            div().into_any_element()
+            None
         } else {
             let text_to_copy = tool.output_text.clone();
             let button = div()
-                .absolute()
-                .top(px(metrics.spacing.xs))
-                .right(px(metrics.spacing.xs))
-                .p(px(4.0))
+                .p(px(metrics.spacing.xs))
                 .rounded(px(4.0))
                 .bg(Rgba {
                     r: 1.0,
@@ -922,20 +934,31 @@ fn render_tool_item(
                         .size(px(12.0))
                         .text_color(colors.text),
                 );
-            with_click(
-                button,
-                click_handler(weak_view.clone(), move |view, _ev, _window, cx| {
-                    view.copy_text_with_key(copy_key.clone(), text_to_copy.clone(), cx);
-                }),
+            Some(
+                with_click(
+                    button,
+                    click_handler(weak_view.clone(), move |view, _ev, _window, cx| {
+                        view.copy_text_with_key(copy_key.clone(), text_to_copy.clone(), cx);
+                    }),
+                )
+                .into_any_element(),
             )
-            .into_any_element()
+        };
+        let copy_row = if let Some(button) = copy_button {
+            div()
+                .flex()
+                .items_center()
+                .justify_end()
+                .child(button)
+                .into_any_element()
+        } else {
+            div().into_any_element()
         };
         div()
             .flex()
             .flex_col()
             .gap(px(metrics.spacing.xs))
-            .relative()
-            .child(copy_button)
+            .child(copy_row)
             .child(input_row)
             .child(output)
             .into_any_element()
@@ -989,7 +1012,8 @@ fn render_tool_item(
                             b: 1.0,
                             a: 0.02,
                         })
-                        .p(px(8.0))
+                        .px(px(metrics.spacing.lg))
+                        .py(px(metrics.spacing.md))
                 })
                 .child(body),
         )
