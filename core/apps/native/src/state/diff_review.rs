@@ -65,6 +65,16 @@ impl DiffPatchAction {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct DiffListResizeState {
+    pub(crate) start_x: f32,
+    pub(crate) start_width: f32,
+}
+
+const DIFF_LIST_DEFAULT_WIDTH: f32 = 220.0;
+const DIFF_LIST_MIN_WIDTH: f32 = 160.0;
+const DIFF_LIST_MAX_WIDTH: f32 = 320.0;
+
 #[derive(Debug)]
 pub(crate) struct DiffReviewState {
     pub(crate) track_id: Option<TrackId>,
@@ -74,6 +84,9 @@ pub(crate) struct DiffReviewState {
     pub(crate) busy_key: Option<String>,
     pub(crate) status: Option<String>,
     pub(crate) error: Option<String>,
+    pub(crate) list_width: f32,
+    pub(crate) list_resizing: bool,
+    pub(crate) list_resize_state: Option<DiffListResizeState>,
 }
 
 impl DiffReviewState {
@@ -86,6 +99,9 @@ impl DiffReviewState {
             busy_key: None,
             status: None,
             error: None,
+            list_width: DIFF_LIST_DEFAULT_WIDTH,
+            list_resizing: false,
+            list_resize_state: None,
         }
     }
 
@@ -197,6 +213,19 @@ impl DiffReviewState {
         );
     }
 
+    pub(crate) fn set_list_width(&mut self, width: f32, cx: &mut Context<Self>) {
+        let clamped = width.round().clamp(DIFF_LIST_MIN_WIDTH, DIFF_LIST_MAX_WIDTH);
+        if (self.list_width - clamped).abs() < f32::EPSILON {
+            return;
+        }
+        self.list_width = clamped;
+        cx.notify();
+    }
+
+    pub(crate) fn reset_list_width(&mut self, cx: &mut Context<Self>) {
+        self.set_list_width(DIFF_LIST_DEFAULT_WIDTH, cx);
+    }
+
     fn reset_state(&mut self) {
         self.diff.clear();
         self.files.clear();
@@ -204,6 +233,8 @@ impl DiffReviewState {
         self.busy_key = None;
         self.status = None;
         self.error = None;
+        self.list_resizing = false;
+        self.list_resize_state = None;
     }
 
     fn ensure_active_file(&mut self) {
