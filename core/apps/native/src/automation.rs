@@ -26,7 +26,7 @@ use serde_json::{Map, json, Value};
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio::time::timeout;
 
-use crate::app::ShellView;
+use crate::app::{ComposerMenuId, ShellView};
 use crate::automation_tree;
 
 #[derive(Clone, Debug, Default)]
@@ -562,13 +562,15 @@ fn apply_focus_target(
             view.focus_composer(&ClickEvent::default(), window, cx);
         }
         FocusTarget::ComposerProviderMenu => {
-            view.composer_provider_menu_open = true;
-            view.composer_model_menu_open = false;
+            if view.composer_open_menu != Some(ComposerMenuId::Harness) {
+                view.toggle_menu(ComposerMenuId::Harness, window, cx);
+            }
             view.focus_composer(&ClickEvent::default(), window, cx);
         }
         FocusTarget::ComposerModelMenu => {
-            view.composer_model_menu_open = true;
-            view.composer_provider_menu_open = false;
+            if view.composer_open_menu != Some(ComposerMenuId::Model) {
+                view.toggle_menu(ComposerMenuId::Model, window, cx);
+            }
             view.focus_composer(&ClickEvent::default(), window, cx);
         }
         FocusTarget::SessionsPane => {
