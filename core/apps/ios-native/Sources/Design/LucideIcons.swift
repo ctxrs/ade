@@ -13,6 +13,8 @@ enum LucideIconName {
     case square
     case expand
     case x
+    case copy
+    case check
 }
 
 struct LucideIcon: View {
@@ -112,6 +114,13 @@ struct LucideIcon: View {
             path.addLine(to: CGPoint(x: 18, y: 18))
             path.move(to: CGPoint(x: 6, y: 18))
             path.addLine(to: CGPoint(x: 18, y: 6))
+        case .copy:
+            path.addRoundedRect(in: CGRect(x: 9, y: 9, width: 13, height: 13), cornerSize: CGSize(width: 2, height: 2))
+            path.addRoundedRect(in: CGRect(x: 3, y: 3, width: 13, height: 13), cornerSize: CGSize(width: 2, height: 2))
+        case .check:
+            path.move(to: CGPoint(x: 4, y: 12))
+            path.addLine(to: CGPoint(x: 9, y: 17))
+            path.addLine(to: CGPoint(x: 20, y: 6))
         }
         return path
     }

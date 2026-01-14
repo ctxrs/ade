@@ -64,6 +64,7 @@ struct ChatView: View {
     @State private var expandedTools: Set<String> = []
     @State private var isNearBottom = true
     @FocusState private var isComposerFocused: Bool
+    private let scrollAnchorId = "chat.scroll.anchor"
 
     init(
         viewModel: ChatViewModel,
@@ -241,6 +242,7 @@ struct ChatView: View {
                                 key: ScrollToBottomPreferenceKey.self,
                                 value: proxy.frame(in: .named("chatScroll")).maxY
                             )
+                            .id(scrollAnchorId)
                         }
                         .frame(height: 1)
                     }
@@ -258,6 +260,9 @@ struct ChatView: View {
                         scrollToBottom(proxy: proxy, animated: false)
                     }
                     .onChange(of: viewModel.threadItemsRevision) { _, _ in
+                        scrollToBottom(proxy: proxy, animated: true)
+                    }
+                    .onChange(of: viewModel.turnStatus) { _, _ in
                         scrollToBottom(proxy: proxy, animated: true)
                     }
                     .onChange(of: isComposerFocused) { _, focused in
@@ -371,7 +376,7 @@ struct ChatView: View {
     }
 
     private func scrollToBottom(proxy: ScrollViewProxy, animated: Bool) {
-        guard let target = viewModel.threadItems.last?.id else { return }
+        let target = scrollAnchorId
         if animated {
             withAnimation(.easeOut(duration: 0.2)) {
                 proxy.scrollTo(target, anchor: .bottom)
@@ -480,18 +485,24 @@ struct MessageRow: View {
     let message: ChatMessage
     let maxBubbleWidth: CGFloat
     let assetContext: DaemonAssetContext
+    @State private var isExpanded: Bool
+    @State private var copied = false
+
+    private static let userMessageLineLimit = 4
+    private static let userMessageLengthLimit = 280
+
+    init(message: ChatMessage, maxBubbleWidth: CGFloat, assetContext: DaemonAssetContext) {
+        self.message = message
+        self.maxBubbleWidth = maxBubbleWidth
+        self.assetContext = assetContext
+        let isLong = message.role == .user && Self.isLongUserMessage(message.text)
+        _isExpanded = State(initialValue: !isLong)
+    }
 
     var body: some View {
         let isAssistantSide = message.role == .assistant || message.role == .system
-        HStack {
-            if isAssistantSide {
-                bubble
-            } else {
-                Spacer(minLength: 0)
-                bubble
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: isAssistantSide ? .leading : .trailing)
+        bubble
+            .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("chat.message.\(isAssistantSide ? "assistant" : "user")")
     }
@@ -505,11 +516,7 @@ struct MessageRow: View {
             }
             if !message.text.isEmpty {
                 if message.role == .user {
-                    Text(message.text)
-                        .font(CtxChatStyle.bodyFont)
-                        .foregroundColor(.ctxTextPrimary)
-                        .lineSpacing(CtxChatStyle.bodyLineSpacing)
-                        .accessibilityIdentifier("chat.message.text.user")
+                    userMessageText
                 } else {
                     MarkdownContentView(text: message.text, isMuted: message.role == .system)
                         .accessibilityIdentifier("chat.message.text.assistant")
@@ -524,6 +531,80 @@ struct MessageRow: View {
         }
         .modifier(MessageBubbleStyle(role: message.role, maxBubbleWidth: maxBubbleWidth))
         .accessibilityElement(children: .contain)
+    }
+
+    private var userMessageText: some View {
+        let trimmedText = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let isLong = Self.isLongUserMessage(message.text)
+        let showCopyButton = !trimmedText.isEmpty
+        return Text(message.text)
+            .font(CtxChatStyle.bodyFont)
+            .foregroundColor(.ctxTextPrimary)
+            .lineSpacing(CtxChatStyle.bodyLineSpacing)
+            .lineLimit(isExpanded ? nil : Self.userMessageLineLimit)
+            .padding(.trailing, showCopyButton ? 26 : 0)
+            .mask(userMessageMask(isLong: isLong))
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                guard isLong else { return }
+                withAnimation(.easeOut(duration: 0.2)) {
+                    isExpanded.toggle()
+                }
+            }
+            .overlay(alignment: .topTrailing) {
+                if showCopyButton {
+                    userCopyButton
+                }
+            }
+            .accessibilityIdentifier("chat.message.text.user")
+    }
+
+    private func userMessageMask(isLong: Bool) -> some View {
+        Group {
+            if isExpanded || !isLong {
+                Rectangle()
+            } else {
+                LinearGradient(
+                    gradient: Gradient(stops: [
+                        .init(color: .black, location: 0),
+                        .init(color: .black, location: 0.7),
+                        .init(color: .clear, location: 1),
+                    ]),
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            }
+        }
+    }
+
+    private var userCopyButton: some View {
+        Button(action: copyUserMessage) {
+            LucideIcon(name: copied ? .check : .copy, size: 14)
+                .foregroundColor(.ctxTextMuted)
+                .frame(width: 24, height: 24)
+                .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(copied ? "Copied" : "Copy message")
+    }
+
+    private func copyUserMessage() {
+        let trimmed = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        UIPasteboard.general.string = trimmed
+        copied = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+            copied = false
+        }
+    }
+
+    private static func isLongUserMessage(_ text: String) -> Bool {
+        if text.count > userMessageLengthLimit {
+            return true
+        }
+        let lineCount = text.split(whereSeparator: \.isNewline).count
+        return lineCount > userMessageLineLimit
     }
 }
 
@@ -634,6 +715,7 @@ private struct CodeBlockView: View {
 
 private struct ChatTurnStatusRow: View {
     let status: ChatViewModel.TurnStatusSnapshot
+    @State private var copied = false
 
     var body: some View {
         let isRunning = status.status == .queued || status.status == .running
@@ -654,14 +736,35 @@ private struct ChatTurnStatusRow: View {
             updatedAt: status.updatedAt,
             now: now
         )
+        let assistantMessage = status.assistantMessage.trimmingCharacters(in: .whitespacesAndNewlines)
+        let showCopyButton = status.status == .completed && !assistantMessage.isEmpty
         HStack(spacing: 6) {
             Text(label)
             Text("·")
             Text(elapsed)
+            if showCopyButton {
+                Text("·")
+                Button(action: copyAssistantMessage) {
+                    LucideIcon(name: copied ? .check : .copy, size: 12)
+                        .foregroundColor(.ctxTextSecondary)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(copied ? "Copied" : "Copy response")
+            }
         }
         .font(.system(size: 12, weight: .semibold))
         .foregroundColor(.ctxTextSecondary)
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func copyAssistantMessage() {
+        let trimmed = status.assistantMessage.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        UIPasteboard.general.string = trimmed
+        copied = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+            copied = false
+        }
     }
 }
 
@@ -685,11 +788,15 @@ private struct MessageBubbleStyle: ViewModifier {
             content
                 .padding(.vertical, CtxChatStyle.userBubbleVerticalPadding)
                 .padding(.horizontal, CtxChatStyle.userBubbleHorizontalPadding)
+                .frame(maxWidth: maxBubbleWidth, alignment: .leading)
                 .background(
                     Color.ctxBubbleUser,
                     in: RoundedRectangle(cornerRadius: CtxChatStyle.userBubbleCornerRadius, style: .continuous)
                 )
-                .frame(maxWidth: maxBubbleWidth, alignment: .trailing)
+                .overlay(
+                    RoundedRectangle(cornerRadius: CtxChatStyle.userBubbleCornerRadius, style: .continuous)
+                        .stroke(Color.ctxLine, lineWidth: 1)
+                )
         }
     }
 }
@@ -2570,6 +2677,7 @@ final class ChatViewModel: ObservableObject {
         let status: SessionTurnStatus
         let startedAt: String
         let updatedAt: String
+        let assistantMessage: String
     }
 
     private enum RefreshResult {
@@ -2624,6 +2732,7 @@ final class ChatViewModel: ObservableObject {
             latestTurns = []
             latestEvents = []
             latestToolSummaries = []
+            turnStatus = sampleTurnStatus()
             rebuildThreadItems()
         }
     }
@@ -2654,7 +2763,7 @@ final class ChatViewModel: ObservableObject {
             artifacts = []
             artifactsError = nil
             isArtifactsLoading = false
-            turnStatus = nil
+            turnStatus = sampleTurnStatus()
             contextWindowInfo = nil
             lastEventSeq = nil
             refreshAssetContext()
@@ -2724,6 +2833,18 @@ final class ChatViewModel: ObservableObject {
         let statusWorking = turnStatus?.status == .queued || turnStatus?.status == .running
         let streamingWorking = streamingAssistantState?.isActive == true
         isAssistantWorking = pendingAssistantResponse || statusWorking || streamingWorking
+    }
+
+    private func sampleTurnStatus() -> TurnStatusSnapshot? {
+        guard ProcessInfo.processInfo.environment["CTX_UI_TEST_MODE"] == "1" else { return nil }
+        let now = Date()
+        let assistantMessage = messages.reversed().first(where: { $0.role == .assistant })?.text ?? ""
+        return TurnStatusSnapshot(
+            status: .completed,
+            startedAt: formatIsoTimestamp(now.addingTimeInterval(-42)),
+            updatedAt: formatIsoTimestamp(now),
+            assistantMessage: assistantMessage
+        )
     }
 
     func selectSession(_ sessionId: String?, workspaceId: String? = nil) {
@@ -3323,7 +3444,8 @@ final class ChatViewModel: ObservableObject {
         turnStatus = TurnStatusSnapshot(
             status: turn.status,
             startedAt: turn.startedAt,
-            updatedAt: turn.updatedAt
+            updatedAt: turn.updatedAt,
+            assistantMessage: assistantMessageContent(for: turn)
         )
         if turn.status == .completed || turn.status == .failed || turn.status == .interrupted {
             setPendingAssistantResponse(false)
@@ -3334,6 +3456,18 @@ final class ChatViewModel: ObservableObject {
     private func updateContextWindow(from turn: SessionTurn) {
         guard let info = parseContextWindowInfo(from: turn.metricsJson) else { return }
         contextWindowInfo = info
+    }
+
+    private func assistantMessageContent(for turn: SessionTurn) -> String {
+        if let partial = turn.assistantPartial?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !partial.isEmpty {
+            return partial
+        }
+        if let streaming = streamingAssistantState?.text.trimmingCharacters(in: .whitespacesAndNewlines),
+           !streaming.isEmpty {
+            return streaming
+        }
+        return messages.reversed().first(where: { $0.role == .assistant })?.text ?? ""
     }
 
     private func resolveSessionId() async -> String? {
@@ -3630,7 +3764,7 @@ final class ChatViewModel: ObservableObject {
         ChatMessage(
             id: UUID().uuidString,
             role: .user,
-            text: "A native chat screen with SwiftUI components.",
+            text: "A native chat screen with SwiftUI components.\nMake the user message bubble full-width and easy to copy.\nMatch the web styling and clamp long messages.\nAdd tap-to-expand for the full text on demand.\nKeep the status row copy affordance visible.",
             attachments: [],
             createdAt: formatIsoTimestamp(Date().addingTimeInterval(-180))
         ),
