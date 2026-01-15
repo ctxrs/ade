@@ -92,9 +92,6 @@ import {
   useWorkbenchStore,
 } from "../workbench/store";
 import {
-  loadWorkbenchArtifactsPaneOpenV1,
-  loadWorkbenchDiffPaneOpenV1,
-  loadWorkbenchSessionsPaneOpenV1,
   loadWorkbenchTerminalPanelOpenV1,
   saveWorkbenchArtifactsPaneOpenV1,
   saveWorkbenchDiffPaneOpenV1,
@@ -773,7 +770,6 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const [artifactsOpen, setArtifactsOpen] = useState(false);
   const [artifactsOpenHydrated, setArtifactsOpenHydrated] = useState(false);
   const [artifactsOpenSeeded, setArtifactsOpenSeeded] = useState(false);
-  const [artifactsAutoOpenPending, setArtifactsAutoOpenPending] = useState(false);
   const [artifactsHeight, setArtifactsHeight] = useState(260);
   const [artifactsResizing, setArtifactsResizing] = useState(false);
   const artifactsPaneScopeRef = useRef<string | null>(null);
@@ -2028,21 +2024,8 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       setDiffOpenHydrated(true);
       return;
     }
-    let cancelled = false;
-    loadWorkbenchDiffPaneOpenV1(workspaceId, diffPaneScope)
-      .then((open) => {
-        if (cancelled) return;
-        setDiffOpen(open ?? false);
-        setDiffOpenHydrated(true);
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setDiffOpen(false);
-        setDiffOpenHydrated(true);
-      });
-    return () => {
-      cancelled = true;
-    };
+    setDiffOpen(false);
+    setDiffOpenHydrated(true);
   }, [workspaceId, diffPaneScope]);
 
   useEffect(() => {
@@ -2055,31 +2038,11 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       artifactsPaneScopeRef.current = null;
       return;
     }
-    let cancelled = false;
-    loadWorkbenchArtifactsPaneOpenV1(workspaceId, artifactsPaneScope)
-      .then((open) => {
-        if (cancelled) return;
-        if (typeof open === "boolean") {
-          setArtifactsOpen(open);
-          setArtifactsOpenSeeded(true);
-          setArtifactsAutoOpenPending(false);
-        } else {
-          setArtifactsOpen(false);
-          setArtifactsAutoOpenPending(true);
-        }
-        setArtifactsOpenHydrated(true);
-        artifactsPaneScopeRef.current = artifactsPaneScope;
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setArtifactsOpen(false);
-        setArtifactsOpenHydrated(true);
-        setArtifactsAutoOpenPending(true);
-        artifactsPaneScopeRef.current = artifactsPaneScope;
-      });
-    return () => {
-      cancelled = true;
-    };
+    setArtifactsOpen(false);
+    setArtifactsOpenSeeded(true);
+    setArtifactsAutoOpenPending(false);
+    setArtifactsOpenHydrated(true);
+    artifactsPaneScopeRef.current = artifactsPaneScope;
   }, [workspaceId, artifactsPaneScope]);
 
   useEffect(() => {
@@ -2090,23 +2053,9 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       sessionsPaneScopeRef.current = null;
       return;
     }
-    let cancelled = false;
-    loadWorkbenchSessionsPaneOpenV1(workspaceId, sessionsPaneScope)
-      .then((open) => {
-        if (cancelled) return;
-        setSessionsOpen(open ?? false);
-        setSessionsOpenHydrated(true);
-        sessionsPaneScopeRef.current = sessionsPaneScope;
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setSessionsOpen(false);
-        setSessionsOpenHydrated(true);
-        sessionsPaneScopeRef.current = sessionsPaneScope;
-      });
-    return () => {
-      cancelled = true;
-    };
+    setSessionsOpen(false);
+    setSessionsOpenHydrated(true);
+    sessionsPaneScopeRef.current = sessionsPaneScope;
   }, [workspaceId, sessionsPaneScope]);
 
   useEffect(() => {
@@ -2128,15 +2077,6 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     if (sessionsPaneScopeRef.current !== sessionsPaneScope) return;
     saveWorkbenchSessionsPaneOpenV1(workspaceId, sessionsPaneScope, sessionsOpen).catch(() => {});
   }, [sessionsOpen, sessionsOpenHydrated, workspaceId, sessionsPaneScope]);
-
-  useEffect(() => {
-    if (!artifactsOpenHydrated) return;
-    if (!artifactsAutoOpenPending) return;
-    if (artifactsCount === 0) return;
-    setArtifactsOpen(true);
-    setArtifactsOpenSeeded(true);
-    setArtifactsAutoOpenPending(false);
-  }, [artifactsAutoOpenPending, artifactsCount, artifactsOpenHydrated]);
 
   useEffect(() => {
     if (!sessionsOpenHydrated) return;
