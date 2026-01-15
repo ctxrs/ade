@@ -810,8 +810,7 @@ export function SessionView({
       if (!session) return;
       const taskId = idToString(session.task_id);
       if (!taskId) return;
-      const trackId = idToString(session.track_id);
-      workbenchStore.focusTask(taskId, trackId || null, childSessionId || null);
+      workbenchStore.focusTask(taskId, childSessionId || null);
     },
     [session, workbenchStore],
   );

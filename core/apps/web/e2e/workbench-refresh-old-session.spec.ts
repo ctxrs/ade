@@ -74,11 +74,8 @@ test("workbench: refresh keeps selection, even for older sessions", async ({ pag
     snapshot?.active?.tasks?.[0];
   expect(taskSummary).toBeTruthy();
   const taskId = readId(taskSummary?.task?.id);
-  const trackSummary = taskSummary?.tracks?.[0];
-  expect(trackSummary).toBeTruthy();
-  const trackId = readId(trackSummary?.track?.id);
-  const sessionSummary = trackSummary?.sessions?.[0];
-  const sessionId = readId(sessionSummary?.session?.id) || readId(trackSummary?.primary_session_id);
+  const sessionSummary = taskSummary?.sessions?.[0];
+  const sessionId = readId(sessionSummary?.session?.id) || readId(taskSummary?.task?.primary_session_id);
 
   await expect
     .poll(async () => {
@@ -106,7 +103,6 @@ test("workbench: refresh keeps selection, even for older sessions", async ({ pag
   const shift = (iso: string) => new Date(Date.parse(iso) - shiftMs).toISOString();
 
   const taskRow = sqliteJson(`SELECT created_at, updated_at FROM tasks WHERE id='${taskId}'`)[0];
-  const trackRow = sqliteJson(`SELECT created_at, updated_at FROM tracks WHERE id='${trackId}'`)[0];
   const sessionRow = sqliteJson(`SELECT created_at, updated_at FROM sessions WHERE id='${sessionId}'`)[0];
   const messageRows = sqliteJson(`SELECT id, created_at FROM messages WHERE session_id='${sessionId}'`);
   const eventRows = sqliteJson(`SELECT id, created_at FROM session_events WHERE session_id='${sessionId}'`);
@@ -115,7 +111,6 @@ test("workbench: refresh keeps selection, even for older sessions", async ({ pag
     `PRAGMA busy_timeout=5000;`,
     `BEGIN;`,
     `UPDATE tasks SET created_at='${shift(String(taskRow.created_at))}', updated_at='${shift(String(taskRow.updated_at))}' WHERE id='${taskId}';`,
-    `UPDATE tracks SET created_at='${shift(String(trackRow.created_at))}', updated_at='${shift(String(trackRow.updated_at))}' WHERE id='${trackId}';`,
     `UPDATE sessions SET created_at='${shift(String(sessionRow.created_at))}', updated_at='${shift(String(sessionRow.updated_at))}' WHERE id='${sessionId}';`,
     ...messageRows.map((r) => `UPDATE messages SET created_at='${shift(String(r.created_at))}' WHERE id='${String(r.id)}';`),
     ...eventRows.map((r) => `UPDATE session_events SET created_at='${shift(String(r.created_at))}' WHERE id='${String(r.id)}';`),

@@ -82,9 +82,8 @@ test("workbench: recovers when workspace stream drops once", async ({ page }) =>
       if (!resp.ok()) return "";
       const snapshot = (await resp.json()) as any;
       const taskSummary = snapshot?.active?.tasks?.[0];
-      const trackSummary = taskSummary?.tracks?.[0];
-      const primarySessionId = readId(trackSummary?.primary_session_id);
-      const sessionSummary = trackSummary?.sessions?.[trackSummary?.sessions?.length - 1];
+      const primarySessionId = readId(taskSummary?.task?.primary_session_id);
+      const sessionSummary = taskSummary?.sessions?.[taskSummary?.sessions?.length - 1];
       sessionId = readId(sessionSummary?.session?.id) || primarySessionId;
       return sessionId;
     })

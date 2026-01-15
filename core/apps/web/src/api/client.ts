@@ -22,16 +22,13 @@ import type {
   SubagentInvocationChild,
   SessionHead,
   SessionHeadDelta,
+  SessionHeadWindow,
   SessionHistoryPage,
   SessionEventsPage,
   SessionCatchupSummary,
+  SessionSummaryCheckpoint,
   TerminalSession,
   Task,
-  Track,
-  TrackDiffSummary,
-  TrackDiffSummaryResponse,
-  TrackSummary,
-  TrackWorker,
   Workspace,
   WorkspaceCatchupCursor,
   WorkspaceCatchupClientMessage,
@@ -39,7 +36,6 @@ import type {
   WorkspaceCatchupEvent,
   WorkspaceCatchupSnapshot,
   WorkspaceCatchupTaskSummary,
-  WorkspaceCatchupTrackSummary,
   Worktree,
   WorkspaceAttachment,
   WorkspaceAttachmentKind,
@@ -70,16 +66,13 @@ export type {
   SubagentInvocationChild,
   SessionHead,
   SessionHeadDelta,
+  SessionHeadWindow,
   SessionHistoryPage,
   SessionEventsPage,
   SessionCatchupSummary,
+  SessionSummaryCheckpoint,
   TerminalSession,
   Task,
-  Track,
-  TrackDiffSummary,
-  TrackDiffSummaryResponse,
-  TrackSummary,
-  TrackWorker,
   Workspace,
   WorkspaceCatchupCursor,
   WorkspaceCatchupClientMessage,
@@ -87,7 +80,6 @@ export type {
   WorkspaceCatchupEvent,
   WorkspaceCatchupSnapshot,
   WorkspaceCatchupTaskSummary,
-  WorkspaceCatchupTrackSummary,
   Worktree,
   WorkspaceAttachment,
   WorkspaceAttachmentKind,
@@ -893,7 +885,6 @@ export const updateSubagentSystemPrompt = (workspaceId: string, req: { system_pr
 
 export type CreateTerminalRequest = {
   task_id?: string | null;
-  track_id?: string | null;
   session_id?: string | null;
   worktree_id?: string | null;
   cwd?: string | null;
@@ -942,15 +933,14 @@ export const createTask = (
   workspaceId: string,
   title: string,
   description?: string,
-  opts?: { create_default_track?: boolean; default_track_label?: string },
+  opts?: { create_default_session?: boolean },
 ) =>
   apiAny<Task>(`/api/workspaces/${workspaceId}/tasks`, {
     method: "POST",
     body: JSON.stringify({
       title,
       description,
-      ...(opts?.create_default_track === undefined ? {} : { create_default_track: opts.create_default_track }),
-      ...(opts?.default_track_label === undefined ? {} : { default_track_label: opts.default_track_label }),
+      ...(opts?.create_default_session === undefined ? {} : { create_default_session: opts.create_default_session }),
     }),
   });
 
@@ -973,46 +963,29 @@ export const markTaskRead = (taskId: string) =>
 export const markTaskUnread = (taskId: string) =>
   apiAny<Task>(`/api/tasks/${taskId}/mark_unread`, { method: "POST" });
 
-export const createTrack = (
+export const createSession = (
   taskId: string,
-  label?: string,
-  opts?: { env_target?: "worktree" | "local" | "cloud" },
-) =>
-  apiAny<Track>(`/api/tasks/${taskId}/tracks`, {
-    method: "POST",
-    body: JSON.stringify({
-      label,
-      ...(opts?.env_target ? { env_target: opts.env_target } : {}),
-    }),
-  });
-
-export const startTrackCloudWorker = (
-  trackId: string,
+  provider_id: string,
+  model_id: string,
   opts?: {
-    provider_id?: string;
-    model_id?: string;
-    diff_debounce_ms?: number;
-    ttl_seconds?: number;
-    snapshot_ttl_seconds?: number;
+    parent_session_id?: string | null;
+    relationship?: string | null;
+    env_target?: "worktree" | "local" | "cloud";
+    worktree_id?: string | null;
+    initial_prompt?: string | null;
   },
 ) =>
-  apiAny<TrackWorker>(`/api/tracks/${trackId}/cloud_worker`, {
+  apiAny<Session>(`/api/tasks/${taskId}/sessions`, {
     method: "POST",
     body: JSON.stringify({
-      ...(opts?.provider_id ? { provider_id: opts.provider_id } : {}),
-      ...(opts?.model_id ? { model_id: opts.model_id } : {}),
-      ...(opts?.diff_debounce_ms !== undefined ? { diff_debounce_ms: opts.diff_debounce_ms } : {}),
-      ...(opts?.ttl_seconds !== undefined ? { ttl_seconds: opts.ttl_seconds } : {}),
-      ...(opts?.snapshot_ttl_seconds !== undefined
-        ? { snapshot_ttl_seconds: opts.snapshot_ttl_seconds }
-        : {}),
+      provider_id,
+      model_id,
+      ...(opts?.parent_session_id ? { parent_session_id: opts.parent_session_id } : {}),
+      ...(opts?.relationship ? { relationship: opts.relationship } : {}),
+      ...(opts?.env_target ? { env_target: opts.env_target } : {}),
+      ...(opts?.worktree_id ? { worktree_id: opts.worktree_id } : {}),
+      ...(opts?.initial_prompt ? { initial_prompt: opts.initial_prompt } : {}),
     }),
-  });
-
-export const createSession = (trackId: string, provider_id: string, model_id: string) =>
-  apiAny<Session>(`/api/tracks/${trackId}/sessions`, {
-    method: "POST",
-    body: JSON.stringify({ provider_id, model_id }),
   });
 
 
@@ -1228,20 +1201,14 @@ export const submitAskUserQuestion = (
     body: JSON.stringify({ tool_call_id, outcome, answers }),
   });
 
-export const trackDiff = (trackId: string) =>
-  apiAny<{ diff: string }>(`/api/tracks/${trackId}/diff`);
+export const getSessionDiff = (sessionId: string) =>
+  apiAny<{ diff: string }>(`/api/sessions/${sessionId}/diff`);
 
-export const getTrackDiffSummary = (trackId: string) =>
-  apiAny<TrackDiffSummaryResponse>(`/api/tracks/${trackId}/diff_summary`);
-
-export const applyTrackDiffPatch = (trackId: string, action: "accept" | "reject", patch: string) =>
-  apiAny<{ diff: string }>(`/api/tracks/${trackId}/diff/apply`, {
+export const applySessionDiffPatch = (sessionId: string, action: "accept" | "reject", patch: string) =>
+  apiAny<{ diff: string }>(`/api/sessions/${sessionId}/diff/apply`, {
     method: "POST",
     body: JSON.stringify({ action, patch }),
   });
-
-export const listEditPlansForTrack = (trackId: string) =>
-  apiAny<EditPlanSummary[]>(`/api/tracks/${trackId}/edit_plans`);
 
 export const getEditPlan = (planId: string) =>
   apiAny<EditPlanSummary>(`/api/edit_plans/${planId}`);

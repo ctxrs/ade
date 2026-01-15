@@ -27,10 +27,9 @@ export type WorkbenchTab =
     }
   | {
       id: string;
-      kind: "track";
+      kind: "task";
       ref: {
         taskId: string;
-        trackId: string | null;
         sessionId?: string | null;
       };
       titleOverride?: string;

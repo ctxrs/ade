@@ -13,7 +13,6 @@ vi.mock("../api/client", () => {
     getSessionHistory: vi.fn(),
     listSessionArtifacts: vi.fn(async () => []),
     listTurnTools: vi.fn(async () => []),
-    trackDiff: vi.fn(async () => ({ diff: "" })),
   };
 });
 
@@ -26,9 +25,8 @@ vi.mock("./uiStateStore", () => ({
 
 import { getSessionHead } from "../api/client";
 
-const mkSession = (sessionId: string, trackId: string): Session => ({
+const mkSession = (sessionId: string): Session => ({
   id: { 0: sessionId },
-  track_id: { 0: trackId },
   task_id: { 0: "task-1" },
   workspace_id: { 0: "ws-1" },
   worktree_id: { 0: "wt-1" },
@@ -49,8 +47,6 @@ describe("SessionSupervisor", () => {
     const { SessionSupervisor } = await import("./sessionSupervisor");
 
     const sessionId = "session-1";
-    const trackId = "track-1";
-
     const headMessages: Message[] = [
       {
         id: { 0: "m1" },
@@ -63,7 +59,7 @@ describe("SessionSupervisor", () => {
     ];
 
     (getSessionHead as any).mockResolvedValue({
-      session: mkSession(sessionId, trackId),
+      session: mkSession(sessionId),
       turns: [] as SessionTurn[],
       events: [] as SessionEvent[],
       messages: headMessages,
@@ -88,10 +84,8 @@ describe("SessionSupervisor", () => {
     const { SessionSupervisor } = await import("./sessionSupervisor");
 
     const sessionId = "session-2";
-    const trackId = "track-2";
-
     (getSessionHead as any).mockResolvedValue({
-      session: mkSession(sessionId, trackId),
+      session: mkSession(sessionId),
       turns: [] as SessionTurn[],
       events: [] as SessionEvent[],
       messages: [] as Message[],
@@ -179,11 +173,10 @@ describe("SessionSupervisor", () => {
     const { listTurnTools } = await import("../api/client");
 
     const sessionId = "session-3";
-    const trackId = "track-3";
     const turnId = "turn-1";
 
     (getSessionHead as any).mockResolvedValue({
-      session: mkSession(sessionId, trackId),
+      session: mkSession(sessionId),
       turns: [
         {
           turn_id: { 0: turnId },

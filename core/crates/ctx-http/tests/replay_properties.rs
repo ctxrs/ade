@@ -108,10 +108,8 @@ async fn property_replay_respects_after_seq_and_monotonicity() {
         .await
         .unwrap();
 
-    let tracks = store.list_tracks_for_task(task.id).await.unwrap();
-    let track = &tracks[0];
     let session: ctx_core::models::Session = client
-        .post(format!("{base}/api/tracks/{}/sessions", track.id.0))
+        .post(format!("{base}/api/tasks/{}/sessions", task.id.0))
         .json(&json!({"provider_id":"fake","model_id":"fake-model"}))
         .send()
         .await
@@ -119,6 +117,11 @@ async fn property_replay_respects_after_seq_and_monotonicity() {
         .json()
         .await
         .unwrap();
+    let sessions = store.list_sessions_for_task(task.id).await.unwrap();
+    assert!(
+        sessions.iter().any(|stored| stored.id == session.id),
+        "expected session to be stored"
+    );
 
     let mut seqs = Vec::new();
     for i in 0..15 {

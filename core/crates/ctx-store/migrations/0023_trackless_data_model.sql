@@ -1,5 +1,4 @@
 PRAGMA foreign_keys = OFF;
-BEGIN TRANSACTION;
 
 CREATE TABLE IF NOT EXISTS tasks_new (
   id TEXT PRIMARY KEY NOT NULL,
@@ -281,5 +280,4 @@ CREATE INDEX IF NOT EXISTS idx_session_events_session_id ON session_events(sessi
 CREATE INDEX IF NOT EXISTS idx_artifacts_session_id ON artifacts(session_id);
 CREATE INDEX IF NOT EXISTS idx_worktree_attachment_mounts_worktree_id ON worktree_attachment_mounts(worktree_id);
 
-COMMIT;
 PRAGMA foreign_keys = ON;

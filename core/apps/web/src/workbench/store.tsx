@@ -370,7 +370,7 @@ export class WorkbenchStore {
     return true;
   };
 
-  focusTask = (taskId: string, trackId?: string | null, sessionId?: string | null, opts?: WorkbenchNavOpts): boolean => {
+  focusTask = (taskId: string, sessionId?: string | null, opts?: WorkbenchNavOpts): boolean => {
     const tid = String(taskId).trim();
     if (!tid) return false;
     if (!this.shouldApplyNavToken(opts?.navToken)) return false;
@@ -381,22 +381,19 @@ export class WorkbenchStore {
     const leaf = findLeaf(win.layout, leafId);
     if (!leaf) return false;
 
-    const existing = leaf.tabs.find((t) => t.kind === "track" && t.ref.taskId === tid);
+    const existing = leaf.tabs.find((t) => t.kind === "task" && t.ref.taskId === tid);
     const tabId = existing?.id ?? randomUuid();
     const newTab: WorkbenchTab = {
       id: tabId,
-      kind: "track",
-      ref: { taskId: tid, trackId: trackId ?? null, sessionId: sessionId ?? null },
+      kind: "task",
+      ref: { taskId: tid, sessionId: sessionId ?? null },
     };
     const nextTabs = existing
       ? leaf.tabs.map((t) => {
         if (t.id !== tabId) return t;
-        if (t.kind !== "track") return t;
-        const nextTrackId = trackId === undefined ? t.ref.trackId : trackId;
-        const trackChanged = trackId !== undefined && nextTrackId !== t.ref.trackId;
-        const nextSessionId =
-          sessionId !== undefined ? sessionId : trackChanged ? null : (t.ref.sessionId ?? null);
-        return { ...t, ref: { ...t.ref, trackId: nextTrackId, sessionId: nextSessionId } };
+        if (t.kind !== "task") return t;
+        const nextSessionId = sessionId === undefined ? (t.ref.sessionId ?? null) : sessionId;
+        return { ...t, ref: { ...t.ref, sessionId: nextSessionId } };
       })
       : [newTab, ...leaf.tabs];
 
@@ -405,7 +402,7 @@ export class WorkbenchStore {
     return true;
   };
 
-  setActiveTrackForActiveTask = (trackId: string | null, opts?: WorkbenchNavOpts): boolean => {
+  setActiveSessionForActiveTask = (sessionId: string | null, opts?: WorkbenchNavOpts): boolean => {
     if (!this.shouldApplyNavToken(opts?.navToken)) return false;
     this.applyNavSource(opts?.source);
     this.markLayoutDirty();
@@ -414,12 +411,12 @@ export class WorkbenchStore {
     const leaf = findLeaf(win.layout, leafId);
     if (!leaf) return false;
     const tab = getActiveTabFromLeaf(leaf);
-    if (!tab || tab.kind !== "track") return false;
+    if (!tab || tab.kind !== "task") return false;
     const nextLeaf = ensureLeafActiveTab({
       ...leaf,
       tabs: leaf.tabs.map((t) =>
-        t.id === tab.id && t.kind === "track"
-          ? { ...t, ref: { ...t.ref, trackId, sessionId: t.ref.trackId === trackId ? (t.ref.sessionId ?? null) : null } }
+        t.id === tab.id && t.kind === "task"
+          ? { ...t, ref: { ...t.ref, sessionId } }
           : t,
       ),
     });
@@ -600,11 +597,11 @@ export function useActiveWorkbenchTab(): WorkbenchTab | null {
   return getActiveTabFromLeaf(leaf);
 }
 
-export function useActiveWorkbenchIds(): { taskId: string | null; trackId: string | null } {
+export function useActiveWorkbenchIds(): { taskId: string | null; sessionId: string | null } {
   const tab = useActiveWorkbenchTab();
-  if (!tab) return { taskId: null, trackId: null };
-  if (tab.kind === "track") return { taskId: tab.ref.taskId, trackId: tab.ref.trackId };
-  return { taskId: null, trackId: null };
+  if (!tab) return { taskId: null, sessionId: null };
+  if (tab.kind === "task") return { taskId: tab.ref.taskId, sessionId: tab.ref.sessionId ?? null };
+  return { taskId: null, sessionId: null };
 }
 
 export function useWorkbenchDraft(

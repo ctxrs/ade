@@ -621,6 +621,10 @@ async fn emit_failure_notice(
 ) {
     state
         .workspace_catchup
+        .publish_worktree_bootstrap(workspace_id, notice.clone())
+        .await;
+    state
+        .workspace_active_snapshot
         .publish_worktree_bootstrap(workspace_id, notice)
         .await;
 }

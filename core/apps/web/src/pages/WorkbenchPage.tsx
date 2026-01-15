@@ -28,14 +28,14 @@ import {
   WebSessionInfo,
   Worktree,
   Workspace,
+  applySessionDiffPatch,
   archiveTask,
-  applyTrackDiffPatch,
   createSession,
   createTask,
-  createTrack,
   deleteTask,
   daemonFetchRaw,
   getDaemonBaseUrl,
+  getSessionDiff,
   resolveDaemonWsBaseUrl,
   getInstall,
   getProviderOptions,
@@ -49,8 +49,6 @@ import {
   markTaskRead as markTaskReadApi,
   markTaskUnread as markTaskUnreadApi,
   postMessage,
-  startTrackCloudWorker,
-  trackDiff,
   unarchiveTask,
   updateTaskTitle,
   verifyProviderForWorkspace,
@@ -76,7 +74,7 @@ import { desktopSaveTextFile, isDesktopApp } from "../utils/desktop";
 import { parseWsJson } from "../utils/wsJson";
 import { registerDropScope } from "../utils/dragDropScopes";
 import { copyTextToClipboard } from "../utils/clipboard";
-import { pickPreferredSession, pickPreferredSessionId, pickPreferredTrackId } from "../utils/workbenchSelection";
+import { pickPreferredSessionId } from "../utils/workbenchSelection";
 import { imageFilesToInlineAttachments } from "../utils/messageAttachments";
 import { parseModelId } from "../utils/modelEffort";
 import { formatRelativeAgeShort } from "../utils/relativeTime";
@@ -88,7 +86,6 @@ import {
   scrollKey,
   sessionDraftKey,
   useActiveWorkbenchIds,
-  useActiveWorkbenchTab,
   useNewTaskDraft,
   useWorkbenchDraft,
   useWorkbenchShellSnapshot,
@@ -141,11 +138,6 @@ function modelIdsFromOptions(opts?: ProviderOptions): string[] {
   return list
     .map((m: any) => String(m?.modelId ?? m?.model_id ?? m?.id ?? "").trim())
     .filter((s: string) => s.length > 0);
-}
-
-function workbenchLabelForTrack(dt: DraftTrack): string {
-  const name = dt.providerId;
-  return dt.label?.trim() ? `${name} — ${dt.label.trim()}` : name;
 }
 
 function appendSegment(base: string, addition: string): string {
@@ -638,8 +630,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const workspaceCatchup = useWorkspaceCatchupSnapshot();
   const tasksById = workspaceCatchup.tasksById;
   const workbenchSnap = useWorkbenchShellSnapshot();
-  const activeTab = useActiveWorkbenchTab();
-  const { taskId: activeTaskId, trackId: activeTrackId } = useActiveWorkbenchIds();
+  const { taskId: activeTaskId, sessionId: activeSessionIdFromTab } = useActiveWorkbenchIds();
   const { value: newTaskDraft, setValue: setNewTaskDraft } = useNewTaskDraft();
   const draftPrompt = newTaskDraft.text;
   const draftMode = newTaskDraft.modeId;
@@ -733,8 +724,8 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   }, [workbenchStore]);
 
   const focusTask = useCallback(
-    (taskId: string, trackId?: string | null, sessionId?: string | null) => {
-      workbenchStore.focusTask(taskId, trackId, sessionId);
+    (taskId: string, sessionId?: string | null) => {
+      workbenchStore.focusTask(taskId, sessionId);
     },
     [workbenchStore],
   );
@@ -961,14 +952,16 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   }, [useMultipleAgents, draftTracks.length]);
 
 
-  const ensureActiveTrackSelection = useCallback(
-    (taskId: string, trackIds: string[], sessionsMap: Record<string, any[]>) => {
+  const ensureActiveSessionSelection = useCallback(
+    (taskId: string, sessions: Array<{ session: any }>, preferredSessionId?: string | null) => {
       const activeTab = workbenchStore.getActiveTab();
-      const prevTrackId = activeTab?.kind === "track" && activeTab.ref.taskId === taskId ? activeTab.ref.trackId : null;
-      const wanted = prevTrackId ?? null;
-      const nextTrackId = pickPreferredTrackId(trackIds, sessionsMap, wanted);
-      if (activeTab?.kind === "track" && activeTab.ref.taskId === taskId && nextTrackId !== prevTrackId) {
-        workbenchStore.setActiveTrackForActiveTask(nextTrackId, { source: "system" });
+      const prevSessionId =
+        activeTab?.kind === "task" && activeTab.ref.taskId === taskId ? (activeTab.ref.sessionId ?? null) : null;
+      const wanted = prevSessionId ?? preferredSessionId ?? null;
+      const sessionList = sessions.map((s) => s.session).filter(Boolean);
+      const nextSessionId = pickPreferredSessionId(sessionList, wanted);
+      if (activeTab?.kind === "task" && activeTab.ref.taskId === taskId && nextSessionId !== prevSessionId) {
+        workbenchStore.setActiveSessionForActiveTask(nextSessionId, { source: "system" });
       }
     },
     [workbenchStore],
@@ -1231,40 +1224,20 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   }, [providers.length, providersById, defaultProviderId]);
 
   const activeTaskSummary = activeTaskId ? tasksById[activeTaskId] : null;
-  const trackSummaries = useMemo(() => activeTaskSummary?.tracks ?? [], [activeTaskSummary]);
-  const tracks = useMemo(() => trackSummaries.map((t) => t.track), [trackSummaries]);
-  const trackIds = useMemo(
-    () => tracks.map((tr) => idToString(tr.id)).filter(Boolean),
-    [tracks],
+  const sessionSummaries = useMemo(() => activeTaskSummary?.sessions ?? [], [activeTaskSummary]);
+  const sessions = useMemo(() => sessionSummaries.map((s) => s.session), [sessionSummaries]);
+  const sessionIds = useMemo(
+    () => sessions.map((session) => idToString(session.id)).filter(Boolean),
+    [sessions],
   );
-  const primarySessionByTrackId = useMemo(() => {
-    const out: Record<string, string> = {};
-    for (const summary of trackSummaries) {
-      const trackId = idToString(summary.track.id);
-      const primary = idToString(summary.primary_session_id ?? "");
-      if (trackId && primary) out[trackId] = primary;
-    }
-    return out;
-  }, [trackSummaries]);
-  const sessionsByTrack = useMemo(() => {
-    const out: Record<string, any[]> = {};
-    for (const summary of trackSummaries) {
-      const trid = idToString(summary.track.id);
-      if (!trid) continue;
-      out[trid] = summary.sessions.map((s) => s.session);
-    }
-    return out;
-  }, [trackSummaries]);
-  const activeTaskSessionIds = useMemo(() => {
-    const ids: string[] = [];
-    for (const summary of trackSummaries) {
-      for (const session of summary.sessions) {
-        const sid = idToString(session.session.id);
-        if (sid) ids.push(sid);
-      }
-    }
-    return ids;
-  }, [trackSummaries]);
+  const primarySessionId = useMemo(
+    () => idToString(activeTaskSummary?.task.primary_session_id ?? ""),
+    [activeTaskSummary?.task.primary_session_id],
+  );
+  const activeTaskSessionIds = useMemo(
+    () => sessionIds,
+    [sessionIds],
+  );
 
   const warmSessionIds = useMemo(() => {
     const ids: { id: string; updatedAt: number; running: boolean }[] = [];
@@ -1272,14 +1245,12 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     for (const taskId of workspaceCatchup.activeIds) {
       const task = tasksById[taskId];
       if (!task) continue;
-      for (const summary of task.tracks) {
-        for (const sess of summary.sessions) {
-          const sid = idToString(sess.session.id);
-          if (!sid || activeSet.has(sid)) continue;
-          const last = parseMs(sess.last_message_at) ?? parseMs(sess.session.updated_at) ?? 0;
-          const running = sess.session.status === "active" || sess.session.status === "running";
-          ids.push({ id: sid, updatedAt: last, running });
-        }
+      for (const sess of task.sessions) {
+        const sid = idToString(sess.session.id);
+        if (!sid || activeSet.has(sid)) continue;
+        const last = parseMs(sess.last_message_at) ?? parseMs(sess.session.updated_at) ?? 0;
+        const running = sess.session.status === "active" || sess.session.status === "running";
+        ids.push({ id: sid, updatedAt: last, running });
       }
     }
     ids.sort((a, b) => {
@@ -1293,12 +1264,12 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     if (!activeTaskId) {
       return;
     }
-    if (trackIds.length === 0) {
-      workbenchStore.setActiveTrackForActiveTask(null, { source: "system" });
+    if (sessionIds.length === 0) {
+      workbenchStore.setActiveSessionForActiveTask(null, { source: "system" });
       return;
     }
-    ensureActiveTrackSelection(activeTaskId, trackIds, sessionsByTrack);
-  }, [activeTaskId, ensureActiveTrackSelection, sessionsByTrack, trackIds, workbenchStore]);
+    ensureActiveSessionSelection(activeTaskId, sessionSummaries, primarySessionId || null);
+  }, [activeTaskId, ensureActiveSessionSelection, primarySessionId, sessionIds.length, sessionSummaries, workbenchStore]);
 
   useEffect(() => {
     supervisor.setActiveTaskSessionIds(activeTaskSessionIds);
@@ -1356,24 +1327,22 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     for (const summary of Object.values(tasksById)) {
       if (!summary) continue;
       const taskId = summary.id;
-      for (const track of summary.tracks) {
-        for (const sessionSummary of track.sessions) {
-          const sessionId = idToString(sessionSummary.session.id);
-          const entry = sessionId ? entryBySessionId.get(sessionId) : undefined;
-          const isWorking = entry ? isEntryWorking(entry) : sessionSummary.activity?.is_working === true;
-          if (isWorking) workingByTask.add(taskId);
+      for (const sessionSummary of summary.sessions) {
+        const sessionId = idToString(sessionSummary.session.id);
+        const entry = sessionId ? entryBySessionId.get(sessionId) : undefined;
+        const isWorking = entry ? isEntryWorking(entry) : sessionSummary.activity?.is_working === true;
+        if (isWorking) workingByTask.add(taskId);
 
-          const status = entry?.session?.status ?? sessionSummary.session.status;
-          if (status === "failed" || status === "cancelled") {
-            errorByTask.add(taskId);
-          }
-
-          const liveMs = entry ? lastAssistantMessageMs(entry.messages) : null;
-          const summaryMs = parseMs(sessionSummary.last_message_at ?? null);
-          const ms =
-            liveMs !== null && summaryMs !== null ? Math.max(liveMs, summaryMs) : liveMs ?? summaryMs;
-          if (ms !== null) lastAssistantMsByTask[taskId] = Math.max(lastAssistantMsByTask[taskId] ?? 0, ms);
+        const status = entry?.session?.status ?? sessionSummary.session.status;
+        if (status === "failed" || status === "cancelled") {
+          errorByTask.add(taskId);
         }
+
+        const liveMs = entry ? lastAssistantMessageMs(entry.messages) : null;
+        const summaryMs = parseMs(sessionSummary.last_message_at ?? null);
+        const ms =
+          liveMs !== null && summaryMs !== null ? Math.max(liveMs, summaryMs) : liveMs ?? summaryMs;
+        if (ms !== null) lastAssistantMsByTask[taskId] = Math.max(lastAssistantMsByTask[taskId] ?? 0, ms);
       }
     }
 
@@ -1621,9 +1590,9 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       const unread = !working && lastAssistantMs !== null && (seenMs === null || lastAssistantMs > seenMs);
       const ageIso = t.last_activity_at ?? t.updated_at ?? t.created_at;
       const dotKind = hasError ? "error" : unread ? "unread" : null;
-      const summaryProviders = summary.tracks.flatMap((tr) =>
-        tr.sessions.map((s) => String(s.session.provider_id ?? "").trim()).filter(Boolean),
-      );
+      const summaryProviders = summary.sessions
+        .map((s) => String(s.session.provider_id ?? "").trim())
+        .filter(Boolean);
       const providerIds =
         (providerIdsByTaskFromSessions[tid] ?? []).length > 0 ? providerIdsByTaskFromSessions[tid] : summaryProviders;
       const providerCount = new Set(providerIds).size;
@@ -1848,16 +1817,9 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   }, []);
 
   const activeSessionId = useMemo(() => {
-    const resolvedTrackId = activeTrackId ?? pickPreferredTrackId(trackIds, sessionsByTrack, null);
-    if (!resolvedTrackId) return null;
-    const override =
-      activeTab?.kind === "track" && activeTab.ref.trackId === resolvedTrackId
-        ? (activeTab.ref.sessionId ?? null)
-        : null;
-    if (override) return override;
-    const sessions = sessionsByTrack[resolvedTrackId] ?? [];
-    return pickPreferredSessionId(sessions, primarySessionByTrackId[resolvedTrackId]);
-  }, [activeTab, activeTrackId, trackIds, sessionsByTrack, primarySessionByTrackId]);
+    if (activeSessionIdFromTab) return activeSessionIdFromTab;
+    return pickPreferredSessionId(sessions, primarySessionId || null);
+  }, [activeSessionIdFromTab, primarySessionId, sessions]);
 
   const renderSessionBudget = 10;
   const [recentSessionIds, setRecentSessionIds] = useState<string[]>([]);
@@ -1907,13 +1869,12 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       const s = String(v ?? "");
       return s ? s.slice(0, 8) : "-";
     };
-    return `task:${short(activeTaskId)} track:${short(activeTrackId)} session:${short(activeSessionId)}`;
-  }, [activeTaskId, activeTrackId, activeSessionId]);
+    return `task:${short(activeTaskId)} session:${short(activeSessionId)}`;
+  }, [activeTaskId, activeSessionId]);
 
   const sessionCache = useSessionCacheSnapshot();
   const activeEntry = useSessionEntry(activeSessionId ?? "");
-  const activeTrackDiff = activeEntry?.diff ?? "";
-  const activeTrackIdFromSession = activeEntry?.session ? idToString(activeEntry.session.track_id) : "";
+  const activeSessionDiff = activeEntry?.diff ?? "";
   const activeWorktreeId = activeEntry?.session ? idToString(activeEntry.session.worktree_id) : "";
   const [webSessions, setWebSessions] = useState<WebSessionInfo[]>([]);
   const [webSessionsLoading, setWebSessionsLoading] = useState(false);
@@ -2024,7 +1985,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     }
   }, [activeSessionKind, sessionSections]);
 
-  const hasDiff = activeTrackDiff.trim().length > 0;
+  const hasDiff = activeSessionDiff.trim().length > 0;
   const showReviewPane = diffOpen;
   const showArtifactsPane = artifactsOpen;
   const showSessionsPane = sessionsOpen;
@@ -2040,9 +2001,9 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const sessionsCount = webSessions.length;
   const diffFileCount = useMemo(() => {
     if (!hasDiff) return 0;
-    const m = activeTrackDiff.match(/^diff --git /gm);
+    const m = activeSessionDiff.match(/^diff --git /gm);
     return m ? m.length : 1;
-  }, [activeTrackDiff, hasDiff]);
+  }, [activeSessionDiff, hasDiff]);
 
   const toggleDiffPane = useCallback(() => {
     setDiffOpen((open) => {
@@ -2069,9 +2030,8 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
 
   const diffPaneScope = useMemo(() => {
     if (activeSessionId) return `session:${activeSessionId}`;
-    if (activeTrackId) return `track:${activeTrackId}`;
     return null;
-  }, [activeSessionId, activeTrackId]);
+  }, [activeSessionId]);
 
   const artifactsPaneScope = useMemo(() => {
     return activeSessionId ?? null;
@@ -2529,9 +2489,8 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
 
     try {
       const title = deriveTaskTitle(prompt);
-      const task = await createTask(workspaceId, title, undefined, { create_default_track: false });
+      const task = await createTask(workspaceId, title, undefined, { create_default_session: false });
       const taskId = idToString(task.id);
-      let firstTrackId: string | null = null;
       let firstSessionId: string | null = null;
 
       const toStart =
@@ -2546,22 +2505,15 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
             diag ? `Harness “${dt.providerId}” unavailable: ${diag}` : `Harness “${dt.providerId}” unavailable.`,
           );
         }
-        const label = workbenchLabelForTrack(dt);
         const env_target = execTarget === "local" ? "local" : execTarget === "cloud" ? "cloud" : "worktree";
-        const tr = await createTrack(taskId, label, { env_target });
-        const trackId = idToString(tr.id);
         const opts = await ensureProviderOptions(dt.providerId).catch(() => undefined);
         const modelIds = modelIdsFromOptions(opts ?? providerOptions[dt.providerId]);
         const modelId = dt.modelId || modelIds[0] || (dt.providerId === "fake" ? "fake-model" : "default");
-        if (env_target === "cloud") {
-          await startTrackCloudWorker(trackId, { provider_id: dt.providerId, model_id: modelId });
-        }
-        const session = await createSession(trackId, dt.providerId, modelId);
+        const session = await createSession(taskId, dt.providerId, modelId, { env_target });
         const sessionId = idToString(session.id);
-        if (!firstTrackId) firstTrackId = trackId;
         if (!firstSessionId) {
           firstSessionId = sessionId;
-          focusTask(taskId, trackId, sessionId);
+          focusTask(taskId, sessionId);
         }
         supervisor.refreshSession(sessionId, { watchDiff: true });
         await postMessage(sessionId, prompt, "immediate", draftAttachments);
@@ -2578,23 +2530,32 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     }
   };
 
+  const applyDiffPatch = useCallback(
+    async (action: "accept" | "reject", patch: string) => {
+      if (!activeSessionId) return null;
+      const resp = await applySessionDiffPatch(activeSessionId, action, patch);
+      const next = resp.diff ?? "";
+      supervisor.setDiff(activeSessionId, next);
+      return next;
+    },
+    [activeSessionId, supervisor],
+  );
+
   const approveAll = async () => {
-    if (!activeTrackIdFromSession || !hasDiff) return;
-    const resp = await applyTrackDiffPatch(activeTrackIdFromSession, "accept", activeTrackDiff);
-    if (activeSessionId) supervisor.setDiff(activeSessionId, resp.diff ?? "");
+    if (!activeSessionId || !hasDiff) return;
+    await applyDiffPatch("accept", activeSessionDiff);
   };
 
   const rejectAll = async () => {
-    if (!activeTrackIdFromSession || !hasDiff) return;
-    const resp = await applyTrackDiffPatch(activeTrackIdFromSession, "reject", activeTrackDiff);
-    if (activeSessionId) supervisor.setDiff(activeSessionId, resp.diff ?? "");
+    if (!activeSessionId || !hasDiff) return;
+    await applyDiffPatch("reject", activeSessionDiff);
   };
 
   const refreshActiveDiff = useCallback(async () => {
-    if (!activeTrackIdFromSession || !activeSessionId) return;
-    const d = await trackDiff(activeTrackIdFromSession);
+    if (!activeSessionId) return;
+    const d = await getSessionDiff(activeSessionId);
     supervisor.setDiff(activeSessionId, d.diff ?? "");
-  }, [activeTrackIdFromSession, activeSessionId, supervisor]);
+  }, [activeSessionId, supervisor]);
 
   const handleDiffUpdated = useCallback(
     (next: string) => {
@@ -2784,7 +2745,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   }, []);
 
   const activeTask = activeTaskSummary?.task ?? null;
-  const expectedActiveTrackCount = activeTaskSummary ? activeTaskSummary.tracks.length : null;
+  const expectedActiveSessionCount = activeTaskSummary ? activeTaskSummary.sessions.length : null;
   const worktreeChip = useMemo(() => {
     const sess = activeEntry?.session ?? null;
     const worktreeRoot = String(activeWorktree?.root_path ?? "");
@@ -2806,8 +2767,8 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       copyPath: isCloud ? "" : worktreePath,
     };
   }, [activeEntry, activeWorktree?.git_branch, activeWorktree?.root_path, workspace?.root_path]);
-  const singleTrackHeader = useMemo(() => {
-    if (tracks.length !== 1) return null;
+  const singleSessionHeader = useMemo(() => {
+    if (sessions.length !== 1) return null;
     const sess = activeEntry?.session ?? null;
     const parsedModel = parseModelId(sess?.model_id ?? "");
     const harness =
@@ -2843,10 +2804,10 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       modelBase: parsedModel.base || String(sess?.model_id ?? ""),
       effort: parsedModel.effort,
     };
-  }, [activeEntry, activeTask?.title, tracks.length]);
+  }, [activeEntry, activeTask?.title, sessions.length]);
 
-  const singleTrackHeaderForRender = useMemo(() => {
-    if (singleTrackHeader) return singleTrackHeader;
+  const singleSessionHeaderForRender = useMemo(() => {
+    if (singleSessionHeader) return singleSessionHeader;
     if (!activeTaskId) return null;
     return {
       title: activeTask?.title ?? "Conversation",
@@ -2855,12 +2816,14 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       modelBase: "",
       effort: "",
     };
-  }, [activeTask?.title, activeTaskId, singleTrackHeader]);
+  }, [activeTask?.title, activeTaskId, singleSessionHeader]);
 
-  const showSingleTrackHeader = Boolean(
+  const showSingleSessionHeader = Boolean(
     activeTaskId &&
-      singleTrackHeaderForRender &&
-      (tracks.length === 1 || (tracks.length === 0 && (expectedActiveTrackCount === 1 || expectedActiveTrackCount === null))),
+      singleSessionHeaderForRender &&
+      (sessions.length === 1 ||
+        (sessions.length === 0 &&
+          (expectedActiveSessionCount === 1 || expectedActiveSessionCount === null))),
   );
 
   const [worktreeCopied, setWorktreeCopied] = useState(false);
@@ -2903,13 +2866,12 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     const createdId = await terminalPanelRef.current.createTerminal({
       cwd: path,
       taskId: activeTaskId ?? null,
-      trackId: activeTrackId ?? null,
       sessionId: activeSessionId ?? null,
       worktreeId: activeWorktreeId || null,
       scope: "task",
     });
     if (createdId) terminalPanelRef.current.focusTerminal(createdId);
-  }, [activeSessionId, activeTaskId, activeTrackId, activeWorktreeId, worktreeChip.worktreePath]);
+  }, [activeSessionId, activeTaskId, activeWorktreeId, worktreeChip.worktreePath]);
 
   const buildSessionLogExport = useCallback(() => {
     if (!activeEntry?.session) return;
@@ -2928,7 +2890,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     );
     const exportedAt = new Date().toISOString();
 
-    const title = singleTrackHeader?.title ?? "Conversation";
+    const title = singleSessionHeader?.title ?? "Conversation";
     const lines: string[] = [];
     lines.push(`# ${title}`);
     lines.push("");
@@ -3017,7 +2979,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     }
 
     return { title, markdown: lines.join("\n") };
-  }, [activeEntry, singleTrackHeader?.title, worktreeChip.worktreePath]);
+  }, [activeEntry, singleSessionHeader?.title, worktreeChip.worktreePath]);
 
   const buildTranscriptExport = useCallback(() => {
     if (!activeEntry?.session) return;
@@ -3028,7 +2990,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       activeEntry.events ?? [],
     );
 
-    const title = singleTrackHeader?.title ?? "Conversation";
+    const title = singleSessionHeader?.title ?? "Conversation";
     const lines: string[] = [];
     lines.push(`# ${title}`);
     lines.push("");
@@ -3052,7 +3014,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     }
 
     return { title, markdown: lines.join("\n") };
-  }, [activeEntry, singleTrackHeader?.title]);
+  }, [activeEntry, singleSessionHeader?.title]);
 
   const exportSessionLog = useCallback(async () => {
     const payload = buildSessionLogExport();
@@ -3182,14 +3144,13 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
             <button
               type="button"
               className="wb-topbar-ids"
-              title="Click to copy workspace/task/track/session IDs"
+              title="Click to copy workspace/task/session IDs"
               onClick={() =>
                 void copyTextToClipboard(
                   JSON.stringify(
                     {
                       workspaceId,
                       taskId: activeTaskId,
-                      trackId: activeTrackId,
                       sessionId: activeSessionId,
                     },
                     null,
@@ -3331,39 +3292,39 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
         {activeTaskId && (
           <div className="wb-body">
             <div className="wb-convo">
-              {showSingleTrackHeader ? (
-                <div className="wb-single-track-header" aria-busy={tracks.length === 0 ? "true" : undefined}>
-                  <div className="wb-single-track-title">{singleTrackHeaderForRender?.title ?? "Conversation"}</div>
+              {showSingleSessionHeader ? (
+                <div className="wb-single-track-header" aria-busy={sessions.length === 0 ? "true" : undefined}>
+                  <div className="wb-single-track-title">{singleSessionHeaderForRender?.title ?? "Conversation"}</div>
                   <div className="wb-single-track-meta">
                     <div className="wb-single-track-meta-left">
                       <span>
                         <RelativeAgeLabel
-                          iso={singleTrackHeaderForRender?.lastIso}
-                          fallback={singleTrackHeader ? "Now" : "Loading…"}
+                          iso={singleSessionHeaderForRender?.lastIso}
+                          fallback={singleSessionHeader ? "Now" : "Loading…"}
                         />
                       </span>
-                      {singleTrackHeaderForRender?.harness ? (
+                      {singleSessionHeaderForRender?.harness ? (
                         <>
                           <span className="wb-single-track-dot" aria-hidden="true">
                             ·
                           </span>
-                          <span>{singleTrackHeaderForRender.harness}</span>
+                          <span>{singleSessionHeaderForRender.harness}</span>
                         </>
                       ) : null}
-                      {singleTrackHeaderForRender?.modelBase && (
+                      {singleSessionHeaderForRender?.modelBase && (
                         <>
                           <span className="wb-single-track-dot" aria-hidden="true">
                             ·
                           </span>
-                          <span>{singleTrackHeaderForRender.modelBase}</span>
+                          <span>{singleSessionHeaderForRender.modelBase}</span>
                         </>
                       )}
-                      {singleTrackHeaderForRender?.effort && (
+                      {singleSessionHeaderForRender?.effort && (
                         <>
                           <span className="wb-single-track-dot" aria-hidden="true">
                             ·
                           </span>
-                          <span>{singleTrackHeaderForRender.effort}</span>
+                          <span>{singleSessionHeaderForRender.effort}</span>
                         </>
                       )}
                       {worktreeChip.worktreeLabel && (
@@ -3461,30 +3422,29 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
                   </div>
                 </div>
               ) : (
-                <div className="wb-trackbar" aria-busy={tracks.length === 0 ? "true" : undefined}>
-                  {tracks.length === 0 ? (
+                <div className="wb-trackbar" aria-busy={sessions.length === 0 ? "true" : undefined}>
+                  {sessions.length === 0 ? (
                     <>
                       <div className="wb-trackcard wb-trackcard-skeleton" aria-hidden="true" />
                       <div className="wb-trackcard wb-trackcard-skeleton" aria-hidden="true" />
                     </>
                   ) : (
-                    tracks.map((tr) => {
-                      const trid = idToString(tr.id);
-                      const selected = trid === activeTrackId;
-                      const sessions = sessionsByTrack[trid] ?? [];
-                      const preferredSession = pickPreferredSession(sessions, primarySessionByTrackId[trid]) as any;
-                      const sessionId = preferredSession ? idToString((preferredSession as any).id) : "";
-                      const liveSession = sessionId ? sessionCache.sessions[sessionId]?.session : null;
-                      const displaySession = (liveSession ?? preferredSession) as any;
-                      const model = displaySession ? `${displaySession.provider_id} ${displaySession.model_id}` : "No session";
-                      const status =
-                        tr.status === "running" ? "Running…" : tr.status === "completed" ? "Task completed" : tr.status;
+                    sessionSummaries.map((summary) => {
+                      const sessionId = idToString(summary.session.id);
+                      if (!sessionId) return null;
+                      const selected = sessionId === activeSessionId;
+                      const liveSession = sessionCache.sessions[sessionId]?.session;
+                      const displaySession = liveSession ?? summary.session;
+                      const model = displaySession
+                        ? `${displaySession.provider_id} ${displaySession.model_id}`
+                        : "No session";
+                      const status = displaySession?.status ?? "unknown";
                       return (
                         <button
-                          key={trid}
+                          key={sessionId}
                           type="button"
                           className={`wb-trackcard ${selected ? "wb-trackcard-active" : ""}`}
-                          onClick={() => workbenchStore.setActiveTrackForActiveTask(trid)}
+                          onClick={() => workbenchStore.setActiveSessionForActiveTask(sessionId)}
                         >
                           <div className="wb-trackcard-title">{model}</div>
                           <div className="wb-trackcard-sub">{status}</div>
@@ -3510,7 +3470,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
                 })}
                 {!activeSessionId ? (
                   <div className="wb-muted" style={{ padding: 16 }}>
-                    Select a track with a session.
+                    Select a session to view this task.
                   </div>
                 ) : null}
               </div>
@@ -3568,10 +3528,10 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
 
                         {reviewTab === "git" && hasDiff ? (
                           <DiffReviewPane
-                            diff={activeTrackDiff}
-                            trackId={activeTrackIdFromSession}
+                            diff={activeSessionDiff}
                             sessionId={activeSessionId || undefined}
                             onDiffUpdated={handleDiffUpdated}
+                            onApplyPatch={applyDiffPatch}
                             onFileSaved={refreshActiveDiff}
                             labels={diffLabels}
                           />
@@ -3618,10 +3578,10 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
 
                       {reviewTab === "git" && hasDiff ? (
                         <DiffReviewPane
-                          diff={activeTrackDiff}
-                          trackId={activeTrackIdFromSession}
+                          diff={activeSessionDiff}
                           sessionId={activeSessionId || undefined}
                           onDiffUpdated={handleDiffUpdated}
+                          onApplyPatch={applyDiffPatch}
                           onFileSaved={refreshActiveDiff}
                           labels={diffLabels}
                         />
@@ -3659,7 +3619,6 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
             ref={terminalPanelRef}
             workspaceId={workspaceId}
             activeTaskId={activeTaskId}
-            activeTrackId={activeTrackId}
             activeSessionId={activeSessionId}
             open={terminalOpen}
             height={terminalHeight}

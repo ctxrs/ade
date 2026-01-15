@@ -202,19 +202,18 @@ function decodeTab(raw: unknown): WorkbenchTab | null {
       raw.viewMode === "compact" || raw.viewMode === "normal" || raw.viewMode === "verbose" ? raw.viewMode : undefined;
     return { id: raw.id, kind: "new_task", titleOverride, viewMode };
   }
-  if (kind === "track") {
+  if (kind === "task" || kind === "track") {
     const ref = raw.ref;
     if (!isRecord(ref)) return null;
     if (!isString(ref.taskId) || !ref.taskId.trim()) return null;
-    const trackId = ref.trackId === null ? null : isString(ref.trackId) ? ref.trackId : null;
     const sessionId = ref.sessionId === null ? null : isString(ref.sessionId) ? ref.sessionId : null;
     const titleOverride = isString(raw.titleOverride) ? raw.titleOverride : undefined;
     const viewMode =
       raw.viewMode === "compact" || raw.viewMode === "normal" || raw.viewMode === "verbose" ? raw.viewMode : undefined;
     return {
       id: raw.id,
-      kind: "track",
-      ref: { taskId: ref.taskId, trackId, sessionId },
+      kind: "task",
+      ref: { taskId: ref.taskId, sessionId },
       titleOverride,
       viewMode,
     };
@@ -447,7 +446,6 @@ export async function migrateLegacySelectionToWindowV1(opts: {
   const legacy = await loadWorkbenchSelectionV1(workspaceId).catch(() => null);
   const legacyTaskId = String(legacy?.taskId ?? "").trim();
   if (!legacyTaskId) return { migrated: false, window: defaultWindow };
-  const legacyTrackId = legacy?.trackId ?? null;
   const legacySessionId = legacy?.sessionId ?? null;
 
   const firstLeaf = findFirstLeaf(defaultWindow.layout);
@@ -459,8 +457,8 @@ export async function migrateLegacySelectionToWindowV1(opts: {
       const existing = leaf.tabs[0];
       const tab: WorkbenchTab = {
         id: existing?.id ?? randomUuid(),
-        kind: "track",
-        ref: { taskId: legacyTaskId, trackId: legacyTrackId, sessionId: legacySessionId },
+        kind: "task",
+        ref: { taskId: legacyTaskId, sessionId: legacySessionId },
       };
       return { ...leaf, tabs: [tab], activeTabId: tab.id };
     }),

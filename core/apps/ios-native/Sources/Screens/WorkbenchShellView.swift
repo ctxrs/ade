@@ -1,8 +1,6 @@
-import PhotosUI
 import SwiftUI
 import _Concurrency
 import UIKit
-import UniformTypeIdentifiers
 
 struct WorkbenchShellView: View {
     @EnvironmentObject private var connection: ConnectionStore
@@ -70,7 +68,6 @@ struct WorkbenchShellView: View {
                     isLoadingTasks: isLoadingTasks,
                     taskError: taskError,
                     selectedSession: resolvedSession,
-                    isArchivedTask: selectedTask?.task.archivedAt != nil,
                     isArtifactsPresented: $isArtifactsPresented,
                     artifactsCount: $artifactsCount,
                     hasTaskSelection: workbenchSelection.taskId != nil,
@@ -611,13 +608,7 @@ struct WorkbenchShellView: View {
             }
 
             let (providerId, modelId) = try await resolveDefaultSessionConfig(client: client, workspaceId: workspaceId)
-            let session = try await client.createSessionForTask(
-                taskId: taskId,
-                providerId: providerId,
-                modelId: modelId,
-                worktreeId: task.task.primaryWorktreeId?.stringValue,
-                envTarget: "worktree"
-            )
+            let session = try await client.createSession(taskId: taskId, providerId: providerId, modelId: modelId)
             workbenchSelection.setSelection(taskId: taskId, sessionId: session.id.stringValue)
             await loadTasks()
         } catch {
@@ -981,7 +972,11 @@ struct WorkbenchShellView: View {
             guard let index = tasks.firstIndex(where: { $0.task.id.stringValue == taskId }) else { return nil }
             let summary = tasks[index]
             tasks.remove(at: index)
-            return WorkspaceCatchupTaskSummary(task: task, sessions: summary.sessions, sortAt: summary.sortAt)
+            return WorkspaceCatchupTaskSummary(
+                task: task,
+                sessions: summary.sessions,
+                sortAt: summary.sortAt
+            )
         }
 
         if let updated = update(&activeTasks) {
@@ -1037,7 +1032,6 @@ private struct WorkbenchHomeView: View {
     let isLoadingTasks: Bool
     let taskError: String?
     let selectedSession: SessionSummary?
-    let isArchivedTask: Bool
     @Binding var isArtifactsPresented: Bool
     @Binding var artifactsCount: Int
     let hasTaskSelection: Bool
@@ -1053,7 +1047,6 @@ private struct WorkbenchHomeView: View {
                 isLoadingTasks: isLoadingTasks,
                 taskError: taskError,
                 selectedSession: selectedSession,
-                isArchivedTask: isArchivedTask,
                 isArtifactsPresented: $isArtifactsPresented,
                 artifactsCount: $artifactsCount,
                 hasTaskSelection: hasTaskSelection,
@@ -1413,16 +1406,22 @@ private struct WorkbenchWorkspaceSwitcherView: View {
             .buttonStyle(.plain)
             .accessibilityIdentifier("drawer.workspace.switch")
 
-            if let workspaceError {
+            if isLoadingWorkspaces {
+                HStack(spacing: 8) {
+                    ProgressView()
+                        .tint(.ctxAccent)
+                    Text("Loading workspaces...")
+                        .foregroundColor(.ctxTextMuted)
+                }
+                .font(.caption)
+            } else if let workspaceError {
                 Text(workspaceError)
                     .font(.caption)
                     .foregroundColor(.ctxError)
             } else if workspaces.isEmpty {
-                if !isLoadingWorkspaces {
-                    Text("No workspaces connected yet.")
-                        .font(.caption)
-                        .foregroundColor(.ctxTextMuted)
-                }
+                Text("No workspaces connected yet.")
+                    .font(.caption)
+                    .foregroundColor(.ctxTextMuted)
             }
         }
         .padding(.horizontal, 16)
@@ -1457,7 +1456,6 @@ private struct WorkbenchNavigationFlowView: View {
     let isLoadingTasks: Bool
     let taskError: String?
     let selectedSession: SessionSummary?
-    let isArchivedTask: Bool
     @Binding var isArtifactsPresented: Bool
     @Binding var artifactsCount: Int
     let hasTaskSelection: Bool
@@ -1465,18 +1463,22 @@ private struct WorkbenchNavigationFlowView: View {
     let onTaskCreated: () -> Void
 
     var body: some View {
-        if let workspaceError {
+        if isLoadingWorkspaces {
+            VStack(spacing: 12) {
+                ProgressView()
+                    .tint(.ctxAccent)
+                Text("Loading workspaces...")
+                    .font(.footnote)
+                    .foregroundColor(.ctxTextMuted)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if let workspaceError {
             WorkbenchInfoCard(text: workspaceError, tint: .ctxError)
                 .padding(.horizontal, 20)
         } else if let workspace = selectedWorkspace {
             NavigationStack {
                 if let selectedSession {
-                    ChatDetailView(
-                        session: selectedSession,
-                        isArchived: isArchivedTask,
-                        isArtifactsPresented: $isArtifactsPresented,
-                        artifactCount: $artifactsCount
-                    )
+                    ChatDetailView(session: selectedSession, isArtifactsPresented: $isArtifactsPresented, artifactCount: $artifactsCount)
                 } else if hasTaskSelection {
                     if isPreparingSession {
                         WorkbenchEmptyStateView(
@@ -1500,36 +1502,11 @@ private struct WorkbenchNavigationFlowView: View {
             }
             .id(workspace.id)
             .toolbar(.hidden, for: .navigationBar)
-        } else if isLoadingWorkspaces {
-            Color.clear
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             WorkbenchEmptyStateView(
                 title: "No workspace selected",
                 message: "Pick a workspace in settings to start browsing tasks."
             )
-        }
-    }
-}
-
-private enum WorkbenchEnvTarget: String, CaseIterable, Identifiable {
-    case local
-    case worktree
-    case cloud
-    case container
-
-    var id: String { rawValue }
-
-    var label: String {
-        switch self {
-        case .local:
-            return "Local"
-        case .worktree:
-            return "Worktree"
-        case .cloud:
-            return "Cloud"
-        case .container:
-            return "Container"
         }
     }
 }
@@ -1547,22 +1524,72 @@ private struct WorkbenchNewTaskView: View {
     @State private var models: [String] = []
     @State private var selectedProviderId = ""
     @State private var selectedModelId = ""
-    @State private var selectedEffortId = ""
-    @State private var selectedMode: ComposerMode = .default
-    @State private var selectedIsolation: WorkbenchEnvTarget = .worktree
     @State private var isLoadingProviders = false
     @State private var isLoadingModels = false
     @State private var errorMessage: String?
     @State private var isSubmitting = false
     @State private var routingEntry: ModelRoutingEntry?
-    @State private var selectedPhotos: [PhotosPickerItem] = []
-    @State private var pendingAttachments: [MessageAttachment] = []
     @FocusState private var isPromptFocused: Bool
 
     var body: some View {
         ScrollView(showsIndicators: false) {
             VStack(alignment: .leading, spacing: 16) {
-                composerCard
+                Text("New task")
+                    .font(.title3.weight(.semibold))
+                    .foregroundColor(.ctxTextPrimary)
+
+                if isLoadingTasks {
+                    Text("Refreshing tasks...")
+                        .font(.caption)
+                        .foregroundColor(.ctxTextMuted)
+                } else if let taskError {
+                    WorkbenchInfoCard(text: taskError, tint: .ctxError)
+                }
+
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Prompt")
+                        .font(.caption.weight(.semibold))
+                        .foregroundColor(.ctxTextMuted)
+                    CtxTextArea(
+                        placeholder: "Describe what you want...",
+                        text: $prompt,
+                        accessibilityId: "newtask.prompt",
+                        isFocused: $isPromptFocused
+                    )
+                }
+
+                WorkbenchInlineHarnessPicker(
+                    value: providerLabel,
+                    providerId: providerIconId,
+                    isDisabled: providerOptionsDisabled,
+                    options: availableProviderIds,
+                    displayName: formatProviderName,
+                    onSelect: { id in
+                        selectedProviderId = id
+                        selectedModelId = ""
+                    }
+                )
+
+                WorkbenchInlineMenuPicker(
+                    title: "Model",
+                    value: modelLabel,
+                    isDisabled: modelOptionsDisabled,
+                    options: modelChoices,
+                    onSelect: { id in
+                        selectedModelId = id
+                    }
+                )
+
+                if let errorMessage {
+                    WorkbenchInfoCard(text: errorMessage, tint: .ctxError)
+                }
+
+                Button(action: startTask) {
+                    Text(isSubmitting ? "Starting..." : "Start")
+                }
+                .buttonStyle(CtxPrimaryButtonStyle())
+                .disabled(!canSubmit)
+                .accessibilityIdentifier("newtask.start")
             }
             .padding(.horizontal, 20)
             .padding(.bottom, 20)
@@ -1573,15 +1600,6 @@ private struct WorkbenchNewTaskView: View {
         }
         .task(id: effectiveProviderId) {
             await loadModels()
-        }
-        .onChange(of: selectedPhotos) { newItems in
-            _Concurrency.Task { await loadAttachments(from: newItems) }
-        }
-        .onChange(of: models) { _ in
-            syncEffortSelection()
-        }
-        .onChange(of: selectedModelId) { _, _ in
-            syncEffortSelection()
         }
         .onAppear {
             let env = ProcessInfo.processInfo.environment
@@ -1765,7 +1783,6 @@ private struct WorkbenchNewTaskView: View {
                 .stroke(Color.ctxLine, lineWidth: 1)
         )
     }
-
     private var promptTrimmed: String {
         prompt.trimmingCharacters(in: .whitespacesAndNewlines)
     }
@@ -1810,29 +1827,6 @@ private struct WorkbenchNewTaskView: View {
     }
 
     private var effectiveModelId: String {
-        resolveModelIdForUI()
-    }
-
-    private var providerOptionsDisabled: Bool {
-        isLoadingProviders || availableProviderIds.isEmpty
-    }
-
-    private var modelOptionsDisabled: Bool {
-        isLoadingModels || effectiveProviderId.isEmpty || modelChoices.isEmpty
-    }
-
-    private var isSendEnabled: Bool {
-        (!promptTrimmed.isEmpty || !pendingAttachments.isEmpty) && !effectiveProviderId.isEmpty && !effectiveModelId.isEmpty && !isSubmitting
-    }
-
-    private func formatProviderName(_ providerId: String) -> String {
-        providerId
-            .replacingOccurrences(of: "_", with: " ")
-            .replacingOccurrences(of: "-", with: " ")
-            .capitalized
-    }
-
-    private func resolveModelIdForUI() -> String {
         if !selectedModelId.isEmpty {
             return selectedModelId
         }
@@ -1844,101 +1838,29 @@ private struct WorkbenchNewTaskView: View {
         return modelChoices.first ?? "default"
     }
 
-    private func newTaskMenuLabel(_ text: String) -> some View {
-        HStack(spacing: 6) {
-            Text(text)
-                .font(.footnote.weight(.semibold))
-                .foregroundColor(.ctxTextPrimary)
-                .lineLimit(1)
-            LucideIcon(name: .chevronDown, size: 12)
-                .foregroundColor(.ctxTextMuted)
-        }
-        .padding(.vertical, 6)
+    private var modelLabel: String {
+        if isLoadingModels { return "Loading..." }
+        if modelChoices.isEmpty { return "default" }
+        return effectiveModelId
     }
 
-    private func resolveEffortId(parsed: ParsedModelId, efforts: [String]) -> String? {
-        guard !efforts.isEmpty else { return nil }
-        if !selectedEffortId.isEmpty, efforts.contains(selectedEffortId) {
-            return selectedEffortId
-        }
-        if let parsedEffort = parsed.effort, efforts.contains(parsedEffort) {
-            return parsedEffort
-        }
-        return pickDefaultEffort(efforts)
+    private var providerOptionsDisabled: Bool {
+        isLoadingProviders || availableProviderIds.isEmpty
     }
 
-    private func selectBase(_ baseId: String, catalog: ModelCatalog) {
-        let preferredEffort = selectedEffortId.isEmpty ? nil : selectedEffortId
-        let nextModelId = deriveFullModelIdForBase(catalog: catalog, baseId: baseId, preferredEffort: preferredEffort)
-        selectedModelId = nextModelId
-        let parsed = parseModelId(nextModelId, catalog: catalog)
-        let nextEffort = resolveEffortId(parsed: parsed, efforts: catalog.effortsByBase[baseId] ?? []) ?? ""
-        if selectedEffortId != nextEffort {
-            selectedEffortId = nextEffort
-        }
+    private var modelOptionsDisabled: Bool {
+        isLoadingModels || effectiveProviderId.isEmpty || modelChoices.isEmpty
     }
 
-    private func selectEffort(_ effortId: String, baseId: String, catalog: ModelCatalog) {
-        selectedEffortId = effortId
-        let nextModelId = catalog.fullIdByBaseEffort[baseId]?[effortId] ?? composeModelId(base: baseId, effort: effortId)
-        selectedModelId = nextModelId
+    private var canSubmit: Bool {
+        !promptTrimmed.isEmpty && !effectiveProviderId.isEmpty && !effectiveModelId.isEmpty && !isSubmitting
     }
 
-    private func syncEffortSelection() {
-        let choices = modelChoices
-        let catalog = buildModelCatalog(choices)
-        let fallbackModelId = choices.first ?? ""
-        var currentModelId = selectedModelId
-
-        if currentModelId.isEmpty {
-            if let routingEntry, routingEntry.providerId == effectiveProviderId,
-               (choices.isEmpty || choices.contains(routingEntry.modelId)) {
-                currentModelId = routingEntry.modelId
-            } else {
-                currentModelId = fallbackModelId
-            }
-            if !currentModelId.isEmpty {
-                selectedModelId = currentModelId
-            }
-        }
-
-        guard !currentModelId.isEmpty else { return }
-        let parsed = parseModelId(currentModelId, catalog: catalog)
-        let baseId = parsed.base.isEmpty ? currentModelId : parsed.base
-        let efforts = catalog.effortsByBase[baseId] ?? []
-
-        if efforts.isEmpty {
-            if !selectedEffortId.isEmpty {
-                selectedEffortId = ""
-            }
-            return
-        }
-
-        var nextEffort = selectedEffortId
-        if nextEffort.isEmpty || !efforts.contains(nextEffort) {
-            if let parsedEffort = parsed.effort, efforts.contains(parsedEffort) {
-                nextEffort = parsedEffort
-            } else {
-                nextEffort = pickDefaultEffort(efforts) ?? ""
-            }
-        }
-
-        if selectedEffortId != nextEffort {
-            selectedEffortId = nextEffort
-        }
-
-        let resolvedModelId = deriveFullModelIdForBase(catalog: catalog, baseId: baseId, preferredEffort: nextEffort)
-        if !resolvedModelId.isEmpty, selectedModelId != resolvedModelId {
-            selectedModelId = resolvedModelId
-        }
-    }
-
-    private func insertToken(_ token: String) {
-        if !prompt.isEmpty, let last = prompt.last, !last.isWhitespace {
-            prompt.append(" ")
-        }
-        prompt.append(token)
-        isPromptFocused = true
+    private func formatProviderName(_ providerId: String) -> String {
+        providerId
+            .replacingOccurrences(of: "_", with: " ")
+            .replacingOccurrences(of: "-", with: " ")
+            .capitalized
     }
 
     @MainActor
@@ -1993,17 +1915,13 @@ private struct WorkbenchNewTaskView: View {
             errorMessage = "Failed to load models."
         }
         isLoadingModels = false
-        syncEffortSelection()
     }
 
     private func startTask() {
         let promptValue = promptTrimmed
-        guard !promptValue.isEmpty || !pendingAttachments.isEmpty else { return }
+        guard !promptValue.isEmpty else { return }
         let providerId = effectiveProviderId
         let modelId = effectiveModelId
-        let attachments = pendingAttachments
-        let modeId = selectedMode.rawValue
-        let envTarget = selectedIsolation.rawValue
         guard !providerId.isEmpty, !modelId.isEmpty else { return }
         isSubmitting = true
         errorMessage = nil
@@ -2020,30 +1938,17 @@ private struct WorkbenchNewTaskView: View {
                     workspaceId: workspace.id,
                     title: "New task",
                     description: nil,
-                    createDefaultSession: false
+                    createDefaultTrack: false,
+                    defaultTrackLabel: nil
                 )
-                let session = try await client.createSessionForTask(
-                    taskId: task.id.stringValue,
-                    providerId: providerId,
-                    modelId: modelId,
-                    worktreeId: nil,
-                    envTarget: envTarget
-                )
-                try? await client.setSessionMode(sessionId: session.id.stringValue, modeId: modeId)
-                _ = try await client.postMessage(
-                    sessionId: session.id.stringValue,
-                    content: promptValue,
-                    delivery: .immediate,
-                    attachments: attachments
-                )
+                let session = try await client.createSession(taskId: task.id.stringValue, providerId: providerId, modelId: modelId)
+                _ = try await client.postMessage(sessionId: session.id.stringValue, content: promptValue, delivery: .immediate, attachments: [])
                 await MainActor.run {
                     workbenchSelection.setSelection(
                         taskId: task.id.stringValue,
                         sessionId: session.id.stringValue
                     )
                     prompt = ""
-                    pendingAttachments = []
-                    selectedPhotos = []
                     onTaskCreated()
                 }
             } catch {
@@ -2055,38 +1960,6 @@ private struct WorkbenchNewTaskView: View {
                 isSubmitting = false
             }
         }
-    }
-
-    @MainActor
-    private func loadAttachments(from items: [PhotosPickerItem]) async {
-        guard !items.isEmpty else { return }
-        var nextAttachments: [MessageAttachment] = []
-        for item in items {
-            guard let data = try? await item.loadTransferable(type: Data.self) else { continue }
-            let contentType = item.supportedContentTypes.first
-            let mimeType = contentType?.preferredMIMEType ?? "image/*"
-            let fileExtension = contentType?.preferredFilenameExtension
-            let name = suggestedAttachmentName(extension: fileExtension)
-            nextAttachments.append(
-                MessageAttachment(
-                    kind: .image,
-                    mimeType: mimeType,
-                    dataBase64: data.base64EncodedString(),
-                    blobId: nil,
-                    name: name
-                )
-            )
-        }
-        if !nextAttachments.isEmpty {
-            pendingAttachments.append(contentsOf: nextAttachments)
-        }
-        selectedPhotos = []
-    }
-
-    private func suggestedAttachmentName(extension fileExtension: String?) -> String? {
-        let suffix = (fileExtension?.isEmpty == false) ? ".\(fileExtension ?? "")" : ""
-        let shortId = String(UUID().uuidString.prefix(8))
-        return "photo-\(shortId)\(suffix)"
     }
 }
 
@@ -2499,7 +2372,6 @@ private struct WorkbenchEmptyStateView: View {
 private struct ResolvedPrimarySession {
     let sessionId: String?
     let session: SessionSummary?
-    let summary: SessionCatchupSummary?
 }
 
 private func resolvePrimarySession(
@@ -2508,71 +2380,44 @@ private func resolvePrimarySession(
 ) -> ResolvedPrimarySession {
     let sessions = task.sessions
     guard !sessions.isEmpty else {
-        return ResolvedPrimarySession(
-            sessionId: nil,
-            session: nil,
-            summary: nil
-        )
+        return ResolvedPrimarySession(sessionId: nil, session: nil)
     }
 
-    let candidates = sessions.map { summary in
-        SessionCandidate(
-            summary: summary,
-            isPrimary: task.task.primarySessionId == summary.session.id
-        )
-    }
-
-    let nonSubagents = candidates.filter { $0.summary.session.relationship != "sub_agent" }
-    let pool = nonSubagents.isEmpty ? candidates : nonSubagents
+    let nonSubagents = sessions.filter { $0.session.relationship != "sub_agent" }
+    let candidates = nonSubagents.isEmpty ? sessions : nonSubagents
 
     if let preferredSessionId,
-       let match = pool.first(where: { $0.summary.session.id.stringValue == preferredSessionId }) {
-        return resolvedFromCandidate(match)
+       let match = candidates.first(where: { $0.session.id.stringValue == preferredSessionId }) {
+        let summary = SessionSummary(session: match.session)
+        return ResolvedPrimarySession(sessionId: preferredSessionId, session: summary)
     }
 
-    if let primary = pool.first(where: { $0.isPrimary }) {
-        return resolvedFromCandidate(primary)
+    if let primaryId = task.task.primarySessionId?.stringValue,
+       let match = candidates.first(where: { $0.session.id.stringValue == primaryId }) {
+        let summary = SessionSummary(session: match.session)
+        return ResolvedPrimarySession(sessionId: primaryId, session: summary)
     }
 
-    if let running = pool.first(where: { $0.summary.session.status == "active" || $0.summary.session.status == "running" }) {
-        return resolvedFromCandidate(running)
+    if let running = candidates.first(where: { $0.session.status == "active" || $0.session.status == "running" }) {
+        let summary = SessionSummary(session: running.session)
+        let sessionId = running.session.id.stringValue
+        return ResolvedPrimarySession(sessionId: sessionId, session: summary)
     }
 
-    if let recent = mostRecentCandidate(in: pool) {
-        return resolvedFromCandidate(recent)
+    if let recent = mostRecentSession(in: candidates) {
+        let summary = SessionSummary(session: recent.session)
+        let sessionId = recent.session.id.stringValue
+        return ResolvedPrimarySession(sessionId: sessionId, session: summary)
     }
 
-    return resolvedFromCandidate(pool.first)
+    return ResolvedPrimarySession(sessionId: nil, session: nil)
 }
 
-private struct SessionCandidate {
-    let summary: SessionCatchupSummary
-    let isPrimary: Bool
-}
-
-private func resolvedFromCandidate(_ candidate: SessionCandidate?) -> ResolvedPrimarySession {
-    guard let candidate else {
-        return ResolvedPrimarySession(
-            sessionId: nil,
-            session: nil,
-            summary: nil
-        )
-    }
-    let sessionId = candidate.summary.session.id.stringValue
-    return ResolvedPrimarySession(
-        sessionId: sessionId,
-        session: SessionSummary(session: candidate.summary.session),
-        summary: candidate.summary
-    )
-}
-
-private func mostRecentCandidate(in candidates: [SessionCandidate]) -> SessionCandidate? {
-    candidates.max { left, right in
-        let leftKey = left.summary.lastMessageAt ?? left.summary.session.updatedAt ?? left.summary.session.createdAt
-        let rightKey = right.summary.lastMessageAt ?? right.summary.session.updatedAt ?? right.summary.session.createdAt
-        let leftDate = parseIso(leftKey) ?? .distantPast
-        let rightDate = parseIso(rightKey) ?? .distantPast
-        return leftDate < rightDate
+private func mostRecentSession(in sessions: [SessionCatchupSummary]) -> SessionCatchupSummary? {
+    sessions.max { left, right in
+        let leftKey = left.lastMessageAt ?? left.session.updatedAt ?? left.session.createdAt ?? ""
+        let rightKey = right.lastMessageAt ?? right.session.updatedAt ?? right.session.createdAt ?? ""
+        return leftKey < rightKey
     }
 }
 

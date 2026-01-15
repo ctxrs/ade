@@ -15,6 +15,10 @@ enum HTTPMethod: String {
 }
 
 actor DaemonAPIClient {
+    struct SessionDiffResponse: Codable, Sendable {
+        let diff: String
+    }
+
     struct ProviderOptions: Codable, Sendable {
         let providerId: String
         let workspaceId: String
@@ -141,6 +145,18 @@ actor DaemonAPIClient {
         return snapshot.active.tasks.map { TaskSummary(task: $0.task) }
     }
 
+    func listSessions(workspaceId: String, taskId: String) async throws -> [SessionSummary] {
+        let snapshot = try await getWorkspaceCatchupSnapshot(workspaceId: workspaceId)
+        if let task = snapshot.active.tasks.first(where: { $0.task.id.stringValue == taskId }) {
+            return task.sessions.map { SessionSummary(session: $0.session) }
+        }
+        if let archived = snapshot.archived,
+           let task = archived.tasks.first(where: { $0.task.id.stringValue == taskId }) {
+            return task.sessions.map { SessionSummary(session: $0.session) }
+        }
+        return []
+    }
+
     func listWorktrees(workspaceId: String) async throws -> [WorktreeSummary] {
         try await request("/api/workspaces/\(workspaceId)/worktrees")
     }
@@ -251,6 +267,10 @@ actor DaemonAPIClient {
         try await performVoid(request)
     }
 
+    func fetchSessionDiff(sessionId: String) async throws -> SessionDiffResponse {
+        try await request("/api/sessions/\(sessionId)/diff")
+    }
+
     func listProviders() async throws -> [ProviderStatus] {
         try await request("/api/providers")
     }
@@ -325,16 +345,18 @@ actor DaemonAPIClient {
         return try await request("/api/workspaces/\(workspaceId)/catchup", queryItems: queryItems)
     }
 
-    func createTask(workspaceId: String, title: String, description: String?, createDefaultSession: Bool?) async throws -> Task {
+    func createTask(workspaceId: String, title: String, description: String?, createDefaultTrack: Bool?, defaultTrackLabel: String?) async throws -> Task {
         struct Payload: Encodable {
             let title: String
             let description: String?
-            let createDefaultSession: Bool?
+            let createDefaultTrack: Bool?
+            let defaultTrackLabel: String?
         }
         let payload = Payload(
             title: title,
             description: description,
-            createDefaultSession: createDefaultSession
+            createDefaultTrack: createDefaultTrack,
+            defaultTrackLabel: defaultTrackLabel
         )
         return try await request("/api/workspaces/\(workspaceId)/tasks", method: .post, body: payload)
     }
@@ -365,20 +387,12 @@ actor DaemonAPIClient {
         try await request("/api/tasks/\(taskId)/mark_unread", method: .post)
     }
 
-    func createSessionForTask(
-        taskId: String,
-        providerId: String,
-        modelId: String,
-        worktreeId: String?,
-        envTarget: String?
-    ) async throws -> Session {
+    func createSession(taskId: String, providerId: String, modelId: String) async throws -> Session {
         struct Payload: Encodable {
             let providerId: String
             let modelId: String
-            let worktreeId: String?
-            let envTarget: String?
         }
-        let payload = Payload(providerId: providerId, modelId: modelId, worktreeId: worktreeId, envTarget: envTarget)
+        let payload = Payload(providerId: providerId, modelId: modelId)
         return try await request("/api/tasks/\(taskId)/sessions", method: .post, body: payload)
     }
 

@@ -415,4 +415,65 @@ mod tests {
             .unwrap();
         assert_eq!(last.content, "final response");
     }
+
+    #[tokio::test]
+    async fn workspace_active_page_includes_primary_and_subagent_sessions() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("db.sqlite");
+        let store = Store::open(&db_path).await.unwrap();
+        let ws = store
+            .create_workspace("ws".into(), "/tmp/ws".into())
+            .await
+            .unwrap();
+
+        let task = store
+            .create_task(ws.id, "active".into(), None)
+            .await
+            .unwrap();
+        let worktree = store
+            .create_worktree(ws.id, "/tmp/ws".into(), "abc123".into(), None)
+            .await
+            .unwrap();
+        let primary = store
+            .create_session(
+                task.id,
+                ws.id,
+                worktree.id,
+                "fake".into(),
+                "fake".into(),
+                "implementer".into(),
+                None,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        store
+            .set_task_primary_session(task.id, primary.id, worktree.id)
+            .await
+            .unwrap();
+        let subagent = store
+            .create_session(
+                task.id,
+                ws.id,
+                worktree.id,
+                "fake".into(),
+                "fake".into(),
+                "reviewer".into(),
+                Some(primary.id),
+                Some("sub_agent".into()),
+                None,
+            )
+            .await
+            .unwrap();
+
+        let (summaries, total) = store.list_workspace_active_page(ws.id, 50).await.unwrap();
+        assert_eq!(total, 1);
+        assert_eq!(summaries.len(), 1);
+        let summary = &summaries[0];
+        assert_eq!(summary.primary_session.session.id, primary.id);
+        assert_eq!(summary.primary_session_head.session.id, primary.id);
+        assert_eq!(summary.sessions.len(), 1);
+        assert_eq!(summary.sessions[0].session.id, subagent.id);
+    }
 }

@@ -46,7 +46,6 @@ export type TerminalPanelHandle = {
 export type CreateTerminalOptions = {
   cwd?: string | null;
   taskId?: string | null;
-  trackId?: string | null;
   sessionId?: string | null;
   worktreeId?: string | null;
   scope?: TerminalScope;
@@ -55,7 +54,6 @@ export type CreateTerminalOptions = {
 type TerminalPanelProps = {
   workspaceId: string;
   activeTaskId: string | null;
-  activeTrackId: string | null;
   activeSessionId: string | null;
   open: boolean;
   height: number;
@@ -247,7 +245,7 @@ function terminalFontFamily() {
 }
 
 export const TerminalPanel = forwardRef<TerminalPanelHandle, TerminalPanelProps>(function TerminalPanel(
-  { workspaceId, activeTaskId, activeTrackId, activeSessionId, open, height, onRequestClose },
+  { workspaceId, activeTaskId, activeSessionId, open, height, onRequestClose },
   ref,
 ) {
   const [terminals, setTerminals] = useState<TerminalSession[]>([]);
@@ -558,7 +556,6 @@ export const TerminalPanel = forwardRef<TerminalPanelHandle, TerminalPanelProps>
       if (!workspaceId) return null;
       const req: CreateTerminalRequest = {
         task_id: opts.taskId ?? null,
-        track_id: opts.trackId ?? null,
         session_id: opts.sessionId ?? null,
         worktree_id: opts.worktreeId ?? null,
         cwd: opts.cwd ?? null,
@@ -642,11 +639,10 @@ export const TerminalPanel = forwardRef<TerminalPanelHandle, TerminalPanelProps>
     const baseTaskId = scope === "task" ? activeTaskId : null;
     await createTerminalForScope({
       taskId: baseTaskId,
-      trackId: scope === "task" ? activeTrackId : null,
       sessionId: scope === "task" ? activeSessionId : null,
       scope,
     });
-  }, [activeSessionId, activeTaskId, activeTrackId, createTerminalForScope, panelState.scope]);
+  }, [activeSessionId, activeTaskId, createTerminalForScope, panelState.scope]);
 
   const splitTerminalForId = useCallback(
     async (terminalId: string | null) => {
@@ -656,7 +652,6 @@ export const TerminalPanel = forwardRef<TerminalPanelHandle, TerminalPanelProps>
       const createdId = await createTerminalSession(
         {
           taskId: baseTaskId,
-          trackId: scope === "task" ? activeTrackId : null,
           sessionId: scope === "task" ? activeSessionId : null,
           scope,
         },
@@ -698,7 +693,6 @@ export const TerminalPanel = forwardRef<TerminalPanelHandle, TerminalPanelProps>
     [
       activeSessionId,
       activeTaskId,
-      activeTrackId,
       createTerminalSession,
       focusTerminal,
       panelState.scope,

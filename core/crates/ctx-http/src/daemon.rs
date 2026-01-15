@@ -45,6 +45,7 @@ use crate::settings;
 use crate::telemetry::{Telemetry, TelemetryConfig};
 use crate::terminals::TerminalManager;
 use crate::web_sessions::WebSessionManager;
+use crate::workspace_active_snapshot::WorkspaceActiveSnapshotHub;
 use crate::workspace_catchup::WorkspaceCatchupHub;
 
 fn acquire_daemon_lock(data_root: &Path) -> Result<std::fs::File> {
@@ -155,6 +156,7 @@ pub struct AppState {
     pub resource_governance: Mutex<ResourceGovernanceRuntime>,
     pub provider_guard: Mutex<provider_guard::ProviderGuardRuntime>,
     pub resource_sampler: Mutex<ResourceSampler>,
+    pub workspace_active_snapshot: WorkspaceActiveSnapshotHub,
     pub workspace_catchup: WorkspaceCatchupHub,
     pub terminals: TerminalManager,
     pub mobile_tunnel: MobileTunnelManager,
@@ -259,6 +261,7 @@ impl AppState {
         let telemetry = Telemetry::new(data_root.clone());
         let ops_events = OpsEvents::new(data_root.clone());
         let perf_telemetry = PerfTelemetry::new(data_root.clone());
+        let workspace_active_snapshot = WorkspaceActiveSnapshotHub::new();
         let workspace_catchup = WorkspaceCatchupHub::new();
         let web_sessions = Arc::new(WebSessionManager::new());
         let merge_queue_notify = Arc::new(Notify::new());
@@ -288,6 +291,7 @@ impl AppState {
             resource_governance: Mutex::new(ResourceGovernanceRuntime::default()),
             provider_guard: Mutex::new(provider_guard::ProviderGuardRuntime::default()),
             resource_sampler: Mutex::new(ResourceSampler::new()),
+            workspace_active_snapshot,
             workspace_catchup,
             terminals: TerminalManager::default(),
             mobile_tunnel: MobileTunnelManager::default(),
@@ -438,12 +442,34 @@ impl AppState {
                 .publish_task_upsert(workspace_id, summary)
                 .await;
         }
+        match self
+            .store
+            .get_workspace_active_task_summary(task_id)
+            .await?
+        {
+            Some(summary) => {
+                let workspace_id = summary.task.workspace_id;
+                self.workspace_active_snapshot
+                    .publish_active_task_upsert(workspace_id, summary)
+                    .await;
+            }
+            None => {
+                if let Some(task) = self.store.get_task(task_id).await? {
+                    self.workspace_active_snapshot
+                        .publish_active_task_delete(task.workspace_id, task_id)
+                        .await;
+                }
+            }
+        }
         Ok(())
     }
 
     pub async fn emit_workspace_task_delete(&self, workspace_id: WorkspaceId, task_id: TaskId) {
         self.workspace_catchup
             .publish_task_delete(workspace_id, task_id)
+            .await;
+        self.workspace_active_snapshot
+            .publish_active_task_delete(workspace_id, task_id)
             .await;
     }
 
@@ -521,6 +547,10 @@ impl AppState {
                 };
                 state
                     .workspace_catchup
+                    .publish_session_head_delta(session.workspace_id, delta.clone())
+                    .await;
+                state
+                    .workspace_active_snapshot
                     .publish_session_head_delta(session.workspace_id, delta)
                     .await;
             }

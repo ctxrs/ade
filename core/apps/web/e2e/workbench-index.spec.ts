@@ -45,8 +45,8 @@ test("workbench catchup snapshot+stream keeps network lean", async ({ page }) =>
     r.method === "GET" && r.url.includes(`/api/workspaces/${workspaceId}/catchup`),
   );
   expect(catchupRequests.length).toBeGreaterThanOrEqual(1);
-  const tracksRequests = apiRequests.filter((r) => /\/api\/tasks\/[^/]+\/tracks/.test(r.url));
-  const sessionsRequests = apiRequests.filter((r) => /\/api\/tracks\/[^/]+\/sessions/.test(r.url));
-  expect(tracksRequests.length).toBe(0);
-  expect(sessionsRequests.length).toBe(0);
+  const trackRequests = apiRequests.filter(
+    (r) => /\/api\/tasks\/[^/]+\/tracks/.test(r.url) || /\/api\/tracks\/[^/]+/.test(r.url),
+  );
+  expect(trackRequests.length).toBe(0);
 });

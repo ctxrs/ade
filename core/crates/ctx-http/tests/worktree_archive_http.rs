@@ -114,25 +114,32 @@ async fn archive_and_unarchive_recreates_managed_worktrees() {
         .unwrap();
 
     client
-        .post(format!("{base}/api/tasks/{}/tracks", task.id.0))
-        .json(&json!({"label":"secondary","env_target":"worktree"}))
+        .post(format!("{base}/api/tasks/{}/sessions", task.id.0))
+        .json(&json!({"provider_id":"fake","model_id":"fake-model","env_target":"worktree"}))
         .send()
         .await
         .unwrap();
 
     client
-        .post(format!("{base}/api/tasks/{}/tracks", task.id.0))
-        .json(&json!({"label":"local","env_target":"local"}))
+        .post(format!("{base}/api/tasks/{}/sessions", task.id.0))
+        .json(&json!({"provider_id":"fake","model_id":"fake-model","env_target":"worktree"}))
         .send()
         .await
         .unwrap();
 
-    let tracks = store.list_tracks_for_task(task.id).await.unwrap();
+    client
+        .post(format!("{base}/api/tasks/{}/sessions", task.id.0))
+        .json(&json!({"provider_id":"fake","model_id":"fake-model","env_target":"local"}))
+        .send()
+        .await
+        .unwrap();
+
+    let sessions = store.list_sessions_for_task(task.id).await.unwrap();
     let mut managed = Vec::new();
     let mut local_roots = Vec::new();
-    for track in tracks {
+    for session in sessions {
         let worktree = store
-            .get_worktree(track.worktree_id)
+            .get_worktree(session.worktree_id)
             .await
             .unwrap()
             .unwrap();
@@ -186,7 +193,9 @@ async fn archive_and_unarchive_recreates_managed_worktrees() {
     }
 
     for branch in &managed_branches {
-        run_git(repo.path(), &["branch", "-D", branch]).await;
+        if branch_exists(repo.path(), branch).await {
+            run_git(repo.path(), &["branch", "-D", branch]).await;
+        }
         assert!(!branch_exists(repo.path(), branch).await);
     }
 

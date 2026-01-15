@@ -24,6 +24,7 @@ const SESSION_HEAD_MAX_TURNS: u32 = 200;
 const SESSION_HEAD_MESSAGE_LIMIT: usize = 200;
 const SESSION_HEAD_EVENT_LIMIT: usize = 200;
 const SESSION_HEAD_BYTE_LIMIT: usize = 1_500_000;
+const ACTIVE_SNAPSHOT_HEAD_LIMIT: u32 = 60;
 
 #[derive(Serialize)]
 struct SessionHeadWindowPayload<'a> {
@@ -2134,6 +2135,134 @@ impl Store {
         Ok((summaries, next_cursor))
     }
 
+    pub async fn list_workspace_active_page(
+        &self,
+        workspace_id: WorkspaceId,
+        limit: i64,
+    ) -> Result<(Vec<WorkspaceActiveTaskSummary>, i64)> {
+        const MAX_LIMIT: i64 = 200;
+        let limit = limit.clamp(1, MAX_LIMIT);
+
+        const ACTIVITY_EXPR: &str = "
+            COALESCE(
+                (
+                    SELECT MAX(m.created_at)
+                    FROM messages m
+                    WHERE m.task_id = t.id
+                ),
+                t.updated_at,
+                t.created_at
+            )
+        ";
+
+        let total_count = sqlx::query_scalar::<_, i64>(
+            r#"SELECT COUNT(*)
+               FROM tasks t
+               WHERE t.workspace_id = ?
+                 AND t.archived_at IS NULL
+                 AND EXISTS (SELECT 1 FROM sessions s WHERE s.task_id = t.id)"#,
+        )
+        .bind(workspace_id.0.to_string())
+        .fetch_one(&self.pool)
+        .await?;
+
+        let sql = format!(
+            r#"
+            SELECT
+              t.id,
+              t.workspace_id,
+              t.title,
+              t.description,
+              t.status,
+              t.exec_plan_id,
+              t.primary_session_id,
+              t.primary_worktree_id,
+              t.created_at,
+              t.updated_at,
+              t.archived_at,
+              t.assistant_seen_at,
+              (
+                SELECT MAX(m.created_at)
+                FROM messages m
+                WHERE m.task_id = t.id AND m.role = 'assistant'
+              ) AS last_assistant_message_at,
+              EXISTS(
+                SELECT 1
+                FROM sessions s
+                WHERE s.task_id = t.id AND s.status = 'active'
+              ) AS has_active_session,
+              ({activity_expr}) AS activity_at
+            FROM tasks t
+            WHERE t.workspace_id = ?
+              AND t.archived_at IS NULL
+              AND EXISTS (SELECT 1 FROM sessions s WHERE s.task_id = t.id)
+            ORDER BY activity_at DESC, t.id DESC
+            LIMIT ?
+            "#,
+            activity_expr = ACTIVITY_EXPR,
+        );
+
+        let rows = sqlx::query(&sql)
+            .bind(workspace_id.0.to_string())
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await?;
+
+        let mut task_rows = Vec::with_capacity(rows.len());
+        for r in rows {
+            let id: String = r.try_get("id")?;
+            let ws_id: String = r.try_get("workspace_id")?;
+            let created_at: String = r.try_get("created_at")?;
+            let updated_at: String = r.try_get("updated_at")?;
+            let archived_at: Option<String> = r.try_get("archived_at")?;
+            let assistant_seen_at: Option<String> = r.try_get("assistant_seen_at")?;
+            let primary_session_id: Option<String> = r.try_get("primary_session_id")?;
+            let primary_worktree_id: Option<String> = r.try_get("primary_worktree_id")?;
+            let last_assistant_message_at: Option<String> =
+                r.try_get("last_assistant_message_at")?;
+            let has_active_session: i64 = r.try_get("has_active_session")?;
+            let activity_at: String = r.try_get("activity_at")?;
+            let activity_at_dt = parse_dt(&activity_at)?;
+
+            let task = Task {
+                id: TaskId(uuid::Uuid::parse_str(&id)?),
+                workspace_id: WorkspaceId(uuid::Uuid::parse_str(&ws_id)?),
+                title: r.try_get("title")?,
+                description: r.try_get("description")?,
+                status: parse_task_status(r.try_get::<String, _>("status")?.as_str()),
+                created_at: parse_dt(&created_at)?,
+                updated_at: parse_dt(&updated_at)?,
+                exec_plan_id: r.try_get("exec_plan_id")?,
+                primary_session_id: primary_session_id
+                    .as_deref()
+                    .and_then(|value| uuid::Uuid::parse_str(value).ok())
+                    .map(SessionId),
+                primary_worktree_id: primary_worktree_id
+                    .as_deref()
+                    .and_then(|value| uuid::Uuid::parse_str(value).ok())
+                    .map(WorktreeId),
+                archived_at: archived_at.as_deref().map(parse_dt).transpose()?,
+                assistant_seen_at: assistant_seen_at.as_deref().map(parse_dt).transpose()?,
+                last_activity_at: Some(activity_at_dt),
+                last_assistant_message_at: last_assistant_message_at
+                    .as_deref()
+                    .map(parse_dt)
+                    .transpose()?,
+                has_active_session: has_active_session != 0,
+            };
+            task_rows.push((task, activity_at_dt));
+        }
+
+        if task_rows.is_empty() {
+            return Ok((Vec::new(), total_count));
+        }
+
+        let summaries = self
+            .build_workspace_active_task_summaries(task_rows)
+            .await?;
+        Ok((summaries, total_count))
+    }
+
     pub async fn list_workspace_catchup_page(
         &self,
         workspace_id: WorkspaceId,
@@ -2392,6 +2521,185 @@ impl Store {
         } else {
             Ok(None)
         }
+    }
+
+    pub async fn get_workspace_active_task_summary(
+        &self,
+        task_id: TaskId,
+    ) -> Result<Option<WorkspaceActiveTaskSummary>> {
+        let row = sqlx::query(
+            r#"SELECT id, workspace_id, title, description, status, exec_plan_id,
+                      primary_session_id, primary_worktree_id,
+                      created_at, updated_at, archived_at, assistant_seen_at,
+                      (
+                        SELECT MAX(m.created_at)
+                        FROM messages m
+                        WHERE m.task_id = t.id AND m.role = 'assistant'
+                      ) AS last_assistant_message_at,
+                      EXISTS(
+                        SELECT 1
+                        FROM sessions s
+                        WHERE s.task_id = t.id AND s.status = 'active'
+                      ) AS has_active_session,
+                      COALESCE(
+                        (
+                          SELECT MAX(m.created_at)
+                          FROM messages m
+                          WHERE m.task_id = t.id
+                        ),
+                        t.updated_at,
+                        t.created_at
+                      ) AS activity_at
+               FROM tasks t
+               WHERE id = ?
+                 AND archived_at IS NULL
+                 AND EXISTS (SELECT 1 FROM sessions s WHERE s.task_id = t.id)"#,
+        )
+        .bind(task_id.0.to_string())
+        .fetch_optional(&self.pool)
+        .await?;
+
+        if let Some(r) = row {
+            let id: String = r.try_get("id")?;
+            let ws_id: String = r.try_get("workspace_id")?;
+            let created_at: String = r.try_get("created_at")?;
+            let updated_at: String = r.try_get("updated_at")?;
+            let archived_at: Option<String> = r.try_get("archived_at")?;
+            let assistant_seen_at: Option<String> = r.try_get("assistant_seen_at")?;
+            let primary_session_id: Option<String> = r.try_get("primary_session_id")?;
+            let primary_worktree_id: Option<String> = r.try_get("primary_worktree_id")?;
+            let last_assistant_message_at: Option<String> =
+                r.try_get("last_assistant_message_at")?;
+            let has_active_session: i64 = r.try_get("has_active_session")?;
+            let activity_at: String = r.try_get("activity_at")?;
+            let activity_at_dt = parse_dt(&activity_at)?;
+
+            let task = Task {
+                id: TaskId(uuid::Uuid::parse_str(&id)?),
+                workspace_id: WorkspaceId(uuid::Uuid::parse_str(&ws_id)?),
+                title: r.try_get("title")?,
+                description: r.try_get("description")?,
+                status: parse_task_status(r.try_get::<String, _>("status")?.as_str()),
+                created_at: parse_dt(&created_at)?,
+                updated_at: parse_dt(&updated_at)?,
+                exec_plan_id: r.try_get("exec_plan_id")?,
+                primary_session_id: primary_session_id
+                    .as_deref()
+                    .and_then(|value| uuid::Uuid::parse_str(value).ok())
+                    .map(SessionId),
+                primary_worktree_id: primary_worktree_id
+                    .as_deref()
+                    .and_then(|value| uuid::Uuid::parse_str(value).ok())
+                    .map(WorktreeId),
+                archived_at: archived_at.as_deref().map(parse_dt).transpose()?,
+                assistant_seen_at: assistant_seen_at.as_deref().map(parse_dt).transpose()?,
+                last_activity_at: Some(activity_at_dt),
+                last_assistant_message_at: last_assistant_message_at
+                    .as_deref()
+                    .map(parse_dt)
+                    .transpose()?,
+                has_active_session: has_active_session != 0,
+            };
+
+            let summaries = self
+                .build_workspace_active_task_summaries(vec![(task, activity_at_dt)])
+                .await?;
+            return Ok(summaries.into_iter().next());
+        }
+        Ok(None)
+    }
+
+    async fn build_workspace_active_task_summaries(
+        &self,
+        rows: Vec<(Task, DateTime<Utc>)>,
+    ) -> Result<Vec<WorkspaceActiveTaskSummary>> {
+        if rows.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut seeds = Vec::with_capacity(rows.len());
+        for (task, sort_at) in rows {
+            seeds.push((task, sort_at));
+        }
+
+        let task_ids: Vec<TaskId> = seeds.iter().map(|(task, _)| task.id).collect();
+        let session_rows = self.list_session_catchup_rows(&task_ids).await?;
+        let mut sessions_by_task: HashMap<TaskId, Vec<SessionSnapshotSummary>> = HashMap::new();
+        for row in session_rows {
+            let summary = SessionSnapshotSummary {
+                session: session_metadata_from_session(&row.session),
+                last_message_at: row.last_message_at,
+                last_message_preview: row.last_message_preview,
+                last_event_seq: row.last_event_seq,
+                activity: row.activity,
+                unread: None,
+            };
+            sessions_by_task
+                .entry(summary.session.task_id)
+                .or_default()
+                .push(summary);
+        }
+
+        let mut summaries = Vec::with_capacity(seeds.len());
+        for (task, sort_at) in seeds {
+            let mut task_sessions = sessions_by_task.remove(&task.id).unwrap_or_default();
+            if task_sessions.is_empty() {
+                continue;
+            }
+
+            let mut primary_idx = None;
+            let mut include_children = false;
+            if let Some(primary_id) = task.primary_session_id {
+                if let Some(idx) = task_sessions
+                    .iter()
+                    .position(|summary| summary.session.id == primary_id)
+                {
+                    primary_idx = Some(idx);
+                    include_children = true;
+                }
+            }
+            if primary_idx.is_none() {
+                primary_idx = task_sessions
+                    .iter()
+                    .position(|summary| summary.session.parent_session_id.is_none());
+            }
+            if primary_idx.is_none() {
+                primary_idx = Some(0);
+            }
+
+            let primary_summary = task_sessions.remove(primary_idx.unwrap());
+            let primary_id = primary_summary.session.id;
+            let mut sessions = Vec::new();
+            for summary in task_sessions {
+                let include = if include_children {
+                    summary.session.parent_session_id == Some(primary_id)
+                } else {
+                    summary.session.parent_session_id.is_none()
+                };
+                if include {
+                    sessions.push(summary);
+                }
+            }
+
+            let head = match self
+                .get_session_head(primary_id, ACTIVE_SNAPSHOT_HEAD_LIMIT, false)
+                .await?
+            {
+                Some(head) => head,
+                None => continue,
+            };
+            let primary_session_head = session_head_to_snapshot(head);
+
+            summaries.push(WorkspaceActiveTaskSummary {
+                task,
+                primary_session: primary_summary,
+                primary_session_head,
+                sessions,
+                sort_at,
+            });
+        }
+
+        Ok(summaries)
     }
 
     pub async fn list_messages_for_session(&self, session_id: SessionId) -> Result<Vec<Message>> {
@@ -4548,6 +4856,42 @@ struct SessionCatchupRow {
     last_message_preview: Option<String>,
     last_event_seq: Option<i64>,
     activity: SessionActivityState,
+}
+
+fn session_metadata_from_session(session: &Session) -> SessionMetadata {
+    SessionMetadata {
+        id: session.id,
+        task_id: session.task_id,
+        workspace_id: session.workspace_id,
+        worktree_id: session.worktree_id,
+        parent_session_id: session.parent_session_id,
+        relationship: session.relationship.clone(),
+        provider_id: session.provider_id.clone(),
+        model_id: session.model_id.clone(),
+        title: session.title.clone(),
+        agent_role: session.agent_role.clone(),
+        status: session.status.clone(),
+        provider_session_ref: session.provider_session_ref.clone(),
+        created_at: session.created_at,
+        updated_at: session.updated_at,
+    }
+}
+
+fn session_head_to_snapshot(head: SessionHead) -> SessionHeadSnapshot {
+    SessionHeadSnapshot {
+        session: session_metadata_from_session(&head.session),
+        turns: head.turns,
+        tool_summaries: head.tool_summaries,
+        events: head.events,
+        messages: head.messages,
+        last_event_seq: head.last_event_seq,
+        activity: head.activity,
+        has_more_turns: head.has_more_turns,
+        history_cursor: None,
+        has_more_history: false,
+        summary_checkpoint: head.summary_checkpoint,
+        head_window: head.head_window,
+    }
 }
 
 fn derive_message_preview(content: &str) -> String {

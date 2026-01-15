@@ -97,7 +97,7 @@ async fn attachments_demo_react_smoketest() {
         bootstrap_script_path: None,
     };
     store.insert_worktree(worktree.clone()).await.unwrap();
-    let task = store
+    let _task = store
         .create_task(ws.id, "demo".to_string(), None)
         .await
         .unwrap();

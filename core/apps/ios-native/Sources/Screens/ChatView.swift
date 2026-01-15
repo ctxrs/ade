@@ -176,33 +176,6 @@ struct ChatView: View {
                 ZStack(alignment: .bottomTrailing) {
                     ScrollView {
                         LazyVStack(spacing: CtxChatStyle.messageSpacing) {
-                            if viewModel.isArchivedSession, viewModel.historyHasMore || viewModel.isHistoryLoading {
-                                HStack {
-                                    if viewModel.isHistoryLoading {
-                                        ProgressView()
-                                            .tint(.ctxAccent)
-                                    } else {
-                                        Button("Load earlier messages") {
-                                            viewModel.loadEarlierMessages()
-                                        }
-                                        .font(.caption.weight(.semibold))
-                                        .foregroundColor(.ctxTextPrimary)
-                                        .padding(.vertical, 6)
-                                        .padding(.horizontal, 12)
-                                        .background(
-                                            Color.ctxSurface.opacity(0.6),
-                                            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                        )
-                                        .overlay(
-                                            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                                .stroke(Color.ctxLine, lineWidth: 1)
-                                        )
-                                    }
-                                }
-                                .frame(maxWidth: .infinity)
-                                .padding(.top, 2)
-                            }
-
                             if !viewModel.queueMessages.isEmpty {
                                 QueuePanel(
                                     messages: viewModel.queueMessages,
@@ -298,9 +271,6 @@ struct ChatView: View {
                         scrollToBottom(proxy: proxy, animated: false)
                     }
                     .onChange(of: viewModel.threadItemsRevision) { _, _ in
-                        if viewModel.isArchivedSession && viewModel.isHistoryLoading {
-                            return
-                        }
                         scrollToBottom(proxy: proxy, animated: true)
                     }
                     .onChange(of: viewModel.turnStatus) { _, _ in
@@ -433,7 +403,6 @@ struct ChatView: View {
 struct ChatDetailView: View {
     @EnvironmentObject private var connection: ConnectionStore
     let session: SessionSummary
-    let isArchived: Bool
     @StateObject private var viewModel: ChatViewModel
     @Binding var isArtifactsPresented: Bool
     @Binding var artifactCount: Int
@@ -444,9 +413,8 @@ struct ChatDetailView: View {
     @State private var selectedMode: ComposerMode = .default
     @State private var selectedVerbosity: ComposerVerbosity = .default
 
-    init(session: SessionSummary, isArchived: Bool, isArtifactsPresented: Binding<Bool>, artifactCount: Binding<Int>) {
+    init(session: SessionSummary, isArtifactsPresented: Binding<Bool>, artifactCount: Binding<Int>) {
         self.session = session
-        self.isArchived = isArchived
         _isArtifactsPresented = isArtifactsPresented
         _artifactCount = artifactCount
         _selectedModelId = State(initialValue: session.modelId)
@@ -472,25 +440,19 @@ struct ChatDetailView: View {
         )
             .onAppear {
                 viewModel.setClient(connection.apiClient)
-                viewModel.setArchived(isArchived)
                 viewModel.selectSession(session.id, workspaceId: session.workspaceId)
                 artifactCount = viewModel.artifacts.count
                 _Concurrency.Task { await loadModels() }
             }
             .onChange(of: session.id) { newSessionId in
                 artifactCount = 0
-                viewModel.setArchived(isArchived)
                 viewModel.selectSession(newSessionId, workspaceId: session.workspaceId)
                 selectedModelId = session.modelId
                 _Concurrency.Task { await loadModels() }
             }
             .onChange(of: session.workspaceId) { _ in
-                viewModel.setArchived(isArchived)
                 viewModel.selectSession(session.id, workspaceId: session.workspaceId)
                 _Concurrency.Task { await loadModels() }
-            }
-            .onChange(of: isArchived) { _, newValue in
-                viewModel.setArchived(newValue)
             }
             .onChange(of: session.providerId) { _ in
                 _Concurrency.Task { await loadModels() }
@@ -2843,9 +2805,6 @@ final class ChatViewModel: ObservableObject {
     @Published private(set) var assetToken: String?
     @Published private(set) var threadItemsRevision: Int = 0
     @Published private(set) var activeAskToolCallId: String?
-    @Published private(set) var isArchivedSession = false
-    @Published private(set) var historyHasMore = false
-    @Published private(set) var isHistoryLoading = false
 
     private struct StreamingAssistantState {
         let turnId: String
@@ -2904,12 +2863,6 @@ final class ChatViewModel: ObservableObject {
     private var optimisticAskAnswers: [String: AskUserAnswerState] = [:]
     private var lastSetModelId: String?
     private var lastSetModeId: String?
-    private var historyCursor: Int?
-    private var historyInitialized = false
-    private var headMessages: [ChatMessage] = []
-    private var historyMessages: [ChatMessage] = []
-    private var headTurns: [SessionTurn] = []
-    private var historyTurns: [SessionTurn] = []
 
     init(client: DaemonAPIClient? = nil, initialSessionId: String? = nil, initialWorkspaceId: String? = nil) {
         self.client = client
@@ -2945,14 +2898,6 @@ final class ChatViewModel: ObservableObject {
             threadItemsRevision = 0
             lastSetModelId = nil
             lastSetModeId = nil
-            historyCursor = nil
-            historyInitialized = false
-            historyHasMore = false
-            isHistoryLoading = false
-            headMessages = []
-            historyMessages = []
-            headTurns = []
-            historyTurns = []
             setPendingAssistantResponse(false)
             streamingAssistantState = nil
             errorMessage = nil
@@ -3008,15 +2953,6 @@ final class ChatViewModel: ObservableObject {
         }
     }
 
-    func setArchived(_ value: Bool) {
-        if isArchivedSession == value { return }
-        isArchivedSession = value
-        if value {
-            stopPolling()
-            stopStream()
-        }
-    }
-
     private func refreshAssetContext() {
         guard let client else {
             assetBaseURL = nil
@@ -3061,14 +2997,6 @@ final class ChatViewModel: ObservableObject {
         streamingAssistantState = nil
         refreshInFlight = false
         refreshPending = false
-        historyCursor = nil
-        historyInitialized = false
-        historyHasMore = false
-        isHistoryLoading = false
-        headMessages = []
-        historyMessages = []
-        headTurns = []
-        historyTurns = []
         messages = []
         threadItems = []
         queueMessages = []
@@ -3091,20 +3019,15 @@ final class ChatViewModel: ObservableObject {
         contextWindowInfo = nil
         updateWorkingState()
         _Concurrency.Task {
-            if !isArchivedSession {
-                await primeStreamCursor()
-            }
+            await primeStreamCursor()
             _ = await refreshMessages()
             await refreshQueue()
             await refreshArtifacts()
-            if !isArchivedSession {
-                await sendStreamSubscriptionIfNeeded()
-            }
+            await sendStreamSubscriptionIfNeeded()
         }
     }
 
     func startPolling() {
-        guard !isArchivedSession else { return }
         guard pollTask == nil else { return }
         startStream()
         pollTask = _Concurrency.Task {
@@ -3184,22 +3107,9 @@ final class ChatViewModel: ObservableObject {
                     createdAt: message.createdAt
                 )
             }
-            let nextWithStreaming = isArchivedSession ? nextMessages : applyStreamingAssistantState(to: nextMessages)
-            if isArchivedSession {
-                headMessages = nextMessages
-                headTurns = head.turns
-                if !historyInitialized {
-                    historyCursor = head.turns.first?.startSeq
-                    historyHasMore = head.hasMoreTurns && historyCursor != nil
-                    historyInitialized = true
-                }
-                latestTurns = historyTurns + headTurns
-                messages = mergeMessages(historyMessages, headMessages)
-                lastEventSeq = head.lastEventSeq
-            } else {
-                messages = nextWithStreaming
-                latestTurns = head.turns
-            }
+            let nextWithStreaming = applyStreamingAssistantState(to: nextMessages)
+            messages = nextWithStreaming
+            latestTurns = head.turns
             latestEvents = head.events ?? []
             latestToolSummaries = head.toolSummaries ?? []
             if let turn = mostRecentTurn(in: head.turns) {
@@ -3209,7 +3119,7 @@ final class ChatViewModel: ObservableObject {
             lastSetModelId = head.session.modelId
             rebuildThreadItems()
             await refreshQueue()
-            if !isArchivedSession, pendingAssistantResponse, nextWithStreaming.contains(where: { $0.role == .assistant }) {
+            if pendingAssistantResponse, nextWithStreaming.contains(where: { $0.role == .assistant }) {
                 setPendingAssistantResponse(false)
                 streamingAssistantState = nil
                 updateWorkingState()
@@ -3229,43 +3139,6 @@ final class ChatViewModel: ObservableObject {
                 _Concurrency.Task { _ = await refreshMessages() }
             }
             return .failed
-        }
-    }
-
-    func loadEarlierMessages() {
-        guard isArchivedSession, historyHasMore, !isHistoryLoading else { return }
-        guard historyCursor != nil else { return }
-        let generation = sessionGeneration
-        isHistoryLoading = true
-        _Concurrency.Task {
-            defer { isHistoryLoading = false }
-            guard let client else { return }
-            let resolved = await resolveSessionId()
-            guard let resolved, generation == sessionGeneration else { return }
-            do {
-                let page = try await client.getSessionHistory(sessionId: resolved, beforeSeq: historyCursor, limit: 200)
-                guard generation == sessionGeneration else { return }
-                let nextMessages = page.messages.map { message in
-                    ChatMessage(
-                        id: message.id.stringValue,
-                        role: roleForMessage(message.role),
-                        text: message.content,
-                        attachments: message.attachments ?? [],
-                        createdAt: message.createdAt
-                    )
-                }
-                historyMessages = mergeMessages(historyMessages, nextMessages)
-                historyTurns = mergeTurns(historyTurns, page.turns)
-                historyCursor = page.nextCursor
-                historyHasMore = page.hasMore
-                latestTurns = historyTurns + headTurns
-                messages = mergeMessages(historyMessages, headMessages)
-                rebuildThreadItems()
-            } catch {
-                if generation == sessionGeneration {
-                    errorMessage = "Failed to load older messages."
-                }
-            }
         }
     }
 
@@ -3314,14 +3187,9 @@ final class ChatViewModel: ObservableObject {
     }
 
     private func appendMessage(_ message: ChatMessage) {
-        if isArchivedSession {
-            headMessages = mergeMessages(headMessages, [message])
-            messages = mergeMessages(historyMessages, headMessages)
-        } else {
-            var next = messages
-            next.append(message)
-            messages = next
-        }
+        var next = messages
+        next.append(message)
+        messages = next
         rebuildThreadItems()
     }
 
@@ -3453,44 +3321,6 @@ final class ChatViewModel: ObservableObject {
             )
         )
         return next
-    }
-
-    private func mergeMessages(_ existing: [ChatMessage], _ incoming: [ChatMessage]) -> [ChatMessage] {
-        var byId: [String: ChatMessage] = [:]
-        for message in existing {
-            byId[message.id] = message
-        }
-        for message in incoming {
-            byId[message.id] = message
-        }
-        return byId.values.sorted { left, right in
-            let leftDate = parseIso(left.createdAt) ?? .distantPast
-            let rightDate = parseIso(right.createdAt) ?? .distantPast
-            if leftDate != rightDate {
-                return leftDate < rightDate
-            }
-            return left.id < right.id
-        }
-    }
-
-    private func mergeTurns(_ existing: [SessionTurn], _ incoming: [SessionTurn]) -> [SessionTurn] {
-        var byId: [String: SessionTurn] = [:]
-        for turn in existing {
-            byId[turn.turnId.stringValue] = turn
-        }
-        for turn in incoming {
-            byId[turn.turnId.stringValue] = turn
-        }
-        return byId.values.sorted { left, right in
-            let leftSeq = left.startSeq ?? 0
-            let rightSeq = right.startSeq ?? 0
-            if leftSeq != rightSeq {
-                return leftSeq < rightSeq
-            }
-            let leftDate = parseIso(left.updatedAt) ?? parseIso(left.startedAt) ?? .distantPast
-            let rightDate = parseIso(right.updatedAt) ?? parseIso(right.startedAt) ?? .distantPast
-            return leftDate < rightDate
-        }
     }
 
     private func rebuildThreadItems() {
@@ -3808,31 +3638,29 @@ final class ChatViewModel: ObservableObject {
     }
 
     private func resolvePrimarySessionId(for task: WorkspaceCatchupTaskSummary) -> String? {
-        struct Candidate {
-            let summary: SessionCatchupSummary
-            let isPrimary: Bool
+        let sessions = task.sessions
+        guard !sessions.isEmpty else { return nil }
+        let nonSubagents = sessions.filter { $0.session.relationship != "sub_agent" }
+        let pool = nonSubagents.isEmpty ? sessions : nonSubagents
+
+        if let primaryId = task.task.primarySessionId,
+           let match = pool.first(where: { $0.session.id == primaryId }) {
+            return match.session.id.stringValue
         }
 
-        let candidates = task.sessions.map { summary in
-            Candidate(summary: summary, isPrimary: task.task.primarySessionId == summary.session.id)
+        if let running = pool.first(where: { $0.session.status == "active" || $0.session.status == "running" }) {
+            return running.session.id.stringValue
         }
-        guard !candidates.isEmpty else { return nil }
-        let nonSubagents = candidates.filter { $0.summary.session.relationship != "sub_agent" }
-        let pool = nonSubagents.isEmpty ? candidates : nonSubagents
-        if let primary = pool.first(where: { $0.isPrimary }) {
-            return primary.summary.session.id.stringValue
-        }
-        if let running = pool.first(where: { $0.summary.session.status == "active" || $0.summary.session.status == "running" }) {
-            return running.summary.session.id.stringValue
-        }
+
         if let recent = pool.max(by: { left, right in
-            let leftDate = parseIso(left.summary.lastMessageAt ?? left.summary.session.updatedAt ?? left.summary.session.createdAt) ?? .distantPast
-            let rightDate = parseIso(right.summary.lastMessageAt ?? right.summary.session.updatedAt ?? right.summary.session.createdAt) ?? .distantPast
+            let leftDate = parseIso(left.lastMessageAt ?? left.session.updatedAt ?? left.session.createdAt) ?? .distantPast
+            let rightDate = parseIso(right.lastMessageAt ?? right.session.updatedAt ?? right.session.createdAt) ?? .distantPast
             return leftDate < rightDate
         }) {
-            return recent.summary.session.id.stringValue
+            return recent.session.id.stringValue
         }
-        return pool.first?.summary.session.id.stringValue
+
+        return pool.first?.session.id.stringValue
     }
 
     private func resolveWorkspaceId() async -> String? {
@@ -3855,7 +3683,6 @@ final class ChatViewModel: ObservableObject {
     }
 
     private func primeStreamCursor(force: Bool = false) async {
-        guard !isArchivedSession else { return }
         guard let client, let sessionId else { return }
         if !force, lastEventSeq != nil, workspaceId != nil { return }
         if let head = try? await client.getSessionHead(sessionId: sessionId, limit: 1, includeEvents: false) {
@@ -3979,7 +3806,6 @@ final class ChatViewModel: ObservableObject {
     }
 
     private func sendStreamSubscriptionIfNeeded() async {
-        guard !isArchivedSession else { return }
         guard let socket = streamSocket else { return }
         guard let sessionId else { return }
         await primeStreamCursor()
@@ -4165,6 +3991,197 @@ private func uniqueTrimmed(_ values: [String]) -> [String] {
         out.append(trimmed)
     }
     return out
+}
+
+private let preferredEffortOrder: [String] = ["none", "minimal", "low", "medium", "high", "xhigh"]
+
+private struct ParsedModelId {
+    let full: String
+    let base: String
+    let effort: String?
+}
+
+private struct ModelCatalog {
+    let baseIds: [String]
+    let displayNameByBase: [String: String]
+    let effortsByBase: [String: [String]]
+    let fullIdByBaseEffort: [String: [String: String]]
+}
+
+private func splitOnLastSlash(_ fullModelId: String) -> (full: String, base: String, suffix: String?) {
+    let full = fullModelId.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !full.isEmpty else { return ("", "", nil) }
+    guard let idx = full.lastIndex(of: "/"), idx != full.startIndex else {
+        return (full, full, nil)
+    }
+    let base = String(full[..<idx])
+    let suffix = String(full[full.index(after: idx)...]).trimmingCharacters(in: .whitespacesAndNewlines)
+    return (full, base, suffix.isEmpty ? nil : suffix)
+}
+
+private func normalizeEffortIdForCompare(_ value: String) -> String {
+    value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+}
+
+private func isPreferredEffortId(_ value: String) -> Bool {
+    let normalized = normalizeEffortIdForCompare(value)
+    return preferredEffortOrder.contains(normalized)
+}
+
+private func hasTrailingParenSuffix(name: String, suffix: String) -> Bool {
+    let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard trimmed.hasSuffix(")") else { return false }
+    guard let openIdx = trimmed.lastIndex(of: "("),
+          openIdx < trimmed.index(before: trimmed.endIndex) else {
+        return false
+    }
+    let inner = String(trimmed[trimmed.index(after: openIdx)..<trimmed.index(before: trimmed.endIndex)])
+    return normalizeEffortIdForCompare(inner) == normalizeEffortIdForCompare(suffix)
+}
+
+private func stripTrailingParenIfEffort(_ name: String, effortIds: [String]) -> String {
+    let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard trimmed.hasSuffix(")") else { return trimmed }
+    guard let openIdx = trimmed.lastIndex(of: "("),
+          openIdx < trimmed.index(before: trimmed.endIndex) else {
+        return trimmed
+    }
+    let inner = String(trimmed[trimmed.index(after: openIdx)..<trimmed.index(before: trimmed.endIndex)])
+    let normalizedInner = normalizeEffortIdForCompare(inner)
+    let isEffort = effortIds.contains { normalizeEffortIdForCompare($0) == normalizedInner }
+    return isEffort ? String(trimmed[..<openIdx]).trimmingCharacters(in: .whitespacesAndNewlines) : trimmed
+}
+
+private func orderEffortIds(_ efforts: Set<String>) -> [String] {
+    let list = efforts.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+    let orderIndex: (String) -> Int = { value in
+        let normalized = normalizeEffortIdForCompare(value)
+        return preferredEffortOrder.firstIndex(of: normalized) ?? Int.max
+    }
+    return list.sorted { left, right in
+        let leftIndex = orderIndex(left)
+        let rightIndex = orderIndex(right)
+        if leftIndex != rightIndex {
+            return leftIndex < rightIndex
+        }
+        return left.localizedCaseInsensitiveCompare(right) == .orderedAscending
+    }
+}
+
+private func buildModelCatalog(_ modelIds: [String]) -> ModelCatalog {
+    var baseIdsSet = Set<String>()
+    var rawEffortsByBase: [String: Set<String>] = [:]
+    var rawNamesByBase: [String: [String]] = [:]
+    var displayNameByBase: [String: String] = [:]
+    var fullIdByBaseEffort: [String: [String: String]] = [:]
+
+    for id in modelIds {
+        let trimmedId = id.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedId.isEmpty else { continue }
+        let name = trimmedId
+        let parts = splitOnLastSlash(trimmedId)
+        guard !parts.base.isEmpty else { continue }
+
+        let effort = parts.suffix.flatMap { suffix in
+            (isPreferredEffortId(suffix) || hasTrailingParenSuffix(name: name, suffix: suffix)) ? suffix : nil
+        }
+        let base = effort == nil ? trimmedId : parts.base
+
+        baseIdsSet.insert(base)
+        rawNamesByBase[base, default: []].append(name)
+        if let effort {
+            rawEffortsByBase[base, default: []].insert(effort)
+            var map = fullIdByBaseEffort[base] ?? [:]
+            map[effort] = trimmedId
+            fullIdByBaseEffort[base] = map
+        }
+    }
+
+    let baseIds = baseIdsSet.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+    var effortsByBase: [String: [String]] = [:]
+    for base in baseIds {
+        let ordered = rawEffortsByBase[base].map(orderEffortIds) ?? []
+        let efforts = ordered.count >= 2 ? ordered : []
+        effortsByBase[base] = efforts
+
+        if !efforts.isEmpty {
+            displayNameByBase[base] = base
+            continue
+        }
+
+        let names = rawNamesByBase[base] ?? []
+        let stripped = names.map { stripTrailingParenIfEffort($0, effortIds: efforts) }
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        displayNameByBase[base] = stripped.first ?? base
+    }
+
+    return ModelCatalog(
+        baseIds: baseIds,
+        displayNameByBase: displayNameByBase,
+        effortsByBase: effortsByBase,
+        fullIdByBaseEffort: fullIdByBaseEffort
+    )
+}
+
+private func parseModelId(_ fullModelId: String, catalog: ModelCatalog?) -> ParsedModelId {
+    let parts = splitOnLastSlash(fullModelId)
+    guard !parts.full.isEmpty else { return ParsedModelId(full: "", base: "", effort: nil) }
+    guard let suffix = parts.suffix else {
+        return ParsedModelId(full: parts.full, base: parts.full, effort: nil)
+    }
+
+    if let catalog {
+        let options = catalog.effortsByBase[parts.base] ?? []
+        if options.contains(suffix) {
+            return ParsedModelId(full: parts.full, base: parts.base, effort: suffix)
+        }
+        if catalog.baseIds.contains(parts.full) {
+            return ParsedModelId(full: parts.full, base: parts.full, effort: nil)
+        }
+    }
+
+    if isPreferredEffortId(suffix) {
+        return ParsedModelId(full: parts.full, base: parts.base, effort: suffix)
+    }
+    return ParsedModelId(full: parts.full, base: parts.full, effort: nil)
+}
+
+private func composeModelId(base: String, effort: String?) -> String {
+    let trimmed = base.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return "" }
+    guard let effort, !effort.isEmpty else { return trimmed }
+    return "\(trimmed)/\(effort)"
+}
+
+private func formatEffortLabel(_ effort: String?) -> String {
+    let raw = effort?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    guard !raw.isEmpty else { return "" }
+    let normalized = raw.lowercased()
+    if normalized == "xhigh" || normalized == "extra_high" || normalized == "extra-high" {
+        return "Extra High"
+    }
+    return normalized.prefix(1).uppercased() + normalized.dropFirst()
+}
+
+private func pickDefaultEffort(_ efforts: [String]) -> String? {
+    if let medium = efforts.first(where: { normalizeEffortIdForCompare($0) == "medium" }) {
+        return medium
+    }
+    return efforts.first
+}
+
+private func deriveFullModelIdForBase(catalog: ModelCatalog, baseId: String, preferredEffort: String?) -> String {
+    let efforts = catalog.effortsByBase[baseId] ?? []
+    guard !efforts.isEmpty else { return baseId }
+    let resolvedEffort = preferredEffort.flatMap { pref in
+        efforts.first(where: { normalizeEffortIdForCompare($0) == normalizeEffortIdForCompare(pref) })
+    } ?? pickDefaultEffort(efforts)
+    guard let effort = resolvedEffort else { return baseId }
+    if let fullId = catalog.fullIdByBaseEffort[baseId]?[effort] {
+        return fullId
+    }
+    return composeModelId(base: baseId, effort: effort)
 }
 
 private func contextWindowSummary(from info: ContextWindowInfo?) -> ContextWindowSummary? {

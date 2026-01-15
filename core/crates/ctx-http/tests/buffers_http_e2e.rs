@@ -108,7 +108,7 @@ async fn create_session(
     }
     let ws: ctx_core::models::Workspace = serde_json::from_slice(&body).unwrap();
 
-    // create task (auto track + worktree)
+    // create task (default worktree)
     let req = Request::builder()
         .method("POST")
         .uri(format!("/api/workspaces/{}/tasks", ws.id.0))
@@ -120,7 +120,21 @@ async fn create_session(
     let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
     let task: ctx_core::models::Task = serde_json::from_slice(&body).unwrap();
 
-    // fetch workspace catchup to locate the default track
+    // create session
+    let req = Request::builder()
+        .method("POST")
+        .uri(format!("/api/tasks/{}/sessions", task.id.0))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({"provider_id":"fake","model_id":"fake"}).to_string(),
+        ))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let session: ctx_core::models::Session = serde_json::from_slice(&body).unwrap();
+
+    // fetch workspace catchup to verify the session is visible
     let req = Request::builder()
         .method("GET")
         .uri(format!("/api/workspaces/{}/catchup", ws.id.0))
@@ -131,27 +145,18 @@ async fn create_session(
     let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
     let snapshot: ctx_core::models::WorkspaceCatchupSnapshot =
         serde_json::from_slice(&body).unwrap();
-    let track = snapshot
+    snapshot
         .active
         .tasks
         .iter()
         .find(|summary| summary.task.id == task.id)
-        .and_then(|summary| summary.tracks.first())
-        .expect("default track missing");
-
-    // create session
-    let req = Request::builder()
-        .method("POST")
-        .uri(format!("/api/tracks/{}/sessions", track.track.id.0))
-        .header("content-type", "application/json")
-        .body(Body::from(
-            json!({"provider_id":"fake","model_id":"fake"}).to_string(),
-        ))
-        .unwrap();
-    let res = app.clone().oneshot(req).await.unwrap();
-    assert_eq!(res.status(), StatusCode::OK);
-    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
-    let session: ctx_core::models::Session = serde_json::from_slice(&body).unwrap();
+        .and_then(|summary| {
+            summary
+                .sessions
+                .iter()
+                .find(|candidate| candidate.session.id == session.id)
+        })
+        .expect("session missing from catchup");
     (app, session)
 }
 

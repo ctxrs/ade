@@ -7,12 +7,14 @@ import {
   listSessionArtifacts,
   listSessionSubagentInvocations,
   listTurnTools,
-  trackDiff,
   type Artifact,
   type Message,
   type ProviderOptions,
   type Session,
   type SessionEvent,
+  type SessionHead,
+  type SessionHeadWindow,
+  type SessionSummaryCheckpoint,
   type SessionTurn,
   type SessionTurnTool,
   type SessionTurnToolSummary,
@@ -60,6 +62,8 @@ export type SessionCacheEntry = {
   subagentInvocationsLoading: boolean;
   queue: Message[];
   diff?: string;
+  summaryCheckpoint?: SessionSummaryCheckpoint | null;
+  headWindow?: SessionHeadWindow | null;
   diagnosticsByPath?: Record<string, any[]>;
   lastEventSeq?: number;
   loading: boolean;
@@ -109,13 +113,11 @@ const extractAcpMetaFromEvent = (event: SessionEvent): AcpMeta | null => {
 
 type InternalEntry = SessionCacheEntry & {
   refCount: number;
-  wantDiffCount: number;
   warmUntilMs: number;
   acpMetaUpdatedAtMs?: number;
   seqSet: Set<number>;
   turnsHydrated: boolean;
   oldestTurnSeq?: number;
-  diffFetchedAtMs?: number;
   toolStatusByKey: Map<string, string>;
   toolIdsByTurn: Map<string, Set<string>>;
   turnToolsLoadingSet: Set<string>;
@@ -124,14 +126,12 @@ type InternalEntry = SessionCacheEntry & {
   artifactsFetchedAtMs?: number;
   subagentInvocationsLoaded: boolean;
   subagentInvocationsFetchedAtMs?: number;
-  trackId?: string;
   diagnosticsByPath: Record<string, any[]>;
   loadedFromCache: boolean;
   headFromCache: boolean;
   fetching: {
     head: boolean;
     history: boolean;
-    diff: boolean;
   };
 };
 
@@ -145,13 +145,6 @@ const MAX_CACHED_SESSIONS = readTunableInt(
 const WARM_TTL_MS = readTunableInt("contextWarmSessionTtlMs", 10 * 60 * 1000);
 const HEAD_LIMIT = readTunableInt("contextSessionHeadLimit", TURN_PAGE_LIMIT);
 const SUBSCRIBE_LIMIT = readTunableInt("contextSubscribeLimit", 20);
-const DIFF_REFRESH_MS = readTunableInt("contextDiffRefreshMs", 30 * 1000);
-// TEMP: Disable live git diff subscriptions during the webapp -> native migration.
-// This is not the correct long-term behavior; re-enable once perf/memory issues are resolved.
-const ENABLE_LIVE_DIFF_SUBSCRIPTION = false;
-
-const shouldSubscribeDiff = (opts?: OpenOptions): boolean =>
-  ENABLE_LIVE_DIFF_SUBSCRIPTION && Boolean(opts?.watchDiff);
 
 export class SessionSupervisor {
   private listeners = new Set<() => void>();
@@ -200,7 +193,6 @@ export class SessionSupervisor {
   openSession = (sessionId: string, opts?: OpenOptions) => {
     const entry = this.ensureEntry(sessionId);
     entry.refCount += 1;
-    if (shouldSubscribeDiff(opts)) entry.wantDiffCount += 1;
     entry.warmUntilMs = Date.now() + WARM_TTL_MS;
     this.ensureLoaded(sessionId, opts).catch(() => {});
     this.refreshSubscriptions();
@@ -211,7 +203,6 @@ export class SessionSupervisor {
     const entry = this.entries.get(sessionId);
     if (!entry) return;
     entry.refCount = Math.max(0, entry.refCount - 1);
-    if (shouldSubscribeDiff(opts)) entry.wantDiffCount = Math.max(0, entry.wantDiffCount - 1);
     entry.warmUntilMs = Date.now() + WARM_TTL_MS;
     this.refreshSubscriptions();
     this.publish();
@@ -244,7 +235,6 @@ export class SessionSupervisor {
     if (!sessionId) return;
     const entry = this.ensureEntry(sessionId);
     entry.session = session;
-    entry.trackId = idToString(session.track_id);
     entry.updatedAtMs = Date.now();
     this.publish();
   };
@@ -252,7 +242,6 @@ export class SessionSupervisor {
   setDiff = (sessionId: string, diff: string) => {
     const entry = this.ensureEntry(sessionId);
     entry.diff = diff;
-    entry.diffFetchedAtMs = Date.now();
     entry.updatedAtMs = Date.now();
     this.publish();
   };
@@ -394,6 +383,8 @@ export class SessionSupervisor {
       subagentInvocationsLoading: false,
       queue: [],
       diff: undefined,
+      summaryCheckpoint: null,
+      headWindow: null,
       diagnosticsByPath: {},
       lastEventSeq: undefined,
       loading: false,
@@ -401,13 +392,11 @@ export class SessionSupervisor {
       subscribed: false,
       updatedAtMs: Date.now(),
       refCount: 0,
-      wantDiffCount: 0,
       warmUntilMs: Date.now() + WARM_TTL_MS,
       acpMetaUpdatedAtMs: undefined,
       seqSet: new Set<number>(),
       turnsHydrated: false,
       oldestTurnSeq: undefined,
-      diffFetchedAtMs: undefined,
       toolStatusByKey: new Map(),
       toolIdsByTurn: new Map(),
       turnToolsLoadingSet: new Set(),
@@ -416,13 +405,11 @@ export class SessionSupervisor {
       artifactsFetchedAtMs: undefined,
       subagentInvocationsLoaded: false,
       subagentInvocationsFetchedAtMs: undefined,
-      trackId: undefined,
       loadedFromCache: false,
       headFromCache: false,
       fetching: {
         head: false,
         history: false,
-        diff: false,
       },
     };
     this.entries.set(sessionId, entry);
@@ -523,15 +510,10 @@ export class SessionSupervisor {
     const entry = this.ensureEntry(sessionId);
     if (!entry.loadedFromCache) {
       entry.loadedFromCache = true;
-      await this.loadCachedHead(entry);
+      void this.loadCachedHead(entry);
     }
     if (entry.fetching.head) return;
     if (entry.turnsHydrated && !opts?.force && !entry.headFromCache) {
-      if (shouldSubscribeDiff(opts)) {
-        void this.refreshDiff(entry);
-      } else if (opts?.watchDiff) {
-        void this.refreshDiff(entry, { allowWithoutSubscription: true });
-      }
       return;
     }
     entry.fetching.head = true;
@@ -556,11 +538,6 @@ export class SessionSupervisor {
       entry.fetching.head = false;
       entry.updatedAtMs = Date.now();
       this.publish();
-    }
-    if (shouldSubscribeDiff(opts)) {
-      void this.refreshDiff(entry);
-    } else if (opts?.watchDiff) {
-      void this.refreshDiff(entry, { allowWithoutSubscription: true });
     }
   }
 
@@ -608,6 +585,7 @@ export class SessionSupervisor {
     try {
       const cached = await loadSessionHeadV1(entry.sessionId);
       if (!cached?.head) return;
+      if (entry.turnsHydrated && !entry.headFromCache) return;
       this.applyHead(entry, cached.head, { fromCache: true });
       const cachedMeta = await loadSessionAcpMetaV1(entry.sessionId);
       if (cachedMeta) {
@@ -632,20 +610,13 @@ export class SessionSupervisor {
 
   private applyHead(
     entry: InternalEntry,
-    head: {
-      session: Session;
-      turns: SessionTurn[];
-      tool_summaries?: SessionTurnToolSummary[];
-      events?: SessionEvent[];
-      messages: Message[];
-      last_event_seq: number;
-      has_more_turns: boolean;
-    },
+    head: SessionHead,
     opts?: { fromCache?: boolean },
   ) {
     entry.headFromCache = Boolean(opts?.fromCache);
     entry.session = head.session;
-    entry.trackId = idToString(head.session.track_id);
+    entry.summaryCheckpoint = head.summary_checkpoint ?? null;
+    entry.headWindow = head.head_window ?? null;
     entry.turnsHydrated = true;
     entry.hasMoreTurns = head.has_more_turns;
     entry.lastEventSeq = head.last_event_seq;
@@ -697,30 +668,6 @@ export class SessionSupervisor {
     this.publish();
   }
 
-  private async refreshDiff(
-    entry: InternalEntry,
-    opts?: { force?: boolean; allowWithoutSubscription?: boolean },
-  ) {
-    const force = opts?.force ?? false;
-    if (entry.fetching.diff) return;
-    if (!entry.trackId) return;
-    if (!opts?.allowWithoutSubscription && entry.wantDiffCount <= 0) return;
-    if (!force && entry.diff !== undefined && entry.diffFetchedAtMs) {
-      const ageMs = Date.now() - entry.diffFetchedAtMs;
-      if (ageMs < DIFF_REFRESH_MS) return;
-    }
-    entry.fetching.diff = true;
-    try {
-      const resp = await trackDiff(entry.trackId);
-      entry.diff = resp.diff ?? "";
-      entry.diffFetchedAtMs = Date.now();
-      entry.updatedAtMs = Date.now();
-      this.publish();
-    } finally {
-      entry.fetching.diff = false;
-    }
-  }
-
   private async persistHead(entry: InternalEntry) {
     if (!entry.session) return;
     const tool_summaries = buildToolSummaries(entry.turnToolsByTurnId);
@@ -732,6 +679,8 @@ export class SessionSupervisor {
       tool_summaries,
       last_event_seq: entry.lastEventSeq ?? 0,
       has_more_turns: entry.hasMoreTurns,
+      summary_checkpoint: entry.summaryCheckpoint ?? null,
+      head_window: entry.headWindow ?? null,
     };
     await saveSessionHeadV1(entry.sessionId, head);
   }
@@ -1020,16 +969,6 @@ export class SessionSupervisor {
   }
 
   private handleCatchupEvent(evt: WorkspaceCatchupEvent) {
-    if (evt.type === "track_upsert") {
-      const trackId = idToString(evt.track.track.id);
-      if (!trackId) return;
-      for (const entry of this.entries.values()) {
-        if (entry.trackId !== trackId) continue;
-        if (entry.wantDiffCount <= 0) continue;
-        void this.refreshDiff(entry, { force: true });
-      }
-      return;
-    }
     if (evt.type === "session_gap") {
       const sid = idToString(evt.session_id);
       if (!sid) return;

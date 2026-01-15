@@ -7,7 +7,6 @@ import type {
   WorkspaceCatchupEvent,
   WorkspaceCatchupSessionSubscription,
   WorkspaceCatchupTaskSummary,
-  WorkspaceCatchupTrackSummary,
 } from "@ctx/types";
 import {
   getDaemonBaseUrl,
@@ -416,10 +415,6 @@ class WorkspaceCatchupStoreImpl implements WorkspaceCatchupEventSource {
         this.deleteTask(evt.task_id);
         this.publish();
         break;
-      case "track_upsert":
-        this.applyTrackSummary(evt.track);
-        this.publish();
-        break;
       case "session_summary":
         this.applySessionSummary(evt.summary);
         this.publish();
@@ -459,13 +454,11 @@ class WorkspaceCatchupStoreImpl implements WorkspaceCatchupEventSource {
   private rebuildSessionLastEventSeq() {
     this.sessionLastEventSeq.clear();
     for (const task of this.tasks.values()) {
-      for (const track of task.tracks) {
-        for (const summary of track.sessions) {
-          const id = idToString(summary.session.id);
-          if (!id) continue;
-          if (typeof summary.last_event_seq === "number") {
-            this.sessionLastEventSeq.set(id, summary.last_event_seq);
-          }
+      for (const summary of task.sessions) {
+        const id = idToString(summary.session.id);
+        if (!id) continue;
+        if (typeof summary.last_event_seq === "number") {
+          this.sessionLastEventSeq.set(id, summary.last_event_seq);
         }
       }
     }
@@ -517,38 +510,12 @@ class WorkspaceCatchupStoreImpl implements WorkspaceCatchupEventSource {
     }
   }
 
-  private applyTrackSummary(summary: WorkspaceCatchupTrackSummary) {
-    const taskId = idToString(summary.track.task_id);
-    if (!taskId) return;
-    const task = this.tasks.get(taskId);
-    if (!task) return;
-    const trackId = idToString(summary.track.id);
-    if (!trackId) return;
-    const nextTracks = task.tracks.slice();
-    const idx = nextTracks.findIndex((t) => idToString(t.track.id) === trackId);
-    const normalized = this.normalizeTrackSummary(summary);
-    if (idx >= 0) {
-      nextTracks[idx] = normalized;
-    } else {
-      nextTracks.push(normalized);
-    }
-    nextTracks.sort((a, b) => String(a.track.created_at ?? "").localeCompare(String(b.track.created_at ?? "")));
-    this.tasks.set(taskId, { ...task, tracks: nextTracks });
-    this.rebuildSessionLastEventSeq();
-  }
-
   private applySessionSummary(summary: SessionCatchupSummary) {
     const taskId = idToString(summary.session.task_id);
     if (!taskId) return;
     const task = this.tasks.get(taskId);
     if (!task) return;
-    const trackId = idToString(summary.session.track_id);
-    if (!trackId) return;
-    const nextTracks = task.tracks.slice();
-    const trackIdx = nextTracks.findIndex((t) => idToString(t.track.id) === trackId);
-    if (trackIdx < 0) return;
-    const track = nextTracks[trackIdx];
-    const nextSessions = track.sessions.slice();
+    const nextSessions = task.sessions.slice();
     const sessionId = idToString(summary.session.id);
     const sessionIdx = nextSessions.findIndex((s) => idToString(s.session.id) === sessionId);
     const normalized = this.normalizeSessionSummary(summary);
@@ -558,29 +525,20 @@ class WorkspaceCatchupStoreImpl implements WorkspaceCatchupEventSource {
       nextSessions.push(normalized);
     }
     nextSessions.sort((a, b) => String(a.session.created_at ?? "").localeCompare(String(b.session.created_at ?? "")));
-    nextTracks[trackIdx] = { ...track, sessions: nextSessions };
-    this.tasks.set(taskId, { ...task, tracks: nextTracks });
+    this.tasks.set(taskId, { ...task, sessions: nextSessions });
     this.rebuildSessionLastEventSeq();
   }
 
   private normalizeSummary(summary: WorkspaceCatchupTaskSummary): WorkspaceCatchupItem {
     const id = idToString(summary.task.id);
     const sortAtMs = Date.parse(summary.task.archived_at ?? summary.task.created_at ?? "") || Date.now();
+    const sessions = (summary as WorkspaceCatchupTaskSummary & { sessions?: SessionCatchupSummary[] }).sessions ?? [];
     return {
       ...summary,
       id,
       task: { ...summary.task },
-      tracks: summary.tracks.map((t) => this.normalizeTrackSummary(t)),
+      sessions: sessions.map((s) => this.normalizeSessionSummary(s)),
       sortAtMs,
-    };
-  }
-
-  private normalizeTrackSummary(summary: WorkspaceCatchupTrackSummary): WorkspaceCatchupTrackSummary {
-    return {
-      track: { ...summary.track },
-      primary_session_id: summary.primary_session_id,
-      diff_summary: summary.diff_summary ? { ...summary.diff_summary } : summary.diff_summary,
-      sessions: summary.sessions.map((s) => this.normalizeSessionSummary(s)),
     };
   }
 

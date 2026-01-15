@@ -33,7 +33,7 @@ export default function CursorDiffDemoPage() {
       )}
 
       <div className="cursor-demo-content">
-        <DiffReviewPane diff={diff} trackId="demo" onDiffUpdated={() => {}} />
+        <DiffReviewPane diff={diff} onDiffUpdated={() => {}} />
       </div>
     </div>
   );

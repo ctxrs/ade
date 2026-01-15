@@ -946,9 +946,12 @@ impl Client {
             .map_err(|_| anyhow!("failed to set websocket scheme"))?;
         let prefix = url.path().trim_end_matches('/');
         let path = if prefix.is_empty() {
-            format!("/api/workspaces/{}/stream", workspace_id.0)
+            format!("/api/workspaces/{}/active_snapshot/stream", workspace_id.0)
         } else {
-            format!("{}/api/workspaces/{}/stream", prefix, workspace_id.0)
+            format!(
+                "{}/api/workspaces/{}/active_snapshot/stream",
+                prefix, workspace_id.0
+            )
         };
         url.set_path(&path);
         url.set_query(None);
@@ -1571,6 +1574,6 @@ mod tests {
         let workspace_id = WorkspaceId::new();
         let url = client.workspace_stream_url(workspace_id).unwrap();
         assert!(url.starts_with("wss://example.com/base/api/workspaces/"));
-        assert!(url.ends_with("/stream"));
+        assert!(url.ends_with("/active_snapshot/stream"));
     }
 }

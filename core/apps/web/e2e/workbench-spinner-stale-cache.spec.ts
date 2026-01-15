@@ -69,8 +69,9 @@ test("workbench: stale cached events do not re-show running", async ({ page }) =
         const resp = await page.request.get(`/api/workspaces/${workspaceId}/catchup`);
         if (!resp.ok()) return "";
         const data = await resp.json();
-        const session = data?.active?.tasks?.[0]?.tracks?.[0]?.sessions?.[0]?.session?.id;
-        sessionIdValue = readId(session);
+        const session = data?.active?.tasks?.[0]?.sessions?.[0]?.session?.id;
+        const primary = data?.active?.tasks?.[0]?.task?.primary_session_id;
+        sessionIdValue = readId(session) || readId(primary);
         return sessionIdValue;
       },
       { timeout: 20000 },

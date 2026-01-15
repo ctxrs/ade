@@ -7,7 +7,6 @@ import WorkbenchPage from "./WorkbenchPage";
 
 const workspaceId = "ws-1";
 const taskId = "task-1";
-const trackId = "track-1";
 const sessionId = "session-1";
 
 const baseIso = "2024-01-01T00:00:00.000Z";
@@ -20,7 +19,6 @@ let sessionSnap = {
       session: {
         id: sessionId,
         task_id: taskId,
-        track_id: trackId,
         provider_id: "codex",
         status: "active",
         created_at: baseIso,
@@ -58,31 +56,19 @@ let workspaceCatchupSnap = {
         assistant_seen_at: null,
         last_assistant_message_at: null,
       },
-      tracks: [
+      sessions: [
         {
-          track: {
-            id: trackId,
+          session: {
+            id: sessionId,
             task_id: taskId,
+            provider_id: "codex",
+            status: "active",
             created_at: baseIso,
           },
-          primary_session_id: null,
-          diff_summary: null,
-          sessions: [
-            {
-              session: {
-                id: sessionId,
-                task_id: taskId,
-                track_id: trackId,
-                provider_id: "codex",
-                status: "active",
-                created_at: baseIso,
-              },
-              last_message_at: null,
-              last_event_seq: null,
-              activity: { is_working: false, last_turn_status: null },
-              unread: false,
-            },
-          ],
+          last_message_at: null,
+          last_event_seq: null,
+          activity: { is_working: false, last_turn_status: null },
+          unread: false,
         },
       ],
     },
@@ -99,10 +85,8 @@ let workspaceCatchupSnap = {
 
 vi.mock("../api/client", () => ({
   archiveTask: vi.fn(async () => ({})),
-  applyTrackDiffPatch: vi.fn(async () => ({})),
   createSession: vi.fn(async () => ({})),
   createTask: vi.fn(async () => ({})),
-  createTrack: vi.fn(async () => ({})),
   deleteTask: vi.fn(async () => ({})),
   getDaemonBaseUrl: vi.fn(() => ""),
   resolveDaemonWsBaseUrl: vi.fn(() => "ws://localhost:4399"),
@@ -118,7 +102,6 @@ vi.mock("../api/client", () => ({
   markTaskRead: vi.fn(async () => ({})),
   markTaskUnread: vi.fn(async () => ({})),
   postMessage: vi.fn(async () => ({})),
-  trackDiff: vi.fn(async () => ({ diff: "" })),
   unarchiveTask: vi.fn(async () => ({})),
   updateTaskTitle: vi.fn(async () => ({})),
   verifyProviderForWorkspace: vi.fn(async () => ({})),
@@ -157,7 +140,7 @@ vi.mock("../workbench/store", () => ({
   useWorkbenchStore: () => ({
     focusNewTask: vi.fn(),
     focusTask: vi.fn(),
-    setActiveTrackForActiveTask: vi.fn(),
+    setActiveSessionForActiveTask: vi.fn(),
     setScrollState: vi.fn(),
     flushDraft: vi.fn(),
     getActiveTab: vi.fn(() => null),
@@ -170,7 +153,7 @@ vi.mock("../workbench/store", () => ({
     window: { scrollByKey: {} },
   }),
   useActiveWorkbenchTab: () => null,
-  useActiveWorkbenchIds: () => ({ taskId: null, trackId: null }),
+  useActiveWorkbenchIds: () => ({ taskId: null, sessionId: null }),
   useNewTaskDraft: () => ({ value: { text: "", modeId: "default" }, setValue: vi.fn() }),
   useWorkbenchDraft: () => ({ value: { text: "", modeId: "default" }, updatedAtMs: 0, setValue: vi.fn() }),
 }));

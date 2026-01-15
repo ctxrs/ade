@@ -177,9 +177,7 @@ final class WorkbenchSelectionStore: ObservableObject {
         let currentTaskId = self.taskId
         let currentSessionId = self.sessionId
         let normalizedPreferredSessionId = SelectionDefaults.normalizedId(preferredSessionId)
-        let persistedPreferredSessionId = currentTaskId == normalizedTaskId
-            ? currentSessionId
-            : nil
+        let persistedPreferredSessionId = currentTaskId == normalizedTaskId ? currentSessionId : nil
         let sessionIds = Set(sessions.compactMap { SelectionDefaults.normalizedId($0.id) })
         let persistedValidSessionId = persistedPreferredSessionId.flatMap { sessionIds.contains($0) ? $0 : nil }
         let resolvedSessionId = pickPreferredSessionId(

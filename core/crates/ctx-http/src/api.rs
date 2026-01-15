@@ -337,6 +337,14 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
             "/api/workspaces/:id/terminals",
             get(list_workspace_terminals).post(create_workspace_terminal),
         )
+        .route(
+            "/api/workspaces/:id/active_snapshot",
+            get(get_workspace_active_snapshot),
+        )
+        .route(
+            "/api/workspaces/:id/active_snapshot/stream",
+            get(workspace_active_snapshot_stream_ws),
+        )
         .route("/api/workspaces/:id/catchup", get(get_workspace_catchup))
         .route(
             "/api/workspaces/:id/stream",
@@ -430,6 +438,11 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
             post(generate_session_title),
         )
         .route("/api/sessions/:id/head", get(get_session_head))
+        .route("/api/sessions/:id/diff", get(get_session_diff))
+        .route(
+            "/api/sessions/:id/diff/apply",
+            post(apply_session_diff_patch),
+        )
         .route("/api/sessions/:id/events", get(get_session_events))
         .route("/api/sessions/:id/history", get(get_session_history))
         .route(
@@ -8025,8 +8038,7 @@ async fn create_task(
                     error: logs::redact_sensitive(&e.to_string()),
                 }),
             )
-        })?
-    {
+        })? {
         Some(task) => task,
         None => {
             return Err((
@@ -8370,6 +8382,17 @@ struct SessionHeadQuery {
     include_events: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct SessionDiffApplyReq {
+    action: String, // "accept" | "reject"
+    patch: String,
+}
+
+#[derive(Debug, Serialize)]
+struct SessionDiffResponse {
+    diff: String,
+}
+
 async fn get_session_head(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
@@ -8388,6 +8411,177 @@ async fn get_session_head(
         Ok(None) => Err(StatusCode::NOT_FOUND),
         Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
     }
+}
+
+async fn get_session_diff(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<SessionDiffResponse>, (StatusCode, Json<ApiErrorResp>)> {
+    let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid session id".to_string(),
+            }),
+        )
+    })?);
+    let session = state
+        .store
+        .get_session(session_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(ApiErrorResp {
+                    error: "session not found".to_string(),
+                }),
+            )
+        })?;
+    let worktree = state
+        .store
+        .get_worktree(session.worktree_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(ApiErrorResp {
+                    error: "worktree not found".to_string(),
+                }),
+            )
+        })?;
+    let diff = ctx_fs::worktrees::diff_worktree(&worktree.root_path, &worktree.base_commit_sha)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
+    Ok(Json(SessionDiffResponse { diff }))
+}
+
+async fn apply_session_diff_patch(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(req): Json<SessionDiffApplyReq>,
+) -> Result<Json<SessionDiffResponse>, (StatusCode, Json<ApiErrorResp>)> {
+    let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid session id".to_string(),
+            }),
+        )
+    })?);
+    if req.patch.trim().is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "patch is empty".to_string(),
+            }),
+        ));
+    }
+
+    let action = req.action.trim().to_lowercase();
+    let reverse = match action.as_str() {
+        "accept" => false,
+        "reject" => true,
+        _ => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: "action must be accept or reject".to_string(),
+                }),
+            ));
+        }
+    };
+
+    let session = state
+        .store
+        .get_session(session_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(ApiErrorResp {
+                    error: "session not found".to_string(),
+                }),
+            )
+        })?;
+    let worktree = state
+        .store
+        .get_worktree(session.worktree_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(ApiErrorResp {
+                    error: "worktree not found".to_string(),
+                }),
+            )
+        })?;
+
+    ctx_fs::git::git_apply_patch(
+        &worktree.root_path,
+        &req.patch,
+        ctx_fs::git::ApplyPatchTarget::Worktree,
+        reverse,
+    )
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&e.to_string()),
+            }),
+        )
+    })?;
+
+    let diff = ctx_fs::worktrees::diff_worktree(&worktree.root_path, &worktree.base_commit_sha)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
+    Ok(Json(SessionDiffResponse { diff }))
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -8590,6 +8784,11 @@ async fn workspace_file_completions(
 }
 
 #[derive(Debug, Deserialize)]
+struct WorkspaceActiveSnapshotQuery {
+    limit: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
 struct WorkspaceCatchupQuery {
     limit: Option<i64>,
     #[serde(default)]
@@ -8619,6 +8818,46 @@ fn parse_boolish_flag(raw: Option<&str>, label: &str) -> Result<bool, String> {
         }
         None => Ok(false),
     }
+}
+
+async fn get_workspace_active_snapshot(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Query(query): Query<WorkspaceActiveSnapshotQuery>,
+) -> Result<Json<WorkspaceActiveSnapshot>, (StatusCode, Json<ApiErrorResp>)> {
+    let workspace_id = WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid workspace id".to_string(),
+            }),
+        )
+    })?);
+
+    let limit = query.limit.unwrap_or(50) as i64;
+    let (tasks, total_count) = state
+        .store
+        .list_workspace_active_page(workspace_id, limit)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
+
+    let snapshot_rev = state
+        .workspace_active_snapshot
+        .current_rev(workspace_id)
+        .await;
+    let snapshot = WorkspaceActiveSnapshot {
+        workspace_id,
+        snapshot_rev,
+        active: WorkspaceActivePage { tasks, total_count },
+    };
+    Ok(Json(snapshot))
 }
 
 async fn get_workspace_catchup(
@@ -8722,6 +8961,18 @@ async fn get_workspace_catchup(
     Ok(Json(snapshot))
 }
 
+async fn workspace_active_snapshot_stream_ws(
+    ws: WebSocketUpgrade,
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let workspace_id = match uuid::Uuid::parse_str(&id) {
+        Ok(v) => WorkspaceId(v),
+        Err(_) => return StatusCode::BAD_REQUEST.into_response(),
+    };
+    ws.on_upgrade(move |socket| handle_workspace_active_snapshot_ws(socket, state, workspace_id))
+}
+
 async fn workspace_catchup_stream_ws(
     ws: WebSocketUpgrade,
     State(state): State<Arc<AppState>>,
@@ -8735,6 +8986,341 @@ async fn workspace_catchup_stream_ws(
 }
 
 const SESSION_REPLAY_MAX_EVENTS: usize = 2000;
+
+async fn send_workspace_active_gap(
+    socket: &mut WebSocket,
+    state: &Arc<AppState>,
+    workspace_id: WorkspaceId,
+    session_id: SessionId,
+    after_seq: i64,
+    reason: &str,
+) -> bool {
+    if crate::fault_injection::maybe_fail("ctx_http.send_workspace_active_gap").is_err() {
+        return false;
+    }
+    let snapshot_rev = state
+        .workspace_active_snapshot
+        .current_rev(workspace_id)
+        .await;
+    let event = WorkspaceActiveSnapshotEvent::SessionGap {
+        workspace_id,
+        snapshot_rev,
+        session_id,
+        after_seq,
+        reason: Some(reason.to_string()),
+    };
+    if let Ok(text) = serde_json::to_string(&event) {
+        socket.send(WsMessage::Text(text)).await.is_ok()
+    } else {
+        false
+    }
+}
+
+async fn replay_session_events_active(
+    socket: &mut WebSocket,
+    state: &Arc<AppState>,
+    workspace_id: WorkspaceId,
+    session_id: SessionId,
+    after_seq: i64,
+) -> Result<(i64, bool), ()> {
+    let snapshot_rev = state
+        .workspace_active_snapshot
+        .current_rev(workspace_id)
+        .await;
+    let mut last_sent = after_seq.max(0);
+    let limit = u32::try_from(SESSION_REPLAY_MAX_EVENTS + 1).unwrap_or(u32::MAX);
+    let events =
+        match crate::fault_injection::maybe_fail("ctx_http.replay_session_events_active.list") {
+            Ok(()) => match state
+                .store
+                .list_session_events_page_by_seq(session_id, Some(last_sent), Some(limit), false)
+                .await
+            {
+                Ok(events) => events,
+                Err(_) => {
+                    let latest = state
+                        .store
+                        .get_session_last_event_seq(session_id)
+                        .await
+                        .unwrap_or(last_sent);
+                    if !send_workspace_active_gap(
+                        socket,
+                        state,
+                        workspace_id,
+                        session_id,
+                        latest,
+                        "replay_error",
+                    )
+                    .await
+                    {
+                        return Err(());
+                    }
+                    return Ok((latest, true));
+                }
+            },
+            Err(_) => {
+                let latest = state
+                    .store
+                    .get_session_last_event_seq(session_id)
+                    .await
+                    .unwrap_or(last_sent);
+                if !send_workspace_active_gap(
+                    socket,
+                    state,
+                    workspace_id,
+                    session_id,
+                    latest,
+                    "replay_error",
+                )
+                .await
+                {
+                    return Err(());
+                }
+                return Ok((latest, true));
+            }
+        };
+
+    if events.len() > SESSION_REPLAY_MAX_EVENTS {
+        let latest = state
+            .store
+            .get_session_last_event_seq(session_id)
+            .await
+            .unwrap_or(last_sent);
+        if !send_workspace_active_gap(
+            socket,
+            state,
+            workspace_id,
+            session_id,
+            latest,
+            "replay_too_large",
+        )
+        .await
+        {
+            return Err(());
+        }
+        return Ok((latest, true));
+    }
+
+    for event in events {
+        let message = if matches!(
+            event.event_type,
+            SessionEventType::UserMessage | SessionEventType::AssistantMessageInserted
+        ) {
+            let message_id = event
+                .payload_json
+                .get("message_id")
+                .and_then(|v| v.as_str())
+                .and_then(|id| uuid::Uuid::parse_str(id).ok())
+                .map(MessageId);
+            match message_id {
+                Some(id) => state.store.get_message(id).await.ok().flatten(),
+                None => None,
+            }
+        } else {
+            None
+        };
+
+        let turn = if matches!(event.event_type, SessionEventType::UserMessage) {
+            match event.turn_id {
+                Some(turn_id) => state
+                    .store
+                    .get_session_turn(event.session_id, turn_id)
+                    .await
+                    .ok()
+                    .flatten(),
+                None => None,
+            }
+        } else {
+            None
+        };
+
+        let delta = SessionHeadDelta {
+            session_id: event.session_id,
+            last_event_seq: event.seq,
+            event: Some(event),
+            turn,
+            message,
+        };
+        let next_seq = delta.last_event_seq;
+        let wrapped = WorkspaceActiveSnapshotEvent::SessionHeadDelta {
+            workspace_id,
+            snapshot_rev,
+            delta: Box::new(delta),
+        };
+        let text = serde_json::to_string(&wrapped).map_err(|_| ())?;
+        crate::fault_injection::maybe_fail("ctx_http.replay_session_events_active.send")
+            .map_err(|_| ())?;
+        socket.send(WsMessage::Text(text)).await.map_err(|_| ())?;
+        last_sent = next_seq;
+    }
+    Ok((last_sent, false))
+}
+
+async fn handle_workspace_active_snapshot_ws(
+    mut socket: WebSocket,
+    state: Arc<AppState>,
+    workspace_id: WorkspaceId,
+) {
+    struct SessionCursor {
+        last_sent: i64,
+    }
+
+    let ready = WorkspaceActiveSnapshotEvent::Ready {
+        workspace_id,
+        snapshot_rev: state
+            .workspace_active_snapshot
+            .current_rev(workspace_id)
+            .await,
+    };
+    if let Ok(text) = serde_json::to_string(&ready) {
+        if socket.send(WsMessage::Text(text)).await.is_err() {
+            return;
+        }
+    }
+    let mut rx = state
+        .workspace_active_snapshot
+        .subscribe(workspace_id)
+        .await;
+    let mut subscriptions: HashMap<SessionId, SessionCursor> = HashMap::new();
+
+    loop {
+        tokio::select! {
+            msg = socket.recv() => {
+                match msg {
+                    Some(Ok(WsMessage::Text(text))) => {
+                        if let Ok(message) = serde_json::from_str::<WorkspaceCatchupClientMessage>(&text) {
+                            let (session_ids, sessions) = match message {
+                                WorkspaceCatchupClientMessage::Subscribe { session_ids, sessions } => (session_ids, sessions),
+                            };
+                            let mut next: Vec<WorkspaceCatchupSessionSubscription> = if !sessions.is_empty() {
+                                sessions
+                            } else {
+                                session_ids
+                                    .into_iter()
+                                    .map(|session_id| WorkspaceCatchupSessionSubscription { session_id, after_seq: None })
+                                    .collect()
+                            };
+                            next.sort_by(|a, b| a.session_id.0.cmp(&b.session_id.0));
+                            let mut next_map = HashMap::new();
+                            for sub in next {
+                                let after_seq = sub.after_seq.unwrap_or(0);
+                                let (last_sent, gap) = match replay_session_events_active(
+                                    &mut socket,
+                                    &state,
+                                    workspace_id,
+                                    sub.session_id,
+                                    after_seq,
+                                )
+                                .await
+                                {
+                                    Ok(v) => v,
+                                    Err(_) => return,
+                                };
+                                if gap {
+                                    next_map.insert(sub.session_id, SessionCursor { last_sent });
+                                    continue;
+                                }
+                                next_map.insert(sub.session_id, SessionCursor { last_sent });
+                            }
+                            subscriptions = next_map;
+                        }
+                    }
+                    Some(Ok(WsMessage::Binary(bytes))) => {
+                        if let Ok(text) = String::from_utf8(bytes.to_vec()) {
+                            if let Ok(message) = serde_json::from_str::<WorkspaceCatchupClientMessage>(&text) {
+                                let (session_ids, sessions) = match message {
+                                    WorkspaceCatchupClientMessage::Subscribe { session_ids, sessions } => (session_ids, sessions),
+                                };
+                                let mut next: Vec<WorkspaceCatchupSessionSubscription> = if !sessions.is_empty() {
+                                    sessions
+                                } else {
+                                    session_ids
+                                        .into_iter()
+                                        .map(|session_id| WorkspaceCatchupSessionSubscription { session_id, after_seq: None })
+                                        .collect()
+                                };
+                                next.sort_by(|a, b| a.session_id.0.cmp(&b.session_id.0));
+                                let mut next_map = HashMap::new();
+                                for sub in next {
+                                    let after_seq = sub.after_seq.unwrap_or(0);
+                                    let (last_sent, gap) = match replay_session_events_active(
+                                        &mut socket,
+                                        &state,
+                                        workspace_id,
+                                        sub.session_id,
+                                        after_seq,
+                                    )
+                                    .await
+                                    {
+                                        Ok(v) => v,
+                                        Err(_) => return,
+                                    };
+                                    if gap {
+                                        next_map.insert(sub.session_id, SessionCursor { last_sent });
+                                        continue;
+                                    }
+                                    next_map.insert(sub.session_id, SessionCursor { last_sent });
+                                }
+                                subscriptions = next_map;
+                            }
+                        }
+                    }
+                    Some(Ok(WsMessage::Close(_))) => break,
+                    Some(Ok(_)) => {},
+                    Some(Err(_)) => break,
+                    None => break,
+                }
+            }
+            event = rx.recv() => {
+                let event = match event {
+                    Ok(event) => event,
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                        let mut failed = false;
+                        for (session_id, cursor) in &mut subscriptions {
+                            let latest = state
+                                .store
+                                .get_session_last_event_seq(*session_id)
+                                .await
+                                .unwrap_or(cursor.last_sent);
+                            cursor.last_sent = latest;
+                            if !send_workspace_active_gap(&mut socket, &state, workspace_id, *session_id, latest, "stream_lagged").await {
+                                failed = true;
+                                break;
+                            }
+                        }
+                        if failed {
+                            break;
+                        }
+                        break;
+                    }
+                    Err(_) => break,
+                };
+
+                if let WorkspaceActiveSnapshotEvent::SessionHeadDelta { delta, .. } = &event {
+                    let Some(cursor) = subscriptions.get_mut(&delta.session_id) else {
+                        continue;
+                    };
+                    if let Some(ev) = &delta.event {
+                        if ev.seq <= cursor.last_sent {
+                            continue;
+                        }
+                        cursor.last_sent = ev.seq;
+                    } else if delta.last_event_seq <= cursor.last_sent {
+                        continue;
+                    } else {
+                        cursor.last_sent = delta.last_event_seq;
+                    }
+                }
+
+                if let Ok(text) = serde_json::to_string(&event) {
+                    if socket.send(WsMessage::Text(text)).await.is_err() {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+}
 
 #[allow(clippy::too_many_arguments)]
 async fn send_secure_workspace_gap(

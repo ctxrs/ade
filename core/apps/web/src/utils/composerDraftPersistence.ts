@@ -16,8 +16,8 @@ export function composerDraftKeyNewTaskV1(workspaceId: string) {
   return `wb.composerDraft.newTask.v1.${workspaceId}`;
 }
 
-export function composerDraftKeyTrackV1(workspaceId: string, trackId: string) {
-  return `wb.composerDraft.track.v1.${workspaceId}.${trackId}`;
+export function composerDraftKeySessionV1(workspaceId: string, sessionId: string) {
+  return `wb.composerDraft.session.v1.${workspaceId}.${sessionId}`;
 }
 
 export function loadComposerDraftV1(key: string): PersistedComposerDraftV1 | null {
@@ -50,4 +50,3 @@ export function removeComposerDraft(key: string) {
     // ignore
   }
 }
-

@@ -56,10 +56,9 @@ test("workbench: sticks to bottom unless the user scrolls away", async ({ page, 
       if (!resp.ok()) return "";
       const snapshot = (await resp.json()) as any;
       const taskSummary = snapshot?.active?.tasks?.[0];
-      const trackSummary = taskSummary?.tracks?.[0];
-      const sessionSummary = trackSummary?.sessions?.[0];
+      const sessionSummary = taskSummary?.sessions?.[0];
       const resolved =
-        readId(sessionSummary?.session?.id) || readId(trackSummary?.primary_session_id);
+        readId(sessionSummary?.session?.id) || readId(taskSummary?.task?.primary_session_id);
       sessionId = resolved;
       return resolved;
     }, { timeout: 20000 })

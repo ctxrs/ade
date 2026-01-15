@@ -1,7 +1,6 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import Editor from "@monaco-editor/react";
 import { Check, ChevronDown, ChevronUp, MessageSquare, X } from "lucide-react";
-import { applyTrackDiffPatch } from "../api/client";
 import { guessMonacoLanguage } from "../utils/monacoLanguage";
 import { FileBufferEditor } from "./FileBufferEditor";
 import { FileIcon } from "./FileIcon";
@@ -31,16 +30,16 @@ type DiffHunk = {
 
 const DiffReviewPane = memo(function DiffReviewPane({
   diff,
-  trackId,
   sessionId,
   onDiffUpdated,
+  onApplyPatch,
   onFileSaved,
   labels,
 }: {
   diff: string;
-  trackId: string;
   sessionId?: string;
   onDiffUpdated: (diff: string) => void;
+  onApplyPatch?: (action: "accept" | "reject", patch: string) => Promise<string | null | undefined>;
   onFileSaved?: () => void;
   labels?: Partial<{
     title: string;
@@ -58,6 +57,7 @@ const DiffReviewPane = memo(function DiffReviewPane({
   const [error, setError] = useState<string | null>(null);
   const [hoverKeepKey, setHoverKeepKey] = useState<string | null>(null);
   const tooltipTimeoutRef = useRef<number | null>(null);
+  const canApply = Boolean(onApplyPatch);
 
   useEffect(() => {
     setEditingPath(null);
@@ -66,17 +66,19 @@ const DiffReviewPane = memo(function DiffReviewPane({
     setBusyKey(null);
     setError(null);
     setHoverKeepKey(null);
-  }, [trackId, sessionId]);
+  }, [sessionId]);
 
   const files = useMemo(() => parseUnifiedDiff(diff), [diff]);
 
   const doApply = async (key: string, action: "accept" | "reject", patch: string) => {
-    if (!trackId) return;
+    if (!onApplyPatch) return;
     setBusyKey(key);
     setError(null);
     try {
-      const resp = await applyTrackDiffPatch(trackId, action, patch);
-      onDiffUpdated(resp.diff ?? "");
+      const nextDiff = await onApplyPatch(action, patch);
+      if (typeof nextDiff === "string") {
+        onDiffUpdated(nextDiff);
+      }
     } catch (e: any) {
       setError(e?.message ?? String(e));
     } finally {
@@ -191,7 +193,7 @@ const DiffReviewPane = memo(function DiffReviewPane({
                         className="cursor-diff-icon-btn cursor-diff-icon-btn-danger"
                         aria-label="Undo"
                         title="Undo"
-                        disabled={!trackId || fileBusy || busyKey !== null}
+                        disabled={!canApply || fileBusy || busyKey !== null}
                         onClick={() => doApply(`file:${f.key}`, "reject", filePatch)}
                       >
                         <X size={14} />
@@ -208,7 +210,7 @@ const DiffReviewPane = memo(function DiffReviewPane({
                           tooltipTimeoutRef.current = window.setTimeout(() => setHoverKeepKey(null), 80);
                         }}
                         title="Keep"
-                        disabled={!trackId || fileBusy || busyKey !== null}
+                        disabled={!canApply || fileBusy || busyKey !== null}
                         onClick={() => doApply(`file:${f.key}`, "accept", filePatch)}
                       >
                         <Check size={14} />
@@ -243,7 +245,7 @@ const DiffReviewPane = memo(function DiffReviewPane({
                               <button
                                 type="button"
                                 className="cursor-diff-overlay-btn"
-                                disabled={!trackId || fileBusy || busyKey !== null}
+                                disabled={!canApply || fileBusy || busyKey !== null}
                                 onClick={() => doApply(`file:${f.key}`, "reject", filePatch)}
                               >
                                 Undo <span className="cursor-diff-kbd">⌘N</span>
@@ -251,7 +253,7 @@ const DiffReviewPane = memo(function DiffReviewPane({
                               <button
                                 type="button"
                                 className="cursor-diff-overlay-btn cursor-diff-overlay-btn-keep"
-                                disabled={!trackId || fileBusy || busyKey !== null}
+                                disabled={!canApply || fileBusy || busyKey !== null}
                                 onClick={() => doApply(`file:${f.key}`, "accept", filePatch)}
                               >
                                 Keep <span className="cursor-diff-kbd">⌘Y</span>

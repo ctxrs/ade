@@ -57,7 +57,6 @@ async function createWorkspaceAndStartRun(opts: {
     .not.toBe("");
 
   let taskId = "";
-  let trackId = "";
   let sessionId = "";
   await expect
     .poll(
@@ -68,11 +67,8 @@ async function createWorkspaceAndStartRun(opts: {
         const taskSummary = snapshot?.active?.tasks?.[0];
         if (!taskSummary) return "";
         taskId = readId(taskSummary?.task?.id);
-        const trackSummary = taskSummary?.tracks?.[0];
-        if (!trackSummary) return "";
-        trackId = readId(trackSummary?.track?.id);
-        const primarySessionId = readId(trackSummary?.primary_session_id);
-        const sessionSummary = trackSummary?.sessions?.[trackSummary?.sessions?.length - 1];
+        const sessionSummary = taskSummary?.sessions?.[taskSummary?.sessions?.length - 1];
+        const primarySessionId = readId(taskSummary?.task?.primary_session_id);
         sessionId = readId(sessionSummary?.session?.id) || primarySessionId;
         return sessionId;
       },
@@ -92,7 +88,7 @@ async function createWorkspaceAndStartRun(opts: {
   const worktreeRoot = String(wt?.root_path ?? "");
   expect(worktreeRoot).toBeTruthy();
 
-  return { sessionId, trackId, worktreeRoot };
+  return { sessionId, worktreeRoot };
 }
 
 test("workbench: diff updates mid-turn", async ({ page, request }) => {
@@ -107,7 +103,7 @@ test("workbench: diff updates mid-turn", async ({ page, request }) => {
   const workspaceName = `ws-${Date.now()}`;
   const taskTitle = "slow-diff-test";
 
-  const { worktreeRoot, trackId } = await createWorkspaceAndStartRun({
+  const { worktreeRoot, sessionId } = await createWorkspaceAndStartRun({
     page,
     request,
     repo,
@@ -117,7 +113,7 @@ test("workbench: diff updates mid-turn", async ({ page, request }) => {
 
   writeFileSync(path.join(worktreeRoot, "file.txt"), "hello\nchanged while running\n");
 
-  const diffResp = await request.get(`/api/tracks/${trackId}/diff`);
+  const diffResp = await request.get(`/api/sessions/${sessionId}/diff`);
   expect(diffResp.ok()).toBeTruthy();
   const diff = await diffResp.json();
   expect(String(diff?.diff ?? "")).toContain("file.txt");
@@ -134,7 +130,7 @@ test("workbench: diff updates for manual edits while idle", async ({ page, reque
 
   const workspaceName = `ws-${Date.now()}`;
   const taskTitle = "idle-diff-test";
-  const { sessionId, worktreeRoot, trackId } = await createWorkspaceAndStartRun({
+  const { sessionId, worktreeRoot } = await createWorkspaceAndStartRun({
     page,
     request,
     repo,
@@ -149,7 +145,7 @@ test("workbench: diff updates for manual edits while idle", async ({ page, reque
   // Simulate user editing the worktree outside the agent.
   writeFileSync(path.join(worktreeRoot, "file.txt"), "hello\nchanged while idle\n");
 
-  const diffResp = await request.get(`/api/tracks/${trackId}/diff`);
+  const diffResp = await request.get(`/api/sessions/${sessionId}/diff`);
   expect(diffResp.ok()).toBeTruthy();
   const diff = await diffResp.json();
   expect(String(diff?.diff ?? "")).toContain("file.txt");

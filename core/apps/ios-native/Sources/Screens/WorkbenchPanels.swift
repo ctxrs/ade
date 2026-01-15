@@ -94,19 +94,100 @@ private struct WorkbenchPanelScaffold<Content: View>: View {
 }
 
 struct WorkbenchDiffPanelView: View {
+    @EnvironmentObject private var connection: ConnectionStore
     let session: SessionSummary?
+
+    @State private var diffText = ""
+    @State private var isLoading = false
+    @State private var errorMessage: String?
 
     var body: some View {
         WorkbenchPanelScaffold(
             title: "Diff",
-            icon: .gitBranch
+            subtitle: nil,
+            icon: .gitBranch,
+            onRefresh: { _Concurrency.Task { await loadDiff() } }
         ) {
             GlassPanel {
-                Text(session == nil ? "Select a task session to view a diff." : "Diff unavailable in trackless mode.")
-                    .font(.caption)
-                    .foregroundColor(.ctxTextMuted)
+                if isLoading {
+                    ProgressView()
+                        .tint(.ctxAccent)
+                } else if let errorMessage {
+                    Text(errorMessage)
+                        .font(.caption)
+                        .foregroundColor(.ctxError)
+                } else if diffText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Text("No unstaged changes.")
+                        .font(.caption)
+                        .foregroundColor(.ctxTextMuted)
+                } else {
+                    DiffTextView(diffText: diffText)
+                }
             }
         }
+        .task(id: session?.id) {
+            await loadDiff()
+        }
+    }
+
+    @MainActor
+    private func loadDiff() async {
+        guard let sessionId = session?.id, !sessionId.isEmpty else {
+            diffText = ""
+            errorMessage = "Select a task session to view a diff."
+            return
+        }
+        guard let client = connection.apiClient else {
+            diffText = ""
+            errorMessage = "Connect to a daemon first."
+            return
+        }
+        isLoading = true
+        errorMessage = nil
+        do {
+            let response = try await client.fetchSessionDiff(sessionId: sessionId)
+            diffText = response.diff
+        } catch {
+            diffText = ""
+            errorMessage = "Failed to load diff."
+        }
+        isLoading = false
+    }
+}
+
+private struct DiffTextView: View {
+    let diffText: String
+
+    private var attributedDiff: AttributedString {
+        var output = AttributedString()
+        let lines = diffText.split(omittingEmptySubsequences: false) { $0.isNewline }
+        for (index, line) in lines.enumerated() {
+            let text = String(line)
+            var fragment = AttributedString(text)
+            fragment.font = .system(size: 12, weight: .regular, design: .monospaced)
+            fragment.foregroundColor = diffLineColor(text)
+            output.append(fragment)
+            if index < lines.count - 1 {
+                output.append(AttributedString("\n"))
+            }
+        }
+        return output
+    }
+
+    var body: some View {
+        Text(attributedDiff)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .textSelection(.enabled)
+    }
+
+    private func diffLineColor(_ line: String) -> Color {
+        if line.hasPrefix("+"), !line.hasPrefix("+++") {
+            return .ctxDiffAdded
+        }
+        if line.hasPrefix("-"), !line.hasPrefix("---") {
+            return .ctxDiffRemoved
+        }
+        return .ctxTextPrimary
     }
 }
 

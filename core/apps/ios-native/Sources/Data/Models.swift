@@ -13,8 +13,6 @@ struct Task: Codable, Sendable, Identifiable {
     let title: String
     let description: String?
     let status: String
-    let primarySessionId: CtxID?
-    let primaryWorktreeId: CtxID?
     let createdAt: String
     let updatedAt: String
     let archivedAt: String?
@@ -22,6 +20,8 @@ struct Task: Codable, Sendable, Identifiable {
     let lastActivityAt: String?
     let lastAssistantMessageAt: String?
     let hasActiveSession: Bool?
+    var primarySessionId: CtxID?
+    var primaryWorktreeId: CtxID?
 }
 
 struct Worktree: Codable, Sendable, Identifiable {
@@ -297,6 +297,34 @@ struct WorkspaceCatchupTaskSummary: Codable, Sendable {
     let task: Task
     let sessions: [SessionCatchupSummary]
     let sortAt: String
+
+    private enum CodingKeys: String, CodingKey {
+        case task
+        case sessions
+        case sortAt
+    }
+
+    init(task: Task, sessions: [SessionCatchupSummary], sortAt: String) {
+        self.task = task
+        self.sessions = sessions
+        self.sortAt = sortAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        task = try container.decode(Task.self, forKey: .task)
+        sessions = try container.decodeIfPresent([SessionCatchupSummary].self, forKey: .sessions) ?? []
+        sortAt = try container.decode(String.self, forKey: .sortAt)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(task, forKey: .task)
+        if !sessions.isEmpty {
+            try container.encode(sessions, forKey: .sessions)
+        }
+        try container.encode(sortAt, forKey: .sortAt)
+    }
 }
 
 struct WorkspaceCatchupPage: Codable, Sendable {

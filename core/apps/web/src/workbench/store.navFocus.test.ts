@@ -11,7 +11,7 @@ vi.mock("./persistence", async () => {
 
 const getActiveTaskId = (store: WorkbenchStore): string | null => {
   const tab = store.getActiveTab();
-  return tab && tab.kind === "track" ? tab.ref.taskId : null;
+  return tab && tab.kind === "task" ? tab.ref.taskId : null;
 };
 
 const getActiveTabKind = (store: WorkbenchStore): string | null => {
@@ -27,7 +27,7 @@ describe("WorkbenchStore navigation tokens", () => {
       const store = new WorkbenchStore("ws-1");
       const token = store.getNavToken();
 
-      const applied = store.focusTask("task-1", "track-1", "session-1", { navToken: token, source: "system" });
+      const applied = store.focusTask("task-1", "session-1", { navToken: token, source: "system" });
 
       expect(applied).toBe(true);
       expect(getActiveTaskId(store)).toBe("task-1");
@@ -61,7 +61,7 @@ describe("WorkbenchStore navigation tokens", () => {
       const token = store.getNavToken();
 
       store.focusTask("task-1");
-      const applied = store.focusTask("task-2", null, null, { navToken: token, source: "system" });
+      const applied = store.focusTask("task-2", null, { navToken: token, source: "system" });
 
       expect(applied).toBe(false);
       expect(getActiveTaskId(store)).toBe("task-1");
@@ -71,18 +71,18 @@ describe("WorkbenchStore navigation tokens", () => {
     }
   });
 
-  it("does not bump tokens for system track updates", async () => {
+  it("does not bump tokens for system session updates", async () => {
     vi.useFakeTimers();
     try {
       const { WorkbenchStore } = await import("./store");
       const store = new WorkbenchStore("ws-1");
 
-      store.focusTask("task-1", "track-1", "session-1");
+      store.focusTask("task-1", "session-1");
       const beforeSystem = store.getNavToken();
-      store.setActiveTrackForActiveTask("track-2", { source: "system" });
+      store.setActiveSessionForActiveTask("session-2", { source: "system" });
 
       expect(store.getNavToken()).toBe(beforeSystem);
-      expect(getActiveTabKind(store)).toBe("track");
+      expect(getActiveTabKind(store)).toBe("task");
     } finally {
       vi.runAllTimers();
       vi.useRealTimers();

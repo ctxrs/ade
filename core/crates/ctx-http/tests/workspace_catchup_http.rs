@@ -33,7 +33,7 @@ async fn setup() -> (
 
 #[tokio::test]
 async fn workspace_catchup_snapshot_includes_sessions() {
-    let (repo, _data_dir, store, server) = setup().await;
+    let (repo, _data_dir, _store, server) = setup().await;
     let base = &server.base_url;
     let client = &server.client;
 
@@ -398,10 +398,8 @@ async fn workspace_stream_emits_gap_on_large_replay() {
         .await
         .unwrap();
 
-    let tracks = store.list_tracks_for_task(task.id).await.unwrap();
-    let track = &tracks[0];
     let session: ctx_core::models::Session = client
-        .post(format!("{base}/api/tracks/{}/sessions", track.id.0))
+        .post(format!("{base}/api/tasks/{}/sessions", task.id.0))
         .json(&json!({"provider_id":"fake","model_id":"fake-model"}))
         .send()
         .await
@@ -409,6 +407,11 @@ async fn workspace_stream_emits_gap_on_large_replay() {
         .json()
         .await
         .unwrap();
+    let sessions = store.list_sessions_for_task(task.id).await.unwrap();
+    assert!(
+        sessions.iter().any(|stored| stored.id == session.id),
+        "expected session to be stored"
+    );
 
     for _ in 0..2105 {
         store
@@ -548,10 +551,8 @@ async fn workspace_catchup_stream_filters_session_head_deltas() {
         .await
         .unwrap();
 
-    let tracks = store.list_tracks_for_task(task.id).await.unwrap();
-    let track = &tracks[0];
     let session_a: ctx_core::models::Session = client
-        .post(format!("{base}/api/tracks/{}/sessions", track.id.0))
+        .post(format!("{base}/api/tasks/{}/sessions", task.id.0))
         .json(&json!({"provider_id":"fake","model_id":"fake-model"}))
         .send()
         .await
@@ -560,7 +561,7 @@ async fn workspace_catchup_stream_filters_session_head_deltas() {
         .await
         .unwrap();
     let session_b: ctx_core::models::Session = client
-        .post(format!("{base}/api/tracks/{}/sessions", track.id.0))
+        .post(format!("{base}/api/tasks/{}/sessions", task.id.0))
         .json(&json!({"provider_id":"fake","model_id":"fake-model"}))
         .send()
         .await
@@ -568,6 +569,15 @@ async fn workspace_catchup_stream_filters_session_head_deltas() {
         .json()
         .await
         .unwrap();
+    let sessions = store.list_sessions_for_task(task.id).await.unwrap();
+    assert!(
+        sessions.iter().any(|stored| stored.id == session_a.id),
+        "expected session a to be stored"
+    );
+    assert!(
+        sessions.iter().any(|stored| stored.id == session_b.id),
+        "expected session b to be stored"
+    );
 
     let ws_url = format!("{base}/api/workspaces/{}/stream", ws.id.0).replace("http://", "ws://");
     let (mut socket, _) = connect_async(&ws_url).await.unwrap();
