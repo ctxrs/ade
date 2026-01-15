@@ -135,11 +135,9 @@ async fn wait_for_assistant_reply(
         )
         .await?;
 
-        if head
-            .messages
-            .iter()
-            .any(|msg| matches!(msg.role, MessageRole::Assistant) && msg.content.contains(ASSISTANT_EXPECTED))
-        {
+        if head.messages.iter().any(|msg| {
+            matches!(msg.role, MessageRole::Assistant) && msg.content.contains(ASSISTANT_EXPECTED)
+        }) {
             return Ok(());
         }
 
@@ -368,8 +366,7 @@ async fn cloud_gateway_aws_e2e() -> Result<()> {
         if let Some(instance_id) = gateway_resp.gateway.instance_id.as_deref() {
             eprintln!(
                 "gateway instance_id={} url={}",
-                instance_id,
-                gateway_resp.gateway.gateway_url
+                instance_id, gateway_resp.gateway.gateway_url
             );
         }
         wait_for_gateway_health(&gateway_resp.gateway).await?;
@@ -388,8 +385,7 @@ async fn cloud_gateway_aws_e2e() -> Result<()> {
         .await?;
         eprintln!(
             "worker started track_id={} worker_id={}",
-            track_worker.track_id.0,
-            track_worker.worker_id
+            track_worker.track_id.0, track_worker.worker_id
         );
         worker = Some(track_worker);
 

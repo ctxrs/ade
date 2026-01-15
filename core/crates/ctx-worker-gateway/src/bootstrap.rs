@@ -217,17 +217,19 @@ pub fn render_bootstrap_script(spec: &BootstrapSpec<'_>) -> String {
     script.push_str("    if [ \"$gateway_host_port\" = \"$gateway_host\" ]; then\n");
     script.push_str("      gateway_port=\"443\"\n");
     script.push_str("    fi\n");
-    script.push_str("    if echo \"$gateway_host\" | grep -Eq '^([0-9]{1,3}\\.){3}[0-9]{1,3}$'; then\n");
-    script.push_str("      local resolved_url=\"${url/$gateway_host_port/ctx-gateway:${gateway_port}}\"\n");
+    script.push_str(
+        "    if echo \"$gateway_host\" | grep -Eq '^([0-9]{1,3}\\.){3}[0-9]{1,3}$'; then\n",
+    );
+    script.push_str(
+        "      local resolved_url=\"${url/$gateway_host_port/ctx-gateway:${gateway_port}}\"\n",
+    );
     script.push_str("      echo \"${gateway_host} ctx-gateway\" >> /etc/hosts\n");
     script.push_str(
         "      curl --cacert \"$CTX_GATEWAY_CA_PATH\" --resolve \"ctx-gateway:${gateway_port}:${gateway_host}\" -fsSL \"$resolved_url\" -o \"$dest\"\n",
     );
     script.push_str("      return $?\n");
     script.push_str("    fi\n");
-    script.push_str(
-        "    curl --cacert \"$CTX_GATEWAY_CA_PATH\" -fsSL \"$url\" -o \"$dest\"\n",
-    );
+    script.push_str("    curl --cacert \"$CTX_GATEWAY_CA_PATH\" -fsSL \"$url\" -o \"$dest\"\n");
     script.push_str("    return $?\n");
     script.push_str("  fi\n");
     script.push_str("  curl -fsSL \"$url\" -o \"$dest\"\n");
@@ -388,26 +390,27 @@ pub fn render_bootstrap_script(spec: &BootstrapSpec<'_>) -> String {
         script.push_str("    log \"no session disk detected; continuing without mount\"\n");
         script.push_str("    return 0\n");
         script.push_str("  fi\n");
-    script.push_str("  if ! blkid \"$device\" >/dev/null 2>&1; then\n");
-    script.push_str("    log \"formatting session disk $device\"\n");
-    script.push_str("    mkfs.ext4 -F \"$device\" >/dev/null 2>&1\n");
-    script.push_str("  fi\n");
-    script.push_str("  mkdir -p \"$CTX_MOUNT_PATH\"\n");
-    script.push_str("  if command -v mountpoint >/dev/null 2>&1; then\n");
-    script.push_str("    if mountpoint -q \"$CTX_MOUNT_PATH\"; then\n");
-    script.push_str("      log \"session disk already mounted at $CTX_MOUNT_PATH\"\n");
-    script.push_str("      return 0\n");
-    script.push_str("    fi\n");
-    script.push_str("  fi\n");
-    script.push_str("  if mount \"$device\" \"$CTX_MOUNT_PATH\" >/dev/null 2>&1; then\n");
-    script.push_str("    return 0\n");
-    script.push_str("  fi\n");
-    script.push_str("  if mount -o rw,remount \"$CTX_MOUNT_PATH\" >/dev/null 2>&1; then\n");
-    script.push_str("    return 0\n");
-    script.push_str("  fi\n");
-    script.push_str("  log \"failed to mount session disk $device; continuing without mount\"\n");
-    script.push_str("  return 0\n");
-    script.push_str("}\n\n");
+        script.push_str("  if ! blkid \"$device\" >/dev/null 2>&1; then\n");
+        script.push_str("    log \"formatting session disk $device\"\n");
+        script.push_str("    mkfs.ext4 -F \"$device\" >/dev/null 2>&1\n");
+        script.push_str("  fi\n");
+        script.push_str("  mkdir -p \"$CTX_MOUNT_PATH\"\n");
+        script.push_str("  if command -v mountpoint >/dev/null 2>&1; then\n");
+        script.push_str("    if mountpoint -q \"$CTX_MOUNT_PATH\"; then\n");
+        script.push_str("      log \"session disk already mounted at $CTX_MOUNT_PATH\"\n");
+        script.push_str("      return 0\n");
+        script.push_str("    fi\n");
+        script.push_str("  fi\n");
+        script.push_str("  if mount \"$device\" \"$CTX_MOUNT_PATH\" >/dev/null 2>&1; then\n");
+        script.push_str("    return 0\n");
+        script.push_str("  fi\n");
+        script.push_str("  if mount -o rw,remount \"$CTX_MOUNT_PATH\" >/dev/null 2>&1; then\n");
+        script.push_str("    return 0\n");
+        script.push_str("  fi\n");
+        script
+            .push_str("  log \"failed to mount session disk $device; continuing without mount\"\n");
+        script.push_str("  return 0\n");
+        script.push_str("}\n\n");
     } else {
         script.push_str("mount_session_disk() { :; }\n\n");
     }
