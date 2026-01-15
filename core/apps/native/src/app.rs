@@ -3,11 +3,11 @@ use std::str::FromStr;
 
 use chrono::Utc;
 use gpui::{
-    App, Application, Bounds, ClickEvent, Context, Entity, Global, ListAlignment, ListState,
+    App, Application, Bounds, ClickEvent, Context, Entity, Global, KeyDownEvent, ListAlignment, ListState,
     ScrollStrategy, Window, WindowBounds, WindowHandle, WindowOptions, div,
     InteractiveElement as _, StatefulInteractiveElement as _, prelude::*, px, size,
 };
-use gpui_component::{Root, VirtualListScrollHandle, input::{InputEvent, InputState}};
+use gpui_component::{Root, TitleBar, VirtualListScrollHandle, input::{InputEvent, InputState}};
 use ctx_core::models::MessageRole;
 
 use crate::automation;
@@ -392,6 +392,7 @@ pub(crate) fn open_shell_window(
         WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
             app_id: Some("ctx".to_string()),
+            titlebar: Some(TitleBar::title_bar_options()),
             ..Default::default()
         },
         |window, cx| {
@@ -450,8 +451,8 @@ impl Render for ShellView {
             .unwrap_or_else(|| "No workspace".to_string());
         let settings_button = div()
             .id("settings-button")
-            .w(px(28.0))
-            .h(px(28.0))
+            .w(px(26.0))
+            .h(px(26.0))
             .flex()
             .items_center()
             .justify_center()
@@ -465,6 +466,26 @@ impl Render for ShellView {
             .on_click(cx.listener(|view, _: &ClickEvent, _window, cx| {
                 view.set_route(ShellRoute::Settings, cx);
             }));
+        let title_bar = TitleBar::new()
+            .bg(self.colors.panel)
+            .border_color(self.colors.border_strong)
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .w_full()
+                    .child(div().w(px(26.0)).flex_none())
+                    .child(
+                        div()
+                            .flex()
+                            .flex_1()
+                            .items_center()
+                            .justify_center()
+                            .text_sm()
+                            .child(workspace_label),
+                    )
+                    .child(settings_button),
+            );
         div()
             .on_children_prepainted(automation_tree::track_children_bounds(
                 "app-shell",
@@ -478,33 +499,19 @@ impl Render for ShellView {
             .flex_col()
             .bg(self.colors.bg)
             .text_color(self.colors.text)
+            .on_key_down(cx.listener(|view, event: &KeyDownEvent, _window, cx| {
+                let modifiers = event.keystroke.modifiers;
+                let key = event.keystroke.key.to_lowercase();
+                if key == "b" && (modifiers.platform || modifiers.control) {
+                    if view.route == ShellRoute::Workbench {
+                        let collapsed = view.sidebar_collapsed;
+                        view.set_sidebar_collapsed(!collapsed, cx);
+                    }
+                    cx.stop_propagation();
+                }
+            }))
             .child(
-                div()
-                    .id("title-bar")
-                    .flex()
-                    .items_center()
-                    .h(px(44.0))
-                    .px_3()
-                    .bg(self.colors.panel)
-                    .border_b_1()
-                    .border_color(self.colors.border_strong)
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .w_full()
-                            .child(div().w(px(28.0)).flex_none())
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_1()
-                                    .items_center()
-                                    .justify_center()
-                                    .text_sm()
-                                    .child(workspace_label),
-                            )
-                            .child(settings_button),
-                    ),
+                title_bar,
             )
             .child(
                 div()

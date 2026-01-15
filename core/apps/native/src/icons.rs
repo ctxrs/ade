@@ -138,6 +138,7 @@ impl IconAssets {
 
 impl AssetSource for IconAssets {
     fn load(&self, path: &str) -> Result<Option<Cow<'static, [u8]>>> {
+        let path = path.trim_start_matches('/');
         let svg = match path {
             "icons/settings.svg" => IconName::Settings.svg(),
             "icons/refresh-cw.svg" => IconName::Refresh.svg(),
@@ -172,7 +173,10 @@ impl AssetSource for IconAssets {
     }
 
     fn list(&self, path: &str) -> Result<Vec<SharedString>> {
-        let path = path.trim_end_matches('/');
+        let path = path.trim_matches('/');
+        if path.is_empty() {
+            return Ok(vec![SharedString::from("icons")]);
+        }
         if path == "icons" {
             Ok(vec![
                 SharedString::from("settings.svg"),
@@ -224,6 +228,7 @@ impl AppAssets {
 
 impl AssetSource for AppAssets {
     fn load(&self, path: &str) -> Result<Option<Cow<'static, [u8]>>> {
+        let path = path.trim_start_matches('/');
         if let Some(data) = self.icon_assets.load(path)? {
             return Ok(Some(data));
         }
@@ -235,6 +240,7 @@ impl AssetSource for AppAssets {
     }
 
     fn list(&self, path: &str) -> Result<Vec<SharedString>> {
+        let path = path.trim_matches('/');
         let mut entries = self.icon_assets.list(path)?;
         let mut component_entries = self.component_assets.list(path)?;
         entries.append(&mut component_entries);

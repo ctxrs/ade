@@ -67,6 +67,7 @@ fn set_app_menus(cx: &mut App) {
     app_items.push(MenuItem::action("Quit ctx", Quit));
 
     let file_items = vec![MenuItem::action("New Launcher Window", NewLauncherWindow)];
+    let view_items = vec![MenuItem::action("Toggle Sidebar", ToggleSidebar)];
 
     cx.set_menus(vec![
         Menu {
@@ -76,6 +77,10 @@ fn set_app_menus(cx: &mut App) {
         Menu {
             name: "File".into(),
             items: file_items,
+        },
+        Menu {
+            name: "View".into(),
+            items: view_items,
         },
     ]);
 }
