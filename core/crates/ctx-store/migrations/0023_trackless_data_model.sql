@@ -248,17 +248,34 @@ INSERT INTO worktree_attachment_mounts (
   updated_at
 )
 SELECT
-  tr.worktree_id,
-  tam.attachment_id,
-  tam.mount_abs_path,
-  tam.materialized_id,
-  tam.status,
-  tam.last_sync_at,
-  tam.error_message,
-  tam.created_at,
-  tam.updated_at
-FROM track_attachment_mounts tam
-JOIN tracks tr ON tr.id = tam.track_id;
+  worktree_id,
+  attachment_id,
+  mount_abs_path,
+  materialized_id,
+  status,
+  last_sync_at,
+  error_message,
+  created_at,
+  updated_at
+FROM (
+  SELECT
+    tr.worktree_id AS worktree_id,
+    tam.attachment_id AS attachment_id,
+    tam.mount_abs_path AS mount_abs_path,
+    tam.materialized_id AS materialized_id,
+    tam.status AS status,
+    tam.last_sync_at AS last_sync_at,
+    tam.error_message AS error_message,
+    tam.created_at AS created_at,
+    tam.updated_at AS updated_at,
+    ROW_NUMBER() OVER (
+      PARTITION BY tr.worktree_id, tam.attachment_id
+      ORDER BY tam.updated_at DESC, tam.rowid DESC
+    ) AS rn
+  FROM track_attachment_mounts tam
+  JOIN tracks tr ON tr.id = tam.track_id
+)
+WHERE rn = 1;
 
 DROP TABLE IF EXISTS track_attachment_mounts;
 DROP TABLE IF EXISTS track_workers;
