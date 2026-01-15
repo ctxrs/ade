@@ -76,7 +76,7 @@ export async function clearWorkbenchSelectionV1(workspaceId: string): Promise<vo
 export type PersistedSessionHeadV1 = {
   v: 1;
   sessionId: string;
-  head: import("@ctx/types").SessionHead;
+  head: import("@ctx/types").SessionHeadSnapshot;
   updatedAtMs: number;
 };
 

@@ -6,7 +6,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import type { RootStackParamList } from "../navigation/types";
 import { useConnection } from "../state/ConnectionProvider";
 import { useWorkspaceSelection } from "../state/WorkspaceSelectionProvider";
-import { useWorkspaceCatchupSnapshot, useWorkspaceCatchupStore } from "../state/workspaceCatchupStore";
+import { useWorkspaceActiveSnapshotState, useWorkspaceActiveSnapshotStore } from "../state/workspaceActiveSnapshotStore";
 import { LoadingView } from "../components/LoadingView";
 import { ErrorView } from "../components/ErrorView";
 import { createContextStyles, useContextTokens } from "../theme";
@@ -23,8 +23,8 @@ export function TaskListScreen({ route, navigation }: Props): React.JSX.Element 
   const { workspaceId, workspaceName } = route.params;
   const { config } = useConnection();
   const { workspaceId: selectedId, setWorkspace } = useWorkspaceSelection();
-  const store = useWorkspaceCatchupStore();
-  const snapshot = useWorkspaceCatchupSnapshot();
+  const store = useWorkspaceActiveSnapshotStore();
+  const snapshot = useWorkspaceActiveSnapshotState();
   const theme = useContextTokens();
   const [tab, setTab] = useState<TabKey>(TAB_ACTIVE);
 

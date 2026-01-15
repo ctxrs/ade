@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { waitForCondition } from "../test/utils/waitForCondition";
 
 vi.mock("../api/client", () => ({
-  getSessionHead: vi.fn(),
+  getSessionSnapshot: vi.fn(),
   getSessionHistory: vi.fn(),
   listTurnTools: vi.fn(async () => []),
   getSessionDiff: vi.fn(async () => ({ diff: "" })),
@@ -21,7 +21,7 @@ vi.mock("./uiStateStore", () => ({
   saveSessionHeadV1: vi.fn(async () => {}),
 }));
 
-import { getSessionHead } from "../api/client";
+import { getSessionSnapshot } from "../api/client";
 import { SessionSupervisor } from "./sessionSupervisor";
 
 const conn = { baseUrl: "https://example.com", token: "test-token" };
@@ -44,6 +44,7 @@ const mkHead = (sessionId: string) => ({
   last_event_seq: 0,
   has_more_turns: false,
   has_more_history: false,
+  history_cursor: null,
 });
 
 describe("SessionSupervisor warm heads", () => {
@@ -52,23 +53,47 @@ describe("SessionSupervisor warm heads", () => {
   });
 
   it("warms at most the budgeted session heads", async () => {
-    vi.mocked(getSessionHead).mockImplementation(async (_conn, sessionId) => mkHead(String(sessionId)) as any);
+    vi.mocked(getSessionSnapshot).mockImplementation(async (_conn, sessionId) => {
+      const head = mkHead(String(sessionId));
+      return {
+        summary: {
+          session: head.session,
+          last_message_at: null,
+          last_message_preview: null,
+          last_event_seq: head.last_event_seq,
+          activity: { is_working: false, last_turn_status: null },
+          unread: false,
+        },
+        head,
+      } as any;
+    });
 
     const sup = new SessionSupervisor(conn);
     const ids = Array.from({ length: 25 }, (_, i) => `session-${i + 1}`);
     sup.setActiveTaskSessionIds(ids);
 
-    await waitForCondition(() => vi.mocked(getSessionHead).mock.calls.length > 0);
+    await waitForCondition(() => vi.mocked(getSessionSnapshot).mock.calls.length > 0);
 
     // Budget is derived at module init; in tests (no localStorage) it should default to 12.
-    await waitForCondition(() => vi.mocked(getSessionHead).mock.calls.length === 12);
+    await waitForCondition(() => vi.mocked(getSessionSnapshot).mock.calls.length === 12);
 
     const warmed = Object.values(sup.getSnapshot().sessions).filter((s) => s.subscribed);
     expect(warmed.length).toBe(12);
   });
 
   it("does not refetch an already hydrated head when opening the same session again", async () => {
-    vi.mocked(getSessionHead).mockResolvedValueOnce(mkHead("session-1") as any);
+    const head = mkHead("session-1");
+    vi.mocked(getSessionSnapshot).mockResolvedValueOnce({
+      summary: {
+        session: head.session,
+        last_message_at: null,
+        last_message_preview: null,
+        last_event_seq: head.last_event_seq,
+        activity: { is_working: false, last_turn_status: null },
+        unread: false,
+      },
+      head,
+    } as any);
 
     const sup = new SessionSupervisor(conn);
     sup.openSession("session-1");
@@ -78,11 +103,11 @@ describe("SessionSupervisor warm heads", () => {
       return Boolean(entry && !entry.loading);
     });
 
-    vi.mocked(getSessionHead).mockClear();
+    vi.mocked(getSessionSnapshot).mockClear();
     sup.openSession("session-1");
 
     // Give the openSession call a tick to run ensureLoaded.
     await new Promise((r) => setTimeout(r, 0));
-    expect(getSessionHead).not.toHaveBeenCalled();
+    expect(getSessionSnapshot).not.toHaveBeenCalled();
   });
 });

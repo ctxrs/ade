@@ -25,7 +25,7 @@ import { parseWsJson } from "../utils/wsJson";
 import { useConnection } from "./ConnectionProvider";
 import { nextSecureSeq } from "./secureSeq";
 
-export type WorkspaceCatchupItem = {
+export type WorkspaceActiveSnapshotItem = {
   id: string;
   task: Task;
   sessions: SessionSnapshotSummary[];
@@ -33,11 +33,11 @@ export type WorkspaceCatchupItem = {
   sortAtMs: number;
 };
 
-export type WorkspaceCatchupState = {
+export type WorkspaceActiveSnapshotState = {
   workspaceId: string | null;
   initialized: boolean;
   connection: "idle" | "connecting" | "connected" | "disconnected";
-  tasksById: Record<string, WorkspaceCatchupItem>;
+  tasksById: Record<string, WorkspaceActiveSnapshotItem>;
   activeIds: string[];
   archivedIds: string[];
   totalActive: number;
@@ -51,10 +51,10 @@ export type WorkspaceCatchupState = {
   archivedLoaded: boolean;
 };
 
-export type WorkspaceCatchupEventSource = {
+export type WorkspaceActiveSnapshotEventSource = {
   subscribe: (listener: () => void) => () => void;
   subscribeEvents: (listener: (event: WorkspaceActiveSnapshotEvent) => void) => () => void;
-  getSnapshot: () => WorkspaceCatchupState;
+  getSnapshot: () => WorkspaceActiveSnapshotState;
   setSubscriptions: (subscriptions: WorkspaceActiveSnapshotSessionSubscription[]) => void;
 };
 
@@ -124,11 +124,11 @@ const isSecureEnvelope = (value: any): value is E2eeEnvelope =>
   typeof value.nonce === "string" &&
   typeof value.ciphertext === "string";
 
-export class WorkspaceCatchupStoreImpl implements WorkspaceCatchupEventSource {
+export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSource {
   private listeners = new Set<() => void>();
   private eventListeners = new Set<(event: WorkspaceActiveSnapshotEvent) => void>();
-  private snapshot: WorkspaceCatchupState;
-  private tasks = new Map<string, WorkspaceCatchupItem>();
+  private snapshot: WorkspaceActiveSnapshotState;
+  private tasks = new Map<string, WorkspaceActiveSnapshotItem>();
   private activeOrder: string[] = [];
   private archivedOrder: string[] = [];
   private activeLimit = 50;
@@ -183,7 +183,7 @@ export class WorkspaceCatchupStoreImpl implements WorkspaceCatchupEventSource {
     return () => this.eventListeners.delete(listener);
   };
 
-  getSnapshot = (): WorkspaceCatchupState => this.snapshot;
+  getSnapshot = (): WorkspaceActiveSnapshotState => this.snapshot;
 
   setSubscriptions = (subscriptions: WorkspaceActiveSnapshotSessionSubscription[]) => {
     const next = normalizeSubscriptions(subscriptions, this.sessionLastEventSeq);
@@ -253,7 +253,7 @@ export class WorkspaceCatchupStoreImpl implements WorkspaceCatchupEventSource {
     const nextArchived = Boolean(task.archived_at);
     const stableSortAt = task.archived_at ?? task.created_at ?? existing.sort_at;
     const stableSortAtMs = Date.parse(stableSortAt ?? "") || existing.sortAtMs || Date.now();
-    const updated: WorkspaceCatchupItem = {
+    const updated: WorkspaceActiveSnapshotItem = {
       ...existing,
       task: { ...task },
       sortAtMs: stableSortAtMs,
@@ -603,7 +603,7 @@ export class WorkspaceCatchupStoreImpl implements WorkspaceCatchupEventSource {
     this.rebuildSessionLastEventSeq();
   }
 
-  private upsertArchivedItem(item: WorkspaceCatchupItem, opts?: { adjustCounts?: boolean }) {
+  private upsertArchivedItem(item: WorkspaceActiveSnapshotItem, opts?: { adjustCounts?: boolean }) {
     const existing = this.tasks.get(item.id);
     this.tasks.set(item.id, item);
     const adjustCounts = opts?.adjustCounts ?? true;
@@ -618,7 +618,7 @@ export class WorkspaceCatchupStoreImpl implements WorkspaceCatchupEventSource {
     this.rebuildSessionLastEventSeq();
   }
 
-  private updateCountsForMove(prev: WorkspaceCatchupItem, next: WorkspaceCatchupItem) {
+  private updateCountsForMove(prev: WorkspaceActiveSnapshotItem, next: WorkspaceActiveSnapshotItem) {
     const prevArchived = Boolean(prev.task.archived_at);
     const nextArchived = Boolean(next.task.archived_at);
     if (prevArchived === nextArchived) return;
@@ -653,7 +653,7 @@ export class WorkspaceCatchupStoreImpl implements WorkspaceCatchupEventSource {
     this.rebuildSessionLastEventSeq();
   }
 
-  private normalizeActiveSummary(summary: WorkspaceActiveTaskSummary): WorkspaceCatchupItem {
+  private normalizeActiveSummary(summary: WorkspaceActiveTaskSummary): WorkspaceActiveSnapshotItem {
     const id = idToString(summary.task.id);
     const sortAtMs = Date.parse(summary.sort_at ?? "") || Date.now();
     const primary = summary.primary_session ? [this.normalizeSessionSummary(summary.primary_session)] : [];
@@ -710,7 +710,7 @@ export class WorkspaceCatchupStoreImpl implements WorkspaceCatchupEventSource {
     return idx >= 0 ? idx + 1 : 0;
   }
 
-  private async buildArchivedItem(task: Task): Promise<WorkspaceCatchupItem | null> {
+  private async buildArchivedItem(task: Task): Promise<WorkspaceActiveSnapshotItem | null> {
     const id = idToString(task.id);
     if (!id) return null;
     const sessions = await listTaskSessions(this.conn, id);
@@ -779,7 +779,7 @@ export class WorkspaceCatchupStoreImpl implements WorkspaceCatchupEventSource {
     }
   }
 
-  private placeInOrders(item: WorkspaceCatchupItem) {
+  private placeInOrders(item: WorkspaceActiveSnapshotItem) {
     const { id } = item;
     this.activeOrder = this.activeOrder.filter((existing) => existing !== id);
     this.archivedOrder = this.archivedOrder.filter((existing) => existing !== id);
@@ -814,7 +814,7 @@ export class WorkspaceCatchupStoreImpl implements WorkspaceCatchupEventSource {
   }
 
   private publish() {
-    const tasksById: Record<string, WorkspaceCatchupItem> = {};
+    const tasksById: Record<string, WorkspaceActiveSnapshotItem> = {};
     for (const [id, item] of this.tasks.entries()) {
       tasksById[id] = item;
     }
@@ -834,9 +834,9 @@ export class WorkspaceCatchupStoreImpl implements WorkspaceCatchupEventSource {
   }
 }
 
-const WorkspaceCatchupContext = createContext<WorkspaceCatchupStoreImpl | null>(null);
+const WorkspaceActiveSnapshotContext = createContext<WorkspaceActiveSnapshotStoreImpl | null>(null);
 
-export function WorkspaceCatchupProvider({
+export function WorkspaceActiveSnapshotProvider({
   workspaceId,
   children,
 }: {
@@ -844,7 +844,7 @@ export function WorkspaceCatchupProvider({
   children: React.ReactNode;
 }) {
   const { config } = useConnection();
-  const storeRef = useRef<WorkspaceCatchupStoreImpl | null>(null);
+  const storeRef = useRef<WorkspaceActiveSnapshotStoreImpl | null>(null);
   const lastKeyRef = useRef<string | null>(null);
   const key = config && workspaceId ? `${config.baseUrl}::${workspaceId}` : null;
 
@@ -854,7 +854,7 @@ export function WorkspaceCatchupProvider({
     lastKeyRef.current = null;
   } else if (!storeRef.current || lastKeyRef.current !== key) {
     storeRef.current?.destroy();
-    storeRef.current = new WorkspaceCatchupStoreImpl(workspaceId, config);
+    storeRef.current = new WorkspaceActiveSnapshotStoreImpl(workspaceId, config);
     lastKeyRef.current = key;
   }
 
@@ -865,44 +865,44 @@ export function WorkspaceCatchupProvider({
   }, [key]);
 
   return (
-    <WorkspaceCatchupContext.Provider value={storeRef.current}>
+    <WorkspaceActiveSnapshotContext.Provider value={storeRef.current}>
       {children}
-    </WorkspaceCatchupContext.Provider>
+    </WorkspaceActiveSnapshotContext.Provider>
   );
 }
 
-export function useWorkspaceCatchupStore() {
-  const store = useContext(WorkspaceCatchupContext);
-  if (!store) throw new Error("WorkspaceCatchupProvider missing");
+export function useWorkspaceActiveSnapshotStore() {
+  const store = useContext(WorkspaceActiveSnapshotContext);
+  if (!store) throw new Error("WorkspaceActiveSnapshotProvider missing");
   return store;
 }
 
-export function useMaybeWorkspaceCatchupStore(): WorkspaceCatchupStoreImpl | null {
-  return useContext(WorkspaceCatchupContext);
+export function useMaybeWorkspaceActiveSnapshotStore(): WorkspaceActiveSnapshotStoreImpl | null {
+  return useContext(WorkspaceActiveSnapshotContext);
 }
 
-export function useWorkspaceCatchupSnapshot(): WorkspaceCatchupState {
-  const store = useWorkspaceCatchupStore();
+export function useWorkspaceActiveSnapshotState(): WorkspaceActiveSnapshotState {
+  const store = useWorkspaceActiveSnapshotStore();
   return useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
 }
 
-export function useMaybeWorkspaceCatchupSnapshot(): WorkspaceCatchupState | null {
-  const store = useMaybeWorkspaceCatchupStore();
+export function useMaybeWorkspaceActiveSnapshotState(): WorkspaceActiveSnapshotState | null {
+  const store = useMaybeWorkspaceActiveSnapshotStore();
   const subscribe = useMemo(() => store?.subscribe ?? (() => () => {}), [store]);
   const getSnapshot = useMemo(
     () => store?.getSnapshot ?? (() => null),
     [store],
   );
-  const snap = useSyncExternalStore<WorkspaceCatchupState | null>(
+  const snap = useSyncExternalStore<WorkspaceActiveSnapshotState | null>(
     subscribe,
-    getSnapshot as () => WorkspaceCatchupState | null,
-    getSnapshot as () => WorkspaceCatchupState | null,
+    getSnapshot as () => WorkspaceActiveSnapshotState | null,
+    getSnapshot as () => WorkspaceActiveSnapshotState | null,
   );
-  return store ? (snap as WorkspaceCatchupState) : null;
+  return store ? (snap as WorkspaceActiveSnapshotState) : null;
 }
 
-export function useWorkspaceCatchupEvents(handler: (event: WorkspaceActiveSnapshotEvent) => void) {
-  const store = useWorkspaceCatchupStore();
+export function useWorkspaceActiveSnapshotEvents(handler: (event: WorkspaceActiveSnapshotEvent) => void) {
+  const store = useWorkspaceActiveSnapshotStore();
   const stableHandler = useMemo(() => handler, [handler]);
   useEffect(() => store.subscribeEvents(stableHandler), [store, stableHandler]);
 }

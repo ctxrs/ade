@@ -20,7 +20,7 @@ import { WorkbenchScreen } from "./src/screens/WorkbenchScreen";
 import { NewTaskScreen } from "./src/screens/NewTaskScreen";
 import type { RootStackParamList } from "./src/navigation/types";
 import { ConnectionProvider, useConnection } from "./src/state/ConnectionProvider";
-import { WorkspaceCatchupProvider, useWorkspaceCatchupStore } from "./src/state/workspaceCatchupStore";
+import { WorkspaceActiveSnapshotProvider, useWorkspaceActiveSnapshotStore } from "./src/state/workspaceActiveSnapshotStore";
 import { SessionSupervisorProvider, useSessionSupervisor } from "./src/state/sessionSupervisor";
 import { WorkspaceSelectionProvider, useWorkspaceSelection } from "./src/state/WorkspaceSelectionProvider";
 import { WorkbenchSelectionProvider } from "./src/state/WorkbenchSelectionProvider";
@@ -66,20 +66,20 @@ function WorkspaceDataProviders({ children }: { children: React.ReactNode }): Re
   const { workspaceId } = useWorkspaceSelection();
 
   return (
-    <WorkspaceCatchupProvider workspaceId={workspaceId}>
-      {workspaceId ? <WorkspaceCatchupBinding /> : null}
+    <WorkspaceActiveSnapshotProvider workspaceId={workspaceId}>
+      {workspaceId ? <WorkspaceActiveSnapshotBinding /> : null}
       {children}
-    </WorkspaceCatchupProvider>
+    </WorkspaceActiveSnapshotProvider>
   );
 }
 
-function WorkspaceCatchupBinding(): null {
+function WorkspaceActiveSnapshotBinding(): null {
   const supervisor = useSessionSupervisor();
-  const store = useWorkspaceCatchupStore();
+  const store = useWorkspaceActiveSnapshotStore();
 
   useEffect(() => {
-    supervisor.bindWorkspaceCatchupStore(store);
-    return () => supervisor.bindWorkspaceCatchupStore(null);
+    supervisor.bindWorkspaceActiveSnapshotStore(store);
+    return () => supervisor.bindWorkspaceActiveSnapshotStore(null);
   }, [supervisor, store]);
 
   return null;

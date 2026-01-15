@@ -1,10 +1,10 @@
 /// <reference types="vitest" />
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { buildDummySessionHead } from "../test/fixtures/dummyWorkspace";
+import { buildDummySessionSnapshot } from "../test/fixtures/dummyWorkspace";
 
 vi.mock("../api/client", () => ({
-  getSessionHead: vi.fn(),
+  getSessionSnapshot: vi.fn(),
   getSessionHistory: vi.fn(),
   listTurnTools: vi.fn(async () => []),
   getSessionDiff: vi.fn(async () => ({ diff: "" })),
@@ -22,7 +22,7 @@ vi.mock("./uiStateStore", () => ({
   saveSessionHeadV1: vi.fn(async () => {}),
 }));
 
-import { getSessionHead } from "../api/client";
+import { getSessionSnapshot } from "../api/client";
 import { loadSessionHeadV1 } from "./uiStateStore";
 import { SessionSupervisor } from "./sessionSupervisor";
 
@@ -69,7 +69,7 @@ describe("SessionSupervisor", () => {
       },
     ];
 
-    vi.mocked(getSessionHead).mockResolvedValue({
+    const head = {
       session: mkSession(sessionId),
       turns: [],
       events: [],
@@ -77,6 +77,18 @@ describe("SessionSupervisor", () => {
       last_event_seq: 1,
       has_more_turns: false,
       has_more_history: false,
+      history_cursor: null,
+    };
+    vi.mocked(getSessionSnapshot).mockResolvedValue({
+      summary: {
+        session: head.session,
+        last_message_at: headMessages[0]?.created_at ?? null,
+        last_message_preview: headMessages[0]?.content ?? null,
+        last_event_seq: head.last_event_seq,
+        activity: { is_working: false, last_turn_status: null },
+        unread: false,
+      },
+      head,
     });
 
     const sup = new SessionSupervisor(conn);
@@ -95,7 +107,7 @@ describe("SessionSupervisor", () => {
   it("uses cached head to avoid refetch", async () => {
     const sessionId = "session-cache";
 
-    const cachedHead = buildDummySessionHead({
+    const cachedSnapshot = buildDummySessionSnapshot({
       sessionId,
       taskId: "task-cache",
       workspaceId: "ws-cache",
@@ -105,7 +117,7 @@ describe("SessionSupervisor", () => {
     vi.mocked(loadSessionHeadV1).mockResolvedValueOnce({
       v: 1,
       sessionId,
-      head: cachedHead,
+      head: cachedSnapshot.head,
       updatedAtMs: Date.now(),
     });
 
@@ -114,18 +126,18 @@ describe("SessionSupervisor", () => {
 
     await waitForCondition(() => {
       const entry = sup.getSnapshot().sessions[sessionId];
-      return Boolean(entry && entry.messages.length === cachedHead.messages.length);
+      return Boolean(entry && entry.messages.length === cachedSnapshot.head.messages.length);
     });
 
-    expect(getSessionHead).not.toHaveBeenCalled();
+    expect(getSessionSnapshot).not.toHaveBeenCalled();
     const entry = sup.getSnapshot().sessions[sessionId];
-    expect(entry?.messages.length).toBe(cachedHead.messages.length);
+    expect(entry?.messages.length).toBe(cachedSnapshot.head.messages.length);
   });
 
   it("applies session head deltas from workspace stream", async () => {
     const sessionId = "session-2";
 
-    vi.mocked(getSessionHead).mockResolvedValue({
+    const head = {
       session: mkSession(sessionId),
       turns: [],
       events: [],
@@ -133,6 +145,18 @@ describe("SessionSupervisor", () => {
       last_event_seq: 0,
       has_more_turns: false,
       has_more_history: false,
+      history_cursor: null,
+    };
+    vi.mocked(getSessionSnapshot).mockResolvedValue({
+      summary: {
+        session: head.session,
+        last_message_at: null,
+        last_message_preview: null,
+        last_event_seq: head.last_event_seq,
+        activity: { is_working: false, last_turn_status: null },
+        unread: false,
+      },
+      head,
     });
 
     const sup = new SessionSupervisor(conn);
@@ -161,7 +185,7 @@ describe("SessionSupervisor", () => {
       }),
     };
 
-    sup.bindWorkspaceCatchupStore(store);
+    sup.bindWorkspaceActiveSnapshotStore(store);
     sup.openSession(sessionId);
 
     await waitForCondition(() => {

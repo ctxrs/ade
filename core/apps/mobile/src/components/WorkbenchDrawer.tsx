@@ -9,7 +9,7 @@ import { useConnection } from "../state/ConnectionProvider";
 import { useWorkspaceSelection } from "../state/WorkspaceSelectionProvider";
 import { createContextStyles, useContextTokens } from "../theme";
 import { IconButton } from "./IconButton";
-import { useWorkspaceCatchupSnapshot, useWorkspaceCatchupStore, type WorkspaceCatchupItem } from "../state/workspaceCatchupStore";
+import { useWorkspaceActiveSnapshotState, useWorkspaceActiveSnapshotStore, type WorkspaceActiveSnapshotItem } from "../state/workspaceActiveSnapshotStore";
 import { TaskActionSheet } from "./TaskActionSheet";
 import { useSessionCacheSnapshot, type SessionCacheEntry } from "../state/sessionSupervisor";
 
@@ -166,14 +166,14 @@ function TaskListBody({
   onSelectTaskId: (taskId: string) => void;
   onOpenTaskMenu: (taskId: string) => void;
 }): React.JSX.Element {
-  const snapshot = useWorkspaceCatchupSnapshot();
-  const store = useWorkspaceCatchupStore();
+  const snapshot = useWorkspaceActiveSnapshotState();
+  const store = useWorkspaceActiveSnapshotStore();
   const theme = useContextTokens();
   const sessionSnap = useSessionCacheSnapshot();
 
   const ids = showArchived ? snapshot.archivedIds : snapshot.activeIds;
   const items = useMemo(() => {
-    return ids.map((id) => snapshot.tasksById[id]).filter((t): t is WorkspaceCatchupItem => Boolean(t));
+    return ids.map((id) => snapshot.tasksById[id]).filter((t): t is WorkspaceActiveSnapshotItem => Boolean(t));
   }, [ids, snapshot.tasksById]);
 
   const taskLiveInfo = useMemo(() => {
@@ -287,7 +287,7 @@ function TaskListBody({
 }
 
 function computeTaskIndicators(
-  item: WorkspaceCatchupItem,
+  item: WorkspaceActiveSnapshotItem,
   live: { workingByTask: Set<string>; errorByTask: Set<string>; lastAssistantMsByTask: Record<string, number> },
 ): { kind: null | "unread" | "error" | "running"; working: boolean } {
   const taskId = item.id;

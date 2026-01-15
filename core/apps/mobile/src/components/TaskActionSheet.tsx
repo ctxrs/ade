@@ -13,10 +13,10 @@ import {
 } from "../api/client";
 import { useConnection } from "../state/ConnectionProvider";
 import {
-  useMaybeWorkspaceCatchupSnapshot,
-  useMaybeWorkspaceCatchupStore,
-  type WorkspaceCatchupItem,
-} from "../state/workspaceCatchupStore";
+  useMaybeWorkspaceActiveSnapshotState,
+  useMaybeWorkspaceActiveSnapshotStore,
+  type WorkspaceActiveSnapshotItem,
+} from "../state/workspaceActiveSnapshotStore";
 import { createContextStyles, useContextTokens } from "../theme";
 
 export function TaskActionSheet({
@@ -30,12 +30,12 @@ export function TaskActionSheet({
 }): React.JSX.Element | null {
   const theme = useContextTokens();
   const { config } = useConnection();
-  const store = useMaybeWorkspaceCatchupStore();
-  const snapshot = useMaybeWorkspaceCatchupSnapshot();
+  const store = useMaybeWorkspaceActiveSnapshotStore();
+  const snapshot = useMaybeWorkspaceActiveSnapshotState();
   const [renameOpen, setRenameOpen] = useState(false);
   const [renameDraft, setRenameDraft] = useState("");
 
-  const item: WorkspaceCatchupItem | null = useMemo(() => {
+  const item: WorkspaceActiveSnapshotItem | null = useMemo(() => {
     if (!taskId) return null;
     return snapshot?.tasksById?.[taskId] ?? null;
   }, [snapshot?.tasksById, taskId]);
@@ -166,7 +166,7 @@ export function TaskActionSheet({
   );
 }
 
-function computeUnread(item: WorkspaceCatchupItem): boolean {
+function computeUnread(item: WorkspaceActiveSnapshotItem): boolean {
   const lastAssistant = Date.parse(item.task.last_assistant_message_at ?? "") || null;
   const seen = Date.parse(item.task.assistant_seen_at ?? "") || null;
   return Boolean(lastAssistant !== null && (seen === null || lastAssistant > seen));

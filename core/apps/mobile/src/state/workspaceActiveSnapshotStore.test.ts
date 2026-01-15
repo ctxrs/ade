@@ -19,7 +19,7 @@ vi.mock("../api/client", () => ({
 }));
 
 import { getWorkspaceActiveSnapshot, idToString } from "../api/client";
-import { WorkspaceCatchupStoreImpl } from "./workspaceCatchupStore";
+import { WorkspaceActiveSnapshotStoreImpl } from "./workspaceActiveSnapshotStore";
 
 const conn = { baseUrl: "https://example.com", token: "test-token" };
 
@@ -32,7 +32,7 @@ async function waitForCondition(cond, timeoutMs = 1000) {
   throw new Error("Timed out waiting for condition");
 }
 
-describe("WorkspaceCatchupStore", () => {
+describe("WorkspaceActiveSnapshotStore", () => {
   afterEach(() => {
     vi.clearAllMocks();
     vi.useRealTimers();
@@ -43,7 +43,7 @@ describe("WorkspaceCatchupStore", () => {
     vi.mocked(getWorkspaceActiveSnapshot).mockResolvedValue(snapshot);
 
     const workspaceId = idToString(snapshot.workspace_id);
-    const store = new WorkspaceCatchupStoreImpl(workspaceId, conn, { streamEnabled: false });
+    const store = new WorkspaceActiveSnapshotStoreImpl(workspaceId, conn, { streamEnabled: false });
     store.init();
 
     await waitForCondition(() => store.getSnapshot().initialized);

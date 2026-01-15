@@ -3,7 +3,7 @@ import type {
   Message,
   Session,
   SessionEvent,
-  SessionHead,
+  SessionHeadSnapshot,
   SessionTurn,
   SessionTurnTool,
   WorkspaceActiveSnapshotEvent,
@@ -11,13 +11,13 @@ import type {
 
 import {
   getSessionDiff,
-  getSessionHead,
   getSessionHistory,
+  getSessionSnapshot,
   idToString,
   listTurnTools,
   type ConnectionConfig,
 } from "../api/client";
-import type { WorkspaceCatchupEventSource } from "./workspaceCatchupStore";
+import type { WorkspaceActiveSnapshotEventSource } from "./workspaceActiveSnapshotStore";
 import { loadSessionHeadV1, saveSessionHeadV1 } from "./uiStateStore";
 import { useConnection } from "./ConnectionProvider";
 
@@ -102,9 +102,9 @@ export class SessionSupervisor {
   private listeners = new Set<() => void>();
   private snapshot: SessionSupervisorSnapshot = { connection: "idle", sessions: {} };
   private entries = new Map<string, InternalEntry>();
-  private catchupStore: WorkspaceCatchupEventSource | null = null;
-  private catchupUnsub: (() => void) | null = null;
-  private catchupSnapshotUnsub: (() => void) | null = null;
+  private activeSnapshotStore: WorkspaceActiveSnapshotEventSource | null = null;
+  private activeSnapshotUnsub: (() => void) | null = null;
+  private activeSnapshotStateUnsub: (() => void) | null = null;
   private activeTaskSessionIds: string[] = [];
   private warmSessionIds: string[] = [];
   private warmedSessionIds: string[] = [];
@@ -118,24 +118,24 @@ export class SessionSupervisor {
 
   getSnapshot = (): SessionSupervisorSnapshot => this.snapshot;
 
-  bindWorkspaceCatchupStore(store: WorkspaceCatchupEventSource | null) {
-    if (this.catchupUnsub) {
-      this.catchupUnsub();
-      this.catchupUnsub = null;
+  bindWorkspaceActiveSnapshotStore(store: WorkspaceActiveSnapshotEventSource | null) {
+    if (this.activeSnapshotUnsub) {
+      this.activeSnapshotUnsub();
+      this.activeSnapshotUnsub = null;
     }
-    if (this.catchupSnapshotUnsub) {
-      this.catchupSnapshotUnsub();
-      this.catchupSnapshotUnsub = null;
+    if (this.activeSnapshotStateUnsub) {
+      this.activeSnapshotStateUnsub();
+      this.activeSnapshotStateUnsub = null;
     }
-    this.catchupStore = store;
+    this.activeSnapshotStore = store;
     if (!store) {
       this.setConnection("disconnected");
       this.setActiveTaskSessionIds([]);
       this.setWarmSessionIds([]);
       return;
     }
-    this.catchupUnsub = store.subscribeEvents((evt) => this.handleCatchupEvent(evt));
-    this.catchupSnapshotUnsub = store.subscribe(() => {
+    this.activeSnapshotUnsub = store.subscribeEvents((evt) => this.handleActiveSnapshotEvent(evt));
+    this.activeSnapshotStateUnsub = store.subscribe(() => {
       const state = store.getSnapshot();
       const next = this.mapConnection(state.connection);
       this.setConnection(next);
@@ -364,8 +364,8 @@ export class SessionSupervisor {
       this.publish();
     }
     try {
-      const head = await getSessionHead(this.conn, sessionId, HEAD_LIMIT, true);
-      this.applyHead(entry, head);
+      const snapshot = await getSessionSnapshot(this.conn, sessionId, HEAD_LIMIT, true);
+      this.applyHead(entry, snapshot.head);
       await this.persistHead(entry);
     } catch (e: any) {
       if (!opts?.silent) {
@@ -414,7 +414,7 @@ export class SessionSupervisor {
         this.ensureLoaded(sessionId, { silent: true }).catch(() => {});
       }
     }
-    if (this.catchupStore) {
+    if (this.activeSnapshotStore) {
       const subs = next.map((sessionId) => {
         const entry = this.entries.get(sessionId);
         const afterSeq = entry?.lastEventSeq;
@@ -423,7 +423,7 @@ export class SessionSupervisor {
           ...(typeof afterSeq === "number" ? { after_seq: afterSeq } : {}),
         };
       });
-      this.catchupStore.setSubscriptions(subs);
+      this.activeSnapshotStore.setSubscriptions(subs);
     }
   }
 
@@ -437,7 +437,7 @@ export class SessionSupervisor {
     }
   }
 
-  private applyHead(entry: InternalEntry, head: SessionHead, opts?: { fromCache?: boolean }) {
+  private applyHead(entry: InternalEntry, head: SessionHeadSnapshot, opts?: { fromCache?: boolean }) {
     entry.session = head.session;
     entry.turnsHydrated = true;
     entry.hasMoreTurns = head.has_more_turns;
@@ -475,6 +475,7 @@ export class SessionSupervisor {
       messages: entry.messages,
       last_event_seq: entry.lastEventSeq ?? 0,
       has_more_turns: entry.hasMoreTurns,
+      has_more_history: false,
     };
     await saveSessionHeadV1(entry.sessionId, head);
   }
@@ -703,7 +704,7 @@ export class SessionSupervisor {
     return true;
   }
 
-  private handleCatchupEvent(evt: WorkspaceActiveSnapshotEvent) {
+  private handleActiveSnapshotEvent(evt: WorkspaceActiveSnapshotEvent) {
     if (evt.type !== "session_head_delta") return;
     const delta = evt.delta;
     const sid = idToString(delta.session_id);

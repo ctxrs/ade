@@ -5,7 +5,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import type { RootStackParamList } from "../navigation/types";
 import { useConnection } from "../state/ConnectionProvider";
-import { useWorkspaceCatchupSnapshot, useWorkspaceCatchupStore } from "../state/workspaceCatchupStore";
+import { useWorkspaceActiveSnapshotState, useWorkspaceActiveSnapshotStore } from "../state/workspaceActiveSnapshotStore";
 import { LoadingView } from "../components/LoadingView";
 import { ErrorView } from "../components/ErrorView";
 import { createContextStyles, useContextTokens } from "../theme";
@@ -24,8 +24,8 @@ type Props = NativeStackScreenProps<RootStackParamList, "Sessions">;
 export function SessionListScreen({ route, navigation }: Props): React.JSX.Element {
   const { taskId, taskTitle } = route.params;
   const { config } = useConnection();
-  const store = useWorkspaceCatchupStore();
-  const snapshot = useWorkspaceCatchupSnapshot();
+  const store = useWorkspaceActiveSnapshotStore();
+  const snapshot = useWorkspaceActiveSnapshotState();
   const theme = useContextTokens();
 
   if (!config) return <ErrorView message="Connect to a daemon first." />;

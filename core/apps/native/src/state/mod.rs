@@ -27,7 +27,7 @@ use tokio::sync::watch;
 use ctx_core::ids::{SessionId, TaskId, TurnId, WorkspaceId};
 use ctx_core::models::{
     Artifact, MessageAttachment, SessionEvent, SessionSnapshotSummary, SessionTurn,
-    WorkspaceCatchupClientMessage, WorkspaceCatchupCursor,
+    WorkspaceActiveSnapshotClientMessage,
 };
 
 use crate::theme::ThemeColors;
@@ -138,16 +138,12 @@ pub(crate) struct ShellView {
     pub(crate) composer_model_id: Option<String>,
     pub(crate) composer_provider_menu_open: bool,
     pub(crate) composer_model_menu_open: bool,
-    pub(crate) catchup_active_total: Option<i64>,
-    pub(crate) catchup_archived_total: Option<i64>,
     pub(crate) task_store_initialized: bool,
     pub(crate) task_fetch_active: TaskFetchState,
     pub(crate) task_fetch_archived: TaskFetchState,
     pub(crate) task_has_more_active: bool,
     pub(crate) task_has_more_archived: bool,
     pub(crate) task_archived_loaded: bool,
-    pub(crate) task_active_cursor: Option<WorkspaceCatchupCursor>,
-    pub(crate) task_archived_cursor: Option<WorkspaceCatchupCursor>,
     pub(crate) tasks_by_id: HashMap<TaskId, TaskSummaryItem>,
     pub(crate) task_active_order: Vec<TaskId>,
     pub(crate) task_archived_order: Vec<TaskId>,
@@ -271,7 +267,7 @@ pub(crate) struct ShellView {
     pub(crate) copied_flags: HashMap<String, Instant>,
     pub(crate) stream_status: StreamStatus,
     pub(crate) resyncing_session: Option<SessionId>,
-    pub(crate) stream_subscribe_tx: Option<watch::Sender<WorkspaceCatchupClientMessage>>,
+    pub(crate) stream_subscribe_tx: Option<watch::Sender<WorkspaceActiveSnapshotClientMessage>>,
     pub(crate) stream_stop_tx: Option<watch::Sender<bool>>,
     pub(crate) session_last_event_seq: HashMap<SessionId, i64>,
     pub(crate) thread_list_handler_set: bool,
@@ -567,7 +563,7 @@ impl ShellView {
             state.set_context(terminal_context, cx);
         });
         cx.update_entity(&self.diff_review_state, |state, cx| {
-            state.set_worktree_id(worktree_id, cx);
+            state.set_session_id(selected_session_id, cx);
         });
     }
 }

@@ -174,8 +174,6 @@ fn create_shell_view(
             composer_model_id: None,
             composer_provider_menu_open: false,
             composer_model_menu_open: false,
-            active_total: None,
-            archived_total: None,
             task_store_initialized: false,
             task_fetch_active: TaskFetchState::Idle,
             task_fetch_archived: TaskFetchState::Idle,

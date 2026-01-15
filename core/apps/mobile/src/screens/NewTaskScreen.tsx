@@ -9,7 +9,7 @@ import { createSession, createTask, getProviderOptions, idToString, listProvider
 import { useConnection } from "../state/ConnectionProvider";
 import { useWorkspaceSelection } from "../state/WorkspaceSelectionProvider";
 import { useWorkbenchSelection } from "../state/WorkbenchSelectionProvider";
-import { useMaybeWorkspaceCatchupStore } from "../state/workspaceCatchupStore";
+import { useMaybeWorkspaceActiveSnapshotStore } from "../state/workspaceActiveSnapshotStore";
 import { useSessionSupervisor } from "../state/sessionSupervisor";
 import { createContextStyles, useContextTokens } from "../theme";
 
@@ -20,7 +20,7 @@ export function NewTaskScreen({ navigation }: Props): React.JSX.Element {
   const { config } = useConnection();
   const { workspaceId } = useWorkspaceSelection();
   const selection = useWorkbenchSelection();
-  const catchupStore = useMaybeWorkspaceCatchupStore();
+  const activeSnapshotStore = useMaybeWorkspaceActiveSnapshotStore();
   const supervisor = useSessionSupervisor();
   const [text, setText] = useState("");
   const [providerPickerOpen, setProviderPickerOpen] = useState(false);
@@ -78,7 +78,7 @@ export function NewTaskScreen({ navigation }: Props): React.JSX.Element {
       return { taskId, sessionId };
     },
     onSuccess: ({ taskId, sessionId }) => {
-      catchupStore?.refreshActive();
+      activeSnapshotStore?.refreshActive();
       selection.setSelection({ taskId, sessionId });
       navigation.goBack();
     },

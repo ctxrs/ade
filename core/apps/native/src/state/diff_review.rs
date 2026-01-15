@@ -1,7 +1,7 @@
 use gpui::{AsyncApp, Context, WeakEntity};
 use gpui_tokio::Tokio;
 
-use ctx_core::ids::WorktreeId;
+use ctx_core::ids::SessionId;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum DiffLineKind {
@@ -77,7 +77,7 @@ const DIFF_LIST_MAX_WIDTH: f32 = 320.0;
 
 #[derive(Debug)]
 pub(crate) struct DiffReviewState {
-    pub(crate) worktree_id: Option<WorktreeId>,
+    pub(crate) session_id: Option<SessionId>,
     pub(crate) diff: String,
     pub(crate) files: Vec<DiffFile>,
     pub(crate) active_file_key: Option<String>,
@@ -92,7 +92,7 @@ pub(crate) struct DiffReviewState {
 impl DiffReviewState {
     pub(crate) fn new() -> Self {
         Self {
-            worktree_id: None,
+            session_id: None,
             diff: String::new(),
             files: Vec::new(),
             active_file_key: None,
@@ -105,17 +105,17 @@ impl DiffReviewState {
         }
     }
 
-    pub(crate) fn set_worktree_id(
+    pub(crate) fn set_session_id(
         &mut self,
-        worktree_id: Option<WorktreeId>,
+        session_id: Option<SessionId>,
         cx: &mut Context<Self>,
     ) {
-        if self.worktree_id == worktree_id {
+        if self.session_id == session_id {
             return;
         }
-        self.worktree_id = worktree_id;
+        self.session_id = session_id;
         self.reset_state();
-        if self.worktree_id.is_some() {
+        if self.session_id.is_some() {
             self.reload_diff(cx);
         } else {
             cx.notify();
@@ -137,7 +137,7 @@ impl DiffReviewState {
     }
 
     pub(crate) fn reload_diff(&mut self, cx: &mut Context<Self>) {
-        let Some(worktree_id) = self.worktree_id else {
+        let Some(session_id) = self.session_id else {
             return;
         };
         self.busy_key = Some("diff:load".to_string());
@@ -148,7 +148,7 @@ impl DiffReviewState {
         let task = Tokio::spawn_result(cx, async move {
             let config = ctx_client::resolve_daemon_config()?;
             let client = ctx_client::Client::new(config)?;
-            client.get_worktree_diff(worktree_id).await
+            client.get_session_diff(session_id).await
         });
 
         cx.spawn(move |this: WeakEntity<DiffReviewState>, cx: &mut AsyncApp| {
@@ -156,13 +156,13 @@ impl DiffReviewState {
             async move {
                 let result = task.await;
                 this.update(&mut cx, |view, cx| {
-                    if view.worktree_id != Some(worktree_id) {
+                    if view.session_id != Some(session_id) {
                         return;
                     }
                     view.busy_key = None;
                     match result {
                         Ok(diff) => {
-                            view.set_diff(diff);
+                            view.set_diff(diff.diff);
                         }
                         Err(err) => {
                             view.error = Some(err.to_string());
@@ -258,7 +258,7 @@ impl DiffReviewState {
         status_message: String,
         cx: &mut Context<Self>,
     ) {
-        let Some(worktree_id) = self.worktree_id else {
+        let Some(session_id) = self.session_id else {
             return;
         };
         if self.busy_key.is_some() {
@@ -274,7 +274,7 @@ impl DiffReviewState {
             let config = ctx_client::resolve_daemon_config()?;
             let client = ctx_client::Client::new(config)?;
             client
-                .apply_worktree_diff_patch(worktree_id, &action_label, &patch)
+                .apply_session_diff_patch(session_id, &action_label, &patch)
                 .await
         });
 
@@ -283,13 +283,13 @@ impl DiffReviewState {
             async move {
                 let result = task.await;
                 this.update(&mut cx, |view, cx| {
-                    if view.worktree_id != Some(worktree_id) {
+                    if view.session_id != Some(session_id) {
                         return;
                     }
                     view.busy_key = None;
                     match result {
                         Ok(diff) => {
-                            view.set_diff(diff);
+                            view.set_diff(diff.diff);
                             view.status = Some(status_message);
                         }
                         Err(err) => {

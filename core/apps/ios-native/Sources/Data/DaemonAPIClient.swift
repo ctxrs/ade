@@ -164,8 +164,8 @@ actor DaemonAPIClient {
     }
 
     func listMessages(sessionId: String) async throws -> [MessageSummary] {
-        let head = try await getSessionHead(sessionId: sessionId, limit: 200, includeEvents: false)
-        return head.messages.map(MessageSummary.init)
+        let snapshot = try await getSessionSnapshot(sessionId: sessionId, limit: 200, includeEvents: false)
+        return snapshot.head.messages.map(MessageSummary.init)
     }
 
     func postMessage(sessionId: String, content: String, delivery: MessageDelivery?, attachments: [MessageAttachment]?) async throws -> MessageSummary {
@@ -366,17 +366,6 @@ actor DaemonAPIClient {
         }
         let payload = Payload(providerId: providerId, modelId: modelId, envTarget: envTarget)
         return try await request("/api/tasks/\(taskId)/sessions", method: .post, body: payload)
-    }
-
-    func getSessionHead(sessionId: String, limit: Int?, includeEvents: Bool?) async throws -> SessionHead {
-        var queryItems: [URLQueryItem] = []
-        if let limit = limit {
-            queryItems.append(URLQueryItem(name: "limit", value: String(limit)))
-        }
-        if let includeEvents = includeEvents {
-            queryItems.append(URLQueryItem(name: "include_events", value: includeEvents ? "1" : "0"))
-        }
-        return try await request("/api/sessions/\(sessionId)/head", queryItems: queryItems)
     }
 
     func getSessionSnapshot(sessionId: String, limit: Int?, includeEvents: Bool?) async throws -> SessionSnapshot {

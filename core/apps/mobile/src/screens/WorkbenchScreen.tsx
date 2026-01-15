@@ -11,7 +11,7 @@ import { IconButton } from "../components/IconButton";
 import { SideDrawer } from "../components/SideDrawer";
 import { WorkbenchDrawer } from "../components/WorkbenchDrawer";
 import { useWorkspaceSelection } from "../state/WorkspaceSelectionProvider";
-import { useMaybeWorkspaceCatchupSnapshot, useMaybeWorkspaceCatchupStore } from "../state/workspaceCatchupStore";
+import { useMaybeWorkspaceActiveSnapshotState, useMaybeWorkspaceActiveSnapshotStore } from "../state/workspaceActiveSnapshotStore";
 import { useWorkbenchSelection } from "../state/WorkbenchSelectionProvider";
 import { useSessionEntry, useSessionSupervisor } from "../state/sessionSupervisor";
 import { WorkbenchConversation } from "../components/WorkbenchConversation";
@@ -28,8 +28,8 @@ export function WorkbenchScreen({ navigation }: Props): React.JSX.Element {
   const [optionsOpen, setOptionsOpen] = useState(false);
   const { config } = useConnection();
   const { workspaceId } = useWorkspaceSelection();
-  const snapshot = useMaybeWorkspaceCatchupSnapshot();
-  const catchupStore = useMaybeWorkspaceCatchupStore();
+  const snapshot = useMaybeWorkspaceActiveSnapshotState();
+  const activeSnapshotStore = useMaybeWorkspaceActiveSnapshotStore();
   const selection = useWorkbenchSelection();
   const activeTaskId = selection.taskId;
   const supervisor = useSessionSupervisor();
@@ -201,7 +201,7 @@ export function WorkbenchScreen({ navigation }: Props): React.JSX.Element {
         currentProviderId={sessionEntry?.session?.provider_id}
         currentModelId={sessionEntry?.session?.model_id}
         onCreated={({ sessionId }) => {
-          catchupStore?.refreshActive();
+          activeSnapshotStore?.refreshActive();
           selection.setSelection({ taskId: activeTaskId, sessionId });
           supervisor.refreshSession(sessionId);
         }}

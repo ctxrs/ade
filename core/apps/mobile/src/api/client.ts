@@ -7,7 +7,6 @@ import type {
   MobileDeviceRegistration,
   ProviderStatus,
   Session,
-  SessionHead,
   SessionHistoryPage,
   SessionSnapshot,
   SessionTurnTool,
@@ -406,19 +405,6 @@ export const createSession = (
       ...(opts?.env_target ? { env_target: opts.env_target } : {}),
     }),
   });
-
-export const getSessionHead = (
-  conn: ConnectionConfig,
-  sessionId: string,
-  limit?: number,
-  includeEvents?: boolean,
-) => {
-  const qs = new URLSearchParams();
-  if (limit) qs.set("limit", String(limit));
-  if (includeEvents !== undefined) qs.set("include_events", includeEvents ? "1" : "0");
-  const suffix = qs.toString() ? `?${qs.toString()}` : "";
-  return fetchJson<SessionHead>(conn, `/api/sessions/${sessionId}/head${suffix}`);
-};
 
 export const getSessionSnapshot = (
   conn: ConnectionConfig,

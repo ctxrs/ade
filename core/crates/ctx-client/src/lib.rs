@@ -836,6 +836,11 @@ impl Client {
         self.request_json(Method::GET, &path, None::<&()>).await
     }
 
+    pub async fn list_workspace_tasks(&self, workspace_id: WorkspaceId) -> Result<Vec<Task>> {
+        let path = format!("/api/workspaces/{}/tasks", workspace_id.0);
+        self.request_json(Method::GET, &path, None::<&()>).await
+    }
+
     pub async fn create_task(
         &self,
         workspace_id: WorkspaceId,
@@ -967,6 +972,11 @@ impl Client {
     ) -> Result<SessionWithEnv> {
         let path = format!("/api/tasks/{}/sessions", task_id.0);
         self.request_json(Method::POST, &path, Some(req)).await
+    }
+
+    pub async fn list_task_sessions(&self, task_id: TaskId) -> Result<Vec<Session>> {
+        let path = format!("/api/tasks/{}/sessions", task_id.0);
+        self.request_json(Method::GET, &path, None::<&()>).await
     }
 
     pub async fn post_message(

@@ -1,8 +1,8 @@
 import type {
   Message,
   Session,
-  SessionHead,
   SessionHeadSnapshot,
+  SessionSnapshot,
   SessionSnapshotSummary,
   SessionTurn,
   WorkspaceActiveSnapshot,
@@ -93,14 +93,14 @@ export const buildDummyWorkspaceSnapshot = (opts: DummyWorkspaceOptions = {}): W
   };
 };
 
-export type DummySessionHeadOptions = {
+export type DummySessionSnapshotOptions = {
   sessionId: string;
   taskId: string;
   workspaceId: string;
   turnCount?: number;
 };
 
-export const buildDummySessionHead = (opts: DummySessionHeadOptions): SessionHead => {
+export const buildDummySessionSnapshot = (opts: DummySessionSnapshotOptions): SessionSnapshot => {
   const turnCount = opts.turnCount ?? 20;
   const session: Session = {
     id: opts.sessionId,
@@ -149,7 +149,7 @@ export const buildDummySessionHead = (opts: DummySessionHeadOptions): SessionHea
     seq += 2;
   }
 
-  return {
+  const head: SessionHeadSnapshot = {
     session,
     turns,
     events: [],
@@ -157,5 +157,18 @@ export const buildDummySessionHead = (opts: DummySessionHeadOptions): SessionHea
     last_event_seq: seq,
     has_more_turns: false,
     has_more_history: false,
+    history_cursor: null,
   };
+
+  const lastMessage = messages[messages.length - 1];
+  const summary: SessionSnapshotSummary = {
+    session,
+    last_message_at: lastMessage?.created_at ?? null,
+    last_message_preview: lastMessage?.content ?? null,
+    last_event_seq: head.last_event_seq,
+    activity: { is_working: false, last_turn_status: null },
+    unread: false,
+  };
+
+  return { summary, head };
 };

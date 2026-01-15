@@ -361,8 +361,8 @@ struct WorkbenchShellView: View {
         }
         _Concurrency.Task {
             do {
-                let head = try await client.getSessionHead(sessionId: sessionId, limit: 200, includeEvents: true)
-                let logText = formatSessionLog(head: head)
+                let snapshot = try await client.getSessionSnapshot(sessionId: sessionId, limit: 200, includeEvents: true)
+                let logText = formatSessionLog(head: snapshot.head)
                 await MainActor.run {
                     sharePayload = SharePayload(items: [logText])
                 }
@@ -385,8 +385,8 @@ struct WorkbenchShellView: View {
         }
         _Concurrency.Task {
             do {
-                let head = try await client.getSessionHead(sessionId: sessionId, limit: 200, includeEvents: true)
-                let logText = formatSessionLog(head: head)
+                let snapshot = try await client.getSessionSnapshot(sessionId: sessionId, limit: 200, includeEvents: true)
+                let logText = formatSessionLog(head: snapshot.head)
                 await MainActor.run {
                     UIPasteboard.general.string = logText
                     topBarAlert = WorkbenchTopBarAlert(title: "Copy Session Log", message: "Session log copied to clipboard.")
