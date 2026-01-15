@@ -536,6 +536,13 @@ impl ShellView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let modifiers = event.keystroke.modifiers;
+        let key = event.keystroke.key.to_lowercase();
+        if key == "b" && (modifiers.platform || modifiers.control) {
+            self.set_sidebar_collapsed(!self.sidebar_collapsed, cx);
+            cx.stop_propagation();
+            return;
+        }
         match event.keystroke.key.as_str() {
             "tab" => {
                 if self.handle_autocomplete_tab(window, cx) {

@@ -45,7 +45,6 @@ impl MessageItem {
 pub(crate) struct SessionInfo {
     pub(crate) title: String,
     pub(crate) status: String,
-    pub(crate) detail: String,
 }
 
 impl SessionInfo {
@@ -53,7 +52,6 @@ impl SessionInfo {
         Self {
             title: "Session".to_string(),
             status: "Idle".to_string(),
-            detail: "Select a task to begin.".to_string(),
         }
     }
 }
@@ -95,13 +93,6 @@ fn session_status_text(status: &SessionStatus, is_working: bool) -> String {
     } else {
         session_status_label(status).to_string()
     }
-}
-
-fn session_detail_text(session: &Session) -> String {
-    format!(
-        "Provider: {} / Model: {} / Role: {}",
-        session.provider_id, session.model_id, session.agent_role
-    )
 }
 
 #[allow(dead_code)]
@@ -302,11 +293,9 @@ pub(crate) fn session_info_from_head(head: &SessionHead) -> SessionInfo {
         head.session.title.clone()
     };
     let status = session_status_text(&head.session.status, head.activity.is_working);
-    let detail = session_detail_text(&head.session);
     SessionInfo {
         title,
         status,
-        detail,
     }
 }
 
@@ -317,11 +306,9 @@ pub(crate) fn session_info_from_summary(summary: &SessionCatchupSummary) -> Sess
         summary.session.title.clone()
     };
     let status = session_status_text(&summary.session.status, summary.activity.is_working);
-    let detail = session_detail_text(&summary.session);
     SessionInfo {
         title,
         status,
-        detail,
     }
 }
 

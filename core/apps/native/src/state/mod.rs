@@ -395,26 +395,6 @@ impl ShellView {
             .unwrap_or(false);
     }
 
-    fn persist_pane_state(&mut self) {
-        let Some(workspace_id) = self.selected_workspace else {
-            return;
-        };
-        if let Some(scope) = self.sessions_pane_scope() {
-            self.ui_state
-                .set_sessions_pane_open(workspace_id, &scope, self.show_sessions_pane);
-        }
-        if let Some(scope) = self.diff_pane_scope() {
-            self.ui_state
-                .set_diff_pane_open(workspace_id, &scope, self.show_diff_pane);
-        }
-        if let Some(scope) = self.artifacts_pane_scope() {
-            self.ui_state
-                .set_artifacts_pane_open(workspace_id, &scope, self.show_artifacts_pane);
-        }
-        self.ui_state
-            .set_terminal_panel_open(workspace_id, self.show_terminal_panel);
-    }
-
     #[cfg(feature = "automation")]
     #[allow(dead_code)]
     pub(crate) fn archived_ready(&self) -> bool {
@@ -478,63 +458,6 @@ impl ShellView {
             }
         });
         self.relative_time_task = Some(update_task);
-    }
-
-    pub(crate) fn toggle_sessions_pane(
-        &mut self,
-        _: &ClickEvent,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let next = !self.show_sessions_pane;
-        self.show_sessions_pane = next;
-        if next {
-            self.show_diff_pane = false;
-            self.show_artifacts_pane = false;
-        }
-        self.persist_pane_state();
-        cx.notify();
-    }
-
-    pub(crate) fn toggle_diff_pane(
-        &mut self,
-        _: &ClickEvent,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let next = !self.show_diff_pane;
-        self.show_diff_pane = next;
-        if next {
-            self.show_sessions_pane = false;
-        }
-        self.persist_pane_state();
-        cx.notify();
-    }
-
-    pub(crate) fn toggle_artifacts_pane(
-        &mut self,
-        _: &ClickEvent,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let next = !self.show_artifacts_pane;
-        self.show_artifacts_pane = next;
-        if next {
-            self.show_sessions_pane = false;
-        }
-        self.persist_pane_state();
-        cx.notify();
-    }
-
-    pub(crate) fn toggle_terminal_panel(
-        &mut self,
-        _: &ClickEvent,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.show_terminal_panel = !self.show_terminal_panel;
-        self.persist_pane_state();
-        cx.notify();
     }
 
     pub(crate) fn sync_auxiliary_panes(&mut self, cx: &mut Context<Self>) {
