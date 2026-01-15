@@ -6,8 +6,8 @@ use chrono::{DateTime, Utc};
 use regex::Regex;
 use ctx_core::ids::{MessageId, TurnId};
 use ctx_core::models::{
-    Artifact, Message, MessageDelivery, MessageRole, Session, SessionCatchupSummary,
-    SessionEvent, SessionEventType, SessionHead, SessionHistoryPage, SessionStatus, SessionTurn,
+    Artifact, Message, MessageDelivery, MessageRole, SessionCatchupSummary, SessionEvent,
+    SessionEventType, SessionHead, SessionHistoryPage, SessionStatus, SessionTurn,
     SessionTurnStatus, SessionTurnTool, SessionTurnToolSummary,
 };
 use serde::Serialize;
