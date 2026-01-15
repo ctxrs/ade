@@ -109,6 +109,18 @@ impl UiStateStore {
             .copied()
     }
 
+    pub(crate) fn set_sessions_pane_open(
+        &mut self,
+        workspace_id: WorkspaceId,
+        scope: &str,
+        open: bool,
+    ) {
+        self.state
+            .sessions_pane_open_by_scope
+            .insert(workspace_scope_key(workspace_id, scope), open);
+        self.save();
+    }
+
     pub(crate) fn diff_pane_open(
         &self,
         workspace_id: WorkspaceId,
@@ -118,6 +130,18 @@ impl UiStateStore {
             .diff_pane_open_by_scope
             .get(&workspace_scope_key(workspace_id, scope))
             .copied()
+    }
+
+    pub(crate) fn set_diff_pane_open(
+        &mut self,
+        workspace_id: WorkspaceId,
+        scope: &str,
+        open: bool,
+    ) {
+        self.state
+            .diff_pane_open_by_scope
+            .insert(workspace_scope_key(workspace_id, scope), open);
+        self.save();
     }
 
     pub(crate) fn artifacts_pane_open(
@@ -131,11 +155,30 @@ impl UiStateStore {
             .copied()
     }
 
+    pub(crate) fn set_artifacts_pane_open(
+        &mut self,
+        workspace_id: WorkspaceId,
+        scope: &str,
+        open: bool,
+    ) {
+        self.state
+            .artifacts_pane_open_by_scope
+            .insert(workspace_scope_key(workspace_id, scope), open);
+        self.save();
+    }
+
     pub(crate) fn terminal_panel_open(&self, workspace_id: WorkspaceId) -> Option<bool> {
         self.state
             .terminal_panel_open_by_workspace
             .get(&workspace_key(workspace_id))
             .copied()
+    }
+
+    pub(crate) fn set_terminal_panel_open(&mut self, workspace_id: WorkspaceId, open: bool) {
+        self.state
+            .terminal_panel_open_by_workspace
+            .insert(workspace_key(workspace_id), open);
+        self.save();
     }
 
     #[allow(dead_code)]

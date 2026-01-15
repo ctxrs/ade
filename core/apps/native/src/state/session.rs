@@ -72,12 +72,14 @@ const SESSION_HISTORY_PREFETCH_THRESHOLD: usize = 6;
 #[derive(Clone, Copy)]
 enum SessionControlAction {
     Interrupt,
+    Cancel,
 }
 
 impl SessionControlAction {
     fn failure_message(self) -> &'static str {
         match self {
             SessionControlAction::Interrupt => "Unable to interrupt session.",
+            SessionControlAction::Cancel => "Unable to cancel session.",
         }
     }
 }
@@ -110,6 +112,15 @@ impl ShellView {
         self.request_session_control(SessionControlAction::Interrupt, cx);
     }
 
+    pub(crate) fn on_cancel_click(
+        &mut self,
+        _: &ClickEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.request_session_control(SessionControlAction::Cancel, cx);
+    }
+
     pub(crate) fn on_jump_to_latest_click(
         &mut self,
         _: &ClickEvent,
@@ -132,6 +143,7 @@ impl ShellView {
             let client = ctx_client::Client::new(config)?;
             match action {
                 SessionControlAction::Interrupt => client.interrupt_session(session_id).await?,
+                SessionControlAction::Cancel => client.cancel_session(session_id).await?,
             }
             Ok(session_id)
         });

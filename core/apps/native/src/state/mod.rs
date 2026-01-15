@@ -393,6 +393,26 @@ impl ShellView {
             .unwrap_or(false);
     }
 
+    fn persist_pane_state(&mut self) {
+        let Some(workspace_id) = self.selected_workspace else {
+            return;
+        };
+        if let Some(scope) = self.sessions_pane_scope() {
+            self.ui_state
+                .set_sessions_pane_open(workspace_id, &scope, self.show_sessions_pane);
+        }
+        if let Some(scope) = self.diff_pane_scope() {
+            self.ui_state
+                .set_diff_pane_open(workspace_id, &scope, self.show_diff_pane);
+        }
+        if let Some(scope) = self.artifacts_pane_scope() {
+            self.ui_state
+                .set_artifacts_pane_open(workspace_id, &scope, self.show_artifacts_pane);
+        }
+        self.ui_state
+            .set_terminal_panel_open(workspace_id, self.show_terminal_panel);
+    }
+
     #[cfg(feature = "automation")]
     #[allow(dead_code)]
     pub(crate) fn archived_ready(&self) -> bool {

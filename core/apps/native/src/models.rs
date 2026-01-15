@@ -7,8 +7,8 @@ use regex::Regex;
 use ctx_core::ids::{MessageId, TurnId};
 use ctx_core::models::{
     Artifact, Message, MessageDelivery, MessageRole, SessionEvent, SessionEventType,
-    SessionHeadSnapshot, SessionHistoryPage, SessionSnapshotSummary, SessionStatus, SessionTurn,
-    SessionTurnStatus, SessionTurnTool, SessionTurnToolSummary,
+    SessionHeadSnapshot, SessionHistoryPage, SessionMetadata, SessionSnapshotSummary,
+    SessionStatus, SessionTurn, SessionTurnStatus, SessionTurnTool, SessionTurnToolSummary,
 };
 use serde::Serialize;
 use serde_json::Value;
@@ -45,6 +45,7 @@ impl MessageItem {
 pub(crate) struct SessionInfo {
     pub(crate) title: String,
     pub(crate) status: String,
+    pub(crate) detail: String,
 }
 
 impl SessionInfo {
@@ -52,6 +53,7 @@ impl SessionInfo {
         Self {
             title: "Session".to_string(),
             status: "Idle".to_string(),
+            detail: String::new(),
         }
     }
 }
@@ -93,6 +95,13 @@ fn session_status_text(status: &SessionStatus, is_working: bool) -> String {
     } else {
         session_status_label(status).to_string()
     }
+}
+
+fn session_detail_text(session: &SessionMetadata) -> String {
+    format!(
+        "Provider: {} / Model: {} / Role: {}",
+        session.provider_id, session.model_id, session.agent_role
+    )
 }
 #[allow(dead_code)]
 pub(crate) fn session_event_type_label(event_type: &SessionEventType) -> &'static str {
@@ -292,9 +301,11 @@ pub(crate) fn session_info_from_head(head: &SessionHeadSnapshot) -> SessionInfo 
         head.session.title.clone()
     };
     let status = session_status_text(&head.session.status, head.activity.is_working);
+    let detail = session_detail_text(&head.session);
     SessionInfo {
         title,
         status,
+        detail,
     }
 }
 
@@ -305,9 +316,11 @@ pub(crate) fn session_info_from_summary(summary: &SessionSnapshotSummary) -> Ses
         summary.session.title.clone()
     };
     let status = session_status_text(&summary.session.status, summary.activity.is_working);
+    let detail = session_detail_text(&summary.session);
     SessionInfo {
         title,
         status,
+        detail,
     }
 }
 

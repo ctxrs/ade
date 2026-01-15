@@ -3588,8 +3588,6 @@ impl Store {
             tool_summaries,
             events,
             messages,
-            head_window: Some(turn_ids.len() as i64),
-            summary_checkpoint: None,
             last_event_seq,
             activity,
             has_more_turns,
