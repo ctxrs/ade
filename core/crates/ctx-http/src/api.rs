@@ -14592,7 +14592,7 @@ async fn launch_gcp_gateway_inner(
     }
 
     let gcp_auth = gcp_provider().await.context("gcp auth init")?;
-    let gcp_client = GcpApiClient::new(Arc::new(gcp_auth));
+    let gcp_client = GcpApiClient::new(gcp_auth);
 
     let bucket = if let Some(existing) = gcp
         .artifact_bucket
@@ -15537,10 +15537,8 @@ fn generate_gateway_token() -> String {
 fn generate_gateway_tls_material() -> anyhow::Result<(String, String)> {
     let cert = generate_simple_self_signed(vec!["ctx-gateway".to_string()])
         .context("generate gateway certificate")?;
-    let cert_pem = cert
-        .serialize_pem()
-        .context("serialize gateway certificate")?;
-    let key_pem = cert.serialize_private_key_pem();
+    let cert_pem = cert.cert.pem();
+    let key_pem = cert.key_pair.serialize_pem();
     Ok((cert_pem, key_pem))
 }
 
@@ -15597,8 +15595,8 @@ async fn resolve_subnet_and_vpc(
         .send()
         .await
         .context("describe_subnets")?;
-    let subnet = if let Some(subnet) = subnet_resp.subnets().first() {
-        subnet
+    let subnet_id = if let Some(subnet) = subnet_resp.subnets().first() {
+        subnet.subnet_id().context("subnet missing id")?.to_string()
     } else {
         let fallback = ec2
             .describe_subnets()
@@ -15610,9 +15608,11 @@ async fn resolve_subnet_and_vpc(
             .subnets()
             .first()
             .context("default subnet not found")?
+            .subnet_id()
+            .context("subnet missing id")?
+            .to_string()
     };
-    let subnet_id = subnet.subnet_id().context("subnet missing id")?;
-    Ok((subnet_id.to_string(), vpc_id.to_string()))
+    Ok((subnet_id, vpc_id.to_string()))
 }
 
 #[allow(dead_code)]
@@ -15766,7 +15766,7 @@ async fn ensure_bucket(s3: &S3Client, bucket: &str, region: &str) -> anyhow::Res
 
     let mut create = s3.create_bucket().bucket(bucket);
     if region != "us-east-1" {
-        let location = BucketLocationConstraint::from(region.to_string());
+        let location = BucketLocationConstraint::from(region);
         create = create.create_bucket_configuration(
             aws_sdk_s3::types::CreateBucketConfiguration::builder()
                 .location_constraint(location)

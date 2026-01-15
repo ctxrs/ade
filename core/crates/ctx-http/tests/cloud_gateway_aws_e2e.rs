@@ -6,6 +6,8 @@ use anyhow::{Context, Result};
 use aws_config::Region;
 use aws_credential_types::Credentials;
 use aws_sdk_ec2::Client as Ec2Client;
+use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION};
+use reqwest::Certificate;
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde_json::json;
@@ -59,6 +61,23 @@ async fn wait_for_daemon(base: &str) -> Result<()> {
     anyhow::bail!("daemon did not become healthy")
 }
 
+async fn load_daemon_auth_token(data_root: &Path) -> Result<String> {
+    let path = data_root.join("daemon_auth.json");
+    for _ in 0..50 {
+        if let Ok(contents) = tokio::fs::read_to_string(&path).await {
+            if let Ok(value) = serde_json::from_str::<serde_json::Value>(&contents) {
+                if let Some(token) = value.get("token").and_then(|v| v.as_str()) {
+                    if !token.trim().is_empty() {
+                        return Ok(token.trim().to_string());
+                    }
+                }
+            }
+        }
+        sleep(Duration::from_millis(200)).await;
+    }
+    anyhow::bail!("daemon auth token not found")
+}
+
 async fn git_remote_origin(root: &Path) -> Option<String> {
     let output = Command::new("git")
         .arg("-C")
@@ -79,6 +98,8 @@ async fn write_settings(data_root: &Path, aws: AwsCloudWorkersSettings) -> Resul
         cloud_workers: Some(CloudWorkersSettings {
             gateway: None,
             aws: Some(aws),
+            gcp: None,
+            azure: None,
         }),
         ..DaemonSettings::default()
     };
@@ -92,7 +113,11 @@ async fn write_settings(data_root: &Path, aws: AwsCloudWorkersSettings) -> Resul
 
 async fn send_json<T: DeserializeOwned>(request: reqwest::RequestBuilder) -> Result<T> {
     let resp = request.send().await.context("request failed")?;
-    let resp = resp.error_for_status().context("request failed")?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        anyhow::bail!("request failed ({status}): {body}");
+    }
     resp.json::<T>().await.context("parsing response json")
 }
 
@@ -110,9 +135,11 @@ async fn wait_for_assistant_reply(
         )
         .await?;
 
-        if head.messages.iter().any(|msg| {
-            msg.role == MessageRole::Assistant && msg.content.contains(ASSISTANT_EXPECTED)
-        }) {
+        if head
+            .messages
+            .iter()
+            .any(|msg| matches!(msg.role, MessageRole::Assistant) && msg.content.contains(ASSISTANT_EXPECTED))
+        {
             return Ok(());
         }
 
@@ -129,6 +156,27 @@ async fn wait_for_assistant_reply(
         }
         sleep(Duration::from_secs(2)).await;
     }
+}
+
+async fn wait_for_gateway_health(gateway: &CloudGatewaySettings) -> Result<()> {
+    let health_url = format!("{}/health", gateway.gateway_url.trim_end_matches('/'));
+    let mut builder = reqwest::Client::builder();
+    if let Some(pem) = gateway.gateway_ca_pem.as_deref() {
+        let cert = Certificate::from_pem(pem.as_bytes()).context("gateway CA PEM invalid")?;
+        builder = builder
+            .add_root_certificate(cert)
+            .danger_accept_invalid_hostnames(true);
+    }
+    let client = builder.build().context("building gateway client")?;
+    for _ in 0..60 {
+        if let Ok(resp) = client.get(&health_url).send().await {
+            if resp.status().is_success() {
+                return Ok(());
+            }
+        }
+        sleep(Duration::from_secs(2)).await;
+    }
+    anyhow::bail!("gateway did not become healthy")
 }
 
 async fn aws_sdk_config(
@@ -251,7 +299,7 @@ async fn cloud_gateway_aws_e2e() -> Result<()> {
     let mut gateway = None;
     let mut worker = None;
     let base_url = format!("http://127.0.0.1:{port}");
-    let client = reqwest::Client::new();
+    let mut client: Option<reqwest::Client> = None;
     let session_token = env_trim("AWS_SESSION_TOKEN");
 
     let test_result: Result<()> = async {
@@ -270,6 +318,20 @@ async fn cloud_gateway_aws_e2e() -> Result<()> {
         daemon = Some(child);
 
         wait_for_daemon(&base_url).await?;
+
+        let auth_token = load_daemon_auth_token(data_dir.path()).await?;
+        let mut headers = HeaderMap::new();
+        let header_value = format!("Bearer {}", auth_token);
+        headers.insert(
+            AUTHORIZATION,
+            HeaderValue::from_str(&header_value).context("invalid auth header")?,
+        );
+        let client_inner = reqwest::Client::builder()
+            .default_headers(headers)
+            .build()
+            .context("building http client")?;
+        client = Some(client_inner);
+        let client = client.as_ref().context("http client missing")?;
 
         let ws: Workspace = send_json(client.post(format!("{base_url}/api/workspaces")).json(
             &json!({"root_path": workspace_root.to_string_lossy(), "name": "aws-gateway-e2e"}),
@@ -296,10 +358,11 @@ async fn cloud_gateway_aws_e2e() -> Result<()> {
         let gateway_resp: AwsGatewayLaunchResp = send_json(
             client
                 .post(format!("{base_url}/api/cloud_workers/aws/gateway/launch"))
-                .json(&json!({})),
+                .json(&json!({ "workspace_id": ws.id.0 })),
         )
         .await?;
         gateway = Some(gateway_resp.gateway.clone());
+        wait_for_gateway_health(&gateway_resp.gateway).await?;
 
         let track_worker: TrackWorker = send_json(
             client
@@ -343,7 +406,7 @@ async fn cloud_gateway_aws_e2e() -> Result<()> {
     .await;
 
     let mut cleanup_errors = Vec::new();
-    if let Some(track_worker) = worker.as_ref() {
+    if let (Some(track_worker), Some(client)) = (worker.as_ref(), client.as_ref()) {
         let resp = client
             .delete(format!(
                 "{base_url}/api/tracks/{}/worker",
