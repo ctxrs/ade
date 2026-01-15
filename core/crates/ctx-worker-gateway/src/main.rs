@@ -14,10 +14,11 @@ use axum::routing::{get, post};
 use axum::Json;
 use axum::Router;
 use axum_server::tls_rustls::RustlsConfig;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use clap::Parser;
 use futures_util::{SinkExt, StreamExt};
 use tokio::sync::{mpsc, Mutex, RwLock};
+use tokio::time::{interval, Duration};
 use tracing::{debug, error, info};
 
 use ctx_worker_protocol::{
@@ -574,6 +575,8 @@ struct WorkerRecord {
     last_diff: Option<DiffArtifact>,
     ssh: Option<ctx_worker_protocol::SshInfo>,
     acp_log_dir: Option<String>,
+    paused_at: Option<DateTime<Utc>>,
+    snapshot_expires_at: Option<DateTime<Utc>>,
 }
 
 #[tokio::main]
@@ -741,6 +744,7 @@ async fn main() -> Result<()> {
         relays: Arc::new(RwLock::new(HashMap::new())),
         terminal_relays: Arc::new(RwLock::new(HashMap::new())),
     };
+    spawn_snapshot_reaper(state.clone());
 
     let app = Router::new()
         .route("/workers", post(start_worker))
@@ -944,6 +948,8 @@ async fn start_worker(
         last_diff: None,
         ssh: None,
         acp_log_dir: None,
+        paused_at: None,
+        snapshot_expires_at: None,
     };
 
     {
@@ -1017,7 +1023,7 @@ async fn pause_worker(
             Json(ErrorResponse::new("failed_to_pause")),
         ));
     }
-    update_state(&state, &id, WorkerState::Paused).await;
+    mark_paused(&state, &id).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -1556,6 +1562,10 @@ async fn update_state(state: &AppState, worker_id: &str, new_state: WorkerState)
     if let Some(record) = workers.get_mut(worker_id) {
         record.state = new_state;
         record.updated_at = Utc::now();
+        if !matches!(record.state, WorkerState::Paused) {
+            record.paused_at = None;
+            record.snapshot_expires_at = None;
+        }
     }
 }
 
@@ -1572,6 +1582,25 @@ async fn update_state_with_ssh(
             record.ssh = ssh;
         }
         record.updated_at = Utc::now();
+        if !matches!(record.state, WorkerState::Paused) {
+            record.paused_at = None;
+            record.snapshot_expires_at = None;
+        }
+    }
+}
+
+async fn mark_paused(state: &AppState, worker_id: &str) {
+    let mut workers = state.store.workers.write().await;
+    if let Some(record) = workers.get_mut(worker_id) {
+        let now = Utc::now();
+        record.state = WorkerState::Paused;
+        record.updated_at = now;
+        record.paused_at = Some(now);
+        record.snapshot_expires_at = record
+            .spec
+            .snapshot_ttl_seconds
+            .filter(|ttl| *ttl > 0)
+            .map(|ttl| now + ChronoDuration::seconds(ttl as i64));
     }
 }
 
@@ -1582,6 +1611,42 @@ async fn ensure_exists(
     let workers = state.store.workers.read().await;
     workers.get(worker_id).ok_or_else(not_found)?;
     Ok(())
+}
+
+fn spawn_snapshot_reaper(state: AppState) {
+    tokio::spawn(async move {
+        let mut tick = interval(Duration::from_secs(60));
+        loop {
+            tick.tick().await;
+            let now = Utc::now();
+            let expired_ids: Vec<String> = {
+                let workers = state.store.workers.read().await;
+                workers
+                    .iter()
+                    .filter_map(|(id, record)| {
+                        if record.state != WorkerState::Paused {
+                            return None;
+                        }
+                        let expires_at = record.snapshot_expires_at?;
+                        if expires_at <= now {
+                            Some(id.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect()
+            };
+
+            for worker_id in expired_ids {
+                info!("snapshot TTL expired for worker {worker_id}, stopping");
+                if let Err(err) = state.driver.stop(&worker_id).await {
+                    error!("failed to stop expired worker {worker_id}: {err:#}");
+                    continue;
+                }
+                update_state(&state, &worker_id, WorkerState::Stopped).await;
+            }
+        }
+    });
 }
 
 async fn get_request_spec(

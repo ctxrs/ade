@@ -533,6 +533,21 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
             "/api/sessions/:id/ask_user_question",
             post(submit_ask_user_question),
         )
+        .route("/api/tracks/:id/diff", get(track_diff))
+        .route("/api/tracks/:id/diff_summary", get(track_diff_summary))
+        .route("/api/tracks/:id/diff/apply", post(track_diff_apply))
+        .route(
+            "/api/tracks/:id/worker",
+            get(get_track_worker)
+                .post(start_track_worker)
+                .delete(delete_track_worker),
+        )
+        .route("/api/tracks/:id/worker/pause", post(pause_track_worker))
+        .route("/api/tracks/:id/worker/resume", post(resume_track_worker))
+        .route(
+            "/api/tracks/:id/cloud_worker",
+            post(start_track_cloud_worker),
+        )
         .route(
             "/api/cloud_workers/aws/gateway/launch",
             post(launch_aws_gateway),
@@ -15688,6 +15703,144 @@ async fn delete_track_worker(
                 )
             })?;
     }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn pause_track_worker(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<StatusCode, (StatusCode, Json<ApiErrorResp>)> {
+    let track_id = TrackId(uuid::Uuid::parse_str(&id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid track id".to_string(),
+            }),
+        )
+    })?);
+    let worker = state.store.get_track_worker(track_id).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResp {
+                error: e.to_string(),
+            }),
+        )
+    })?;
+    let Some(worker) = worker else {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "track worker not found".to_string(),
+            }),
+        ));
+    };
+
+    let url = format!(
+        "{}/workers/{}/pause",
+        worker.gateway_url.trim_end_matches('/'),
+        worker.worker_id
+    );
+    let settings = user_settings::load_settings(&state.data_root).await;
+    let gateway_ca_pem = resolve_gateway_ca_pem(&settings);
+    let gateway_token = resolve_gateway_token(&settings);
+    let client = build_gateway_client(gateway_ca_pem.as_deref()).map_err(|e| {
+        (
+            StatusCode::BAD_GATEWAY,
+            Json(ApiErrorResp {
+                error: e.to_string(),
+            }),
+        )
+    })?;
+    let mut request = client.post(url);
+    if let Some(token) = gateway_token.as_deref() {
+        request = request.header("x-ctx-gateway-token", token);
+    }
+    let resp = request.send().await.map_err(|e| {
+        (
+            StatusCode::BAD_GATEWAY,
+            Json(ApiErrorResp {
+                error: e.to_string(),
+            }),
+        )
+    })?;
+    if !resp.status().is_success() {
+        return Err((
+            StatusCode::BAD_GATEWAY,
+            Json(ApiErrorResp {
+                error: format!("gateway pause failed: {}", resp.status()),
+            }),
+        ));
+    }
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn resume_track_worker(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<StatusCode, (StatusCode, Json<ApiErrorResp>)> {
+    let track_id = TrackId(uuid::Uuid::parse_str(&id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid track id".to_string(),
+            }),
+        )
+    })?);
+    let worker = state.store.get_track_worker(track_id).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResp {
+                error: e.to_string(),
+            }),
+        )
+    })?;
+    let Some(worker) = worker else {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "track worker not found".to_string(),
+            }),
+        ));
+    };
+
+    let url = format!(
+        "{}/workers/{}/resume",
+        worker.gateway_url.trim_end_matches('/'),
+        worker.worker_id
+    );
+    let settings = user_settings::load_settings(&state.data_root).await;
+    let gateway_ca_pem = resolve_gateway_ca_pem(&settings);
+    let gateway_token = resolve_gateway_token(&settings);
+    let client = build_gateway_client(gateway_ca_pem.as_deref()).map_err(|e| {
+        (
+            StatusCode::BAD_GATEWAY,
+            Json(ApiErrorResp {
+                error: e.to_string(),
+            }),
+        )
+    })?;
+    let mut request = client.post(url);
+    if let Some(token) = gateway_token.as_deref() {
+        request = request.header("x-ctx-gateway-token", token);
+    }
+    let resp = request.send().await.map_err(|e| {
+        (
+            StatusCode::BAD_GATEWAY,
+            Json(ApiErrorResp {
+                error: e.to_string(),
+            }),
+        )
+    })?;
+    if !resp.status().is_success() {
+        return Err((
+            StatusCode::BAD_GATEWAY,
+            Json(ApiErrorResp {
+                error: format!("gateway resume failed: {}", resp.status()),
+            }),
+        ));
+    }
+
     Ok(StatusCode::NO_CONTENT)
 }
 
