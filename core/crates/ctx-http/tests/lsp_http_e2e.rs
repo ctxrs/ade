@@ -76,7 +76,7 @@ async fn lsp_diagnostics_endpoint_returns_diagnostics() {
         },
         false,
     ));
-    state.start_workspace_catchup_listener();
+    state.start_workspace_active_snapshot_listener();
     let app = api::router(state.clone());
 
     let repo = setup_git_repo().await;
@@ -125,16 +125,16 @@ async fn lsp_diagnostics_endpoint_returns_diagnostics() {
     let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
     let session: ctx_core::models::Session = serde_json::from_slice(&body).unwrap();
 
-    // fetch workspace catchup to verify the session is visible
+    // fetch workspace active snapshot to verify the session is visible
     let req = Request::builder()
         .method("GET")
-        .uri(format!("/api/workspaces/{}/catchup", ws.id.0))
+        .uri(format!("/api/workspaces/{}/active_snapshot", ws.id.0))
         .body(Body::empty())
         .unwrap();
     let res = app.clone().oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::OK);
     let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
-    let snapshot: ctx_core::models::WorkspaceCatchupSnapshot =
+    let snapshot: ctx_core::models::WorkspaceActiveSnapshot =
         serde_json::from_slice(&body).unwrap();
     snapshot
         .active
@@ -142,12 +142,15 @@ async fn lsp_diagnostics_endpoint_returns_diagnostics() {
         .iter()
         .find(|summary| summary.task.id == task.id)
         .and_then(|summary| {
+            if summary.primary_session.session.id == session.id {
+                return Some(&summary.primary_session);
+            }
             summary
                 .sessions
                 .iter()
                 .find(|candidate| candidate.session.id == session.id)
         })
-        .expect("session missing from catchup");
+        .expect("session missing from active snapshot");
 
     let wt = state
         .store
@@ -222,7 +225,7 @@ async fn lsp_status_endpoint_returns_expected_shape() {
         },
         true,
     ));
-    state.start_workspace_catchup_listener();
+    state.start_workspace_active_snapshot_listener();
     let app = api::router(state);
 
     let req = Request::builder()
@@ -295,7 +298,7 @@ async fn lsp_semantic_endpoints_return_payloads() {
         },
         false,
     ));
-    state.start_workspace_catchup_listener();
+    state.start_workspace_active_snapshot_listener();
     let app = api::router(state.clone());
 
     let repo = setup_git_repo().await;
@@ -344,16 +347,16 @@ async fn lsp_semantic_endpoints_return_payloads() {
     let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
     let session: ctx_core::models::Session = serde_json::from_slice(&body).unwrap();
 
-    // fetch workspace catchup to verify the session is visible
+    // fetch workspace active snapshot to verify the session is visible
     let req = Request::builder()
         .method("GET")
-        .uri(format!("/api/workspaces/{}/catchup", ws.id.0))
+        .uri(format!("/api/workspaces/{}/active_snapshot", ws.id.0))
         .body(Body::empty())
         .unwrap();
     let res = app.clone().oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::OK);
     let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
-    let snapshot: ctx_core::models::WorkspaceCatchupSnapshot =
+    let snapshot: ctx_core::models::WorkspaceActiveSnapshot =
         serde_json::from_slice(&body).unwrap();
     snapshot
         .active
@@ -361,12 +364,15 @@ async fn lsp_semantic_endpoints_return_payloads() {
         .iter()
         .find(|summary| summary.task.id == task.id)
         .and_then(|summary| {
+            if summary.primary_session.session.id == session.id {
+                return Some(&summary.primary_session);
+            }
             summary
                 .sessions
                 .iter()
                 .find(|candidate| candidate.session.id == session.id)
         })
-        .expect("session missing from catchup");
+        .expect("session missing from active snapshot");
 
     let wt = state
         .store
@@ -441,7 +447,7 @@ async fn lsp_text_only_agent_endpoints_return_payloads() {
         },
         false,
     ));
-    state.start_workspace_catchup_listener();
+    state.start_workspace_active_snapshot_listener();
     let app = api::router(state.clone());
 
     let repo = setup_git_repo().await;
@@ -490,16 +496,16 @@ async fn lsp_text_only_agent_endpoints_return_payloads() {
     let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
     let session: ctx_core::models::Session = serde_json::from_slice(&body).unwrap();
 
-    // fetch workspace catchup to verify the session is visible
+    // fetch workspace active snapshot to verify the session is visible
     let req = Request::builder()
         .method("GET")
-        .uri(format!("/api/workspaces/{}/catchup", ws.id.0))
+        .uri(format!("/api/workspaces/{}/active_snapshot", ws.id.0))
         .body(Body::empty())
         .unwrap();
     let res = app.clone().oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::OK);
     let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
-    let snapshot: ctx_core::models::WorkspaceCatchupSnapshot =
+    let snapshot: ctx_core::models::WorkspaceActiveSnapshot =
         serde_json::from_slice(&body).unwrap();
     snapshot
         .active
@@ -507,12 +513,15 @@ async fn lsp_text_only_agent_endpoints_return_payloads() {
         .iter()
         .find(|summary| summary.task.id == task.id)
         .and_then(|summary| {
+            if summary.primary_session.session.id == session.id {
+                return Some(&summary.primary_session);
+            }
             summary
                 .sessions
                 .iter()
                 .find(|candidate| candidate.session.id == session.id)
         })
-        .expect("session missing from catchup");
+        .expect("session missing from active snapshot");
 
     let wt = state
         .store

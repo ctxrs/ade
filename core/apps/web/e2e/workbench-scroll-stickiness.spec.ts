@@ -52,7 +52,7 @@ test("workbench: sticks to bottom unless the user scrolls away", async ({ page, 
   let sessionId = "";
   await expect
     .poll(async () => {
-      const resp = await request.get(`/api/workspaces/${seed.workspaceId}/catchup`);
+      const resp = await request.get(`/api/workspaces/${seed.workspaceId}/active_snapshot`);
       if (!resp.ok()) return "";
       const snapshot = (await resp.json()) as any;
       const taskSummary = snapshot?.active?.tasks?.[0];

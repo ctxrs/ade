@@ -12,7 +12,7 @@ test("workbench: replay restores missed assistant message after stream drop", as
     }
     await route.continue();
   });
-  await page.route("**/api/workspaces/*/catchup**", async (route) => {
+  await page.route("**/api/workspaces/*/active_snapshot**", async (route) => {
     if (blockCatchup) {
       await new Promise((resolve) => setTimeout(resolve, 25000));
     }
@@ -39,7 +39,7 @@ test("workbench: replay restores missed assistant message after stream drop", as
         // @ts-expect-error - runtime shim
         super(url, protocols);
         const u = String(url ?? "");
-        if (!u.includes("/api/workspaces/") || !u.includes("/stream")) return;
+        if (!u.includes("/api/workspaces/") || !u.includes("/active_snapshot/stream")) return;
         (window as any).__contextLastStreamWs = this;
         const originalAddEventListener = this.addEventListener.bind(this);
         this.addEventListener = (type: any, listener: any, options?: any) => {

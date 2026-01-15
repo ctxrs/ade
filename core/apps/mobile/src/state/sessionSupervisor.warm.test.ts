@@ -29,7 +29,6 @@ const conn = { baseUrl: "https://example.com", token: "test-token" };
 const mkHead = (sessionId: string) => ({
   session: {
     id: sessionId,
-    track_id: `track-${sessionId}`,
     task_id: "task-1",
     workspace_id: "ws-1",
     worktree_id: "wt-1",
@@ -44,6 +43,7 @@ const mkHead = (sessionId: string) => ({
   messages: [],
   last_event_seq: 0,
   has_more_turns: false,
+  has_more_history: false,
 });
 
 describe("SessionSupervisor warm heads", () => {

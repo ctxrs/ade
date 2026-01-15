@@ -28,9 +28,8 @@ import { SessionSupervisor } from "./sessionSupervisor";
 
 const conn = { baseUrl: "https://example.com", token: "test-token" };
 
-const mkSession = (sessionId, trackId) => ({
+const mkSession = (sessionId) => ({
   id: sessionId,
-  track_id: trackId,
   task_id: "task-1",
   workspace_id: "ws-1",
   worktree_id: "wt-1",
@@ -58,7 +57,6 @@ describe("SessionSupervisor", () => {
 
   it("hydrates session head and derives queue from queued messages", async () => {
     const sessionId = "session-1";
-    const trackId = "track-1";
 
     const headMessages = [
       {
@@ -72,12 +70,13 @@ describe("SessionSupervisor", () => {
     ];
 
     vi.mocked(getSessionHead).mockResolvedValue({
-      session: mkSession(sessionId, trackId),
+      session: mkSession(sessionId),
       turns: [],
       events: [],
       messages: headMessages,
       last_event_seq: 1,
       has_more_turns: false,
+      has_more_history: false,
     });
 
     const sup = new SessionSupervisor(conn);
@@ -95,11 +94,9 @@ describe("SessionSupervisor", () => {
 
   it("uses cached head to avoid refetch", async () => {
     const sessionId = "session-cache";
-    const trackId = "track-cache";
 
     const cachedHead = buildDummySessionHead({
       sessionId,
-      trackId,
       taskId: "task-cache",
       workspaceId: "ws-cache",
       turnCount: 5,
@@ -127,15 +124,15 @@ describe("SessionSupervisor", () => {
 
   it("applies session head deltas from workspace stream", async () => {
     const sessionId = "session-2";
-    const trackId = "track-2";
 
     vi.mocked(getSessionHead).mockResolvedValue({
-      session: mkSession(sessionId, trackId),
+      session: mkSession(sessionId),
       turns: [],
       events: [],
       messages: [],
       last_event_seq: 0,
       has_more_turns: false,
+      has_more_history: false,
     });
 
     const sup = new SessionSupervisor(conn);
@@ -147,6 +144,7 @@ describe("SessionSupervisor", () => {
         listeners.add(listener);
         return () => listeners.delete(listener);
       },
+      setSubscriptions: () => {},
       getSnapshot: () => ({
         workspaceId: "ws-1",
         initialized: true,

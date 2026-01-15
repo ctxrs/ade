@@ -4,7 +4,7 @@ import { tmpdir } from "os";
 import path from "path";
 import { execSync } from "child_process";
 
-test("workbench catchup snapshot+stream keeps network lean", async ({ page }) => {
+test("workbench active snapshot stream keeps network lean", async ({ page }) => {
   const repo = mkdtempSync(path.join(tmpdir(), "ctx-e2e-"));
   execSync("git init", { cwd: repo });
   execSync("git config user.email test@example.com", { cwd: repo });
@@ -29,10 +29,12 @@ test("workbench catchup snapshot+stream keeps network lean", async ({ page }) =>
     .getByRole("listitem")
     .filter({ hasText: repo })
     .getByRole("link", { name: workspaceName });
-  const catchupPromise = page.waitForResponse((resp) => /\/api\/workspaces\/[^/]+\/catchup/.test(resp.url()));
+  const snapshotPromise = page.waitForResponse((resp) =>
+    /\/api\/workspaces\/[^/]+\/active_snapshot/.test(resp.url()),
+  );
   await workspaceLink.click();
   await page.waitForURL(/\/workspaces\/[^/]+$/);
-  await catchupPromise;
+  await snapshotPromise;
 
   const url = new URL(page.url());
   const workspaceId = url.pathname.split("/").pop() ?? "";
@@ -41,10 +43,10 @@ test("workbench catchup snapshot+stream keeps network lean", async ({ page }) =>
   const apiRequests = requests.filter((r) => r.url.includes("/api/"));
   expect(apiRequests.length).toBeLessThanOrEqual(30);
 
-  const catchupRequests = apiRequests.filter((r) =>
-    r.method === "GET" && r.url.includes(`/api/workspaces/${workspaceId}/catchup`),
+  const snapshotRequests = apiRequests.filter((r) =>
+    r.method === "GET" && r.url.includes(`/api/workspaces/${workspaceId}/active_snapshot`),
   );
-  expect(catchupRequests.length).toBeGreaterThanOrEqual(1);
+  expect(snapshotRequests.length).toBeGreaterThanOrEqual(1);
   const trackRequests = apiRequests.filter(
     (r) => /\/api\/tasks\/[^/]+\/tracks/.test(r.url) || /\/api\/tracks\/[^/]+/.test(r.url),
   );

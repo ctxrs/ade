@@ -22,20 +22,21 @@ import type {
   SubagentInvocationChild,
   SessionHead,
   SessionHeadDelta,
+  SessionHeadSnapshot,
   SessionHeadWindow,
   SessionHistoryPage,
   SessionEventsPage,
-  SessionCatchupSummary,
+  SessionSnapshot,
+  SessionSnapshotSummary,
   SessionSummaryCheckpoint,
   TerminalSession,
   Task,
   Workspace,
-  WorkspaceCatchupCursor,
-  WorkspaceCatchupClientMessage,
-  WorkspaceCatchupSessionSubscription,
-  WorkspaceCatchupEvent,
-  WorkspaceCatchupSnapshot,
-  WorkspaceCatchupTaskSummary,
+  WorkspaceActiveSnapshot,
+  WorkspaceActiveSnapshotClientMessage,
+  WorkspaceActiveSnapshotEvent,
+  WorkspaceActiveSnapshotSessionSubscription,
+  WorkspaceActiveTaskSummary,
   Worktree,
   WorkspaceAttachment,
   WorkspaceAttachmentKind,
@@ -66,20 +67,21 @@ export type {
   SubagentInvocationChild,
   SessionHead,
   SessionHeadDelta,
+  SessionHeadSnapshot,
   SessionHeadWindow,
   SessionHistoryPage,
   SessionEventsPage,
-  SessionCatchupSummary,
+  SessionSnapshot,
+  SessionSnapshotSummary,
   SessionSummaryCheckpoint,
   TerminalSession,
   Task,
   Workspace,
-  WorkspaceCatchupCursor,
-  WorkspaceCatchupClientMessage,
-  WorkspaceCatchupSessionSubscription,
-  WorkspaceCatchupEvent,
-  WorkspaceCatchupSnapshot,
-  WorkspaceCatchupTaskSummary,
+  WorkspaceActiveSnapshot,
+  WorkspaceActiveSnapshotClientMessage,
+  WorkspaceActiveSnapshotEvent,
+  WorkspaceActiveSnapshotSessionSubscription,
+  WorkspaceActiveTaskSummary,
   Worktree,
   WorkspaceAttachment,
   WorkspaceAttachmentKind,
@@ -903,31 +905,23 @@ export const createWorkspaceTerminal = (workspaceId: string, req: CreateTerminal
 export const deleteTerminal = (terminalId: string) =>
   apiAny<void>(`/api/terminals/${terminalId}`, { method: "DELETE" });
 
-export type WorkspaceCatchupParams = {
+export type WorkspaceActiveSnapshotParams = {
   limit?: number;
-  includeArchived?: boolean;
-  archivedOnly?: boolean;
-  activeCursor?: WorkspaceCatchupCursor | null;
-  archivedCursor?: WorkspaceCatchupCursor | null;
 };
 
-export const getWorkspaceCatchup = (workspaceId: string, params?: WorkspaceCatchupParams) => {
+export const getWorkspaceActiveSnapshot = (workspaceId: string, params?: WorkspaceActiveSnapshotParams) => {
   const search = new URLSearchParams();
   if (params?.limit) search.set("limit", String(params.limit));
-  if (params?.includeArchived) search.set("include_archived", params.includeArchived ? "1" : "0");
-  if (params?.archivedOnly) search.set("archived_only", params.archivedOnly ? "1" : "0");
-  if (params?.activeCursor) {
-    search.set("active_cursor_sort_at", params.activeCursor.sort_at);
-    search.set("active_cursor_task_id", idToString(params.activeCursor.task_id));
-  }
-  if (params?.archivedCursor) {
-    search.set("archived_cursor_sort_at", params.archivedCursor.sort_at);
-    search.set("archived_cursor_task_id", idToString(params.archivedCursor.task_id));
-  }
   const qs = search.toString();
   const suffix = qs ? `?${qs}` : "";
-  return apiAny<WorkspaceCatchupSnapshot>(`/api/workspaces/${workspaceId}/catchup${suffix}`);
+  return apiAny<WorkspaceActiveSnapshot>(`/api/workspaces/${workspaceId}/active_snapshot${suffix}`);
 };
+
+export const listWorkspaceTasks = (workspaceId: string) =>
+  apiAny<Task[]>(`/api/workspaces/${workspaceId}/tasks`);
+
+export const listTaskSessions = (taskId: string) =>
+  apiAny<Session[]>(`/api/tasks/${taskId}/sessions`);
 
 export const createTask = (
   workspaceId: string,
@@ -1043,6 +1037,14 @@ export const getSessionHead = (sessionId: string, limit?: number, includeEvents?
   if (includeEvents !== undefined) qs.set("include_events", includeEvents ? "1" : "0");
   const suffix = qs.toString() ? `?${qs.toString()}` : "";
   return apiAny<SessionHead>(`/api/sessions/${sessionId}/head${suffix}`);
+};
+
+export const getSessionSnapshot = (sessionId: string, limit?: number, includeEvents?: boolean) => {
+  const qs = new URLSearchParams();
+  if (limit) qs.set("limit", String(limit));
+  if (includeEvents !== undefined) qs.set("include_events", includeEvents ? "1" : "0");
+  const suffix = qs.toString() ? `?${qs.toString()}` : "";
+  return apiAny<SessionSnapshot>(`/api/sessions/${sessionId}/snapshot${suffix}`);
 };
 
 export type ArtifactInput = {

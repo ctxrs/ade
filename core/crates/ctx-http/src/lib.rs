@@ -28,7 +28,6 @@ pub mod title_generation;
 pub mod updates;
 pub mod web_sessions;
 pub mod workspace_active_snapshot;
-pub mod workspace_catchup;
 pub mod workspace_config;
 pub mod worktree_bootstrap;
 
@@ -116,7 +115,7 @@ mod tests {
             "http://127.0.0.1:4399".to_string(),
             None,
         ));
-        state.start_workspace_catchup_listener();
+        state.start_workspace_active_snapshot_listener();
         let app = api::router(state.clone());
 
         // create workspace
@@ -216,7 +215,7 @@ mod tests {
             "http://127.0.0.1:4399".to_string(),
             None,
         ));
-        state.start_workspace_catchup_listener();
+        state.start_workspace_active_snapshot_listener();
         {
             let mut statuses = HashMap::new();
             statuses.insert(
@@ -325,9 +324,12 @@ mod tests {
         let mut seen_done = false;
         while let Some(Ok(frame)) = ws_stream.next().await {
             if let tokio_tungstenite::tungstenite::Message::Text(txt) = frame {
-                let ev: ctx_core::models::WorkspaceCatchupEvent =
+                let ev: ctx_core::models::WorkspaceActiveSnapshotEvent =
                     serde_json::from_str(&txt).unwrap();
-                if let ctx_core::models::WorkspaceCatchupEvent::SessionHeadDelta { delta, .. } = ev
+                if let ctx_core::models::WorkspaceActiveSnapshotEvent::SessionHeadDelta {
+                    delta,
+                    ..
+                } = ev
                 {
                     if delta.session_id == session.id
                         && delta

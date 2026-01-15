@@ -27,7 +27,7 @@ test("workbench: spinner clears after replayed completion", async ({ page }) => 
         // @ts-expect-error - runtime shim
         super(url, protocols);
         const u = String(url ?? "");
-        if (!u.includes("/api/workspaces/") || !u.includes("/stream")) return;
+        if (!u.includes("/api/workspaces/") || !u.includes("/active_snapshot/stream")) return;
         this.addEventListener("open", () => {
           if (Date.now() >= (window as any).__contextDropUntil) return;
           setTimeout(() => {

@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { waitForCondition } from "../testUtils/waitForCondition";
 
-import type { Message, Session, SessionEvent, SessionTurn, WorkspaceCatchupEvent } from "../api/client";
-import type { WorkspaceCatchupEventSource } from "./workspaceCatchupStore";
+import type { Message, Session, SessionEvent, SessionTurn, WorkspaceActiveSnapshotEvent } from "../api/client";
+import type { WorkspaceActiveSnapshotEventSource } from "./workspaceCatchupStore";
 
 vi.mock("../api/client", () => {
   const idToString = (id: any): string => (typeof id === "string" ? id : id?.["0"]);
@@ -95,10 +95,10 @@ describe("SessionSupervisor", () => {
 
     const sup = new SessionSupervisor();
 
-    const listeners = new Set<(evt: WorkspaceCatchupEvent) => void>();
-    const store: WorkspaceCatchupEventSource = {
+    const listeners = new Set<(evt: WorkspaceActiveSnapshotEvent) => void>();
+    const store: WorkspaceActiveSnapshotEventSource = {
       subscribe: () => () => {},
-      subscribeEvents: (listener: (evt: WorkspaceCatchupEvent) => void) => {
+      subscribeEvents: (listener: (evt: WorkspaceActiveSnapshotEvent) => void) => {
         listeners.add(listener);
         return () => listeners.delete(listener);
       },
@@ -119,7 +119,7 @@ describe("SessionSupervisor", () => {
       }),
     };
 
-    sup.bindWorkspaceCatchupStore(store);
+    sup.bindWorkspaceActiveSnapshotStore(store);
     sup.openSession(sessionId);
 
     await waitForCondition(() => {
@@ -147,7 +147,7 @@ describe("SessionSupervisor", () => {
       created_at: now,
     };
 
-    const deltaEvent: WorkspaceCatchupEvent = {
+    const deltaEvent: WorkspaceActiveSnapshotEvent = {
       type: "session_head_delta",
       workspace_id: { 0: "ws-1" },
       snapshot_rev: 1,

@@ -16,7 +16,7 @@ use ctx_core::models::{
     Artifact, AttachmentMode, AttachmentUpdatePolicy, Message, MessageAttachment, MessageDelivery,
     Session, SessionEventsPage, SessionHead, SessionHistoryPage, SessionSnapshot, SessionTurnTool,
     Task, TerminalSession, Workspace, WorkspaceActiveSnapshot, WorkspaceAttachment,
-    WorkspaceAttachmentKind, WorkspaceCatchupCursor, WorkspaceCatchupSnapshot,
+    WorkspaceAttachmentKind,
 };
 use ctx_providers::adapters::ProviderStatus;
 
@@ -206,13 +206,15 @@ pub enum AskUserQuestionOutcome {
     Cancelled,
 }
 
-#[derive(Debug, Clone, Default)]
-pub struct WorkspaceCatchupParams {
-    pub limit: Option<u32>,
-    pub include_archived: Option<bool>,
-    pub archived_only: Option<bool>,
-    pub active_cursor: Option<WorkspaceCatchupCursor>,
-    pub archived_cursor: Option<WorkspaceCatchupCursor>,
+#[derive(Debug, Clone, Serialize)]
+pub struct SessionDiffApplyRequest {
+    pub action: String,
+    pub patch: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SessionDiffResponse {
+    pub diff: String,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -891,49 +893,6 @@ impl Client {
         self.request_json(Method::GET, &path, None::<&()>).await
     }
 
-    pub async fn get_workspace_catchup(
-        &self,
-        workspace_id: WorkspaceId,
-        params: &WorkspaceCatchupParams,
-    ) -> Result<WorkspaceCatchupSnapshot> {
-        let mut search = Vec::new();
-        if let Some(limit) = params.limit {
-            search.push(format!("limit={}", limit));
-        }
-        if let Some(include_archived) = params.include_archived {
-            search.push(format!(
-                "include_archived={}",
-                if include_archived { "1" } else { "0" }
-            ));
-        }
-        if let Some(archived_only) = params.archived_only {
-            search.push(format!(
-                "archived_only={}",
-                if archived_only { "1" } else { "0" }
-            ));
-        }
-        if let Some(cursor) = params.active_cursor.as_ref() {
-            search.push(format!(
-                "active_cursor_sort_at={}",
-                cursor.sort_at.to_rfc3339()
-            ));
-            search.push(format!("active_cursor_task_id={}", cursor.task_id.0));
-        }
-        if let Some(cursor) = params.archived_cursor.as_ref() {
-            search.push(format!(
-                "archived_cursor_sort_at={}",
-                cursor.sort_at.to_rfc3339()
-            ));
-            search.push(format!("archived_cursor_task_id={}", cursor.task_id.0));
-        }
-        let mut path = format!("/api/workspaces/{}/catchup", workspace_id.0);
-        if !search.is_empty() {
-            path.push('?');
-            path.push_str(&search.join("&"));
-        }
-        self.request_json(Method::GET, &path, None::<&()>).await
-    }
-
     pub fn workspace_stream_url(&self, workspace_id: WorkspaceId) -> Result<String> {
         let mut url = Url::parse(&self.base_url)
             .with_context(|| format!("invalid base url: {}", self.base_url))?;
@@ -1065,6 +1024,25 @@ impl Client {
             path.push_str(&params.join("&"));
         }
         self.request_json(Method::GET, &path, None::<&()>).await
+    }
+
+    pub async fn get_session_diff(&self, session_id: SessionId) -> Result<SessionDiffResponse> {
+        let path = format!("/api/sessions/{}/diff", session_id.0);
+        self.request_json(Method::GET, &path, None::<&()>).await
+    }
+
+    pub async fn apply_session_diff_patch(
+        &self,
+        session_id: SessionId,
+        action: &str,
+        patch: &str,
+    ) -> Result<SessionDiffResponse> {
+        let path = format!("/api/sessions/{}/diff/apply", session_id.0);
+        let req = SessionDiffApplyRequest {
+            action: action.to_string(),
+            patch: patch.to_string(),
+        };
+        self.request_json(Method::POST, &path, Some(&req)).await
     }
 
     pub async fn get_session_history(

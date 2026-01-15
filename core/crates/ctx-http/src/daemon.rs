@@ -46,7 +46,6 @@ use crate::telemetry::{Telemetry, TelemetryConfig};
 use crate::terminals::TerminalManager;
 use crate::web_sessions::WebSessionManager;
 use crate::workspace_active_snapshot::WorkspaceActiveSnapshotHub;
-use crate::workspace_catchup::WorkspaceCatchupHub;
 
 fn acquire_daemon_lock(data_root: &Path) -> Result<std::fs::File> {
     let path = data_root.join("daemon.lock");
@@ -157,7 +156,6 @@ pub struct AppState {
     pub provider_guard: Mutex<provider_guard::ProviderGuardRuntime>,
     pub resource_sampler: Mutex<ResourceSampler>,
     pub workspace_active_snapshot: WorkspaceActiveSnapshotHub,
-    pub workspace_catchup: WorkspaceCatchupHub,
     pub terminals: TerminalManager,
     pub mobile_tunnel: MobileTunnelManager,
     pub web_sessions: Arc<WebSessionManager>,
@@ -262,7 +260,6 @@ impl AppState {
         let ops_events = OpsEvents::new(data_root.clone());
         let perf_telemetry = PerfTelemetry::new(data_root.clone());
         let workspace_active_snapshot = WorkspaceActiveSnapshotHub::new();
-        let workspace_catchup = WorkspaceCatchupHub::new();
         let web_sessions = Arc::new(WebSessionManager::new());
         let merge_queue_notify = Arc::new(Notify::new());
         Self {
@@ -292,7 +289,6 @@ impl AppState {
             provider_guard: Mutex::new(provider_guard::ProviderGuardRuntime::default()),
             resource_sampler: Mutex::new(ResourceSampler::new()),
             workspace_active_snapshot,
-            workspace_catchup,
             terminals: TerminalManager::default(),
             mobile_tunnel: MobileTunnelManager::default(),
             web_sessions,
@@ -432,16 +428,6 @@ impl AppState {
     }
 
     pub async fn emit_workspace_task_upsert(&self, task_id: TaskId) -> Result<()> {
-        if let Some(summary) = self
-            .store
-            .get_workspace_catchup_task_summary(task_id)
-            .await?
-        {
-            let workspace_id = summary.task.workspace_id;
-            self.workspace_catchup
-                .publish_task_upsert(workspace_id, summary)
-                .await;
-        }
         match self
             .store
             .get_workspace_active_task_summary(task_id)
@@ -465,15 +451,12 @@ impl AppState {
     }
 
     pub async fn emit_workspace_task_delete(&self, workspace_id: WorkspaceId, task_id: TaskId) {
-        self.workspace_catchup
-            .publish_task_delete(workspace_id, task_id)
-            .await;
         self.workspace_active_snapshot
             .publish_active_task_delete(workspace_id, task_id)
             .await;
     }
 
-    pub fn start_workspace_catchup_listener(self: &Arc<Self>) {
+    pub fn start_workspace_active_snapshot_listener(self: &Arc<Self>) {
         let state = Arc::downgrade(self);
         tokio::spawn(async move {
             let mut rx = match state.upgrade() {
@@ -545,10 +528,6 @@ impl AppState {
                     turn,
                     message,
                 };
-                state
-                    .workspace_catchup
-                    .publish_session_head_delta(session.workspace_id, delta.clone())
-                    .await;
                 state
                     .workspace_active_snapshot
                     .publish_session_head_delta(session.workspace_id, delta)
@@ -1077,7 +1056,7 @@ pub async fn serve(bind: String, data_dir: Option<String>) -> Result<()> {
         auth_token,
         lsp_cfg,
     ));
-    state.start_workspace_catchup_listener();
+    state.start_workspace_active_snapshot_listener();
     state.web_sessions.clone().start_reaper().await;
     if let Err(err) = reconcile_running_turns(&state).await {
         tracing::warn!(err = %err, "failed to reconcile running turns on startup");

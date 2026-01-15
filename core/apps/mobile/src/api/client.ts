@@ -9,12 +9,12 @@ import type {
   Session,
   SessionHead,
   SessionHistoryPage,
+  SessionSnapshot,
   SessionTurnTool,
   Task,
   Track,
   Workspace,
-  WorkspaceCatchupCursor,
-  WorkspaceCatchupSnapshot,
+  WorkspaceActiveSnapshot,
 } from "@ctx/types";
 
 import type { E2eeEnvelope } from "../utils/e2ee";
@@ -317,6 +317,9 @@ export const listTracks = (conn: ConnectionConfig, taskId: string) =>
 export const listSessionsForTrack = (conn: ConnectionConfig, trackId: string) =>
   fetchJson<Session[]>(conn, `/api/tracks/${trackId}/sessions`).then((items) => items.map(mapSession));
 
+export const listTaskSessions = (conn: ConnectionConfig, taskId: string) =>
+  fetchJson<Session[]>(conn, `/api/tasks/${taskId}/sessions`);
+
 export const listMessages = (conn: ConnectionConfig, sessionId: string) =>
   fetchJson<Message[]>(conn, `/api/sessions/${sessionId}/messages`).then((items) => items.map(mapMessage));
 
@@ -387,34 +390,20 @@ export const pairMobileDevice = async (baseUrl: string, payload: PairMobileDevic
   return JSON.parse(text) as E2eeEnvelope;
 };
 
-export type WorkspaceCatchupParams = {
+export type WorkspaceActiveSnapshotParams = {
   limit?: number;
-  includeArchived?: boolean;
-  archivedOnly?: boolean;
-  activeCursor?: WorkspaceCatchupCursor | null;
-  archivedCursor?: WorkspaceCatchupCursor | null;
 };
 
-export const getWorkspaceCatchup = (
+export const getWorkspaceActiveSnapshot = (
   conn: ConnectionConfig,
   workspaceId: string,
-  params?: WorkspaceCatchupParams,
+  params?: WorkspaceActiveSnapshotParams,
 ) => {
   const search = new URLSearchParams();
   if (params?.limit) search.set("limit", String(params.limit));
-  if (params?.includeArchived) search.set("include_archived", "1");
-  if (params?.archivedOnly) search.set("archived_only", "1");
-  if (params?.activeCursor) {
-    search.set("active_cursor_sort_at", params.activeCursor.sort_at);
-    search.set("active_cursor_task_id", idToString(params.activeCursor.task_id));
-  }
-  if (params?.archivedCursor) {
-    search.set("archived_cursor_sort_at", params.archivedCursor.sort_at);
-    search.set("archived_cursor_task_id", idToString(params.archivedCursor.task_id));
-  }
   const qs = search.toString();
   const suffix = qs ? `?${qs}` : "";
-  return fetchJson<WorkspaceCatchupSnapshot>(conn, `/api/workspaces/${workspaceId}/catchup${suffix}`);
+  return fetchJson<WorkspaceActiveSnapshot>(conn, `/api/workspaces/${workspaceId}/active_snapshot${suffix}`);
 };
 
 export const createTask = (
@@ -478,6 +467,19 @@ export const getSessionHead = (
   if (includeEvents !== undefined) qs.set("include_events", includeEvents ? "1" : "0");
   const suffix = qs.toString() ? `?${qs.toString()}` : "";
   return fetchJson<SessionHead>(conn, `/api/sessions/${sessionId}/head${suffix}`);
+};
+
+export const getSessionSnapshot = (
+  conn: ConnectionConfig,
+  sessionId: string,
+  limit?: number,
+  includeEvents?: boolean,
+) => {
+  const qs = new URLSearchParams();
+  if (limit) qs.set("limit", String(limit));
+  if (includeEvents !== undefined) qs.set("include_events", includeEvents ? "1" : "0");
+  const suffix = qs.toString() ? `?${qs.toString()}` : "";
+  return fetchJson<SessionSnapshot>(conn, `/api/sessions/${sessionId}/snapshot${suffix}`);
 };
 
 export const getSessionHistory = (conn: ConnectionConfig, sessionId: string, beforeSeq?: number, limit?: number) => {

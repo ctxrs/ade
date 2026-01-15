@@ -6,7 +6,7 @@ import type {
   SessionHead,
   SessionTurn,
   SessionTurnTool,
-  WorkspaceCatchupEvent,
+  WorkspaceActiveSnapshotEvent,
 } from "@ctx/types";
 
 import {
@@ -192,7 +192,7 @@ export class SessionSupervisor {
     if (!sessionId) return;
     const entry = this.ensureEntry(sessionId);
     entry.session = session;
-    entry.trackId = idToString(session.track_id);
+    entry.trackId = idToString(session.worktree_id);
     entry.updatedAtMs = Date.now();
     this.publish();
   };
@@ -417,6 +417,17 @@ export class SessionSupervisor {
         this.ensureLoaded(sessionId, { silent: true }).catch(() => {});
       }
     }
+    if (this.catchupStore) {
+      const subs = next.map((sessionId) => {
+        const entry = this.entries.get(sessionId);
+        const afterSeq = entry?.lastEventSeq;
+        return {
+          session_id: sessionId,
+          ...(typeof afterSeq === "number" ? { after_seq: afterSeq } : {}),
+        };
+      });
+      this.catchupStore.setSubscriptions(subs);
+    }
   }
 
   private async loadCachedHead(entry: InternalEntry) {
@@ -431,7 +442,7 @@ export class SessionSupervisor {
 
   private applyHead(entry: InternalEntry, head: SessionHead, opts?: { fromCache?: boolean }) {
     entry.session = head.session;
-    entry.trackId = idToString(head.session.track_id);
+    entry.trackId = idToString(head.session.worktree_id);
     entry.turnsHydrated = true;
     entry.hasMoreTurns = head.has_more_turns;
     entry.lastEventSeq = head.last_event_seq;
@@ -697,7 +708,7 @@ export class SessionSupervisor {
     return true;
   }
 
-  private handleCatchupEvent(evt: WorkspaceCatchupEvent) {
+  private handleCatchupEvent(evt: WorkspaceActiveSnapshotEvent) {
     if (evt.type !== "session_head_delta") return;
     const delta = evt.delta;
     const sid = idToString(delta.session_id);

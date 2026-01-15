@@ -1,12 +1,12 @@
 import type {
   Message,
   Session,
-  SessionCatchupSummary,
   SessionHead,
+  SessionHeadSnapshot,
+  SessionSnapshotSummary,
   SessionTurn,
-  WorkspaceCatchupSnapshot,
-  WorkspaceCatchupTaskSummary,
-  WorkspaceCatchupTrackSummary,
+  WorkspaceActiveSnapshot,
+  WorkspaceActiveTaskSummary,
 } from "@ctx/types";
 
 import { isoAt } from "../utils/deterministic";
@@ -14,67 +14,54 @@ import { isoAt } from "../utils/deterministic";
 export type DummyWorkspaceOptions = {
   workspaceId?: string;
   taskCount?: number;
-  tracksPerTask?: number;
   sessionsPerTrack?: number;
 };
 
-export const buildDummyWorkspaceSnapshot = (opts: DummyWorkspaceOptions = {}): WorkspaceCatchupSnapshot => {
+export const buildDummyWorkspaceSnapshot = (opts: DummyWorkspaceOptions = {}): WorkspaceActiveSnapshot => {
   const workspaceId = opts.workspaceId ?? "ws-dummy";
   const taskCount = opts.taskCount ?? 3;
-  const tracksPerTask = opts.tracksPerTask ?? 2;
   const sessionsPerTrack = opts.sessionsPerTrack ?? 4;
 
-  const tasks: WorkspaceCatchupTaskSummary[] = [];
+  const tasks: WorkspaceActiveTaskSummary[] = [];
   let clock = 0;
 
   for (let t = 0; t < taskCount; t += 1) {
     const taskId = `task-${t + 1}`;
-    const tracks: WorkspaceCatchupTrackSummary[] = [];
+    const sessions: SessionSnapshotSummary[] = [];
 
-    for (let tr = 0; tr < tracksPerTask; tr += 1) {
-      const trackId = `track-${t + 1}-${tr + 1}`;
-      const sessions: SessionCatchupSummary[] = [];
-
-      for (let s = 0; s < sessionsPerTrack; s += 1) {
-        const sessionId = `session-${t + 1}-${tr + 1}-${s + 1}`;
-        const createdAt = isoAt(clock++);
-        const session: Session = {
-          id: sessionId,
-          track_id: trackId,
-          task_id: taskId,
-          workspace_id: workspaceId,
-          worktree_id: `wt-${t + 1}`,
-          provider_id: "codex",
-          model_id: "gpt-4",
-          title: "New Task",
-          agent_role: "assistant",
-          status: s === 0 ? "running" : "completed",
-        };
-        sessions.push({
-          session,
-          last_message_at: createdAt,
-          last_message_preview: `Preview ${sessionId}`,
-          last_event_seq: s + 1,
-          unread: false,
-        });
-      }
-
-      tracks.push({
-        track: {
-          id: trackId,
-          task_id: taskId,
-          workspace_id: workspaceId,
-          worktree_id: `wt-${t + 1}`,
-          label: `Track ${tr + 1}`,
-          status: "active",
-          created_at: isoAt(clock++),
-          updated_at: isoAt(clock++),
-        },
-        primary_session_id: sessions[0]?.session.id ?? null,
-        diff_summary: null,
-        sessions,
+    for (let s = 0; s < sessionsPerTrack; s += 1) {
+      const sessionId = `session-${t + 1}-${s + 1}`;
+      const createdAt = isoAt(clock++);
+      const session: Session = {
+        id: sessionId,
+        task_id: taskId,
+        workspace_id: workspaceId,
+        worktree_id: `wt-${t + 1}`,
+        provider_id: "codex",
+        model_id: "gpt-4",
+        title: "New Task",
+        agent_role: "assistant",
+        status: s === 0 ? "active" : "completed",
+      };
+      sessions.push({
+        session,
+        last_message_at: createdAt,
+        last_message_preview: `Preview ${sessionId}`,
+        last_event_seq: s + 1,
+        unread: false,
       });
     }
+
+    const primarySession = sessions[0];
+    const primaryHead: SessionHeadSnapshot = {
+      session: primarySession.session,
+      turns: [],
+      messages: [],
+      last_event_seq: primarySession.last_event_seq ?? 0,
+      activity: primarySession.activity ?? { is_working: false, last_turn_status: null },
+      has_more_turns: false,
+      has_more_history: false,
+    };
 
     tasks.push({
       task: {
@@ -86,8 +73,12 @@ export const buildDummyWorkspaceSnapshot = (opts: DummyWorkspaceOptions = {}): W
         created_at: isoAt(clock++),
         updated_at: isoAt(clock++),
         archived_at: null,
+        primary_session_id: primarySession.session.id,
+        primary_worktree_id: `wt-${t + 1}`,
       },
-      tracks,
+      primary_session: primarySession,
+      primary_session_head: primaryHead,
+      sessions,
       sort_at: isoAt(clock++),
     });
   }
@@ -97,16 +88,13 @@ export const buildDummyWorkspaceSnapshot = (opts: DummyWorkspaceOptions = {}): W
     snapshot_rev: 1,
     active: {
       tasks,
-      next_cursor: null,
       total_count: tasks.length,
     },
-    archived: null,
   };
 };
 
 export type DummySessionHeadOptions = {
   sessionId: string;
-  trackId: string;
   taskId: string;
   workspaceId: string;
   turnCount?: number;
@@ -116,7 +104,6 @@ export const buildDummySessionHead = (opts: DummySessionHeadOptions): SessionHea
   const turnCount = opts.turnCount ?? 20;
   const session: Session = {
     id: opts.sessionId,
-    track_id: opts.trackId,
     task_id: opts.taskId,
     workspace_id: opts.workspaceId,
     worktree_id: `wt-${opts.taskId}`,
@@ -169,5 +156,6 @@ export const buildDummySessionHead = (opts: DummySessionHeadOptions): SessionHea
     messages,
     last_event_seq: seq,
     has_more_turns: false,
+    has_more_history: false,
   };
 };

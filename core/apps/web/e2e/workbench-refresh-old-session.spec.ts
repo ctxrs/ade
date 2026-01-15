@@ -66,7 +66,7 @@ test("workbench: refresh keeps selection, even for older sessions", async ({ pag
   const workspaceId = url.pathname.split("/").filter(Boolean).pop();
   expect(workspaceId).toBeTruthy();
 
-  const snapshotResp = await page.request.get(`/api/workspaces/${workspaceId}/catchup`);
+  const snapshotResp = await page.request.get(`/api/workspaces/${workspaceId}/active_snapshot`);
   expect(snapshotResp.ok()).toBeTruthy();
   const snapshot = (await snapshotResp.json()) as any;
   const taskSummary =

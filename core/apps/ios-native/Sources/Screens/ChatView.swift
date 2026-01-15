@@ -176,6 +176,33 @@ struct ChatView: View {
                 ZStack(alignment: .bottomTrailing) {
                     ScrollView {
                         LazyVStack(spacing: CtxChatStyle.messageSpacing) {
+                            if viewModel.isArchivedSession, viewModel.historyHasMore || viewModel.isHistoryLoading {
+                                HStack {
+                                    if viewModel.isHistoryLoading {
+                                        ProgressView()
+                                            .tint(.ctxAccent)
+                                    } else {
+                                        Button("Load earlier messages") {
+                                            viewModel.loadEarlierMessages()
+                                        }
+                                        .font(.caption.weight(.semibold))
+                                        .foregroundColor(.ctxTextPrimary)
+                                        .padding(.vertical, 6)
+                                        .padding(.horizontal, 12)
+                                        .background(
+                                            Color.ctxSurface.opacity(0.6),
+                                            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                        )
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                                .stroke(Color.ctxLine, lineWidth: 1)
+                                        )
+                                    }
+                                }
+                                .frame(maxWidth: .infinity)
+                                .padding(.top, 2)
+                            }
+
                             if !viewModel.queueMessages.isEmpty {
                                 QueuePanel(
                                     messages: viewModel.queueMessages,
@@ -271,6 +298,9 @@ struct ChatView: View {
                         scrollToBottom(proxy: proxy, animated: false)
                     }
                     .onChange(of: viewModel.threadItemsRevision) { _, _ in
+                        if viewModel.isArchivedSession && viewModel.isHistoryLoading {
+                            return
+                        }
                         scrollToBottom(proxy: proxy, animated: true)
                     }
                     .onChange(of: viewModel.turnStatus) { _, _ in
@@ -403,6 +433,7 @@ struct ChatView: View {
 struct ChatDetailView: View {
     @EnvironmentObject private var connection: ConnectionStore
     let session: SessionSummary
+    let isArchived: Bool
     @StateObject private var viewModel: ChatViewModel
     @Binding var isArtifactsPresented: Bool
     @Binding var artifactCount: Int
@@ -413,8 +444,9 @@ struct ChatDetailView: View {
     @State private var selectedMode: ComposerMode = .default
     @State private var selectedVerbosity: ComposerVerbosity = .default
 
-    init(session: SessionSummary, isArtifactsPresented: Binding<Bool>, artifactCount: Binding<Int>) {
+    init(session: SessionSummary, isArchived: Bool, isArtifactsPresented: Binding<Bool>, artifactCount: Binding<Int>) {
         self.session = session
+        self.isArchived = isArchived
         _isArtifactsPresented = isArtifactsPresented
         _artifactCount = artifactCount
         _selectedModelId = State(initialValue: session.modelId)
@@ -440,19 +472,25 @@ struct ChatDetailView: View {
         )
             .onAppear {
                 viewModel.setClient(connection.apiClient)
+                viewModel.setArchived(isArchived)
                 viewModel.selectSession(session.id, workspaceId: session.workspaceId)
                 artifactCount = viewModel.artifacts.count
                 _Concurrency.Task { await loadModels() }
             }
             .onChange(of: session.id) { newSessionId in
                 artifactCount = 0
+                viewModel.setArchived(isArchived)
                 viewModel.selectSession(newSessionId, workspaceId: session.workspaceId)
                 selectedModelId = session.modelId
                 _Concurrency.Task { await loadModels() }
             }
             .onChange(of: session.workspaceId) { _ in
+                viewModel.setArchived(isArchived)
                 viewModel.selectSession(session.id, workspaceId: session.workspaceId)
                 _Concurrency.Task { await loadModels() }
+            }
+            .onChange(of: isArchived) { _, newValue in
+                viewModel.setArchived(newValue)
             }
             .onChange(of: session.providerId) { _ in
                 _Concurrency.Task { await loadModels() }
@@ -2805,6 +2843,9 @@ final class ChatViewModel: ObservableObject {
     @Published private(set) var assetToken: String?
     @Published private(set) var threadItemsRevision: Int = 0
     @Published private(set) var activeAskToolCallId: String?
+    @Published private(set) var isArchivedSession = false
+    @Published private(set) var historyHasMore = false
+    @Published private(set) var isHistoryLoading = false
 
     private struct StreamingAssistantState {
         let turnId: String
@@ -2863,6 +2904,12 @@ final class ChatViewModel: ObservableObject {
     private var optimisticAskAnswers: [String: AskUserAnswerState] = [:]
     private var lastSetModelId: String?
     private var lastSetModeId: String?
+    private var historyCursor: Int?
+    private var historyInitialized = false
+    private var headMessages: [ChatMessage] = []
+    private var historyMessages: [ChatMessage] = []
+    private var headTurns: [SessionTurn] = []
+    private var historyTurns: [SessionTurn] = []
 
     init(client: DaemonAPIClient? = nil, initialSessionId: String? = nil, initialWorkspaceId: String? = nil) {
         self.client = client
@@ -2898,6 +2945,14 @@ final class ChatViewModel: ObservableObject {
             threadItemsRevision = 0
             lastSetModelId = nil
             lastSetModeId = nil
+            historyCursor = nil
+            historyInitialized = false
+            historyHasMore = false
+            isHistoryLoading = false
+            headMessages = []
+            historyMessages = []
+            headTurns = []
+            historyTurns = []
             setPendingAssistantResponse(false)
             streamingAssistantState = nil
             errorMessage = nil
@@ -2911,7 +2966,7 @@ final class ChatViewModel: ObservableObject {
             _Concurrency.Task { @MainActor in
                 secureContext = await client?.secureConnectionContext()
             }
-            if pollTask != nil {
+            if pollTask != nil && !isArchivedSession {
                 startStream()
             }
             _Concurrency.Task {
@@ -2950,6 +3005,15 @@ final class ChatViewModel: ObservableObject {
             secureContext = nil
             rebuildThreadItems()
             updateWorkingState()
+        }
+    }
+
+    func setArchived(_ value: Bool) {
+        if isArchivedSession == value { return }
+        isArchivedSession = value
+        if value {
+            stopPolling()
+            stopStream()
         }
     }
 
@@ -3010,6 +3074,14 @@ final class ChatViewModel: ObservableObject {
         threadItemsRevision = 0
         lastSetModelId = nil
         lastSetModeId = nil
+        historyCursor = nil
+        historyInitialized = false
+        historyHasMore = false
+        isHistoryLoading = false
+        headMessages = []
+        historyMessages = []
+        headTurns = []
+        historyTurns = []
         errorMessage = nil
         artifacts = []
         artifactsError = nil
@@ -3019,15 +3091,20 @@ final class ChatViewModel: ObservableObject {
         contextWindowInfo = nil
         updateWorkingState()
         _Concurrency.Task {
-            await primeStreamCursor()
+            if !isArchivedSession {
+                await primeStreamCursor()
+            }
             _ = await refreshMessages()
             await refreshQueue()
             await refreshArtifacts()
-            await sendStreamSubscriptionIfNeeded()
+            if !isArchivedSession {
+                await sendStreamSubscriptionIfNeeded()
+            }
         }
     }
 
     func startPolling() {
+        guard !isArchivedSession else { return }
         guard pollTask == nil else { return }
         startStream()
         pollTask = _Concurrency.Task {
@@ -3096,7 +3173,8 @@ final class ChatViewModel: ObservableObject {
         let resolved = await resolveSessionId()
         guard let resolved, generation == sessionGeneration else { return .skipped }
         do {
-            let head = try await client.getSessionHead(sessionId: resolved, limit: 200, includeEvents: true)
+            let snapshot = try await client.getSessionSnapshot(sessionId: resolved, limit: 200, includeEvents: true)
+            let head = snapshot.head
             guard generation == sessionGeneration, resolved == sessionId else { return .skipped }
             let nextMessages = head.messages.map { message in
                 ChatMessage(
@@ -3107,9 +3185,22 @@ final class ChatViewModel: ObservableObject {
                     createdAt: message.createdAt
                 )
             }
-            let nextWithStreaming = applyStreamingAssistantState(to: nextMessages)
-            messages = nextWithStreaming
-            latestTurns = head.turns
+            let nextWithStreaming = isArchivedSession ? nextMessages : applyStreamingAssistantState(to: nextMessages)
+            if isArchivedSession {
+                headMessages = nextMessages
+                headTurns = head.turns
+                if !historyInitialized {
+                    historyCursor = head.turns.first?.startSeq
+                    historyHasMore = head.hasMoreTurns && historyCursor != nil
+                    historyInitialized = true
+                }
+                latestTurns = historyTurns + headTurns
+                messages = mergeMessages(historyMessages, headMessages)
+                lastEventSeq = head.lastEventSeq
+            } else {
+                messages = nextWithStreaming
+                latestTurns = head.turns
+            }
             latestEvents = head.events ?? []
             latestToolSummaries = head.toolSummaries ?? []
             if let turn = mostRecentTurn(in: head.turns) {
@@ -3119,7 +3210,7 @@ final class ChatViewModel: ObservableObject {
             lastSetModelId = head.session.modelId
             rebuildThreadItems()
             await refreshQueue()
-            if pendingAssistantResponse, nextWithStreaming.contains(where: { $0.role == .assistant }) {
+            if !isArchivedSession, pendingAssistantResponse, nextWithStreaming.contains(where: { $0.role == .assistant }) {
                 setPendingAssistantResponse(false)
                 streamingAssistantState = nil
                 updateWorkingState()
@@ -3139,6 +3230,43 @@ final class ChatViewModel: ObservableObject {
                 _Concurrency.Task { _ = await refreshMessages() }
             }
             return .failed
+        }
+    }
+
+    func loadEarlierMessages() {
+        guard isArchivedSession, historyHasMore, !isHistoryLoading else { return }
+        guard historyCursor != nil else { return }
+        let generation = sessionGeneration
+        isHistoryLoading = true
+        _Concurrency.Task {
+            defer { isHistoryLoading = false }
+            guard let client else { return }
+            let resolved = await resolveSessionId()
+            guard let resolved, generation == sessionGeneration else { return }
+            do {
+                let page = try await client.getSessionHistory(sessionId: resolved, beforeSeq: historyCursor, limit: 200)
+                guard generation == sessionGeneration else { return }
+                let nextMessages = page.messages.map { message in
+                    ChatMessage(
+                        id: message.id.stringValue,
+                        role: roleForMessage(message.role),
+                        text: message.content,
+                        attachments: message.attachments ?? [],
+                        createdAt: message.createdAt
+                    )
+                }
+                historyMessages = mergeMessages(historyMessages, nextMessages)
+                historyTurns = mergeTurns(historyTurns, page.turns)
+                historyCursor = page.nextCursor
+                historyHasMore = page.hasMore
+                latestTurns = historyTurns + headTurns
+                messages = mergeMessages(historyMessages, headMessages)
+                rebuildThreadItems()
+            } catch {
+                if generation == sessionGeneration {
+                    errorMessage = "Failed to load older messages."
+                }
+            }
         }
     }
 
@@ -3187,9 +3315,14 @@ final class ChatViewModel: ObservableObject {
     }
 
     private func appendMessage(_ message: ChatMessage) {
-        var next = messages
-        next.append(message)
-        messages = next
+        if isArchivedSession {
+            headMessages = mergeMessages(headMessages, [message])
+            messages = mergeMessages(historyMessages, headMessages)
+        } else {
+            var next = messages
+            next.append(message)
+            messages = next
+        }
         rebuildThreadItems()
     }
 
@@ -3321,6 +3454,44 @@ final class ChatViewModel: ObservableObject {
             )
         )
         return next
+    }
+
+    private func mergeMessages(_ existing: [ChatMessage], _ incoming: [ChatMessage]) -> [ChatMessage] {
+        var byId: [String: ChatMessage] = [:]
+        for message in existing {
+            byId[message.id] = message
+        }
+        for message in incoming {
+            byId[message.id] = message
+        }
+        return byId.values.sorted { left, right in
+            let leftDate = parseIso(left.createdAt) ?? .distantPast
+            let rightDate = parseIso(right.createdAt) ?? .distantPast
+            if leftDate != rightDate {
+                return leftDate < rightDate
+            }
+            return left.id < right.id
+        }
+    }
+
+    private func mergeTurns(_ existing: [SessionTurn], _ incoming: [SessionTurn]) -> [SessionTurn] {
+        var byId: [String: SessionTurn] = [:]
+        for turn in existing {
+            byId[turn.turnId.stringValue] = turn
+        }
+        for turn in incoming {
+            byId[turn.turnId.stringValue] = turn
+        }
+        return byId.values.sorted { left, right in
+            let leftSeq = left.startSeq ?? 0
+            let rightSeq = right.startSeq ?? 0
+            if leftSeq != rightSeq {
+                return leftSeq < rightSeq
+            }
+            let leftDate = parseIso(left.updatedAt) ?? parseIso(left.startedAt) ?? .distantPast
+            let rightDate = parseIso(right.updatedAt) ?? parseIso(right.startedAt) ?? .distantPast
+            return leftDate < rightDate
+        }
     }
 
     private func rebuildThreadItems() {
@@ -3626,8 +3797,18 @@ final class ChatViewModel: ObservableObject {
             let workspaces = try await client.listWorkspaces()
             guard let workspace = workspaces.first else { return nil }
             workspaceId = workspace.id
-            let snapshot = try await client.getWorkspaceCatchupSnapshot(workspaceId: workspace.id, includeArchived: true)
-            let tasks = snapshot.active.tasks + (snapshot.archived?.tasks ?? [])
+            let params = DaemonAPIClient.WorkspaceActiveSnapshotParams(limit: 50)
+            let snapshot = try await client.getWorkspaceActiveSnapshot(workspaceId: workspace.id, params: params)
+            var tasks = snapshot.active.tasks.map(WorkspaceTaskSummary.init)
+            if tasks.isEmpty {
+                let workspaceTasks = try await client.listWorkspaceTasks(workspaceId: workspace.id)
+                if let task = workspaceTasks.first {
+                    let sessions = try await client.listTaskSessions(taskId: task.id.stringValue)
+                    let summaries = sessions.map(SessionSnapshotSummary.init)
+                    let sortAt = task.lastActivityAt ?? task.updatedAt ?? task.createdAt
+                    tasks = [WorkspaceTaskSummary(task: task, sessions: summaries, sortAt: sortAt)]
+                }
+            }
             guard let task = tasks.first else { return nil }
             guard let resolved = resolvePrimarySessionId(for: task) else { return nil }
             sessionId = resolved
@@ -3637,7 +3818,7 @@ final class ChatViewModel: ObservableObject {
         }
     }
 
-    private func resolvePrimarySessionId(for task: WorkspaceCatchupTaskSummary) -> String? {
+    private func resolvePrimarySessionId(for task: WorkspaceTaskSummary) -> String? {
         let sessions = task.sessions
         guard !sessions.isEmpty else { return nil }
         let nonSubagents = sessions.filter { $0.session.relationship != "sub_agent" }
@@ -3667,7 +3848,8 @@ final class ChatViewModel: ObservableObject {
         if let workspaceId { return workspaceId }
         guard let client else { return nil }
         if let sessionId {
-            if let head = try? await client.getSessionHead(sessionId: sessionId, limit: 1, includeEvents: false) {
+            if let snapshot = try? await client.getSessionSnapshot(sessionId: sessionId, limit: 1, includeEvents: false) {
+                let head = snapshot.head
                 let resolved = head.session.workspaceId.stringValue
                 workspaceId = resolved
                 lastEventSeq = head.lastEventSeq
@@ -3684,8 +3866,10 @@ final class ChatViewModel: ObservableObject {
 
     private func primeStreamCursor(force: Bool = false) async {
         guard let client, let sessionId else { return }
+        guard !isArchivedSession else { return }
         if !force, lastEventSeq != nil, workspaceId != nil { return }
-        if let head = try? await client.getSessionHead(sessionId: sessionId, limit: 1, includeEvents: false) {
+        if let snapshot = try? await client.getSessionSnapshot(sessionId: sessionId, limit: 1, includeEvents: false) {
+            let head = snapshot.head
             lastEventSeq = head.lastEventSeq
             workspaceId = workspaceId ?? head.session.workspaceId.stringValue
             if let turn = mostRecentTurn(in: head.turns) {
@@ -3808,14 +3992,15 @@ final class ChatViewModel: ObservableObject {
     private func sendStreamSubscriptionIfNeeded() async {
         guard let socket = streamSocket else { return }
         guard let sessionId else { return }
+        guard !isArchivedSession else { return }
         await primeStreamCursor()
-        let subscription = WorkspaceCatchupSessionSubscription(
+        let subscription = WorkspaceActiveSnapshotSessionSubscription(
             sessionId: CtxID(sessionId),
             afterSeq: lastEventSeq
         )
-        let message = WorkspaceCatchupClientMessage(
+        let message = WorkspaceActiveSnapshotClientMessage(
             type: "subscribe",
-            sessionIds: nil,
+            sessionIds: [],
             sessions: [subscription]
         )
         if let secureContext {
@@ -3852,15 +4037,15 @@ final class ChatViewModel: ObservableObject {
             guard let envelope = try? streamDecoder.decode(SecureEnvelope.self, from: data) else { return }
             guard envelope.deviceId == secureContext.deviceId else { return }
             guard let decrypted = try? MobileE2EE.decryptEnvelope(envelope, key: secureContext.key) else { return }
-            guard let event = try? streamDecoder.decode(WorkspaceCatchupEvent.self, from: decrypted) else { return }
+            guard let event = try? streamDecoder.decode(WorkspaceActiveSnapshotEvent.self, from: decrypted) else { return }
             handleStreamEvent(event)
             return
         }
-        guard let event = try? streamDecoder.decode(WorkspaceCatchupEvent.self, from: data) else { return }
+        guard let event = try? streamDecoder.decode(WorkspaceActiveSnapshotEvent.self, from: data) else { return }
         handleStreamEvent(event)
     }
 
-    private func handleStreamEvent(_ event: WorkspaceCatchupEvent) {
+    private func handleStreamEvent(_ event: WorkspaceActiveSnapshotEvent) {
         guard let currentSessionId = sessionId else { return }
         switch event {
         case .sessionHeadDelta(_, _, let delta):

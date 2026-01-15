@@ -8,7 +8,7 @@ vi.mock("../utils/e2ee", () => ({
 }));
 
 vi.mock("../api/client", () => ({
-  getWorkspaceCatchup: vi.fn(),
+  getWorkspaceActiveSnapshot: vi.fn(),
   idToString: (value) => {
     if (typeof value === "string") return value;
     if (value && typeof value === "object" && "0" in value) {
@@ -18,7 +18,7 @@ vi.mock("../api/client", () => ({
   },
 }));
 
-import { getWorkspaceCatchup, idToString } from "../api/client";
+import { getWorkspaceActiveSnapshot, idToString } from "../api/client";
 import { WorkspaceCatchupStoreImpl } from "./workspaceCatchupStore";
 
 const conn = { baseUrl: "https://example.com", token: "test-token" };
@@ -38,9 +38,9 @@ describe("WorkspaceCatchupStore", () => {
     vi.useRealTimers();
   });
 
-  it("hydrates snapshot data from catchup", async () => {
-    const snapshot = buildDummyWorkspaceSnapshot({ taskCount: 2, tracksPerTask: 1, sessionsPerTrack: 2 });
-    vi.mocked(getWorkspaceCatchup).mockResolvedValue(snapshot);
+  it("hydrates snapshot data from active snapshot", async () => {
+    const snapshot = buildDummyWorkspaceSnapshot({ taskCount: 2, sessionsPerTrack: 2 });
+    vi.mocked(getWorkspaceActiveSnapshot).mockResolvedValue(snapshot);
 
     const workspaceId = idToString(snapshot.workspace_id);
     const store = new WorkspaceCatchupStoreImpl(workspaceId, conn, { streamEnabled: false });
@@ -50,10 +50,10 @@ describe("WorkspaceCatchupStore", () => {
 
     const state = store.getSnapshot();
     expect(state.activeIds.length).toBe(snapshot.active.tasks.length);
-    expect(getWorkspaceCatchup).toHaveBeenCalledWith(
+    expect(getWorkspaceActiveSnapshot).toHaveBeenCalledWith(
       conn,
       workspaceId,
-      expect.objectContaining({ includeArchived: false }),
+      expect.objectContaining({ limit: 50 }),
     );
 
     store.destroy();

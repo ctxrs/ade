@@ -9,7 +9,7 @@ use serde_json::json;
 use tokio::process::Command;
 use tokio_tungstenite::{connect_async, tungstenite::Message as WsMessage};
 
-use ctx_core::models::{SessionEventType, WorkspaceCatchupEvent};
+use ctx_core::models::{SessionEventType, WorkspaceActiveSnapshotEvent};
 use ctx_http::{api, daemon::AppState};
 use ctx_providers::fake::FakeProviderAdapter;
 use ctx_store::Store;
@@ -85,7 +85,7 @@ async fn setup_server() -> (
         "http://127.0.0.1:0".to_string(),
         None,
     ));
-    state.start_workspace_catchup_listener();
+    state.start_workspace_active_snapshot_listener();
     let app = api::router(state.clone());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -208,9 +208,9 @@ async fn fault_matrix_replay_errors_become_gaps() {
         let WsMessage::Text(txt) = msg else {
             panic!("{}: expected text frame, got {:?}", case.name, msg);
         };
-        let event: WorkspaceCatchupEvent = serde_json::from_str(&txt).unwrap();
+        let event: WorkspaceActiveSnapshotEvent = serde_json::from_str(&txt).unwrap();
         match event {
-            WorkspaceCatchupEvent::SessionGap {
+            WorkspaceActiveSnapshotEvent::SessionGap {
                 session_id,
                 after_seq,
                 reason,

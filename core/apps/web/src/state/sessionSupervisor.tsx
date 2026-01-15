@@ -19,9 +19,9 @@ import {
   type SessionTurnTool,
   type SessionTurnToolSummary,
   type SubagentInvocation,
-  type WorkspaceCatchupEvent,
+  type WorkspaceActiveSnapshotEvent,
 } from "../api/client";
-import type { WorkspaceCatchupEventSource } from "./workspaceCatchupStore";
+import type { WorkspaceActiveSnapshotEventSource } from "./workspaceCatchupStore";
 import { loadSessionAcpMetaV1, loadSessionHeadV1, saveSessionAcpMetaV1, saveSessionHeadV1 } from "./uiStateStore";
 
 const readTunableInt = (key: string, fallback: number) => {
@@ -150,9 +150,9 @@ export class SessionSupervisor {
   private listeners = new Set<() => void>();
   private snapshot: SessionSupervisorSnapshot = { connection: "idle", sessions: {} };
   private entries = new Map<string, InternalEntry>();
-  private catchupStore: WorkspaceCatchupEventSource | null = null;
-  private catchupUnsub: (() => void) | null = null;
-  private catchupSnapshotUnsub: (() => void) | null = null;
+  private snapshotStore: WorkspaceActiveSnapshotEventSource | null = null;
+  private snapshotUnsub: (() => void) | null = null;
+  private snapshotStateUnsub: (() => void) | null = null;
   private activeTaskSessionIds: string[] = [];
   private warmSessionIds: string[] = [];
   private subscribedSessionIds: string[] = [];
@@ -166,22 +166,22 @@ export class SessionSupervisor {
 
   getSnapshot = (): SessionSupervisorSnapshot => this.snapshot;
 
-  bindWorkspaceCatchupStore(store: WorkspaceCatchupEventSource | null) {
-    if (this.catchupUnsub) {
-      this.catchupUnsub();
-      this.catchupUnsub = null;
+  bindWorkspaceActiveSnapshotStore(store: WorkspaceActiveSnapshotEventSource | null) {
+    if (this.snapshotUnsub) {
+      this.snapshotUnsub();
+      this.snapshotUnsub = null;
     }
-    if (this.catchupSnapshotUnsub) {
-      this.catchupSnapshotUnsub();
-      this.catchupSnapshotUnsub = null;
+    if (this.snapshotStateUnsub) {
+      this.snapshotStateUnsub();
+      this.snapshotStateUnsub = null;
     }
-    this.catchupStore = store;
+    this.snapshotStore = store;
     if (!store) {
       this.setConnection("disconnected");
       return;
     }
-    this.catchupUnsub = store.subscribeEvents((evt) => this.handleCatchupEvent(evt));
-    this.catchupSnapshotUnsub = store.subscribe(() => {
+    this.snapshotUnsub = store.subscribeEvents((evt) => this.handleWorkspaceEvent(evt));
+    this.snapshotStateUnsub = store.subscribe(() => {
       const state = store.getSnapshot();
       const next = this.mapConnection(state.connection);
       this.setConnection(next);
@@ -705,7 +705,7 @@ export class SessionSupervisor {
         this.ensureLoaded(sessionId, { silent: true }).catch(() => {});
       }
     }
-    if (this.catchupStore) {
+    if (this.snapshotStore) {
       const subs = next.map((sessionId) => {
         const entry = this.entries.get(sessionId);
         const afterSeq = entry?.lastEventSeq;
@@ -714,7 +714,7 @@ export class SessionSupervisor {
           ...(typeof afterSeq === "number" ? { after_seq: afterSeq } : {}),
         };
       });
-      this.catchupStore.setSubscriptions(subs);
+      this.snapshotStore.setSubscriptions(subs);
     }
     this.publish();
   }
@@ -968,7 +968,7 @@ export class SessionSupervisor {
     return true;
   }
 
-  private handleCatchupEvent(evt: WorkspaceCatchupEvent) {
+  private handleWorkspaceEvent(evt: WorkspaceActiveSnapshotEvent) {
     if (evt.type === "session_gap") {
       const sid = idToString(evt.session_id);
       if (!sid) return;

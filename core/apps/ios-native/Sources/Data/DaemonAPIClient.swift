@@ -58,12 +58,8 @@ actor DaemonAPIClient {
         let supabaseToken: String
     }
 
-    struct WorkspaceCatchupParams: Sendable {
+    struct WorkspaceActiveSnapshotParams: Sendable {
         let limit: Int?
-        let includeArchived: Bool?
-        let archivedOnly: Bool?
-        let activeCursor: WorkspaceCatchupCursor?
-        let archivedCursor: WorkspaceCatchupCursor?
     }
 
     private struct EmptyResponse: Decodable {}
@@ -141,20 +137,21 @@ actor DaemonAPIClient {
     }
 
     func listTasks(workspaceId: String) async throws -> [TaskSummary] {
-        let snapshot = try await getWorkspaceCatchupSnapshot(workspaceId: workspaceId)
-        return snapshot.active.tasks.map { TaskSummary(task: $0.task) }
+        let tasks = try await listWorkspaceTasks(workspaceId: workspaceId)
+        return tasks.map(TaskSummary.init)
     }
 
     func listSessions(workspaceId: String, taskId: String) async throws -> [SessionSummary] {
-        let snapshot = try await getWorkspaceCatchupSnapshot(workspaceId: workspaceId)
-        if let task = snapshot.active.tasks.first(where: { $0.task.id.stringValue == taskId }) {
-            return task.sessions.map { SessionSummary(session: $0.session) }
-        }
-        if let archived = snapshot.archived,
-           let task = archived.tasks.first(where: { $0.task.id.stringValue == taskId }) {
-            return task.sessions.map { SessionSummary(session: $0.session) }
-        }
-        return []
+        let sessions = try await listTaskSessions(taskId: taskId)
+        return sessions.map(SessionSummary.init)
+    }
+
+    func listWorkspaceTasks(workspaceId: String) async throws -> [Task] {
+        try await request("/api/workspaces/\(workspaceId)/tasks")
+    }
+
+    func listTaskSessions(taskId: String) async throws -> [Session] {
+        try await request("/api/tasks/\(taskId)/sessions")
     }
 
     func listWorktrees(workspaceId: String) async throws -> [WorktreeSummary] {
@@ -323,28 +320,6 @@ actor DaemonAPIClient {
         return try await perform(request)
     }
 
-    func getWorkspaceCatchup(workspaceId: String, params: WorkspaceCatchupParams?) async throws -> WorkspaceCatchupSnapshot {
-        var queryItems: [URLQueryItem] = []
-        if let limit = params?.limit {
-            queryItems.append(URLQueryItem(name: "limit", value: String(limit)))
-        }
-        if params?.includeArchived == true {
-            queryItems.append(URLQueryItem(name: "include_archived", value: "1"))
-        }
-        if params?.archivedOnly == true {
-            queryItems.append(URLQueryItem(name: "archived_only", value: "1"))
-        }
-        if let activeCursor = params?.activeCursor {
-            queryItems.append(URLQueryItem(name: "active_cursor_sort_at", value: activeCursor.sortAt))
-            queryItems.append(URLQueryItem(name: "active_cursor_task_id", value: activeCursor.taskId.stringValue))
-        }
-        if let archivedCursor = params?.archivedCursor {
-            queryItems.append(URLQueryItem(name: "archived_cursor_sort_at", value: archivedCursor.sortAt))
-            queryItems.append(URLQueryItem(name: "archived_cursor_task_id", value: archivedCursor.taskId.stringValue))
-        }
-        return try await request("/api/workspaces/\(workspaceId)/catchup", queryItems: queryItems)
-    }
-
     func createTask(workspaceId: String, title: String, description: String?, createDefaultTrack: Bool?, defaultTrackLabel: String?) async throws -> Task {
         struct Payload: Encodable {
             let title: String
@@ -387,12 +362,13 @@ actor DaemonAPIClient {
         try await request("/api/tasks/\(taskId)/mark_unread", method: .post)
     }
 
-    func createSession(taskId: String, providerId: String, modelId: String) async throws -> Session {
+    func createSession(taskId: String, providerId: String, modelId: String, envTarget: String? = nil) async throws -> Session {
         struct Payload: Encodable {
             let providerId: String
             let modelId: String
+            let envTarget: String?
         }
-        let payload = Payload(providerId: providerId, modelId: modelId)
+        let payload = Payload(providerId: providerId, modelId: modelId, envTarget: envTarget)
         return try await request("/api/tasks/\(taskId)/sessions", method: .post, body: payload)
     }
 
@@ -405,6 +381,17 @@ actor DaemonAPIClient {
             queryItems.append(URLQueryItem(name: "include_events", value: includeEvents ? "1" : "0"))
         }
         return try await request("/api/sessions/\(sessionId)/head", queryItems: queryItems)
+    }
+
+    func getSessionSnapshot(sessionId: String, limit: Int?, includeEvents: Bool?) async throws -> SessionSnapshot {
+        var queryItems: [URLQueryItem] = []
+        if let limit = limit {
+            queryItems.append(URLQueryItem(name: "limit", value: String(limit)))
+        }
+        if let includeEvents = includeEvents {
+            queryItems.append(URLQueryItem(name: "include_events", value: includeEvents ? "1" : "0"))
+        }
+        return try await request("/api/sessions/\(sessionId)/snapshot", queryItems: queryItems)
     }
 
     func getSessionHistory(sessionId: String, beforeSeq: Int?, limit: Int?) async throws -> SessionHistoryPage {
@@ -442,15 +429,12 @@ actor DaemonAPIClient {
         try await request("/api/workspaces/\(workspaceId)/providers/\(providerId)/verify", method: .post)
     }
 
-    func getWorkspaceCatchupSnapshot(workspaceId: String, includeArchived: Bool) async throws -> WorkspaceCatchupSnapshot {
-        let params = WorkspaceCatchupParams(
-            limit: nil,
-            includeArchived: includeArchived,
-            archivedOnly: false,
-            activeCursor: nil,
-            archivedCursor: nil
-        )
-        return try await getWorkspaceCatchup(workspaceId: workspaceId, params: params)
+    func getWorkspaceActiveSnapshot(workspaceId: String, params: WorkspaceActiveSnapshotParams?) async throws -> WorkspaceActiveSnapshot {
+        var queryItems: [URLQueryItem] = []
+        if let limit = params?.limit {
+            queryItems.append(URLQueryItem(name: "limit", value: String(limit)))
+        }
+        return try await request("/api/workspaces/\(workspaceId)/active_snapshot", queryItems: queryItems)
     }
 
     private func requireToken() throws -> String {
@@ -458,10 +442,6 @@ actor DaemonAPIClient {
             return tokenCache
         }
         throw DaemonAPIError.missingToken
-    }
-
-    private func getWorkspaceCatchupSnapshot(workspaceId: String) async throws -> WorkspaceCatchupSnapshot {
-        try await getWorkspaceCatchupSnapshot(workspaceId: workspaceId, includeArchived: false)
     }
 
     private func request<T: Decodable>(_ path: String, method: HTTPMethod = .get, queryItems: [URLQueryItem] = [], body: Encodable? = nil) async throws -> T {

@@ -1,32 +1,38 @@
 import React, { createContext, useContext, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import type {
-  SessionCatchupSummary,
+  Session,
+  SessionSnapshotSummary,
   Task,
-  WorkspaceCatchupCursor,
-  WorkspaceCatchupClientMessage,
-  WorkspaceCatchupEvent,
-  WorkspaceCatchupSessionSubscription,
-  WorkspaceCatchupTaskSummary,
+  WorkspaceActiveSnapshotEvent,
+  WorkspaceActiveSnapshotSessionSubscription,
+  WorkspaceActiveTaskSummary,
 } from "@ctx/types";
 import {
   getDaemonBaseUrl,
   getHealth,
-  getWorkspaceCatchup,
+  getSessionSnapshot,
+  getWorkspaceActiveSnapshot,
   idToString,
-  type WorkspaceCatchupParams,
+  listTaskSessions,
+  listWorkspaceTasks,
+  type WorkspaceActiveSnapshotClientMessage,
+  type WorkspaceActiveSnapshotParams,
 } from "../api/client";
 import { parseWsJson } from "../utils/wsJson";
 
-export type WorkspaceCatchupItem = WorkspaceCatchupTaskSummary & {
+export type WorkspaceActiveSnapshotItem = {
   id: string;
+  task: Task;
+  sessions: SessionSnapshotSummary[];
+  sort_at?: string | null;
   sortAtMs: number;
 };
 
-export type WorkspaceCatchupState = {
+export type WorkspaceActiveSnapshotState = {
   workspaceId: string;
   initialized: boolean;
   connection: "idle" | "connecting" | "connected" | "disconnected";
-  tasksById: Record<string, WorkspaceCatchupItem>;
+  tasksById: Record<string, WorkspaceActiveSnapshotItem>;
   activeIds: string[];
   archivedIds: string[];
   totalActive: number;
@@ -40,12 +46,14 @@ export type WorkspaceCatchupState = {
   archivedLoaded: boolean;
 };
 
-export type WorkspaceCatchupEventSource = {
+export type WorkspaceActiveSnapshotEventSource = {
   subscribe: (listener: () => void) => () => void;
-  subscribeEvents: (listener: (event: WorkspaceCatchupEvent) => void) => () => void;
-  getSnapshot: () => WorkspaceCatchupState;
-  setSubscriptions: (subscriptions: WorkspaceCatchupSessionSubscription[]) => void;
+  subscribeEvents: (listener: (event: WorkspaceActiveSnapshotEvent) => void) => () => void;
+  getSnapshot: () => WorkspaceActiveSnapshotState;
+  setSubscriptions: (subscriptions: WorkspaceActiveSnapshotSessionSubscription[]) => void;
 };
+
+const ACTIVE_PAGE_SIZE = 50;
 
 const authToken = (): string | null => {
   try {
@@ -67,11 +75,11 @@ const dedupeUrls = (urls: string[]): string[] => {
 };
 
 const normalizeSubscriptions = (
-  subs: WorkspaceCatchupSessionSubscription[],
+  subs: WorkspaceActiveSnapshotSessionSubscription[],
   lastSeqBySession: Map<string, number>,
-): WorkspaceCatchupSessionSubscription[] => {
+): WorkspaceActiveSnapshotSessionSubscription[] => {
   const seen = new Set<string>();
-  const out: WorkspaceCatchupSessionSubscription[] = [];
+  const out: WorkspaceActiveSnapshotSessionSubscription[] = [];
   for (const sub of subs) {
     const id = idToString(sub.session_id);
     if (!id || seen.has(id)) continue;
@@ -87,25 +95,33 @@ const normalizeSubscriptions = (
   return out;
 };
 
-class WorkspaceCatchupStoreImpl implements WorkspaceCatchupEventSource {
+const sortSessionSummaries = (summaries: SessionSnapshotSummary[]): SessionSnapshotSummary[] => {
+  return summaries
+    .slice()
+    .sort((a, b) => String(a.session.created_at ?? "").localeCompare(String(b.session.created_at ?? "")));
+};
+
+class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSource {
   private listeners = new Set<() => void>();
-  private eventListeners = new Set<(event: WorkspaceCatchupEvent) => void>();
-  private snapshot: WorkspaceCatchupState;
-  private tasks = new Map<string, WorkspaceCatchupItem>();
+  private eventListeners = new Set<(event: WorkspaceActiveSnapshotEvent) => void>();
+  private snapshot: WorkspaceActiveSnapshotState;
+  private tasks = new Map<string, WorkspaceActiveSnapshotItem>();
   private activeOrder: string[] = [];
   private archivedOrder: string[] = [];
-  private activeCursor: WorkspaceCatchupCursor | null = null;
-  private archivedCursor: WorkspaceCatchupCursor | null = null;
   private totalActive = 0;
   private totalArchived = 0;
   private hasMoreActive = true;
   private hasMoreArchived = false;
   private archivedLoaded = false;
+  private activeLimit = ACTIVE_PAGE_SIZE;
+  private archivedCursor: { sort_at: string; task_id: { 0: string } | string } | null = null;
+  private archivedIndex: Task[] = [];
+  private archivedIndexLoaded = false;
   private ws: WebSocket | null = null;
   private reconnectTimer: number | null = null;
   private reconnectDelayMs = 1000;
   private snapshotRev = 0;
-  private subscriptions: WorkspaceCatchupSessionSubscription[] = [];
+  private subscriptions: WorkspaceActiveSnapshotSessionSubscription[] = [];
   private sessionLastEventSeq = new Map<string, number>();
   private subscriptionKey = "";
   private destroyed = false;
@@ -132,14 +148,14 @@ class WorkspaceCatchupStoreImpl implements WorkspaceCatchupEventSource {
     return () => this.listeners.delete(listener);
   };
 
-  subscribeEvents = (listener: (event: WorkspaceCatchupEvent) => void): (() => void) => {
+  subscribeEvents = (listener: (event: WorkspaceActiveSnapshotEvent) => void): (() => void) => {
     this.eventListeners.add(listener);
     return () => this.eventListeners.delete(listener);
   };
 
-  getSnapshot = (): WorkspaceCatchupState => this.snapshot;
+  getSnapshot = (): WorkspaceActiveSnapshotState => this.snapshot;
 
-  setSubscriptions = (subscriptions: WorkspaceCatchupSessionSubscription[]) => {
+  setSubscriptions = (subscriptions: WorkspaceActiveSnapshotSessionSubscription[]) => {
     const next = normalizeSubscriptions(subscriptions, this.sessionLastEventSeq);
     const key = next.map((sub) => `${idToString(sub.session_id)}:${sub.after_seq ?? 0}`).join("|");
     if (key === this.subscriptionKey) return;
@@ -150,7 +166,7 @@ class WorkspaceCatchupStoreImpl implements WorkspaceCatchupEventSource {
 
   init = () => {
     this.destroyed = false;
-    this.ensureActivePage(true).catch(() => {});
+    this.ensureActiveSnapshot(true).catch(() => {});
     this.connectStream().catch(() => {});
   };
 
@@ -174,7 +190,8 @@ class WorkspaceCatchupStoreImpl implements WorkspaceCatchupEventSource {
 
   loadMoreActive = () => {
     if (!this.hasMoreActive || this.snapshot.fetchState.active === "loading") return;
-    this.ensureActivePage(false).catch(() => {});
+    this.activeLimit += ACTIVE_PAGE_SIZE;
+    this.ensureActiveSnapshot(false).catch(() => {});
   };
 
   ensureArchivedLoaded = () => {
@@ -192,51 +209,68 @@ class WorkspaceCatchupStoreImpl implements WorkspaceCatchupEventSource {
     if (!id) return;
     const existing = this.tasks.get(id);
     if (!existing) return;
+    const prevArchived = Boolean(existing.task.archived_at);
+    const nextArchived = Boolean(task.archived_at);
     const stableSortAt = task.archived_at ?? task.created_at ?? existing.sort_at;
     const stableSortAtMs = Date.parse(stableSortAt ?? "") || existing.sortAtMs || Date.now();
-    const updated: WorkspaceCatchupItem = {
+    const updated: WorkspaceActiveSnapshotItem = {
       ...existing,
       task: { ...task },
       sortAtMs: stableSortAtMs,
       sort_at: stableSortAt ?? existing.sort_at,
     };
     this.tasks.set(id, updated);
+    if (prevArchived !== nextArchived) {
+      this.archivedIndexLoaded = false;
+    }
     this.updateCountsForMove(existing, updated);
     this.placeInOrders(updated);
     this.publish();
   }
 
-  private async ensureActivePage(reset: boolean) {
+  private async ensureActiveSnapshot(reset: boolean) {
     if (this.destroyed) return;
     if (reset && this.snapshot.fetchState.active === "loading") return;
-    if (!reset && !this.activeCursor && this.snapshot.initialized) {
-      this.hasMoreActive = false;
-      this.publish();
-      return;
-    }
 
     this.setFetchState("active", "loading");
-    const params: WorkspaceCatchupParams = {
-      limit: 50,
-      activeCursor: reset ? null : this.activeCursor,
-      includeArchived: false,
+    const params: WorkspaceActiveSnapshotParams = {
+      limit: this.activeLimit,
     };
     try {
-      const page = await getWorkspaceCatchup(this.workspaceId, params);
-      this.snapshotRev = Math.max(this.snapshotRev, page.snapshot_rev ?? 0);
-      this.totalActive = page.active.total_count ?? this.totalActive;
-      this.totalArchived = page.archived?.total_count ?? this.totalArchived;
+      const snapshot = await getWorkspaceActiveSnapshot(this.workspaceId, params);
+      this.snapshotRev = Math.max(this.snapshotRev, snapshot.snapshot_rev ?? 0);
+      this.totalActive = snapshot.active.total_count ?? this.totalActive;
       if (reset) {
-        this.tasks.clear();
+        for (const [id, item] of this.tasks.entries()) {
+          if (!item.task.archived_at) {
+            this.tasks.delete(id);
+          }
+        }
         this.activeOrder = [];
-        this.archivedOrder = [];
-        this.archivedCursor = null;
-        this.archivedLoaded = false;
-        this.hasMoreArchived = false;
       }
-      page.active.tasks.forEach((summary) => this.upsertSummary(summary));
-      this.activeCursor = page.active.next_cursor ?? null;
-      this.hasMoreActive = Boolean(page.active.next_cursor);
+
+      const activeTasks = snapshot.active.tasks ?? [];
+      const nextActiveIds = new Set<string>();
+      for (const summary of activeTasks) {
+        const normalized = this.normalizeActiveSummary(summary);
+        nextActiveIds.add(normalized.id);
+        this.tasks.set(normalized.id, normalized);
+        this.placeInOrders(normalized);
+      }
+
+      if (this.activeLimit >= this.totalActive) {
+        const prevActive = [...this.activeOrder];
+        for (const id of prevActive) {
+          if (nextActiveIds.has(id)) continue;
+          const existing = this.tasks.get(id);
+          if (!existing) continue;
+          if (!existing.task.archived_at) {
+            this.removeTask(id, { adjustCounts: false });
+          }
+        }
+      }
+
+      this.rebuildSessionLastEventSeq();
       this.snapshot.initialized = true;
       this.publish();
     } catch {
@@ -250,28 +284,45 @@ class WorkspaceCatchupStoreImpl implements WorkspaceCatchupEventSource {
     if (this.destroyed) return;
     if (firstLoad) {
       this.archivedCursor = null;
-    } else if (!this.archivedCursor) {
+      this.archivedIndexLoaded = false;
+    }
+    if (!firstLoad && !this.archivedCursor) {
       this.hasMoreArchived = false;
       this.publish();
       return;
     }
     this.setFetchState("archived", "loading");
     try {
-      const page = await getWorkspaceCatchup(this.workspaceId, {
-        limit: 50,
-        archivedOnly: true,
-        archivedCursor: firstLoad ? null : this.archivedCursor,
-      });
-      this.snapshotRev = Math.max(this.snapshotRev, page.snapshot_rev ?? 0);
-      this.totalActive = page.active.total_count ?? this.totalActive;
-      this.totalArchived = page.archived?.total_count ?? this.totalArchived;
-      if (page.archived) {
-        page.archived.tasks.forEach((summary) => this.upsertSummary(summary));
-        this.archivedCursor = page.archived.next_cursor ?? null;
-        this.hasMoreArchived = Boolean(page.archived.next_cursor);
-        this.archivedLoaded = true;
-        this.publish();
+      if (!this.archivedIndexLoaded) {
+        const tasks = await listWorkspaceTasks(this.workspaceId);
+        this.archivedIndex = tasks
+          .filter((task) => Boolean(task.archived_at))
+          .sort((a, b) => {
+            const aSort = this.taskSortMs(a);
+            const bSort = this.taskSortMs(b);
+            if (aSort !== bSort) return bSort - aSort;
+            return String(idToString(b.id)).localeCompare(String(idToString(a.id)));
+          });
+        this.archivedIndexLoaded = true;
+        this.totalArchived = this.archivedIndex.length;
       }
+
+      const startIndex = this.archivedCursor ? this.findArchivedStartIndex(this.archivedCursor) : 0;
+      const pageTasks = this.archivedIndex.slice(startIndex, startIndex + ACTIVE_PAGE_SIZE);
+      const summaries = await Promise.all(pageTasks.map((task) => this.buildArchivedItem(task)));
+      summaries.forEach((summary) => {
+        if (summary) {
+          this.upsertArchivedItem(summary, { adjustCounts: false });
+        }
+      });
+
+      const hasMore = startIndex + pageTasks.length < this.archivedIndex.length;
+      this.archivedCursor = hasMore && pageTasks.length
+        ? { sort_at: this.taskSortAt(pageTasks[pageTasks.length - 1]), task_id: pageTasks[pageTasks.length - 1].id }
+        : null;
+      this.hasMoreArchived = hasMore;
+      this.archivedLoaded = true;
+      this.publish();
     } catch {
       this.setFetchState("archived", "error");
       return;
@@ -301,7 +352,7 @@ class WorkspaceCatchupStoreImpl implements WorkspaceCatchupEventSource {
     const token = authToken();
     const qs = token ? `?token=${encodeURIComponent(token)}` : "";
     const urls: string[] = [];
-    const sameOrigin = `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/api/workspaces/${this.workspaceId}/stream${qs}`;
+    const sameOrigin = `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/api/workspaces/${this.workspaceId}/active_snapshot/stream${qs}`;
     urls.push(sameOrigin);
 
     const configured = getDaemonBaseUrl();
@@ -309,7 +360,7 @@ class WorkspaceCatchupStoreImpl implements WorkspaceCatchupEventSource {
       const wsBase = configured.startsWith("https://")
         ? configured.replace(/^https:\/\//, "wss://")
         : configured.replace(/^http:\/\//, "ws://");
-      urls.push(`${wsBase}/api/workspaces/${this.workspaceId}/stream${qs}`);
+      urls.push(`${wsBase}/api/workspaces/${this.workspaceId}/active_snapshot/stream${qs}`);
     } else {
       try {
         const health = await getHealth();
@@ -318,7 +369,7 @@ class WorkspaceCatchupStoreImpl implements WorkspaceCatchupEventSource {
           const wsBase = base.startsWith("https://")
             ? base.replace(/^https:\/\//, "wss://")
             : base.replace(/^http:\/\//, "ws://");
-          urls.push(`${wsBase}/api/workspaces/${this.workspaceId}/stream${qs}`);
+          urls.push(`${wsBase}/api/workspaces/${this.workspaceId}/active_snapshot/stream${qs}`);
         }
       } catch {
         // ignore
@@ -338,7 +389,7 @@ class WorkspaceCatchupStoreImpl implements WorkspaceCatchupEventSource {
         } catch {
           // ignore
         }
-        reject(new Error("workspace catchup ws timeout"));
+        reject(new Error("workspace active snapshot ws timeout"));
       }, 4000);
 
       ws.onopen = () => {
@@ -359,7 +410,7 @@ class WorkspaceCatchupStoreImpl implements WorkspaceCatchupEventSource {
       ws.onerror = () => {
         window.clearTimeout(timeoutId);
         if (!opened) {
-          reject(new Error("workspace catchup ws error"));
+          reject(new Error("workspace active snapshot ws error"));
         }
       };
 
@@ -385,34 +436,32 @@ class WorkspaceCatchupStoreImpl implements WorkspaceCatchupEventSource {
   private async handleStreamMessage(data: unknown) {
     const parsed = await parseWsJson(data);
     if (!parsed || typeof parsed !== "object") return;
-    const evt = parsed as WorkspaceCatchupEvent;
+    const evt = parsed as WorkspaceActiveSnapshotEvent;
     if (evt.type === "ready" && typeof evt.snapshot_rev === "number") {
-      if (evt.snapshot_rev < this.snapshotRev) {
+      if (evt.snapshot_rev !== this.snapshotRev) {
         this.snapshotRev = evt.snapshot_rev;
-        this.ensureActivePage(true).catch(() => {});
-      } else if (evt.snapshot_rev > this.snapshotRev) {
-        this.snapshotRev = evt.snapshot_rev;
-        this.ensureActivePage(true).catch(() => {});
+        this.ensureActiveSnapshot(true).catch(() => {});
       }
     }
     if (evt.snapshot_rev && evt.snapshot_rev > this.snapshotRev + 1) {
-      this.ensureActivePage(true).catch(() => {});
+      this.ensureActiveSnapshot(true).catch(() => {});
     }
     if (evt.snapshot_rev) {
       this.snapshotRev = Math.max(this.snapshotRev, evt.snapshot_rev);
     }
+
     switch (evt.type) {
       case "ready":
         this.snapshot.connection = "connected";
         this.publish();
         this.flushSubscriptions();
         break;
-      case "task_upsert":
-        this.upsertSummary(evt.task);
+      case "active_task_upsert":
+        this.upsertActiveSummary(evt.task);
         this.publish();
         break;
-      case "task_delete":
-        this.deleteTask(evt.task_id);
+      case "active_task_delete":
+        this.removeTask(idToString(evt.task_id), { adjustCounts: true });
         this.publish();
         break;
       case "session_summary":
@@ -420,18 +469,17 @@ class WorkspaceCatchupStoreImpl implements WorkspaceCatchupEventSource {
         this.publish();
         break;
       case "session_head_delta":
-        this.notifyEventListeners(evt);
+      case "session_gap":
+      case "worktree_bootstrap":
         break;
       default:
         break;
     }
 
-    if (evt.type !== "session_head_delta") {
-      this.notifyEventListeners(evt);
-    }
+    this.notifyEventListeners(evt);
   }
 
-  private notifyEventListeners(evt: WorkspaceCatchupEvent) {
+  private notifyEventListeners(evt: WorkspaceActiveSnapshotEvent) {
     for (const listener of this.eventListeners) {
       listener(evt);
     }
@@ -440,7 +488,7 @@ class WorkspaceCatchupStoreImpl implements WorkspaceCatchupEventSource {
   private flushSubscriptions() {
     const ws = this.ws;
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
-    const message: WorkspaceCatchupClientMessage = {
+    const message: WorkspaceActiveSnapshotClientMessage = {
       type: "subscribe",
       sessions: this.subscriptions,
     };
@@ -464,40 +512,53 @@ class WorkspaceCatchupStoreImpl implements WorkspaceCatchupEventSource {
     }
   }
 
-  private deleteTask(taskId: { 0: string } | string) {
-    const deleteId = idToString(taskId);
+  private removeTask(taskId: string | undefined, opts?: { adjustCounts?: boolean }) {
+    const deleteId = idToString(taskId ?? "");
     if (!deleteId) return;
     const existing = this.tasks.get(deleteId);
     if (!existing) return;
     this.tasks.delete(deleteId);
     this.activeOrder = this.activeOrder.filter((id) => id !== deleteId);
     this.archivedOrder = this.archivedOrder.filter((id) => id !== deleteId);
-    if (existing.task.archived_at) {
-      this.totalArchived = Math.max(0, this.totalArchived - 1);
-    } else {
-      this.totalActive = Math.max(0, this.totalActive - 1);
+    if (opts?.adjustCounts) {
+      if (existing.task.archived_at) {
+        this.totalArchived = Math.max(0, this.totalArchived - 1);
+      } else {
+        this.totalActive = Math.max(0, this.totalActive - 1);
+      }
     }
     this.rebuildSessionLastEventSeq();
   }
 
-  private upsertSummary(summary: WorkspaceCatchupTaskSummary) {
-    const normalized = this.normalizeSummary(summary);
+  private upsertActiveSummary(summary: WorkspaceActiveTaskSummary) {
+    const normalized = this.normalizeActiveSummary(summary);
     const existing = this.tasks.get(normalized.id);
     this.tasks.set(normalized.id, normalized);
     if (existing) {
       this.updateCountsForMove(existing, normalized);
     } else {
-      if (normalized.task.archived_at) {
-        this.totalArchived += 1;
-      } else {
-        this.totalActive += 1;
-      }
+      this.totalActive += 1;
     }
     this.placeInOrders(normalized);
     this.rebuildSessionLastEventSeq();
   }
 
-  private updateCountsForMove(prev: WorkspaceCatchupItem, next: WorkspaceCatchupItem) {
+  private upsertArchivedItem(item: WorkspaceActiveSnapshotItem, opts?: { adjustCounts?: boolean }) {
+    const existing = this.tasks.get(item.id);
+    this.tasks.set(item.id, item);
+    const adjustCounts = opts?.adjustCounts ?? true;
+    if (adjustCounts) {
+      if (existing) {
+        this.updateCountsForMove(existing, item);
+      } else {
+        this.totalArchived += 1;
+      }
+    }
+    this.placeInOrders(item);
+    this.rebuildSessionLastEventSeq();
+  }
+
+  private updateCountsForMove(prev: WorkspaceActiveSnapshotItem, next: WorkspaceActiveSnapshotItem) {
     const prevArchived = Boolean(prev.task.archived_at);
     const nextArchived = Boolean(next.task.archived_at);
     if (prevArchived === nextArchived) return;
@@ -510,7 +571,7 @@ class WorkspaceCatchupStoreImpl implements WorkspaceCatchupEventSource {
     }
   }
 
-  private applySessionSummary(summary: SessionCatchupSummary) {
+  private applySessionSummary(summary: SessionSnapshotSummary) {
     const taskId = idToString(summary.session.task_id);
     if (!taskId) return;
     const task = this.tasks.get(taskId);
@@ -524,25 +585,101 @@ class WorkspaceCatchupStoreImpl implements WorkspaceCatchupEventSource {
     } else {
       nextSessions.push(normalized);
     }
-    nextSessions.sort((a, b) => String(a.session.created_at ?? "").localeCompare(String(b.session.created_at ?? "")));
-    this.tasks.set(taskId, { ...task, sessions: nextSessions });
+    this.tasks.set(taskId, { ...task, sessions: sortSessionSummaries(nextSessions) });
     this.rebuildSessionLastEventSeq();
   }
 
-  private normalizeSummary(summary: WorkspaceCatchupTaskSummary): WorkspaceCatchupItem {
+  private normalizeActiveSummary(summary: WorkspaceActiveTaskSummary): WorkspaceActiveSnapshotItem {
     const id = idToString(summary.task.id);
-    const sortAtMs = Date.parse(summary.task.archived_at ?? summary.task.created_at ?? "") || Date.now();
-    const sessions = (summary as WorkspaceCatchupTaskSummary & { sessions?: SessionCatchupSummary[] }).sessions ?? [];
+    const sortAtMs = Date.parse(summary.sort_at ?? "") || Date.now();
+    const primary = summary.primary_session ? [this.normalizeSessionSummary(summary.primary_session)] : [];
+    const sessions = summary.sessions.map((s) => this.normalizeSessionSummary(s));
+    const merged: SessionSnapshotSummary[] = [];
+    const seen = new Set<string>();
+    const addSummary = (item: SessionSnapshotSummary) => {
+      const sid = idToString(item.session.id);
+      if (!sid || seen.has(sid)) return;
+      seen.add(sid);
+      merged.push(item);
+    };
+    primary.forEach(addSummary);
+    sessions.forEach(addSummary);
+
     return {
-      ...summary,
       id,
       task: { ...summary.task },
-      sessions: sessions.map((s) => this.normalizeSessionSummary(s)),
+      sessions: sortSessionSummaries(merged),
       sortAtMs,
+      sort_at: summary.sort_at ?? null,
     };
   }
 
-  private normalizeSessionSummary(summary: SessionCatchupSummary): SessionCatchupSummary {
+  private taskSortAt(task: Task): string {
+    return task.archived_at ?? task.created_at ?? task.updated_at ?? "";
+  }
+
+  private taskSortMs(task: Task): number {
+    return Date.parse(this.taskSortAt(task)) || 0;
+  }
+
+  private findArchivedStartIndex(cursor: { sort_at: string; task_id: { 0: string } | string }): number {
+    const cursorId = idToString(cursor.task_id);
+    if (!cursorId) return 0;
+    const cursorSortMs = Date.parse(cursor.sort_at ?? "") || 0;
+    const idx = this.archivedIndex.findIndex((task) => {
+      const id = idToString(task.id);
+      if (!id || id !== cursorId) return false;
+      const sortMs = this.taskSortMs(task);
+      return sortMs === cursorSortMs;
+    });
+    return idx >= 0 ? idx + 1 : 0;
+  }
+
+  private async buildArchivedItem(task: Task): Promise<WorkspaceActiveSnapshotItem | null> {
+    const id = idToString(task.id);
+    if (!id) return null;
+    const sessions = await listTaskSessions(id);
+    let summaries = sessions.map((session) => this.sessionToSummary(session));
+    const preferredId = this.pickArchivedSessionId(task, sessions);
+    if (preferredId) {
+      try {
+        const snapshot = await getSessionSnapshot(preferredId, 200, false);
+        const snapshotId = idToString(snapshot.summary.session.id);
+        if (snapshotId) {
+          const normalized = this.normalizeSessionSummary(snapshot.summary);
+          const idx = summaries.findIndex((summary) => idToString(summary.session.id) === snapshotId);
+          if (idx >= 0) {
+            summaries[idx] = normalized;
+          } else {
+            summaries.push(normalized);
+          }
+        }
+      } catch {
+        // ignore snapshot errors for archived sessions
+      }
+    }
+    const sortAt = this.taskSortAt(task);
+    return {
+      id,
+      task: { ...task },
+      sessions: sortSessionSummaries(summaries),
+      sortAtMs: Date.parse(sortAt) || Date.now(),
+      sort_at: sortAt || null,
+    };
+  }
+
+  private pickArchivedSessionId(task: Task, sessions: Session[]): string | null {
+    const primaryId = idToString(task.primary_session_id ?? "");
+    if (primaryId && (sessions.length === 0 || sessions.some((s) => idToString(s.id) === primaryId))) {
+      return primaryId;
+    }
+    const nonSubagents = sessions.filter((session) => session.relationship !== "sub_agent");
+    const pool = nonSubagents.length ? nonSubagents : sessions;
+    const selected = pool[0];
+    return selected ? idToString(selected.id) : null;
+  }
+
+  private normalizeSessionSummary(summary: SessionSnapshotSummary): SessionSnapshotSummary {
     return {
       session: { ...summary.session },
       last_message_at: summary.last_message_at ?? null,
@@ -553,7 +690,18 @@ class WorkspaceCatchupStoreImpl implements WorkspaceCatchupEventSource {
     };
   }
 
-  private placeInOrders(item: WorkspaceCatchupItem) {
+  private sessionToSummary(session: Session): SessionSnapshotSummary {
+    return this.normalizeSessionSummary({
+      session,
+      last_message_at: null,
+      last_message_preview: null,
+      last_event_seq: null,
+      activity: { is_working: false, last_turn_status: null },
+      unread: undefined,
+    });
+  }
+
+  private placeInOrders(item: WorkspaceActiveSnapshotItem) {
     const { id } = item;
     this.activeOrder = this.activeOrder.filter((existing) => existing !== id);
     this.archivedOrder = this.archivedOrder.filter((existing) => existing !== id);
@@ -588,10 +736,11 @@ class WorkspaceCatchupStoreImpl implements WorkspaceCatchupEventSource {
   }
 
   private publish() {
-    const tasksById: Record<string, WorkspaceCatchupItem> = {};
+    const tasksById: Record<string, WorkspaceActiveSnapshotItem> = {};
     for (const [id, item] of this.tasks.entries()) {
       tasksById[id] = item;
     }
+    this.hasMoreActive = this.totalActive > this.activeOrder.length;
     this.snapshot = {
       ...this.snapshot,
       tasksById,
@@ -607,20 +756,20 @@ class WorkspaceCatchupStoreImpl implements WorkspaceCatchupEventSource {
   }
 }
 
-const WorkspaceCatchupContext = createContext<WorkspaceCatchupStoreImpl | null>(null);
+const WorkspaceActiveSnapshotContext = createContext<WorkspaceActiveSnapshotStoreImpl | null>(null);
 
-export function WorkspaceCatchupProvider({
+export function WorkspaceActiveSnapshotProvider({
   workspaceId,
   children,
 }: {
   workspaceId: string;
   children: React.ReactNode;
 }) {
-  const storeRef = useRef<WorkspaceCatchupStoreImpl | null>(null);
+  const storeRef = useRef<WorkspaceActiveSnapshotStoreImpl | null>(null);
   const lastWorkspaceRef = useRef<string | null>(null);
   if (!storeRef.current || lastWorkspaceRef.current !== workspaceId) {
     storeRef.current?.destroy();
-    storeRef.current = new WorkspaceCatchupStoreImpl(workspaceId);
+    storeRef.current = new WorkspaceActiveSnapshotStoreImpl(workspaceId);
     lastWorkspaceRef.current = workspaceId;
   }
 
@@ -630,25 +779,25 @@ export function WorkspaceCatchupProvider({
   }, [workspaceId]);
 
   return (
-    <WorkspaceCatchupContext.Provider value={storeRef.current}>
+    <WorkspaceActiveSnapshotContext.Provider value={storeRef.current}>
       {children}
-    </WorkspaceCatchupContext.Provider>
+    </WorkspaceActiveSnapshotContext.Provider>
   );
 }
 
-export function useWorkspaceCatchupStore() {
-  const store = useContext(WorkspaceCatchupContext);
-  if (!store) throw new Error("WorkspaceCatchupProvider missing");
+export function useWorkspaceActiveSnapshotStore() {
+  const store = useContext(WorkspaceActiveSnapshotContext);
+  if (!store) throw new Error("WorkspaceActiveSnapshotProvider missing");
   return store;
 }
 
-export function useWorkspaceCatchupSnapshot(): WorkspaceCatchupState {
-  const store = useWorkspaceCatchupStore();
+export function useWorkspaceActiveSnapshotSnapshot(): WorkspaceActiveSnapshotState {
+  const store = useWorkspaceActiveSnapshotStore();
   return useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
 }
 
-export function useWorkspaceCatchupEvents(handler: (event: WorkspaceCatchupEvent) => void) {
-  const store = useWorkspaceCatchupStore();
+export function useWorkspaceActiveSnapshotEvents(handler: (event: WorkspaceActiveSnapshotEvent) => void) {
+  const store = useWorkspaceActiveSnapshotStore();
   const stableHandler = useMemo(() => handler, [handler]);
   useEffect(() => store.subscribeEvents(stableHandler), [store, stableHandler]);
 }

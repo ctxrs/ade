@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useRef, useState } from "react";
-import type { WorktreeBootstrapNotice, WorkspaceCatchupEvent } from "@ctx/types";
+import type { WorktreeBootstrapNotice, WorkspaceActiveSnapshotEvent } from "@ctx/types";
 import { getWorktreeBootstrapLogs, idToString } from "../api/client";
-import { useWorkspaceCatchupEvents } from "../state/workspaceCatchupStore";
+import { useWorkspaceActiveSnapshotEvents } from "../state/workspaceCatchupStore";
 import { desktopSaveTextFile, isDesktopApp } from "../utils/desktop";
 
 const buildNoticeKey = (notice: WorktreeBootstrapNotice): string =>
@@ -50,7 +50,7 @@ export function WorktreeBootstrapSnackbar() {
   const [downloading, setDownloading] = useState(false);
   const lastKeyRef = useRef<string | null>(null);
 
-  useWorkspaceCatchupEvents((evt: WorkspaceCatchupEvent) => {
+  useWorkspaceActiveSnapshotEvents((evt: WorkspaceActiveSnapshotEvent) => {
     if (evt.type !== "worktree_bootstrap") return;
     const next = evt.notice;
     const key = buildNoticeKey(next);

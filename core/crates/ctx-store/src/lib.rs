@@ -17,12 +17,11 @@ pub mod fault_injection {
 #[cfg(test)]
 mod tests {
     use super::Store;
-    use chrono::Utc;
     use std::sync::Arc;
     use std::time::Duration;
 
-    use ctx_core::ids::{MessageId, RunId, TurnId, WorkspaceId, WorktreeId};
-    use ctx_core::models::{Message, MessageDelivery, MessageRole, SessionEventType, Worktree};
+    use ctx_core::ids::{MessageId, RunId, TurnId, WorkspaceId};
+    use ctx_core::models::{Message, MessageDelivery, MessageRole, SessionEventType};
     use tokio::sync::Barrier;
 
     #[tokio::test]
@@ -195,134 +194,6 @@ mod tests {
         })
         .await
         .unwrap();
-    }
-
-    #[tokio::test]
-    async fn workspace_catchup_page_counts_and_sessions() {
-        let dir = tempfile::tempdir().unwrap();
-        let db_path = dir.path().join("db.sqlite");
-        let store = Store::open(&db_path).await.unwrap();
-        let ws = store
-            .create_workspace("ws".into(), "/tmp/ws".into())
-            .await
-            .unwrap();
-
-        let task_active = store
-            .create_task(ws.id, "active".into(), None)
-            .await
-            .unwrap();
-        let worktree = Worktree {
-            id: WorktreeId::new(),
-            workspace_id: ws.id,
-            root_path: "/tmp/ws".into(),
-            base_commit_sha: "abc123".into(),
-            git_branch: None,
-            created_at: Utc::now(),
-            bootstrap_status: None,
-            bootstrap_started_at: None,
-            bootstrap_finished_at: None,
-            bootstrap_exit_code: None,
-            bootstrap_timeout_sec: None,
-            bootstrap_error: None,
-            bootstrap_log_path: None,
-            bootstrap_log_truncated: None,
-            bootstrap_config_path: None,
-            bootstrap_config_key: None,
-            bootstrap_command: None,
-            bootstrap_script_path: None,
-        };
-        store.insert_worktree(worktree.clone()).await.unwrap();
-        let session = store
-            .create_session(
-                task_active.id,
-                ws.id,
-                worktree.id,
-                "fake".into(),
-                "fake-model".into(),
-                "implementer".into(),
-                None,
-                None,
-                None,
-            )
-            .await
-            .unwrap();
-        store
-            .set_task_primary_session(task_active.id, session.id, worktree.id)
-            .await
-            .unwrap();
-
-        let task_archived = store
-            .create_task(ws.id, "archived".into(), None)
-            .await
-            .unwrap();
-        store.archive_task(task_archived.id).await.unwrap();
-
-        let (page, cursor) = store
-            .list_workspace_catchup_page(ws.id, None, 50, false)
-            .await
-            .unwrap();
-        assert_eq!(page.len(), 1);
-        assert!(cursor.is_none());
-        let summary = &page[0];
-        assert_eq!(summary.task.id, task_active.id);
-        assert_eq!(summary.task.primary_session_id, Some(session.id));
-        assert_eq!(summary.sessions.len(), 1);
-        assert_eq!(summary.sessions[0].session.id, session.id);
-
-        let (active_count, archived_count) = store.workspace_task_counts(ws.id).await.unwrap();
-        assert_eq!(active_count, 1);
-        assert_eq!(archived_count, 1);
-
-        let (page_all, _) = store
-            .list_workspace_catchup_page(ws.id, None, 50, true)
-            .await
-            .unwrap();
-        assert_eq!(page_all.len(), 1);
-        assert_eq!(page_all[0].task.id, task_archived.id);
-        assert!(page_all[0].task.archived_at.is_some());
-
-        let summary = store
-            .get_workspace_catchup_task_summary(task_active.id)
-            .await
-            .unwrap()
-            .expect("summary exists");
-        assert_eq!(summary.task.id, task_active.id);
-        assert_eq!(summary.sessions.len(), 1);
-        assert_eq!(summary.sessions[0].session.id, session.id);
-    }
-
-    #[tokio::test]
-    async fn workspace_catchup_cursor_supports_pagination() {
-        let dir = tempfile::tempdir().unwrap();
-        let db_path = dir.path().join("db.sqlite");
-        let store = Store::open(&db_path).await.unwrap();
-        let ws = store
-            .create_workspace("ws".into(), "/tmp/ws".into())
-            .await
-            .unwrap();
-
-        for i in 0..3 {
-            let title = format!("task-{i}");
-            store.create_task(ws.id, title, None).await.unwrap();
-        }
-
-        let (page1, cursor1) = store
-            .list_workspace_catchup_page(ws.id, None, 2, false)
-            .await
-            .unwrap();
-        assert_eq!(page1.len(), 2);
-        assert!(cursor1.is_some());
-
-        if let Some(cursor) = cursor1 {
-            let (page2, cursor2) = store
-                .list_workspace_catchup_page(ws.id, Some(cursor), 2, false)
-                .await
-                .unwrap();
-            assert!(page2.len() <= 2);
-            assert!(cursor2.is_none());
-        } else {
-            panic!("expected cursor for second page");
-        }
     }
 
     #[tokio::test]

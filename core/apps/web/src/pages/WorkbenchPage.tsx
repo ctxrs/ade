@@ -103,10 +103,10 @@ import {
 } from "../workbench/persistence";
 import type { WorkbenchScrollState } from "../workbench/types";
 import {
-  WorkspaceCatchupProvider,
-  useWorkspaceCatchupSnapshot,
-  useWorkspaceCatchupStore,
-  type WorkspaceCatchupItem,
+  WorkspaceActiveSnapshotProvider,
+  useWorkspaceActiveSnapshotSnapshot,
+  useWorkspaceActiveSnapshotStore,
+  type WorkspaceActiveSnapshotItem,
 } from "../state/workspaceCatchupStore";
 import { useEnsureArchivedLoaded } from "../state/useEnsureArchivedLoaded";
 
@@ -256,12 +256,12 @@ type TaskListContext = {
 
 type TaskListItem =
   | { kind: "active-empty" }
-  | { kind: "active-task"; summary: WorkspaceCatchupItem }
+  | { kind: "active-task"; summary: WorkspaceActiveSnapshotItem }
   | { kind: "archived-header" }
   | { kind: "archived-loading" }
   | { kind: "archived-error" }
   | { kind: "archived-empty" }
-  | { kind: "archived-task"; summary: WorkspaceCatchupItem };
+  | { kind: "archived-task"; summary: WorkspaceActiveSnapshotItem };
 
 type TaskListScrollerProps = React.HTMLAttributes<HTMLDivElement> & {
   context?: TaskListContext;
@@ -613,11 +613,11 @@ export default function WorkbenchPage() {
   const { id: workspaceId } = useParams<{ id: string }>();
   if (!workspaceId) return null;
   return (
-    <WorkspaceCatchupProvider workspaceId={workspaceId}>
+    <WorkspaceActiveSnapshotProvider workspaceId={workspaceId}>
       <WorkbenchStoreProvider workspaceId={workspaceId}>
         <WorkbenchPageInner workspaceId={workspaceId} />
       </WorkbenchStoreProvider>
-    </WorkspaceCatchupProvider>
+    </WorkspaceActiveSnapshotProvider>
   );
 }
 
@@ -626,9 +626,9 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const supervisor = useSessionSupervisor();
   const sessionSnap = useSessionCacheSnapshot();
   const workbenchStore = useWorkbenchStore();
-  const workspaceCatchupStore = useWorkspaceCatchupStore();
-  const workspaceCatchup = useWorkspaceCatchupSnapshot();
-  const tasksById = workspaceCatchup.tasksById;
+  const workspaceSnapshotStore = useWorkspaceActiveSnapshotStore();
+  const workspaceSnapshot = useWorkspaceActiveSnapshotSnapshot();
+  const tasksById = workspaceSnapshot.tasksById;
   const workbenchSnap = useWorkbenchShellSnapshot();
   const { taskId: activeTaskId, sessionId: activeSessionIdFromTab } = useActiveWorkbenchIds();
   const { value: newTaskDraft, setValue: setNewTaskDraft } = useNewTaskDraft();
@@ -636,9 +636,9 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const draftMode = newTaskDraft.modeId;
 
   useEffect(() => {
-    supervisor.bindWorkspaceCatchupStore(workspaceCatchupStore);
-    return () => supervisor.bindWorkspaceCatchupStore(null);
-  }, [supervisor, workspaceCatchupStore]);
+    supervisor.bindWorkspaceActiveSnapshotStore(workspaceSnapshotStore);
+    return () => supervisor.bindWorkspaceActiveSnapshotStore(null);
+  }, [supervisor, workspaceSnapshotStore]);
   const setDraftPrompt = useCallback(
     (text: string) => setNewTaskDraft({ text, modeId: newTaskDraft.modeId }),
     [newTaskDraft.modeId, setNewTaskDraft],
@@ -1242,7 +1242,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const warmSessionIds = useMemo(() => {
     const ids: { id: string; updatedAt: number; running: boolean }[] = [];
     const activeSet = new Set(activeTaskSessionIds);
-    for (const taskId of workspaceCatchup.activeIds) {
+    for (const taskId of workspaceSnapshot.activeIds) {
       const task = tasksById[taskId];
       if (!task) continue;
       for (const sess of task.sessions) {
@@ -1258,7 +1258,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       return b.updatedAt - a.updatedAt;
     });
     return ids.map((s) => s.id).slice(0, 20);
-  }, [activeTaskSessionIds, tasksById, workspaceCatchup.activeIds]);
+  }, [activeTaskSessionIds, tasksById, workspaceSnapshot.activeIds]);
 
   useEffect(() => {
     if (!activeTaskId) {
@@ -1281,29 +1281,29 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
 
   const normalizedTaskQuery = taskQuery.trim().toLowerCase();
   const filteredActiveIds = useMemo(() => {
-    return workspaceCatchup.activeIds.filter((id) => {
+    return workspaceSnapshot.activeIds.filter((id) => {
       const summary = tasksById[id];
       if (!summary) return false;
       if (!normalizedTaskQuery) return true;
       return (summary.task.title ?? "").toLowerCase().includes(normalizedTaskQuery);
     });
-  }, [workspaceCatchup.activeIds, tasksById, normalizedTaskQuery]);
+  }, [workspaceSnapshot.activeIds, tasksById, normalizedTaskQuery]);
 
   const filteredArchivedIds = useMemo(() => {
-    return workspaceCatchup.archivedIds.filter((id) => {
+    return workspaceSnapshot.archivedIds.filter((id) => {
       const summary = tasksById[id];
       if (!summary) return false;
       if (!normalizedTaskQuery) return true;
       return (summary.task.title ?? "").toLowerCase().includes(normalizedTaskQuery);
     });
-  }, [workspaceCatchup.archivedIds, tasksById, normalizedTaskQuery]);
+  }, [workspaceSnapshot.archivedIds, tasksById, normalizedTaskQuery]);
 
   const activeTaskSummaries = useMemo(
-    () => filteredActiveIds.map((id) => tasksById[id]).filter((v): v is WorkspaceCatchupItem => Boolean(v)),
+    () => filteredActiveIds.map((id) => tasksById[id]).filter((v): v is WorkspaceActiveSnapshotItem => Boolean(v)),
     [filteredActiveIds, tasksById],
   );
   const archivedTaskSummaries = useMemo(
-    () => filteredArchivedIds.map((id) => tasksById[id]).filter((v): v is WorkspaceCatchupItem => Boolean(v)),
+    () => filteredArchivedIds.map((id) => tasksById[id]).filter((v): v is WorkspaceActiveSnapshotItem => Boolean(v)),
     [filteredArchivedIds, tasksById],
   );
 
@@ -1391,7 +1391,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     const p = (async () => {
       try {
         const updated = await markTaskReadApi(taskId);
-        workspaceCatchupStore.applyTaskUpdate(updated);
+        workspaceSnapshotStore.applyTaskUpdate(updated);
       } catch {
         // ignore
       }
@@ -1400,16 +1400,16 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     });
     markTaskReadInFlightRef.current[taskId] = p;
     await p;
-  }, [workspaceCatchupStore]);
+  }, [workspaceSnapshotStore]);
 
   const markTaskUnread = useCallback(async (taskId: string) => {
     try {
       const updated = await markTaskUnreadApi(taskId);
-      workspaceCatchupStore.applyTaskUpdate(updated);
+      workspaceSnapshotStore.applyTaskUpdate(updated);
     } catch {
       // ignore
     }
-  }, [workspaceCatchupStore]);
+  }, [workspaceSnapshotStore]);
 
   useEffect(() => {
     if (!activeTaskId) return;
@@ -1432,9 +1432,9 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
 
   useEnsureArchivedLoaded({
     archivedCollapsed,
-    archivedLoaded: workspaceCatchup.archivedLoaded,
-    fetchState: workspaceCatchup.fetchState.archived,
-    ensureArchivedLoaded: workspaceCatchupStore.ensureArchivedLoaded,
+    archivedLoaded: workspaceSnapshot.archivedLoaded,
+    fetchState: workspaceSnapshot.fetchState.archived,
+    ensureArchivedLoaded: workspaceSnapshotStore.ensureArchivedLoaded,
   });
 
   const applyArchiveToggle = useCallback(
@@ -1445,7 +1445,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       }));
       try {
         const updated = nextArchived ? await archiveTask(taskId) : await unarchiveTask(taskId);
-        workspaceCatchupStore.applyTaskUpdate(updated);
+        workspaceSnapshotStore.applyTaskUpdate(updated);
         if (nextArchived && activeTaskId === taskId) {
           focusNewTask();
         }
@@ -1458,7 +1458,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
         });
       }
     },
-    [activeTaskId, focusNewTask, workspaceCatchupStore],
+    [activeTaskId, focusNewTask, workspaceSnapshotStore],
   );
 
   const onToggleArchive = useCallback(
@@ -1557,18 +1557,18 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       }
       try {
         const updated = await updateTaskTitle(taskId, next);
-        workspaceCatchupStore.applyTaskUpdate(updated);
+        workspaceSnapshotStore.applyTaskUpdate(updated);
         clearRenameDraft(taskId);
         cancelRenameTask();
       } catch (e: any) {
         window.alert(e?.message ?? "Failed to rename.");
       }
     },
-    [cancelRenameTask, clearRenameDraft, tasksById, workspaceCatchupStore],
+    [cancelRenameTask, clearRenameDraft, tasksById, workspaceSnapshotStore],
   );
 
   const renderTaskRow = useCallback(
-    (summary: WorkspaceCatchupItem, opts?: { archived?: boolean }) => {
+    (summary: WorkspaceActiveSnapshotItem, opts?: { archived?: boolean }) => {
       const tid = summary.id;
       const t = summary.task;
       const selected = tid === activeTaskId;
@@ -1650,7 +1650,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   );
 
   const renderArchivedRow = useCallback(
-    (summary: WorkspaceCatchupItem) => renderTaskRow(summary, { archived: true }),
+    (summary: WorkspaceActiveSnapshotItem) => renderTaskRow(summary, { archived: true }),
     [renderTaskRow],
   );
 
@@ -1658,25 +1658,25 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     const items: TaskListItem[] = [];
     if (
       activeTaskSummaries.length === 0 &&
-      workspaceCatchup.initialized &&
-      workspaceCatchup.fetchState.active !== "loading"
+      workspaceSnapshot.initialized &&
+      workspaceSnapshot.fetchState.active !== "loading"
     ) {
       items.push({ kind: "active-empty" });
     }
     activeTaskSummaries.forEach((summary) => items.push({ kind: "active-task", summary }));
     items.push({ kind: "archived-header" });
     if (!archivedCollapsed) {
-      if (workspaceCatchup.fetchState.archived === "loading") {
+      if (workspaceSnapshot.fetchState.archived === "loading") {
         items.push({ kind: "archived-loading" });
       }
-      if (workspaceCatchup.fetchState.archived === "error") {
+      if (workspaceSnapshot.fetchState.archived === "error") {
         items.push({ kind: "archived-error" });
       }
       archivedTaskSummaries.forEach((summary) => items.push({ kind: "archived-task", summary }));
       if (
         archivedTaskSummaries.length === 0 &&
-        workspaceCatchup.archivedLoaded &&
-        workspaceCatchup.fetchState.archived !== "loading"
+        workspaceSnapshot.archivedLoaded &&
+        workspaceSnapshot.fetchState.archived !== "loading"
       ) {
         items.push({ kind: "archived-empty" });
       }
@@ -1686,21 +1686,21 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     activeTaskSummaries,
     archivedCollapsed,
     archivedTaskSummaries,
-    workspaceCatchup.archivedLoaded,
-    workspaceCatchup.fetchState.active,
-    workspaceCatchup.fetchState.archived,
-    workspaceCatchup.initialized,
+    workspaceSnapshot.archivedLoaded,
+    workspaceSnapshot.fetchState.active,
+    workspaceSnapshot.fetchState.archived,
+    workspaceSnapshot.initialized,
   ]);
 
   const activeSectionLastIndex = useMemo(() => {
     if (activeTaskSummaries.length > 0) {
       return activeTaskSummaries.length - 1;
     }
-    if (workspaceCatchup.initialized && workspaceCatchup.fetchState.active !== "loading") {
+    if (workspaceSnapshot.initialized && workspaceSnapshot.fetchState.active !== "loading") {
       return 0;
     }
     return -1;
-  }, [activeTaskSummaries.length, workspaceCatchup.fetchState.active, workspaceCatchup.initialized]);
+  }, [activeTaskSummaries.length, workspaceSnapshot.fetchState.active, workspaceSnapshot.initialized]);
 
   const renderTaskListItem = useCallback(
     (item: TaskListItem) => {
@@ -1719,7 +1719,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
                   const next = !archivedCollapsed;
                   setArchivedCollapsed(next);
                   if (!next) {
-                    workspaceCatchupStore.ensureArchivedLoaded();
+                    workspaceSnapshotStore.ensureArchivedLoaded();
                   }
                 }}
                 aria-expanded={!archivedCollapsed}
@@ -1743,7 +1743,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
           return null;
       }
     },
-    [archivedCollapsed, renderArchivedRow, renderTaskRow, workspaceCatchupStore],
+    [archivedCollapsed, renderArchivedRow, renderTaskRow, workspaceSnapshotStore],
   );
 
   const computeTaskListItemKey = useCallback((_: number, item: TaskListItem) => {
@@ -1769,27 +1769,27 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
 
   const onTaskListRangeChanged = useCallback(
     (range: { startIndex: number; endIndex: number }) => {
-      if (!workspaceCatchup.hasMoreActive) return;
-      if (workspaceCatchup.fetchState.active === "loading") return;
+      if (!workspaceSnapshot.hasMoreActive) return;
+      if (workspaceSnapshot.fetchState.active === "loading") return;
       if (activeSectionLastIndex < 0) return;
       if (range.endIndex < activeSectionLastIndex) return;
-      workspaceCatchupStore.loadMoreActive();
+      workspaceSnapshotStore.loadMoreActive();
     },
-    [activeSectionLastIndex, workspaceCatchup.fetchState.active, workspaceCatchup.hasMoreActive, workspaceCatchupStore],
+    [activeSectionLastIndex, workspaceSnapshot.fetchState.active, workspaceSnapshot.hasMoreActive, workspaceSnapshotStore],
   );
 
   const loadMoreArchived = useCallback(() => {
-    workspaceCatchupStore.loadMoreArchived();
-  }, [workspaceCatchupStore]);
+    workspaceSnapshotStore.loadMoreArchived();
+  }, [workspaceSnapshotStore]);
 
   const taskListContext = useMemo<TaskListContext>(
     () => ({
       archivedCollapsed,
-      archivedFetchState: workspaceCatchup.fetchState.archived,
-      hasMoreArchived: workspaceCatchup.hasMoreArchived,
+      archivedFetchState: workspaceSnapshot.fetchState.archived,
+      hasMoreArchived: workspaceSnapshot.hasMoreArchived,
       onLoadMoreArchived: loadMoreArchived,
     }),
-    [archivedCollapsed, loadMoreArchived, workspaceCatchup.fetchState.archived, workspaceCatchup.hasMoreArchived],
+    [archivedCollapsed, loadMoreArchived, workspaceSnapshot.fetchState.archived, workspaceSnapshot.hasMoreArchived],
   );
 
   const onDeleteTask = useCallback(

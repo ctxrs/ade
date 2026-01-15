@@ -279,12 +279,7 @@ struct SessionHistoryPage: Codable, Sendable {
     let hasMore: Bool
 }
 
-struct WorkspaceCatchupCursor: Codable, Sendable {
-    let sortAt: String
-    let taskId: CtxID
-}
-
-struct SessionCatchupSummary: Codable, Sendable {
+struct SessionSnapshotSummary: Codable, Sendable {
     let session: Session
     let lastMessageAt: String?
     let lastMessagePreview: String?
@@ -293,19 +288,30 @@ struct SessionCatchupSummary: Codable, Sendable {
     let unread: Bool?
 }
 
-struct WorkspaceCatchupTaskSummary: Codable, Sendable {
+struct SessionSnapshot: Codable, Sendable {
+    let summary: SessionSnapshotSummary
+    let head: SessionHead
+}
+
+struct WorkspaceActiveTaskSummary: Codable, Sendable {
     let task: Task
-    let sessions: [SessionCatchupSummary]
+    let primarySession: SessionSnapshotSummary
+    let primarySessionHead: SessionHead
+    let sessions: [SessionSnapshotSummary]
     let sortAt: String
 
     private enum CodingKeys: String, CodingKey {
         case task
+        case primarySession
+        case primarySessionHead
         case sessions
         case sortAt
     }
 
-    init(task: Task, sessions: [SessionCatchupSummary], sortAt: String) {
+    init(task: Task, primarySession: SessionSnapshotSummary, primarySessionHead: SessionHead, sessions: [SessionSnapshotSummary], sortAt: String) {
         self.task = task
+        self.primarySession = primarySession
+        self.primarySessionHead = primarySessionHead
         self.sessions = sessions
         self.sortAt = sortAt
     }
@@ -313,63 +319,37 @@ struct WorkspaceCatchupTaskSummary: Codable, Sendable {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         task = try container.decode(Task.self, forKey: .task)
-        sessions = try container.decodeIfPresent([SessionCatchupSummary].self, forKey: .sessions) ?? []
+        primarySession = try container.decode(SessionSnapshotSummary.self, forKey: .primarySession)
+        primarySessionHead = try container.decode(SessionHead.self, forKey: .primarySessionHead)
+        sessions = try container.decodeIfPresent([SessionSnapshotSummary].self, forKey: .sessions) ?? []
         sortAt = try container.decode(String.self, forKey: .sortAt)
-    }
-
-    func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(task, forKey: .task)
-        if !sessions.isEmpty {
-            try container.encode(sessions, forKey: .sessions)
-        }
-        try container.encode(sortAt, forKey: .sortAt)
     }
 }
 
-struct WorkspaceCatchupPage: Codable, Sendable {
-    let tasks: [WorkspaceCatchupTaskSummary]
-    let nextCursor: WorkspaceCatchupCursor?
+struct WorkspaceActivePage: Codable, Sendable {
+    let tasks: [WorkspaceActiveTaskSummary]
     let totalCount: Int
 }
 
-struct WorkspaceCatchupSnapshot: Codable, Sendable {
+struct WorkspaceActiveSnapshot: Codable, Sendable {
     let workspaceId: CtxID
     let snapshotRev: Int
-    let active: WorkspaceCatchupPage
-    let archived: WorkspaceCatchupPage?
+    let active: WorkspaceActivePage
 }
 
-struct WorktreeBootstrapNotice: Codable, Sendable {
-    let worktreeId: CtxID
-    let worktreeRoot: String
-    let status: String
-    let startedAt: String
-    let finishedAt: String
-    let exitCode: Int?
-    let timeoutSec: Int?
-    let configPath: String?
-    let configKey: String?
-    let command: String?
-    let scriptPath: String?
-    let logPath: String?
-    let logTruncated: Bool?
-    let error: String?
-}
-
-enum WorkspaceCatchupEvent: Codable, Sendable {
+enum WorkspaceActiveSnapshotEvent: Codable, Sendable {
     case ready(workspaceId: CtxID, snapshotRev: Int)
-    case taskUpsert(workspaceId: CtxID, snapshotRev: Int, task: WorkspaceCatchupTaskSummary)
-    case taskDelete(workspaceId: CtxID, snapshotRev: Int, taskId: CtxID)
-    case sessionSummary(workspaceId: CtxID, snapshotRev: Int, summary: SessionCatchupSummary)
+    case activeTaskUpsert(workspaceId: CtxID, snapshotRev: Int, task: WorkspaceActiveTaskSummary)
+    case activeTaskDelete(workspaceId: CtxID, snapshotRev: Int, taskId: CtxID)
+    case sessionSummary(workspaceId: CtxID, snapshotRev: Int, summary: SessionSnapshotSummary)
     case sessionHeadDelta(workspaceId: CtxID, snapshotRev: Int, delta: SessionHeadDelta)
     case sessionGap(workspaceId: CtxID, snapshotRev: Int, sessionId: CtxID, afterSeq: Int, reason: String?)
     case worktreeBootstrap(workspaceId: CtxID, snapshotRev: Int, notice: WorktreeBootstrapNotice)
 
     private enum EventType: String, Codable {
         case ready
-        case taskUpsert = "task_upsert"
-        case taskDelete = "task_delete"
+        case activeTaskUpsert = "active_task_upsert"
+        case activeTaskDelete = "active_task_delete"
         case sessionSummary = "session_summary"
         case sessionHeadDelta = "session_head_delta"
         case sessionGap = "session_gap"
@@ -398,14 +378,14 @@ enum WorkspaceCatchupEvent: Codable, Sendable {
         switch type {
         case .ready:
             self = .ready(workspaceId: workspaceId, snapshotRev: snapshotRev)
-        case .taskUpsert:
-            let task = try container.decode(WorkspaceCatchupTaskSummary.self, forKey: .task)
-            self = .taskUpsert(workspaceId: workspaceId, snapshotRev: snapshotRev, task: task)
-        case .taskDelete:
+        case .activeTaskUpsert:
+            let task = try container.decode(WorkspaceActiveTaskSummary.self, forKey: .task)
+            self = .activeTaskUpsert(workspaceId: workspaceId, snapshotRev: snapshotRev, task: task)
+        case .activeTaskDelete:
             let taskId = try container.decode(CtxID.self, forKey: .taskId)
-            self = .taskDelete(workspaceId: workspaceId, snapshotRev: snapshotRev, taskId: taskId)
+            self = .activeTaskDelete(workspaceId: workspaceId, snapshotRev: snapshotRev, taskId: taskId)
         case .sessionSummary:
-            let summary = try container.decode(SessionCatchupSummary.self, forKey: .summary)
+            let summary = try container.decode(SessionSnapshotSummary.self, forKey: .summary)
             self = .sessionSummary(workspaceId: workspaceId, snapshotRev: snapshotRev, summary: summary)
         case .sessionHeadDelta:
             let delta = try container.decode(SessionHeadDelta.self, forKey: .delta)
@@ -428,13 +408,13 @@ enum WorkspaceCatchupEvent: Codable, Sendable {
             try container.encode(EventType.ready, forKey: .type)
             try container.encode(workspaceId, forKey: .workspaceId)
             try container.encode(snapshotRev, forKey: .snapshotRev)
-        case .taskUpsert(let workspaceId, let snapshotRev, let task):
-            try container.encode(EventType.taskUpsert, forKey: .type)
+        case .activeTaskUpsert(let workspaceId, let snapshotRev, let task):
+            try container.encode(EventType.activeTaskUpsert, forKey: .type)
             try container.encode(workspaceId, forKey: .workspaceId)
             try container.encode(snapshotRev, forKey: .snapshotRev)
             try container.encode(task, forKey: .task)
-        case .taskDelete(let workspaceId, let snapshotRev, let taskId):
-            try container.encode(EventType.taskDelete, forKey: .type)
+        case .activeTaskDelete(let workspaceId, let snapshotRev, let taskId):
+            try container.encode(EventType.activeTaskDelete, forKey: .type)
             try container.encode(workspaceId, forKey: .workspaceId)
             try container.encode(snapshotRev, forKey: .snapshotRev)
             try container.encode(taskId, forKey: .taskId)
@@ -464,15 +444,44 @@ enum WorkspaceCatchupEvent: Codable, Sendable {
     }
 }
 
-struct WorkspaceCatchupSessionSubscription: Codable, Sendable {
+struct WorkspaceActiveSnapshotSessionSubscription: Codable, Sendable {
     let sessionId: CtxID
     let afterSeq: Int?
 }
 
-struct WorkspaceCatchupClientMessage: Codable, Sendable {
+struct WorkspaceActiveSnapshotClientMessage: Codable, Sendable {
     let type: String
-    let sessionIds: [CtxID]?
-    let sessions: [WorkspaceCatchupSessionSubscription]?
+    let sessionIds: [CtxID]
+    let sessions: [WorkspaceActiveSnapshotSessionSubscription]
+}
+
+struct WorkspaceTaskSummary: Sendable {
+    let task: Task
+    let sessions: [SessionSnapshotSummary]
+    let sortAt: String
+
+    init(task: Task, sessions: [SessionSnapshotSummary], sortAt: String) {
+        self.task = task
+        self.sessions = sessions
+        self.sortAt = sortAt
+    }
+}
+
+struct WorktreeBootstrapNotice: Codable, Sendable {
+    let worktreeId: CtxID
+    let worktreeRoot: String
+    let status: String
+    let startedAt: String
+    let finishedAt: String
+    let exitCode: Int?
+    let timeoutSec: Int?
+    let configPath: String?
+    let configKey: String?
+    let command: String?
+    let scriptPath: String?
+    let logPath: String?
+    let logTruncated: Bool?
+    let error: String?
 }
 
 struct ProviderStatus: Codable, Sendable {
@@ -764,6 +773,33 @@ extension SessionSummary {
             status: session.status,
             agentRole: session.agentRole
         )
+    }
+}
+
+extension SessionSnapshotSummary {
+    init(session: Session) {
+        self.init(
+            session: session,
+            lastMessageAt: nil,
+            lastMessagePreview: nil,
+            lastEventSeq: nil,
+            activity: nil,
+            unread: nil
+        )
+    }
+}
+
+extension WorkspaceTaskSummary {
+    init(activeSummary: WorkspaceActiveTaskSummary) {
+        var sessions = [activeSummary.primarySession] + activeSummary.sessions
+        var seen = Set<String>()
+        sessions = sessions.filter { summary in
+            let id = summary.session.id.stringValue
+            guard !seen.contains(id) else { return false }
+            seen.insert(id)
+            return true
+        }
+        self.init(task: activeSummary.task, sessions: sessions, sortAt: activeSummary.sortAt)
     }
 }
 

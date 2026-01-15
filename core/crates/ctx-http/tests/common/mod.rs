@@ -63,7 +63,7 @@ pub fn build_state(
         base_url.into(),
         None,
     ));
-    state.start_workspace_catchup_listener();
+    state.start_workspace_active_snapshot_listener();
     state
 }
 

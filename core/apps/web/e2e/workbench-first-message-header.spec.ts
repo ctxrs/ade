@@ -14,7 +14,7 @@ test("workbench: first user message renders from stream when head is stale", asy
         // @ts-expect-error runtime shim
         super(url, protocols);
         const u = String(url ?? "");
-        if (!u.includes("/api/workspaces/") || !u.includes("/stream")) return;
+        if (!u.includes("/api/workspaces/") || !u.includes("/active_snapshot/stream")) return;
         this.addEventListener("open", () => {
           (window as any).__contextStreamOpenCount += 1;
         });

@@ -17,7 +17,7 @@ test("workbench: recovers when workspace stream drops once", async ({ page }) =>
         super(url, protocols);
         const u = String(url ?? "");
         if ((window as any).__contextTestClosedStreamOnce) return;
-        if (!u.includes("/api/workspaces/") || !u.includes("/stream")) return;
+        if (!u.includes("/api/workspaces/") || !u.includes("/active_snapshot/stream")) return;
 
         this.addEventListener("open", () => {
           // Close shortly after open to simulate an interrupted WS.
@@ -78,7 +78,7 @@ test("workbench: recovers when workspace stream drops once", async ({ page }) =>
   let sessionId = "";
   await expect
     .poll(async () => {
-      const resp = await page.request.get(`/api/workspaces/${workspaceId}/catchup`);
+      const resp = await page.request.get(`/api/workspaces/${workspaceId}/active_snapshot`);
       if (!resp.ok()) return "";
       const snapshot = (await resp.json()) as any;
       const taskSummary = snapshot?.active?.tasks?.[0];

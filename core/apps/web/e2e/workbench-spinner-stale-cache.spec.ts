@@ -66,7 +66,7 @@ test("workbench: stale cached events do not re-show running", async ({ page }) =
   await expect
     .poll(
       async () => {
-        const resp = await page.request.get(`/api/workspaces/${workspaceId}/catchup`);
+        const resp = await page.request.get(`/api/workspaces/${workspaceId}/active_snapshot`);
         if (!resp.ok()) return "";
         const data = await resp.json();
         const session = data?.active?.tasks?.[0]?.sessions?.[0]?.session?.id;

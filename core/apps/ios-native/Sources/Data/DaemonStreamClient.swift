@@ -12,7 +12,7 @@ final class DaemonStreamClient {
     }
 
     func connectWorkspaceStream(baseURL: URL, workspaceId: String, token: String?) throws -> URLSessionWebSocketTask {
-        guard let url = webSocketURL(baseURL: baseURL, path: "/api/workspaces/\(workspaceId)/stream", token: token) else {
+        guard let url = webSocketURL(baseURL: baseURL, path: "/api/workspaces/\(workspaceId)/active_snapshot/stream", token: token) else {
             throw DaemonStreamError.invalidURL
         }
         let task = session.webSocketTask(with: url)

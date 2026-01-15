@@ -38,7 +38,7 @@ let sessionSnap = {
   },
 };
 
-let workspaceCatchupSnap = {
+let workspaceSnapshotSnap = {
   workspaceId,
   initialized: true,
   connection: "connected",
@@ -109,7 +109,7 @@ vi.mock("../api/client", () => ({
 
 vi.mock("../state/sessionSupervisor", () => ({
   useSessionSupervisor: () => ({
-    bindWorkspaceCatchupStore: vi.fn(),
+    bindWorkspaceActiveSnapshotStore: vi.fn(),
     setActiveTaskSessionIds: vi.fn(),
     setWarmSessionIds: vi.fn(),
   }),
@@ -119,12 +119,10 @@ vi.mock("../state/sessionSupervisor", () => ({
 }));
 
 vi.mock("../state/workspaceCatchupStore", () => ({
-  WorkspaceCatchupProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
-  useWorkspaceCatchupEvents: () => ({
-    subscribeToWorkspaceCatchupEvents: vi.fn(() => () => {}),
-  }),
-  useWorkspaceCatchupSnapshot: () => workspaceCatchupSnap,
-  useWorkspaceCatchupStore: () => ({
+  WorkspaceActiveSnapshotProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  useWorkspaceActiveSnapshotEvents: () => {},
+  useWorkspaceActiveSnapshotSnapshot: () => workspaceSnapshotSnap,
+  useWorkspaceActiveSnapshotStore: () => ({
     applyTaskUpdate: vi.fn(),
     ensureArchivedLoaded: vi.fn(),
     loadMoreActive: vi.fn(),

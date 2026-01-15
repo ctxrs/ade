@@ -9,7 +9,7 @@ use serde_json::json;
 use tokio::process::Command;
 use tokio_tungstenite::{connect_async, tungstenite::Message as WsMessage};
 
-use ctx_core::models::{SessionEventType, WorkspaceCatchupEvent};
+use ctx_core::models::{SessionEventType, WorkspaceActiveSnapshotEvent};
 use ctx_http::{api, daemon::AppState};
 use ctx_providers::fake::FakeProviderAdapter;
 use ctx_store::Store;
@@ -78,7 +78,7 @@ async fn property_replay_respects_after_seq_and_monotonicity() {
         "http://127.0.0.1:0".to_string(),
         None,
     ));
-    state.start_workspace_catchup_listener();
+    state.start_workspace_active_snapshot_listener();
     let app = api::router(state.clone());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -171,8 +171,8 @@ async fn property_replay_respects_after_seq_and_monotonicity() {
             let Some(Ok(WsMessage::Text(txt))) = socket.next().await else {
                 break;
             };
-            let Ok(WorkspaceCatchupEvent::SessionHeadDelta { delta, .. }) =
-                serde_json::from_str::<WorkspaceCatchupEvent>(&txt)
+            let Ok(WorkspaceActiveSnapshotEvent::SessionHeadDelta { delta, .. }) =
+                serde_json::from_str::<WorkspaceActiveSnapshotEvent>(&txt)
             else {
                 continue;
             };

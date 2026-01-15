@@ -1,6 +1,8 @@
+import PhotosUI
 import SwiftUI
 import _Concurrency
 import UIKit
+import UniformTypeIdentifiers
 
 struct WorkbenchShellView: View {
     @EnvironmentObject private var connection: ConnectionStore
@@ -10,8 +12,8 @@ struct WorkbenchShellView: View {
     @State private var workspaces: [WorkspaceSummary] = []
     @State private var isLoadingWorkspaces = false
     @State private var workspaceError: String?
-    @State private var activeTasks: [WorkspaceCatchupTaskSummary] = []
-    @State private var archivedTasks: [WorkspaceCatchupTaskSummary] = []
+    @State private var activeTasks: [WorkspaceTaskSummary] = []
+    @State private var archivedTasks: [WorkspaceTaskSummary] = []
     @State private var isLoadingTasks = false
     @State private var isRefreshingTasks = false
     @State private var taskError: String?
@@ -20,7 +22,7 @@ struct WorkbenchShellView: View {
     @State private var didResetSelection = false
     @State private var taskQuery = ""
     @State private var shouldAutoOpenDrawer = ProcessInfo.processInfo.environment["CTX_OPEN_DRAWER_ON_LAUNCH"] == "1"
-    @State private var renameTarget: WorkspaceCatchupTaskSummary?
+    @State private var renameTarget: WorkspaceTaskSummary?
     @State private var renameText: String = ""
     @State private var renameError: String?
     @State private var isRenaming = false
@@ -452,7 +454,7 @@ struct WorkbenchShellView: View {
         return workspaces.first
     }
 
-    private var selectedTask: WorkspaceCatchupTaskSummary? {
+    private var selectedTask: WorkspaceTaskSummary? {
         guard let taskId = workbenchSelection.taskId else { return nil }
         if let match = activeTasks.first(where: { $0.task.id.stringValue == taskId }) {
             return match
@@ -530,10 +532,25 @@ struct WorkbenchShellView: View {
         }
         taskError = nil
         do {
-            let snapshot = try await client.getWorkspaceCatchupSnapshot(workspaceId: workspaceId, includeArchived: true)
-            lastStreamSnapshotRev = snapshot.snapshotRev
-            activeTasks = snapshot.active.tasks
-            archivedTasks = snapshot.archived?.tasks ?? []
+            let params = DaemonAPIClient.WorkspaceActiveSnapshotParams(limit: 50)
+            let activeSnapshot = try await client.getWorkspaceActiveSnapshot(workspaceId: workspaceId, params: params)
+            lastStreamSnapshotRev = activeSnapshot.snapshotRev
+            let activeSummaries = activeSnapshot.active.tasks.map(WorkspaceTaskSummary.init)
+            let workspaceTasks = try await client.listWorkspaceTasks(workspaceId: workspaceId)
+            let activeIds = Set(activeSummaries.map { $0.task.id.stringValue })
+            var extraActive: [WorkspaceTaskSummary] = []
+            var nextArchived: [WorkspaceTaskSummary] = []
+            for task in workspaceTasks {
+                if task.archivedAt != nil {
+                    nextArchived.append(await buildArchivedTaskSummary(client: client, task: task))
+                    continue
+                }
+                if activeIds.contains(task.id.stringValue) { continue }
+                let sortAt = task.lastActivityAt ?? task.updatedAt ?? task.createdAt
+                extraActive.append(WorkspaceTaskSummary(task: task, sessions: [], sortAt: sortAt))
+            }
+            activeTasks = sortTasksBySortAt(activeSummaries + extraActive)
+            archivedTasks = sortTasksBySortAt(nextArchived)
             resolveSelectionForCurrentTask()
         } catch {
             if showBlocking {
@@ -569,7 +586,7 @@ struct WorkbenchShellView: View {
         didResetSelection = true
     }
 
-    private func selectTask(_ task: WorkspaceCatchupTaskSummary) {
+    private func selectTask(_ task: WorkspaceTaskSummary) {
         let resolved = resolvePrimarySession(for: task, preferredSessionId: nil)
         workbenchSelection.setSelection(
             taskId: task.task.id.stringValue,
@@ -593,9 +610,8 @@ struct WorkbenchShellView: View {
             }
         }
         do {
-            let snapshot = try await client.getWorkspaceCatchupSnapshot(workspaceId: workspaceId, includeArchived: true)
-            let allTasks = snapshot.active.tasks + (snapshot.archived?.tasks ?? [])
-            guard let task = allTasks.first(where: { $0.task.id.stringValue == taskId }) else { return }
+            guard let task = (activeTasks + archivedTasks)
+                .first(where: { $0.task.id.stringValue == taskId }) else { return }
             guard task.task.archivedAt == nil else { return }
 
             let resolved = resolvePrimarySession(
@@ -624,7 +640,7 @@ struct WorkbenchShellView: View {
         return items.first
     }
 
-    private func beginRename(_ task: WorkspaceCatchupTaskSummary) {
+    private func beginRename(_ task: WorkspaceTaskSummary) {
         renameTarget = task
         let current = task.task.title.trimmingCharacters(in: .whitespacesAndNewlines)
         renameText = current.isEmpty ? "New task" : current
@@ -656,7 +672,7 @@ struct WorkbenchShellView: View {
     }
 
     @MainActor
-    private func toggleArchive(_ task: WorkspaceCatchupTaskSummary) async {
+    private func toggleArchive(_ task: WorkspaceTaskSummary) async {
         guard let client = connection.apiClient else {
             taskError = "Connect to a daemon to manage tasks."
             return
@@ -727,7 +743,7 @@ struct WorkbenchShellView: View {
     }
 
     @MainActor
-    private func markTaskReadIfNeeded(_ task: WorkspaceCatchupTaskSummary) async {
+    private func markTaskReadIfNeeded(_ task: WorkspaceTaskSummary) async {
         let taskId = task.task.id.stringValue
         guard !taskId.isEmpty else { return }
         guard !markReadInFlight.contains(taskId) else { return }
@@ -831,7 +847,7 @@ struct WorkbenchShellView: View {
     @MainActor
     private func sendWorkspaceSubscriptionIfNeeded() async {
         guard let socket = streamSocket else { return }
-        let message = WorkspaceCatchupClientMessage(type: "subscribe", sessionIds: nil, sessions: [])
+        let message = WorkspaceActiveSnapshotClientMessage(type: "subscribe", sessionIds: [], sessions: [])
         if let secureContext = streamSecureContext {
             let seq = await SecureSequenceStore.shared.next(for: secureContext.deviceId)
             guard let payload = try? streamEncoder.encode(message) else { return }
@@ -867,23 +883,23 @@ struct WorkbenchShellView: View {
             guard let envelope = try? streamDecoder.decode(SecureEnvelope.self, from: data) else { return }
             guard envelope.deviceId == secureContext.deviceId else { return }
             guard let decrypted = try? MobileE2EE.decryptEnvelope(envelope, key: secureContext.key) else { return }
-            guard let event = try? streamDecoder.decode(WorkspaceCatchupEvent.self, from: decrypted) else { return }
+            guard let event = try? streamDecoder.decode(WorkspaceActiveSnapshotEvent.self, from: decrypted) else { return }
             handleWorkspaceStreamEvent(event)
             return
         }
-        guard let event = try? streamDecoder.decode(WorkspaceCatchupEvent.self, from: data) else { return }
+        guard let event = try? streamDecoder.decode(WorkspaceActiveSnapshotEvent.self, from: data) else { return }
         handleWorkspaceStreamEvent(event)
     }
 
     @MainActor
-    private func handleWorkspaceStreamEvent(_ event: WorkspaceCatchupEvent) {
+    private func handleWorkspaceStreamEvent(_ event: WorkspaceActiveSnapshotEvent) {
         let snapshotRev: Int
         switch event {
         case .ready(_, let rev):
             snapshotRev = rev
-        case .taskUpsert(_, let rev, _):
+        case .activeTaskUpsert(_, let rev, _):
             snapshotRev = rev
-        case .taskDelete(_, let rev, _):
+        case .activeTaskDelete(_, let rev, _):
             snapshotRev = rev
         case .sessionSummary(_, let rev, _):
             snapshotRev = rev
@@ -904,9 +920,9 @@ struct WorkbenchShellView: View {
         lastStreamSnapshotRev = max(lastStreamSnapshotRev, snapshotRev)
 
         switch event {
-        case .taskUpsert(_, _, let task):
-            upsertTaskSummary(task)
-        case .taskDelete(_, _, let taskId):
+        case .activeTaskUpsert(_, _, let task):
+            upsertTaskSummary(WorkspaceTaskSummary(activeSummary: task))
+        case .activeTaskDelete(_, _, let taskId):
             removeTask(taskId: taskId.stringValue)
         case .sessionSummary(_, _, let summary):
             applySessionSummary(summary)
@@ -918,7 +934,7 @@ struct WorkbenchShellView: View {
     }
 
     @MainActor
-    private func upsertTaskSummary(_ summary: WorkspaceCatchupTaskSummary) {
+    private func upsertTaskSummary(_ summary: WorkspaceTaskSummary) {
         let taskId = summary.task.id.stringValue
         activeTasks.removeAll { $0.task.id.stringValue == taskId }
         archivedTasks.removeAll { $0.task.id.stringValue == taskId }
@@ -940,10 +956,10 @@ struct WorkbenchShellView: View {
     }
 
     @MainActor
-    private func applySessionSummary(_ summary: SessionCatchupSummary) {
+    private func applySessionSummary(_ summary: SessionSnapshotSummary) {
         let taskId = summary.session.taskId.stringValue
         let sessionId = summary.session.id.stringValue
-        func update(_ tasks: inout [WorkspaceCatchupTaskSummary]) -> Bool {
+        func update(_ tasks: inout [WorkspaceTaskSummary]) -> Bool {
             guard let taskIndex = tasks.firstIndex(where: { $0.task.id.stringValue == taskId }) else { return false }
             let taskSummary = tasks[taskIndex]
             var sessions = taskSummary.sessions
@@ -952,7 +968,7 @@ struct WorkbenchShellView: View {
             } else {
                 sessions.append(summary)
             }
-            tasks[taskIndex] = WorkspaceCatchupTaskSummary(
+            tasks[taskIndex] = WorkspaceTaskSummary(
                 task: taskSummary.task,
                 sessions: sessions,
                 sortAt: taskSummary.sortAt
@@ -968,11 +984,11 @@ struct WorkbenchShellView: View {
     @MainActor
     private func applyTaskUpdate(_ task: Task) {
         let taskId = task.id.stringValue
-        func update(_ tasks: inout [WorkspaceCatchupTaskSummary]) -> WorkspaceCatchupTaskSummary? {
+        func update(_ tasks: inout [WorkspaceTaskSummary]) -> WorkspaceTaskSummary? {
             guard let index = tasks.firstIndex(where: { $0.task.id.stringValue == taskId }) else { return nil }
             let summary = tasks[index]
             tasks.remove(at: index)
-            return WorkspaceCatchupTaskSummary(
+            return WorkspaceTaskSummary(
                 task: task,
                 sessions: summary.sessions,
                 sortAt: summary.sortAt
@@ -1191,8 +1207,8 @@ private struct WorkbenchDrawerView: View {
     let selectedWorkspace: WorkspaceSummary?
     let isLoadingWorkspaces: Bool
     let workspaceError: String?
-    let activeTasks: [WorkspaceCatchupTaskSummary]
-    let archivedTasks: [WorkspaceCatchupTaskSummary]
+    let activeTasks: [WorkspaceTaskSummary]
+    let archivedTasks: [WorkspaceTaskSummary]
     let isLoadingTasks: Bool
     let isRefreshingTasks: Bool
     let taskError: String?
@@ -1200,14 +1216,14 @@ private struct WorkbenchDrawerView: View {
     @Binding var taskQuery: String
     let drawerWidth: CGFloat
     let onRefresh: () -> Void
-    let onSelectTask: (WorkspaceCatchupTaskSummary) -> Void
+    let onSelectTask: (WorkspaceTaskSummary) -> Void
     let onNewTask: () -> Void
-    let onRenameTask: (WorkspaceCatchupTaskSummary) -> Void
-    let onArchiveToggle: (WorkspaceCatchupTaskSummary) -> Void
+    let onRenameTask: (WorkspaceTaskSummary) -> Void
+    let onArchiveToggle: (WorkspaceTaskSummary) -> Void
     let markReadInFlight: Set<String>
     let deleteInFlight: Set<String>
-    let onToggleReadState: (WorkspaceCatchupTaskSummary) -> Void
-    let onDeleteTask: (WorkspaceCatchupTaskSummary) -> Void
+    let onToggleReadState: (WorkspaceTaskSummary) -> Void
+    let onDeleteTask: (WorkspaceTaskSummary) -> Void
     @State private var showArchived = false
 
     var body: some View {
@@ -1478,7 +1494,7 @@ private struct WorkbenchNavigationFlowView: View {
         } else if let workspace = selectedWorkspace {
             NavigationStack {
                 if let selectedSession {
-                    ChatDetailView(session: selectedSession, isArtifactsPresented: $isArtifactsPresented, artifactCount: $artifactsCount)
+                    ChatDetailView(session: selectedSession, isArchived: selectedTask?.task.archivedAt != nil, isArtifactsPresented: $isArtifactsPresented, artifactCount: $artifactsCount)
                 } else if hasTaskSelection {
                     if isPreparingSession {
                         WorkbenchEmptyStateView(
@@ -1524,72 +1540,22 @@ private struct WorkbenchNewTaskView: View {
     @State private var models: [String] = []
     @State private var selectedProviderId = ""
     @State private var selectedModelId = ""
+    @State private var selectedEffortId = ""
+    @State private var selectedMode: ComposerMode = .default
+    @State private var selectedIsolation: WorkbenchEnvTarget = .worktree
     @State private var isLoadingProviders = false
     @State private var isLoadingModels = false
     @State private var errorMessage: String?
     @State private var isSubmitting = false
     @State private var routingEntry: ModelRoutingEntry?
+    @State private var selectedPhotos: [PhotosPickerItem] = []
+    @State private var pendingAttachments: [MessageAttachment] = []
     @FocusState private var isPromptFocused: Bool
 
     var body: some View {
         ScrollView(showsIndicators: false) {
             VStack(alignment: .leading, spacing: 16) {
-                Text("New task")
-                    .font(.title3.weight(.semibold))
-                    .foregroundColor(.ctxTextPrimary)
-
-                if isLoadingTasks {
-                    Text("Refreshing tasks...")
-                        .font(.caption)
-                        .foregroundColor(.ctxTextMuted)
-                } else if let taskError {
-                    WorkbenchInfoCard(text: taskError, tint: .ctxError)
-                }
-
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("Prompt")
-                        .font(.caption.weight(.semibold))
-                        .foregroundColor(.ctxTextMuted)
-                    CtxTextArea(
-                        placeholder: "Describe what you want...",
-                        text: $prompt,
-                        accessibilityId: "newtask.prompt",
-                        isFocused: $isPromptFocused
-                    )
-                }
-
-                WorkbenchInlineHarnessPicker(
-                    value: providerLabel,
-                    providerId: providerIconId,
-                    isDisabled: providerOptionsDisabled,
-                    options: availableProviderIds,
-                    displayName: formatProviderName,
-                    onSelect: { id in
-                        selectedProviderId = id
-                        selectedModelId = ""
-                    }
-                )
-
-                WorkbenchInlineMenuPicker(
-                    title: "Model",
-                    value: modelLabel,
-                    isDisabled: modelOptionsDisabled,
-                    options: modelChoices,
-                    onSelect: { id in
-                        selectedModelId = id
-                    }
-                )
-
-                if let errorMessage {
-                    WorkbenchInfoCard(text: errorMessage, tint: .ctxError)
-                }
-
-                Button(action: startTask) {
-                    Text(isSubmitting ? "Starting..." : "Start")
-                }
-                .buttonStyle(CtxPrimaryButtonStyle())
-                .disabled(!canSubmit)
-                .accessibilityIdentifier("newtask.start")
+                composerCard
             }
             .padding(.horizontal, 20)
             .padding(.bottom, 20)
@@ -1600,6 +1566,15 @@ private struct WorkbenchNewTaskView: View {
         }
         .task(id: effectiveProviderId) {
             await loadModels()
+        }
+        .onChange(of: selectedPhotos) { newItems in
+            _Concurrency.Task { await loadAttachments(from: newItems) }
+        }
+        .onChange(of: models) { _ in
+            syncEffortSelection()
+        }
+        .onChange(of: selectedModelId) { _, _ in
+            syncEffortSelection()
         }
         .onAppear {
             let env = ProcessInfo.processInfo.environment
@@ -1827,21 +1802,7 @@ private struct WorkbenchNewTaskView: View {
     }
 
     private var effectiveModelId: String {
-        if !selectedModelId.isEmpty {
-            return selectedModelId
-        }
-        if let routingEntry, routingEntry.providerId == effectiveProviderId {
-            if modelChoices.isEmpty || modelChoices.contains(routingEntry.modelId) {
-                return routingEntry.modelId
-            }
-        }
-        return modelChoices.first ?? "default"
-    }
-
-    private var modelLabel: String {
-        if isLoadingModels { return "Loading..." }
-        if modelChoices.isEmpty { return "default" }
-        return effectiveModelId
+        resolveModelIdForUI()
     }
 
     private var providerOptionsDisabled: Bool {
@@ -1852,8 +1813,8 @@ private struct WorkbenchNewTaskView: View {
         isLoadingModels || effectiveProviderId.isEmpty || modelChoices.isEmpty
     }
 
-    private var canSubmit: Bool {
-        !promptTrimmed.isEmpty && !effectiveProviderId.isEmpty && !effectiveModelId.isEmpty && !isSubmitting
+    private var isSendEnabled: Bool {
+        (!promptTrimmed.isEmpty || !pendingAttachments.isEmpty) && !effectiveProviderId.isEmpty && !effectiveModelId.isEmpty && !isSubmitting
     }
 
     private func formatProviderName(_ providerId: String) -> String {
@@ -1907,6 +1868,7 @@ private struct WorkbenchNewTaskView: View {
         do {
             let options = try await client.getProviderOptions(workspaceId: workspace.id, providerId: effectiveProviderId)
             models = extractModelIds(from: options.models)
+            syncEffortSelection()
             if !models.contains(selectedModelId) {
                 selectedModelId = ""
             }
@@ -1915,13 +1877,100 @@ private struct WorkbenchNewTaskView: View {
             errorMessage = "Failed to load models."
         }
         isLoadingModels = false
+        syncEffortSelection()
+    }
+
+    private func syncEffortSelection() {
+        let catalog = buildModelCatalog(modelChoices)
+        let parsed = parseModelId(resolveModelIdForUI(), catalog: catalog)
+        let baseId = parsed.base.isEmpty ? resolveModelIdForUI() : parsed.base
+        let efforts = catalog.effortsByBase[baseId] ?? []
+
+        if efforts.isEmpty {
+            if !selectedEffortId.isEmpty {
+                selectedEffortId = ""
+            }
+            return
+        }
+
+        var nextEffort = selectedEffortId
+        if nextEffort.isEmpty || !efforts.contains(nextEffort) {
+            if let parsedEffort = parsed.effort, efforts.contains(parsedEffort) {
+                nextEffort = parsedEffort
+            } else {
+                nextEffort = pickDefaultEffort(efforts) ?? ""
+            }
+        }
+
+        if selectedEffortId != nextEffort {
+            selectedEffortId = nextEffort
+        }
+
+        let resolvedModelId = deriveFullModelIdForBase(catalog: catalog, baseId: baseId, preferredEffort: nextEffort)
+        if !resolvedModelId.isEmpty, selectedModelId != resolvedModelId {
+            selectedModelId = resolvedModelId
+        }
+    }
+
+    private func insertToken(_ token: String) {
+        if !prompt.isEmpty, let last = prompt.last, !last.isWhitespace {
+            prompt.append(" ")
+        }
+        prompt.append(token)
+        isPromptFocused = true
+    }
+
+    private func selectBase(_ baseId: String, catalog: ModelCatalog) {
+        selectedModelId = baseId
+        selectedEffortId = ""
+        let efforts = catalog.effortsByBase[baseId] ?? []
+        if let defaultEffort = pickDefaultEffort(efforts) {
+            selectedEffortId = defaultEffort
+        }
+    }
+
+    private func selectEffort(_ effortId: String, baseId: String, catalog: ModelCatalog) {
+        let next = deriveFullModelIdForBase(catalog: catalog, baseId: baseId, preferredEffort: effortId)
+        if !next.isEmpty {
+            selectedModelId = next
+            selectedEffortId = effortId
+        }
+    }
+
+    private func resolveEffortId(parsed: ParsedModelId, efforts: [String]) -> String? {
+        if let effort = parsed.effort, efforts.contains(effort) {
+            return effort
+        }
+        if !selectedEffortId.isEmpty, efforts.contains(selectedEffortId) {
+            return selectedEffortId
+        }
+        return nil
+    }
+
+    private func formatEffortLabel(_ effort: String) -> String {
+        effort.replacingOccurrences(of: "_", with: " ").capitalized
+    }
+
+    private func resolveModelIdForUI() -> String {
+        if !selectedModelId.isEmpty {
+            return selectedModelId
+        }
+        if let routingEntry, routingEntry.providerId == effectiveProviderId {
+            if modelChoices.isEmpty || modelChoices.contains(routingEntry.modelId) {
+                return routingEntry.modelId
+            }
+        }
+        return modelChoices.first ?? "default"
     }
 
     private func startTask() {
         let promptValue = promptTrimmed
-        guard !promptValue.isEmpty else { return }
+        guard !promptValue.isEmpty || !pendingAttachments.isEmpty else { return }
         let providerId = effectiveProviderId
         let modelId = effectiveModelId
+        let attachments = pendingAttachments
+        let modeId = selectedMode.rawValue
+        let envTarget = selectedIsolation.rawValue
         guard !providerId.isEmpty, !modelId.isEmpty else { return }
         isSubmitting = true
         errorMessage = nil
@@ -1941,14 +1990,27 @@ private struct WorkbenchNewTaskView: View {
                     createDefaultTrack: false,
                     defaultTrackLabel: nil
                 )
-                let session = try await client.createSession(taskId: task.id.stringValue, providerId: providerId, modelId: modelId)
-                _ = try await client.postMessage(sessionId: session.id.stringValue, content: promptValue, delivery: .immediate, attachments: [])
+                let session = try await client.createSession(
+                    taskId: task.id.stringValue,
+                    providerId: providerId,
+                    modelId: modelId,
+                    envTarget: envTarget
+                )
+                try? await client.setSessionMode(sessionId: session.id.stringValue, modeId: modeId)
+                _ = try await client.postMessage(
+                    sessionId: session.id.stringValue,
+                    content: promptValue,
+                    delivery: .immediate,
+                    attachments: attachments
+                )
                 await MainActor.run {
                     workbenchSelection.setSelection(
                         taskId: task.id.stringValue,
                         sessionId: session.id.stringValue
                     )
                     prompt = ""
+                    pendingAttachments = []
+                    selectedPhotos = []
                     onTaskCreated()
                 }
             } catch {
@@ -1960,6 +2022,38 @@ private struct WorkbenchNewTaskView: View {
                 isSubmitting = false
             }
         }
+    }
+
+    @MainActor
+    private func loadAttachments(from items: [PhotosPickerItem]) async {
+        guard !items.isEmpty else { return }
+        var nextAttachments: [MessageAttachment] = []
+        for item in items {
+            guard let data = try? await item.loadTransferable(type: Data.self) else { continue }
+            let contentType = item.supportedContentTypes.first
+            let mimeType = contentType?.preferredMIMEType ?? "image/*"
+            let fileExtension = contentType?.preferredFilenameExtension
+            let name = suggestedAttachmentName(extension: fileExtension)
+            nextAttachments.append(
+                MessageAttachment(
+                    kind: .image,
+                    mimeType: mimeType,
+                    dataBase64: data.base64EncodedString(),
+                    blobId: nil,
+                    name: name
+                )
+            )
+        }
+        if !nextAttachments.isEmpty {
+            pendingAttachments.append(contentsOf: nextAttachments)
+        }
+        selectedPhotos = []
+    }
+
+    private func suggestedAttachmentName(extension fileExtension: String?) -> String? {
+        let suffix = (fileExtension?.isEmpty == false) ? ".\(fileExtension ?? "")" : ""
+        let shortId = String(UUID().uuidString.prefix(8))
+        return "photo-\(shortId)\(suffix)"
     }
 }
 
@@ -2375,7 +2469,7 @@ private struct ResolvedPrimarySession {
 }
 
 private func resolvePrimarySession(
-    for task: WorkspaceCatchupTaskSummary,
+    for task: WorkspaceTaskSummary,
     preferredSessionId: String?
 ) -> ResolvedPrimarySession {
     let sessions = task.sessions
@@ -2413,7 +2507,7 @@ private func resolvePrimarySession(
     return ResolvedPrimarySession(sessionId: nil, session: nil)
 }
 
-private func mostRecentSession(in sessions: [SessionCatchupSummary]) -> SessionCatchupSummary? {
+private func mostRecentSession(in sessions: [SessionSnapshotSummary]) -> SessionSnapshotSummary? {
     sessions.max { left, right in
         let leftKey = left.lastMessageAt ?? left.session.updatedAt ?? left.session.createdAt ?? ""
         let rightKey = right.lastMessageAt ?? right.session.updatedAt ?? right.session.createdAt ?? ""
@@ -2501,6 +2595,42 @@ private func resolveDefaultSessionConfig(
     return (providerId, modelId)
 }
 
+private func buildArchivedTaskSummary(
+    client: DaemonAPIClient,
+    task: Task
+) async -> WorkspaceTaskSummary {
+    let sessions = (try? await client.listTaskSessions(taskId: task.id.stringValue)) ?? []
+    var summaries = sessions.map(SessionSnapshotSummary.init)
+    if let preferredSessionId = pickArchivedSessionId(task: task, sessions: sessions) {
+        if let snapshot = try? await client.getSessionSnapshot(sessionId: preferredSessionId, limit: 200, includeEvents: false) {
+            let snapshotId = snapshot.summary.session.id.stringValue
+            if summaries.contains(where: { $0.session.id.stringValue == snapshotId }) {
+                summaries = summaries.map { summary in
+                    if summary.session.id.stringValue == snapshotId {
+                        return snapshot.summary
+                    }
+                    return summary
+                }
+            } else {
+                summaries.append(snapshot.summary)
+            }
+        }
+        _ = try? await client.getSessionHistory(sessionId: preferredSessionId, beforeSeq: nil, limit: 1)
+    }
+    let sortAt = task.lastActivityAt ?? task.updatedAt ?? task.createdAt
+    return WorkspaceTaskSummary(task: task, sessions: summaries, sortAt: sortAt)
+}
+
+private func pickArchivedSessionId(task: Task, sessions: [Session]) -> String? {
+    if let primaryId = task.primarySessionId?.stringValue,
+       (sessions.isEmpty || sessions.contains(where: { $0.id.stringValue == primaryId })) {
+        return primaryId
+    }
+    let nonSubagents = sessions.filter { $0.relationship != "sub_agent" }
+    let pool = nonSubagents.isEmpty ? sessions : nonSubagents
+    return pool.first?.id.stringValue
+}
+
 // MARK: - Task list helpers (web parity)
 
 private struct WorkbenchSearchField: View {
@@ -2548,7 +2678,7 @@ private struct WorkbenchSectionHeaderView: View {
 }
 
 private struct WorkbenchTaskRowView: View {
-    let task: WorkspaceCatchupTaskSummary
+    let task: WorkspaceTaskSummary
     let isSelected: Bool
 
     private var title: String {
@@ -2772,7 +2902,7 @@ private struct TaskRowIndicators {
     let ageLabel: String
     let previewText: String?
 
-    init(task: WorkspaceCatchupTaskSummary) {
+    init(task: WorkspaceTaskSummary) {
         providerIds = resolveProviderIds(for: task)
         isWorking = taskHasWorkingSession(task)
         let hasError = taskHasErrorSession(task)
@@ -2794,7 +2924,7 @@ private enum TaskRowDotKind {
     case error
 }
 
-private func resolveTaskPreview(_ task: WorkspaceCatchupTaskSummary) -> String? {
+private func resolveTaskPreview(_ task: WorkspaceTaskSummary) -> String? {
     if let primaryId = task.task.primarySessionId,
        let summary = task.sessions.first(where: { $0.session.id == primaryId }),
        let preview = summary.lastMessagePreview?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -2811,7 +2941,7 @@ private func resolveTaskPreview(_ task: WorkspaceCatchupTaskSummary) -> String? 
 }
 
 
-private func taskHasWorkingSession(_ task: WorkspaceCatchupTaskSummary) -> Bool {
+private func taskHasWorkingSession(_ task: WorkspaceTaskSummary) -> Bool {
     for summary in task.sessions {
         let status = summary.session.status.lowercased()
         if status == "failed" || status == "cancelled" || status == "completed" {
@@ -2824,7 +2954,7 @@ private func taskHasWorkingSession(_ task: WorkspaceCatchupTaskSummary) -> Bool 
     return false
 }
 
-private func taskHasErrorSession(_ task: WorkspaceCatchupTaskSummary) -> Bool {
+private func taskHasErrorSession(_ task: WorkspaceTaskSummary) -> Bool {
     for summary in task.sessions {
         let status = summary.session.status.lowercased()
         if status == "failed" || status == "cancelled" {
@@ -2834,7 +2964,7 @@ private func taskHasErrorSession(_ task: WorkspaceCatchupTaskSummary) -> Bool {
     return false
 }
 
-private func taskHasUnread(_ task: WorkspaceCatchupTaskSummary, isWorking: Bool) -> Bool {
+private func taskHasUnread(_ task: WorkspaceTaskSummary, isWorking: Bool) -> Bool {
     guard !isWorking else { return false }
     guard let lastAssistantIso = task.task.lastAssistantMessageAt else { return false }
     let lastAssistant = parseIso(lastAssistantIso)
@@ -2846,7 +2976,7 @@ private func taskHasUnread(_ task: WorkspaceCatchupTaskSummary, isWorking: Bool)
     return true
 }
 
-private func resolveProviderIds(for task: WorkspaceCatchupTaskSummary) -> [String] {
+private func resolveProviderIds(for task: WorkspaceTaskSummary) -> [String] {
     var ordered: [String] = []
     for summary in task.sessions {
         let providerId = summary.session.providerId.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -2858,7 +2988,7 @@ private func resolveProviderIds(for task: WorkspaceCatchupTaskSummary) -> [Strin
     return ordered
 }
 
-private func filterTasks(_ tasks: [WorkspaceCatchupTaskSummary], matching query: String) -> [WorkspaceCatchupTaskSummary] {
+private func filterTasks(_ tasks: [WorkspaceTaskSummary], matching query: String) -> [WorkspaceTaskSummary] {
     guard !query.isEmpty else { return tasks }
     return tasks.filter { task in
         let title = task.task.title.lowercased()
@@ -2866,7 +2996,7 @@ private func filterTasks(_ tasks: [WorkspaceCatchupTaskSummary], matching query:
     }
 }
 
-private func sortTasksBySortAt(_ tasks: [WorkspaceCatchupTaskSummary]) -> [WorkspaceCatchupTaskSummary] {
+private func sortTasksBySortAt(_ tasks: [WorkspaceTaskSummary]) -> [WorkspaceTaskSummary] {
     tasks.sorted { left, right in
         let leftDate = parseIso(left.sortAt)
         let rightDate = parseIso(right.sortAt)

@@ -10,7 +10,7 @@ use tokio_tungstenite::connect_async;
 use url::Url;
 use uuid::Uuid;
 
-use ctx_core::models::WorkspaceCatchupEvent;
+use ctx_core::models::WorkspaceActiveSnapshotEvent;
 
 #[derive(Debug, Deserialize)]
 struct EnableMobileAccessResp {
@@ -214,9 +214,9 @@ async fn run_e2e(
         &ws_env.nonce,
         &ws_env.ciphertext,
     )?;
-    let event: WorkspaceCatchupEvent = serde_json::from_slice(&ws_payload)?;
+    let event: WorkspaceActiveSnapshotEvent = serde_json::from_slice(&ws_payload)?;
     match event {
-        WorkspaceCatchupEvent::Ready { workspace_id, .. } => {
+        WorkspaceActiveSnapshotEvent::Ready { workspace_id, .. } => {
             if workspace_id.0.to_string() != expected_workspace_id {
                 return Err(anyhow!("workspace id mismatch in ws ready event"));
             }

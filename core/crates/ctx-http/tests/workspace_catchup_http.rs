@@ -32,7 +32,7 @@ async fn setup() -> (
 }
 
 #[tokio::test]
-async fn workspace_catchup_snapshot_includes_sessions() {
+async fn workspace_active_snapshot_includes_sessions() {
     let (repo, _data_dir, _store, server) = setup().await;
     let base = &server.base_url;
     let client = &server.client;
@@ -57,7 +57,7 @@ async fn workspace_catchup_snapshot_includes_sessions() {
         .await
         .unwrap();
 
-    let _session: ctx_core::models::Session = client
+    let session: ctx_core::models::Session = client
         .post(format!("{base}/api/tasks/{}/sessions", task_active.id.0))
         .json(&json!({"provider_id":"fake","model_id":"fake-model"}))
         .send()
@@ -67,23 +67,11 @@ async fn workspace_catchup_snapshot_includes_sessions() {
         .await
         .unwrap();
 
-    let task_archived: ctx_core::models::Task = client
-        .post(format!("{base}/api/workspaces/{}/tasks", ws.id.0))
-        .json(&json!({"title":"archived"}))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
-    client
-        .post(format!("{base}/api/tasks/{}/archive", task_archived.id.0))
-        .send()
-        .await
-        .unwrap();
-
-    let snapshot: ctx_core::models::WorkspaceCatchupSnapshot = client
-        .get(format!("{base}/api/workspaces/{}/catchup?limit=5", ws.id.0))
+    let snapshot: ctx_core::models::WorkspaceActiveSnapshot = client
+        .get(format!(
+            "{base}/api/workspaces/{}/active_snapshot?limit=5",
+            ws.id.0
+        ))
         .send()
         .await
         .unwrap()
@@ -93,13 +81,50 @@ async fn workspace_catchup_snapshot_includes_sessions() {
     assert_eq!(snapshot.active.tasks.len(), 1);
     let summary = &snapshot.active.tasks[0];
     assert_eq!(summary.task.id, task_active.id);
-    assert_eq!(summary.sessions.len(), 1);
+    assert_eq!(summary.primary_session.session.id, session.id);
     assert_eq!(snapshot.active.total_count, 1);
+}
 
-    let snapshot_all: ctx_core::models::WorkspaceCatchupSnapshot = client
+#[tokio::test]
+async fn session_snapshot_returns_summary_and_head() {
+    let (repo, _data_dir, _store, server) = setup().await;
+    let base = &server.base_url;
+    let client = &server.client;
+
+    let ws: ctx_core::models::Workspace = client
+        .post(format!("{base}/api/workspaces"))
+        .json(&json!({"root_path": repo.path(), "name": "ws"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let task: ctx_core::models::Task = client
+        .post(format!("{base}/api/workspaces/{}/tasks", ws.id.0))
+        .json(&json!({"title":"snapshot"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let session: ctx_core::models::Session = client
+        .post(format!("{base}/api/tasks/{}/sessions", task.id.0))
+        .json(&json!({"provider_id":"fake","model_id":"fake-model"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let snapshot: ctx_core::models::SessionSnapshot = client
         .get(format!(
-            "{base}/api/workspaces/{}/catchup?limit=10&include_archived=1",
-            ws.id.0
+            "{base}/api/sessions/{}/snapshot?limit=10",
+            session.id.0
         ))
         .send()
         .await
@@ -107,25 +132,9 @@ async fn workspace_catchup_snapshot_includes_sessions() {
         .json()
         .await
         .unwrap();
-    let archived = snapshot_all.archived.expect("archived page");
-    assert_eq!(archived.tasks.len(), 1);
-    assert_eq!(archived.tasks[0].task.id, task_archived.id);
 
-    let snapshot_archived_only: ctx_core::models::WorkspaceCatchupSnapshot = client
-        .get(format!(
-            "{base}/api/workspaces/{}/catchup?limit=5&archived_only=1",
-            ws.id.0
-        ))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
-    assert_eq!(snapshot_archived_only.active.tasks.len(), 0);
-    let archived_only = snapshot_archived_only.archived.expect("archived page");
-    assert_eq!(archived_only.tasks.len(), 1);
-    assert_eq!(archived_only.tasks[0].task.id, task_archived.id);
+    assert_eq!(snapshot.summary.session.id, session.id);
+    assert_eq!(snapshot.head.session.id, session.id);
 }
 
 #[tokio::test]
@@ -220,9 +229,17 @@ async fn workspace_stream_replays_from_after_seq() {
     let mut seen_old = false;
     let deadline = tokio::time::Instant::now() + Duration::from_secs(4);
     while tokio::time::Instant::now() < deadline {
-        if let Some(Ok(WsMessage::Text(txt))) = socket.next().await {
-            if let Ok(ctx_core::models::WorkspaceCatchupEvent::SessionHeadDelta { delta, .. }) =
-                serde_json::from_str::<ctx_core::models::WorkspaceCatchupEvent>(&txt)
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            break;
+        }
+        let wait = remaining.min(Duration::from_millis(250));
+        let next = tokio::time::timeout(wait, socket.next()).await;
+        if let Ok(Some(Ok(WsMessage::Text(txt)))) = next {
+            if let Ok(ctx_core::models::WorkspaceActiveSnapshotEvent::SessionHeadDelta {
+                delta,
+                ..
+            }) = serde_json::from_str::<ctx_core::models::WorkspaceActiveSnapshotEvent>(&txt)
             {
                 if delta.session_id != session.id {
                     continue;
@@ -347,8 +364,10 @@ async fn workspace_stream_replays_tool_events() {
         let wait = remaining.min(Duration::from_millis(250));
         let next = tokio::time::timeout(wait, socket.next()).await;
         if let Ok(Some(Ok(WsMessage::Text(txt)))) = next {
-            if let Ok(ctx_core::models::WorkspaceCatchupEvent::SessionHeadDelta { delta, .. }) =
-                serde_json::from_str::<ctx_core::models::WorkspaceCatchupEvent>(&txt)
+            if let Ok(ctx_core::models::WorkspaceActiveSnapshotEvent::SessionHeadDelta {
+                delta,
+                ..
+            }) = serde_json::from_str::<ctx_core::models::WorkspaceActiveSnapshotEvent>(&txt)
             {
                 if delta.session_id != session.id {
                     continue;
@@ -450,9 +469,17 @@ async fn workspace_stream_emits_gap_on_large_replay() {
     let mut seen_gap = false;
     let deadline = tokio::time::Instant::now() + Duration::from_secs(6);
     while tokio::time::Instant::now() < deadline {
-        if let Some(Ok(WsMessage::Text(txt))) = socket.next().await {
-            if let Ok(ctx_core::models::WorkspaceCatchupEvent::SessionGap { session_id, .. }) =
-                serde_json::from_str::<ctx_core::models::WorkspaceCatchupEvent>(&txt)
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            break;
+        }
+        let wait = remaining.min(Duration::from_millis(250));
+        let next = tokio::time::timeout(wait, socket.next()).await;
+        if let Ok(Some(Ok(WsMessage::Text(txt)))) = next {
+            if let Ok(ctx_core::models::WorkspaceActiveSnapshotEvent::SessionGap {
+                session_id,
+                ..
+            }) = serde_json::from_str::<ctx_core::models::WorkspaceActiveSnapshotEvent>(&txt)
             {
                 if session_id == session.id {
                     seen_gap = true;
@@ -466,7 +493,7 @@ async fn workspace_stream_emits_gap_on_large_replay() {
 }
 
 #[tokio::test]
-async fn workspace_catchup_stream_pushes_updates() {
+async fn workspace_active_snapshot_stream_pushes_updates() {
     let (repo, _data_dir, _store, server) = setup().await;
     let base = &server.base_url;
     let client = &server.client;
@@ -489,9 +516,10 @@ async fn workspace_catchup_stream_pushes_updates() {
         .unwrap()
         .unwrap();
     if let WsMessage::Text(txt) = ready_msg {
-        let evt: ctx_core::models::WorkspaceCatchupEvent = serde_json::from_str(&txt).unwrap();
+        let evt: ctx_core::models::WorkspaceActiveSnapshotEvent =
+            serde_json::from_str(&txt).unwrap();
         match evt {
-            ctx_core::models::WorkspaceCatchupEvent::Ready { .. } => {}
+            ctx_core::models::WorkspaceActiveSnapshotEvent::Ready { .. } => {}
             other => panic!("expected ready, got {other:?}"),
         }
     } else {
@@ -508,12 +536,31 @@ async fn workspace_catchup_stream_pushes_updates() {
         .await
         .unwrap();
 
+    let _session: ctx_core::models::Session = client
+        .post(format!("{base}/api/tasks/{}/sessions", task.id.0))
+        .json(&json!({"provider_id":"fake","model_id":"fake-model"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
     let mut saw_upsert = false;
     let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
     while tokio::time::Instant::now() < deadline {
-        if let Some(Ok(WsMessage::Text(txt))) = socket.next().await {
-            if let ctx_core::models::WorkspaceCatchupEvent::TaskUpsert { task: summary, .. } =
-                serde_json::from_str::<ctx_core::models::WorkspaceCatchupEvent>(&txt).unwrap()
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            break;
+        }
+        let wait = remaining.min(Duration::from_millis(250));
+        let next = tokio::time::timeout(wait, socket.next()).await;
+        if let Ok(Some(Ok(WsMessage::Text(txt)))) = next {
+            if let ctx_core::models::WorkspaceActiveSnapshotEvent::ActiveTaskUpsert {
+                task: summary,
+                ..
+            } = serde_json::from_str::<ctx_core::models::WorkspaceActiveSnapshotEvent>(&txt)
+                .unwrap()
             {
                 if summary.task.id == task.id {
                     saw_upsert = true;
@@ -526,7 +573,7 @@ async fn workspace_catchup_stream_pushes_updates() {
 }
 
 #[tokio::test]
-async fn workspace_catchup_stream_filters_session_head_deltas() {
+async fn workspace_active_snapshot_stream_filters_session_head_deltas() {
     let (repo, _data_dir, store, server) = setup().await;
     let base = &server.base_url;
     let client = &server.client;
@@ -617,9 +664,17 @@ async fn workspace_catchup_stream_filters_session_head_deltas() {
     let mut seen_b = false;
     let deadline = tokio::time::Instant::now() + Duration::from_secs(4);
     while tokio::time::Instant::now() < deadline {
-        if let Some(Ok(WsMessage::Text(txt))) = socket.next().await {
-            if let Ok(ctx_core::models::WorkspaceCatchupEvent::SessionHeadDelta { delta, .. }) =
-                serde_json::from_str::<ctx_core::models::WorkspaceCatchupEvent>(&txt)
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            break;
+        }
+        let wait = remaining.min(Duration::from_millis(250));
+        let next = tokio::time::timeout(wait, socket.next()).await;
+        if let Ok(Some(Ok(WsMessage::Text(txt)))) = next {
+            if let Ok(ctx_core::models::WorkspaceActiveSnapshotEvent::SessionHeadDelta {
+                delta,
+                ..
+            }) = serde_json::from_str::<ctx_core::models::WorkspaceActiveSnapshotEvent>(&txt)
             {
                 if delta.session_id == session_a.id {
                     seen_a = true;

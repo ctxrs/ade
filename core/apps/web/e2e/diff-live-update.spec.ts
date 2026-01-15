@@ -61,7 +61,7 @@ async function createWorkspaceAndStartRun(opts: {
   await expect
     .poll(
       async () => {
-        const resp = await request.get(`/api/workspaces/${workspaceId}/catchup`);
+        const resp = await request.get(`/api/workspaces/${workspaceId}/active_snapshot`);
         if (!resp.ok()) return "";
         const snapshot = (await resp.json()) as any;
         const taskSummary = snapshot?.active?.tasks?.[0];

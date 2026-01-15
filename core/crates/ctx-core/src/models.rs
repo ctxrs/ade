@@ -560,23 +560,6 @@ pub struct WorkspaceActiveSnapshot {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WorkspaceCatchupCursor {
-    pub sort_at: DateTime<Utc>,
-    pub task_id: TaskId,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SessionCatchupSummary {
-    pub session: Session,
-    pub last_message_at: Option<DateTime<Utc>>,
-    pub last_message_preview: Option<String>,
-    pub last_event_seq: Option<i64>,
-    #[serde(default)]
-    pub activity: SessionActivityState,
-    pub unread: Option<bool>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionSnapshotSummary {
     pub session: SessionMetadata,
     pub last_message_at: Option<DateTime<Utc>>,
@@ -585,31 +568,6 @@ pub struct SessionSnapshotSummary {
     #[serde(default)]
     pub activity: SessionActivityState,
     pub unread: Option<bool>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WorkspaceCatchupTaskSummary {
-    pub task: Task,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub sessions: Vec<SessionCatchupSummary>,
-    pub sort_at: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WorkspaceCatchupPage {
-    pub tasks: Vec<WorkspaceCatchupTaskSummary>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub next_cursor: Option<WorkspaceCatchupCursor>,
-    pub total_count: i64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WorkspaceCatchupSnapshot {
-    pub workspace_id: WorkspaceId,
-    pub snapshot_rev: i64,
-    pub active: WorkspaceCatchupPage,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub archived: Option<WorkspaceCatchupPage>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -797,49 +755,7 @@ pub enum WorkspaceActiveSnapshotEvent {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum WorkspaceCatchupEvent {
-    Ready {
-        workspace_id: WorkspaceId,
-        snapshot_rev: i64,
-    },
-    TaskUpsert {
-        workspace_id: WorkspaceId,
-        snapshot_rev: i64,
-        task: WorkspaceCatchupTaskSummary,
-    },
-    TaskDelete {
-        workspace_id: WorkspaceId,
-        snapshot_rev: i64,
-        task_id: TaskId,
-    },
-    SessionSummary {
-        workspace_id: WorkspaceId,
-        snapshot_rev: i64,
-        summary: SessionCatchupSummary,
-    },
-    SessionHeadDelta {
-        workspace_id: WorkspaceId,
-        snapshot_rev: i64,
-        delta: Box<SessionHeadDelta>,
-    },
-    SessionGap {
-        workspace_id: WorkspaceId,
-        snapshot_rev: i64,
-        session_id: SessionId,
-        after_seq: i64,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        reason: Option<String>,
-    },
-    WorktreeBootstrap {
-        workspace_id: WorkspaceId,
-        snapshot_rev: i64,
-        notice: WorktreeBootstrapNotice,
-    },
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WorkspaceCatchupSessionSubscription {
+pub struct WorkspaceActiveSnapshotSessionSubscription {
     pub session_id: SessionId,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub after_seq: Option<i64>,
@@ -847,12 +763,12 @@ pub struct WorkspaceCatchupSessionSubscription {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub enum WorkspaceCatchupClientMessage {
+pub enum WorkspaceActiveSnapshotClientMessage {
     Subscribe {
         #[serde(default)]
         session_ids: Vec<SessionId>,
         #[serde(default)]
-        sessions: Vec<WorkspaceCatchupSessionSubscription>,
+        sessions: Vec<WorkspaceActiveSnapshotSessionSubscription>,
     },
 }
 
