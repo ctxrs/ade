@@ -12,6 +12,7 @@ const RPC_METHODS = {
   locatorText: "automation.locator.text",
   locatorVisible: "automation.locator.visible",
   keyboardPress: "automation.keyboard.press",
+  inputScroll: "ctx.input.scroll",
   sessionSelect: "ctx.sessions.select",
 };
 
@@ -427,6 +428,28 @@ function createPage(rpc, httpUrl) {
           throw new Error("keyboard.press requires a key");
         }
         return rpc.call(RPC_METHODS.keyboardPress, { key: String(key) });
+      },
+    },
+    mouse: {
+      async wheel(deltaX, deltaY, options = {}) {
+        const dx = Number(deltaX ?? 0);
+        const dy = Number(deltaY ?? 0);
+        if (!Number.isFinite(dx) || !Number.isFinite(dy)) {
+          throw new Error("mouse.wheel requires numeric deltaX/deltaY");
+        }
+        const x = Number(options.x ?? 0);
+        const y = Number(options.y ?? 0);
+        if (!Number.isFinite(x) || !Number.isFinite(y)) {
+          throw new Error("mouse.wheel requires numeric x/y when provided");
+        }
+        const precise = Boolean(options.precise);
+        return rpc.call(RPC_METHODS.inputScroll, {
+          x,
+          y,
+          delta_x: dx,
+          delta_y: dy,
+          precise,
+        });
       },
     },
     async clickSession(index) {

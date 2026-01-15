@@ -16,8 +16,8 @@ use axum::{
 };
 use gpui::{
     App, AppContext, ClickEvent, Context, Keystroke, Modifiers, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, PlatformInput, ScrollStrategy, Window, WindowHandle, px, size,
-    point,
+    MouseMoveEvent, MouseUpEvent, PlatformInput, ScrollDelta, ScrollStrategy, ScrollWheelEvent,
+    TouchPhase, Window, WindowHandle, px, size, point,
 };
 use gpui_component::Root;
 use image::{ColorType, ImageFormat};
@@ -378,6 +378,13 @@ enum AutomationCommand {
     Screenshot { path: PathBuf },
     Resize { width: f32, height: f32 },
     Click { x: f32, y: f32, button: MouseButton },
+    Scroll {
+        x: f32,
+        y: f32,
+        delta_x: f32,
+        delta_y: f32,
+        precise: bool,
+    },
     SelectSession { index: usize },
     Type { text: String },
     KeyPress { keystroke: Keystroke },
@@ -431,6 +438,29 @@ async fn run_command_loop(
                         dispatch_click(window, cx, x, y, button);
                         mark_input(&state);
                         Ok(json!({ "x": x, "y": y }))
+                    })
+                    .map_err(|err| err.to_string())
+                    .and_then(|result| result)
+            }
+            AutomationCommand::Scroll {
+                x,
+                y,
+                delta_x,
+                delta_y,
+                precise,
+            } => {
+                let mut cx = cx.clone();
+                window
+                    .update(&mut cx, |_, window, cx| {
+                        dispatch_scroll(window, cx, x, y, delta_x, delta_y, precise);
+                        mark_input(&state);
+                        Ok(json!({
+                            "x": x,
+                            "y": y,
+                            "delta_x": delta_x,
+                            "delta_y": delta_y,
+                            "precise": precise,
+                        }))
                     })
                     .map_err(|err| err.to_string())
                     .and_then(|result| result)
@@ -517,6 +547,33 @@ fn dispatch_click(window: &mut Window, cx: &mut App, x: f32, y: f32, button: Mou
             position,
             modifiers,
             click_count: 1,
+        }),
+        cx,
+    );
+}
+
+fn dispatch_scroll(
+    window: &mut Window,
+    cx: &mut App,
+    x: f32,
+    y: f32,
+    delta_x: f32,
+    delta_y: f32,
+    precise: bool,
+) {
+    let position = point(px(x), px(y));
+    let modifiers = Modifiers::none();
+    let delta = if precise {
+        ScrollDelta::Pixels(point(px(delta_x), px(delta_y)))
+    } else {
+        ScrollDelta::Lines(point(delta_x, delta_y))
+    };
+    window.dispatch_platform_input(
+        PlatformInput::ScrollWheel(ScrollWheelEvent {
+            position,
+            delta,
+            modifiers,
+            touch_phase: TouchPhase::Moved,
         }),
         cx,
     );
@@ -1000,6 +1057,21 @@ async fn handle_rpc_method(
             .await
             .map_err(RpcError::server_error)
         }
+        "ctx.input.scroll" => {
+            let params: ScrollParams = parse_params(params)?;
+            dispatch_command(
+                state,
+                AutomationCommand::Scroll {
+                    x: params.x,
+                    y: params.y,
+                    delta_x: params.delta_x,
+                    delta_y: params.delta_y,
+                    precise: params.precise,
+                },
+            )
+            .await
+            .map_err(RpcError::server_error)
+        }
         "ctx.sessions.select" => {
             let params: SelectSessionParams = parse_params(params)?;
             dispatch_command(state, AutomationCommand::SelectSession { index: params.index })
@@ -1114,6 +1186,16 @@ struct ClickParams {
     x: f32,
     y: f32,
     button: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ScrollParams {
+    x: f32,
+    y: f32,
+    delta_x: f32,
+    delta_y: f32,
+    #[serde(default)]
+    precise: bool,
 }
 
 #[derive(Debug, Deserialize)]
