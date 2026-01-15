@@ -398,6 +398,42 @@ async fn start_turn(
         provider_env.insert("CTX_SYSTEM_PROMPT_APPEND".to_string(), append.to_string());
     }
 
+    if let Ok(Some(worker)) = state.store.get_track_worker(session.track_id).await {
+        provider_env.insert("CTX_WORKER_GATEWAY_URL".to_string(), worker.gateway_url);
+        provider_env.insert("CTX_WORKER_ID".to_string(), worker.worker_id);
+        provider_env
+            .entry("CTX_MCP_DISABLED".to_string())
+            .or_insert_with(|| "1".to_string());
+        let settings = settings::load_settings(&state.data_root).await;
+        let gateway_token = settings
+            .cloud_workers
+            .as_ref()
+            .and_then(|cw| cw.gateway.as_ref())
+            .and_then(|gateway| gateway.gateway_token.as_ref())
+            .map(|token| token.trim().to_string())
+            .filter(|token| !token.is_empty())
+            .or_else(|| {
+                std::env::var("CTX_WORKER_GATEWAY_TOKEN")
+                    .ok()
+                    .map(|token| token.trim().to_string())
+                    .filter(|token| !token.is_empty())
+            });
+        if let Some(token) = gateway_token {
+            provider_env.insert("CTX_WORKER_GATEWAY_TOKEN".to_string(), token);
+        }
+        if let Some(pem) = settings
+            .cloud_workers
+            .as_ref()
+            .and_then(|cw| cw.gateway.as_ref())
+            .and_then(|gateway| gateway.gateway_ca_pem.as_ref())
+        {
+            let trimmed = pem.trim();
+            if !trimmed.is_empty() {
+                let encoded = base64::engine::general_purpose::STANDARD.encode(trimmed.as_bytes());
+                provider_env.insert("CTX_WORKER_GATEWAY_CA_B64".to_string(), encoded);
+            }
+        }
+    }
     let run_started_at = Instant::now();
     let spawn_started_at = Instant::now();
     let handle = match adapter

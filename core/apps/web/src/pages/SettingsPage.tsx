@@ -15,7 +15,7 @@ import {
   ResourceGovernanceStatus,
   ResourceUtilization,
   SandboxingSettings,
-  Settings,
+  UpdateSettingsPatch,
   AgentSystemPromptConfig,
   SubagentSystemPromptConfig,
   TelemetrySettings,
@@ -51,6 +51,7 @@ import {
   listInstallEvents,
   listProviders,
   listWorkspaces,
+  launchAwsGateway,
   retryMergeQueueEntry,
   setCodexActiveAccount,
   startCodexLogin,
@@ -133,6 +134,7 @@ type SectionId =
   | "harness_subscriptions"
   | "models_routing"
   | "sandboxing"
+  | "cloud_workers"
   | "worktree_bootstrap"
   | "agent_system_prompt"
   | "workspace_attachments"
@@ -165,6 +167,7 @@ const SECTIONS: Array<{
   { id: "harness_subscriptions", label: "Harness Subscriptions", group: "main" },
   { id: "models_routing", label: "Models & Routing", group: "main" },
   { id: "sandboxing", label: "Sandboxing", group: "main" },
+  { id: "cloud_workers", label: "Cloud Workers", group: "main" },
   { id: "worktree_bootstrap", label: "Worktree Bootstrap", group: "main" },
   { id: "agent_system_prompt", label: "Agent System Prompt", group: "main" },
   { id: "workspace_attachments", label: "Workspace Attachments", group: "main" },
@@ -486,6 +489,27 @@ export default function SettingsPage() {
   const [titleGenApiKey, setTitleGenApiKey] = useState("");
   const [titleGenModel, setTitleGenModel] = useState("google/gemini-3-flash-preview");
   const [titleGenUseJson, setTitleGenUseJson] = useState(true);
+  const [githubToken, setGithubToken] = useState("");
+  const [githubTokenSet, setGithubTokenSet] = useState(false);
+  const [awsAccessKeyId, setAwsAccessKeyId] = useState("");
+  const [awsSecretAccessKey, setAwsSecretAccessKey] = useState("");
+  const [awsSecretAccessKeySet, setAwsSecretAccessKeySet] = useState(false);
+  const [awsRegion, setAwsRegion] = useState("us-east-1");
+  const [awsGatewayInstanceType, setAwsGatewayInstanceType] = useState("t3.small");
+  const [awsWorkerInstanceType, setAwsWorkerInstanceType] = useState("t3.small");
+  const [awsSubnetId, setAwsSubnetId] = useState("");
+  const [awsSecurityGroupId, setAwsSecurityGroupId] = useState("");
+  const [awsSshKeyName, setAwsSshKeyName] = useState("");
+  const [awsWorkerAmiId, setAwsWorkerAmiId] = useState("");
+  const [awsGatewayAmiId, setAwsGatewayAmiId] = useState("");
+  const [awsSshUser, setAwsSshUser] = useState("");
+  const [awsArtifactBucket, setAwsArtifactBucket] = useState("");
+  const [gatewayUrl, setGatewayUrl] = useState("");
+  const [gatewayInstanceId, setGatewayInstanceId] = useState("");
+  const [gatewayPublicIp, setGatewayPublicIp] = useState("");
+  const [gatewayRegion, setGatewayRegion] = useState("");
+  const [gatewayLaunchBusy, setGatewayLaunchBusy] = useState(false);
+  const [gatewayLaunchError, setGatewayLaunchError] = useState<string | null>(null);
   const resourceGovernanceHydrated = useRef(false);
   const sandboxingHydrated = useRef(false);
   const [resourceGovernanceEnabled, setResourceGovernanceEnabled] = useState(true);
@@ -794,6 +818,32 @@ export default function SettingsPage() {
           setTitleGenUseJson(Boolean(tg.use_json));
         }
 
+        const gh = s.github ?? null;
+        setGithubTokenSet(Boolean(gh?.token_set));
+
+        const cw = s.cloud_workers ?? null;
+        const aws = cw?.aws ?? null;
+        if (aws) {
+          setAwsAccessKeyId(aws.access_key_id ?? "");
+          setAwsSecretAccessKeySet(Boolean(aws.secret_access_key_set));
+          setAwsRegion((aws.region ?? "").trim() || "us-east-1");
+          setAwsGatewayInstanceType((aws.gateway_instance_type ?? "").trim() || "t3.small");
+          setAwsWorkerInstanceType((aws.worker_instance_type ?? "").trim() || "t3.small");
+          setAwsSubnetId(aws.subnet_id ?? "");
+          setAwsSecurityGroupId(aws.security_group_id ?? "");
+          setAwsSshKeyName(aws.ssh_key_name ?? "");
+          setAwsWorkerAmiId(aws.worker_ami_id ?? "");
+          setAwsGatewayAmiId(aws.gateway_ami_id ?? "");
+          setAwsSshUser(aws.ssh_user ?? "");
+          setAwsArtifactBucket(aws.artifact_bucket ?? "");
+        }
+
+        const gateway = cw?.gateway ?? null;
+        setGatewayUrl(gateway?.gateway_url ?? "");
+        setGatewayInstanceId(gateway?.instance_id ?? "");
+        setGatewayPublicIp(gateway?.public_ip ?? "");
+        setGatewayRegion(gateway?.region ?? "");
+
         const rg = s.resource_governance ?? null;
         if (rg) {
           setResourceGovernanceEnabled(rg.enabled);
@@ -844,16 +894,48 @@ export default function SettingsPage() {
     };
   }, []);
 
-  const savePatch = async (patch: Partial<Settings>) => {
+  const savePatch = async (patch: UpdateSettingsPatch) => {
     setSaveError(null);
     setSaving(true);
     const seq = ++saveSeq.current;
+    const includesGithub = Object.prototype.hasOwnProperty.call(patch, "github");
+    const includesCloudWorkers = Object.prototype.hasOwnProperty.call(patch, "cloud_workers");
     try {
-      const next = await updateSettings(patch as Settings);
+      const next = await updateSettings(patch);
       if (seq !== saveSeq.current) return;
       if (next.dictation?.livekit?.api_secret_set) {
         setApiSecret("");
         setApiSecretSet(true);
+      }
+      if (includesGithub && next.github) {
+        const tokenSet = Boolean(next.github.token_set);
+        setGithubTokenSet(tokenSet);
+        if (tokenSet) {
+          setGithubToken("");
+        }
+      }
+      if (includesCloudWorkers && next.cloud_workers?.aws) {
+        const aws = next.cloud_workers.aws;
+        setAwsAccessKeyId(aws.access_key_id ?? "");
+        setAwsSecretAccessKeySet(Boolean(aws.secret_access_key_set));
+        setAwsRegion((aws.region ?? "").trim() || "us-east-1");
+        setAwsGatewayInstanceType((aws.gateway_instance_type ?? "").trim() || "t3.small");
+        setAwsWorkerInstanceType((aws.worker_instance_type ?? "").trim() || "t3.small");
+        setAwsSubnetId(aws.subnet_id ?? "");
+        setAwsSecurityGroupId(aws.security_group_id ?? "");
+        setAwsSshKeyName(aws.ssh_key_name ?? "");
+        setAwsWorkerAmiId(aws.worker_ami_id ?? "");
+        setAwsGatewayAmiId(aws.gateway_ami_id ?? "");
+        setAwsSshUser(aws.ssh_user ?? "");
+        setAwsArtifactBucket(aws.artifact_bucket ?? "");
+        setAwsSecretAccessKey("");
+      }
+      if (includesCloudWorkers && next.cloud_workers?.gateway) {
+        const gateway = next.cloud_workers.gateway;
+        setGatewayUrl(gateway?.gateway_url ?? "");
+        setGatewayInstanceId(gateway?.instance_id ?? "");
+        setGatewayPublicIp(gateway?.public_ip ?? "");
+        setGatewayRegion(gateway?.region ?? "");
       }
       if (next.resource_governance) {
         setResourceGovernanceEnabled(next.resource_governance.enabled);
@@ -876,6 +958,83 @@ export default function SettingsPage() {
       if (seq === saveSeq.current) setSaving(false);
     }
   };
+
+  const handleSaveGithubToken = useCallback(async () => {
+    const trimmed = githubToken.trim();
+    if (!trimmed) return;
+    await savePatch({ github: { token: trimmed } });
+  }, [githubToken, savePatch]);
+
+  const handleSaveAwsSettings = useCallback(async (): Promise<boolean> => {
+    const accessKeyId = awsAccessKeyId.trim();
+    if (!accessKeyId) return false;
+    const region = awsRegion.trim() || "us-east-1";
+    const gatewayInstanceType = awsGatewayInstanceType.trim() || "t3.small";
+    const workerInstanceType = awsWorkerInstanceType.trim() || "t3.small";
+    const patch: UpdateSettingsPatch = {
+      cloud_workers: {
+        aws: {
+          access_key_id: accessKeyId,
+          region,
+          gateway_instance_type: gatewayInstanceType,
+          worker_instance_type: workerInstanceType,
+          subnet_id: awsSubnetId.trim() || null,
+          security_group_id: awsSecurityGroupId.trim() || null,
+          ssh_key_name: awsSshKeyName.trim() || null,
+          worker_ami_id: awsWorkerAmiId.trim() || null,
+          gateway_ami_id: awsGatewayAmiId.trim() || null,
+          ssh_user: awsSshUser.trim() || null,
+          artifact_bucket: awsArtifactBucket.trim() || null,
+        },
+      },
+    };
+    const secret = awsSecretAccessKey.trim();
+    if (secret) {
+      patch.cloud_workers = {
+        aws: {
+          ...(patch.cloud_workers?.aws ?? {}),
+          secret_access_key: secret,
+        },
+      };
+    }
+    await savePatch(patch);
+    return true;
+  }, [
+    awsAccessKeyId,
+    awsArtifactBucket,
+    awsGatewayAmiId,
+    awsGatewayInstanceType,
+    awsRegion,
+    awsSecretAccessKey,
+    awsSecurityGroupId,
+    awsSshKeyName,
+    awsSshUser,
+    awsSubnetId,
+    awsWorkerAmiId,
+    awsWorkerInstanceType,
+    savePatch,
+  ]);
+
+  const handleLaunchAwsGateway = useCallback(async () => {
+    setGatewayLaunchError(null);
+    setGatewayLaunchBusy(true);
+    try {
+      const saved = await handleSaveAwsSettings();
+      if (!saved) {
+        setGatewayLaunchBusy(false);
+        return;
+      }
+      const resp = await launchAwsGateway(workspaceId);
+      setGatewayUrl(resp.gateway.gateway_url ?? "");
+      setGatewayInstanceId(resp.gateway.instance_id ?? "");
+      setGatewayPublicIp(resp.gateway.public_ip ?? "");
+      setGatewayRegion(resp.gateway.region ?? "");
+    } catch (e: any) {
+      setGatewayLaunchError(e?.message ?? String(e));
+    } finally {
+      setGatewayLaunchBusy(false);
+    }
+  }, [handleSaveAwsSettings, workspaceId]);
 
   const dictationPayload = useMemo((): DictationSettings => {
     return {
@@ -941,6 +1100,12 @@ export default function SettingsPage() {
     if (!apiSecretSet && !apiSecret.trim()) return false;
     return true;
   }, [apiKey, apiSecret, apiSecretSet, dictationEnabled]);
+
+  const githubTokenCanSave = githubToken.trim().length > 0;
+  const awsAccessKeyReady = awsAccessKeyId.trim().length > 0;
+  const awsSecretReady = awsSecretAccessKey.trim().length > 0 || awsSecretAccessKeySet;
+  const awsCanSave = awsAccessKeyReady && !saving;
+  const awsCanLaunch = awsAccessKeyReady && awsSecretReady && !saving && !gatewayLaunchBusy;
 
   useEffect(() => {
     if (!loaded) return;
@@ -1901,6 +2066,233 @@ export default function SettingsPage() {
       );
     }
 
+    if (active === "cloud_workers") {
+      const anyWorkspace = workspaces.length > 0;
+      return (
+        <>
+          <Card title="AWS Cloud Workers">
+            <Row
+              title="Access key ID"
+              description="Stored locally; required to launch the gateway."
+              control={
+                <input
+                  className="settings-control settings-control-wide"
+                  value={awsAccessKeyId}
+                  onChange={(e) => setAwsAccessKeyId(e.target.value)}
+                  placeholder="AKIA..."
+                  disabled={!loaded}
+                />
+              }
+            />
+            <Row
+              title="Secret access key"
+              description={awsSecretAccessKeySet ? "Secret stored; enter a new value to rotate." : "Required to launch."}
+              control={
+                <input
+                  className="settings-control settings-control-wide"
+                  value={awsSecretAccessKey}
+                  onChange={(e) => setAwsSecretAccessKey(e.target.value)}
+                  placeholder={awsSecretAccessKeySet ? "(set)" : "••••••••"}
+                  type="password"
+                  disabled={!loaded}
+                />
+              }
+            />
+            <Row
+              title="Region"
+              description="Used for gateway and workers."
+              control={
+                <input
+                  className="settings-control settings-control-wide"
+                  value={awsRegion}
+                  onChange={(e) => setAwsRegion(e.target.value)}
+                  placeholder="us-east-1"
+                  disabled={!loaded}
+                />
+              }
+            />
+            <Row
+              title="Gateway instance type"
+              description="Instance size for the gateway service."
+              control={
+                <input
+                  className="settings-control settings-control-wide"
+                  value={awsGatewayInstanceType}
+                  onChange={(e) => setAwsGatewayInstanceType(e.target.value)}
+                  placeholder="t3.small"
+                  disabled={!loaded}
+                />
+              }
+            />
+            <Row
+              title="Worker instance type"
+              description="Default instance size for workers."
+              control={
+                <input
+                  className="settings-control settings-control-wide"
+                  value={awsWorkerInstanceType}
+                  onChange={(e) => setAwsWorkerInstanceType(e.target.value)}
+                  placeholder="t3.small"
+                  disabled={!loaded}
+                />
+              }
+            />
+            <Row
+              title="Subnet ID (optional)"
+              description="Leave blank to use the default subnet."
+              control={
+                <input
+                  className="settings-control settings-control-wide"
+                  value={awsSubnetId}
+                  onChange={(e) => setAwsSubnetId(e.target.value)}
+                  placeholder="subnet-..."
+                  disabled={!loaded}
+                />
+              }
+            />
+            <Row
+              title="Security group ID (optional)"
+              description="Leave blank to auto-create a gateway security group."
+              control={
+                <input
+                  className="settings-control settings-control-wide"
+                  value={awsSecurityGroupId}
+                  onChange={(e) => setAwsSecurityGroupId(e.target.value)}
+                  placeholder="sg-..."
+                  disabled={!loaded}
+                />
+              }
+            />
+            <Row
+              title="SSH key name (optional)"
+              description="Attach a key pair if you want SSH access."
+              control={
+                <input
+                  className="settings-control settings-control-wide"
+                  value={awsSshKeyName}
+                  onChange={(e) => setAwsSshKeyName(e.target.value)}
+                  placeholder="ctx-workers"
+                  disabled={!loaded}
+                />
+              }
+            />
+            <Row
+              title="Worker AMI ID (optional)"
+              description="Overrides the default Amazon Linux 2023 AMI."
+              control={
+                <input
+                  className="settings-control settings-control-wide"
+                  value={awsWorkerAmiId}
+                  onChange={(e) => setAwsWorkerAmiId(e.target.value)}
+                  placeholder="ami-..."
+                  disabled={!loaded}
+                />
+              }
+            />
+            <Row
+              title="Gateway AMI ID (optional)"
+              description="Overrides the default Amazon Linux 2023 AMI."
+              control={
+                <input
+                  className="settings-control settings-control-wide"
+                  value={awsGatewayAmiId}
+                  onChange={(e) => setAwsGatewayAmiId(e.target.value)}
+                  placeholder="ami-..."
+                  disabled={!loaded}
+                />
+              }
+            />
+            <Row
+              title="SSH user (optional)"
+              description="Default user for SSH access."
+              control={
+                <input
+                  className="settings-control settings-control-wide"
+                  value={awsSshUser}
+                  onChange={(e) => setAwsSshUser(e.target.value)}
+                  placeholder="ec2-user"
+                  disabled={!loaded}
+                />
+              }
+            />
+            <Row
+              title="Artifact bucket (optional)"
+              description="Used to stage gateway/shim binaries."
+              control={
+                <input
+                  className="settings-control settings-control-wide"
+                  value={awsArtifactBucket}
+                  onChange={(e) => setAwsArtifactBucket(e.target.value)}
+                  placeholder="ctx-worker-gateway-..."
+                  disabled={!loaded}
+                />
+              }
+            />
+            <Row
+              title="Actions"
+              control={
+                <button
+                  type="button"
+                  className="settings-btn"
+                  onClick={() => handleSaveAwsSettings().catch(() => {})}
+                  disabled={!awsCanSave}
+                >
+                  {saving ? "Saving…" : "Save AWS settings"}
+                </button>
+              }
+            />
+          </Card>
+          <Card title="Gateway">
+            <Row
+              title="Workspace"
+              description="Optional: write the gateway URL into .ctx/config.toml."
+              control={
+                <select
+                  className="settings-control settings-select"
+                  value={workspaceId ?? ""}
+                  onChange={(e) => setWorkspaceId(e.target.value || null)}
+                  disabled={!anyWorkspace}
+                >
+                  {workspaces.map((ws) => {
+                    const id = idToString((ws as any).id);
+                    return (
+                      <option key={id} value={id}>
+                        {ws.name}
+                      </option>
+                    );
+                  })}
+                </select>
+              }
+            />
+            <Row
+              title="Gateway URL"
+              control={<span className="settings-pill wb-mono">{gatewayUrl || "Not launched"}</span>}
+            />
+            <Row
+              title="Instance ID"
+              control={<span className="settings-pill wb-mono">{gatewayInstanceId || "—"}</span>}
+            />
+            <Row title="Public IP" control={<span className="settings-pill wb-mono">{gatewayPublicIp || "—"}</span>} />
+            <Row title="Region" control={<span className="settings-pill wb-mono">{gatewayRegion || "—"}</span>} />
+            <Row
+              title="Actions"
+              control={
+                <button
+                  type="button"
+                  className="settings-btn"
+                  onClick={() => handleLaunchAwsGateway().catch(() => {})}
+                  disabled={!awsCanLaunch}
+                >
+                  {gatewayLaunchBusy ? "Launching…" : "Launch AWS gateway"}
+                </button>
+              }
+            />
+          </Card>
+          {gatewayLaunchError ? <div className="settings-banner settings-banner-error">{gatewayLaunchError}</div> : null}
+        </>
+      );
+    }
+
     if (active === "worktree_bootstrap") {
       const anyWorkspace = workspaces.length > 0;
       const selectedWorkspace = workspaces.find((ws) => idToString((ws as any).id) === workspaceId) ?? null;
@@ -1940,6 +2332,39 @@ export default function SettingsPage() {
               title="Example"
               description="Add this section to enable bootstrap."
               control={<pre className="settings-code-block">{example}</pre>}
+            />
+          </Card>
+          <Card title="GitHub Access">
+            <Row
+              title="GitHub token (PAT)"
+              description={
+                githubTokenSet
+                  ? "Token stored; enter a new value to rotate."
+                  : "Stored locally; used to clone private GitHub repos on cloud workers."
+              }
+              control={
+                <input
+                  className="settings-control settings-control-wide"
+                  value={githubToken}
+                  onChange={(e) => setGithubToken(e.target.value)}
+                  placeholder={githubTokenSet ? "(set)" : "ghp_..."}
+                  type="password"
+                  disabled={!loaded}
+                />
+              }
+            />
+            <Row
+              title="Actions"
+              control={
+                <button
+                  type="button"
+                  className="settings-btn"
+                  onClick={() => handleSaveGithubToken().catch(() => {})}
+                  disabled={!githubTokenCanSave || saving}
+                >
+                  {saving ? "Saving…" : "Save token"}
+                </button>
+              }
             />
           </Card>
         </>

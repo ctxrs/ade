@@ -4,6 +4,15 @@ use std::process::Stdio;
 use std::sync::Arc;
 
 use anyhow::{bail, Context};
+use aws_config::Region;
+use aws_credential_types::Credentials;
+use aws_sdk_ec2::{
+    types::{Filter, InstanceType, IpPermission, IpRange},
+    Client as Ec2Client,
+};
+use aws_sdk_s3::presigning::PresigningConfig;
+use aws_sdk_s3::{primitives::ByteStream, types::BucketLocationConstraint, Client as S3Client};
+use aws_sdk_sts::Client as StsClient;
 use axum::body::{Body, Bytes};
 use axum::extract::ws::{Message as WsMessage, WebSocket, WebSocketUpgrade};
 use axum::extract::{Extension, MatchedPath, Multipart, Path, Query, State};
@@ -20,6 +29,7 @@ use futures::{SinkExt, Stream, StreamExt};
 use opentelemetry::trace::SpanKind;
 use opentelemetry::KeyValue;
 use rand_core::RngCore;
+use rcgen::generate_simple_self_signed;
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
 use std::time::{Duration, Instant};
@@ -181,6 +191,10 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
     let api = axum::Router::new()
         .route("/api/health", get(health))
         .route("/api/settings", get(get_settings).post(update_settings))
+        .route(
+            "/api/settings/cloud_workers/aws/launch",
+            post(launch_aws_gateway),
+        )
         .route("/api/diagnostics", get(diagnostics))
         .route("/api/resource_utilization", get(resource_utilization))
         .route("/api/telemetry/summary", get(get_telemetry_summary))
@@ -518,6 +532,10 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
         .route(
             "/api/sessions/:id/ask_user_question",
             post(submit_ask_user_question),
+        )
+        .route(
+            "/api/cloud_workers/aws/gateway/launch",
+            post(launch_aws_gateway),
         )
         .route(
             "/api/dictation/livekit/stream",
@@ -6767,6 +6785,81 @@ async fn create_workspace_terminal(
     let shell = requested_shell
         .map(|value| value.to_string())
         .unwrap_or_else(default_shell);
+    let remote_shell = requested_shell
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "/bin/bash".to_string());
+
+    if let Some(worker) = track_worker {
+        let terminal_id = TerminalId::new();
+        let remote_cwd = worktree_root
+            .as_ref()
+            .and_then(|root| cwd.strip_prefix(root).ok())
+            .and_then(|rel| {
+                let rel = rel.to_string_lossy().to_string();
+                if rel.is_empty() {
+                    None
+                } else {
+                    Some(rel)
+                }
+            });
+        let open_req = TerminalOpenRequest {
+            terminal_id: terminal_id.0.to_string(),
+            shell: remote_shell.clone(),
+            cwd: remote_cwd,
+            cols: 80,
+            rows: 24,
+        };
+        let settings = user_settings::load_settings(&state.data_root).await;
+        let gateway_token = resolve_gateway_token(&settings);
+        let gateway_ca_pem = resolve_gateway_ca_pem(&settings);
+        open_remote_terminal(
+            &worker,
+            &open_req,
+            gateway_token.as_deref(),
+            gateway_ca_pem.as_deref(),
+        )
+        .await
+        .map_err(|_| {
+            (
+                StatusCode::BAD_GATEWAY,
+                Json(ApiErrorResp {
+                    error: "failed to open remote terminal".to_string(),
+                }),
+            )
+        })?;
+        let session = state
+            .terminals
+            .create_remote(
+                TerminalCreateRequest {
+                    workspace_id,
+                    task_id,
+                    track_id,
+                    session_id,
+                    worktree_id,
+                    cwd,
+                    shell: remote_shell,
+                    cols: None,
+                    rows: None,
+                },
+                RemoteTerminalRequest {
+                    terminal_id,
+                    gateway_url: worker.gateway_url,
+                    worker_id: worker.worker_id,
+                    token: gateway_token,
+                    gateway_ca_pem: gateway_ca_pem.clone(),
+                },
+            )
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiErrorResp {
+                        error: format!("failed to create remote terminal: {e}"),
+                    }),
+                )
+            })?;
+        return Ok(Json(session.snapshot()));
+    }
     let session = state
         .terminals
         .create(TerminalCreateRequest {
@@ -6799,6 +6892,21 @@ async fn delete_terminal(
     let terminal_id = TerminalId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
     let session = state.terminals.remove(terminal_id).await;
     if let Some(session) = session {
+        let snapshot = session.snapshot();
+        if let Some(track_id) = snapshot.track_id {
+            if let Ok(Some(worker)) = state.store.get_track_worker(track_id).await {
+                let settings = user_settings::load_settings(&state.data_root).await;
+                let gateway_token = resolve_gateway_token(&settings);
+                let gateway_ca_pem = resolve_gateway_ca_pem(&settings);
+                let _ = close_remote_terminal(
+                    &worker,
+                    &terminal_id,
+                    gateway_token.as_deref(),
+                    gateway_ca_pem.as_deref(),
+                )
+                .await;
+            }
+        }
         let _ = session.kill();
         session.mark_exited(None);
         return Ok(StatusCode::NO_CONTENT);
@@ -13563,6 +13671,2024 @@ async fn submit_ask_user_question(
     }
 
     Ok(Json(SubmitAskUserQuestionResp { ok: true }))
+}
+
+const DIFF_SUMMARY_TTL: Duration = Duration::from_secs(10);
+const DIFF_SUMMARY_TOO_LARGE_TTL: Duration = Duration::from_secs(60);
+const DIFF_SUMMARY_MAX_FILES: i64 = 1000;
+const DIFF_SUMMARY_MAX_LINES: i64 = 500_000;
+
+fn diff_summary_cache_ttl(too_large: bool) -> Duration {
+    if too_large {
+        DIFF_SUMMARY_TOO_LARGE_TTL
+    } else {
+        DIFF_SUMMARY_TTL
+    }
+}
+
+fn diff_summary_is_too_large(file_count: i64, additions: i64, deletions: i64) -> bool {
+    file_count > DIFF_SUMMARY_MAX_FILES
+        || additions.saturating_add(deletions) > DIFF_SUMMARY_MAX_LINES
+}
+
+fn build_diff_summary(
+    file_count: i64,
+    line_additions: i64,
+    line_deletions: i64,
+) -> (Option<TrackDiffSummary>, bool) {
+    let too_large = diff_summary_is_too_large(file_count, line_additions, line_deletions);
+    let summary = TrackDiffSummary {
+        file_count,
+        line_additions,
+        line_deletions,
+        updated_at: chrono::Utc::now(),
+    };
+    let summary = if too_large { None } else { Some(summary) };
+    (summary, too_large)
+}
+
+async fn write_diff_summary_cache(
+    state: &Arc<AppState>,
+    track_id: TrackId,
+    summary: Option<TrackDiffSummary>,
+    too_large: bool,
+) -> CachedDiffSummary {
+    let entry = CachedDiffSummary {
+        cached_at: Instant::now(),
+        summary,
+        too_large,
+    };
+    let mut cache = state.diff_summary_cache.lock().await;
+    cache.insert(track_id, entry.clone());
+    entry
+}
+
+async fn read_cached_diff_summary(
+    state: &Arc<AppState>,
+    track_id: TrackId,
+) -> Option<CachedDiffSummary> {
+    let mut cache = state.diff_summary_cache.lock().await;
+    let entry = cache.get(&track_id)?.clone();
+    if entry.cached_at.elapsed() > diff_summary_cache_ttl(entry.too_large) {
+        cache.remove(&track_id);
+        return None;
+    }
+    Some(entry)
+}
+
+async fn apply_cached_diff_summaries(
+    state: &Arc<AppState>,
+    tasks: &mut [WorkspaceCatchupTaskSummary],
+) {
+    let mut cache = state.diff_summary_cache.lock().await;
+    for task in tasks.iter_mut() {
+        for track_summary in task.tracks.iter_mut() {
+            let track_id = track_summary.track.id;
+            let entry = match cache.get(&track_id) {
+                Some(entry) => entry.clone(),
+                None => continue,
+            };
+            if entry.cached_at.elapsed() > diff_summary_cache_ttl(entry.too_large) {
+                cache.remove(&track_id);
+                continue;
+            }
+            if let Some(summary) = entry.summary.clone() {
+                track_summary.diff_summary = Some(summary);
+            }
+        }
+    }
+}
+
+async fn track_diff_summary(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<TrackDiffSummaryResponse>, StatusCode> {
+    let perf = std::env::var_os("CTX_PERF").is_some();
+    let t0 = Instant::now();
+    let track_id = TrackId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
+    let track = state
+        .store
+        .get_track(track_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    if let Ok(Some(worker)) = state.store.get_track_worker(track_id).await {
+        let diff = fetch_remote_diff(&state, &worker).await?;
+        let (summary, too_large) =
+            build_diff_summary(diff.file_count, diff.line_additions, diff.line_deletions);
+        let entry = write_diff_summary_cache(&state, track_id, summary.clone(), too_large).await;
+
+        if let Ok(Some(mut catchup_summary)) = state
+            .store
+            .get_workspace_catchup_track_summary(track_id)
+            .await
+        {
+            catchup_summary.diff_summary = summary.clone();
+            state
+                .workspace_catchup
+                .publish_track_upsert(track.workspace_id, catchup_summary)
+                .await;
+        }
+
+        if perf {
+            tracing::info!(
+                target: "ctx_perf",
+                endpoint = "track_diff_summary",
+                track_id = %track_id.0,
+                cache_hit = false,
+                ms = %t0.elapsed().as_millis(),
+            );
+        }
+
+        return Ok(Json(TrackDiffSummaryResponse {
+            summary: entry.summary,
+            too_large: entry.too_large,
+        }));
+    }
+
+    if let Some(entry) = read_cached_diff_summary(&state, track_id).await {
+        if perf {
+            tracing::info!(
+                target: "ctx_perf",
+                endpoint = "track_diff_summary",
+                track_id = %track_id.0,
+                cache_hit = true,
+                ms = %t0.elapsed().as_millis(),
+            );
+        }
+        let mut labels = HashMap::new();
+        labels.insert("event".to_string(), "diff_summary_cache".to_string());
+        labels.insert("source".to_string(), "daemon".to_string());
+        let metric = PerfMetric {
+            name: "fs.diff_summary_ms".to_string(),
+            kind: PerfMetricKind::Histogram,
+            unit: "ms".to_string(),
+            value: t0.elapsed().as_millis() as f64,
+            labels,
+        };
+        state
+            .perf_telemetry
+            .record_metric(metric, None, None, None)
+            .await;
+        return Ok(Json(TrackDiffSummaryResponse {
+            summary: entry.summary,
+            too_large: entry.too_large,
+        }));
+    }
+
+    let worktree = state
+        .store
+        .get_worktree(track.worktree_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    let (file_count, line_additions, line_deletions) = diff_worktree_summary(&worktree.root_path)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let (summary, too_large) = build_diff_summary(file_count, line_additions, line_deletions);
+    let entry = write_diff_summary_cache(&state, track_id, summary.clone(), too_large).await;
+
+    if let Ok(Some(mut catchup_summary)) = state
+        .store
+        .get_workspace_catchup_track_summary(track_id)
+        .await
+    {
+        catchup_summary.diff_summary = summary.clone();
+        state
+            .workspace_catchup
+            .publish_track_upsert(track.workspace_id, catchup_summary)
+            .await;
+    }
+
+    if perf {
+        tracing::info!(
+            target: "ctx_perf",
+            endpoint = "track_diff_summary",
+            track_id = %track_id.0,
+            cache_hit = false,
+            ms = %t0.elapsed().as_millis(),
+        );
+    }
+
+    let mut labels = HashMap::new();
+    labels.insert("event".to_string(), "diff_summary".to_string());
+    labels.insert("source".to_string(), "daemon".to_string());
+    let metric = PerfMetric {
+        name: "fs.diff_summary_ms".to_string(),
+        kind: PerfMetricKind::Histogram,
+        unit: "ms".to_string(),
+        value: t0.elapsed().as_millis() as f64,
+        labels,
+    };
+    state
+        .perf_telemetry
+        .record_metric(metric, None, None, None)
+        .await;
+    Ok(Json(TrackDiffSummaryResponse {
+        summary: entry.summary,
+        too_large: entry.too_large,
+    }))
+}
+
+#[derive(Debug, Serialize)]
+struct DiffResponse {
+    diff: String,
+}
+
+async fn track_diff(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<DiffResponse>, StatusCode> {
+    let perf = std::env::var_os("CTX_PERF").is_some();
+    let t0 = Instant::now();
+    let track_id = TrackId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
+    let track = state
+        .store
+        .get_track(track_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    let worktree = state
+        .store
+        .get_worktree(track.worktree_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    let diff = ctx_fs::worktrees::diff_worktree(&worktree.root_path, &worktree.base_commit_sha)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if perf {
+        tracing::info!(
+            target: "ctx_perf",
+            endpoint = "track_diff",
+            track_id = %track_id.0,
+            ms = %t0.elapsed().as_millis(),
+            bytes = diff.len(),
+        );
+    }
+    let mut labels = HashMap::new();
+    labels.insert("event".to_string(), "diff".to_string());
+    labels.insert("source".to_string(), "daemon".to_string());
+    let metric = PerfMetric {
+        name: "fs.diff_ms".to_string(),
+        kind: PerfMetricKind::Histogram,
+        unit: "ms".to_string(),
+        value: t0.elapsed().as_millis() as f64,
+        labels,
+    };
+    state
+        .perf_telemetry
+        .record_metric(metric, None, None, None)
+        .await;
+    Ok(Json(DiffResponse { diff }))
+}
+
+async fn fetch_remote_diff(
+    state: &Arc<AppState>,
+    worker: &TrackWorker,
+) -> Result<DiffArtifact, StatusCode> {
+    let base = worker.gateway_url.trim_end_matches('/');
+    let url = format!("{base}/workers/{}/diff", worker.worker_id);
+    let settings = user_settings::load_settings(&state.data_root).await;
+    let gateway_token = resolve_gateway_token(&settings);
+    let gateway_ca_pem = resolve_gateway_ca_pem(&settings);
+    let client = build_gateway_client(gateway_ca_pem.as_deref()).map_err(|_| StatusCode::BAD_GATEWAY)?;
+    let mut request = client.get(url);
+    if let Some(token) = gateway_token.as_deref() {
+        request = request.header("x-ctx-gateway-token", token);
+    }
+    let resp = request
+        .send()
+        .await
+        .map_err(|_| StatusCode::BAD_GATEWAY)?;
+    if !resp.status().is_success() {
+        return Err(StatusCode::BAD_GATEWAY);
+    }
+    resp.json::<DiffArtifact>()
+        .await
+        .map_err(|_| StatusCode::BAD_GATEWAY)
+}
+
+async fn open_remote_terminal(
+    worker: &TrackWorker,
+    req: &TerminalOpenRequest,
+    token: Option<&str>,
+    gateway_ca_pem: Option<&str>,
+) -> Result<(), StatusCode> {
+    let base = worker.gateway_url.trim_end_matches('/');
+    let url = format!("{base}/workers/{}/terminals", worker.worker_id);
+    let client = build_gateway_client(gateway_ca_pem).map_err(|_| StatusCode::BAD_GATEWAY)?;
+    let mut request = client.post(url).json(req);
+    if let Some(token) = token {
+        request = request.header("x-ctx-gateway-token", token);
+    }
+    let resp = request.send().await.map_err(|_| StatusCode::BAD_GATEWAY)?;
+    if !resp.status().is_success() {
+        return Err(StatusCode::BAD_GATEWAY);
+    }
+    Ok(())
+}
+
+async fn close_remote_terminal(
+    worker: &TrackWorker,
+    terminal_id: &TerminalId,
+    token: Option<&str>,
+    gateway_ca_pem: Option<&str>,
+) -> Result<(), StatusCode> {
+    let base = worker.gateway_url.trim_end_matches('/');
+    let url = format!(
+        "{base}/workers/{}/terminals/{}/close",
+        worker.worker_id, terminal_id.0
+    );
+    let client = build_gateway_client(gateway_ca_pem).map_err(|_| StatusCode::BAD_GATEWAY)?;
+    let mut request = client.post(url);
+    if let Some(token) = token {
+        request = request.header("x-ctx-gateway-token", token);
+    }
+    let resp = request.send().await.map_err(|_| StatusCode::BAD_GATEWAY)?;
+    if !resp.status().is_success() {
+        return Err(StatusCode::BAD_GATEWAY);
+    }
+    Ok(())
+}
+
+#[derive(Debug, Deserialize)]
+struct TrackDiffApplyReq {
+    action: String, // "accept" | "reject"
+    patch: String,
+}
+
+async fn track_diff_apply(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(req): Json<TrackDiffApplyReq>,
+) -> Result<Json<DiffResponse>, (StatusCode, Json<ApiErrorResp>)> {
+    let perf = std::env::var_os("CTX_PERF").is_some();
+    let t0 = Instant::now();
+    let track_id = TrackId(uuid::Uuid::parse_str(&id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid track id".to_string(),
+            }),
+        )
+    })?);
+    let track = state
+        .store
+        .get_track(track_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: e.to_string(),
+                }),
+            )
+        })?
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "track not found".to_string(),
+            }),
+        ))?;
+    let worktree = state
+        .store
+        .get_worktree(track.worktree_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: e.to_string(),
+                }),
+            )
+        })?
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "worktree not found".to_string(),
+            }),
+        ))?;
+
+    let action = req.action.trim().to_lowercase();
+    let patch = req.patch;
+    if patch.trim().is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "patch is empty".to_string(),
+            }),
+        ));
+    }
+
+    match action.as_str() {
+        "accept" => {
+            ctx_fs::git::git_apply_patch(
+                &worktree.root_path,
+                &patch,
+                ctx_fs::git::ApplyPatchTarget::Index,
+                false,
+            )
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(ApiErrorResp {
+                        error: e.to_string(),
+                    }),
+                )
+            })?;
+        }
+        "reject" => {
+            // First revert in worktree, then best-effort unstage.
+            ctx_fs::git::git_apply_patch(
+                &worktree.root_path,
+                &patch,
+                ctx_fs::git::ApplyPatchTarget::Worktree,
+                true,
+            )
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(ApiErrorResp {
+                        error: e.to_string(),
+                    }),
+                )
+            })?;
+            ctx_fs::git::git_apply_patch_allow_noop(
+                &worktree.root_path,
+                &patch,
+                ctx_fs::git::ApplyPatchTarget::Index,
+                true,
+            )
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(ApiErrorResp {
+                        error: e.to_string(),
+                    }),
+                )
+            })?;
+        }
+        _ => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: "action must be accept or reject".to_string(),
+                }),
+            ));
+        }
+    }
+
+    let diff = ctx_fs::worktrees::diff_worktree(&worktree.root_path, &worktree.base_commit_sha)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: e.to_string(),
+                }),
+            )
+        })?;
+    if perf {
+        tracing::info!(
+            target: "ctx_perf",
+            endpoint = "track_diff_apply",
+            action = %action,
+            track_id = %track_id.0,
+            ms = %t0.elapsed().as_millis(),
+            patch_bytes = patch.len(),
+            diff_bytes = diff.len(),
+        );
+    }
+
+    if let Ok((file_count, additions, deletions)) = diff_worktree_summary(&worktree.root_path).await
+    {
+        let (summary, too_large) = build_diff_summary(file_count, additions, deletions);
+        let entry = write_diff_summary_cache(&state, track_id, summary.clone(), too_large).await;
+        if let Ok(Some(mut catchup_summary)) = state
+            .store
+            .get_workspace_catchup_track_summary(track_id)
+            .await
+        {
+            catchup_summary.diff_summary = entry.summary.clone();
+            state
+                .workspace_catchup
+                .publish_track_upsert(track.workspace_id, catchup_summary)
+                .await;
+        }
+    }
+
+    let mut labels = HashMap::new();
+    labels.insert("event".to_string(), "diff_apply".to_string());
+    labels.insert("source".to_string(), "daemon".to_string());
+    let metric = PerfMetric {
+        name: "fs.diff_apply_ms".to_string(),
+        kind: PerfMetricKind::Histogram,
+        unit: "ms".to_string(),
+        value: t0.elapsed().as_millis() as f64,
+        labels,
+    };
+    state
+        .perf_telemetry
+        .record_metric(metric, None, None, None)
+        .await;
+    Ok(Json(DiffResponse { diff }))
+}
+
+#[derive(Debug, Deserialize)]
+struct TrackWorkerStartReq {
+    gateway_url: String,
+    repo: RepoSpec,
+    #[serde(default)]
+    base_commit_sha: Option<String>,
+    #[serde(default)]
+    diff_debounce_ms: Option<u64>,
+    #[serde(default)]
+    ttl_seconds: Option<u64>,
+    #[serde(default)]
+    snapshot_ttl_seconds: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct TrackCloudWorkerStartReq {
+    #[serde(default)]
+    provider_id: Option<String>,
+    #[serde(default)]
+    model_id: Option<String>,
+    #[serde(default)]
+    diff_debounce_ms: Option<u64>,
+    #[serde(default)]
+    ttl_seconds: Option<u64>,
+    #[serde(default)]
+    snapshot_ttl_seconds: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+struct AwsGatewayLaunchReq {
+    #[serde(default)]
+    workspace_id: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[allow(dead_code)]
+struct AwsGatewayLaunchResp {
+    gateway: user_settings::CloudGatewaySettings,
+}
+
+#[allow(dead_code)]
+async fn launch_aws_gateway(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<AwsGatewayLaunchReq>,
+) -> Result<Json<AwsGatewayLaunchResp>, (StatusCode, Json<ApiErrorResp>)> {
+    let gateway = launch_aws_gateway_inner(state, req).await.map_err(|err| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&err.to_string()),
+            }),
+        )
+    })?;
+
+    Ok(Json(AwsGatewayLaunchResp { gateway }))
+}
+
+#[allow(dead_code)]
+async fn launch_aws_gateway_inner(
+    state: Arc<AppState>,
+    req: AwsGatewayLaunchReq,
+) -> anyhow::Result<user_settings::CloudGatewaySettings> {
+    let mut settings = user_settings::load_settings(&state.data_root).await;
+    let cloud = settings.cloud_workers.get_or_insert_default();
+    let aws = cloud.aws.get_or_insert_default();
+
+    if aws.access_key_id.trim().is_empty() || aws.secret_access_key.trim().is_empty() {
+        anyhow::bail!("AWS access key id and secret are required");
+    }
+    if aws.region.trim().is_empty() {
+        aws.region = "us-east-1".to_string();
+    }
+    if aws.gateway_instance_type.trim().is_empty() {
+        aws.gateway_instance_type = "t3.small".to_string();
+    }
+    if aws.worker_instance_type.trim().is_empty() {
+        aws.worker_instance_type = "t3.small".to_string();
+    }
+
+    let sdk_config =
+        aws_sdk_config(&aws.region, &aws.access_key_id, &aws.secret_access_key).await?;
+    let ec2 = Ec2Client::new(&sdk_config);
+    let s3 = S3Client::new(&sdk_config);
+    let sts = StsClient::new(&sdk_config);
+
+    let (subnet_id, vpc_id) = resolve_subnet_and_vpc(&ec2, aws.subnet_id.as_deref()).await?;
+    aws.subnet_id = Some(subnet_id.clone());
+
+    let allow_ssh = aws
+        .ssh_key_name
+        .as_ref()
+        .map(|v| !v.trim().is_empty())
+        .unwrap_or(false);
+    let security_group_id = match aws
+        .security_group_id
+        .as_ref()
+        .filter(|v| !v.trim().is_empty())
+    {
+        Some(existing) => existing.to_string(),
+        None => ensure_security_group(&ec2, &vpc_id, allow_ssh).await?,
+    };
+    aws.security_group_id = Some(security_group_id.clone());
+
+    let ami_id = match aws.gateway_ami_id.as_ref().filter(|v| !v.trim().is_empty()) {
+        Some(id) => id.to_string(),
+        None => resolve_latest_amazon_linux_2023_ami(&ec2).await?,
+    };
+    if aws
+        .gateway_ami_id
+        .as_ref()
+        .map(|v| v.trim().is_empty())
+        .unwrap_or(true)
+    {
+        aws.gateway_ami_id = Some(ami_id.clone());
+    }
+    if aws
+        .worker_ami_id
+        .as_ref()
+        .map(|v| v.trim().is_empty())
+        .unwrap_or(true)
+    {
+        aws.worker_ami_id = Some(ami_id.clone());
+    }
+    if aws
+        .ssh_user
+        .as_ref()
+        .map(|v| v.trim().is_empty())
+        .unwrap_or(true)
+    {
+        aws.ssh_user = Some("ec2-user".to_string());
+    }
+
+    let bucket = if let Some(existing) = aws
+        .artifact_bucket
+        .as_ref()
+        .filter(|v| !v.trim().is_empty())
+    {
+        ensure_bucket(&s3, existing, &aws.region).await?;
+        existing.to_string()
+    } else {
+        let name = default_bucket_name(&sts, &aws.region).await?;
+        ensure_bucket(&s3, &name, &aws.region).await?;
+        aws.artifact_bucket = Some(name.clone());
+        name
+    };
+
+    let gateway_bin = resolve_binary_path("CTX_WORKER_GATEWAY_BIN", "ctx-worker-gateway")
+        .context("ctx-worker-gateway binary not found")?;
+    let shim_bin = resolve_binary_path("CTX_WORKER_SHIM_BIN", "ctx-worker-shim")
+        .context("ctx-worker-shim binary not found")?;
+
+    let gateway_key = format!(
+        "ctx-cloud-workers/binaries/{}/ctx-worker-gateway",
+        uuid::Uuid::new_v4()
+    );
+    let shim_key = format!(
+        "ctx-cloud-workers/binaries/{}/ctx-worker-shim",
+        uuid::Uuid::new_v4()
+    );
+    upload_file_to_s3(&s3, &bucket, &gateway_key, &gateway_bin).await?;
+    upload_file_to_s3(&s3, &bucket, &shim_key, &shim_bin).await?;
+
+    let gateway_download_url = presign_get_url(
+        &s3,
+        &bucket,
+        &gateway_key,
+        PresigningConfig::expires_in(Duration::from_secs(3600))?,
+    )
+    .await?;
+    let shim_download_url = presign_get_url(
+        &s3,
+        &bucket,
+        &shim_key,
+        PresigningConfig::expires_in(Duration::from_secs(3600))?,
+    )
+    .await?;
+
+    let gateway_token = generate_gateway_token();
+    let (gateway_cert_pem, gateway_key_pem) = generate_gateway_tls_material()?;
+
+    let user_data = render_gateway_user_data(&GatewayUserDataSpec {
+        gateway_download_url: &gateway_download_url,
+        shim_download_url: &shim_download_url,
+        gateway_auth_token: &gateway_token,
+        gateway_cert_pem: &gateway_cert_pem,
+        gateway_key_pem: &gateway_key_pem,
+        aws_region: &aws.region,
+        aws_access_key_id: &aws.access_key_id,
+        aws_secret_access_key: &aws.secret_access_key,
+        worker_ami_id: aws.worker_ami_id.as_deref().unwrap_or(&ami_id),
+        worker_instance_type: &aws.worker_instance_type,
+        subnet_id: &subnet_id,
+        security_group_id: &security_group_id,
+        ssh_key_name: aws.ssh_key_name.as_deref(),
+        ssh_user: aws.ssh_user.as_deref(),
+    });
+    let user_data_b64 = base64::engine::general_purpose::STANDARD.encode(user_data.as_bytes());
+
+    let instance_id = run_gateway_instance(
+        &ec2,
+        &ami_id,
+        &aws.gateway_instance_type,
+        &subnet_id,
+        &security_group_id,
+        &user_data_b64,
+        aws.ssh_key_name.as_deref(),
+    )
+    .await?;
+    let (public_ip, _) = wait_instance_ips(&ec2, &instance_id).await?;
+    let public_ip = public_ip.context("gateway instance missing public IP")?;
+
+    let gateway_url = format!("https://{public_ip}:8787");
+    let region = aws.region.clone();
+    let worker_instance_type = aws.worker_instance_type.clone();
+    let gateway = user_settings::CloudGatewaySettings {
+        provider: "aws".to_string(),
+        gateway_url: gateway_url.clone(),
+        instance_id: Some(instance_id),
+        region: Some(region.clone()),
+        public_ip: Some(public_ip),
+        gateway_ca_pem: Some(gateway_cert_pem.clone()),
+        gateway_token: Some(gateway_token.clone()),
+    };
+
+    cloud.gateway = Some(gateway.clone());
+    user_settings::save_settings(&state.data_root, &settings).await?;
+
+    if let Some(workspace_id) = req.workspace_id.as_deref() {
+        if let Ok(workspace_id) = uuid::Uuid::parse_str(workspace_id) {
+            if let Ok(Some(workspace)) = state.store.get_workspace(WorkspaceId(workspace_id)).await
+            {
+                if let Err(err) = update_workspace_cloud_workers_config(
+                    StdPath::new(&workspace.root_path),
+                    &gateway_url,
+                    &region,
+                    &worker_instance_type,
+                )
+                .await
+                {
+                    tracing::warn!("failed to update cloud worker config: {err:#}");
+                }
+            }
+        }
+    }
+
+    Ok(gateway)
+}
+
+#[derive(Debug, Clone, Default)]
+struct StartWorkerOptions {
+    provider_id: Option<String>,
+    model_id: Option<String>,
+    diff_debounce_ms: Option<u64>,
+    ttl_seconds: Option<u64>,
+    snapshot_ttl_seconds: Option<u64>,
+    base_commit_sha: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct WorkspaceCloudWorkersConfig {
+    #[serde(default)]
+    gateway_url: Option<String>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    default_profile: Option<String>,
+    #[serde(default)]
+    diff_debounce_ms: Option<u64>,
+    #[serde(default)]
+    idle_timeout_minutes: Option<u64>,
+    #[serde(default)]
+    snapshot_ttl_days: Option<u64>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    region: Option<String>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    worker_instance_type: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct WorkspaceConfigFile {
+    #[serde(default)]
+    cloud_workers: Option<WorkspaceCloudWorkersConfig>,
+}
+
+#[derive(Debug)]
+#[allow(dead_code)]
+struct RepoArchive {
+    _dir: tempfile::TempDir,
+    path: PathBuf,
+}
+
+async fn load_workspace_cloud_workers_config(
+    root: &StdPath,
+) -> anyhow::Result<WorkspaceCloudWorkersConfig> {
+    let config_path = root.join(workspace_config::WORKSPACE_CONFIG_REL_PATH);
+    let text = match tokio::fs::read_to_string(&config_path).await {
+        Ok(text) => text,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(WorkspaceCloudWorkersConfig::default())
+        }
+        Err(err) => return Err(err).context("reading .ctx/config.toml"),
+    };
+    let cfg: WorkspaceConfigFile = toml::from_str(&text).context("parsing .ctx/config.toml")?;
+    Ok(cfg.cloud_workers.unwrap_or_default())
+}
+
+#[allow(dead_code)]
+async fn update_workspace_cloud_workers_config(
+    root: &StdPath,
+    gateway_url: &str,
+    region: &str,
+    worker_instance_type: &str,
+) -> anyhow::Result<()> {
+    let config_path = root.join(workspace_config::WORKSPACE_CONFIG_REL_PATH);
+    let mut root_table = if config_path.exists() {
+        let text = tokio::fs::read_to_string(&config_path)
+            .await
+            .context("reading .ctx/config.toml")?;
+        match toml::from_str::<toml::Value>(&text).context("parsing .ctx/config.toml")? {
+            toml::Value::Table(table) => table,
+            _ => anyhow::bail!(".ctx/config.toml must contain a TOML table at the root"),
+        }
+    } else {
+        toml::value::Table::new()
+    };
+
+    let cloud_value = root_table
+        .entry("cloud_workers".to_string())
+        .or_insert_with(|| toml::Value::Table(toml::value::Table::new()));
+    let cloud_table = cloud_value
+        .as_table_mut()
+        .ok_or_else(|| anyhow::anyhow!(".ctx/config.toml [cloud_workers] must be a TOML table"))?;
+    cloud_table.insert(
+        "gateway_url".to_string(),
+        toml::Value::String(gateway_url.trim().to_string()),
+    );
+    if !region.trim().is_empty() {
+        cloud_table.insert(
+            "region".to_string(),
+            toml::Value::String(region.trim().to_string()),
+        );
+    }
+    if !worker_instance_type.trim().is_empty() {
+        cloud_table.insert(
+            "worker_instance_type".to_string(),
+            toml::Value::String(worker_instance_type.trim().to_string()),
+        );
+    }
+
+    if let Some(parent) = config_path.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .context("creating .ctx directory")?;
+    }
+    let serialized = toml::to_string_pretty(&toml::Value::Table(root_table))
+        .context("serializing .ctx/config.toml")?;
+    tokio::fs::write(&config_path, serialized)
+        .await
+        .context("writing .ctx/config.toml")?;
+    Ok(())
+}
+
+async fn git_remote_origin_url(root: &StdPath) -> anyhow::Result<String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["remote", "get-url", "origin"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .await
+        .context("running git remote get-url origin")?;
+    if !output.status.success() {
+        bail!(
+            "git remote get-url origin failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let url = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if url.is_empty() {
+        bail!("git remote origin is empty");
+    }
+    Ok(url)
+}
+
+async fn load_track_and_worktree(
+    state: &Arc<AppState>,
+    track_id: TrackId,
+) -> Result<(Track, Worktree), (StatusCode, Json<ApiErrorResp>)> {
+    let track = state
+        .store
+        .get_track(track_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: e.to_string(),
+                }),
+            )
+        })?
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "track not found".to_string(),
+            }),
+        ))?;
+    let worktree = state
+        .store
+        .get_worktree(track.worktree_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: e.to_string(),
+                }),
+            )
+        })?
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "worktree not found".to_string(),
+            }),
+        ))?;
+    Ok((track, worktree))
+}
+
+async fn resolve_cloud_worker_gateway_url(
+    state: &Arc<AppState>,
+    workspace_root: &str,
+) -> Result<String, (StatusCode, Json<ApiErrorResp>)> {
+    let workspace_cfg = load_workspace_cloud_workers_config(StdPath::new(workspace_root))
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: e.to_string(),
+                }),
+            )
+        })?;
+    if let Some(url) = workspace_cfg
+        .gateway_url
+        .as_ref()
+        .filter(|v| !v.trim().is_empty())
+    {
+        return Ok(url.trim().to_string());
+    }
+
+    let settings = user_settings::load_settings(&state.data_root).await;
+    let url = settings
+        .cloud_workers
+        .and_then(|cw| cw.gateway)
+        .map(|gateway| gateway.gateway_url)
+        .unwrap_or_default();
+    if url.trim().is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "cloud worker gateway url is not configured".to_string(),
+            }),
+        ));
+    }
+    Ok(url)
+}
+
+async fn resolve_cloud_worker_repo_spec(
+    worktree: &Worktree,
+    reference: &str,
+) -> Result<RepoSpec, (StatusCode, Json<ApiErrorResp>)> {
+    assert_git_repo(&worktree.root_path).await.map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: e.to_string(),
+            }),
+        )
+    })?;
+    let url = git_remote_origin_url(StdPath::new(&worktree.root_path))
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: e.to_string(),
+                }),
+            )
+        })?;
+    Ok(RepoSpec::Git {
+        url,
+        reference: reference.to_string(),
+    })
+}
+
+async fn load_codex_auth_b64() -> Option<String> {
+    let path = if let Ok(path) = std::env::var("CTX_CODEX_AUTH_PATH") {
+        PathBuf::from(path)
+    } else {
+        let base = directories::BaseDirs::new()?;
+        base.home_dir().join(".codex").join("auth.json")
+    };
+    let bytes = tokio::fs::read(&path).await.ok()?;
+    if bytes.is_empty() {
+        return None;
+    }
+    Some(base64::engine::general_purpose::STANDARD.encode(bytes))
+}
+
+async fn load_codex_config_b64() -> Option<String> {
+    let path = if let Ok(path) = std::env::var("CTX_CODEX_CONFIG_PATH") {
+        PathBuf::from(path)
+    } else {
+        let base = directories::BaseDirs::new()?;
+        base.home_dir().join(".codex").join("config.toml")
+    };
+    let bytes = tokio::fs::read(&path).await.ok()?;
+    if bytes.is_empty() {
+        return None;
+    }
+    Some(base64::engine::general_purpose::STANDARD.encode(bytes))
+}
+
+async fn load_codex_compact_prompt_b64() -> Option<String> {
+    let path = if let Ok(path) = std::env::var("CTX_CODEX_COMPACT_PROMPT_PATH") {
+        PathBuf::from(path)
+    } else {
+        let base = directories::BaseDirs::new()?;
+        base.home_dir().join(".codex").join("compact_prompt.txt")
+    };
+    let bytes = tokio::fs::read(&path).await.ok()?;
+    if bytes.is_empty() {
+        return None;
+    }
+    Some(base64::engine::general_purpose::STANDARD.encode(bytes))
+}
+
+fn build_gateway_client(gateway_ca_pem: Option<&str>) -> Result<reqwest::Client, reqwest::Error> {
+    let mut builder = reqwest::Client::builder();
+    if let Some(pem) = gateway_ca_pem {
+        let cert = reqwest::Certificate::from_pem(pem.as_bytes())?;
+        builder = builder
+            .add_root_certificate(cert)
+            .danger_accept_invalid_hostnames(true);
+    }
+    builder.build()
+}
+
+fn resolve_gateway_token(settings: &user_settings::Settings) -> Option<String> {
+    let settings_token = settings
+        .cloud_workers
+        .as_ref()
+        .and_then(|cw| cw.gateway.as_ref())
+        .and_then(|gateway| gateway.gateway_token.as_ref())
+        .map(|token| token.trim().to_string())
+        .filter(|token| !token.is_empty());
+    settings_token.or_else(|| {
+        std::env::var("CTX_WORKER_GATEWAY_TOKEN")
+            .ok()
+            .map(|token| token.trim().to_string())
+            .filter(|token| !token.is_empty())
+    })
+}
+
+fn resolve_gateway_ca_pem(settings: &user_settings::Settings) -> Option<String> {
+    settings
+        .cloud_workers
+        .as_ref()
+        .and_then(|cw| cw.gateway.as_ref())
+        .and_then(|gateway| gateway.gateway_ca_pem.as_ref())
+        .map(|pem| pem.trim().to_string())
+        .filter(|pem| !pem.is_empty())
+}
+
+async fn start_track_worker_inner(
+    state: Arc<AppState>,
+    track: Track,
+    worktree: Worktree,
+    req: TrackWorkerStartReq,
+    opts: StartWorkerOptions,
+) -> Result<TrackWorker, (StatusCode, Json<ApiErrorResp>)> {
+    let base_commit = opts
+        .base_commit_sha
+        .or(req.base_commit_sha)
+        .unwrap_or_else(|| worktree.base_commit_sha.clone());
+
+    let mut env = HashMap::new();
+    let settings = user_settings::load_settings(&state.data_root).await;
+    let gateway_token = resolve_gateway_token(&settings);
+    if let Some(token) = gateway_token.as_deref() {
+        env.insert("CTX_WORKER_GATEWAY_TOKEN".to_string(), token.to_string());
+    }
+    let gateway_ca_pem = resolve_gateway_ca_pem(&settings);
+    if let Some(pem) = gateway_ca_pem.as_deref() {
+        let encoded = base64::engine::general_purpose::STANDARD.encode(pem.as_bytes());
+        env.insert("CTX_GATEWAY_CA_B64".to_string(), encoded);
+    }
+    if let Some(codex_auth_b64) = load_codex_auth_b64().await {
+        env.insert("CTX_CODEX_AUTH_B64".to_string(), codex_auth_b64);
+    }
+    if let Some(codex_config_b64) = load_codex_config_b64().await {
+        env.insert("CTX_CODEX_CONFIG_B64".to_string(), codex_config_b64);
+    }
+    if let Some(codex_compact_prompt_b64) = load_codex_compact_prompt_b64().await {
+        env.insert(
+            "CTX_CODEX_COMPACT_PROMPT_B64".to_string(),
+            codex_compact_prompt_b64,
+        );
+    }
+    let repo_token = std::env::var("CTX_REPO_TOKEN")
+        .ok()
+        .map(|token| token.trim().to_string())
+        .filter(|token| !token.is_empty())
+        .or_else(|| {
+            settings
+                .github
+                .as_ref()
+                .and_then(|github| github.token.as_ref())
+                .map(|token| token.trim().to_string())
+                .filter(|token| !token.is_empty())
+        });
+    if let Some(token) = repo_token {
+        env.insert("CTX_REPO_TOKEN".to_string(), token);
+    }
+
+    let start_req = StartWorkerRequest {
+        task_id: track.task_id.0.to_string(),
+        track_id: track.id.0.to_string(),
+        provider_id: opts.provider_id,
+        model_id: opts.model_id,
+        repo: req.repo,
+        base_commit_sha: Some(base_commit),
+        diff_debounce_ms: opts.diff_debounce_ms.or(req.diff_debounce_ms),
+        ttl_seconds: opts.ttl_seconds.or(req.ttl_seconds),
+        snapshot_ttl_seconds: opts.snapshot_ttl_seconds.or(req.snapshot_ttl_seconds),
+        env,
+    };
+
+    let url = format!("{}/workers", req.gateway_url.trim_end_matches('/'));
+    let client = build_gateway_client(gateway_ca_pem.as_deref()).map_err(|e| {
+        (
+            StatusCode::BAD_GATEWAY,
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&e.to_string()),
+            }),
+        )
+    })?;
+    let mut request = client.post(url).json(&start_req);
+    if let Some(token) = gateway_token.as_deref() {
+        request = request.header("x-ctx-gateway-token", token);
+    }
+    let resp = request
+        .send()
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_GATEWAY,
+                Json(ApiErrorResp {
+                    error: e.to_string(),
+                }),
+            )
+        })?
+        .error_for_status()
+        .map_err(|e| {
+            (
+                StatusCode::BAD_GATEWAY,
+                Json(ApiErrorResp {
+                    error: e.to_string(),
+                }),
+            )
+        })?
+        .json::<StartWorkerResponse>()
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_GATEWAY,
+                Json(ApiErrorResp {
+                    error: e.to_string(),
+                }),
+            )
+        })?;
+
+    let now = Utc::now();
+    let worker = TrackWorker {
+        track_id: track.id,
+        worker_id: resp.worker_id,
+        gateway_url: req.gateway_url,
+        created_at: now,
+        updated_at: now,
+    };
+
+    state
+        .store
+        .upsert_track_worker(&worker)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: e.to_string(),
+                }),
+            )
+        })?;
+
+    Ok(worker)
+}
+
+#[derive(Debug)]
+#[allow(dead_code)]
+struct GatewayUserDataSpec<'a> {
+    gateway_download_url: &'a str,
+    shim_download_url: &'a str,
+    gateway_auth_token: &'a str,
+    gateway_cert_pem: &'a str,
+    gateway_key_pem: &'a str,
+    aws_region: &'a str,
+    aws_access_key_id: &'a str,
+    aws_secret_access_key: &'a str,
+    worker_ami_id: &'a str,
+    worker_instance_type: &'a str,
+    subnet_id: &'a str,
+    security_group_id: &'a str,
+    ssh_key_name: Option<&'a str>,
+    ssh_user: Option<&'a str>,
+}
+
+fn generate_gateway_token() -> String {
+    let mut bytes = [0u8; 32];
+    rand_core::OsRng.fill_bytes(&mut bytes);
+    format!(
+        "ctxgw_{}",
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
+    )
+}
+
+fn generate_gateway_tls_material() -> anyhow::Result<(String, String)> {
+    let cert = generate_simple_self_signed(vec!["ctx-gateway".to_string()])
+        .context("generate gateway certificate")?;
+    let cert_pem = cert
+        .serialize_pem()
+        .context("serialize gateway certificate")?;
+    let key_pem = cert.serialize_private_key_pem();
+    Ok((cert_pem, key_pem))
+}
+
+#[allow(dead_code, deprecated)]
+async fn aws_sdk_config(
+    region: &str,
+    access_key_id: &str,
+    secret_access_key: &str,
+) -> anyhow::Result<aws_config::SdkConfig> {
+    let credentials = Credentials::new(access_key_id, secret_access_key, None, None, "ctx");
+    let config = aws_config::from_env()
+        .region(Region::new(region.to_string()))
+        .credentials_provider(credentials)
+        .load()
+        .await;
+    Ok(config)
+}
+
+#[allow(dead_code)]
+async fn resolve_subnet_and_vpc(
+    ec2: &Ec2Client,
+    subnet_id: Option<&str>,
+) -> anyhow::Result<(String, String)> {
+    if let Some(subnet_id) = subnet_id.map(|id| id.trim()).filter(|id| !id.is_empty()) {
+        let resp = ec2
+            .describe_subnets()
+            .subnet_ids(subnet_id)
+            .send()
+            .await
+            .context("describe_subnets")?;
+        let subnet = resp.subnets().first().context("subnet not found")?;
+        let vpc_id = subnet.vpc_id().context("subnet missing vpc id")?;
+        return Ok((subnet_id.to_string(), vpc_id.to_string()));
+    }
+
+    let vpc_resp = ec2
+        .describe_vpcs()
+        .filters(
+            Filter::builder()
+                .name("isDefault")
+                .values("true")
+                .build(),
+        )
+        .send()
+        .await
+        .context("describe_vpcs")?;
+    let vpc = vpc_resp.vpcs().first().context("default VPC not found")?;
+    let vpc_id = vpc.vpc_id().context("default VPC missing id")?;
+
+    let subnet_resp = ec2
+        .describe_subnets()
+        .filters(
+            Filter::builder()
+                .name("vpc-id")
+                .values(vpc_id)
+                .build(),
+        )
+        .filters(
+            Filter::builder()
+                .name("default-for-az")
+                .values("true")
+                .build(),
+        )
+        .send()
+        .await
+        .context("describe_subnets")?;
+    let subnet = if let Some(subnet) = subnet_resp.subnets().first() {
+        subnet
+    } else {
+        let fallback = ec2
+            .describe_subnets()
+            .filters(
+                Filter::builder()
+                    .name("vpc-id")
+                    .values(vpc_id)
+                    .build(),
+            )
+            .send()
+            .await
+            .context("describe_subnets fallback")?;
+        fallback
+            .subnets()
+            .first()
+            .context("default subnet not found")?
+    };
+    let subnet_id = subnet.subnet_id().context("subnet missing id")?;
+    Ok((subnet_id.to_string(), vpc_id.to_string()))
+}
+
+#[allow(dead_code)]
+async fn ensure_security_group(
+    ec2: &Ec2Client,
+    vpc_id: &str,
+    allow_ssh: bool,
+) -> anyhow::Result<String> {
+    let group_name = "ctx-worker-gateway";
+    let existing = ec2
+        .describe_security_groups()
+        .filters(
+            Filter::builder()
+                .name("group-name")
+                .values(group_name)
+                .build(),
+        )
+        .filters(Filter::builder().name("vpc-id").values(vpc_id).build())
+        .send()
+        .await
+        .context("describe_security_groups")?;
+    if let Some(group) = existing.security_groups().first() {
+        if let Some(id) = group.group_id() {
+            return Ok(id.to_string());
+        }
+    }
+
+    let resp = ec2
+        .create_security_group()
+        .group_name(group_name)
+        .description("ctx worker gateway")
+        .vpc_id(vpc_id)
+        .send()
+        .await
+        .context("create_security_group")?;
+    let group_id = resp
+        .group_id()
+        .context("create_security_group missing group id")?
+        .to_string();
+
+    let mut permissions = Vec::new();
+    let gateway_rule = IpPermission::builder()
+        .ip_protocol("tcp")
+        .from_port(8787)
+        .to_port(8787)
+        .ip_ranges(IpRange::builder().cidr_ip("0.0.0.0/0").build())
+        .build();
+    permissions.push(gateway_rule);
+    if allow_ssh {
+        let ssh_rule = IpPermission::builder()
+            .ip_protocol("tcp")
+            .from_port(22)
+            .to_port(22)
+            .ip_ranges(IpRange::builder().cidr_ip("0.0.0.0/0").build())
+            .build();
+        permissions.push(ssh_rule);
+    }
+
+    let ingress = ec2
+        .authorize_security_group_ingress()
+        .group_id(&group_id)
+        .set_ip_permissions(Some(permissions))
+        .send()
+        .await;
+    if let Err(err) = ingress {
+        let msg = err.to_string();
+        if !msg.contains("InvalidPermission.Duplicate") {
+            return Err(anyhow::Error::new(err).context("authorize_security_group_ingress"));
+        }
+    }
+
+    Ok(group_id)
+}
+
+#[allow(dead_code)]
+async fn resolve_latest_amazon_linux_2023_ami(ec2: &Ec2Client) -> anyhow::Result<String> {
+    let resp = ec2
+        .describe_images()
+        .owners("amazon")
+        .filters(Filter::builder().name("name").values("al2023-ami-*").build())
+        .filters(
+            Filter::builder()
+                .name("architecture")
+                .values("x86_64")
+                .build(),
+        )
+        .filters(
+            Filter::builder()
+                .name("root-device-type")
+                .values("ebs")
+                .build(),
+        )
+        .filters(
+            Filter::builder()
+                .name("virtualization-type")
+                .values("hvm")
+                .build(),
+        )
+        .filters(
+            Filter::builder()
+                .name("state")
+                .values("available")
+                .build(),
+        )
+        .send()
+        .await
+        .context("describe_images")?;
+
+    let mut best_id = None;
+    let mut best_date = None;
+    for image in resp.images() {
+        let image_id = match image.image_id() {
+            Some(id) => id,
+            None => continue,
+        };
+        let created_at = match image.creation_date() {
+            Some(date) => date,
+            None => continue,
+        };
+        if best_date.as_deref().map_or(true, |best| created_at > best) {
+            best_date = Some(created_at.to_string());
+            best_id = Some(image_id.to_string());
+        }
+    }
+
+    best_id.context("no Amazon Linux 2023 AMI found")
+}
+
+#[allow(dead_code)]
+async fn default_bucket_name(sts: &StsClient, region: &str) -> anyhow::Result<String> {
+    let identity = sts
+        .get_caller_identity()
+        .send()
+        .await
+        .context("get_caller_identity")?;
+    let account_id = identity.account().context("missing AWS account id")?;
+    Ok(format!("ctx-worker-gateway-{account_id}-{region}"))
+}
+
+#[allow(dead_code)]
+async fn ensure_bucket(s3: &S3Client, bucket: &str, region: &str) -> anyhow::Result<()> {
+    match s3.head_bucket().bucket(bucket).send().await {
+        Ok(_) => return Ok(()),
+        Err(err) => {
+            let msg = err.to_string();
+            if !(msg.contains("NotFound") || msg.contains("NoSuchBucket") || msg.contains("404")) {
+                return Err(anyhow::Error::new(err).context("head_bucket"));
+            }
+        }
+    }
+
+    let mut create = s3.create_bucket().bucket(bucket);
+    if region != "us-east-1" {
+        let location = BucketLocationConstraint::from(region.to_string());
+        create = create.create_bucket_configuration(
+            aws_sdk_s3::types::CreateBucketConfiguration::builder()
+                .location_constraint(location)
+                .build(),
+        );
+    }
+
+    match create.send().await {
+        Ok(_) => Ok(()),
+        Err(err) => {
+            let msg = err.to_string();
+            if msg.contains("BucketAlreadyOwnedByYou") {
+                Ok(())
+            } else {
+                Err(anyhow::Error::new(err).context("create_bucket"))
+            }
+        }
+    }
+}
+
+#[allow(dead_code)]
+fn resolve_binary_path(env_key: &str, binary_name: &str) -> anyhow::Result<PathBuf> {
+    if let Ok(path) = std::env::var(env_key) {
+        let path = PathBuf::from(path.trim());
+        if path.is_file() {
+            return Ok(path);
+        }
+        anyhow::bail!("{env_key} did not point to a file");
+    }
+    let path = which::which(binary_name).context("binary not found in PATH")?;
+    Ok(path)
+}
+
+#[allow(dead_code)]
+async fn upload_file_to_s3(
+    s3: &S3Client,
+    bucket: &str,
+    key: &str,
+    path: &PathBuf,
+) -> anyhow::Result<()> {
+    let bytes = tokio::fs::read(path)
+        .await
+        .with_context(|| format!("reading {}", path.display()))?;
+    let body = ByteStream::from(bytes);
+    s3.put_object()
+        .bucket(bucket)
+        .key(key)
+        .body(body)
+        .content_type("application/octet-stream")
+        .send()
+        .await
+        .context("put_object")?;
+    Ok(())
+}
+
+#[allow(dead_code)]
+async fn presign_get_url(
+    s3: &S3Client,
+    bucket: &str,
+    key: &str,
+    config: PresigningConfig,
+) -> anyhow::Result<String> {
+    let presigned = s3
+        .get_object()
+        .bucket(bucket)
+        .key(key)
+        .presigned(config)
+        .await
+        .context("presign get_object")?;
+    Ok(presigned.uri().to_string())
+}
+
+fn shell_escape(value: &str) -> String {
+    if value.is_empty() {
+        return "''".to_string();
+    }
+    format!("'{}'", value.replace('\'', "'\"'\"'"))
+}
+
+#[allow(dead_code)]
+fn render_gateway_user_data(spec: &GatewayUserDataSpec<'_>) -> String {
+    let toml_string = |value: &str| toml::Value::String(value.to_string()).to_string();
+    let mut config_lines = Vec::new();
+    config_lines.push("[server]".to_string());
+    config_lines.push(format!("bind = {}", toml_string("0.0.0.0:8787")));
+    config_lines.push(format!("driver = {}", toml_string("aws")));
+    config_lines.push(format!(
+        "worker_shim_path = {}",
+        toml_string("/usr/local/bin/ctx-worker-shim")
+    ));
+    config_lines.push(format!(
+        "auth_token = {}",
+        toml_string(spec.gateway_auth_token)
+    ));
+    config_lines.push("public_base_url = \"${public_base_url}\"".to_string());
+    config_lines.push(format!(
+        "tls_cert_path = {}",
+        toml_string("/etc/ctx-gateway/tls.crt")
+    ));
+    config_lines.push(format!(
+        "tls_key_path = {}",
+        toml_string("/etc/ctx-gateway/tls.key")
+    ));
+    config_lines.push(String::new());
+    config_lines.push("[aws]".to_string());
+    config_lines.push(format!("region = {}", toml_string(spec.aws_region)));
+    config_lines.push(format!("ami_id = {}", toml_string(spec.worker_ami_id)));
+    config_lines.push(format!(
+        "instance_type = {}",
+        toml_string(spec.worker_instance_type)
+    ));
+    config_lines.push(format!("subnet_id = {}", toml_string(spec.subnet_id)));
+    let security_group_ids = toml::Value::Array(vec![toml::Value::String(
+        spec.security_group_id.to_string(),
+    )])
+    .to_string();
+    config_lines.push(format!("security_group_ids = {}", security_group_ids));
+    if let Some(key_name) = spec
+        .ssh_key_name
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+    {
+        config_lines.push(format!("key_name = {}", toml_string(key_name)));
+    }
+    if let Some(ssh_user) = spec
+        .ssh_user
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+    {
+        config_lines.push(format!("ssh_user = {}", toml_string(ssh_user)));
+    }
+    let config_body = config_lines.join("\n");
+
+    let mut script = String::new();
+    script.push_str("#!/usr/bin/env bash\n");
+    script.push_str("set -euo pipefail\n\n");
+    script.push_str("install_deps() {\n");
+    script.push_str("  if command -v curl >/dev/null 2>&1; then\n");
+    script.push_str("    return 0\n");
+    script.push_str("  fi\n");
+    script.push_str("  if command -v apt-get >/dev/null 2>&1; then\n");
+    script.push_str("    apt-get update -y >/dev/null 2>&1 || true\n");
+    script.push_str("    apt-get install -y curl ca-certificates >/dev/null 2>&1 || true\n");
+    script.push_str("  elif command -v dnf >/dev/null 2>&1; then\n");
+    script.push_str("    dnf install -y curl ca-certificates >/dev/null 2>&1 || true\n");
+    script.push_str("  elif command -v yum >/dev/null 2>&1; then\n");
+    script.push_str("    yum install -y curl ca-certificates >/dev/null 2>&1 || true\n");
+    script.push_str("  fi\n");
+    script.push_str("}\n\n");
+
+    script.push_str("fetch_metadata() {\n");
+    script.push_str("  local path=\"$1\"\n");
+    script.push_str("  local token=\"\"\n");
+    script.push_str("  token=$(curl -fsX PUT \"http://169.254.169.254/latest/api/token\" -H \"X-aws-ec2-metadata-token-ttl-seconds: 21600\" 2>/dev/null || true)\n");
+    script.push_str("  if [ -n \"$token\" ]; then\n");
+    script.push_str("    curl -fsSL -H \"X-aws-ec2-metadata-token: $token\" \"http://169.254.169.254/latest/meta-data/${path}\" 2>/dev/null || true\n");
+    script.push_str("  else\n");
+    script.push_str("    curl -fsSL \"http://169.254.169.254/latest/meta-data/${path}\" 2>/dev/null || true\n");
+    script.push_str("  fi\n");
+    script.push_str("}\n\n");
+
+    script.push_str("install_deps\n");
+    script.push_str("public_ip=$(fetch_metadata public-ipv4)\n");
+    script.push_str("if [ -z \"$public_ip\" ]; then\n");
+    script.push_str("  public_ip=$(fetch_metadata local-ipv4)\n");
+    script.push_str("fi\n");
+    script.push_str("if [ -z \"$public_ip\" ]; then\n");
+    script.push_str("  echo \"missing instance IP\" >&2\n");
+    script.push_str("  exit 1\n");
+    script.push_str("fi\n");
+    script.push_str("public_base_url=\"https://${public_ip}:8787\"\n");
+    script.push_str("mkdir -p /etc/ctx-gateway /usr/local/bin\n");
+    script.push_str(&format!(
+        "curl -fsSL {} -o /usr/local/bin/ctx-worker-gateway\n",
+        shell_escape(spec.gateway_download_url)
+    ));
+    script.push_str("chmod +x /usr/local/bin/ctx-worker-gateway\n");
+    script.push_str(&format!(
+        "curl -fsSL {} -o /usr/local/bin/ctx-worker-shim\n",
+        shell_escape(spec.shim_download_url)
+    ));
+    script.push_str("chmod +x /usr/local/bin/ctx-worker-shim\n");
+    script.push_str("cat > /etc/ctx-gateway/tls.crt <<'EOF'\n");
+    script.push_str(spec.gateway_cert_pem);
+    if !spec.gateway_cert_pem.ends_with('\n') {
+        script.push('\n');
+    }
+    script.push_str("EOF\n");
+    script.push_str("cat > /etc/ctx-gateway/tls.key <<'EOF'\n");
+    script.push_str(spec.gateway_key_pem);
+    if !spec.gateway_key_pem.ends_with('\n') {
+        script.push('\n');
+    }
+    script.push_str("EOF\n");
+    script.push_str("chmod 600 /etc/ctx-gateway/tls.key\n");
+    script.push_str("cat > /etc/ctx-gateway/ctx-gateway.env <<'EOF'\n");
+    script.push_str(&format!(
+        "AWS_ACCESS_KEY_ID={}\n",
+        spec.aws_access_key_id.trim()
+    ));
+    script.push_str(&format!(
+        "AWS_SECRET_ACCESS_KEY={}\n",
+        spec.aws_secret_access_key.trim()
+    ));
+    script.push_str(&format!("AWS_REGION={}\n", spec.aws_region.trim()));
+    script.push_str(&format!(
+        "AWS_DEFAULT_REGION={}\n",
+        spec.aws_region.trim()
+    ));
+    script.push_str("EOF\n");
+    script.push_str("chmod 600 /etc/ctx-gateway/ctx-gateway.env\n");
+    script.push_str("cat > /etc/ctx-gateway/config.toml <<EOF\n");
+    script.push_str(&config_body);
+    if !config_body.ends_with('\n') {
+        script.push('\n');
+    }
+    script.push_str("EOF\n");
+    script.push_str("chmod 600 /etc/ctx-gateway/config.toml\n");
+    script.push_str("cat > /etc/systemd/system/ctx-worker-gateway.service <<'EOF'\n");
+    script.push_str("[Unit]\n");
+    script.push_str("Description=ctx worker gateway\n");
+    script.push_str("After=network-online.target\n");
+    script.push_str("Wants=network-online.target\n\n");
+    script.push_str("[Service]\n");
+    script.push_str("EnvironmentFile=/etc/ctx-gateway/ctx-gateway.env\n");
+    script.push_str(
+        "ExecStart=/usr/local/bin/ctx-worker-gateway --config /etc/ctx-gateway/config.toml\n",
+    );
+    script.push_str("Restart=on-failure\n");
+    script.push_str("RestartSec=5\n");
+    script.push_str("User=root\n\n");
+    script.push_str("[Install]\n");
+    script.push_str("WantedBy=multi-user.target\n");
+    script.push_str("EOF\n");
+    script.push_str("systemctl daemon-reload\n");
+    script.push_str("systemctl enable --now ctx-worker-gateway\n");
+    script
+}
+
+#[allow(dead_code)]
+async fn run_gateway_instance(
+    ec2: &Ec2Client,
+    ami_id: &str,
+    instance_type: &str,
+    subnet_id: &str,
+    security_group_id: &str,
+    user_data_b64: &str,
+    ssh_key_name: Option<&str>,
+) -> anyhow::Result<String> {
+    let mut run = ec2
+        .run_instances()
+        .image_id(ami_id)
+        .instance_type(InstanceType::from(instance_type))
+        .min_count(1)
+        .max_count(1)
+        .subnet_id(subnet_id)
+        .user_data(user_data_b64);
+
+    if !security_group_id.trim().is_empty() {
+        run = run.set_security_group_ids(Some(vec![security_group_id.to_string()]));
+    }
+    if let Some(key_name) = ssh_key_name.map(|v| v.trim()).filter(|v| !v.is_empty()) {
+        run = run.key_name(key_name);
+    }
+
+    let resp = run.send().await.context("run_instances")?;
+    let instance = resp.instances().first().context("missing instance")?;
+    let instance_id = instance
+        .instance_id()
+        .map(|id| id.to_string())
+        .context("missing instance id")?;
+    Ok(instance_id)
+}
+
+#[allow(dead_code)]
+async fn wait_instance_ips(
+    ec2: &Ec2Client,
+    instance_id: &str,
+) -> anyhow::Result<(Option<String>, Option<String>)> {
+    for _ in 0..40 {
+        let resp = match ec2
+            .describe_instances()
+            .instance_ids(instance_id)
+            .send()
+            .await
+        {
+            Ok(resp) => resp,
+            Err(err) => {
+                let msg = err.to_string();
+                let dbg = format!("{err:?}");
+                if msg.contains("InvalidInstanceID.NotFound")
+                    || dbg.contains("InvalidInstanceID.NotFound")
+                {
+                    tokio::time::sleep(Duration::from_secs(3)).await;
+                    continue;
+                }
+                return Err(anyhow::Error::new(err).context("describe_instances"));
+            }
+        };
+        if let Some(res) = resp.reservations().first() {
+            if let Some(instance) = res.instances().first() {
+                let state = instance.state().and_then(|s| s.name()).map(|s| s.as_str());
+                if matches!(state, Some("running")) {
+                    let public_ip = instance.public_ip_address().map(|v| v.to_string());
+                    let private_ip = instance.private_ip_address().map(|v| v.to_string());
+                    return Ok((public_ip, private_ip));
+                }
+                if matches!(state, Some("terminated") | Some("shutting-down")) {
+                    anyhow::bail!("instance terminated while waiting for IP");
+                }
+            }
+        }
+        tokio::time::sleep(Duration::from_secs(3)).await;
+    }
+    Ok((None, None))
+}
+async fn start_track_worker(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(req): Json<TrackWorkerStartReq>,
+) -> Result<Json<TrackWorker>, (StatusCode, Json<ApiErrorResp>)> {
+    let track_id = TrackId(uuid::Uuid::parse_str(&id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid track id".to_string(),
+            }),
+        )
+    })?);
+    let (track, worktree) = load_track_and_worktree(&state, track_id).await?;
+    let worker =
+        start_track_worker_inner(state, track, worktree, req, StartWorkerOptions::default())
+            .await?;
+    Ok(Json(worker))
+}
+
+async fn start_track_cloud_worker(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(req): Json<TrackCloudWorkerStartReq>,
+) -> Result<Json<TrackWorker>, (StatusCode, Json<ApiErrorResp>)> {
+    let track_id = TrackId(uuid::Uuid::parse_str(&id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid track id".to_string(),
+            }),
+        )
+    })?);
+    let (track, worktree) = load_track_and_worktree(&state, track_id).await?;
+    let workspace = state
+        .store
+        .get_workspace(track.workspace_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: e.to_string(),
+                }),
+            )
+        })?
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "workspace not found".to_string(),
+            }),
+        ))?;
+    let workspace_cfg = load_workspace_cloud_workers_config(StdPath::new(&workspace.root_path))
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: e.to_string(),
+                }),
+            )
+        })?;
+
+    let gateway_url = resolve_cloud_worker_gateway_url(&state, &workspace.root_path).await?;
+    let base_commit = if worktree.base_commit_sha.trim().is_empty() {
+        rev_parse_head(&worktree.root_path).await.map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: e.to_string(),
+                }),
+            )
+        })?
+    } else {
+        worktree.base_commit_sha.clone()
+    };
+    let reference = worktree
+        .git_branch
+        .clone()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| base_commit.clone());
+    let repo = resolve_cloud_worker_repo_spec(&worktree, &reference).await?;
+    let diff_debounce_ms = req.diff_debounce_ms.or(workspace_cfg.diff_debounce_ms);
+    let ttl_seconds = req
+        .ttl_seconds
+        .or(workspace_cfg.idle_timeout_minutes.map(|m| m * 60));
+    let snapshot_ttl_seconds = req.snapshot_ttl_seconds.or_else(|| {
+        workspace_cfg
+            .snapshot_ttl_days
+            .map(|d| d.saturating_mul(24 * 60 * 60))
+    });
+
+    let worker = start_track_worker_inner(
+        state,
+        track,
+        worktree,
+        TrackWorkerStartReq {
+            gateway_url,
+            repo,
+            base_commit_sha: Some(base_commit),
+            diff_debounce_ms,
+            ttl_seconds,
+            snapshot_ttl_seconds,
+        },
+        StartWorkerOptions {
+            provider_id: req.provider_id,
+            model_id: req.model_id,
+            diff_debounce_ms,
+            ttl_seconds,
+            snapshot_ttl_seconds,
+            base_commit_sha: None,
+        },
+    )
+    .await?;
+
+    Ok(Json(worker))
+}
+
+async fn get_track_worker(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<TrackWorker>, StatusCode> {
+    let track_id = TrackId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
+    let worker = state
+        .store
+        .get_track_worker(track_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    Ok(Json(worker))
+}
+
+async fn delete_track_worker(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<StatusCode, (StatusCode, Json<ApiErrorResp>)> {
+    let track_id = TrackId(uuid::Uuid::parse_str(&id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid track id".to_string(),
+            }),
+        )
+    })?);
+    let worker = state.store.get_track_worker(track_id).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResp {
+                error: e.to_string(),
+            }),
+        )
+    })?;
+    if let Some(worker) = worker {
+        let url = format!(
+            "{}/workers/{}/stop",
+            worker.gateway_url.trim_end_matches('/'),
+            worker.worker_id
+        );
+        let settings = user_settings::load_settings(&state.data_root).await;
+        let gateway_ca_pem = resolve_gateway_ca_pem(&settings);
+        let gateway_token = resolve_gateway_token(&settings);
+        let client = match build_gateway_client(gateway_ca_pem.as_deref()) {
+            Ok(client) => client,
+            Err(err) => {
+                tracing::warn!("gateway client init failed: {err:?}");
+                reqwest::Client::new()
+            }
+        };
+        let mut request = client.post(url);
+        if let Some(token) = gateway_token.as_deref() {
+            request = request.header("x-ctx-gateway-token", token);
+        }
+        let _ = request.send().await;
+        state
+            .store
+            .delete_track_worker(track_id)
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiErrorResp {
+                        error: e.to_string(),
+                    }),
+                )
+            })?;
+    }
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn dictation_livekit_stream_ws(

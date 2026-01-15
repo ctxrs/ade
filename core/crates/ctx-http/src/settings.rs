@@ -21,6 +21,8 @@ pub struct Settings {
     #[serde(default)]
     pub sandboxing: Option<SandboxingSettings>,
     #[serde(default)]
+    pub github: Option<GithubSettings>,
+    #[serde(default)]
     pub cloud_workers: Option<CloudWorkersSettings>,
 }
 
@@ -98,6 +100,12 @@ impl Default for SandboxingSettings {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct GithubSettings {
+    #[serde(default)]
+    pub token: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ResourceGovernanceMode {
@@ -151,6 +159,20 @@ pub struct CloudGatewaySettings {
     pub public_ip: Option<String>,
     #[serde(default)]
     pub gateway_ca_pem: Option<String>,
+    #[serde(default)]
+    pub gateway_token: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PublicCloudGatewaySettings {
+    pub provider: String,
+    pub gateway_url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub instance_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub region: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub public_ip: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -179,6 +201,37 @@ pub struct AwsCloudWorkersSettings {
     pub ssh_user: Option<String>,
     #[serde(default)]
     pub artifact_bucket: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PublicAwsCloudWorkersSettings {
+    pub access_key_id: String,
+    pub secret_access_key_set: bool,
+    pub region: String,
+    pub gateway_instance_type: String,
+    pub worker_instance_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subnet_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub security_group_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ssh_key_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub worker_ami_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gateway_ami_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ssh_user: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub artifact_bucket: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PublicCloudWorkersSettings {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gateway: Option<PublicCloudGatewaySettings>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub aws: Option<PublicAwsCloudWorkersSettings>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -242,6 +295,10 @@ pub struct PublicSettings {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title_generation: Option<PublicTitleGenerationSettings>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub github: Option<PublicGithubSettings>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cloud_workers: Option<PublicCloudWorkersSettings>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub resource_governance: Option<PublicResourceGovernanceSettings>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provider_guard: Option<PublicProviderGuardSettings>,
@@ -280,6 +337,11 @@ pub struct PublicTitleGenerationSettings {
     pub api_key: String,
     pub model: String,
     pub use_json: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PublicGithubSettings {
+    pub token_set: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -358,6 +420,10 @@ pub struct UpdateSettingsReq {
     #[serde(default)]
     pub title_generation: Option<UpdateTitleGenerationSettingsReq>,
     #[serde(default)]
+    pub github: Option<UpdateGithubSettingsReq>,
+    #[serde(default)]
+    pub cloud_workers: Option<UpdateCloudWorkersSettingsReq>,
+    #[serde(default)]
     pub resource_governance: Option<UpdateResourceGovernanceSettingsReq>,
     #[serde(default)]
     pub provider_guard: Option<UpdateProviderGuardSettingsReq>,
@@ -397,6 +463,45 @@ pub struct UpdateTitleGenerationSettingsReq {
     pub model: String,
     #[serde(default)]
     pub use_json: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct UpdateGithubSettingsReq {
+    pub token: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct UpdateCloudWorkersSettingsReq {
+    #[serde(default)]
+    pub aws: Option<UpdateAwsCloudWorkersSettingsReq>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct UpdateAwsCloudWorkersSettingsReq {
+    #[serde(default)]
+    pub access_key_id: Option<String>,
+    #[serde(default)]
+    pub secret_access_key: Option<String>,
+    #[serde(default)]
+    pub region: Option<String>,
+    #[serde(default)]
+    pub gateway_instance_type: Option<String>,
+    #[serde(default)]
+    pub worker_instance_type: Option<String>,
+    #[serde(default)]
+    pub subnet_id: Option<String>,
+    #[serde(default)]
+    pub security_group_id: Option<String>,
+    #[serde(default)]
+    pub ssh_key_name: Option<String>,
+    #[serde(default)]
+    pub worker_ami_id: Option<String>,
+    #[serde(default)]
+    pub gateway_ami_id: Option<String>,
+    #[serde(default)]
+    pub ssh_user: Option<String>,
+    #[serde(default)]
+    pub artifact_bucket: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -560,6 +665,35 @@ pub fn to_public(settings: &Settings) -> PublicSettings {
                 model: t.model.clone(),
                 use_json: t.use_json,
             });
+    let github = settings.github.as_ref().map(|g| PublicGithubSettings {
+        token_set: g
+            .token
+            .as_ref()
+            .is_some_and(|token| !token.trim().is_empty()),
+    });
+    let cloud_workers = settings.cloud_workers.as_ref().map(|cw| PublicCloudWorkersSettings {
+        gateway: cw.gateway.as_ref().map(|gateway| PublicCloudGatewaySettings {
+            provider: gateway.provider.clone(),
+            gateway_url: gateway.gateway_url.clone(),
+            instance_id: gateway.instance_id.clone(),
+            region: gateway.region.clone(),
+            public_ip: gateway.public_ip.clone(),
+        }),
+        aws: cw.aws.as_ref().map(|aws| PublicAwsCloudWorkersSettings {
+            access_key_id: aws.access_key_id.clone(),
+            secret_access_key_set: !aws.secret_access_key.trim().is_empty(),
+            region: aws.region.clone(),
+            gateway_instance_type: aws.gateway_instance_type.clone(),
+            worker_instance_type: aws.worker_instance_type.clone(),
+            subnet_id: aws.subnet_id.clone(),
+            security_group_id: aws.security_group_id.clone(),
+            ssh_key_name: aws.ssh_key_name.clone(),
+            worker_ami_id: aws.worker_ami_id.clone(),
+            gateway_ami_id: aws.gateway_ami_id.clone(),
+            ssh_user: aws.ssh_user.clone(),
+            artifact_bucket: aws.artifact_bucket.clone(),
+        }),
+    });
     let resource_governance =
         settings
             .resource_governance
@@ -597,6 +731,8 @@ pub fn to_public(settings: &Settings) -> PublicSettings {
         dictation,
         telemetry,
         title_generation,
+        github,
+        cloud_workers,
         resource_governance,
         provider_guard,
         subagents,
@@ -644,6 +780,58 @@ pub fn apply_update(mut current: Settings, req: UpdateSettingsReq) -> Settings {
         next.model = t.model;
         next.use_json = t.use_json;
         current.title_generation = Some(next);
+    }
+    if let Some(g) = req.github {
+        let mut next = current.github.unwrap_or_default();
+        if let Some(token) = g.token {
+            let trimmed = token.trim();
+            if trimmed.is_empty() {
+                next.token = None;
+            } else {
+                next.token = Some(trimmed.to_string());
+            }
+        }
+        current.github = Some(next);
+    }
+    if let Some(cw) = req.cloud_workers {
+        let mut next = current.cloud_workers.unwrap_or_default();
+        if let Some(aws_req) = cw.aws {
+            let mut aws = next.aws.unwrap_or_default();
+            let mut set_string = |target: &mut String, value: Option<String>| {
+                if let Some(value) = value {
+                    let trimmed = value.trim();
+                    if trimmed.is_empty() {
+                        target.clear();
+                    } else {
+                        *target = trimmed.to_string();
+                    }
+                }
+            };
+            let mut set_optional = |target: &mut Option<String>, value: Option<String>| {
+                if let Some(value) = value {
+                    let trimmed = value.trim();
+                    if trimmed.is_empty() {
+                        *target = None;
+                    } else {
+                        *target = Some(trimmed.to_string());
+                    }
+                }
+            };
+            set_string(&mut aws.access_key_id, aws_req.access_key_id);
+            set_string(&mut aws.secret_access_key, aws_req.secret_access_key);
+            set_string(&mut aws.region, aws_req.region);
+            set_string(&mut aws.gateway_instance_type, aws_req.gateway_instance_type);
+            set_string(&mut aws.worker_instance_type, aws_req.worker_instance_type);
+            set_optional(&mut aws.subnet_id, aws_req.subnet_id);
+            set_optional(&mut aws.security_group_id, aws_req.security_group_id);
+            set_optional(&mut aws.ssh_key_name, aws_req.ssh_key_name);
+            set_optional(&mut aws.worker_ami_id, aws_req.worker_ami_id);
+            set_optional(&mut aws.gateway_ami_id, aws_req.gateway_ami_id);
+            set_optional(&mut aws.ssh_user, aws_req.ssh_user);
+            set_optional(&mut aws.artifact_bucket, aws_req.artifact_bucket);
+            next.aws = Some(aws);
+        }
+        current.cloud_workers = Some(next);
     }
     if let Some(r) = req.resource_governance {
         let mut next = current.resource_governance.unwrap_or_default();

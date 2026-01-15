@@ -243,14 +243,76 @@ export type TitleGenerationSettings = {
   use_json: boolean;
 };
 
+export type GithubSettings = {
+  token?: string | null;
+  token_set?: boolean;
+};
+
+export type CloudGatewaySettings = {
+  provider: string;
+  gateway_url: string;
+  instance_id?: string | null;
+  region?: string | null;
+  public_ip?: string | null;
+};
+
+export type AwsCloudWorkersSettings = {
+  access_key_id?: string;
+  secret_access_key_set?: boolean;
+  region?: string;
+  gateway_instance_type?: string;
+  worker_instance_type?: string;
+  subnet_id?: string | null;
+  security_group_id?: string | null;
+  ssh_key_name?: string | null;
+  worker_ami_id?: string | null;
+  gateway_ami_id?: string | null;
+  ssh_user?: string | null;
+  artifact_bucket?: string | null;
+};
+
+export type CloudWorkersSettings = {
+  gateway?: CloudGatewaySettings | null;
+  aws?: AwsCloudWorkersSettings | null;
+};
+
+export type AwsCloudWorkersSettingsPatch = {
+  access_key_id?: string;
+  secret_access_key?: string;
+  region?: string;
+  gateway_instance_type?: string;
+  worker_instance_type?: string;
+  subnet_id?: string | null;
+  security_group_id?: string | null;
+  ssh_key_name?: string | null;
+  worker_ami_id?: string | null;
+  gateway_ami_id?: string | null;
+  ssh_user?: string | null;
+  artifact_bucket?: string | null;
+};
+
+export type CloudWorkersSettingsPatch = {
+  aws?: AwsCloudWorkersSettingsPatch;
+};
+
 export type Settings = {
   dictation?: DictationSettings | null;
   telemetry?: TelemetrySettings | null;
   title_generation?: TitleGenerationSettings | null;
+  github?: GithubSettings | null;
+  cloud_workers?: CloudWorkersSettings | null;
   resource_governance?: ResourceGovernanceSettings | null;
   provider_guard?: ProviderGuardSettings | null;
   subagents?: SubagentSettings | null;
   sandboxing?: SandboxingSettings | null;
+};
+
+export type UpdateSettingsPatch = Partial<Settings> & {
+  cloud_workers?: CloudWorkersSettingsPatch;
+};
+
+export type AwsGatewayLaunchResp = {
+  gateway: CloudGatewaySettings;
 };
 
 export type WebSessionViewport = {
@@ -802,10 +864,16 @@ export const listWorkspaces = () =>
 export const getSettings = () =>
   apiAny<Settings>("/api/settings");
 
-export const updateSettings = (settings: Settings) =>
+export const updateSettings = (settings: UpdateSettingsPatch) =>
   apiAny<Settings>("/api/settings", {
     method: "POST",
     body: JSON.stringify(settings),
+  });
+
+export const launchAwsGateway = (workspace_id?: string | null) =>
+  apiAny<AwsGatewayLaunchResp>("/api/settings/cloud_workers/aws/launch", {
+    method: "POST",
+    body: JSON.stringify({ workspace_id: workspace_id ?? null }),
   });
 
 export type AgentSystemPromptConfig = {
