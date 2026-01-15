@@ -1669,11 +1669,7 @@ private struct WorkbenchNewTaskView: View {
         )
 
         return VStack(alignment: .leading, spacing: 12) {
-            if isLoadingTasks {
-                Text("Refreshing tasks...")
-                    .font(.caption)
-                    .foregroundColor(.ctxTextMuted)
-            } else if let taskError {
+            if let taskError {
                 WorkbenchInfoCard(text: taskError, tint: .ctxError)
             }
 

@@ -58,6 +58,7 @@ struct ChatView: View {
     @Binding var selectedMode: ComposerMode
     @Binding var selectedVerbosity: ComposerVerbosity
     @State private var composerText = ""
+    @State private var lastDraftSessionId: String?
     @State private var pendingAttachments: [MessageAttachment] = []
     @State private var selectedPhotos: [PhotosPickerItem] = []
     @State private var expandedToolGroups: Set<String> = []
@@ -131,8 +132,18 @@ struct ChatView: View {
         .onAppear {
             viewModel.startPolling()
             syncEffortSelection()
+            lastDraftSessionId = viewModel.sessionId
+            composerText = ChatDraftStore.load(sessionId: viewModel.sessionId)
         }
         .onDisappear { viewModel.stopPolling() }
+        .onChange(of: viewModel.sessionId) { _, newValue in
+            ChatDraftStore.save(composerText, sessionId: lastDraftSessionId)
+            lastDraftSessionId = newValue
+            composerText = ChatDraftStore.load(sessionId: newValue)
+        }
+        .onChange(of: composerText) { _, newValue in
+            ChatDraftStore.save(newValue, sessionId: viewModel.sessionId)
+        }
         .onChange(of: selectedPhotos) { newItems in
             _Concurrency.Task { await loadAttachments(from: newItems) }
         }
@@ -336,6 +347,7 @@ struct ChatView: View {
         guard !trimmed.isEmpty || !pendingAttachments.isEmpty else { return }
         viewModel.send(trimmed, attachments: pendingAttachments)
         composerText = ""
+        ChatDraftStore.save("", sessionId: viewModel.sessionId)
         pendingAttachments = []
     }
 
@@ -1285,30 +1297,48 @@ private struct CompactGhostButtonStyle: ButtonStyle {
 struct DaemonAssetContext {
     let baseURL: URL?
     let token: String?
+    let client: DaemonAPIClient?
+
+    func blobPath(_ blobId: String) -> String {
+        let escaped = blobId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? blobId
+        return "/api/blobs/\(escaped)"
+    }
+
+    func artifactPath(_ artifactId: String) -> String {
+        let escaped = artifactId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? artifactId
+        return "/api/artifacts/\(escaped)"
+    }
 
     func blobURL(_ blobId: String) -> URL? {
-        let escaped = blobId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? blobId
-        return url(path: "/api/blobs/\(escaped)")
+        url(path: blobPath(blobId))
     }
 
     func artifactURL(_ artifactId: String) -> URL? {
-        let escaped = artifactId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? artifactId
-        return url(path: "/api/artifacts/\(escaped)")
+        url(path: artifactPath(artifactId))
     }
 
     private func url(path: String) -> URL? {
         guard let baseURL else { return nil }
-        let normalizedPath = path.hasPrefix("/") ? path : "/\(path)"
-        guard let base = URL(string: normalizedPath, relativeTo: baseURL),
-              var components = URLComponents(url: base, resolvingAgainstBaseURL: true) else {
+        let trimmedPath = path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        if trimmedPath.isEmpty { return baseURL }
+        guard var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: true) else {
+            return nil
+        }
+        let basePath = components.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        components.path = basePath.isEmpty ? "/\(trimmedPath)" : "/\(basePath)/\(trimmedPath)"
+        components.query = nil
+        components.fragment = nil
+        guard var resolved = components.url,
+              var resolvedComponents = URLComponents(url: resolved, resolvingAgainstBaseURL: true) else {
             return nil
         }
         if let token, !token.isEmpty {
-            var queryItems = components.queryItems ?? []
+            var queryItems = resolvedComponents.queryItems ?? []
             queryItems.append(URLQueryItem(name: "token", value: token))
-            components.queryItems = queryItems
+            resolvedComponents.queryItems = queryItems
+            resolved = resolvedComponents.url ?? resolved
         }
-        return components.url
+        return resolved
     }
 }
 
@@ -1775,7 +1805,7 @@ struct ComposerAttachmentsRow: View {
                     ZStack(alignment: .topTrailing) {
                         AttachmentPreview(
                             attachment: attachment,
-                            assetContext: DaemonAssetContext(baseURL: nil, token: nil)
+                            assetContext: DaemonAssetContext(baseURL: nil, token: nil, client: nil)
                         )
                         .frame(width: 72, height: 72)
                         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
@@ -1833,6 +1863,8 @@ struct AttachmentPreview: View {
                 RemoteAssetImage(
                     url: url,
                     token: assetContext.token,
+                    assetPath: assetContext.blobPath(blobId),
+                    client: assetContext.client,
                     content: { image in
                         image
                             .resizable()
@@ -1887,6 +1919,8 @@ private enum RemoteAssetImagePhase {
 private struct RemoteAssetImage<Content: View, Placeholder: View, Loading: View>: View {
     let url: URL
     let token: String?
+    let assetPath: String?
+    let client: DaemonAPIClient?
     let content: (Image) -> Content
     let placeholder: () -> Placeholder
     let loading: () -> Loading
@@ -1917,6 +1951,19 @@ private struct RemoteAssetImage<Content: View, Placeholder: View, Loading: View>
     private func load() async {
         await MainActor.run {
             phase = .empty
+        }
+        if let client, let assetPath {
+            do {
+                let data = try await client.fetchAssetData(path: assetPath)
+                guard let image = UIImage(data: data) else {
+                    await MainActor.run { phase = .failure }
+                    return
+                }
+                await MainActor.run { phase = .success(image) }
+                return
+            } catch {
+                // Fall through to direct fetch if secure request fails.
+            }
         }
         var request = URLRequest(url: url)
         if let token, !token.isEmpty {
@@ -2089,6 +2136,8 @@ struct ArtifactDetailMedia: View {
                 RemoteAssetImage(
                     url: url,
                     token: assetContext.token,
+                    assetPath: assetContext.artifactPath(artifact.id.stringValue),
+                    client: assetContext.client,
                     content: { image in
                         image
                             .resizable()
@@ -2180,16 +2229,18 @@ struct ArtifactPreview: View {
                 videoPreview
             } else if isImage, let url = assetContext.artifactURL(artifact.id.stringValue) {
                 RemoteAssetImage(
-                url: url,
-                token: assetContext.token,
-                content: { image in
-                    image
-                        .resizable()
-                        .scaledToFill()
-                },
-                placeholder: { placeholder },
-                loading: { loading }
-            )
+                    url: url,
+                    token: assetContext.token,
+                    assetPath: assetContext.artifactPath(artifact.id.stringValue),
+                    client: assetContext.client,
+                    content: { image in
+                        image
+                            .resizable()
+                            .scaledToFill()
+                    },
+                    placeholder: { placeholder },
+                    loading: { loading }
+                )
             } else {
                 placeholder
             }
@@ -2790,7 +2841,7 @@ final class ChatViewModel: ObservableObject {
 
     private var client: DaemonAPIClient?
     private var secureContext: SecureConnectionContext?
-    private var sessionId: String?
+    @Published private(set) var sessionId: String?
     private var workspaceId: String?
     private var lastEventSeq: Int?
     private var pollTask: _Concurrency.Task<Void, Never>?
@@ -2828,7 +2879,7 @@ final class ChatViewModel: ObservableObject {
     }
 
     var assetContext: DaemonAssetContext {
-        DaemonAssetContext(baseURL: assetBaseURL, token: assetToken)
+        DaemonAssetContext(baseURL: assetBaseURL, token: assetToken, client: client)
     }
 
     func setClient(_ client: DaemonAPIClient?) {
