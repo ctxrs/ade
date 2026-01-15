@@ -80,21 +80,24 @@ test("workbench: stale cached events do not re-show running", async ({ page }) =
   expect(sessionIdValue).not.toBe("");
 
   await page.waitForFunction(async (sid) => {
-    const resp = await fetch(`/api/sessions/${sid}/head?include_events=1&limit=60`);
+    const resp = await fetch(`/api/sessions/${sid}/snapshot?include_events=1&limit=60`);
     if (!resp.ok) return false;
     const data = await resp.json();
-    const turns = Array.isArray(data.turns) ? data.turns : [];
+    const head = data?.head ?? {};
+    const turns = Array.isArray(head.turns) ? head.turns : [];
     const lastTurn = turns[turns.length - 1];
-    const hasAssistant = Array.isArray(data.messages) && data.messages.some((m: any) => m?.role === "assistant");
+    const hasAssistant =
+      Array.isArray(head.messages) && head.messages.some((m: any) => m?.role === "assistant");
     return Boolean(hasAssistant && lastTurn?.status === "completed");
   }, sessionIdValue, { timeout: 20000 });
 
-  const head = await page.evaluate(async (sid) => {
-    const resp = await fetch(`/api/sessions/${sid}/head?include_events=1&limit=60`);
+  const snapshot = await page.evaluate(async (sid) => {
+    const resp = await fetch(`/api/sessions/${sid}/snapshot?include_events=1&limit=60`);
     if (!resp.ok) return null;
     return resp.json();
   }, sessionIdValue);
-  expect(head).not.toBeNull();
+  expect(snapshot).not.toBeNull();
+  const head = snapshot?.head ?? {};
 
   const doneLike = new Set(["done", "assistant_complete", "turn_interrupted"]);
   const staleEvents = Array.isArray(head.events)

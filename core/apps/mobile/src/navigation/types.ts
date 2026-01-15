@@ -4,10 +4,9 @@ export type RootStackParamList = {
   NewTask: undefined;
   Workspaces: undefined;
   Tasks: { workspaceId: string; workspaceName: string };
-  Tracks: { taskId: string; taskTitle: string };
-  Sessions: { trackId: string; trackLabel: string };
+  Sessions: { taskId: string; taskTitle: string };
   SessionDetail: { sessionId: string; sessionTitle: string };
-  TrackDiff: { trackId: string; trackLabel: string };
+  SessionDiff: { sessionId: string; sessionTitle: string };
   Diagnostics: undefined;
   Settings: undefined;
   QrScanner: undefined;

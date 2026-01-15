@@ -320,18 +320,14 @@ actor DaemonAPIClient {
         return try await perform(request)
     }
 
-    func createTask(workspaceId: String, title: String, description: String?, createDefaultTrack: Bool?, defaultTrackLabel: String?) async throws -> Task {
+    func createTask(workspaceId: String, title: String, description: String?) async throws -> Task {
         struct Payload: Encodable {
             let title: String
             let description: String?
-            let createDefaultTrack: Bool?
-            let defaultTrackLabel: String?
         }
         let payload = Payload(
             title: title,
-            description: description,
-            createDefaultTrack: createDefaultTrack,
-            defaultTrackLabel: defaultTrackLabel
+            description: description
         )
         return try await request("/api/workspaces/\(workspaceId)/tasks", method: .post, body: payload)
     }

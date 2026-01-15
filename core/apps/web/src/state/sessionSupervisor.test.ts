@@ -2,14 +2,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { waitForCondition } from "../testUtils/waitForCondition";
 
 import type { Message, Session, SessionEvent, SessionTurn, WorkspaceActiveSnapshotEvent } from "../api/client";
-import type { WorkspaceActiveSnapshotEventSource } from "./workspaceCatchupStore";
+import type { WorkspaceActiveSnapshotEventSource } from "./workspaceActiveSnapshotStore";
 
 vi.mock("../api/client", () => {
   const idToString = (id: any): string => (typeof id === "string" ? id : id?.["0"]);
   return {
     idToString,
     getProviderOptions: vi.fn(async () => undefined),
-    getSessionHead: vi.fn(),
+    getSessionSnapshot: vi.fn(),
     getSessionHistory: vi.fn(),
     listSessionArtifacts: vi.fn(async () => []),
     listTurnTools: vi.fn(async () => []),
@@ -23,7 +23,7 @@ vi.mock("./uiStateStore", () => ({
   saveSessionHeadV1: vi.fn(async () => {}),
 }));
 
-import { getSessionHead } from "../api/client";
+import { getSessionSnapshot } from "../api/client";
 
 const mkSession = (sessionId: string): Session => ({
   id: { 0: sessionId },
@@ -58,13 +58,18 @@ describe("SessionSupervisor", () => {
       },
     ];
 
-    (getSessionHead as any).mockResolvedValue({
-      session: mkSession(sessionId),
-      turns: [] as SessionTurn[],
-      events: [] as SessionEvent[],
-      messages: headMessages,
-      last_event_seq: 1,
-      has_more_turns: false,
+    (getSessionSnapshot as any).mockResolvedValue({
+      summary: {
+        session: mkSession(sessionId),
+      },
+      head: {
+        session: mkSession(sessionId),
+        turns: [] as SessionTurn[],
+        events: [] as SessionEvent[],
+        messages: headMessages,
+        last_event_seq: 1,
+        has_more_turns: false,
+      },
     });
 
     const sup = new SessionSupervisor();
@@ -84,13 +89,18 @@ describe("SessionSupervisor", () => {
     const { SessionSupervisor } = await import("./sessionSupervisor");
 
     const sessionId = "session-2";
-    (getSessionHead as any).mockResolvedValue({
-      session: mkSession(sessionId),
-      turns: [] as SessionTurn[],
-      events: [] as SessionEvent[],
-      messages: [] as Message[],
-      last_event_seq: 0,
-      has_more_turns: false,
+    (getSessionSnapshot as any).mockResolvedValue({
+      summary: {
+        session: mkSession(sessionId),
+      },
+      head: {
+        session: mkSession(sessionId),
+        turns: [] as SessionTurn[],
+        events: [] as SessionEvent[],
+        messages: [] as Message[],
+        last_event_seq: 0,
+        has_more_turns: false,
+      },
     });
 
     const sup = new SessionSupervisor();
@@ -175,46 +185,51 @@ describe("SessionSupervisor", () => {
     const sessionId = "session-3";
     const turnId = "turn-1";
 
-    (getSessionHead as any).mockResolvedValue({
-      session: mkSession(sessionId),
-      turns: [
-        {
-          turn_id: { 0: turnId },
-          session_id: { 0: sessionId },
-          run_id: null,
-          user_message_id: null,
-          status: "completed",
-          start_seq: 1,
-          end_seq: 2,
-          started_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-          assistant_partial: null,
-          thought_partial: null,
-          metrics_json: null,
-          tool_total: 1,
-          tool_pending: 0,
-          tool_running: 0,
-          tool_completed: 1,
-          tool_failed: 0,
-        } as SessionTurn,
-      ],
-      tool_summaries: [
-        {
-          session_id: { 0: sessionId },
-          tool_call_id: "tool-1",
-          turn_id: { 0: turnId },
-          tool_kind: "execute",
-          title: "Run",
-          status: "completed",
-          input_preview: { command: "pwd" },
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        },
-      ],
-      events: [] as SessionEvent[],
-      messages: [] as Message[],
-      last_event_seq: 0,
-      has_more_turns: false,
+    (getSessionSnapshot as any).mockResolvedValue({
+      summary: {
+        session: mkSession(sessionId),
+      },
+      head: {
+        session: mkSession(sessionId),
+        turns: [
+          {
+            turn_id: { 0: turnId },
+            session_id: { 0: sessionId },
+            run_id: null,
+            user_message_id: null,
+            status: "completed",
+            start_seq: 1,
+            end_seq: 2,
+            started_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            assistant_partial: null,
+            thought_partial: null,
+            metrics_json: null,
+            tool_total: 1,
+            tool_pending: 0,
+            tool_running: 0,
+            tool_completed: 1,
+            tool_failed: 0,
+          } as SessionTurn,
+        ],
+        tool_summaries: [
+          {
+            session_id: { 0: sessionId },
+            tool_call_id: "tool-1",
+            turn_id: { 0: turnId },
+            tool_kind: "execute",
+            title: "Run",
+            status: "completed",
+            input_preview: { command: "pwd" },
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          },
+        ],
+        events: [] as SessionEvent[],
+        messages: [] as Message[],
+        last_event_seq: 0,
+        has_more_turns: false,
+      },
     });
 
     const sup = new SessionSupervisor();

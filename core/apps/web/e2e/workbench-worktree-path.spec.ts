@@ -30,10 +30,12 @@ test("workbench: worktree slug is visible for the active session", async ({ page
   const taskId = seed.taskIds[0];
   const sessionId = seed.sessionIdsByTask[taskId][0];
 
-  const sessionResp = await request.get(`/api/sessions/${sessionId}/head?limit=1`);
+  const sessionResp = await request.get(`/api/sessions/${sessionId}/snapshot?limit=1`);
   expect(sessionResp.ok()).toBeTruthy();
-  const sessionHead = (await sessionResp.json()) as any;
-  const worktreeId = readId(sessionHead?.session?.worktree_id);
+  const sessionSnapshot = (await sessionResp.json()) as any;
+  const worktreeId = readId(
+    sessionSnapshot?.head?.session?.worktree_id ?? sessionSnapshot?.summary?.session?.worktree_id,
+  );
   expect(worktreeId).not.toEqual("");
 
   const worktreeResp = await request.get(`/api/worktrees/${worktreeId}`);
@@ -63,10 +65,12 @@ test("workbench: worktree slug stays visible in single-track view", async ({ pag
   const taskId = seed.taskIds[0];
   const sessionId = seed.sessionIdsByTask[taskId][0];
 
-  const sessionResp = await request.get(`/api/sessions/${sessionId}/head?limit=1`);
+  const sessionResp = await request.get(`/api/sessions/${sessionId}/snapshot?limit=1`);
   expect(sessionResp.ok()).toBeTruthy();
-  const sessionHead = (await sessionResp.json()) as any;
-  const worktreeId = readId(sessionHead?.session?.worktree_id);
+  const sessionSnapshot = (await sessionResp.json()) as any;
+  const worktreeId = readId(
+    sessionSnapshot?.head?.session?.worktree_id ?? sessionSnapshot?.summary?.session?.worktree_id,
+  );
   expect(worktreeId).not.toEqual("");
 
   const worktreeResp = await request.get(`/api/worktrees/${worktreeId}`);

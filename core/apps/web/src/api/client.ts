@@ -20,7 +20,6 @@ import type {
   SessionSummary,
   SubagentInvocation,
   SubagentInvocationChild,
-  SessionHead,
   SessionHeadDelta,
   SessionHeadSnapshot,
   SessionHeadWindow,
@@ -1029,14 +1028,6 @@ export const getMergeQueueEntryLogs = async (entryId: string): Promise<string> =
     throw new Error(msg || `Failed to download logs (${resp.status}).`);
   }
   return resp.body ?? "";
-};
-
-export const getSessionHead = (sessionId: string, limit?: number, includeEvents?: boolean) => {
-  const qs = new URLSearchParams();
-  if (limit) qs.set("limit", String(limit));
-  if (includeEvents !== undefined) qs.set("include_events", includeEvents ? "1" : "0");
-  const suffix = qs.toString() ? `?${qs.toString()}` : "";
-  return apiAny<SessionHead>(`/api/sessions/${sessionId}/head${suffix}`);
 };
 
 export const getSessionSnapshot = (sessionId: string, limit?: number, includeEvents?: boolean) => {

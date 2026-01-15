@@ -148,11 +148,13 @@ export async function seedDummyWorkspace(
         if (awaitTurnCompletion) {
           const start = Date.now();
           while (true) {
-            const head = await apiGet<{
-              turns: Array<{ status: string; tool_total?: number | null }>;
-              tool_summaries?: any[];
-            }>(request, `/api/sessions/${session.id}/head?limit=1`);
-            const last = head.turns[head.turns.length - 1];
+            const snapshot = await apiGet<{
+              head: {
+                turns: Array<{ status: string; tool_total?: number | null }>;
+                tool_summaries?: any[];
+              };
+            }>(request, `/api/sessions/${session.id}/snapshot?limit=1`);
+            const last = snapshot.head.turns[snapshot.head.turns.length - 1];
             const done = last?.status === "completed" || last?.status === "done";
             if (done) break;
             if (Date.now() - start > completionTimeoutMs) {

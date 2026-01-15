@@ -22,7 +22,7 @@ const formatSessionLabel = (title?: string, provider?: string, model?: string) =
 type Props = NativeStackScreenProps<RootStackParamList, "Sessions">;
 
 export function SessionListScreen({ route, navigation }: Props): React.JSX.Element {
-  const { trackId, trackLabel } = route.params;
+  const { taskId, taskTitle } = route.params;
   const { config } = useConnection();
   const store = useWorkspaceCatchupStore();
   const snapshot = useWorkspaceCatchupSnapshot();
@@ -30,23 +30,16 @@ export function SessionListScreen({ route, navigation }: Props): React.JSX.Eleme
 
   if (!config) return <ErrorView message="Connect to a daemon first." />;
 
-  const trackSummary = useMemo(() => {
-    for (const task of Object.values(snapshot.tasksById)) {
-      const found = task.tracks.find((track) => idToString(track.track.id) === trackId);
-      if (found) return found;
-    }
-    return null;
-  }, [snapshot.tasksById, trackId]);
-
   const sessions = useMemo(() => {
-    if (!trackSummary) return [];
-    return [...trackSummary.sessions].sort((a, b) =>
+    const summary = snapshot.tasksById[taskId];
+    if (!summary) return [];
+    return [...summary.sessions].sort((a, b) =>
       String(a.session.created_at ?? "").localeCompare(String(b.session.created_at ?? "")),
     );
-  }, [trackSummary]);
+  }, [snapshot.tasksById, taskId]);
 
-  if (!trackSummary && !snapshot.initialized) return <LoadingView />;
-  if (!trackSummary && snapshot.initialized) return <ErrorView message="Track not found." />;
+  if (!snapshot.tasksById[taskId] && !snapshot.initialized) return <LoadingView />;
+  if (!snapshot.tasksById[taskId] && snapshot.initialized) return <ErrorView message="Task not found." />;
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -61,23 +54,36 @@ export function SessionListScreen({ route, navigation }: Props): React.JSX.Eleme
             tintColor={theme.colors.accent}
           />
         }
-        ListHeaderComponent={<Text style={styles.header}>{trackLabel}</Text>}
+        ListHeaderComponent={<Text style={styles.header}>{taskTitle}</Text>}
         renderItem={({ item }) => (
-          <Pressable
-            style={styles.card}
-            onPress={() =>
-              navigation.navigate("SessionDetail", {
-                sessionId: idToString(item.session.id),
-                sessionTitle: formatSessionLabel(item.session.title, item.session.provider_id, item.session.model_id),
-              })
-            }
-          >
-            <Text style={styles.title}>
-              {formatSessionLabel(item.session.title, item.session.provider_id, item.session.model_id)}
-            </Text>
-            <Text style={styles.meta}>Status: {item.session.status}</Text>
-            {item.last_message_preview ? <Text style={styles.preview}>{item.last_message_preview}</Text> : null}
-          </Pressable>
+          <View style={styles.card}>
+            <Pressable
+              style={styles.cardMain}
+              onPress={() =>
+                navigation.navigate("SessionDetail", {
+                  sessionId: idToString(item.session.id),
+                  sessionTitle: formatSessionLabel(item.session.title, item.session.provider_id, item.session.model_id),
+                })
+              }
+            >
+              <Text style={styles.title}>
+                {formatSessionLabel(item.session.title, item.session.provider_id, item.session.model_id)}
+              </Text>
+              <Text style={styles.meta}>Status: {item.session.status}</Text>
+              {item.last_message_preview ? <Text style={styles.preview}>{item.last_message_preview}</Text> : null}
+            </Pressable>
+            <Pressable
+              onPress={() =>
+                navigation.navigate("SessionDiff", {
+                  sessionId: idToString(item.session.id),
+                  sessionTitle: formatSessionLabel(item.session.title, item.session.provider_id, item.session.model_id),
+                })
+              }
+              style={styles.diffButton}
+            >
+              <Text style={styles.diffText}>View Diff</Text>
+            </Pressable>
+          </View>
         )}
         ListEmptyComponent={
           <View style={styles.empty}>
@@ -108,6 +114,9 @@ const styles: Record<string, any> = createContextStyles((t) => ({
     gap: t.spacing.xs,
     backgroundColor: t.colors.surfaceAlt,
   },
+  cardMain: {
+    gap: t.spacing.xs,
+  },
   title: {
     color: t.colors.text,
     fontWeight: "700",
@@ -120,6 +129,19 @@ const styles: Record<string, any> = createContextStyles((t) => ({
   },
   preview: {
     color: t.colors.text,
+  },
+  diffButton: {
+    alignSelf: "flex-start",
+    paddingHorizontal: t.spacing.md,
+    paddingVertical: t.spacing.xs,
+    borderRadius: t.radii.pill,
+    borderWidth: 1,
+    borderColor: t.colors.accent,
+    marginTop: t.spacing.xs,
+  },
+  diffText: {
+    color: t.colors.accent,
+    fontWeight: "600",
   },
   empty: {
     padding: t.spacing.xl,

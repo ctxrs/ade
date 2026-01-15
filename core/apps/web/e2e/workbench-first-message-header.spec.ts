@@ -34,7 +34,7 @@ test("workbench: first user message renders from stream when head is stale", asy
   const prompt = `first-message-${Date.now()}`;
   let forceStaleHead = true;
 
-  await page.route("**/api/sessions/*/head**", async (route) => {
+  await page.route("**/api/sessions/*/snapshot**", async (route) => {
     const url = route.request().url();
     if (!url.includes(sessionId)) {
       await route.continue();
@@ -47,9 +47,9 @@ test("workbench: first user message renders from stream when head is stale", asy
       return;
     }
 
-    const head = (await response.json()) as any;
+    const snapshot = (await response.json()) as any;
     const staleHead = {
-      ...head,
+      ...(snapshot?.head ?? {}),
       turns: [],
       messages: [],
       events: [],
@@ -57,7 +57,10 @@ test("workbench: first user message renders from stream when head is stale", asy
       has_more_turns: false,
       last_event_seq: 0,
     };
-    await route.fulfill({ response, body: JSON.stringify(staleHead) });
+    await route.fulfill({
+      response,
+      body: JSON.stringify({ ...snapshot, head: staleHead }),
+    });
   });
 
   await page.goto(`/workspaces/${seed.workspaceId}`, { waitUntil: "domcontentloaded" });

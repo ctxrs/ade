@@ -3,7 +3,7 @@ import { Modal, Pressable, Text, View } from "react-native";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { ChevronDown } from "lucide-react-native";
 
-import { createSession, createTrack, getProviderOptions, idToString, listProviders } from "../api/client";
+import { createSession, getProviderOptions, idToString, listProviders } from "../api/client";
 import type { ConnectionConfig } from "../api/client";
 import { createContextStyles, useContextTokens } from "../theme";
 
@@ -15,7 +15,7 @@ export type WorkbenchComposerOptionsSheetProps = {
   taskId: string;
   currentProviderId?: string | null;
   currentModelId?: string | null;
-  onCreated: (result: { trackId: string; sessionId: string; providerId: string; modelId: string }) => void;
+  onCreated: (result: { sessionId: string; providerId: string; modelId: string }) => void;
 };
 
 export function WorkbenchComposerOptionsSheet(props: WorkbenchComposerOptionsSheetProps): React.JSX.Element {
@@ -75,13 +75,10 @@ export function WorkbenchComposerOptionsSheet(props: WorkbenchComposerOptionsShe
       if (!prov) throw new Error("Select a harness first.");
       if (!model) throw new Error("Select a model first.");
 
-      const track = await createTrack(conn, taskId, "", { env_target: "worktree" });
-      const trackId = idToString(track.id);
-      if (!trackId) throw new Error("Failed to create track.");
-      const session = await createSession(conn, trackId, prov, model);
+      const session = await createSession(conn, taskId, prov, model, { env_target: "worktree" });
       const sessionId = idToString(session.id);
       if (!sessionId) throw new Error("Failed to create session.");
-      return { trackId, sessionId, providerId: prov, modelId: model };
+      return { sessionId, providerId: prov, modelId: model };
     },
     onSuccess: (result) => {
       props.onCreated(result);
@@ -94,14 +91,14 @@ export function WorkbenchComposerOptionsSheet(props: WorkbenchComposerOptionsShe
       <Pressable style={styles.backdrop} onPress={onClose} />
       <View style={styles.sheet}>
         <View style={styles.sheetHeader}>
-          <Text style={styles.sheetTitle}>Track options</Text>
+          <Text style={styles.sheetTitle}>Session options</Text>
           <Pressable onPress={onClose}>
             <Text style={styles.sheetClose}>Close</Text>
           </Pressable>
         </View>
 
         <Text style={styles.hint}>
-          Changing harness/model creates a new track (same as web), then switches you to it.
+          Changing harness/model creates a new session, then switches you to it.
         </Text>
 
         <Pressable style={styles.picker} onPress={() => setProviderPickerOpen(true)}>
@@ -135,7 +132,7 @@ export function WorkbenchComposerOptionsSheet(props: WorkbenchComposerOptionsShe
           onPress={() => createMutation.mutate()}
           disabled={createMutation.isPending}
         >
-          <Text style={styles.primaryButtonText}>{createMutation.isPending ? "Creating…" : "Create new track"}</Text>
+          <Text style={styles.primaryButtonText}>{createMutation.isPending ? "Creating…" : "Create new session"}</Text>
         </Pressable>
 
         <PickerModal

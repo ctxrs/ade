@@ -12,7 +12,6 @@ import type {
   SessionSnapshot,
   SessionTurnTool,
   Task,
-  Track,
   Workspace,
   WorkspaceActiveSnapshot,
 } from "@ctx/types";
@@ -44,27 +43,6 @@ export type TaskSummary = {
   status: string;
   updated_at: string;
   last_activity_at?: string | null;
-};
-
-export type TrackSummary = {
-  id: string;
-  task_id: string;
-  label: string;
-  status: string;
-  worktree_id: string;
-};
-
-export type SessionSummary = {
-  id: string;
-  track_id: string;
-  task_id?: string;
-  workspace_id?: string;
-  worktree_id?: string;
-  provider_id: string;
-  model_id: string;
-  title: string;
-  status: string;
-  agent_role: string;
 };
 
 export type MessageSummary = {
@@ -112,27 +90,6 @@ const mapTask = (item: Task): TaskSummary => ({
   status: item.status,
   updated_at: item.updated_at,
   last_activity_at: item.last_activity_at,
-});
-
-const mapTrack = (item: Track): TrackSummary => ({
-  id: idToString(item.id),
-  task_id: idToString(item.task_id),
-  label: item.label,
-  status: item.status,
-  worktree_id: idToString(item.worktree_id),
-});
-
-const mapSession = (item: Session): SessionSummary => ({
-  id: idToString(item.id),
-  track_id: idToString(item.track_id),
-  task_id: idToString(item.task_id),
-  workspace_id: idToString(item.workspace_id),
-  worktree_id: idToString(item.worktree_id),
-  provider_id: item.provider_id,
-  model_id: item.model_id,
-  title: item.title,
-  status: item.status,
-  agent_role: item.agent_role,
 });
 
 const mapMessage = (item: Message): MessageSummary => ({
@@ -311,12 +268,6 @@ export const createWorkspace = (conn: ConnectionConfig, root_path: string, name?
 export const listTasks = (conn: ConnectionConfig, workspaceId: string) =>
   fetchJson<Task[]>(conn, `/api/workspaces/${workspaceId}/tasks`).then((items) => items.map(mapTask));
 
-export const listTracks = (conn: ConnectionConfig, taskId: string) =>
-  fetchJson<Track[]>(conn, `/api/tasks/${taskId}/tracks`).then((items) => items.map(mapTrack));
-
-export const listSessionsForTrack = (conn: ConnectionConfig, trackId: string) =>
-  fetchJson<Session[]>(conn, `/api/tracks/${trackId}/sessions`).then((items) => items.map(mapSession));
-
 export const listTaskSessions = (conn: ConnectionConfig, taskId: string) =>
   fetchJson<Session[]>(conn, `/api/tasks/${taskId}/sessions`);
 
@@ -335,8 +286,8 @@ export const postMessage = (
     body: JSON.stringify({ content, delivery, attachments: attachments ?? [] }),
   }).then(mapMessage);
 
-export const fetchTrackDiff = (conn: ConnectionConfig, trackId: string) =>
-  fetchJson<{ diff: string }>(conn, `/api/tracks/${trackId}/diff`);
+export const getSessionDiff = (conn: ConnectionConfig, sessionId: string) =>
+  fetchJson<{ diff: string }>(conn, `/api/sessions/${sessionId}/diff`);
 
 export const listProviders = (conn: ConnectionConfig) =>
   fetchJson<ProviderStatus[]>(conn, "/api/providers");
@@ -411,15 +362,14 @@ export const createTask = (
   workspaceId: string,
   title: string,
   description?: string,
-  opts?: { create_default_track?: boolean; default_track_label?: string },
+  opts?: { create_default_session?: boolean },
 ) =>
   fetchJson<Task>(conn, `/api/workspaces/${workspaceId}/tasks`, {
     method: "POST",
     body: JSON.stringify({
       title,
       description,
-      ...(opts?.create_default_track === undefined ? {} : { create_default_track: opts.create_default_track }),
-      ...(opts?.default_track_label === undefined ? {} : { default_track_label: opts.default_track_label }),
+      ...(opts?.create_default_session === undefined ? {} : { create_default_session: opts.create_default_session }),
     }),
   });
 
@@ -441,19 +391,20 @@ export const markTaskRead = (conn: ConnectionConfig, taskId: string) =>
 export const markTaskUnread = (conn: ConnectionConfig, taskId: string) =>
   fetchJson<Task>(conn, `/api/tasks/${taskId}/mark_unread`, { method: "POST" });
 
-export const createTrack = (conn: ConnectionConfig, taskId: string, label?: string, opts?: { env_target?: "worktree" | "local" }) =>
-  fetchJson<Track>(conn, `/api/tasks/${taskId}/tracks`, {
+export const createSession = (
+  conn: ConnectionConfig,
+  taskId: string,
+  provider_id: string,
+  model_id: string,
+  opts?: { env_target?: "worktree" | "local" | "cloud" },
+) =>
+  fetchJson<Session>(conn, `/api/tasks/${taskId}/sessions`, {
     method: "POST",
     body: JSON.stringify({
-      label,
+      provider_id,
+      model_id,
       ...(opts?.env_target ? { env_target: opts.env_target } : {}),
     }),
-  });
-
-export const createSession = (conn: ConnectionConfig, trackId: string, provider_id: string, model_id: string) =>
-  fetchJson<Session>(conn, `/api/tracks/${trackId}/sessions`, {
-    method: "POST",
-    body: JSON.stringify({ provider_id, model_id }),
   });
 
 export const getSessionHead = (

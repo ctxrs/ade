@@ -39,7 +39,7 @@ describe("WorkspaceCatchupStore", () => {
   });
 
   it("hydrates snapshot data from active snapshot", async () => {
-    const snapshot = buildDummyWorkspaceSnapshot({ taskCount: 2, sessionsPerTrack: 2 });
+    const snapshot = buildDummyWorkspaceSnapshot({ taskCount: 2, sessionsPerTask: 2 });
     vi.mocked(getWorkspaceActiveSnapshot).mockResolvedValue(snapshot);
 
     const workspaceId = idToString(snapshot.workspace_id);

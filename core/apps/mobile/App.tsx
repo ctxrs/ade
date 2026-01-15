@@ -10,10 +10,9 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 import { ConnectionScreen } from "./src/screens/ConnectionScreen";
 import { WorkspaceListScreen } from "./src/screens/WorkspaceListScreen";
 import { TaskListScreen } from "./src/screens/TaskListScreen";
-import { TrackListScreen } from "./src/screens/TrackListScreen";
 import { SessionListScreen } from "./src/screens/SessionListScreen";
 import { SessionDetailScreen } from "./src/screens/SessionDetailScreen";
-import { TrackDiffScreen } from "./src/screens/TrackDiffScreen";
+import { SessionDiffScreen } from "./src/screens/SessionDiffScreen";
 import { DiagnosticsScreen } from "./src/screens/DiagnosticsScreen";
 import { SettingsScreen } from "./src/screens/SettingsScreen";
 import { QrScannerScreen } from "./src/screens/QrScannerScreen";
@@ -131,10 +130,9 @@ function RootNavigator(): React.JSX.Element {
             })}
           />
           <Stack.Screen name="Tasks" component={TaskListScreen} options={({ route }) => ({ title: route.params.workspaceName })} />
-          <Stack.Screen name="Tracks" component={TrackListScreen} options={({ route }) => ({ title: route.params.taskTitle })} />
-          <Stack.Screen name="Sessions" component={SessionListScreen} options={({ route }) => ({ title: route.params.trackLabel })} />
+          <Stack.Screen name="Sessions" component={SessionListScreen} options={({ route }) => ({ title: route.params.taskTitle })} />
           <Stack.Screen name="SessionDetail" component={SessionDetailScreen} options={({ route }) => ({ title: route.params.sessionTitle })} />
-          <Stack.Screen name="TrackDiff" component={TrackDiffScreen} options={({ route }) => ({ title: `${route.params.trackLabel} diff` })} />
+          <Stack.Screen name="SessionDiff" component={SessionDiffScreen} options={({ route }) => ({ title: `${route.params.sessionTitle} diff` })} />
           <Stack.Screen name="Diagnostics" component={DiagnosticsScreen} />
           <Stack.Screen name="Settings" component={SettingsScreen} />
           <Stack.Screen name="Connection" component={ConnectionScreen} options={{ presentation: "modal" }} />

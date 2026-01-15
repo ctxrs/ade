@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import type { WorktreeBootstrapNotice, WorkspaceActiveSnapshotEvent } from "@ctx/types";
 import { getWorktreeBootstrapLogs, idToString } from "../api/client";
-import { useWorkspaceActiveSnapshotEvents } from "../state/workspaceCatchupStore";
+import { useWorkspaceActiveSnapshotEvents } from "../state/workspaceActiveSnapshotStore";
 import { desktopSaveTextFile, isDesktopApp } from "../utils/desktop";
 
 const buildNoticeKey = (notice: WorktreeBootstrapNotice): string =>

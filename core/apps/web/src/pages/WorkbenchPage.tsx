@@ -107,7 +107,7 @@ import {
   useWorkspaceActiveSnapshotSnapshot,
   useWorkspaceActiveSnapshotStore,
   type WorkspaceActiveSnapshotItem,
-} from "../state/workspaceCatchupStore";
+} from "../state/workspaceActiveSnapshotStore";
 import { useEnsureArchivedLoaded } from "../state/useEnsureArchivedLoaded";
 
 function deriveTaskTitle(_prompt: string): string {

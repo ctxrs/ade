@@ -9,7 +9,7 @@ test("workbench: spinner clears after replayed completion", async ({ page }) => 
   await page.setViewportSize({ width: 1400, height: 900 });
   let blockHead = false;
   let blockedHeadCount = 0;
-  await page.route("**/api/sessions/*/head**", async (route) => {
+  await page.route("**/api/sessions/*/snapshot**", async (route) => {
     if (blockHead && blockedHeadCount < 2) {
       blockedHeadCount += 1;
       await new Promise((resolve) => setTimeout(resolve, 20000));

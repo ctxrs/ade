@@ -6,7 +6,7 @@ vi.mock("../api/client", () => ({
   getSessionHead: vi.fn(),
   getSessionHistory: vi.fn(),
   listTurnTools: vi.fn(async () => []),
-  fetchTrackDiff: vi.fn(async () => ({ diff: "" })),
+  getSessionDiff: vi.fn(async () => ({ diff: "" })),
   idToString: (value) => {
     if (typeof value === "string") return value;
     if (value && typeof value === "object" && "0" in value) {

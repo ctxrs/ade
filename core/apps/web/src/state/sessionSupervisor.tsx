@@ -1,8 +1,8 @@
 import React, { createContext, useContext, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import {
   getProviderOptions,
-  getSessionHead,
   getSessionHistory,
+  getSessionSnapshot,
   idToString,
   listSessionArtifacts,
   listSessionSubagentInvocations,
@@ -21,7 +21,7 @@ import {
   type SubagentInvocation,
   type WorkspaceActiveSnapshotEvent,
 } from "../api/client";
-import type { WorkspaceActiveSnapshotEventSource } from "./workspaceCatchupStore";
+import type { WorkspaceActiveSnapshotEventSource } from "./workspaceActiveSnapshotStore";
 import { loadSessionAcpMetaV1, loadSessionHeadV1, saveSessionAcpMetaV1, saveSessionHeadV1 } from "./uiStateStore";
 
 const readTunableInt = (key: string, fallback: number) => {
@@ -522,8 +522,8 @@ export class SessionSupervisor {
       this.publish();
     }
     try {
-      const head = await getSessionHead(sessionId, HEAD_LIMIT, true);
-      this.applyHead(entry, head);
+      const snapshot = await getSessionSnapshot(sessionId, HEAD_LIMIT, true);
+      this.applyHead(entry, snapshot.head);
       await this.persistHead(entry);
       await this.ensureArtifacts(entry);
       await this.ensureSubagentInvocations(entry);

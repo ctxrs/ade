@@ -5,7 +5,7 @@ import { KeyboardAvoidingView, Modal, Platform, Pressable, Text, TextInput, Touc
 import { ChevronDown } from "lucide-react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import type { RootStackParamList } from "../navigation/types";
-import { createSession, createTask, createTrack, getProviderOptions, idToString, listProviders, postMessage } from "../api/client";
+import { createSession, createTask, getProviderOptions, idToString, listProviders, postMessage } from "../api/client";
 import { useConnection } from "../state/ConnectionProvider";
 import { useWorkspaceSelection } from "../state/WorkspaceSelectionProvider";
 import { useWorkbenchSelection } from "../state/WorkbenchSelectionProvider";
@@ -60,23 +60,26 @@ export function NewTaskScreen({ navigation }: Props): React.JSX.Element {
       const prompt = text.trim();
       if (!prompt) throw new Error("Prompt is required.");
       const title = deriveTaskTitle(prompt);
-      const task = await createTask(config, workspaceId, title, undefined, { create_default_track: false });
+      const task = await createTask(config, workspaceId, title, undefined, { create_default_session: false });
       const taskId = idToString(task.id);
       if (!taskId) throw new Error("Failed to create task.");
-      const track = await createTrack(config, taskId, "", { env_target: "worktree" });
-      const trackId = idToString(track.id);
-      if (!trackId) throw new Error("Failed to create track.");
-      const session = await createSession(config, trackId, effectiveProviderId || "codex", effectiveModelId || "default");
+      const session = await createSession(
+        config,
+        taskId,
+        effectiveProviderId || "codex",
+        effectiveModelId || "default",
+        { env_target: "worktree" },
+      );
       const sessionId = idToString(session.id);
       if (!sessionId) throw new Error("Failed to create session.");
       supervisor.refreshSession(sessionId);
       await postMessage(config, sessionId, prompt, "immediate");
       supervisor.refreshSession(sessionId);
-      return { taskId, trackId, sessionId };
+      return { taskId, sessionId };
     },
-    onSuccess: ({ taskId, trackId, sessionId }) => {
+    onSuccess: ({ taskId, sessionId }) => {
       catchupStore?.refreshActive();
-      selection.setSelection({ taskId, trackId, sessionId });
+      selection.setSelection({ taskId, sessionId });
       navigation.goBack();
     },
   });

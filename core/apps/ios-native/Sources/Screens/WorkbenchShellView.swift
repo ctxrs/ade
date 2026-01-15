@@ -1986,9 +1986,7 @@ private struct WorkbenchNewTaskView: View {
                 let task = try await client.createTask(
                     workspaceId: workspace.id,
                     title: "New task",
-                    description: nil,
-                    createDefaultTrack: false,
-                    defaultTrackLabel: nil
+                    description: nil
                 )
                 let session = try await client.createSession(
                     taskId: task.id.stringValue,

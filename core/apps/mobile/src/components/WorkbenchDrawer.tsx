@@ -188,22 +188,20 @@ function TaskListBody({
 
     for (const summary of items) {
       const taskId = summary.id;
-      for (const track of summary.tracks) {
-        for (const sessionSummary of track.sessions) {
-          const sessionId = idToString(sessionSummary.session.id);
-          const entry = sessionId ? entryBySessionId.get(sessionId) : undefined;
-          const isWorking = entry ? isEntryWorking(entry) : sessionSummary.activity?.is_working === true;
-          if (isWorking) workingByTask.add(taskId);
+      for (const sessionSummary of summary.sessions) {
+        const sessionId = idToString(sessionSummary.session.id);
+        const entry = sessionId ? entryBySessionId.get(sessionId) : undefined;
+        const isWorking = entry ? isEntryWorking(entry) : sessionSummary.activity?.is_working === true;
+        if (isWorking) workingByTask.add(taskId);
 
-          const status = entry?.session?.status ?? sessionSummary.session.status;
-          if (status === "failed" || status === "cancelled") errorByTask.add(taskId);
+        const status = entry?.session?.status ?? sessionSummary.session.status;
+        if (status === "failed" || status === "cancelled") errorByTask.add(taskId);
 
-          const liveMs = entry ? lastAssistantMessageMs(entry.messages) : null;
-          const summaryMs = parseMs(sessionSummary.last_message_at ?? null);
-          const ms =
-            liveMs !== null && summaryMs !== null ? Math.max(liveMs, summaryMs) : liveMs ?? summaryMs;
-          if (ms !== null) lastAssistantMsByTask[taskId] = Math.max(lastAssistantMsByTask[taskId] ?? 0, ms);
-        }
+        const liveMs = entry ? lastAssistantMessageMs(entry.messages) : null;
+        const summaryMs = parseMs(sessionSummary.last_message_at ?? null);
+        const ms =
+          liveMs !== null && summaryMs !== null ? Math.max(liveMs, summaryMs) : liveMs ?? summaryMs;
+        if (ms !== null) lastAssistantMsByTask[taskId] = Math.max(lastAssistantMsByTask[taskId] ?? 0, ms);
       }
     }
 

@@ -4,16 +4,16 @@ import { seedDummyWorkspace } from "./utils/seedDummyWorkspace";
 test("workbench: replay restores missed assistant message after stream drop", async ({ page, request }) => {
   test.setTimeout(120000);
   await page.setViewportSize({ width: 1400, height: 900 });
-  let blockHead = false;
-  let blockCatchup = false;
-  await page.route("**/api/sessions/*/head**", async (route) => {
-    if (blockHead) {
+  let blockSnapshot = false;
+  let blockActiveSnapshot = false;
+  await page.route("**/api/sessions/*/snapshot**", async (route) => {
+    if (blockSnapshot) {
       await new Promise((resolve) => setTimeout(resolve, 25000));
     }
     await route.continue();
   });
   await page.route("**/api/workspaces/*/active_snapshot**", async (route) => {
-    if (blockCatchup) {
+    if (blockActiveSnapshot) {
       await new Promise((resolve) => setTimeout(resolve, 25000));
     }
     await route.continue();
@@ -118,8 +118,8 @@ test("workbench: replay restores missed assistant message after stream drop", as
     timeout: 10000,
   });
   await page.waitForTimeout(200);
-  blockHead = true;
-  blockCatchup = true;
+  blockSnapshot = true;
+  blockActiveSnapshot = true;
 
   const resp = await request.post(`/api/sessions/${sessionId}/messages`, {
     data: { content: prompt, delivery: "immediate" },
@@ -128,10 +128,10 @@ test("workbench: replay restores missed assistant message after stream drop", as
 
   await expect
     .poll(async () => {
-      const headResp = await request.get(`/api/sessions/${sessionId}/head?limit=50`);
+      const headResp = await request.get(`/api/sessions/${sessionId}/snapshot?limit=50`);
       if (!headResp.ok()) return false;
-      const head = (await headResp.json()) as any;
-      const msgs = head?.messages ?? [];
+      const snapshot = (await headResp.json()) as any;
+      const msgs = snapshot?.head?.messages ?? [];
       return msgs.some(
         (message: any) =>
           message.role === "assistant" && String(message.content ?? "").includes(prompt),
@@ -151,6 +151,6 @@ test("workbench: replay restores missed assistant message after stream drop", as
     timeout: 20000,
   });
 
-  blockHead = false;
-  blockCatchup = false;
+  blockSnapshot = false;
+  blockActiveSnapshot = false;
 });

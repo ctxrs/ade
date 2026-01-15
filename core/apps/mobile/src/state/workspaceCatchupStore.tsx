@@ -25,21 +25,10 @@ import { parseWsJson } from "../utils/wsJson";
 import { useConnection } from "./ConnectionProvider";
 import { nextSecureSeq } from "./secureSeq";
 
-export type WorkspaceTrackSummary = {
-  track: {
-    id: string;
-    label: string;
-    status: string;
-  };
-  primary_session_id?: { 0: string } | string | null;
-  sessions: SessionSnapshotSummary[];
-};
-
 export type WorkspaceCatchupItem = {
   id: string;
   task: Task;
   sessions: SessionSnapshotSummary[];
-  tracks: WorkspaceTrackSummary[];
   sort_at?: string | null;
   sortAtMs: number;
 };
@@ -267,7 +256,6 @@ export class WorkspaceCatchupStoreImpl implements WorkspaceCatchupEventSource {
     const updated: WorkspaceCatchupItem = {
       ...existing,
       task: { ...task },
-      tracks: this.buildTracks(task, existing.sessions),
       sortAtMs: stableSortAtMs,
       sort_at: stableSortAt ?? existing.sort_at,
     };
@@ -661,7 +649,6 @@ export class WorkspaceCatchupStoreImpl implements WorkspaceCatchupEventSource {
     this.tasks.set(taskId, {
       ...task,
       sessions: ordered,
-      tracks: this.buildTracks(task.task, ordered),
     });
     this.rebuildSessionLastEventSeq();
   }
@@ -686,26 +673,9 @@ export class WorkspaceCatchupStoreImpl implements WorkspaceCatchupEventSource {
       id,
       task: { ...summary.task },
       sessions: ordered,
-      tracks: this.buildTracks(summary.task, ordered),
       sortAtMs,
       sort_at: summary.sort_at ?? null,
     };
-  }
-
-  private buildTracks(task: Task, sessions: SessionSnapshotSummary[]): WorkspaceTrackSummary[] {
-    const taskId = idToString(task.id);
-    const label = "Track";
-    const status = sessions.some((s) => s.session.status === "active" || s.session.status === "running")
-      ? "active"
-      : "completed";
-    if (!taskId) return [];
-    return [
-      {
-        track: { id: taskId, label, status },
-        primary_session_id: task.primary_session_id ?? null,
-        sessions,
-      },
-    ];
   }
 
   private normalizeSessionSummary(summary: SessionSnapshotSummary): SessionSnapshotSummary {
@@ -769,7 +739,6 @@ export class WorkspaceCatchupStoreImpl implements WorkspaceCatchupEventSource {
       id,
       task: { ...task },
       sessions: ordered,
-      tracks: this.buildTracks(task, ordered),
       sortAtMs: Date.parse(sortAt) || Date.now(),
       sort_at: sortAt || null,
     };

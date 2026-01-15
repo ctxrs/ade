@@ -1,6 +1,6 @@
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import React, { useEffect, useMemo, useState } from "react";
-import { Alert, Pressable, ScrollView, Text, View } from "react-native";
+import { Alert, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { AlignJustify, Ellipsis, SquarePen } from "lucide-react-native";
 
@@ -43,7 +43,7 @@ export function WorkbenchScreen({ navigation }: Props): React.JSX.Element {
     if (!snapshot?.initialized) return;
     if (activeTaskId && snapshot.tasksById[activeTaskId]) return;
     const fallback = snapshot.activeIds[0] ?? null;
-    if (fallback) selection.setSelection({ taskId: fallback, trackId: null, sessionId: null });
+    if (fallback) selection.setSelection({ taskId: fallback, sessionId: null });
   }, [workspaceId, activeTaskId, snapshot?.initialized, snapshot?.activeIds, snapshot?.tasksById, selection]);
 
   const title = useMemo(() => {
@@ -56,25 +56,15 @@ export function WorkbenchScreen({ navigation }: Props): React.JSX.Element {
     return snapshot.tasksById[activeTaskId] ?? null;
   }, [snapshot?.initialized, snapshot?.tasksById, activeTaskId]);
 
-  const selectedTrack = useMemo(() => {
-    const tracks = activeTask?.tracks ?? [];
-    if (!tracks.length) return null;
-    if (selection.trackId) {
-      const found = tracks.find((t) => idToString(t.track.id) === selection.trackId);
-      if (found) return found;
-    }
-    return tracks[0] ?? null;
-  }, [activeTask?.tracks, selection.trackId]);
-
   const selectedSessionId = useMemo(() => {
-    if (!selectedTrack) return null;
-    const sessions = selectedTrack.sessions ?? [];
+    if (!activeTask) return null;
+    const sessions = activeTask.sessions ?? [];
     const mainSessions = sessions.filter((s) => s.session.relationship !== "sub_agent");
     const candidates = mainSessions.length > 0 ? mainSessions : sessions;
     if (selection.sessionId && sessions.some((s) => idToString(s.session.id) === selection.sessionId)) {
       return selection.sessionId;
     }
-    const primary = idToString(selectedTrack.primary_session_id ?? "");
+    const primary = idToString(activeTask.task.primary_session_id ?? "");
     if (primary && sessions.some((s) => idToString(s.session.id) === primary)) return primary;
     const running = candidates.find((s) => s.session.status === "active" || s.session.status === "running");
     if (running) return idToString(running.session.id);
@@ -82,36 +72,28 @@ export function WorkbenchScreen({ navigation }: Props): React.JSX.Element {
       String(b.session.created_at ?? "").localeCompare(String(a.session.created_at ?? "")),
     )[0];
     return newest ? idToString(newest.session.id) : null;
-  }, [selectedTrack, selection.sessionId]);
+  }, [activeTask, selection.sessionId]);
 
   const sessionEntry = useSessionEntry(selectedSessionId ?? "");
 
   useEffect(() => {
     if (!snapshot?.initialized) return;
     if (!activeTask) return;
-    const tracks = activeTask.tracks ?? [];
-    if (!tracks.length) return;
-    const currentTrackId = selection.trackId;
-    const resolvedTrackId = idToString((selectedTrack as any)?.track?.id ?? "");
-    if (!currentTrackId || currentTrackId !== resolvedTrackId) {
-      selection.setSelection({ trackId: resolvedTrackId || null, sessionId: null });
-      return;
-    }
+    const sessions = activeTask.sessions ?? [];
+    if (!sessions.length) return;
     if (selectedSessionId && selectedSessionId !== selection.sessionId) {
       selection.setSelection({ sessionId: selectedSessionId });
     }
-  }, [snapshot?.initialized, activeTask, selectedTrack, selectedSessionId, selection]);
+  }, [snapshot?.initialized, activeTask, selectedSessionId, selection]);
 
   const warmSessionIds = useMemo(() => {
     if (!snapshot?.initialized) return { activeTaskSessionIds: [] as string[], warm: [] as string[] };
     const activeTaskSummary = activeTaskId ? snapshot.tasksById[activeTaskId] : null;
     const activeTaskSessionIds: string[] = [];
     if (activeTaskSummary) {
-      for (const tr of activeTaskSummary.tracks) {
-        for (const s of tr.sessions) {
-          const sid = idToString(s.session.id);
-          if (sid) activeTaskSessionIds.push(sid);
-        }
+      for (const s of activeTaskSummary.sessions) {
+        const sid = idToString(s.session.id);
+        if (sid) activeTaskSessionIds.push(sid);
       }
     }
 
@@ -120,18 +102,16 @@ export function WorkbenchScreen({ navigation }: Props): React.JSX.Element {
     for (const taskId of snapshot.activeIds) {
       const task = snapshot.tasksById[taskId];
       if (!task) continue;
-      for (const tr of task.tracks) {
-        for (const sess of tr.sessions) {
-          const sid = idToString(sess.session.id);
-          if (!sid || activeSet.has(sid)) continue;
-          const last =
-            Date.parse(sess.last_message_at ?? "") ||
-            Date.parse(sess.session.updated_at ?? "") ||
-            Date.parse(sess.session.created_at ?? "") ||
-            0;
-          const running = sess.session.status === "active" || sess.session.status === "running";
-          candidates.push({ id: sid, running, updatedAt: last });
-        }
+      for (const sess of task.sessions) {
+        const sid = idToString(sess.session.id);
+        if (!sid || activeSet.has(sid)) continue;
+        const last =
+          Date.parse(sess.last_message_at ?? "") ||
+          Date.parse(sess.session.updated_at ?? "") ||
+          Date.parse(sess.session.created_at ?? "") ||
+          0;
+        const running = sess.session.status === "active" || sess.session.status === "running";
+        candidates.push({ id: sid, running, updatedAt: last });
       }
     }
     candidates.sort((a, b) => {
@@ -155,7 +135,7 @@ export function WorkbenchScreen({ navigation }: Props): React.JSX.Element {
           <WorkbenchDrawer
             activeTaskId={activeTaskId}
             onSelectTaskId={(taskId) => {
-              selection.setSelection({ taskId, trackId: null, sessionId: null });
+              selection.setSelection({ taskId, sessionId: null });
               setDrawerOpen(false);
             }}
             onNavigate={(route) => {
@@ -190,35 +170,6 @@ export function WorkbenchScreen({ navigation }: Props): React.JSX.Element {
         </View>
 
         <View style={styles.body}>
-          {activeTask && activeTask.tracks.length > 1 ? (
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.trackRow}
-            >
-              {activeTask.tracks.map((t) => {
-                const tid = idToString(t.track.id);
-                const selected = selection.trackId === tid || (!selection.trackId && tid === idToString((selectedTrack as any)?.track?.id ?? ""));
-                const label = t.track.label || "Track";
-                const running = t.sessions.some((s) => s.session.status === "active" || s.session.status === "running");
-                return (
-                  <Pressable
-                    key={tid}
-                    onPress={() => selection.setSelection({ trackId: tid, sessionId: null })}
-                    style={[styles.trackCard, selected ? styles.trackCardActive : null]}
-                  >
-                    <Text style={styles.trackLabel} numberOfLines={1}>
-                      {label}
-                    </Text>
-                    <Text style={styles.trackMeta} numberOfLines={1}>
-                      {running ? "Running" : t.track.status}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-            </ScrollView>
-          ) : null}
-
           {selectedSessionId ? (
             <WorkbenchConversation
               sessionId={selectedSessionId}
@@ -247,14 +198,14 @@ export function WorkbenchScreen({ navigation }: Props): React.JSX.Element {
           conn={config}
           workspaceId={workspaceId}
           taskId={activeTaskId}
-          currentProviderId={sessionEntry?.session?.provider_id}
-          currentModelId={sessionEntry?.session?.model_id}
-          onCreated={({ trackId, sessionId }) => {
-            catchupStore?.refreshActive();
-            selection.setSelection({ taskId: activeTaskId, trackId, sessionId });
-            supervisor.refreshSession(sessionId);
-          }}
-        />
+        currentProviderId={sessionEntry?.session?.provider_id}
+        currentModelId={sessionEntry?.session?.model_id}
+        onCreated={({ sessionId }) => {
+          catchupStore?.refreshActive();
+          selection.setSelection({ taskId: activeTaskId, sessionId });
+          supervisor.refreshSession(sessionId);
+        }}
+      />
       ) : null}
     </SafeAreaView>
   );
@@ -284,25 +235,6 @@ const styles: Record<string, any> = createContextStyles((t) => ({
     flex: 1,
     paddingTop: 0,
   },
-  trackRow: {
-    paddingHorizontal: t.spacing.lg,
-    gap: t.spacing.sm,
-    paddingBottom: t.spacing.md,
-  },
-  trackCard: {
-    minWidth: 120,
-    maxWidth: 200,
-    paddingHorizontal: t.spacing.md,
-    paddingVertical: t.spacing.sm,
-    borderRadius: t.radii.lg,
-    borderWidth: 1,
-    borderColor: t.colors.border,
-    backgroundColor: t.colors.surfaceAlt,
-    gap: 2,
-  },
-  trackCardActive: { borderColor: t.colors.accent },
-  trackLabel: { color: t.colors.text, fontWeight: "800" },
-  trackMeta: { color: t.colors.muted, fontSize: t.typography.sizes.xs, textTransform: "uppercase" },
   placeholder: {
     color: t.colors.muted,
     fontSize: t.typography.sizes.md,

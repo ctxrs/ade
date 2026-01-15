@@ -79,10 +79,10 @@ test("workbench: refresh keeps selection, even for older sessions", async ({ pag
 
   await expect
     .poll(async () => {
-      const resp = await page.request.get(`/api/sessions/${sessionId}/head`);
+      const resp = await page.request.get(`/api/sessions/${sessionId}/snapshot`);
       if (!resp.ok()) return 0;
-      const head = (await resp.json()) as any;
-      const msgs = head?.messages ?? [];
+      const snapshot = (await resp.json()) as any;
+      const msgs = snapshot?.head?.messages ?? [];
       return msgs.filter((m: any) => m.role === "assistant").length;
     })
     .toBeGreaterThan(0);
@@ -145,10 +145,10 @@ test("workbench: refresh keeps selection, even for older sessions", async ({ pag
   await sendButton.click();
   await expect
     .poll(async () => {
-      const resp = await page.request.get(`/api/sessions/${sessionId}/head?limit=50`);
+      const resp = await page.request.get(`/api/sessions/${sessionId}/snapshot?limit=50`);
       if (!resp.ok()) return 0;
-      const head = (await resp.json()) as any;
-      const msgs = head?.messages ?? [];
+      const snapshot = (await resp.json()) as any;
+      const msgs = snapshot?.head?.messages ?? [];
       return msgs.filter((m: any) => m.role === "assistant").length;
     })
     .toBeGreaterThanOrEqual(2);

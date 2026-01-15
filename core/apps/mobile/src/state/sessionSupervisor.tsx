@@ -10,7 +10,7 @@ import type {
 } from "@ctx/types";
 
 import {
-  fetchTrackDiff,
+  getSessionDiff,
   getSessionHead,
   getSessionHistory,
   idToString,
@@ -79,7 +79,6 @@ type InternalEntry = SessionCacheEntry & {
   toolStatusByKey: Map<string, string>;
   toolIdsByTurn: Map<string, Set<string>>;
   turnToolsLoadingSet: Set<string>;
-  trackId?: string;
   diagnosticsByPath: Record<string, any[]>;
   loadedFromCache: boolean;
   fetching: {
@@ -192,7 +191,6 @@ export class SessionSupervisor {
     if (!sessionId) return;
     const entry = this.ensureEntry(sessionId);
     entry.session = session;
-    entry.trackId = idToString(session.worktree_id);
     entry.updatedAtMs = Date.now();
     this.publish();
   };
@@ -336,7 +334,6 @@ export class SessionSupervisor {
       toolStatusByKey: new Map(),
       toolIdsByTurn: new Map(),
       turnToolsLoadingSet: new Set(),
-      trackId: undefined,
       loadedFromCache: false,
       fetching: {
         head: false,
@@ -442,7 +439,6 @@ export class SessionSupervisor {
 
   private applyHead(entry: InternalEntry, head: SessionHead, opts?: { fromCache?: boolean }) {
     entry.session = head.session;
-    entry.trackId = idToString(head.session.worktree_id);
     entry.turnsHydrated = true;
     entry.hasMoreTurns = head.has_more_turns;
     entry.lastEventSeq = head.last_event_seq;
@@ -458,11 +454,10 @@ export class SessionSupervisor {
 
   private async refreshDiff(entry: InternalEntry) {
     if (entry.fetching.diff) return;
-    if (!entry.trackId) return;
     if (entry.wantDiffCount <= 0) return;
     entry.fetching.diff = true;
     try {
-      const resp = await fetchTrackDiff(this.conn, entry.trackId);
+      const resp = await getSessionDiff(this.conn, entry.sessionId);
       entry.diff = resp.diff ?? "";
       entry.updatedAtMs = Date.now();
       this.publish();

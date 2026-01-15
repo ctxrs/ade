@@ -14,13 +14,13 @@ import { isoAt } from "../utils/deterministic";
 export type DummyWorkspaceOptions = {
   workspaceId?: string;
   taskCount?: number;
-  sessionsPerTrack?: number;
+  sessionsPerTask?: number;
 };
 
 export const buildDummyWorkspaceSnapshot = (opts: DummyWorkspaceOptions = {}): WorkspaceActiveSnapshot => {
   const workspaceId = opts.workspaceId ?? "ws-dummy";
   const taskCount = opts.taskCount ?? 3;
-  const sessionsPerTrack = opts.sessionsPerTrack ?? 4;
+  const sessionsPerTask = opts.sessionsPerTask ?? 4;
 
   const tasks: WorkspaceActiveTaskSummary[] = [];
   let clock = 0;
@@ -29,7 +29,7 @@ export const buildDummyWorkspaceSnapshot = (opts: DummyWorkspaceOptions = {}): W
     const taskId = `task-${t + 1}`;
     const sessions: SessionSnapshotSummary[] = [];
 
-    for (let s = 0; s < sessionsPerTrack; s += 1) {
+    for (let s = 0; s < sessionsPerTask; s += 1) {
       const sessionId = `session-${t + 1}-${s + 1}`;
       const createdAt = isoAt(clock++);
       const session: Session = {

@@ -76,10 +76,10 @@ async function createWorkspaceAndStartRun(opts: {
     )
     .not.toBe("");
 
-  const headResp = await request.get(`/api/sessions/${sessionId}/head?limit=1`);
+  const headResp = await request.get(`/api/sessions/${sessionId}/snapshot?limit=1`);
   expect(headResp.ok()).toBeTruthy();
-  const head = (await headResp.json()) as any;
-  const session = head?.session ?? null;
+  const snapshot = (await headResp.json()) as any;
+  const session = snapshot?.head?.session ?? snapshot?.summary?.session ?? null;
   const worktreeId = readId(session?.worktree_id);
   expect(worktreeId).toBeTruthy();
   const wtResp = await request.get(`/api/worktrees/${worktreeId}`);

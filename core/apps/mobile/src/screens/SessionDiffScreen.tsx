@@ -4,23 +4,23 @@ import React from "react";
 import { RefreshControl, ScrollView, Text } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { fetchTrackDiff } from "../api/client";
+import { getSessionDiff } from "../api/client";
 import type { RootStackParamList } from "../navigation/types";
 import { useConnection } from "../state/ConnectionProvider";
 import { LoadingView } from "../components/LoadingView";
 import { ErrorView } from "../components/ErrorView";
 import { createContextStyles, useContextTokens } from "../theme";
 
-type Props = NativeStackScreenProps<RootStackParamList, "TrackDiff">;
+type Props = NativeStackScreenProps<RootStackParamList, "SessionDiff">;
 
-export function TrackDiffScreen({ route }: Props): React.JSX.Element {
-  const { trackId } = route.params;
+export function SessionDiffScreen({ route }: Props): React.JSX.Element {
+  const { sessionId } = route.params;
   const { config } = useConnection();
   const theme = useContextTokens();
   const query = useQuery({
-    queryKey: ["trackDiff", trackId, config?.baseUrl],
+    queryKey: ["sessionDiff", sessionId, config?.baseUrl],
     enabled: !!config,
-    queryFn: () => fetchTrackDiff(config!, trackId),
+    queryFn: () => getSessionDiff(config!, sessionId),
   });
 
   if (!config) return <ErrorView message="Connect to a daemon first." />;

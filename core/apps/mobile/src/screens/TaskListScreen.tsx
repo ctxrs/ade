@@ -131,7 +131,10 @@ export function TaskListScreen({ route, navigation }: Props): React.JSX.Element 
   function handlePress(taskId?: { 0: string } | string | null) {
     const tid = idToString(taskId);
     if (!tid) return;
-    navigation.navigate("Tracks", { taskId: tid, taskTitle: tasks.find((t) => idToString(t.task.id) === tid)?.task.title ?? "Task" });
+    navigation.navigate("Sessions", {
+      taskId: tid,
+      taskTitle: tasks.find((t) => idToString(t.task.id) === tid)?.task.title ?? "Task",
+    });
   }
 }
 

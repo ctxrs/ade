@@ -118,7 +118,7 @@ vi.mock("../state/sessionSupervisor", () => ({
   useOpenSession: () => {},
 }));
 
-vi.mock("../state/workspaceCatchupStore", () => ({
+vi.mock("../state/workspaceActiveSnapshotStore", () => ({
   WorkspaceActiveSnapshotProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   useWorkspaceActiveSnapshotEvents: () => {},
   useWorkspaceActiveSnapshotSnapshot: () => workspaceSnapshotSnap,

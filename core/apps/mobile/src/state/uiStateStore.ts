@@ -37,7 +37,6 @@ export async function uiStateDelete(key: string): Promise<void> {
 export type PersistedWorkbenchSelectionV1 = {
   v: 1;
   taskId: string | null;
-  trackId: string | null;
   sessionId: string | null;
 };
 
@@ -54,13 +53,11 @@ export function decodeWorkbenchSelectionV1(raw: unknown): PersistedWorkbenchSele
   const rec = raw as Record<string, unknown>;
   if (rec.v !== 1) return null;
   if (!isStringOrNull(rec.taskId)) return null;
-  if (!isStringOrNull(rec.trackId)) return null;
   if (!isStringOrNull(rec.sessionId)) return null;
 
   const taskId = rec.taskId;
-  const trackId = taskId ? rec.trackId : null;
-  const sessionId = taskId && trackId ? rec.sessionId : null;
-  return { v: 1, taskId, trackId, sessionId };
+  const sessionId = taskId ? rec.sessionId : null;
+  return { v: 1, taskId, sessionId };
 }
 
 export async function loadWorkbenchSelectionV1(workspaceId: string): Promise<PersistedWorkbenchSelectionV1 | null> {
