@@ -14,8 +14,8 @@ use url::{form_urlencoded, Url};
 use ctx_core::ids::{ArtifactId, SessionId, TaskId, TerminalId, WorkspaceId, WorktreeId};
 use ctx_core::models::{
     Artifact, AttachmentMode, AttachmentUpdatePolicy, Message, MessageAttachment, MessageDelivery,
-    Session, SessionEventsPage, SessionHead, SessionHistoryPage, SessionSnapshot, SessionTurnTool,
-    Task, TerminalSession, Workspace, WorkspaceActiveSnapshot, WorkspaceAttachment,
+    Session, SessionEventsPage, SessionHistoryPage, SessionSnapshot, SessionTurnTool, Task,
+    TerminalSession, Workspace, WorkspaceActiveSnapshot, WorkspaceAttachment,
     WorkspaceAttachmentKind,
 };
 use ctx_providers::adapters::ProviderStatus;
@@ -986,30 +986,6 @@ impl Client {
     ) -> Result<Message> {
         let path = format!("/api/sessions/{}/messages", session_id.0);
         self.request_json(Method::POST, &path, Some(req)).await
-    }
-
-    pub async fn get_session_head(
-        &self,
-        session_id: SessionId,
-        limit: Option<u32>,
-        include_events: Option<bool>,
-    ) -> Result<SessionHead> {
-        let mut path = format!("/api/sessions/{}/head", session_id.0);
-        let mut params = Vec::new();
-        if let Some(limit) = limit {
-            params.push(format!("limit={}", limit));
-        }
-        if let Some(include_events) = include_events {
-            params.push(format!(
-                "include_events={}",
-                if include_events { "1" } else { "0" }
-            ));
-        }
-        if !params.is_empty() {
-            path.push('?');
-            path.push_str(&params.join("&"));
-        }
-        self.request_json(Method::GET, &path, None::<&()>).await
     }
 
     pub async fn get_session_snapshot(

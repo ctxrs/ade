@@ -2609,15 +2609,25 @@ async fn list_edit_plans_call(
             .map(|s| s.to_string())
             .or_else(|| ctx_env_opt("SESSION_ID"))
             .context("missing worktree_id and session_id")?;
-        let head = daemon_get_json(
+        let snapshot = daemon_get_json(
             client,
             daemon_url,
-            &format!("/api/sessions/{}/head", session_id),
+            &format!(
+                "/api/sessions/{}/snapshot?limit=1&include_events=0",
+                session_id
+            ),
         )
         .await?;
-        let wid = head
-            .get("session")
+        let wid = snapshot
+            .get("summary")
+            .and_then(|v| v.get("session"))
             .and_then(|v| v.get("worktree_id"))
+            .or_else(|| {
+                snapshot
+                    .get("head")
+                    .and_then(|v| v.get("session"))
+                    .and_then(|v| v.get("worktree_id"))
+            })
             .and_then(|v| v.as_str().or_else(|| v.get("0").and_then(|x| x.as_str())))
             .context("session missing worktree_id")?;
         wid.to_string()

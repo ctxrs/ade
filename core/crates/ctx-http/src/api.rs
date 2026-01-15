@@ -442,7 +442,6 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
             "/api/sessions/:id/title/generate",
             post(generate_session_title),
         )
-        .route("/api/sessions/:id/head", get(get_session_head))
         .route("/api/sessions/:id/snapshot", get(get_session_snapshot))
         .route("/api/sessions/:id/diff", get(get_session_diff))
         .route(
@@ -8416,7 +8415,7 @@ async fn create_session_for_task(
 }
 
 #[derive(Debug, Deserialize, Default)]
-struct SessionHeadQuery {
+struct SessionSnapshotQuery {
     limit: Option<u32>,
     include_events: Option<String>,
 }
@@ -8432,30 +8431,10 @@ struct SessionDiffResponse {
     diff: String,
 }
 
-async fn get_session_head(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-    Query(q): Query<SessionHeadQuery>,
-) -> Result<Json<SessionHead>, StatusCode> {
-    let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    let limit = q.limit.unwrap_or(60);
-    let include_events = parse_boolish_flag(q.include_events.as_deref(), "include_events")
-        .map_err(|_| StatusCode::BAD_REQUEST)?;
-    match state
-        .store
-        .get_session_head(session_id, limit, include_events)
-        .await
-    {
-        Ok(Some(head)) => Ok(Json(head)),
-        Ok(None) => Err(StatusCode::NOT_FOUND),
-        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
-    }
-}
-
 async fn get_session_snapshot(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
-    Query(q): Query<SessionHeadQuery>,
+    Query(q): Query<SessionSnapshotQuery>,
 ) -> Result<Json<SessionSnapshot>, StatusCode> {
     let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
     let limit = q.limit.unwrap_or(60);
