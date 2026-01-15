@@ -1471,22 +1471,16 @@ private struct WorkbenchWorkspaceSwitcherView: View {
             .buttonStyle(.plain)
             .accessibilityIdentifier("drawer.workspace.switch")
 
-            if isLoadingWorkspaces {
-                HStack(spacing: 8) {
-                    ProgressView()
-                        .tint(.ctxAccent)
-                    Text("Loading workspaces...")
-                        .foregroundColor(.ctxTextMuted)
-                }
-                .font(.caption)
-            } else if let workspaceError {
+            if let workspaceError {
                 Text(workspaceError)
                     .font(.caption)
                     .foregroundColor(.ctxError)
             } else if workspaces.isEmpty {
-                Text("No workspaces connected yet.")
-                    .font(.caption)
-                    .foregroundColor(.ctxTextMuted)
+                if !isLoadingWorkspaces {
+                    Text("No workspaces connected yet.")
+                        .font(.caption)
+                        .foregroundColor(.ctxTextMuted)
+                }
             }
         }
         .padding(.horizontal, 16)
@@ -1528,16 +1522,7 @@ private struct WorkbenchNavigationFlowView: View {
     let onTaskCreated: () -> Void
 
     var body: some View {
-        if isLoadingWorkspaces {
-            VStack(spacing: 12) {
-                ProgressView()
-                    .tint(.ctxAccent)
-                Text("Loading workspaces...")
-                    .font(.footnote)
-                    .foregroundColor(.ctxTextMuted)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else if let workspaceError {
+        if let workspaceError {
             WorkbenchInfoCard(text: workspaceError, tint: .ctxError)
                 .padding(.horizontal, 20)
         } else if let workspace = selectedWorkspace {
@@ -1567,6 +1552,9 @@ private struct WorkbenchNavigationFlowView: View {
             }
             .id(workspace.id)
             .toolbar(.hidden, for: .navigationBar)
+        } else if isLoadingWorkspaces {
+            Color.clear
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             WorkbenchEmptyStateView(
                 title: "No workspace selected",
