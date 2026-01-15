@@ -13,7 +13,7 @@ use tokio_tungstenite::{
 use ctx_core::ids::{SessionId, WorkspaceId};
 use ctx_core::models::{
     SessionEvent, SessionHeadDelta, SessionSnapshotSummary, WorkspaceActiveSnapshotEvent,
-    WorkspaceActiveSnapshotClientMessage, WorkspaceActiveSnapshotSessionSubscription,
+    WorkspaceCatchupClientMessage, WorkspaceCatchupSessionSubscription,
 };
 
 use super::ShellView;
@@ -162,7 +162,7 @@ impl ShellView {
         .detach();
     }
 
-    fn build_stream_subscribe_message(&self) -> WorkspaceActiveSnapshotClientMessage {
+    fn build_stream_subscribe_message(&self) -> WorkspaceCatchupClientMessage {
         let mut session_ids = self
             .session_summary_map
             .keys()
@@ -171,12 +171,12 @@ impl ShellView {
         session_ids.sort_by(|a, b| a.0.cmp(&b.0));
         let sessions = session_ids
             .into_iter()
-            .map(|session_id| WorkspaceActiveSnapshotSessionSubscription {
+            .map(|session_id| WorkspaceCatchupSessionSubscription {
                 session_id,
                 after_seq: self.session_last_event_seq.get(&session_id).copied(),
             })
             .collect();
-        WorkspaceActiveSnapshotClientMessage::Subscribe {
+        WorkspaceCatchupClientMessage::Subscribe {
             session_ids: Vec::new(),
             sessions,
         }
@@ -313,7 +313,7 @@ impl ShellView {
 async fn run_workspace_stream(
     ws_url: String,
     mut stop_rx: watch::Receiver<bool>,
-    mut subscribe_rx: watch::Receiver<WorkspaceActiveSnapshotClientMessage>,
+    mut subscribe_rx: watch::Receiver<WorkspaceCatchupClientMessage>,
     update_tx: mpsc::UnboundedSender<StreamUpdate>,
 ) -> Result<()> {
     let mut backoff = Duration::from_secs(1);
@@ -432,7 +432,7 @@ fn parse_workspace_stream_event(message: WsMessage) -> Option<WorkspaceActiveSna
 
 async fn send_workspace_subscribe<S>(
     sink: &mut S,
-    message: &WorkspaceActiveSnapshotClientMessage,
+    message: &WorkspaceCatchupClientMessage,
 ) -> Result<()>
 where
     S: SinkExt<WsMessage> + Unpin,

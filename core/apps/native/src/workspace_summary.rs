@@ -1,10 +1,9 @@
 use ctx_core::ids::{SessionId, TaskId};
 use ctx_core::models::{
-    SessionSnapshotSummary, SessionStatus, Task, WorkspaceActiveTaskSummary,
+    Session, SessionCatchupSummary, SessionMetadata, SessionSnapshotSummary, SessionStatus, Task,
+    WorkspaceActiveSnapshot, WorkspaceActiveTaskSummary, WorkspaceCatchupSnapshot,
+    WorkspaceCatchupTaskSummary,
 };
-
-#[cfg(test)]
-use ctx_core::models::WorkspaceActiveSnapshot;
 
 #[derive(Debug, Clone)]
 pub struct TaskSummaryItem {
@@ -23,6 +22,22 @@ impl TaskSummaryItem {
             task: summary.task.clone(),
             primary_session: Some(summary.primary_session.clone()),
             sessions: summary.sessions.clone(),
+            sort_at_ms,
+        }
+    }
+
+    pub fn from_archived(summary: &WorkspaceCatchupTaskSummary) -> Self {
+        let sort_at_ms = summary
+            .task
+            .archived_at
+            .unwrap_or(summary.task.created_at)
+            .timestamp_millis();
+        let (primary_session, sessions) = archived_session_summaries(summary);
+        Self {
+            id: summary.task.id,
+            task: summary.task.clone(),
+            primary_session,
+            sessions,
             sort_at_ms,
         }
     }
@@ -48,6 +63,22 @@ pub struct SessionSummaryItem {
     pub session_id: SessionId,
     pub title: String,
     pub status: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceCatchupCounts {
+    pub active_total: i64,
+    pub archived_total: Option<i64>,
+}
+
+pub fn catchup_counts(
+    snapshot: &WorkspaceActiveSnapshot,
+    archived: Option<&WorkspaceCatchupSnapshot>,
+) -> WorkspaceCatchupCounts {
+    WorkspaceCatchupCounts {
+        active_total: snapshot.active.total_count,
+        archived_total: archived.and_then(|page| page.archived.as_ref().map(|page| page.total_count)),
+    }
 }
 
 #[cfg(test)]
@@ -117,6 +148,68 @@ fn session_status_label(status: &SessionStatus) -> &'static str {
     }
 }
 
+fn session_metadata_from_session(session: &Session) -> SessionMetadata {
+    SessionMetadata {
+        id: session.id,
+        task_id: session.task_id,
+        workspace_id: session.workspace_id,
+        worktree_id: session.worktree_id,
+        parent_session_id: session.parent_session_id,
+        relationship: session.relationship.clone(),
+        provider_id: session.provider_id.clone(),
+        model_id: session.model_id.clone(),
+        title: session.title.clone(),
+        agent_role: session.agent_role.clone(),
+        status: session.status.clone(),
+        provider_session_ref: session.provider_session_ref.clone(),
+        created_at: session.created_at,
+        updated_at: session.updated_at,
+    }
+}
+
+fn session_summary_from_catchup(summary: &SessionCatchupSummary) -> SessionSnapshotSummary {
+    SessionSnapshotSummary {
+        session: session_metadata_from_session(&summary.session),
+        last_message_at: summary.last_message_at,
+        last_message_preview: summary.last_message_preview.clone(),
+        last_event_seq: summary.last_event_seq,
+        activity: summary.activity.clone(),
+        unread: summary.unread,
+    }
+}
+
+fn archived_session_summaries(
+    summary: &WorkspaceCatchupTaskSummary,
+) -> (Option<SessionSnapshotSummary>, Vec<SessionSnapshotSummary>) {
+    let mut sessions = Vec::new();
+    for track in &summary.tracks {
+        for session in &track.sessions {
+            sessions.push(session_summary_from_catchup(session));
+        }
+    }
+
+    let mut primary_id = summary.task.primary_session_id;
+    if primary_id.is_none() {
+        primary_id = summary.tracks.iter().find_map(|track| track.primary_session_id);
+    }
+
+    let mut primary = None;
+    if let Some(id) = primary_id {
+        primary = sessions.iter().find(|item| item.session.id == id).cloned();
+    }
+    if primary.is_none() {
+        primary = sessions.first().cloned();
+    }
+
+    let primary_id = primary.as_ref().map(|item| item.session.id);
+    let remaining = sessions
+        .into_iter()
+        .filter(|item| Some(item.session.id) != primary_id)
+        .collect();
+
+    (primary, remaining)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -178,6 +271,9 @@ mod tests {
         }"#;
 
         let snapshot: WorkspaceActiveSnapshot = serde_json::from_str(json).unwrap();
+        let counts = catchup_counts(&snapshot, None);
+        assert_eq!(counts.active_total, 1);
+        assert_eq!(counts.archived_total, None);
 
         let tasks = task_summaries(&snapshot);
         assert_eq!(tasks.len(), 1);

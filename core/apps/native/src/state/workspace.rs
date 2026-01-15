@@ -6,7 +6,7 @@ use gpui_tokio::Tokio;
 use ctx_core::ids::{SessionId, TaskId, WorkspaceId};
 use ctx_core::models::{
     MessageRole, SessionHeadSnapshot, SessionSnapshotSummary, Task, WorkspaceActiveSnapshot,
-    WorkspaceActiveTaskSummary,
+    WorkspaceActiveTaskSummary, WorkspaceCatchupTaskSummary,
 };
 use ctx_providers::adapters::ProviderStatus;
 
@@ -19,7 +19,7 @@ use super::super::models::{
     session_info_from_summary, MessageItem,
     SessionInfo,
 };
-use super::super::workspace_summary::{task_session_summaries, TaskSummaryItem};
+use super::super::workspace_summary::{catchup_counts, task_session_summaries, TaskSummaryItem};
 
 #[derive(Clone)]
 pub(crate) struct WorkspaceItem {
@@ -262,6 +262,8 @@ impl ShellView {
         self.task_has_more_active = true;
         self.task_has_more_archived = false;
         self.task_archived_loaded = false;
+        self.task_active_cursor = None;
+        self.task_archived_cursor = None;
         self.tasks_by_id.clear();
         self.task_active_order.clear();
         self.task_archived_order.clear();
@@ -290,8 +292,8 @@ impl ShellView {
         self.session_last_event_seq.clear();
         self.resyncing_session = None;
         self.session = SessionInfo::placeholder();
-        self.active_total = None;
-        self.archived_total = None;
+        self.catchup_active_total = None;
+        self.catchup_archived_total = None;
     }
 }
 
@@ -315,31 +317,25 @@ impl ShellView {
     }
 
     fn apply_active_snapshot(&mut self, snapshot: WorkspaceActiveSnapshot) {
-        self.active_total = Some(snapshot.active.total_count);
+        let counts = catchup_counts(&snapshot, None);
+        self.catchup_active_total = Some(counts.active_total);
+        if self.catchup_archived_total.is_none() {
+            self.catchup_archived_total = counts.archived_total;
+        }
 
         self.task_store_initialized = true;
         self.task_fetch_active = super::TaskFetchState::Idle;
         self.task_fetch_archived = super::TaskFetchState::Idle;
         self.task_has_more_active = false;
+        self.task_active_cursor = None;
+        self.task_archived_cursor = None;
         self.task_has_more_archived = false;
-        self.task_archived_loaded = true;
-
-        let archived = self
-            .tasks_by_id
-            .values()
-            .filter(|task| task.is_archived())
-            .cloned()
-            .collect::<Vec<_>>();
-
+        self.task_archived_loaded = false;
         self.tasks_by_id.clear();
         self.task_active_order.clear();
         self.task_archived_order.clear();
         self.session_thread_cache.clear();
         self.session_last_event_seq.clear();
-
-        for item in archived {
-            self.tasks_by_id.insert(item.id, item);
-        }
 
         for summary in snapshot.active.tasks {
             let item = TaskSummaryItem::from_active(&summary);
@@ -402,15 +398,72 @@ impl ShellView {
         if self.task_archived_loaded {
             return;
         }
-        self.task_archived_loaded = true;
-        self.task_has_more_archived = false;
-        self.task_fetch_archived = super::TaskFetchState::Idle;
-        cx.notify();
+        if self.task_fetch_archived == super::TaskFetchState::Loading {
+            return;
+        }
+        self.load_more_archived_tasks(true, cx);
     }
 
     pub(crate) fn load_more_archived_tasks(&mut self, reset: bool, cx: &mut Context<Self>) {
-        let _ = reset;
-        self.ensure_archived_loaded(cx);
+        if self.task_fetch_archived == super::TaskFetchState::Loading {
+            return;
+        }
+        if !reset && !self.task_has_more_archived {
+            return;
+        }
+        let Some(workspace_id) = self.selected_workspace else {
+            return;
+        };
+        let cursor = if reset {
+            None
+        } else {
+            self.task_archived_cursor.clone()
+        };
+        self.task_fetch_archived = super::TaskFetchState::Loading;
+        cx.notify();
+
+        let task = Tokio::spawn_result(cx, async move {
+            let config = ctx_client::resolve_daemon_config()?;
+            let client = ctx_client::Client::new(config)?;
+            let params = ctx_client::WorkspaceCatchupParams {
+                limit: Some(50),
+                archived_only: Some(true),
+                archived_cursor: cursor,
+                ..Default::default()
+            };
+            let snapshot = client.get_workspace_catchup(workspace_id, &params).await?;
+            Ok(snapshot)
+        });
+
+        cx.spawn(move |this: WeakEntity<ShellView>, cx: &mut AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                let result = task.await;
+                this.update(&mut cx, |view, _cx| match result {
+                    Ok(snapshot) => {
+                        if let Some(page) = snapshot.archived {
+                            let next_cursor = page.next_cursor;
+                            view.task_has_more_archived = next_cursor.is_some();
+                            view.task_archived_cursor = next_cursor;
+                            view.task_archived_loaded = true;
+                            view.catchup_archived_total = Some(page.total_count);
+                            for summary in page.tasks {
+                                view.upsert_archived_task_summary(summary);
+                            }
+                        }
+                        view.task_fetch_archived = super::TaskFetchState::Idle;
+                    }
+                    Err(_) => {
+                        view.task_fetch_archived = super::TaskFetchState::Error;
+                    }
+                })
+                .ok();
+                let _ = this.update(&mut cx, |_, cx| {
+                    cx.notify();
+                });
+            }
+        })
+        .detach();
     }
 
     pub(crate) fn upsert_active_task_summary(&mut self, summary: WorkspaceActiveTaskSummary) {
@@ -418,10 +471,22 @@ impl ShellView {
         let existing = self.tasks_by_id.insert(item.id, item.clone());
         if let Some(prev) = existing.as_ref() {
             self.update_task_counts_for_move(prev, &item);
-        } else if let Some(total) = self.active_total.as_mut() {
+        } else if let Some(total) = self.catchup_active_total.as_mut() {
             *total += 1;
         }
         self.cache_session_snapshot(&summary.primary_session, &summary.primary_session_head);
+        self.rebuild_task_orders();
+        self.rebuild_session_state();
+    }
+
+    pub(crate) fn upsert_archived_task_summary(&mut self, summary: WorkspaceCatchupTaskSummary) {
+        let item = TaskSummaryItem::from_archived(&summary);
+        let existing = self.tasks_by_id.insert(item.id, item.clone());
+        if let Some(prev) = existing.as_ref() {
+            self.update_task_counts_for_move(prev, &item);
+        } else if let Some(total) = self.catchup_archived_total.as_mut() {
+            *total += 1;
+        }
         self.rebuild_task_orders();
         self.rebuild_session_state();
     }
@@ -444,10 +509,10 @@ impl ShellView {
         self.task_active_order.retain(|id| *id != task_id);
         self.task_archived_order.retain(|id| *id != task_id);
         if existing.is_archived() {
-            if let Some(total) = self.archived_total.as_mut() {
+            if let Some(total) = self.catchup_archived_total.as_mut() {
                 *total = total.saturating_sub(1);
             }
-        } else if let Some(total) = self.active_total.as_mut() {
+        } else if let Some(total) = self.catchup_active_total.as_mut() {
             *total = total.saturating_sub(1);
         }
         if self.selected_task == Some(task_id) {
@@ -677,17 +742,17 @@ impl ShellView {
             return;
         }
         if prev_archived {
-            if let Some(total) = self.archived_total.as_mut() {
+            if let Some(total) = self.catchup_archived_total.as_mut() {
                 *total = total.saturating_sub(1);
             }
-            if let Some(total) = self.active_total.as_mut() {
+            if let Some(total) = self.catchup_active_total.as_mut() {
                 *total += 1;
             }
         } else {
-            if let Some(total) = self.active_total.as_mut() {
+            if let Some(total) = self.catchup_active_total.as_mut() {
                 *total = total.saturating_sub(1);
             }
-            if let Some(total) = self.archived_total.as_mut() {
+            if let Some(total) = self.catchup_archived_total.as_mut() {
                 *total += 1;
             }
         }

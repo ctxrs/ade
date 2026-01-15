@@ -238,6 +238,7 @@ impl TerminalPanelState {
 
         let request = ctx_client::CreateTerminalRequest {
             task_id,
+            track_id: None,
             session_id,
             worktree_id,
             cwd,

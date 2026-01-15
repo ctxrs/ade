@@ -1,7 +1,7 @@
 use gpui::{AsyncApp, Context, WeakEntity};
 use gpui_tokio::Tokio;
 
-use ctx_core::ids::SessionId;
+use ctx_core::ids::WorktreeId;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum DiffLineKind {
@@ -77,7 +77,7 @@ const DIFF_LIST_MAX_WIDTH: f32 = 320.0;
 
 #[derive(Debug)]
 pub(crate) struct DiffReviewState {
-    pub(crate) session_id: Option<SessionId>,
+    pub(crate) worktree_id: Option<WorktreeId>,
     pub(crate) diff: String,
     pub(crate) files: Vec<DiffFile>,
     pub(crate) active_file_key: Option<String>,
@@ -92,7 +92,7 @@ pub(crate) struct DiffReviewState {
 impl DiffReviewState {
     pub(crate) fn new() -> Self {
         Self {
-            session_id: None,
+            worktree_id: None,
             diff: String::new(),
             files: Vec::new(),
             active_file_key: None,
@@ -105,22 +105,27 @@ impl DiffReviewState {
         }
     }
 
-    pub(crate) fn set_session_id(
+    pub(crate) fn set_worktree_id(
         &mut self,
-        session_id: Option<SessionId>,
+        worktree_id: Option<WorktreeId>,
         cx: &mut Context<Self>,
     ) {
-        if self.session_id == session_id {
+        if self.worktree_id == worktree_id {
             return;
         }
-        self.session_id = session_id;
+        self.worktree_id = worktree_id;
         self.reset_state();
-        if self.session_id.is_some() {
+        if self.worktree_id.is_some() {
             self.reload_diff(cx);
         } else {
-            self.status = Some("Select a session to view diff.".to_string());
             cx.notify();
         }
+    }
+
+    pub(crate) fn set_diff(&mut self, diff: String) {
+        self.diff = diff;
+        self.files = parse_unified_diff(&self.diff);
+        self.ensure_active_file();
     }
 
     pub(crate) fn select_file(&mut self, key: String, cx: &mut Context<Self>) {
@@ -132,10 +137,7 @@ impl DiffReviewState {
     }
 
     pub(crate) fn reload_diff(&mut self, cx: &mut Context<Self>) {
-        let Some(session_id) = self.session_id else {
-            self.reset_state();
-            self.status = Some("Select a session to view diff.".to_string());
-            cx.notify();
+        let Some(worktree_id) = self.worktree_id else {
             return;
         };
         self.busy_key = Some("diff:load".to_string());
@@ -146,31 +148,27 @@ impl DiffReviewState {
         let task = Tokio::spawn_result(cx, async move {
             let config = ctx_client::resolve_daemon_config()?;
             let client = ctx_client::Client::new(config)?;
-            let diff = client.get_session_diff(session_id).await?;
-            Ok((session_id, diff.diff))
+            client.get_worktree_diff(worktree_id).await
         });
 
         cx.spawn(move |this: WeakEntity<DiffReviewState>, cx: &mut AsyncApp| {
             let mut cx = cx.clone();
             async move {
                 let result = task.await;
-                this.update(&mut cx, |view, cx| match result {
-                    Ok((session_id, diff)) => {
-                        if view.session_id != Some(session_id) {
-                            return;
+                this.update(&mut cx, |view, cx| {
+                    if view.worktree_id != Some(worktree_id) {
+                        return;
+                    }
+                    view.busy_key = None;
+                    match result {
+                        Ok(diff) => {
+                            view.set_diff(diff);
                         }
-                        view.busy_key = None;
-                        view.status = None;
-                        view.error = None;
-                        view.set_diff(diff);
-                        cx.notify();
+                        Err(err) => {
+                            view.error = Some(err.to_string());
+                        }
                     }
-                    Err(err) => {
-                        view.busy_key = None;
-                        view.status = None;
-                        view.error = Some(err.to_string());
-                        cx.notify();
-                    }
+                    cx.notify();
                 })
                 .ok();
             }
@@ -232,17 +230,6 @@ impl DiffReviewState {
         self.set_list_width(DIFF_LIST_DEFAULT_WIDTH, cx);
     }
 
-    fn set_diff(&mut self, diff: String) {
-        self.diff = diff;
-        self.files = parse_unified_diff(&self.diff);
-        if let Some(active) = self.active_file_key.as_ref() {
-            if self.files.iter().any(|file| &file.key == active) {
-                return;
-            }
-        }
-        self.active_file_key = self.files.first().map(|file| file.key.clone());
-    }
-
     fn reset_state(&mut self) {
         self.diff.clear();
         self.files.clear();
@@ -254,6 +241,15 @@ impl DiffReviewState {
         self.list_resize_state = None;
     }
 
+    fn ensure_active_file(&mut self) {
+        if let Some(active) = &self.active_file_key {
+            if self.files.iter().any(|file| &file.key == active) {
+                return;
+            }
+        }
+        self.active_file_key = self.files.first().map(|file| file.key.clone());
+    }
+
     fn apply_patch(
         &mut self,
         busy_key: String,
@@ -262,50 +258,45 @@ impl DiffReviewState {
         status_message: String,
         cx: &mut Context<Self>,
     ) {
-        let Some(session_id) = self.session_id else {
+        let Some(worktree_id) = self.worktree_id else {
             return;
         };
-        if patch.trim().is_empty() {
+        if self.busy_key.is_some() {
             return;
         }
-        self.busy_key = Some(busy_key.clone());
+        self.busy_key = Some(busy_key);
         self.status = None;
         self.error = None;
         cx.notify();
 
-        let action = action.as_str().to_string();
-        let patch_value = patch.clone();
-        let status_value = status_message.clone();
+        let action_label = action.as_str().to_string();
         let task = Tokio::spawn_result(cx, async move {
             let config = ctx_client::resolve_daemon_config()?;
             let client = ctx_client::Client::new(config)?;
-            let diff = client
-                .apply_session_diff_patch(session_id, &action, &patch_value)
-                .await?;
-            Ok((session_id, diff.diff, status_value))
+            client
+                .apply_worktree_diff_patch(worktree_id, &action_label, &patch)
+                .await
         });
 
         cx.spawn(move |this: WeakEntity<DiffReviewState>, cx: &mut AsyncApp| {
             let mut cx = cx.clone();
             async move {
                 let result = task.await;
-                this.update(&mut cx, |view, cx| match result {
-                    Ok((session_id, diff, status_message)) => {
-                        if view.session_id != Some(session_id) {
-                            return;
+                this.update(&mut cx, |view, cx| {
+                    if view.worktree_id != Some(worktree_id) {
+                        return;
+                    }
+                    view.busy_key = None;
+                    match result {
+                        Ok(diff) => {
+                            view.set_diff(diff);
+                            view.status = Some(status_message);
                         }
-                        view.busy_key = None;
-                        view.status = Some(status_message);
-                        view.error = None;
-                        view.set_diff(diff);
-                        cx.notify();
+                        Err(err) => {
+                            view.error = Some(err.to_string());
+                        }
                     }
-                    Err(err) => {
-                        view.busy_key = None;
-                        view.status = None;
-                        view.error = Some(err.to_string());
-                        cx.notify();
-                    }
+                    cx.notify();
                 })
                 .ok();
             }
@@ -315,7 +306,7 @@ impl DiffReviewState {
 }
 
 #[derive(Clone, Debug)]
-struct DiffFileSeed {
+struct RawDiffFile {
     key: String,
     old_path: String,
     new_path: String,
@@ -325,69 +316,49 @@ struct DiffFileSeed {
 }
 
 fn parse_unified_diff(diff_text: &str) -> Vec<DiffFile> {
+    let mut lines = diff_text.split('\n').collect::<Vec<_>>();
+    if matches!(lines.last(), Some(line) if line.is_empty()) {
+        lines.pop();
+    }
     let mut files = Vec::new();
-    let mut current: Option<DiffFileSeed> = None;
+    let mut current: Option<RawDiffFile> = None;
     let mut current_hunk: Option<DiffHunk> = None;
     let mut in_header = false;
 
-    let mut lines = diff_text.lines().map(str::to_string).collect::<Vec<_>>();
-    if lines.last().map(|line| line.is_empty()).unwrap_or(false) {
-        lines.pop();
-    }
-
-    let push_current = |files: &mut Vec<DiffFile>,
-                        current: &mut Option<DiffFileSeed>,
-                        current_hunk: &mut Option<DiffHunk>| {
-        if let Some(mut seed) = current.take() {
-            if let Some(hunk) = current_hunk.take() {
-                seed.hunks.push(hunk);
-            }
-            let file = finalize_file(seed);
-            if file.section_lines.iter().any(|line| !line.trim().is_empty()) {
-                files.push(file);
-            }
-        }
-    };
-
     for (idx, line) in lines.iter().enumerate() {
-        if let Some(rest) = line.strip_prefix("diff --git ") {
-            push_current(&mut files, &mut current, &mut current_hunk);
-            let mut parts = rest.split_whitespace();
-            let old_path = parts
-                .next()
-                .unwrap_or_default()
-                .trim_start_matches("a/")
-                .to_string();
-            let new_path = parts
-                .next()
-                .unwrap_or_default()
-                .trim_start_matches("b/")
-                .to_string();
+        if line.starts_with("diff --git ") {
+            push_current(&mut files, &mut current, &mut current_hunk, &mut in_header);
+
+            let mut parts = line.trim_start_matches("diff --git ").split_whitespace();
+            let old_raw = parts.next().unwrap_or("");
+            let new_raw = parts.next().unwrap_or("");
+            let old_path = old_raw.strip_prefix("a/").unwrap_or(old_raw).to_string();
+            let new_path = new_raw.strip_prefix("b/").unwrap_or(new_raw).to_string();
             let key = format!("{old_path}=>{new_path}:{idx}");
-            current = Some(DiffFileSeed {
+            current = Some(RawDiffFile {
                 key,
                 old_path,
                 new_path,
-                section_lines: vec![line.clone()],
-                header_lines: vec![line.clone()],
+                section_lines: vec![line.to_string()],
+                header_lines: vec![line.to_string()],
                 hunks: Vec::new(),
             });
             in_header = true;
             continue;
         }
 
-        let Some(seed) = current.as_mut() else {
+        let Some(current_file) = current.as_mut() else {
             continue;
         };
-        seed.section_lines.push(line.clone());
+        current_file.section_lines.push((*line).to_string());
 
-        if line.starts_with("@@") {
+        if line.starts_with("@@ ") {
             if let Some(hunk) = current_hunk.take() {
-                seed.hunks.push(hunk);
+                current_file.hunks.push(hunk);
             }
             current_hunk = Some(DiffHunk {
-                key: format!("{}:h{}:{}", seed.key, seed.hunks.len(), idx),
-                header_line: line.clone(),
+                key: format!("{}:h{}:{}", current_file.key, current_file.hunks.len(), idx),
+                header_line: (*line).to_string(),
                 lines: Vec::new(),
             });
             in_header = false;
@@ -395,65 +366,93 @@ fn parse_unified_diff(diff_text: &str) -> Vec<DiffFile> {
         }
 
         if in_header {
-            seed.header_lines.push(line.clone());
+            current_file.header_lines.push((*line).to_string());
         } else if let Some(hunk) = current_hunk.as_mut() {
-            hunk.lines.push(line.clone());
+            hunk.lines.push((*line).to_string());
         }
     }
 
-    push_current(&mut files, &mut current, &mut current_hunk);
-
+    push_current(&mut files, &mut current, &mut current_hunk, &mut in_header);
     files
+        .into_iter()
+        .filter(|file| file.section_lines.iter().any(|line| !line.trim().is_empty()))
+        .collect()
 }
 
-fn finalize_file(seed: DiffFileSeed) -> DiffFile {
-    let file_path = if !seed.new_path.is_empty() && seed.new_path != "dev/null" {
-        seed.new_path.clone()
-    } else if !seed.old_path.is_empty() && seed.old_path != "dev/null" {
-        seed.old_path.clone()
+fn push_current(
+    files: &mut Vec<DiffFile>,
+    current: &mut Option<RawDiffFile>,
+    current_hunk: &mut Option<DiffHunk>,
+    in_header: &mut bool,
+) {
+    let Some(mut raw) = current.take() else {
+        return;
+    };
+    if let Some(hunk) = current_hunk.take() {
+        raw.hunks.push(hunk);
+    }
+    files.push(finalize_file(raw));
+    *in_header = false;
+}
+
+fn finalize_file(raw: RawDiffFile) -> DiffFile {
+    let file_path = if !raw.new_path.is_empty() && raw.new_path != "dev/null" {
+        raw.new_path.clone()
+    } else if !raw.old_path.is_empty() && raw.old_path != "dev/null" {
+        raw.old_path.clone()
     } else {
         "(unknown)".to_string()
     };
-
-    let header_text = seed.header_lines.join("\n");
-    let is_new = seed.old_path == "dev/null"
+    let header_text = raw.header_lines.join("\n");
+    let is_new = raw.old_path == "dev/null"
         || header_text.contains("new file mode")
         || header_text.contains("--- /dev/null");
-    let is_deleted = seed.new_path == "dev/null"
+    let is_deleted = raw.new_path == "dev/null"
         || header_text.contains("deleted file mode")
         || header_text.contains("+++ /dev/null");
-    let patch_text = seed.section_lines.join("\n");
-    let mut is_binary = patch_text.contains("GIT binary patch") || patch_text.contains("Binary files");
+    let patch_text = raw.section_lines.join("\n");
+    let is_binary = patch_text.contains("GIT binary patch") || patch_text.contains("Binary files");
 
     let mut added_lines = 0;
     let mut deleted_lines = 0;
-    for hunk in &seed.hunks {
+    let mut has_render_lines = false;
+
+    for hunk in &raw.hunks {
         for line in &hunk.lines {
-            if line.starts_with('+') {
-                if !line.starts_with("+++") {
-                    added_lines += 1;
+            if line.is_empty() {
+                continue;
+            }
+            let prefix = line.as_bytes()[0] as char;
+            match prefix {
+                '+' => {
+                    if !line.starts_with("+++") {
+                        added_lines += 1;
+                        has_render_lines = true;
+                    }
                 }
-            } else if line.starts_with('-') {
-                if !line.starts_with("---") {
-                    deleted_lines += 1;
+                '-' => {
+                    if !line.starts_with("---") {
+                        deleted_lines += 1;
+                        has_render_lines = true;
+                    }
                 }
+                ' ' => {
+                    has_render_lines = true;
+                }
+                _ => {}
             }
         }
     }
 
-    if seed.hunks.is_empty() {
-        is_binary = true;
-    }
-
     DiffFile {
-        key: seed.key,
+        key: raw.key,
         file_path,
-        section_lines: seed.section_lines,
-        header_lines: seed.header_lines,
-        hunks: seed.hunks,
+        section_lines: raw.section_lines,
+        header_lines: raw.header_lines,
+        hunks: raw.hunks,
         is_new,
         is_deleted,
-        is_binary,
+        is_binary: is_binary || !has_render_lines,
         added_lines,
         deleted_lines,
     }
