@@ -7,9 +7,11 @@ import {
   InstallInfo,
   MobileAccessStatus,
   EnableMobileAccessResponse,
+  type AzureCloudWorkersSettingsPatch,
   ProviderOptions,
   ProviderStatus,
   ProviderUsageSnapshot,
+  type GcpCloudWorkersSettingsPatch,
   ResourceGovernanceLimits,
   ResourceGovernanceSettings,
   ResourceGovernanceStatus,
@@ -52,6 +54,8 @@ import {
   listProviders,
   listWorkspaces,
   launchAwsGateway,
+  launchAzureGateway,
+  launchGcpGateway,
   retryMergeQueueEntry,
   setCodexActiveAccount,
   startCodexLogin,
@@ -504,10 +508,37 @@ export default function SettingsPage() {
   const [awsGatewayAmiId, setAwsGatewayAmiId] = useState("");
   const [awsSshUser, setAwsSshUser] = useState("");
   const [awsArtifactBucket, setAwsArtifactBucket] = useState("");
+  const [azureSubscriptionId, setAzureSubscriptionId] = useState("");
+  const [azureResourceGroup, setAzureResourceGroup] = useState("");
+  const [azureLocation, setAzureLocation] = useState("eastus");
+  const [azureVmSize, setAzureVmSize] = useState("Standard_B2s");
+  const [azureImage, setAzureImage] = useState("Canonical:0001-com-ubuntu-server-jammy:22_04-lts:latest");
+  const [azureVnet, setAzureVnet] = useState("");
+  const [azureSubnet, setAzureSubnet] = useState("");
+  const [azureAdminUsername, setAzureAdminUsername] = useState("ctx");
+  const [azureSshPublicKey, setAzureSshPublicKey] = useState("");
+  const [azureDiskSizeGb, setAzureDiskSizeGb] = useState("100");
+  const [azureDiskSku, setAzureDiskSku] = useState("Premium_LRS");
+  const [azureArtifactStorageAccount, setAzureArtifactStorageAccount] = useState("");
+  const [azureArtifactContainer, setAzureArtifactContainer] = useState("ctx-cloud-workers");
+  const [gcpProjectId, setGcpProjectId] = useState("");
+  const [gcpZone, setGcpZone] = useState("us-central1-a");
+  const [gcpMachineType, setGcpMachineType] = useState("e2-standard-2");
+  const [gcpImage, setGcpImage] = useState("projects/debian-cloud/global/images/family/debian-12");
+  const [gcpNetwork, setGcpNetwork] = useState("");
+  const [gcpSubnetwork, setGcpSubnetwork] = useState("");
+  const [gcpServiceAccount, setGcpServiceAccount] = useState("");
+  const [gcpScopes, setGcpScopes] = useState("");
+  const [gcpDiskSizeGb, setGcpDiskSizeGb] = useState("");
+  const [gcpDiskType, setGcpDiskType] = useState("pd-ssd");
+  const [gcpSshUser, setGcpSshUser] = useState("");
+  const [gcpDeleteDiskOnPause, setGcpDeleteDiskOnPause] = useState(false);
+  const [gcpArtifactBucket, setGcpArtifactBucket] = useState("");
   const [gatewayUrl, setGatewayUrl] = useState("");
   const [gatewayInstanceId, setGatewayInstanceId] = useState("");
   const [gatewayPublicIp, setGatewayPublicIp] = useState("");
   const [gatewayRegion, setGatewayRegion] = useState("");
+  const [gatewayProvider, setGatewayProvider] = useState("");
   const [gatewayLaunchBusy, setGatewayLaunchBusy] = useState(false);
   const [gatewayLaunchError, setGatewayLaunchError] = useState<string | null>(null);
   const resourceGovernanceHydrated = useRef(false);
@@ -837,12 +868,49 @@ export default function SettingsPage() {
           setAwsSshUser(aws.ssh_user ?? "");
           setAwsArtifactBucket(aws.artifact_bucket ?? "");
         }
+        const azure = cw?.azure ?? null;
+        if (azure) {
+          setAzureSubscriptionId(azure.subscription_id ?? "");
+          setAzureResourceGroup(azure.resource_group ?? "");
+          setAzureLocation((azure.location ?? "").trim() || "eastus");
+          setAzureVmSize((azure.vm_size ?? "").trim() || "Standard_B2s");
+          setAzureImage(
+            (azure.image ?? "").trim() || "Canonical:0001-com-ubuntu-server-jammy:22_04-lts:latest",
+          );
+          setAzureVnet(azure.vnet ?? "");
+          setAzureSubnet(azure.subnet ?? "");
+          setAzureAdminUsername((azure.admin_username ?? "").trim() || "ctx");
+          setAzureSshPublicKey(azure.ssh_public_key ?? "");
+          setAzureDiskSizeGb(
+            typeof azure.disk_size_gb === "number" && azure.disk_size_gb > 0 ? String(azure.disk_size_gb) : "",
+          );
+          setAzureDiskSku((azure.disk_sku ?? "").trim() || "Premium_LRS");
+          setAzureArtifactStorageAccount(azure.artifact_storage_account ?? "");
+          setAzureArtifactContainer((azure.artifact_container ?? "").trim() || "ctx-cloud-workers");
+        }
+        const gcp = cw?.gcp ?? null;
+        if (gcp) {
+          setGcpProjectId(gcp.project_id ?? "");
+          setGcpZone((gcp.zone ?? "").trim() || "us-central1-a");
+          setGcpMachineType((gcp.machine_type ?? "").trim() || "e2-standard-2");
+          setGcpImage((gcp.image ?? "").trim() || "projects/debian-cloud/global/images/family/debian-12");
+          setGcpNetwork(gcp.network ?? "");
+          setGcpSubnetwork(gcp.subnetwork ?? "");
+          setGcpServiceAccount(gcp.service_account ?? "");
+          setGcpScopes(gcp.scopes?.join(", ") ?? "");
+          setGcpDiskSizeGb(gcp.disk_size_gb ? String(gcp.disk_size_gb) : "");
+          setGcpDiskType((gcp.disk_type ?? "").trim() || "pd-ssd");
+          setGcpSshUser(gcp.ssh_user ?? "");
+          setGcpDeleteDiskOnPause(Boolean(gcp.delete_disk_on_pause));
+          setGcpArtifactBucket(gcp.artifact_bucket ?? "");
+        }
 
         const gateway = cw?.gateway ?? null;
         setGatewayUrl(gateway?.gateway_url ?? "");
         setGatewayInstanceId(gateway?.instance_id ?? "");
         setGatewayPublicIp(gateway?.public_ip ?? "");
         setGatewayRegion(gateway?.region ?? "");
+        setGatewayProvider(gateway?.provider ?? "");
 
         const rg = s.resource_governance ?? null;
         if (rg) {
@@ -930,12 +998,49 @@ export default function SettingsPage() {
         setAwsArtifactBucket(aws.artifact_bucket ?? "");
         setAwsSecretAccessKey("");
       }
+      if (includesCloudWorkers && next.cloud_workers?.azure) {
+        const azure = next.cloud_workers.azure;
+        setAzureSubscriptionId(azure.subscription_id ?? "");
+        setAzureResourceGroup(azure.resource_group ?? "");
+        setAzureLocation((azure.location ?? "").trim() || "eastus");
+        setAzureVmSize((azure.vm_size ?? "").trim() || "Standard_B2s");
+        setAzureImage(
+          (azure.image ?? "").trim() || "Canonical:0001-com-ubuntu-server-jammy:22_04-lts:latest",
+        );
+        setAzureVnet(azure.vnet ?? "");
+        setAzureSubnet(azure.subnet ?? "");
+        setAzureAdminUsername((azure.admin_username ?? "").trim() || "ctx");
+        setAzureSshPublicKey(azure.ssh_public_key ?? "");
+        setAzureDiskSizeGb(
+          typeof azure.disk_size_gb === "number" && azure.disk_size_gb > 0 ? String(azure.disk_size_gb) : "",
+        );
+        setAzureDiskSku((azure.disk_sku ?? "").trim() || "Premium_LRS");
+        setAzureArtifactStorageAccount(azure.artifact_storage_account ?? "");
+        setAzureArtifactContainer((azure.artifact_container ?? "").trim() || "ctx-cloud-workers");
+      }
+      if (includesCloudWorkers && next.cloud_workers?.gcp) {
+        const gcp = next.cloud_workers.gcp;
+        setGcpProjectId(gcp.project_id ?? "");
+        setGcpZone((gcp.zone ?? "").trim() || "us-central1-a");
+        setGcpMachineType((gcp.machine_type ?? "").trim() || "e2-standard-2");
+        setGcpImage((gcp.image ?? "").trim() || "projects/debian-cloud/global/images/family/debian-12");
+        setGcpNetwork(gcp.network ?? "");
+        setGcpSubnetwork(gcp.subnetwork ?? "");
+        setGcpServiceAccount(gcp.service_account ?? "");
+        setGcpScopes(gcp.scopes?.join(", ") ?? "");
+        setGcpDiskSizeGb(gcp.disk_size_gb ? String(gcp.disk_size_gb) : "");
+        setGcpDiskType((gcp.disk_type ?? "").trim() || "pd-ssd");
+        setGcpSshUser(gcp.ssh_user ?? "");
+        setGcpDeleteDiskOnPause(Boolean(gcp.delete_disk_on_pause));
+        setGcpArtifactBucket(gcp.artifact_bucket ?? "");
+      }
       if (includesCloudWorkers && next.cloud_workers?.gateway) {
         const gateway = next.cloud_workers.gateway;
         setGatewayUrl(gateway?.gateway_url ?? "");
         setGatewayInstanceId(gateway?.instance_id ?? "");
         setGatewayPublicIp(gateway?.public_ip ?? "");
         setGatewayRegion(gateway?.region ?? "");
+        setGatewayProvider(gateway?.provider ?? "");
       }
       if (next.resource_governance) {
         setResourceGovernanceEnabled(next.resource_governance.enabled);
@@ -1015,6 +1120,110 @@ export default function SettingsPage() {
     savePatch,
   ]);
 
+  const handleSaveGcpSettings = useCallback(async (): Promise<boolean> => {
+    const projectId = gcpProjectId.trim();
+    if (!projectId) return false;
+    const zone = gcpZone.trim() || "us-central1-a";
+    const machineType = gcpMachineType.trim() || "e2-standard-2";
+    const image = gcpImage.trim() || "projects/debian-cloud/global/images/family/debian-12";
+    const scopes = gcpScopes
+      .split(/[,\n]/)
+      .map((value) => value.trim())
+      .filter((value) => value.length > 0);
+    const serviceAccount = gcpServiceAccount.trim();
+    const diskSize = Number(gcpDiskSizeGb.trim());
+    const diskSizeGb = Number.isFinite(diskSize) && diskSize > 0 ? Math.round(diskSize) : null;
+    const gcpPatch: GcpCloudWorkersSettingsPatch = {
+      project_id: projectId,
+      zone,
+      machine_type: machineType,
+      image,
+      network: gcpNetwork.trim() || null,
+      subnetwork: gcpSubnetwork.trim() || null,
+      scopes: scopes.length > 0 ? scopes : null,
+      disk_type: gcpDiskType.trim() || null,
+      ssh_user: gcpSshUser.trim() || null,
+      delete_disk_on_pause: gcpDeleteDiskOnPause,
+      artifact_bucket: gcpArtifactBucket.trim() || null,
+    };
+    if (serviceAccount) {
+      gcpPatch.service_account = serviceAccount;
+    }
+    if (diskSizeGb !== null) {
+      gcpPatch.disk_size_gb = diskSizeGb;
+    }
+    const patch: UpdateSettingsPatch = { cloud_workers: { gcp: gcpPatch } };
+    await savePatch(patch);
+    return true;
+  }, [
+    gcpArtifactBucket,
+    gcpDeleteDiskOnPause,
+    gcpDiskSizeGb,
+    gcpDiskType,
+    gcpImage,
+    gcpMachineType,
+    gcpNetwork,
+    gcpProjectId,
+    gcpScopes,
+    gcpServiceAccount,
+    gcpSshUser,
+    gcpSubnetwork,
+    gcpZone,
+    savePatch,
+  ]);
+
+  const handleSaveAzureSettings = useCallback(async (): Promise<boolean> => {
+    const subscriptionId = azureSubscriptionId.trim();
+    const resourceGroup = azureResourceGroup.trim();
+    const location = azureLocation.trim() || "eastus";
+    const vmSize = azureVmSize.trim() || "Standard_B2s";
+    const image =
+      azureImage.trim() || "Canonical:0001-com-ubuntu-server-jammy:22_04-lts:latest";
+    const vnet = azureVnet.trim();
+    const subnet = azureSubnet.trim();
+    const adminUsername = azureAdminUsername.trim() || "ctx";
+    const sshPublicKey = azureSshPublicKey.trim();
+    if (!subscriptionId || !resourceGroup || !vnet || !subnet || !sshPublicKey) return false;
+    const diskSize = Number(azureDiskSizeGb);
+    const diskSizeGb = Number.isFinite(diskSize) && diskSize > 0 ? Math.round(diskSize) : null;
+    const diskSku = azureDiskSku.trim() || "Premium_LRS";
+    const azurePatch: AzureCloudWorkersSettingsPatch = {
+      subscription_id: subscriptionId,
+      resource_group: resourceGroup,
+      location,
+      vm_size: vmSize,
+      image,
+      vnet,
+      subnet,
+      admin_username: adminUsername,
+      ssh_public_key: sshPublicKey,
+      disk_sku: diskSku,
+      artifact_storage_account: azureArtifactStorageAccount.trim() || null,
+      artifact_container: azureArtifactContainer.trim() || null,
+    };
+    if (diskSizeGb !== null) {
+      azurePatch.disk_size_gb = diskSizeGb;
+    }
+    const patch: UpdateSettingsPatch = { cloud_workers: { azure: azurePatch } };
+    await savePatch(patch);
+    return true;
+  }, [
+    azureAdminUsername,
+    azureArtifactContainer,
+    azureArtifactStorageAccount,
+    azureDiskSizeGb,
+    azureDiskSku,
+    azureImage,
+    azureLocation,
+    azureResourceGroup,
+    azureSshPublicKey,
+    azureSubnet,
+    azureSubscriptionId,
+    azureVmSize,
+    azureVnet,
+    savePatch,
+  ]);
+
   const handleLaunchAwsGateway = useCallback(async () => {
     setGatewayLaunchError(null);
     setGatewayLaunchBusy(true);
@@ -1029,12 +1238,57 @@ export default function SettingsPage() {
       setGatewayInstanceId(resp.gateway.instance_id ?? "");
       setGatewayPublicIp(resp.gateway.public_ip ?? "");
       setGatewayRegion(resp.gateway.region ?? "");
+      setGatewayProvider(resp.gateway.provider ?? "");
     } catch (e: any) {
       setGatewayLaunchError(e?.message ?? String(e));
     } finally {
       setGatewayLaunchBusy(false);
     }
   }, [handleSaveAwsSettings, workspaceId]);
+
+  const handleLaunchGcpGateway = useCallback(async () => {
+    setGatewayLaunchError(null);
+    setGatewayLaunchBusy(true);
+    try {
+      const saved = await handleSaveGcpSettings();
+      if (!saved) {
+        setGatewayLaunchBusy(false);
+        return;
+      }
+      const resp = await launchGcpGateway(workspaceId);
+      setGatewayUrl(resp.gateway.gateway_url ?? "");
+      setGatewayInstanceId(resp.gateway.instance_id ?? "");
+      setGatewayPublicIp(resp.gateway.public_ip ?? "");
+      setGatewayRegion(resp.gateway.region ?? "");
+      setGatewayProvider(resp.gateway.provider ?? "");
+    } catch (e: any) {
+      setGatewayLaunchError(e?.message ?? String(e));
+    } finally {
+      setGatewayLaunchBusy(false);
+    }
+  }, [handleSaveGcpSettings, workspaceId]);
+
+  const handleLaunchAzureGateway = useCallback(async () => {
+    setGatewayLaunchError(null);
+    setGatewayLaunchBusy(true);
+    try {
+      const saved = await handleSaveAzureSettings();
+      if (!saved) {
+        setGatewayLaunchBusy(false);
+        return;
+      }
+      const resp = await launchAzureGateway(workspaceId);
+      setGatewayUrl(resp.gateway.gateway_url ?? "");
+      setGatewayInstanceId(resp.gateway.instance_id ?? "");
+      setGatewayPublicIp(resp.gateway.public_ip ?? "");
+      setGatewayRegion(resp.gateway.region ?? "");
+      setGatewayProvider(resp.gateway.provider ?? "");
+    } catch (e: any) {
+      setGatewayLaunchError(e?.message ?? String(e));
+    } finally {
+      setGatewayLaunchBusy(false);
+    }
+  }, [handleSaveAzureSettings, workspaceId]);
 
   const dictationPayload = useMemo((): DictationSettings => {
     return {
@@ -1106,6 +1360,23 @@ export default function SettingsPage() {
   const awsSecretReady = awsSecretAccessKey.trim().length > 0 || awsSecretAccessKeySet;
   const awsCanSave = awsAccessKeyReady && !saving;
   const awsCanLaunch = awsAccessKeyReady && awsSecretReady && !saving && !gatewayLaunchBusy;
+  const gcpProjectReady = gcpProjectId.trim().length > 0;
+  const gcpServiceAccountReady = gcpServiceAccount.trim().length > 0;
+  const gcpCanSave = gcpProjectReady && !saving;
+  const gcpCanLaunch = gcpProjectReady && gcpServiceAccountReady && !saving && !gatewayLaunchBusy;
+  const azureSubscriptionReady = azureSubscriptionId.trim().length > 0;
+  const azureResourceGroupReady = azureResourceGroup.trim().length > 0;
+  const azureVnetReady = azureVnet.trim().length > 0;
+  const azureSubnetReady = azureSubnet.trim().length > 0;
+  const azureSshKeyReady = azureSshPublicKey.trim().length > 0;
+  const azureCanSave =
+    azureSubscriptionReady &&
+    azureResourceGroupReady &&
+    azureVnetReady &&
+    azureSubnetReady &&
+    azureSshKeyReady &&
+    !saving;
+  const azureCanLaunch = azureCanSave && !gatewayLaunchBusy;
 
   useEffect(() => {
     if (!loaded) return;
@@ -2242,6 +2513,374 @@ export default function SettingsPage() {
               }
             />
           </Card>
+          <Card title="GCP Cloud Workers">
+            <Row
+              title="Project ID"
+              description="Required to launch the gateway."
+              control={
+                <input
+                  className="settings-control settings-control-wide"
+                  value={gcpProjectId}
+                  onChange={(e) => setGcpProjectId(e.target.value)}
+                  placeholder="my-gcp-project"
+                  disabled={!loaded}
+                />
+              }
+            />
+            <Row
+              title="Zone"
+              description="Used for gateway and workers."
+              control={
+                <input
+                  className="settings-control settings-control-wide"
+                  value={gcpZone}
+                  onChange={(e) => setGcpZone(e.target.value)}
+                  placeholder="us-central1-a"
+                  disabled={!loaded}
+                />
+              }
+            />
+            <Row
+              title="Machine type"
+              description="Default instance size for workers."
+              control={
+                <input
+                  className="settings-control settings-control-wide"
+                  value={gcpMachineType}
+                  onChange={(e) => setGcpMachineType(e.target.value)}
+                  placeholder="e2-standard-2"
+                  disabled={!loaded}
+                />
+              }
+            />
+            <Row
+              title="Image"
+              description="Boot image for gateway and workers."
+              control={
+                <input
+                  className="settings-control settings-control-wide"
+                  value={gcpImage}
+                  onChange={(e) => setGcpImage(e.target.value)}
+                  placeholder="projects/debian-cloud/global/images/family/debian-12"
+                  disabled={!loaded}
+                />
+              }
+            />
+            <Row
+              title="Network (optional)"
+              description="Leave blank to use the default VPC network."
+              control={
+                <input
+                  className="settings-control settings-control-wide"
+                  value={gcpNetwork}
+                  onChange={(e) => setGcpNetwork(e.target.value)}
+                  placeholder="default"
+                  disabled={!loaded}
+                />
+              }
+            />
+            <Row
+              title="Subnetwork (optional)"
+              description="Optional subnetwork name or self-link."
+              control={
+                <input
+                  className="settings-control settings-control-wide"
+                  value={gcpSubnetwork}
+                  onChange={(e) => setGcpSubnetwork(e.target.value)}
+                  placeholder="default"
+                  disabled={!loaded}
+                />
+              }
+            />
+            <Row
+              title="Service account"
+              description="Required for signing URLs and launching workers."
+              control={
+                <input
+                  className="settings-control settings-control-wide"
+                  value={gcpServiceAccount}
+                  onChange={(e) => setGcpServiceAccount(e.target.value)}
+                  placeholder="gateway-sa@my-gcp-project.iam.gserviceaccount.com"
+                  disabled={!loaded}
+                />
+              }
+            />
+            <Row
+              title="Scopes (optional)"
+              description="Comma-separated scopes; leave blank for cloud-platform."
+              control={
+                <input
+                  className="settings-control settings-control-wide"
+                  value={gcpScopes}
+                  onChange={(e) => setGcpScopes(e.target.value)}
+                  placeholder="https://www.googleapis.com/auth/cloud-platform"
+                  disabled={!loaded}
+                />
+              }
+            />
+            <Row
+              title="Disk size (GB, optional)"
+              description="Data disk size for workers."
+              control={
+                <input
+                  className="settings-control settings-control-wide"
+                  value={gcpDiskSizeGb}
+                  onChange={(e) => setGcpDiskSizeGb(e.target.value)}
+                  placeholder="100"
+                  disabled={!loaded}
+                />
+              }
+            />
+            <Row
+              title="Disk type (optional)"
+              description="Data disk type for workers."
+              control={
+                <input
+                  className="settings-control settings-control-wide"
+                  value={gcpDiskType}
+                  onChange={(e) => setGcpDiskType(e.target.value)}
+                  placeholder="pd-ssd"
+                  disabled={!loaded}
+                />
+              }
+            />
+            <Row
+              title="SSH user (optional)"
+              description="Default user for SSH access."
+              control={
+                <input
+                  className="settings-control settings-control-wide"
+                  value={gcpSshUser}
+                  onChange={(e) => setGcpSshUser(e.target.value)}
+                  placeholder="ubuntu"
+                  disabled={!loaded}
+                />
+              }
+            />
+            <Row
+              title="Delete disk on pause"
+              description="Delete worker data disks when pausing."
+              control={
+                <input
+                  className="settings-control"
+                  type="checkbox"
+                  checked={gcpDeleteDiskOnPause}
+                  onChange={(e) => setGcpDeleteDiskOnPause(e.target.checked)}
+                  disabled={!loaded}
+                />
+              }
+            />
+            <Row
+              title="Artifact bucket (optional)"
+              description="Used to stage gateway/shim binaries."
+              control={
+                <input
+                  className="settings-control settings-control-wide"
+                  value={gcpArtifactBucket}
+                  onChange={(e) => setGcpArtifactBucket(e.target.value)}
+                  placeholder="ctx-worker-gateway-my-gcp-project"
+                  disabled={!loaded}
+                />
+              }
+            />
+            <Row
+              title="Actions"
+              control={
+                <button
+                  type="button"
+                  className="settings-btn"
+                  onClick={() => handleSaveGcpSettings().catch(() => {})}
+                  disabled={!gcpCanSave}
+                >
+                  {saving ? "Saving…" : "Save GCP settings"}
+                </button>
+              }
+            />
+          </Card>
+          <Card title="Azure Cloud Workers">
+            <Row
+              title="Subscription ID"
+              description="Required to launch the gateway."
+              control={
+                <input
+                  className="settings-control settings-control-wide"
+                  value={azureSubscriptionId}
+                  onChange={(e) => setAzureSubscriptionId(e.target.value)}
+                  placeholder="00000000-0000-0000-0000-000000000000"
+                  disabled={!loaded}
+                />
+              }
+            />
+            <Row
+              title="Resource group"
+              description="Gateway and workers will be created here."
+              control={
+                <input
+                  className="settings-control settings-control-wide"
+                  value={azureResourceGroup}
+                  onChange={(e) => setAzureResourceGroup(e.target.value)}
+                  placeholder="ctx-cloud-workers"
+                  disabled={!loaded}
+                />
+              }
+            />
+            <Row
+              title="Location"
+              description="Azure region for gateway and workers."
+              control={
+                <input
+                  className="settings-control settings-control-wide"
+                  value={azureLocation}
+                  onChange={(e) => setAzureLocation(e.target.value)}
+                  placeholder="eastus"
+                  disabled={!loaded}
+                />
+              }
+            />
+            <Row
+              title="VM size"
+              description="Default instance size for workers."
+              control={
+                <input
+                  className="settings-control settings-control-wide"
+                  value={azureVmSize}
+                  onChange={(e) => setAzureVmSize(e.target.value)}
+                  placeholder="Standard_B2s"
+                  disabled={!loaded}
+                />
+              }
+            />
+            <Row
+              title="Image"
+              description="Image reference for gateway and workers."
+              control={
+                <input
+                  className="settings-control settings-control-wide"
+                  value={azureImage}
+                  onChange={(e) => setAzureImage(e.target.value)}
+                  placeholder="Canonical:0001-com-ubuntu-server-jammy:22_04-lts:latest"
+                  disabled={!loaded}
+                />
+              }
+            />
+            <Row
+              title="VNet"
+              description="Virtual network name."
+              control={
+                <input
+                  className="settings-control settings-control-wide"
+                  value={azureVnet}
+                  onChange={(e) => setAzureVnet(e.target.value)}
+                  placeholder="vnet-ctx"
+                  disabled={!loaded}
+                />
+              }
+            />
+            <Row
+              title="Subnet"
+              description="Subnet name for the gateway."
+              control={
+                <input
+                  className="settings-control settings-control-wide"
+                  value={azureSubnet}
+                  onChange={(e) => setAzureSubnet(e.target.value)}
+                  placeholder="default"
+                  disabled={!loaded}
+                />
+              }
+            />
+            <Row
+              title="Admin username"
+              description="SSH user for worker instances."
+              control={
+                <input
+                  className="settings-control settings-control-wide"
+                  value={azureAdminUsername}
+                  onChange={(e) => setAzureAdminUsername(e.target.value)}
+                  placeholder="ctx"
+                  disabled={!loaded}
+                />
+              }
+            />
+            <Row
+              title="SSH public key"
+              description="Injected into worker VMs."
+              control={
+                <input
+                  className="settings-control settings-control-wide"
+                  value={azureSshPublicKey}
+                  onChange={(e) => setAzureSshPublicKey(e.target.value)}
+                  placeholder="ssh-rsa AAAA..."
+                  disabled={!loaded}
+                />
+              }
+            />
+            <Row
+              title="Disk size (GB)"
+              description="Managed disk size for workers."
+              control={
+                <input
+                  className="settings-control settings-control-wide"
+                  value={azureDiskSizeGb}
+                  onChange={(e) => setAzureDiskSizeGb(e.target.value)}
+                  placeholder="100"
+                  disabled={!loaded}
+                />
+              }
+            />
+            <Row
+              title="Disk SKU"
+              description="Managed disk SKU (e.g., Premium_LRS)."
+              control={
+                <input
+                  className="settings-control settings-control-wide"
+                  value={azureDiskSku}
+                  onChange={(e) => setAzureDiskSku(e.target.value)}
+                  placeholder="Premium_LRS"
+                  disabled={!loaded}
+                />
+              }
+            />
+            <Row
+              title="Artifact storage account (optional)"
+              description="Used to stage gateway/shim binaries."
+              control={
+                <input
+                  className="settings-control settings-control-wide"
+                  value={azureArtifactStorageAccount}
+                  onChange={(e) => setAzureArtifactStorageAccount(e.target.value)}
+                  placeholder="ctxgw..."
+                  disabled={!loaded}
+                />
+              }
+            />
+            <Row
+              title="Artifact container (optional)"
+              description="Blob container for binaries."
+              control={
+                <input
+                  className="settings-control settings-control-wide"
+                  value={azureArtifactContainer}
+                  onChange={(e) => setAzureArtifactContainer(e.target.value)}
+                  placeholder="ctx-cloud-workers"
+                  disabled={!loaded}
+                />
+              }
+            />
+            <Row
+              title="Actions"
+              control={
+                <button
+                  type="button"
+                  className="settings-btn"
+                  onClick={() => handleSaveAzureSettings().catch(() => {})}
+                  disabled={!azureCanSave}
+                >
+                  {saving ? "Saving…" : "Save Azure settings"}
+                </button>
+              }
+            />
+          </Card>
           <Card title="Gateway">
             <Row
               title="Workspace"
@@ -2268,6 +2907,7 @@ export default function SettingsPage() {
               title="Gateway URL"
               control={<span className="settings-pill wb-mono">{gatewayUrl || "Not launched"}</span>}
             />
+            <Row title="Provider" control={<span className="settings-pill wb-mono">{gatewayProvider || "—"}</span>} />
             <Row
               title="Instance ID"
               control={<span className="settings-pill wb-mono">{gatewayInstanceId || "—"}</span>}
@@ -2275,7 +2915,7 @@ export default function SettingsPage() {
             <Row title="Public IP" control={<span className="settings-pill wb-mono">{gatewayPublicIp || "—"}</span>} />
             <Row title="Region" control={<span className="settings-pill wb-mono">{gatewayRegion || "—"}</span>} />
             <Row
-              title="Actions"
+              title="Launch AWS"
               control={
                 <button
                   type="button"
@@ -2284,6 +2924,32 @@ export default function SettingsPage() {
                   disabled={!awsCanLaunch}
                 >
                   {gatewayLaunchBusy ? "Launching…" : "Launch AWS gateway"}
+                </button>
+              }
+            />
+            <Row
+              title="Launch GCP"
+              control={
+                <button
+                  type="button"
+                  className="settings-btn"
+                  onClick={() => handleLaunchGcpGateway().catch(() => {})}
+                  disabled={!gcpCanLaunch}
+                >
+                  {gatewayLaunchBusy ? "Launching…" : "Launch GCP gateway"}
+                </button>
+              }
+            />
+            <Row
+              title="Launch Azure"
+              control={
+                <button
+                  type="button"
+                  className="settings-btn"
+                  onClick={() => handleLaunchAzureGateway().catch(() => {})}
+                  disabled={!azureCanLaunch}
+                >
+                  {gatewayLaunchBusy ? "Launching…" : "Launch Azure gateway"}
                 </button>
               }
             />

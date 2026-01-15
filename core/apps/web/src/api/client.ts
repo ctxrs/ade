@@ -271,9 +271,43 @@ export type AwsCloudWorkersSettings = {
   artifact_bucket?: string | null;
 };
 
+export type GcpCloudWorkersSettings = {
+  project_id?: string;
+  zone?: string;
+  machine_type?: string;
+  image?: string;
+  network?: string | null;
+  subnetwork?: string | null;
+  service_account?: string | null;
+  scopes?: string[] | null;
+  disk_size_gb?: number | null;
+  disk_type?: string | null;
+  ssh_user?: string | null;
+  delete_disk_on_pause?: boolean | null;
+  artifact_bucket?: string | null;
+};
+
+export type AzureCloudWorkersSettings = {
+  subscription_id?: string;
+  resource_group?: string;
+  location?: string;
+  vm_size?: string;
+  image?: string;
+  vnet?: string;
+  subnet?: string;
+  admin_username?: string;
+  ssh_public_key?: string;
+  disk_size_gb?: number;
+  disk_sku?: string;
+  artifact_storage_account?: string | null;
+  artifact_container?: string | null;
+};
+
 export type CloudWorkersSettings = {
   gateway?: CloudGatewaySettings | null;
   aws?: AwsCloudWorkersSettings | null;
+  gcp?: GcpCloudWorkersSettings | null;
+  azure?: AzureCloudWorkersSettings | null;
 };
 
 export type AwsCloudWorkersSettingsPatch = {
@@ -291,8 +325,42 @@ export type AwsCloudWorkersSettingsPatch = {
   artifact_bucket?: string | null;
 };
 
+export type GcpCloudWorkersSettingsPatch = {
+  project_id?: string;
+  zone?: string;
+  machine_type?: string;
+  image?: string;
+  network?: string | null;
+  subnetwork?: string | null;
+  service_account?: string | null;
+  scopes?: string[] | null;
+  disk_size_gb?: number | null;
+  disk_type?: string | null;
+  ssh_user?: string | null;
+  delete_disk_on_pause?: boolean | null;
+  artifact_bucket?: string | null;
+};
+
+export type AzureCloudWorkersSettingsPatch = {
+  subscription_id?: string;
+  resource_group?: string;
+  location?: string;
+  vm_size?: string;
+  image?: string;
+  vnet?: string;
+  subnet?: string;
+  admin_username?: string;
+  ssh_public_key?: string;
+  disk_size_gb?: number | null;
+  disk_sku?: string;
+  artifact_storage_account?: string | null;
+  artifact_container?: string | null;
+};
+
 export type CloudWorkersSettingsPatch = {
   aws?: AwsCloudWorkersSettingsPatch;
+  gcp?: GcpCloudWorkersSettingsPatch;
+  azure?: AzureCloudWorkersSettingsPatch;
 };
 
 export type Settings = {
@@ -312,6 +380,14 @@ export type UpdateSettingsPatch = Partial<Settings> & {
 };
 
 export type AwsGatewayLaunchResp = {
+  gateway: CloudGatewaySettings;
+};
+
+export type AzureGatewayLaunchResp = {
+  gateway: CloudGatewaySettings;
+};
+
+export type GcpGatewayLaunchResp = {
   gateway: CloudGatewaySettings;
 };
 
@@ -872,6 +948,18 @@ export const updateSettings = (settings: UpdateSettingsPatch) =>
 
 export const launchAwsGateway = (workspace_id?: string | null) =>
   apiAny<AwsGatewayLaunchResp>("/api/settings/cloud_workers/aws/launch", {
+    method: "POST",
+    body: JSON.stringify({ workspace_id: workspace_id ?? null }),
+  });
+
+export const launchAzureGateway = (workspace_id?: string | null) =>
+  apiAny<AzureGatewayLaunchResp>("/api/settings/cloud_workers/azure/launch", {
+    method: "POST",
+    body: JSON.stringify({ workspace_id: workspace_id ?? null }),
+  });
+
+export const launchGcpGateway = (workspace_id?: string | null) =>
+  apiAny<GcpGatewayLaunchResp>("/api/settings/cloud_workers/gcp/launch", {
     method: "POST",
     body: JSON.stringify({ workspace_id: workspace_id ?? null }),
   });

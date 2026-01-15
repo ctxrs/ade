@@ -145,6 +145,10 @@ pub struct CloudWorkersSettings {
     pub gateway: Option<CloudGatewaySettings>,
     #[serde(default)]
     pub aws: Option<AwsCloudWorkersSettings>,
+    #[serde(default)]
+    pub gcp: Option<GcpCloudWorkersSettings>,
+    #[serde(default)]
+    pub azure: Option<AzureCloudWorkersSettings>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -203,6 +207,66 @@ pub struct AwsCloudWorkersSettings {
     pub artifact_bucket: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct GcpCloudWorkersSettings {
+    #[serde(default)]
+    pub project_id: String,
+    #[serde(default)]
+    pub zone: String,
+    #[serde(default)]
+    pub machine_type: String,
+    #[serde(default)]
+    pub image: String,
+    #[serde(default)]
+    pub network: Option<String>,
+    #[serde(default)]
+    pub subnetwork: Option<String>,
+    #[serde(default)]
+    pub service_account: Option<String>,
+    #[serde(default)]
+    pub scopes: Option<Vec<String>>,
+    #[serde(default)]
+    pub disk_size_gb: Option<i64>,
+    #[serde(default)]
+    pub disk_type: Option<String>,
+    #[serde(default)]
+    pub ssh_user: Option<String>,
+    #[serde(default)]
+    pub delete_disk_on_pause: Option<bool>,
+    #[serde(default)]
+    pub artifact_bucket: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct AzureCloudWorkersSettings {
+    #[serde(default)]
+    pub subscription_id: String,
+    #[serde(default)]
+    pub resource_group: String,
+    #[serde(default)]
+    pub location: String,
+    #[serde(default)]
+    pub vm_size: String,
+    #[serde(default)]
+    pub image: String,
+    #[serde(default)]
+    pub vnet: String,
+    #[serde(default)]
+    pub subnet: String,
+    #[serde(default)]
+    pub admin_username: String,
+    #[serde(default)]
+    pub ssh_public_key: String,
+    #[serde(default)]
+    pub disk_size_gb: i32,
+    #[serde(default)]
+    pub disk_sku: String,
+    #[serde(default)]
+    pub artifact_storage_account: Option<String>,
+    #[serde(default)]
+    pub artifact_container: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct PublicAwsCloudWorkersSettings {
     pub access_key_id: String,
@@ -227,11 +291,60 @@ pub struct PublicAwsCloudWorkersSettings {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct PublicGcpCloudWorkersSettings {
+    pub project_id: String,
+    pub zone: String,
+    pub machine_type: String,
+    pub image: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub network: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subnetwork: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub service_account: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scopes: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub disk_size_gb: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub disk_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ssh_user: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub delete_disk_on_pause: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub artifact_bucket: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PublicAzureCloudWorkersSettings {
+    pub subscription_id: String,
+    pub resource_group: String,
+    pub location: String,
+    pub vm_size: String,
+    pub image: String,
+    pub vnet: String,
+    pub subnet: String,
+    pub admin_username: String,
+    pub ssh_public_key: String,
+    pub disk_size_gb: i32,
+    pub disk_sku: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub artifact_storage_account: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub artifact_container: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct PublicCloudWorkersSettings {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gateway: Option<PublicCloudGatewaySettings>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub aws: Option<PublicAwsCloudWorkersSettings>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gcp: Option<PublicGcpCloudWorkersSettings>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub azure: Option<PublicAzureCloudWorkersSettings>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -474,6 +587,10 @@ pub struct UpdateGithubSettingsReq {
 pub struct UpdateCloudWorkersSettingsReq {
     #[serde(default)]
     pub aws: Option<UpdateAwsCloudWorkersSettingsReq>,
+    #[serde(default)]
+    pub gcp: Option<UpdateGcpCloudWorkersSettingsReq>,
+    #[serde(default)]
+    pub azure: Option<UpdateAzureCloudWorkersSettingsReq>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -504,6 +621,65 @@ pub struct UpdateAwsCloudWorkersSettingsReq {
     pub artifact_bucket: Option<String>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct UpdateGcpCloudWorkersSettingsReq {
+    #[serde(default)]
+    pub project_id: Option<String>,
+    #[serde(default)]
+    pub zone: Option<String>,
+    #[serde(default)]
+    pub machine_type: Option<String>,
+    #[serde(default)]
+    pub image: Option<String>,
+    #[serde(default)]
+    pub network: Option<String>,
+    #[serde(default)]
+    pub subnetwork: Option<String>,
+    #[serde(default)]
+    pub service_account: Option<String>,
+    #[serde(default)]
+    pub scopes: Option<Vec<String>>,
+    #[serde(default)]
+    pub disk_size_gb: Option<i64>,
+    #[serde(default)]
+    pub disk_type: Option<String>,
+    #[serde(default)]
+    pub ssh_user: Option<String>,
+    #[serde(default)]
+    pub delete_disk_on_pause: Option<bool>,
+    #[serde(default)]
+    pub artifact_bucket: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct UpdateAzureCloudWorkersSettingsReq {
+    #[serde(default)]
+    pub subscription_id: Option<String>,
+    #[serde(default)]
+    pub resource_group: Option<String>,
+    #[serde(default)]
+    pub location: Option<String>,
+    #[serde(default)]
+    pub vm_size: Option<String>,
+    #[serde(default)]
+    pub image: Option<String>,
+    #[serde(default)]
+    pub vnet: Option<String>,
+    #[serde(default)]
+    pub subnet: Option<String>,
+    #[serde(default)]
+    pub admin_username: Option<String>,
+    #[serde(default)]
+    pub ssh_public_key: Option<String>,
+    #[serde(default)]
+    pub disk_size_gb: Option<i32>,
+    #[serde(default)]
+    pub disk_sku: Option<String>,
+    #[serde(default)]
+    pub artifact_storage_account: Option<String>,
+    #[serde(default)]
+    pub artifact_container: Option<String>,
+}
 #[derive(Debug, Clone, Deserialize)]
 pub struct UpdateResourceGovernanceSettingsReq {
     pub enabled: bool,
@@ -671,29 +847,68 @@ pub fn to_public(settings: &Settings) -> PublicSettings {
             .as_ref()
             .is_some_and(|token| !token.trim().is_empty()),
     });
-    let cloud_workers = settings.cloud_workers.as_ref().map(|cw| PublicCloudWorkersSettings {
-        gateway: cw.gateway.as_ref().map(|gateway| PublicCloudGatewaySettings {
-            provider: gateway.provider.clone(),
-            gateway_url: gateway.gateway_url.clone(),
-            instance_id: gateway.instance_id.clone(),
-            region: gateway.region.clone(),
-            public_ip: gateway.public_ip.clone(),
-        }),
-        aws: cw.aws.as_ref().map(|aws| PublicAwsCloudWorkersSettings {
-            access_key_id: aws.access_key_id.clone(),
-            secret_access_key_set: !aws.secret_access_key.trim().is_empty(),
-            region: aws.region.clone(),
-            gateway_instance_type: aws.gateway_instance_type.clone(),
-            worker_instance_type: aws.worker_instance_type.clone(),
-            subnet_id: aws.subnet_id.clone(),
-            security_group_id: aws.security_group_id.clone(),
-            ssh_key_name: aws.ssh_key_name.clone(),
-            worker_ami_id: aws.worker_ami_id.clone(),
-            gateway_ami_id: aws.gateway_ami_id.clone(),
-            ssh_user: aws.ssh_user.clone(),
-            artifact_bucket: aws.artifact_bucket.clone(),
-        }),
-    });
+    let cloud_workers = settings
+        .cloud_workers
+        .as_ref()
+        .map(|cw| PublicCloudWorkersSettings {
+            gateway: cw
+                .gateway
+                .as_ref()
+                .map(|gateway| PublicCloudGatewaySettings {
+                    provider: gateway.provider.clone(),
+                    gateway_url: gateway.gateway_url.clone(),
+                    instance_id: gateway.instance_id.clone(),
+                    region: gateway.region.clone(),
+                    public_ip: gateway.public_ip.clone(),
+                }),
+            aws: cw.aws.as_ref().map(|aws| PublicAwsCloudWorkersSettings {
+                access_key_id: aws.access_key_id.clone(),
+                secret_access_key_set: !aws.secret_access_key.trim().is_empty(),
+                region: aws.region.clone(),
+                gateway_instance_type: aws.gateway_instance_type.clone(),
+                worker_instance_type: aws.worker_instance_type.clone(),
+                subnet_id: aws.subnet_id.clone(),
+                security_group_id: aws.security_group_id.clone(),
+                ssh_key_name: aws.ssh_key_name.clone(),
+                worker_ami_id: aws.worker_ami_id.clone(),
+                gateway_ami_id: aws.gateway_ami_id.clone(),
+                ssh_user: aws.ssh_user.clone(),
+                artifact_bucket: aws.artifact_bucket.clone(),
+            }),
+            gcp: cw.gcp.as_ref().map(|gcp| PublicGcpCloudWorkersSettings {
+                project_id: gcp.project_id.clone(),
+                zone: gcp.zone.clone(),
+                machine_type: gcp.machine_type.clone(),
+                image: gcp.image.clone(),
+                network: gcp.network.clone(),
+                subnetwork: gcp.subnetwork.clone(),
+                service_account: gcp.service_account.clone(),
+                scopes: gcp.scopes.clone(),
+                disk_size_gb: gcp.disk_size_gb,
+                disk_type: gcp.disk_type.clone(),
+                ssh_user: gcp.ssh_user.clone(),
+                delete_disk_on_pause: gcp.delete_disk_on_pause,
+                artifact_bucket: gcp.artifact_bucket.clone(),
+            }),
+            azure: cw
+                .azure
+                .as_ref()
+                .map(|azure| PublicAzureCloudWorkersSettings {
+                    subscription_id: azure.subscription_id.clone(),
+                    resource_group: azure.resource_group.clone(),
+                    location: azure.location.clone(),
+                    vm_size: azure.vm_size.clone(),
+                    image: azure.image.clone(),
+                    vnet: azure.vnet.clone(),
+                    subnet: azure.subnet.clone(),
+                    admin_username: azure.admin_username.clone(),
+                    ssh_public_key: azure.ssh_public_key.clone(),
+                    disk_size_gb: azure.disk_size_gb,
+                    disk_sku: azure.disk_sku.clone(),
+                    artifact_storage_account: azure.artifact_storage_account.clone(),
+                    artifact_container: azure.artifact_container.clone(),
+                }),
+        });
     let resource_governance =
         settings
             .resource_governance
@@ -820,7 +1035,10 @@ pub fn apply_update(mut current: Settings, req: UpdateSettingsReq) -> Settings {
             set_string(&mut aws.access_key_id, aws_req.access_key_id);
             set_string(&mut aws.secret_access_key, aws_req.secret_access_key);
             set_string(&mut aws.region, aws_req.region);
-            set_string(&mut aws.gateway_instance_type, aws_req.gateway_instance_type);
+            set_string(
+                &mut aws.gateway_instance_type,
+                aws_req.gateway_instance_type,
+            );
             set_string(&mut aws.worker_instance_type, aws_req.worker_instance_type);
             set_optional(&mut aws.subnet_id, aws_req.subnet_id);
             set_optional(&mut aws.security_group_id, aws_req.security_group_id);
@@ -830,6 +1048,100 @@ pub fn apply_update(mut current: Settings, req: UpdateSettingsReq) -> Settings {
             set_optional(&mut aws.ssh_user, aws_req.ssh_user);
             set_optional(&mut aws.artifact_bucket, aws_req.artifact_bucket);
             next.aws = Some(aws);
+        }
+        if let Some(gcp_req) = cw.gcp {
+            let mut gcp = next.gcp.unwrap_or_default();
+            let mut set_string = |target: &mut String, value: Option<String>| {
+                if let Some(value) = value {
+                    let trimmed = value.trim();
+                    if trimmed.is_empty() {
+                        target.clear();
+                    } else {
+                        *target = trimmed.to_string();
+                    }
+                }
+            };
+            let mut set_optional = |target: &mut Option<String>, value: Option<String>| {
+                if let Some(value) = value {
+                    let trimmed = value.trim();
+                    if trimmed.is_empty() {
+                        *target = None;
+                    } else {
+                        *target = Some(trimmed.to_string());
+                    }
+                }
+            };
+            set_string(&mut gcp.project_id, gcp_req.project_id);
+            set_string(&mut gcp.zone, gcp_req.zone);
+            set_string(&mut gcp.machine_type, gcp_req.machine_type);
+            set_string(&mut gcp.image, gcp_req.image);
+            set_optional(&mut gcp.network, gcp_req.network);
+            set_optional(&mut gcp.subnetwork, gcp_req.subnetwork);
+            set_optional(&mut gcp.service_account, gcp_req.service_account);
+            if let Some(scopes) = gcp_req.scopes {
+                let scopes = scopes
+                    .into_iter()
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| !value.is_empty())
+                    .collect::<Vec<_>>();
+                gcp.scopes = if scopes.is_empty() {
+                    None
+                } else {
+                    Some(scopes)
+                };
+            }
+            if let Some(size) = gcp_req.disk_size_gb {
+                gcp.disk_size_gb = if size > 0 { Some(size) } else { None };
+            }
+            set_optional(&mut gcp.disk_type, gcp_req.disk_type);
+            set_optional(&mut gcp.ssh_user, gcp_req.ssh_user);
+            if let Some(delete) = gcp_req.delete_disk_on_pause {
+                gcp.delete_disk_on_pause = Some(delete);
+            }
+            set_optional(&mut gcp.artifact_bucket, gcp_req.artifact_bucket);
+            next.gcp = Some(gcp);
+        }
+        if let Some(azure_req) = cw.azure {
+            let mut azure = next.azure.unwrap_or_default();
+            let mut set_string = |target: &mut String, value: Option<String>| {
+                if let Some(value) = value {
+                    let trimmed = value.trim();
+                    if trimmed.is_empty() {
+                        target.clear();
+                    } else {
+                        *target = trimmed.to_string();
+                    }
+                }
+            };
+            let mut set_optional = |target: &mut Option<String>, value: Option<String>| {
+                if let Some(value) = value {
+                    let trimmed = value.trim();
+                    if trimmed.is_empty() {
+                        *target = None;
+                    } else {
+                        *target = Some(trimmed.to_string());
+                    }
+                }
+            };
+            set_string(&mut azure.subscription_id, azure_req.subscription_id);
+            set_string(&mut azure.resource_group, azure_req.resource_group);
+            set_string(&mut azure.location, azure_req.location);
+            set_string(&mut azure.vm_size, azure_req.vm_size);
+            set_string(&mut azure.image, azure_req.image);
+            set_string(&mut azure.vnet, azure_req.vnet);
+            set_string(&mut azure.subnet, azure_req.subnet);
+            set_string(&mut azure.admin_username, azure_req.admin_username);
+            set_string(&mut azure.ssh_public_key, azure_req.ssh_public_key);
+            if let Some(size) = azure_req.disk_size_gb {
+                azure.disk_size_gb = if size > 0 { size } else { 0 };
+            }
+            set_string(&mut azure.disk_sku, azure_req.disk_sku);
+            set_optional(
+                &mut azure.artifact_storage_account,
+                azure_req.artifact_storage_account,
+            );
+            set_optional(&mut azure.artifact_container, azure_req.artifact_container);
+            next.azure = Some(azure);
         }
         current.cloud_workers = Some(next);
     }

@@ -16,8 +16,8 @@ use ctx_core::models::{
     MessageRole, SessionEventType, SessionHead, Task, TrackWorker, Workspace,
     WorkspaceCatchupSnapshot,
 };
+use ctx_http::settings::Settings as DaemonSettings;
 use ctx_http::settings::{AwsCloudWorkersSettings, CloudGatewaySettings, CloudWorkersSettings};
-use ctx_http::settings::{Settings as DaemonSettings};
 
 const REQUIRED_TIER: &str = "3";
 const ASSISTANT_PROMPT: &str = "Reply with the exact text: cloud_gateway_aws_e2e_ok";
@@ -271,11 +271,9 @@ async fn cloud_gateway_aws_e2e() -> Result<()> {
 
         wait_for_daemon(&base_url).await?;
 
-        let ws: Workspace = send_json(
-            client
-                .post(format!("{base_url}/api/workspaces"))
-                .json(&json!({"root_path": workspace_root.to_string_lossy(), "name": "aws-gateway-e2e"})),
-        )
+        let ws: Workspace = send_json(client.post(format!("{base_url}/api/workspaces")).json(
+            &json!({"root_path": workspace_root.to_string_lossy(), "name": "aws-gateway-e2e"}),
+        ))
         .await?;
 
         let task: Task = send_json(
@@ -285,10 +283,8 @@ async fn cloud_gateway_aws_e2e() -> Result<()> {
         )
         .await?;
 
-        let snapshot: WorkspaceCatchupSnapshot = send_json(
-            client.get(format!("{base_url}/api/workspaces/{}/catchup", ws.id.0)),
-        )
-        .await?;
+        let snapshot: WorkspaceCatchupSnapshot =
+            send_json(client.get(format!("{base_url}/api/workspaces/{}/catchup", ws.id.0))).await?;
         let track = snapshot
             .active
             .tasks
@@ -335,10 +331,7 @@ async fn cloud_gateway_aws_e2e() -> Result<()> {
 
         let _: ctx_core::models::Message = send_json(
             client
-                .post(format!(
-                    "{base_url}/api/sessions/{}/messages",
-                    session.id.0
-                ))
+                .post(format!("{base_url}/api/sessions/{}/messages", session.id.0))
                 .json(&json!({ "content": ASSISTANT_PROMPT })),
         )
         .await?;
@@ -365,10 +358,7 @@ async fn cloud_gateway_aws_e2e() -> Result<()> {
 
     if let Some(gateway) = gateway.as_ref() {
         if let Some(instance_id) = gateway.instance_id.as_deref() {
-            let region = gateway
-                .region
-                .as_deref()
-                .unwrap_or(region.as_str());
+            let region = gateway.region.as_deref().unwrap_or(region.as_str());
             if let Err(err) = terminate_gateway_instance(
                 region,
                 &access_key_id,

@@ -1624,7 +1624,7 @@ fn spawn_snapshot_reaper(state: AppState) {
                 workers
                     .iter()
                     .filter_map(|(id, record)| {
-                        if record.state != WorkerState::Paused {
+                        if !matches!(record.state, WorkerState::Paused) {
                             return None;
                         }
                         let expires_at = record.snapshot_expires_at?;
