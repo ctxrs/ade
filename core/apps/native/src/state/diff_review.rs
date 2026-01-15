@@ -1,5 +1,4 @@
-use gpui::{AsyncApp, Context, WeakEntity};
-use gpui_tokio::Tokio;
+use gpui::Context;
 
 use ctx_core::ids::WorktreeId;
 
@@ -137,43 +136,16 @@ impl DiffReviewState {
     }
 
     pub(crate) fn reload_diff(&mut self, cx: &mut Context<Self>) {
-        let Some(worktree_id) = self.worktree_id else {
+        if self.worktree_id.is_none() {
             return;
-        };
-        self.busy_key = Some("diff:load".to_string());
-        self.status = None;
+        }
+        self.busy_key = None;
+        self.status = Some("Diff unavailable in trackless mode.".to_string());
         self.error = None;
+        self.diff.clear();
+        self.files.clear();
+        self.active_file_key = None;
         cx.notify();
-
-        let task = Tokio::spawn_result(cx, async move {
-            let config = ctx_client::resolve_daemon_config()?;
-            let client = ctx_client::Client::new(config)?;
-            client.get_worktree_diff(worktree_id).await
-        });
-
-        cx.spawn(move |this: WeakEntity<DiffReviewState>, cx: &mut AsyncApp| {
-            let mut cx = cx.clone();
-            async move {
-                let result = task.await;
-                this.update(&mut cx, |view, cx| {
-                    if view.worktree_id != Some(worktree_id) {
-                        return;
-                    }
-                    view.busy_key = None;
-                    match result {
-                        Ok(diff) => {
-                            view.set_diff(diff);
-                        }
-                        Err(err) => {
-                            view.error = Some(err.to_string());
-                        }
-                    }
-                    cx.notify();
-                })
-                .ok();
-            }
-        })
-        .detach();
     }
 
     pub(crate) fn apply_file_patch(
@@ -258,50 +230,11 @@ impl DiffReviewState {
         status_message: String,
         cx: &mut Context<Self>,
     ) {
-        let Some(worktree_id) = self.worktree_id else {
-            return;
-        };
-        if self.busy_key.is_some() {
-            return;
-        }
-        self.busy_key = Some(busy_key);
-        self.status = None;
+        let _ = (busy_key, action, patch, status_message);
+        self.busy_key = None;
+        self.status = Some("Diff unavailable in trackless mode.".to_string());
         self.error = None;
         cx.notify();
-
-        let action_label = action.as_str().to_string();
-        let task = Tokio::spawn_result(cx, async move {
-            let config = ctx_client::resolve_daemon_config()?;
-            let client = ctx_client::Client::new(config)?;
-            client
-                .apply_worktree_diff_patch(worktree_id, &action_label, &patch)
-                .await
-        });
-
-        cx.spawn(move |this: WeakEntity<DiffReviewState>, cx: &mut AsyncApp| {
-            let mut cx = cx.clone();
-            async move {
-                let result = task.await;
-                this.update(&mut cx, |view, cx| {
-                    if view.worktree_id != Some(worktree_id) {
-                        return;
-                    }
-                    view.busy_key = None;
-                    match result {
-                        Ok(diff) => {
-                            view.set_diff(diff);
-                            view.status = Some(status_message);
-                        }
-                        Err(err) => {
-                            view.error = Some(err.to_string());
-                        }
-                    }
-                    cx.notify();
-                })
-                .ok();
-            }
-        })
-        .detach();
     }
 }
 
