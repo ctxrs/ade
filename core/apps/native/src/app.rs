@@ -36,7 +36,7 @@ mod state;
 #[path = "views/mod.rs"]
 mod views;
 
-use self::icons::{Icon, IconAssets, IconName};
+use self::icons::{AppAssets, Icon, IconName};
 use self::models::{MessageItem, SessionInfo};
 use self::state::{
     ArtifactPreviewState, ComposerAutocompleteState, ComposerDraft, ComposerVerbosity, DataLoadState,
@@ -404,7 +404,7 @@ pub(crate) fn open_shell_window(
 pub fn run(options: AppOptions) {
     let is_dark = true;
     let (theme_tokens, colors) = load_theme(is_dark);
-    let app = Application::new().with_assets(IconAssets::new());
+    let app = Application::new().with_assets(AppAssets::new());
     app.run(move |cx: &mut App| {
         gpui_component::init(cx);
         crate::theme::apply_gpui_component_theme(&theme_tokens, is_dark, cx);
@@ -434,7 +434,7 @@ impl Render for ShellView {
         self.update_composer_placeholders(window, cx);
         self.ensure_track_model_inputs(window, cx);
         self.sync_auxiliary_panes(cx);
-        let toggle_label = Icon::new(IconName::Settings, 12.0, self.colors.muted);
+        let settings_icon = Icon::new(IconName::Settings, 14.0, self.colors.text);
         let resyncing = self
             .resyncing_session
             .and_then(|resync_id| {
@@ -448,24 +448,23 @@ impl Render for ShellView {
             .and_then(|id| self.workspaces.iter().find(|ws| ws.id == id))
             .map(|ws| ws.name.clone())
             .unwrap_or_else(|| "No workspace".to_string());
-        let task_label = self
-            .selected_task
-            .and_then(|task_id| self.tasks_by_id.get(&task_id))
-            .map(|task| task.task.title.clone());
-        let mut title_label = div()
+        let settings_button = div()
+            .id("settings-button")
+            .w(px(28.0))
+            .h(px(28.0))
             .flex()
             .items_center()
-            .gap_2()
-            .text_sm()
-            .child(workspace_label);
-        if let Some(task_label) = task_label {
-            title_label = title_label.child(
-                div()
-                    .text_sm()
-                    .text_color(self.colors.muted)
-                    .child(task_label),
-            );
-        }
+            .justify_center()
+            .rounded_md()
+            .bg(self.colors.panel_2)
+            .border_1()
+            .border_color(self.colors.border)
+            .cursor_pointer()
+            .active(|style| style.opacity(0.85))
+            .child(settings_icon)
+            .on_click(cx.listener(|view, _: &ClickEvent, _window, cx| {
+                view.set_route(ShellRoute::Settings, cx);
+            }));
         div()
             .on_children_prepainted(automation_tree::track_children_bounds(
                 "app-shell",
@@ -493,27 +492,18 @@ impl Render for ShellView {
                         div()
                             .flex()
                             .items_center()
-                            .justify_between()
                             .w_full()
-                            .child(title_label)
+                            .child(div().w(px(28.0)).flex_none())
                             .child(
                                 div()
-                                    .id("settings-button")
-                                    .flex_none()
-                                    .px_2()
-                                    .py_1()
+                                    .flex()
+                                    .flex_1()
+                                    .items_center()
+                                    .justify_center()
                                     .text_sm()
-                                    .bg(self.colors.panel_2)
-                                    .border_1()
-                                    .border_color(self.colors.border)
-                                    .rounded_sm()
-                                    .cursor_pointer()
-                                    .active(|this| this.opacity(0.85))
-                                    .child(toggle_label)
-                                    .on_click(cx.listener(|view, _: &ClickEvent, _window, cx| {
-                                        view.set_route(ShellRoute::Settings, cx);
-                                    })),
-                            ),
+                                    .child(workspace_label),
+                            )
+                            .child(settings_button),
                     ),
             )
             .child(

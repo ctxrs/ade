@@ -4,6 +4,7 @@ use gpui::{
     App, AssetSource, Component, RenderOnce, Result, Rgba, SharedString, Transformation, Window,
     prelude::*, px, svg,
 };
+use gpui_component_assets::Assets as ComponentAssets;
 
 // Lucide icons (MIT), rendered as monochrome SVG masks.
 const SETTINGS_SVG: &str = r#"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915\"/><circle cx=\"12\" cy=\"12\" r=\"3\"/></svg>"#;
@@ -204,6 +205,40 @@ impl AssetSource for IconAssets {
         } else {
             Ok(Vec::new())
         }
+    }
+}
+
+pub(crate) struct AppAssets {
+    icon_assets: IconAssets,
+    component_assets: ComponentAssets,
+}
+
+impl AppAssets {
+    pub(crate) fn new() -> Self {
+        Self {
+            icon_assets: IconAssets::new(),
+            component_assets: ComponentAssets,
+        }
+    }
+}
+
+impl AssetSource for AppAssets {
+    fn load(&self, path: &str) -> Result<Option<Cow<'static, [u8]>>> {
+        if let Some(data) = self.icon_assets.load(path)? {
+            return Ok(Some(data));
+        }
+
+        match self.component_assets.load(path) {
+            Ok(data) => Ok(data),
+            Err(_) => Ok(None),
+        }
+    }
+
+    fn list(&self, path: &str) -> Result<Vec<SharedString>> {
+        let mut entries = self.icon_assets.list(path)?;
+        let mut component_entries = self.component_assets.list(path)?;
+        entries.append(&mut component_entries);
+        Ok(entries)
     }
 }
 

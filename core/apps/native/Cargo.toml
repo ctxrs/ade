@@ -22,6 +22,7 @@ futures-util = "0.3"
 gpui = { git = "https://github.com/ctxrs/zed", rev = "610b3d0ed59eae582d14a0857c059dc1281fcfa0", package = "gpui" }
 gpui_tokio = { git = "https://github.com/ctxrs/zed", rev = "610b3d0ed59eae582d14a0857c059dc1281fcfa0", package = "gpui_tokio" }
 gpui-component = { git = "https://github.com/ctxrs/gpui-component", rev = "76d64362a1c0bdf825f83efb0ae3f4cb93849bd7", version = "0.5.0" }
+gpui-component-assets = { git = "https://github.com/ctxrs/gpui-component", rev = "76d64362a1c0bdf825f83efb0ae3f4cb93849bd7", version = "0.5.0" }
 image = { version = "0.25", default-features = false, features = ["png"] }
 qrcode = "0.14"
 regex = "1"
