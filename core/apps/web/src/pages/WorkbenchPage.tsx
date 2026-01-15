@@ -770,6 +770,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const [artifactsOpen, setArtifactsOpen] = useState(false);
   const [artifactsOpenHydrated, setArtifactsOpenHydrated] = useState(false);
   const [artifactsOpenSeeded, setArtifactsOpenSeeded] = useState(false);
+  const [, setArtifactsAutoOpenPending] = useState(false);
   const [artifactsHeight, setArtifactsHeight] = useState(260);
   const [artifactsResizing, setArtifactsResizing] = useState(false);
   const artifactsPaneScopeRef = useRef<string | null>(null);
