@@ -12,7 +12,8 @@ use gpui_tokio::Tokio;
 
 use ctx_core::ids::{SessionId, TurnId};
 use ctx_core::models::{
-    Artifact, MessageRole, SessionEvent, SessionHead, SessionHistoryPage, SessionTurn,
+    MessageRole, SessionEvent, SessionHeadSnapshot, SessionHistoryPage, SessionSnapshot,
+    SessionTurn,
 };
 use ctx_client;
 
@@ -26,10 +27,7 @@ use super::SessionViewVerbosity;
 
 struct SessionLoadResult {
     session_id: SessionId,
-    session_head: Option<SessionHead>,
-    session_history: Option<SessionHistoryPage>,
-    session_events: Vec<SessionEvent>,
-    artifacts: Vec<Artifact>,
+    session_snapshot: Option<SessionSnapshot>,
 }
 
 #[derive(Clone, Default)]
@@ -38,6 +36,33 @@ pub(crate) struct SessionThreadCache {
     pub(super) session_turns: Vec<SessionTurn>,
     pub(super) session_turn_tools: HashMap<TurnId, Vec<TurnToolSnapshot>>,
     pub(super) session_events: Vec<SessionEvent>,
+    pub(super) history_cursor: Option<i64>,
+    pub(super) has_more_history: bool,
+}
+
+impl SessionThreadCache {
+    pub(super) fn from_snapshot(head: &SessionHeadSnapshot) -> Self {
+        let messages = head
+            .messages
+            .iter()
+            .map(message_item_from_model)
+            .collect::<Vec<_>>();
+        let session_turns = head.turns.clone();
+        let session_turn_tools = build_turn_tool_snapshots(Some(head));
+        let session_events = head.events.clone();
+        let history_cursor = head
+            .history_cursor
+            .or_else(|| head.turns.first().and_then(|turn| turn.start_seq.or(turn.end_seq)));
+        let has_more_history = head.has_more_history || head.has_more_turns;
+        Self {
+            messages,
+            session_turns,
+            session_turn_tools,
+            session_events,
+            history_cursor,
+            has_more_history,
+        }
+    }
 }
 
 const COPIED_TIMEOUT: Duration = Duration::from_millis(1_000);
@@ -366,11 +391,13 @@ impl ShellView {
                 session_turns: self.session_turns.clone(),
                 session_turn_tools: self.session_turn_tools.clone(),
                 session_events: self.session_events.clone(),
+                history_cursor: self.session_history_cursor,
+                has_more_history: self.session_history_has_more,
             },
         );
     }
 
-    fn apply_cached_thread_state(
+    pub(super) fn apply_cached_thread_state(
         &mut self,
         session_id: SessionId,
         cx: &mut Context<Self>,
@@ -381,6 +408,9 @@ impl ShellView {
         self.session_turns = cache.session_turns.clone();
         self.session_turn_tools = cache.session_turn_tools.clone();
         self.session_events = cache.session_events.clone();
+        self.session_history_cursor = cache.history_cursor;
+        self.session_history_has_more = cache.has_more_history;
+        self.session_history_loading = false;
         self.replace_messages(cache.messages.clone(), cx);
         true
     }
@@ -541,48 +571,33 @@ impl ShellView {
         }
         self.reset_thread_state();
         self.artifacts.clear();
+        self.artifacts_session_id = None;
         self.artifact_preview = ArtifactPreviewState::None;
         self.session_events.clear();
         self.selected_artifact = None;
         self.resyncing_session = None;
-        if !self.apply_cached_thread_state(session_id, cx) {
+        let used_cache = self.apply_cached_thread_state(session_id, cx);
+        if !used_cache {
             self.apply_empty_thread_state(cx);
         }
         cx.notify();
-        self.load_session_details(session_id, cx);
+        if !used_cache {
+            self.load_session_details(session_id, cx);
+        } else if self.show_artifacts_pane {
+            self.load_session_artifacts(session_id, cx);
+        }
     }
 
     pub(super) fn load_session_details(&mut self, session_id: SessionId, cx: &mut Context<Self>) {
         let task = Tokio::spawn_result(cx, async move {
             let config = ctx_client::resolve_daemon_config()?;
             let client = ctx_client::Client::new(config)?;
-            let session_head = client
-                .get_session_head(session_id, Some(40), Some(false))
-                .await
-                .ok();
-            let session_history = client
-                .get_session_history(session_id, None, Some(SESSION_HISTORY_PAGE_LIMIT))
-                .await
-                .ok();
-            let session_events = client
-                .get_session_events(session_id, None, None, Some(40))
-                .await
-                .ok()
-                .map(|page| page.events)
-                .unwrap_or_default();
-            let artifacts = client
-                .list_session_artifacts(session_id)
-                .await
-                .ok()
-                .map(|items| items.into_iter().collect::<Vec<_>>())
-                .unwrap_or_default();
-
             Ok(SessionLoadResult {
                 session_id,
-                session_head,
-                session_history,
-                session_events,
-                artifacts,
+                session_snapshot: client
+                    .get_session_snapshot(session_id, Some(40), Some(false))
+                    .await
+                    .ok(),
             })
         });
 
@@ -594,100 +609,164 @@ impl ShellView {
                     if !view.is_session_selected(session_id) {
                         return;
                     }
-                match result {
-                    Ok(data) => {
-                        view.session = data
-                            .session_head
-                            .as_ref()
-                            .map(session_info_from_head)
-                            .or_else(|| {
-                                view.session_summary_map
-                                    .get(&data.session_id)
-                                    .map(session_info_from_summary)
-                            })
-                            .unwrap_or_else(SessionInfo::placeholder);
-                        if let Some(head) = data.session_head.as_ref() {
-                            view.composer_provider_id = Some(head.session.provider_id.clone());
-                            view.composer_model_id = Some(head.session.model_id.clone());
-                        }
-                        if let Some(index) = view.selected_session {
-                            if let Some(summary) = view.sessions.get_mut(index) {
-                                if summary.session_id == data.session_id {
-                                    summary.status = view.session.status.clone();
-                                    summary.title = view.session.title.clone();
+                    match result {
+                        Ok(data) => {
+                            let snapshot = data.session_snapshot.as_ref();
+                            view.session = snapshot
+                                .map(|snapshot| session_info_from_head(&snapshot.head))
+                                .or_else(|| {
+                                    view.session_summary_map
+                                        .get(&data.session_id)
+                                        .map(session_info_from_summary)
+                                })
+                                .unwrap_or_else(SessionInfo::placeholder);
+                            if let Some(snapshot) = snapshot {
+                                view.composer_provider_id =
+                                    Some(snapshot.head.session.provider_id.clone());
+                                view.composer_model_id =
+                                    Some(snapshot.head.session.model_id.clone());
+                            }
+                            if let Some(index) = view.selected_session {
+                                if let Some(summary) = view.sessions.get_mut(index) {
+                                    if summary.session_id == data.session_id {
+                                        summary.status = view.session.status.clone();
+                                        summary.title = view.session.title.clone();
+                                    }
+                                }
+                            }
+                            if let Some(snapshot) = snapshot {
+                                let head = &snapshot.head;
+                                let mut messages = build_message_items(Some(head), None);
+                                if messages.is_empty() {
+                                    messages.push(MessageItem::new(
+                                        MessageRole::Assistant,
+                                        "No messages yet. Create one to begin.",
+                                    ));
+                                }
+                                view.session_history_cursor = head
+                                    .history_cursor
+                                    .or_else(|| {
+                                        head.turns.first().and_then(|turn| {
+                                            turn.start_seq.or(turn.end_seq)
+                                        })
+                                    });
+                                view.session_history_has_more =
+                                    head.has_more_history || head.has_more_turns;
+                                view.session_history_loading = false;
+                                view.session_events = head.events.clone();
+                                view.session_turns = head.turns.clone();
+                                view.session_turn_tools = build_turn_tool_snapshots(Some(head));
+                                view.replace_messages(messages, cx);
+                                view.cache_session_thread_state(data.session_id);
+                                view.update_session_last_event_seq(
+                                    head.session.id,
+                                    head.last_event_seq,
+                                );
+                                if view.show_artifacts_pane {
+                                    view.load_session_artifacts(data.session_id, cx);
+                                }
+                                if view.resyncing_session == Some(session_id) {
+                                    view.resyncing_session = None;
+                                }
+                            } else {
+                                view.replace_messages(vec![MessageItem::new(
+                                    MessageRole::Assistant,
+                                    "Unable to load session details.",
+                                )], cx);
+                                view.session_events.clear();
+                                view.session_turns.clear();
+                                view.session_turn_tools.clear();
+                                view.thread_items.clear();
+                                view.thread_list_state.reset(0);
+                                view.thread_list_len = 0;
+                                view.sticky_turn_header = None;
+                                view.sticky_turn_header_at_top = true;
+                                view.session_history_cursor = None;
+                                view.session_history_has_more = false;
+                                view.session_history_loading = false;
+                                if view.resyncing_session == Some(session_id) {
+                                    view.resyncing_session = None;
+                                }
+                                if let Some(summary) = view.session_summary_map.get(&session_id) {
+                                    view.session = session_info_from_summary(summary);
                                 }
                             }
                         }
-                        let mut messages = build_message_items(
-                            data.session_head.as_ref(),
-                            data.session_history.as_ref(),
-                        );
-                        if messages.is_empty() {
-                            messages.push(MessageItem::new(
-                                MessageRole::Assistant,
-                                "No messages yet. Create one to begin.",
-                            ));
-                        }
-                        view.session_history_cursor =
-                            data.session_history.as_ref().and_then(|page| page.next_cursor);
-                        view.session_history_has_more = data
-                            .session_history
-                            .as_ref()
-                            .map(|page| page.has_more)
-                            .unwrap_or(false);
-                        view.session_history_loading = false;
-                        view.session_events = data.session_events;
-                        view.session_turns = merge_session_turns(
-                            data.session_head.as_ref(),
-                            data.session_history.as_ref(),
-                        );
-                        view.session_turn_tools =
-                            build_turn_tool_snapshots(data.session_head.as_ref());
-                        view.replace_messages(messages, cx);
-                        view.cache_session_thread_state(data.session_id);
-                        if let Some(head) = data.session_head.as_ref() {
-                            view.update_session_last_event_seq(head.session.id, head.last_event_seq);
-                        } else if let Some(event) = view.session_events.last() {
-                            view.update_session_last_event_seq(event.session_id, event.seq);
-                        }
-                        view.artifacts = data.artifacts;
-                        view.selected_artifact = if view.artifacts.is_empty() {
-                            None
-                        } else {
-                            Some(0)
-                        };
-                        view.load_artifact_preview(cx);
-                        if view.resyncing_session == Some(session_id) {
-                            view.resyncing_session = None;
+                        Err(_) => {
+                            view.replace_messages(
+                                vec![MessageItem::new(
+                                    MessageRole::Assistant,
+                                    "Unable to load session details.",
+                                )],
+                                cx,
+                            );
+                            view.session_events.clear();
+                            view.session_turns.clear();
+                            view.session_turn_tools.clear();
+                            view.thread_items.clear();
+                            view.thread_list_state.reset(0);
+                            view.thread_list_len = 0;
+                            view.sticky_turn_header = None;
+                            view.sticky_turn_header_at_top = true;
+                            view.session_history_cursor = None;
+                            view.session_history_has_more = false;
+                            view.session_history_loading = false;
+                            if view.resyncing_session == Some(session_id) {
+                                view.resyncing_session = None;
+                            }
+                            if let Some(summary) = view.session_summary_map.get(&session_id) {
+                                view.session = session_info_from_summary(summary);
+                            }
                         }
                     }
-                    Err(_) => {
-                        view.replace_messages(vec![MessageItem::new(
-                            MessageRole::Assistant,
-                            "Unable to load session details.",
-                        )], cx);
-                        view.session_events.clear();
-                        view.session_turns.clear();
-                        view.session_turn_tools.clear();
-                        view.thread_items.clear();
-                        view.thread_list_state.reset(0);
-                        view.thread_list_len = 0;
-                        view.sticky_turn_header = None;
-                        view.sticky_turn_header_at_top = true;
-                        view.session_history_cursor = None;
-                        view.session_history_has_more = false;
-                        view.session_history_loading = false;
-                        view.artifacts.clear();
-                        view.selected_artifact = None;
-                        view.artifact_preview = ArtifactPreviewState::None;
-                        if view.resyncing_session == Some(session_id) {
-                            view.resyncing_session = None;
-                        }
-                        if let Some(summary) = view.session_summary_map.get(&session_id) {
-                            view.session = session_info_from_summary(summary);
-                        }
+                    cx.notify();
+                })
+                .ok();
+            }
+        })
+        .detach();
+    }
+
+    pub(super) fn load_session_artifacts(
+        &mut self,
+        session_id: SessionId,
+        cx: &mut Context<Self>,
+    ) {
+        if self.artifacts_session_id == Some(session_id) && !self.artifacts.is_empty() {
+            return;
+        }
+        self.artifacts_session_id = Some(session_id);
+
+        let task = Tokio::spawn_result(cx, async move {
+            let config = ctx_client::resolve_daemon_config()?;
+            let client = ctx_client::Client::new(config)?;
+            let artifacts = client
+                .list_session_artifacts(session_id)
+                .await
+                .ok()
+                .map(|items| items.into_iter().collect::<Vec<_>>())
+                .unwrap_or_default();
+            Ok((session_id, artifacts))
+        });
+
+        cx.spawn(move |this: WeakEntity<ShellView>, cx: &mut AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                let result = task.await;
+                this.update(&mut cx, |view, cx| {
+                    let Ok((session_id, artifacts)) = result else {
+                        return;
+                    };
+                    if view.artifacts_session_id != Some(session_id) {
+                        return;
                     }
-                }
+                    view.artifacts = artifacts;
+                    view.selected_artifact = if view.artifacts.is_empty() {
+                        None
+                    } else {
+                        Some(0)
+                    };
+                    view.load_artifact_preview(cx);
                     cx.notify();
                 })
                 .ok();
@@ -827,31 +906,9 @@ impl ShellView {
     }
 }
 
-fn merge_session_turns(
-    head: Option<&SessionHead>,
-    history: Option<&SessionHistoryPage>,
-) -> Vec<SessionTurn> {
-    let mut turns: HashMap<TurnId, SessionTurn> = HashMap::new();
-    if let Some(history) = history {
-        for turn in &history.turns {
-            turns.insert(turn.turn_id, turn.clone());
-        }
-    }
-    if let Some(head) = head {
-        for turn in &head.turns {
-            turns.insert(turn.turn_id, turn.clone());
-        }
-    }
-    let mut out: Vec<SessionTurn> = turns.into_values().collect();
-    out.sort_by(|a, b| {
-        a.started_at
-            .cmp(&b.started_at)
-            .then_with(|| a.updated_at.cmp(&b.updated_at))
-    });
-    out
-}
-
-fn build_turn_tool_snapshots(head: Option<&SessionHead>) -> HashMap<TurnId, Vec<TurnToolSnapshot>> {
+fn build_turn_tool_snapshots(
+    head: Option<&SessionHeadSnapshot>,
+) -> HashMap<TurnId, Vec<TurnToolSnapshot>> {
     let mut out: HashMap<TurnId, Vec<TurnToolSnapshot>> = HashMap::new();
     let Some(head) = head else {
         return out;

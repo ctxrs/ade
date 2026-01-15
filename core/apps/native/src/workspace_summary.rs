@@ -1,6 +1,7 @@
 use ctx_core::ids::{SessionId, TaskId};
 use ctx_core::models::{
-    SessionStatus, Task, WorkspaceCatchupSnapshot, WorkspaceCatchupTrackSummary,
+    Session, SessionCatchupSummary, SessionMetadata, SessionSnapshotSummary, SessionStatus, Task,
+    WorkspaceActiveSnapshot, WorkspaceActiveTaskSummary, WorkspaceCatchupSnapshot,
     WorkspaceCatchupTaskSummary,
 };
 
@@ -8,21 +9,35 @@ use ctx_core::models::{
 pub struct TaskSummaryItem {
     pub id: TaskId,
     pub task: Task,
-    pub tracks: Vec<WorkspaceCatchupTrackSummary>,
+    pub primary_session: Option<SessionSnapshotSummary>,
+    pub sessions: Vec<SessionSnapshotSummary>,
     pub sort_at_ms: i64,
 }
 
 impl TaskSummaryItem {
-    pub fn from_summary(summary: &WorkspaceCatchupTaskSummary) -> Self {
+    pub fn from_active(summary: &WorkspaceActiveTaskSummary) -> Self {
+        let sort_at_ms = summary.sort_at.timestamp_millis();
+        Self {
+            id: summary.task.id,
+            task: summary.task.clone(),
+            primary_session: Some(summary.primary_session.clone()),
+            sessions: summary.sessions.clone(),
+            sort_at_ms,
+        }
+    }
+
+    pub fn from_archived(summary: &WorkspaceCatchupTaskSummary) -> Self {
         let sort_at_ms = summary
             .task
             .archived_at
             .unwrap_or(summary.task.created_at)
             .timestamp_millis();
+        let (primary_session, sessions) = archived_session_summaries(summary);
         Self {
             id: summary.task.id,
             task: summary.task.clone(),
-            tracks: summary.tracks.clone(),
+            primary_session,
+            sessions,
             sort_at_ms,
         }
     }
@@ -32,7 +47,8 @@ impl TaskSummaryItem {
         Self {
             id: self.id,
             task,
-            tracks: self.tracks.clone(),
+            primary_session: self.primary_session.clone(),
+            sessions: self.sessions.clone(),
             sort_at_ms: sort_at.timestamp_millis(),
         }
     }
@@ -55,51 +71,64 @@ pub struct WorkspaceCatchupCounts {
     pub archived_total: Option<i64>,
 }
 
-pub fn catchup_counts(snapshot: &WorkspaceCatchupSnapshot) -> WorkspaceCatchupCounts {
+pub fn catchup_counts(
+    snapshot: &WorkspaceActiveSnapshot,
+    archived: Option<&WorkspaceCatchupSnapshot>,
+) -> WorkspaceCatchupCounts {
     WorkspaceCatchupCounts {
         active_total: snapshot.active.total_count,
-        archived_total: snapshot.archived.as_ref().map(|page| page.total_count),
+        archived_total: archived.and_then(|page| page.archived.as_ref().map(|page| page.total_count)),
     }
 }
 
 #[cfg(test)]
-pub fn task_summaries(snapshot: &WorkspaceCatchupSnapshot) -> Vec<TaskSummaryItem> {
+pub fn task_summaries(snapshot: &WorkspaceActiveSnapshot) -> Vec<TaskSummaryItem> {
     snapshot
         .active
         .tasks
         .iter()
-        .map(TaskSummaryItem::from_summary)
+        .map(TaskSummaryItem::from_active)
         .collect()
 }
 
 #[cfg(test)]
-pub fn session_summaries(snapshot: &WorkspaceCatchupSnapshot) -> Vec<SessionSummaryItem> {
+pub fn session_summaries(snapshot: &WorkspaceActiveSnapshot) -> Vec<SessionSummaryItem> {
     snapshot
         .active
         .tasks
         .iter()
-        .flat_map(|task| task_session_summaries(&TaskSummaryItem::from_summary(task)))
+        .flat_map(|task| task_session_summaries(&TaskSummaryItem::from_active(task)))
         .collect()
 }
 
 pub fn task_session_summaries(task: &TaskSummaryItem) -> Vec<SessionSummaryItem> {
     let mut items = Vec::new();
-    for track in &task.tracks {
-        for session in &track.sessions {
-            let title = if session.session.title.is_empty() {
-                "Session".to_string()
-            } else {
-                session.session.title.clone()
-            };
-            let status = session_status_text(&session.session.status, session.activity.is_working);
-            items.push(SessionSummaryItem {
-                session_id: session.session.id,
-                title,
-                status: status.to_string(),
-            });
+    let mut seen_primary = None;
+    if let Some(primary) = &task.primary_session {
+        items.push(session_summary_item(primary));
+        seen_primary = Some(primary.session.id);
+    }
+    for session in &task.sessions {
+        if Some(session.session.id) == seen_primary {
+            continue;
         }
+        items.push(session_summary_item(session));
     }
     items
+}
+
+fn session_summary_item(summary: &SessionSnapshotSummary) -> SessionSummaryItem {
+    let title = if summary.session.title.is_empty() {
+        "Session".to_string()
+    } else {
+        summary.session.title.clone()
+    };
+    let status = session_status_text(&summary.session.status, summary.activity.is_working);
+    SessionSummaryItem {
+        session_id: summary.session.id,
+        title,
+        status: status.to_string(),
+    }
 }
 
 fn session_status_text(status: &SessionStatus, is_working: bool) -> &'static str {
@@ -117,6 +146,68 @@ fn session_status_label(status: &SessionStatus) -> &'static str {
         SessionStatus::Failed => "Failed",
         SessionStatus::Cancelled => "Cancelled",
     }
+}
+
+fn session_metadata_from_session(session: &Session) -> SessionMetadata {
+    SessionMetadata {
+        id: session.id,
+        task_id: session.task_id,
+        workspace_id: session.workspace_id,
+        worktree_id: session.worktree_id,
+        parent_session_id: session.parent_session_id,
+        relationship: session.relationship.clone(),
+        provider_id: session.provider_id.clone(),
+        model_id: session.model_id.clone(),
+        title: session.title.clone(),
+        agent_role: session.agent_role.clone(),
+        status: session.status.clone(),
+        provider_session_ref: session.provider_session_ref.clone(),
+        created_at: session.created_at,
+        updated_at: session.updated_at,
+    }
+}
+
+fn session_summary_from_catchup(summary: &SessionCatchupSummary) -> SessionSnapshotSummary {
+    SessionSnapshotSummary {
+        session: session_metadata_from_session(&summary.session),
+        last_message_at: summary.last_message_at,
+        last_message_preview: summary.last_message_preview.clone(),
+        last_event_seq: summary.last_event_seq,
+        activity: summary.activity.clone(),
+        unread: summary.unread,
+    }
+}
+
+fn archived_session_summaries(
+    summary: &WorkspaceCatchupTaskSummary,
+) -> (Option<SessionSnapshotSummary>, Vec<SessionSnapshotSummary>) {
+    let mut sessions = Vec::new();
+    for track in &summary.tracks {
+        for session in &track.sessions {
+            sessions.push(session_summary_from_catchup(session));
+        }
+    }
+
+    let mut primary_id = summary.task.primary_session_id;
+    if primary_id.is_none() {
+        primary_id = summary.tracks.iter().find_map(|track| track.primary_session_id);
+    }
+
+    let mut primary = None;
+    if let Some(id) = primary_id {
+        primary = sessions.iter().find(|item| item.session.id == id).cloned();
+    }
+    if primary.is_none() {
+        primary = sessions.first().cloned();
+    }
+
+    let primary_id = primary.as_ref().map(|item| item.session.id);
+    let remaining = sessions
+        .into_iter()
+        .filter(|item| Some(item.session.id) != primary_id)
+        .collect();
+
+    (primary, remaining)
 }
 
 #[cfg(test)]
@@ -139,38 +230,39 @@ mod tests {
                             "created_at": "2024-01-01T00:00:00Z",
                             "updated_at": "2024-01-01T01:00:00Z"
                         },
-                        "tracks": [
-                            {
-                                "track": {
-                                    "id": "00000000-0000-0000-0000-000000000020",
-                                    "task_id": "00000000-0000-0000-0000-000000000010",
-                                    "workspace_id": "00000000-0000-0000-0000-000000000001",
-                                    "worktree_id": "00000000-0000-0000-0000-000000000030",
-                                    "label": "main",
-                                    "status": "running",
-                                    "created_at": "2024-01-01T00:00:00Z",
-                                    "updated_at": "2024-01-01T01:00:00Z"
-                                },
-                                "sessions": [
-                                    {
-                                        "session": {
-                                            "id": "00000000-0000-0000-0000-000000000040",
-                                            "track_id": "00000000-0000-0000-0000-000000000020",
-                                            "task_id": "00000000-0000-0000-0000-000000000010",
-                                            "workspace_id": "00000000-0000-0000-0000-000000000001",
-                                            "worktree_id": "00000000-0000-0000-0000-000000000030",
-                                            "provider_id": "codex",
-                                            "model_id": "gpt-5",
-                                            "title": "Primary",
-                                            "agent_role": "implementer",
-                                            "status": "active",
-                                            "created_at": "2024-01-01T00:00:00Z",
-                                            "updated_at": "2024-01-01T01:00:00Z"
-                                        }
-                                    }
-                                ]
+                        "primary_session": {
+                            "session": {
+                                "id": "00000000-0000-0000-0000-000000000040",
+                                "task_id": "00000000-0000-0000-0000-000000000010",
+                                "workspace_id": "00000000-0000-0000-0000-000000000001",
+                                "worktree_id": "00000000-0000-0000-0000-000000000030",
+                                "provider_id": "codex",
+                                "model_id": "gpt-5",
+                                "title": "Primary",
+                                "agent_role": "implementer",
+                                "status": "active",
+                                "created_at": "2024-01-01T00:00:00Z",
+                                "updated_at": "2024-01-01T01:00:00Z"
                             }
-                        ],
+                        },
+                        "primary_session_head": {
+                            "session": {
+                                "id": "00000000-0000-0000-0000-000000000040",
+                                "task_id": "00000000-0000-0000-0000-000000000010",
+                                "workspace_id": "00000000-0000-0000-0000-000000000001",
+                                "worktree_id": "00000000-0000-0000-0000-000000000030",
+                                "provider_id": "codex",
+                                "model_id": "gpt-5",
+                                "title": "Primary",
+                                "agent_role": "implementer",
+                                "status": "active",
+                                "created_at": "2024-01-01T00:00:00Z",
+                                "updated_at": "2024-01-01T01:00:00Z"
+                            },
+                            "last_event_seq": 12,
+                            "has_more_turns": false
+                        },
+                        "sessions": [],
                         "sort_at": "2024-01-01T01:00:00Z"
                     }
                 ],
@@ -178,8 +270,8 @@ mod tests {
             }
         }"#;
 
-        let snapshot: WorkspaceCatchupSnapshot = serde_json::from_str(json).unwrap();
-        let counts = catchup_counts(&snapshot);
+        let snapshot: WorkspaceActiveSnapshot = serde_json::from_str(json).unwrap();
+        let counts = catchup_counts(&snapshot, None);
         assert_eq!(counts.active_total, 1);
         assert_eq!(counts.archived_total, None);
 

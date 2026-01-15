@@ -6,7 +6,7 @@ use gpui_tokio::Tokio;
 use tokio::sync::{mpsc, watch};
 use tokio_tungstenite::{connect_async, tungstenite::Message as WsMessage};
 
-use ctx_core::ids::{SessionId, TaskId, TerminalId, TrackId, WorktreeId, WorkspaceId};
+use ctx_core::ids::{SessionId, TaskId, TerminalId, WorktreeId, WorkspaceId};
 use ctx_core::models::TerminalSession;
 
 use super::ComposerState;
@@ -31,8 +31,8 @@ impl TerminalScope {
 pub(crate) struct TerminalContext {
     pub(crate) workspace_id: Option<WorkspaceId>,
     pub(crate) task_id: Option<TaskId>,
-    pub(crate) track_id: Option<TrackId>,
     pub(crate) session_id: Option<SessionId>,
+    pub(crate) worktree_id: Option<WorktreeId>,
 }
 
 #[derive(Clone, Debug)]
@@ -64,7 +64,6 @@ impl TerminalStreamState {
 #[derive(Clone, Debug, Default)]
 pub(crate) struct CreateTerminalOptions {
     pub(crate) task_id: Option<TaskId>,
-    pub(crate) track_id: Option<TrackId>,
     pub(crate) session_id: Option<SessionId>,
     pub(crate) worktree_id: Option<WorktreeId>,
     pub(crate) cwd: Option<String>,
@@ -224,23 +223,22 @@ impl TerminalPanelState {
         } else {
             None
         };
-        let track_id = if effective_scope == TerminalScope::Task {
-            opts.track_id.or(self.context.track_id)
-        } else {
-            None
-        };
         let session_id = if effective_scope == TerminalScope::Task {
             opts.session_id.or(self.context.session_id)
         } else {
             None
         };
-        let worktree_id = opts.worktree_id;
+        let worktree_id = if effective_scope == TerminalScope::Task {
+            opts.worktree_id.or(self.context.worktree_id)
+        } else {
+            opts.worktree_id
+        };
         let cwd = clean_opt_string(opts.cwd);
         let shell = clean_opt_string(opts.shell);
 
         let request = ctx_client::CreateTerminalRequest {
             task_id,
-            track_id,
+            track_id: None,
             session_id,
             worktree_id,
             cwd,

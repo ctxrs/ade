@@ -26,7 +26,7 @@ use tokio::sync::watch;
 
 use ctx_core::ids::{SessionId, TaskId, TurnId, WorkspaceId};
 use ctx_core::models::{
-    Artifact, MessageAttachment, SessionCatchupSummary, SessionEvent, SessionTurn,
+    Artifact, MessageAttachment, SessionEvent, SessionSnapshotSummary, SessionTurn,
     WorkspaceCatchupClientMessage, WorkspaceCatchupCursor,
 };
 
@@ -195,11 +195,12 @@ pub(crate) struct ShellView {
     #[allow(dead_code)]
     pub(crate) verbosity_menu_open: bool,
     pub(crate) artifacts: Vec<Artifact>,
+    pub(crate) artifacts_session_id: Option<SessionId>,
     pub(crate) selected_artifact: Option<usize>,
     pub(crate) artifact_preview: ArtifactPreviewState,
     pub(crate) session_events: Vec<SessionEvent>,
     pub(crate) session_thread_cache: HashMap<SessionId, SessionThreadCache>,
-    pub(crate) session_summary_map: HashMap<SessionId, SessionCatchupSummary>,
+    pub(crate) session_summary_map: HashMap<SessionId, SessionSnapshotSummary>,
     pub(crate) session: SessionInfo,
     pub(crate) data_state: DataLoadState,
     pub(crate) new_task_mode: bool,
@@ -359,13 +360,14 @@ impl ShellView {
         if let Some(session_id) = self.selected_session_id() {
             return Some(format!("session:{}", session_id.0));
         }
-        let track_id = self.selected_task.and_then(|task_id| {
-            self.tasks_by_id
-                .get(&task_id)
-                .and_then(|task| task.tracks.first())
-                .map(|track| track.track.id)
+        let worktree_id = self.selected_task.and_then(|task_id| {
+            self.tasks_by_id.get(&task_id).and_then(|task| {
+                task.task
+                    .primary_worktree_id
+                    .or_else(|| task.primary_session.as_ref().map(|session| session.session.worktree_id))
+            })
         })?;
-        Some(format!("track:{}", track_id.0))
+        Some(format!("worktree:{}", worktree_id.0))
     }
 
     pub(crate) fn hydrate_pane_state(&mut self) {
@@ -460,6 +462,65 @@ impl ShellView {
         self.relative_time_task = Some(update_task);
     }
 
+    pub(crate) fn toggle_sessions_pane(
+        &mut self,
+        _: &ClickEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let next = !self.show_sessions_pane;
+        self.show_sessions_pane = next;
+        if next {
+            self.show_diff_pane = false;
+            self.show_artifacts_pane = false;
+        }
+        self.persist_pane_state();
+        cx.notify();
+    }
+
+    pub(crate) fn toggle_diff_pane(
+        &mut self,
+        _: &ClickEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let next = !self.show_diff_pane;
+        self.show_diff_pane = next;
+        if next {
+            self.show_sessions_pane = false;
+        }
+        self.persist_pane_state();
+        cx.notify();
+    }
+
+    pub(crate) fn toggle_artifacts_pane(
+        &mut self,
+        _: &ClickEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let next = !self.show_artifacts_pane;
+        self.show_artifacts_pane = next;
+        if next {
+            self.show_sessions_pane = false;
+            if let Some(session_id) = self.selected_session_id() {
+                self.load_session_artifacts(session_id, cx);
+            }
+        }
+        self.persist_pane_state();
+        cx.notify();
+    }
+
+    pub(crate) fn toggle_terminal_panel(
+        &mut self,
+        _: &ClickEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.show_terminal_panel = !self.show_terminal_panel;
+        self.persist_pane_state();
+        cx.notify();
+    }
     pub(crate) fn sync_auxiliary_panes(&mut self, cx: &mut Context<Self>) {
         let selected_session_id = self
             .selected_session
@@ -474,28 +535,39 @@ impl ShellView {
         self.aux_workspace_id = self.selected_workspace;
         self.aux_session_id = selected_session_id;
 
-        let (task_id, track_id) = selected_session_id
+        let (task_id, worktree_id) = selected_session_id
             .and_then(|session_id| self.session_summary_map.get(&session_id))
             .map(|summary| {
                 (
                     Some(summary.session.task_id),
-                    Some(summary.session.track_id),
+                    Some(summary.session.worktree_id),
                 )
             })
             .unwrap_or((None, None));
+        let worktree_id = worktree_id.or_else(|| {
+            self.selected_task.and_then(|task_id| {
+                self.tasks_by_id.get(&task_id).and_then(|task| {
+                    task.task.primary_worktree_id.or_else(|| {
+                        task.primary_session
+                            .as_ref()
+                            .map(|session| session.session.worktree_id)
+                    })
+                })
+            })
+        });
 
         let terminal_context = TerminalContext {
             workspace_id: self.selected_workspace,
             task_id,
-            track_id,
             session_id: selected_session_id,
+            worktree_id,
         };
 
         cx.update_entity(&self.terminal_panel_state, |state, cx| {
             state.set_context(terminal_context, cx);
         });
         cx.update_entity(&self.diff_review_state, |state, cx| {
-            state.set_track_id(track_id, cx);
+            state.set_worktree_id(worktree_id, cx);
         });
     }
 }

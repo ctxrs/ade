@@ -6,8 +6,8 @@ use chrono::{DateTime, Utc};
 use regex::Regex;
 use ctx_core::ids::{MessageId, TurnId};
 use ctx_core::models::{
-    Artifact, Message, MessageDelivery, MessageRole, SessionCatchupSummary, SessionEvent,
-    SessionEventType, SessionHead, SessionHistoryPage, SessionStatus, SessionTurn,
+    Artifact, Message, MessageDelivery, MessageRole, SessionEvent, SessionEventType,
+    SessionHeadSnapshot, SessionHistoryPage, SessionSnapshotSummary, SessionStatus, SessionTurn,
     SessionTurnStatus, SessionTurnTool, SessionTurnToolSummary,
 };
 use serde::Serialize;
@@ -94,7 +94,6 @@ fn session_status_text(status: &SessionStatus, is_working: bool) -> String {
         session_status_label(status).to_string()
     }
 }
-
 #[allow(dead_code)]
 pub(crate) fn session_event_type_label(event_type: &SessionEventType) -> &'static str {
     match event_type {
@@ -286,7 +285,7 @@ pub(crate) fn is_absolute_path(path: &str) -> bool {
     false
 }
 
-pub(crate) fn session_info_from_head(head: &SessionHead) -> SessionInfo {
+pub(crate) fn session_info_from_head(head: &SessionHeadSnapshot) -> SessionInfo {
     let title = if head.session.title.is_empty() {
         "Session".to_string()
     } else {
@@ -299,7 +298,7 @@ pub(crate) fn session_info_from_head(head: &SessionHead) -> SessionInfo {
     }
 }
 
-pub(crate) fn session_info_from_summary(summary: &SessionCatchupSummary) -> SessionInfo {
+pub(crate) fn session_info_from_summary(summary: &SessionSnapshotSummary) -> SessionInfo {
     let title = if summary.session.title.is_empty() {
         "Session".to_string()
     } else {
@@ -313,7 +312,7 @@ pub(crate) fn session_info_from_summary(summary: &SessionCatchupSummary) -> Sess
 }
 
 pub(crate) fn build_message_items(
-    session_head: Option<&SessionHead>,
+    session_head: Option<&SessionHeadSnapshot>,
     session_history: Option<&SessionHistoryPage>,
 ) -> Vec<MessageItem> {
     if let Some(history) = session_history {

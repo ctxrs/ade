@@ -255,6 +255,27 @@ pub struct Session {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionMetadata {
+    pub id: SessionId,
+    pub task_id: TaskId,
+    pub workspace_id: WorkspaceId,
+    pub worktree_id: WorktreeId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_session_id: Option<SessionId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relationship: Option<String>,
+    pub provider_id: String,
+    pub model_id: String,
+    pub title: String,
+    pub agent_role: String,
+    pub status: SessionStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_session_ref: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SubagentInvocation {
     pub id: String,
     pub tool_call_id: String,
@@ -516,6 +537,29 @@ pub enum WorkspaceIndexEvent {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkspaceActiveTaskSummary {
+    pub task: Task,
+    pub primary_session: SessionSnapshotSummary,
+    pub primary_session_head: SessionHeadSnapshot,
+    #[serde(default)]
+    pub sessions: Vec<SessionSnapshotSummary>,
+    pub sort_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkspaceActivePage {
+    pub tasks: Vec<WorkspaceActiveTaskSummary>,
+    pub total_count: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkspaceActiveSnapshot {
+    pub workspace_id: WorkspaceId,
+    pub snapshot_rev: i64,
+    pub active: WorkspaceActivePage,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkspaceCatchupCursor {
     pub sort_at: DateTime<Utc>,
     pub task_id: TaskId,
@@ -524,6 +568,17 @@ pub struct WorkspaceCatchupCursor {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionCatchupSummary {
     pub session: Session,
+    pub last_message_at: Option<DateTime<Utc>>,
+    pub last_message_preview: Option<String>,
+    pub last_event_seq: Option<i64>,
+    #[serde(default)]
+    pub activity: SessionActivityState,
+    pub unread: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionSnapshotSummary {
+    pub session: SessionMetadata,
     pub last_message_at: Option<DateTime<Utc>>,
     pub last_message_preview: Option<String>,
     pub last_event_seq: Option<i64>,
@@ -601,6 +656,31 @@ impl Default for SessionHeadWindow {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionHeadSnapshot {
+    pub session: SessionMetadata,
+    #[serde(default)]
+    pub turns: Vec<SessionTurn>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tool_summaries: Vec<SessionTurnToolSummary>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub events: Vec<SessionEvent>,
+    #[serde(default)]
+    pub messages: Vec<Message>,
+    pub last_event_seq: i64,
+    #[serde(default)]
+    pub activity: SessionActivityState,
+    pub has_more_turns: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub history_cursor: Option<i64>,
+    #[serde(default)]
+    pub has_more_history: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary_checkpoint: Option<SessionSummaryCheckpoint>,
+    #[serde(default)]
+    pub head_window: SessionHeadWindow,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionHead {
     pub session: Session,
     #[serde(default)]
@@ -623,6 +703,12 @@ pub struct SessionHead {
     pub summary_checkpoint: Option<SessionSummaryCheckpoint>,
     #[serde(default)]
     pub head_window: SessionHeadWindow,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionSnapshot {
+    pub summary: SessionSnapshotSummary,
+    pub head: SessionHeadSnapshot,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -682,6 +768,48 @@ pub struct WorktreeBootstrapNotice {
     pub log_truncated: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum WorkspaceActiveSnapshotEvent {
+    Ready {
+        workspace_id: WorkspaceId,
+        snapshot_rev: i64,
+    },
+    ActiveTaskUpsert {
+        workspace_id: WorkspaceId,
+        snapshot_rev: i64,
+        task: Box<WorkspaceActiveTaskSummary>,
+    },
+    ActiveTaskDelete {
+        workspace_id: WorkspaceId,
+        snapshot_rev: i64,
+        task_id: TaskId,
+    },
+    SessionSummary {
+        workspace_id: WorkspaceId,
+        snapshot_rev: i64,
+        summary: Box<SessionSnapshotSummary>,
+    },
+    SessionHeadDelta {
+        workspace_id: WorkspaceId,
+        snapshot_rev: i64,
+        delta: Box<SessionHeadDelta>,
+    },
+    SessionGap {
+        workspace_id: WorkspaceId,
+        snapshot_rev: i64,
+        session_id: SessionId,
+        after_seq: i64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
+    },
+    WorktreeBootstrap {
+        workspace_id: WorkspaceId,
+        snapshot_rev: i64,
+        notice: WorktreeBootstrapNotice,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

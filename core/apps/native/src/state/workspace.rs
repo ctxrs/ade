@@ -5,15 +5,18 @@ use gpui_tokio::Tokio;
 
 use ctx_core::ids::{SessionId, TaskId, WorkspaceId};
 use ctx_core::models::{
-    MessageRole,
-    Artifact, SessionCatchupSummary, SessionEvent, SessionHead, SessionHistoryPage, Task,
-    WorkspaceCatchupSnapshot, WorkspaceCatchupTaskSummary, WorkspaceCatchupTrackSummary,
+    MessageRole, SessionHeadSnapshot, SessionSnapshotSummary, Task, WorkspaceActiveSnapshot,
+    WorkspaceActiveTaskSummary, WorkspaceCatchupTaskSummary,
 };
 use ctx_providers::adapters::ProviderStatus;
 
-use super::{AnchorRect, ArchiveConfirmState, ArtifactPreviewState, ShellView, StreamStatus, TaskArchiveAction, TaskMenuState};
+use super::{
+    AnchorRect, ArchiveConfirmState, ArtifactPreviewState, ShellView, StreamStatus,
+    TaskArchiveAction, TaskMenuState,
+};
+use super::session::SessionThreadCache;
 use super::super::models::{
-    build_message_items, session_info_from_head, session_info_from_summary, MessageItem,
+    session_info_from_summary, MessageItem,
     SessionInfo,
 };
 use super::super::workspace_summary::{catchup_counts, task_session_summaries, TaskSummaryItem};
@@ -33,11 +36,7 @@ struct InitialLoadResult {
 }
 
 struct WorkspaceLoadResult {
-    snapshot: WorkspaceCatchupSnapshot,
-    artifacts: Vec<Artifact>,
-    session_head: Option<SessionHead>,
-    session_history: Option<SessionHistoryPage>,
-    session_events: Vec<SessionEvent>,
+    active_snapshot: WorkspaceActiveSnapshot,
 }
 
 pub(crate) enum DataLoadState {
@@ -150,57 +149,14 @@ impl ShellView {
         let task = Tokio::spawn_result(cx, async move {
             let config = ctx_client::resolve_daemon_config()?;
             let client = ctx_client::Client::new(config)?;
-            let params = ctx_client::WorkspaceCatchupParams {
+            let params = ctx_client::WorkspaceActiveSnapshotParams {
                 limit: Some(50),
-                include_archived: Some(false),
-                ..Default::default()
             };
-            let snapshot = client.get_workspace_catchup(workspace_id, &params).await?;
-            let mut first_session_id = None;
-            for task in &snapshot.active.tasks {
-                for track in &task.tracks {
-                    if let Some(session) = track.sessions.first() {
-                        first_session_id = Some(session.session.id);
-                        break;
-                    }
-                }
-                if first_session_id.is_some() {
-                    break;
-                }
-            }
-            let mut session_head = None;
-            let mut session_history = None;
-            let mut session_events = Vec::new();
-            let mut artifacts = Vec::new();
-            if let Some(session_id) = first_session_id {
-                session_head = client
-                    .get_session_head(session_id, Some(40), Some(false))
-                    .await
-                    .ok();
-                session_history = client
-                    .get_session_history(session_id, None, Some(60))
-                    .await
-                    .ok();
-                session_events = client
-                    .get_session_events(session_id, None, None, Some(40))
-                    .await
-                    .ok()
-                    .map(|page| page.events)
-                    .unwrap_or_default();
-                artifacts = client
-                    .list_session_artifacts(session_id)
-                    .await
-                    .ok()
-                    .map(|items| items.into_iter().collect::<Vec<_>>())
-                    .unwrap_or_default();
-            }
-
+            let active_snapshot = client
+                .get_workspace_active_snapshot(workspace_id, &params)
+                .await?;
             Ok(WorkspaceLoadResult {
-                snapshot,
-                artifacts,
-                session_head,
-                session_history,
-                session_events,
+                active_snapshot,
             })
         });
 
@@ -214,25 +170,31 @@ impl ShellView {
                 }
                 match result {
                     Ok(data) => {
-                        view.apply_workspace_snapshot(data.snapshot);
+                        view.apply_active_snapshot(data.active_snapshot);
                         let keep_new_task = view.new_task_mode_locked;
                         let selected_session_id = if keep_new_task {
                             None
                         } else {
-                            data.session_head
-                                .as_ref()
-                                .map(|head| head.session.id)
-                                .or_else(|| view.sessions.first().map(|summary| summary.session_id))
+                            view.task_active_order
+                                .first()
+                                .and_then(|task_id| view.tasks_by_id.get(task_id))
+                                .and_then(|task| view.preferred_session_for_task(task))
                         };
-                        view.selected_session = selected_session_id
-                            .and_then(|id| view.sessions.iter().position(|summary| summary.session_id == id));
+                        view.selected_session = selected_session_id.and_then(|id| {
+                            view.sessions
+                                .iter()
+                                .position(|summary| summary.session_id == id)
+                        });
                         view.selected_task = if keep_new_task {
                             None
                         } else {
                             view.selected_session
                                 .and_then(|index| view.sessions.get(index))
-                                .and_then(|summary| view.session_summary_map.get(&summary.session_id))
-                                .map(|summary| summary.session.task_id)
+                                .and_then(|summary| {
+                                    view.session_summary_map
+                                        .get(&summary.session_id)
+                                        .map(|summary| summary.session.task_id)
+                                })
                                 .or_else(|| view.task_active_order.first().copied())
                         };
                         view.new_task_mode = keep_new_task || view.selected_session.is_none();
@@ -241,56 +203,41 @@ impl ShellView {
                         view.session = if keep_new_task {
                             SessionInfo::placeholder()
                         } else {
-                            data.session_head
-                                .as_ref()
-                                .map(session_info_from_head)
-                                .or_else(|| {
-                                    view.selected_session
-                                        .and_then(|index| view.sessions.get(index))
-                                        .and_then(|summary| {
-                                            view.session_summary_map
-                                                .get(&summary.session_id)
-                                                .map(session_info_from_summary)
-                                        })
-                                })
+                            selected_session_id
+                                .and_then(|id| view.session_summary_map.get(&id))
+                                .map(session_info_from_summary)
                                 .unwrap_or_else(SessionInfo::placeholder)
                         };
                         view.sync_composer_defaults();
-                        view.session_events = data.session_events;
-                        let mut messages = build_message_items(
-                            data.session_head.as_ref(),
-                            data.session_history.as_ref(),
-                        );
-                        if messages.is_empty() {
-                            messages.push(MessageItem::new(
-                                MessageRole::Assistant,
-                                "No messages yet. Create one to begin.",
-                            ));
-                        }
-                        view.replace_messages(messages, cx);
-                        if let Some(session_id) = view.selected_session_id() {
-                            view.cache_session_thread_state(session_id);
-                        }
-                        view.session_history_cursor =
-                            data.session_history.as_ref().and_then(|page| page.next_cursor);
-                        view.session_history_has_more = data
-                            .session_history
-                            .as_ref()
-                            .map(|page| page.has_more)
-                            .unwrap_or(false);
+                        view.session_events.clear();
+                        view.session_turns.clear();
+                        view.session_turn_tools.clear();
+                        view.session_history_cursor = None;
+                        view.session_history_has_more = false;
                         view.session_history_loading = false;
-                        if let Some(head) = data.session_head.as_ref() {
-                            view.update_session_last_event_seq(head.session.id, head.last_event_seq);
-                        } else if let Some(event) = view.session_events.last() {
-                            view.update_session_last_event_seq(event.session_id, event.seq);
-                        }
-                        view.artifacts = data.artifacts;
-                        view.selected_artifact = if view.artifacts.is_empty() {
-                            None
+                        view.replace_messages(Vec::new(), cx);
+                        if let Some(session_id) = view.selected_session_id() {
+                            if !view.apply_cached_thread_state(session_id, cx) {
+                                view.replace_messages(
+                                    vec![MessageItem::new(
+                                        MessageRole::Assistant,
+                                        "No messages yet. Create one to begin.",
+                                    )],
+                                    cx,
+                                );
+                            }
+                            if view.show_artifacts_pane {
+                                view.load_session_artifacts(session_id, cx);
+                            }
                         } else {
-                            Some(0)
-                        };
-                        view.load_artifact_preview(cx);
+                            view.replace_messages(
+                                vec![MessageItem::new(
+                                    MessageRole::Assistant,
+                                    "Select a task to begin.",
+                                )],
+                                cx,
+                            );
+                        }
                         view.data_state = DataLoadState::Loaded;
                         view.start_workspace_stream(workspace_id, cx);
                     }
@@ -329,6 +276,7 @@ impl ShellView {
         self.selected_session = None;
         self.replace_messages(vec![MessageItem::new(MessageRole::Assistant, message)], cx);
         self.artifacts.clear();
+        self.artifacts_session_id = None;
         self.artifact_preview = ArtifactPreviewState::None;
         self.session_events.clear();
         self.selected_artifact = None;
@@ -368,27 +316,31 @@ impl ShellView {
         }
     }
 
-    fn apply_workspace_snapshot(&mut self, snapshot: WorkspaceCatchupSnapshot) {
-        let counts = catchup_counts(&snapshot);
+    fn apply_active_snapshot(&mut self, snapshot: WorkspaceActiveSnapshot) {
+        let counts = catchup_counts(&snapshot, None);
         self.catchup_active_total = Some(counts.active_total);
-        self.catchup_archived_total = counts.archived_total;
+        if self.catchup_archived_total.is_none() {
+            self.catchup_archived_total = counts.archived_total;
+        }
 
         self.task_store_initialized = true;
         self.task_fetch_active = super::TaskFetchState::Idle;
         self.task_fetch_archived = super::TaskFetchState::Idle;
-        let next_cursor = snapshot.active.next_cursor;
-        self.task_has_more_active = next_cursor.is_some();
-        self.task_active_cursor = next_cursor;
+        self.task_has_more_active = false;
+        self.task_active_cursor = None;
         self.task_archived_cursor = None;
         self.task_has_more_archived = false;
         self.task_archived_loaded = false;
         self.tasks_by_id.clear();
         self.task_active_order.clear();
         self.task_archived_order.clear();
+        self.session_thread_cache.clear();
+        self.session_last_event_seq.clear();
 
         for summary in snapshot.active.tasks {
-            let item = TaskSummaryItem::from_summary(&summary);
+            let item = TaskSummaryItem::from_active(&summary);
             self.tasks_by_id.insert(item.id, item);
+            self.cache_session_snapshot(&summary.primary_session, &summary.primary_session_head);
         }
         self.rebuild_task_orders();
         self.rebuild_session_state();
@@ -404,20 +356,18 @@ impl ShellView {
         let Some(workspace_id) = self.selected_workspace else {
             return;
         };
-        let cursor = self.task_active_cursor.clone();
         self.task_fetch_active = super::TaskFetchState::Loading;
         cx.notify();
 
         let task = Tokio::spawn_result(cx, async move {
             let config = ctx_client::resolve_daemon_config()?;
             let client = ctx_client::Client::new(config)?;
-            let params = ctx_client::WorkspaceCatchupParams {
+            let params = ctx_client::WorkspaceActiveSnapshotParams {
                 limit: Some(50),
-                active_cursor: cursor,
-                include_archived: Some(false),
-                ..Default::default()
             };
-            let snapshot = client.get_workspace_catchup(workspace_id, &params).await?;
+            let snapshot = client
+                .get_workspace_active_snapshot(workspace_id, &params)
+                .await?;
             Ok(snapshot)
         });
 
@@ -427,13 +377,7 @@ impl ShellView {
                 let result = task.await;
                 this.update(&mut cx, |view, _cx| match result {
                     Ok(snapshot) => {
-                        let next_cursor = snapshot.active.next_cursor;
-                        view.task_has_more_active = next_cursor.is_some();
-                        view.task_active_cursor = next_cursor;
-                        view.catchup_active_total = Some(snapshot.active.total_count);
-                        for summary in snapshot.active.tasks {
-                            view.upsert_task_summary(summary);
-                        }
+                        view.apply_active_snapshot(snapshot);
                         view.send_stream_subscribe();
                         view.task_fetch_active = super::TaskFetchState::Idle;
                     }
@@ -504,7 +448,7 @@ impl ShellView {
                             view.task_archived_loaded = true;
                             view.catchup_archived_total = Some(page.total_count);
                             for summary in page.tasks {
-                                view.upsert_task_summary(summary);
+                                view.upsert_archived_task_summary(summary);
                             }
                         }
                         view.task_fetch_archived = super::TaskFetchState::Idle;
@@ -522,16 +466,25 @@ impl ShellView {
         .detach();
     }
 
-    pub(crate) fn upsert_task_summary(&mut self, summary: WorkspaceCatchupTaskSummary) {
-        let item = TaskSummaryItem::from_summary(&summary);
+    pub(crate) fn upsert_active_task_summary(&mut self, summary: WorkspaceActiveTaskSummary) {
+        let item = TaskSummaryItem::from_active(&summary);
         let existing = self.tasks_by_id.insert(item.id, item.clone());
         if let Some(prev) = existing.as_ref() {
             self.update_task_counts_for_move(prev, &item);
-        } else if item.is_archived() {
-            if let Some(total) = self.catchup_archived_total.as_mut() {
-                *total += 1;
-            }
         } else if let Some(total) = self.catchup_active_total.as_mut() {
+            *total += 1;
+        }
+        self.cache_session_snapshot(&summary.primary_session, &summary.primary_session_head);
+        self.rebuild_task_orders();
+        self.rebuild_session_state();
+    }
+
+    pub(crate) fn upsert_archived_task_summary(&mut self, summary: WorkspaceCatchupTaskSummary) {
+        let item = TaskSummaryItem::from_archived(&summary);
+        let existing = self.tasks_by_id.insert(item.id, item.clone());
+        if let Some(prev) = existing.as_ref() {
+            self.update_task_counts_for_move(prev, &item);
+        } else if let Some(total) = self.catchup_archived_total.as_mut() {
             *total += 1;
         }
         self.rebuild_task_orders();
@@ -568,57 +521,54 @@ impl ShellView {
         self.rebuild_session_state();
     }
 
-    pub(crate) fn apply_track_summary(&mut self, summary: WorkspaceCatchupTrackSummary) {
-        let task_id = summary.track.task_id;
+    pub(crate) fn apply_session_summary(&mut self, summary: SessionSnapshotSummary) {
+        let task_id = summary.session.task_id;
         let Some(task) = self.tasks_by_id.get(&task_id).cloned() else {
             return;
         };
-        let mut next_tracks = task.tracks.clone();
-        let idx = next_tracks
-            .iter()
-            .position(|track| track.track.id == summary.track.id);
-        if let Some(idx) = idx {
-            next_tracks[idx] = summary;
+        let mut primary_session = task.primary_session.clone();
+        let mut sessions = task.sessions.clone();
+
+        if primary_session
+            .as_ref()
+            .map(|session| session.session.id == summary.session.id)
+            .unwrap_or(false)
+        {
+            primary_session = Some(summary);
         } else {
-            next_tracks.push(summary);
+            let idx = sessions
+                .iter()
+                .position(|session| session.session.id == summary.session.id);
+            if let Some(idx) = idx {
+                sessions[idx] = summary;
+            } else {
+                sessions.push(summary);
+            }
+            sessions.sort_by_key(|session| session.session.created_at);
         }
-        next_tracks.sort_by_key(|track| track.track.created_at);
+
         let updated = TaskSummaryItem {
-            tracks: next_tracks,
+            primary_session,
+            sessions,
             ..task
         };
         self.tasks_by_id.insert(task_id, updated);
         self.rebuild_session_state();
     }
 
-    pub(crate) fn apply_session_summary(&mut self, summary: SessionCatchupSummary) {
-        let task_id = summary.session.task_id;
-        let Some(task) = self.tasks_by_id.get(&task_id).cloned() else {
-            return;
-        };
-        let track_id = summary.session.track_id;
-        let mut next_tracks = task.tracks.clone();
-        if let Some(track_idx) = next_tracks.iter().position(|track| track.track.id == track_id) {
-            let mut track = next_tracks[track_idx].clone();
-            let mut sessions = track.sessions.clone();
-            let session_idx = sessions
-                .iter()
-                .position(|session| session.session.id == summary.session.id);
-            if let Some(session_idx) = session_idx {
-                sessions[session_idx] = summary;
-            } else {
-                sessions.push(summary);
-            }
-            sessions.sort_by_key(|session| session.session.created_at);
-            track.sessions = sessions;
-            next_tracks[track_idx] = track;
-            let updated = TaskSummaryItem {
-                tracks: next_tracks,
-                ..task
-            };
-            self.tasks_by_id.insert(task_id, updated);
-            self.rebuild_session_state();
+    fn cache_session_snapshot(
+        &mut self,
+        summary: &SessionSnapshotSummary,
+        head: &SessionHeadSnapshot,
+    ) {
+        let cache = SessionThreadCache::from_snapshot(head);
+        self.session_thread_cache
+            .insert(summary.session.id, cache);
+        let mut seq = summary.last_event_seq.unwrap_or(head.last_event_seq);
+        if let Some(prev) = self.session_last_event_seq.get(&summary.session.id) {
+            seq = seq.max(*prev);
         }
+        self.session_last_event_seq.insert(summary.session.id, seq);
     }
 
     pub(crate) fn focus_task(
@@ -663,14 +613,16 @@ impl ShellView {
         let mut working = false;
         let mut session_unread = false;
 
-        for track in &task.tracks {
-            for session in &track.sessions {
-                if session.activity.is_working {
-                    working = true;
-                }
-                if session.unread.unwrap_or(false) {
-                    session_unread = true;
-                }
+        let summaries = task
+            .primary_session
+            .iter()
+            .chain(task.sessions.iter());
+        for session in summaries {
+            if session.activity.is_working {
+                working = true;
+            }
+            if session.unread.unwrap_or(false) {
+                session_unread = true;
             }
         }
 
@@ -704,12 +656,8 @@ impl ShellView {
     }
 
     fn preferred_session_for_task(&self, task: &TaskSummaryItem) -> Option<SessionId> {
-        for track in &task.tracks {
-            if let Some(primary) = track.primary_session_id {
-                if track.sessions.iter().any(|session| session.session.id == primary) {
-                    return Some(primary);
-                }
-            }
+        if let Some(primary) = task.primary_session.as_ref() {
+            return Some(primary.session.id);
         }
         task_session_summaries(task).first().map(|summary| summary.session_id)
     }
@@ -742,21 +690,32 @@ impl ShellView {
         let mut session_last_event_seq = HashMap::new();
         let prev_last_event_seq = std::mem::take(&mut self.session_last_event_seq);
 
-        let task_ids = self.task_active_order.clone();
+        let mut task_ids = self.task_active_order.clone();
+        if let Some(task_id) = self.selected_task {
+            if self
+                .task_archived_order
+                .iter()
+                .any(|archived_id| *archived_id == task_id)
+            {
+                task_ids.push(task_id);
+            }
+        }
         for task_id in &task_ids {
             let Some(task) = self.tasks_by_id.get(task_id) else {
                 continue;
             };
-            for track in &task.tracks {
-                for summary in &track.sessions {
-                    session_summary_map.insert(summary.session.id, summary.clone());
-                    let mut seq = summary.last_event_seq;
-                    if let Some(prev) = prev_last_event_seq.get(&summary.session.id) {
-                        seq = Some(seq.map_or(*prev, |current| current.max(*prev)));
-                    }
-                    if let Some(seq) = seq {
-                        session_last_event_seq.insert(summary.session.id, seq);
-                    }
+            let summaries = task
+                .primary_session
+                .iter()
+                .chain(task.sessions.iter());
+            for summary in summaries {
+                session_summary_map.insert(summary.session.id, summary.clone());
+                let mut seq = summary.last_event_seq;
+                if let Some(prev) = prev_last_event_seq.get(&summary.session.id) {
+                    seq = Some(seq.map_or(*prev, |current| current.max(*prev)));
+                }
+                if let Some(seq) = seq {
+                    session_last_event_seq.insert(summary.session.id, seq);
                 }
             }
             sessions.extend(task_session_summaries(task));
@@ -814,6 +773,7 @@ impl ShellView {
             cx,
         );
         self.artifacts.clear();
+        self.artifacts_session_id = None;
         self.artifact_preview = ArtifactPreviewState::None;
         self.session_events.clear();
         self.selected_artifact = None;

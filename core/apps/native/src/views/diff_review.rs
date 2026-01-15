@@ -107,7 +107,7 @@ impl<'a> DiffReviewView<'a> {
             );
         }
 
-        let can_apply_all = self.state.track_id.is_some() && self.state.busy_key.is_none();
+        let can_apply_all = self.state.worktree_id.is_some() && self.state.busy_key.is_none();
         let apply_all_busy = self
             .state
             .busy_key
@@ -175,7 +175,7 @@ impl<'a> DiffReviewView<'a> {
                 .child(reject_button)
         };
 
-        let can_refresh = self.state.track_id.is_some() && self.state.busy_key.is_none();
+        let can_refresh = self.state.worktree_id.is_some() && self.state.busy_key.is_none();
         let on_refresh = cx.listener(|view, _: &ClickEvent, _window, cx| {
             view.reload_diff(cx);
         });
@@ -336,7 +336,7 @@ impl<'a> DiffReviewView<'a> {
         let detail = if let Some(active_key) = self.state.active_file_key.as_deref() {
             if let Some(file) = self.state.files.iter().find(|file| file.key == active_key) {
                 let file_busy = self.state.busy_key.as_deref() == Some(file.key.as_str());
-                let can_apply = self.state.track_id.is_some() && self.state.busy_key.is_none();
+                let can_apply = self.state.worktree_id.is_some() && self.state.busy_key.is_none();
                 let patch = file.patch_text();
 
                 let actions = if file_busy {
@@ -596,7 +596,7 @@ fn render_inline_diff(
 
     let metrics = ThemeMetrics::default();
     let mut hunks = div().flex().flex_col().gap_2();
-    let can_apply = state.track_id.is_some() && state.busy_key.is_none();
+    let can_apply = state.worktree_id.is_some() && state.busy_key.is_none();
 
     for hunk in &file.hunks {
         let hunk_busy = state.busy_key.as_deref() == Some(hunk.key.as_str());

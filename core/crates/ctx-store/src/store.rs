@@ -420,6 +420,8 @@ impl Store {
                     .map(parse_dt)
                     .transpose()?,
                 has_active_session: has_active_session != 0,
+                primary_session_id: None,
+                primary_worktree_id: None,
             });
         }
         Ok(out)
@@ -448,6 +450,8 @@ impl Store {
             last_activity_at: None,
             last_assistant_message_at: None,
             has_active_session: false,
+            primary_session_id: None,
+            primary_worktree_id: None,
         };
         sqlx::query(
             r#"INSERT INTO tasks (id, workspace_id, title, description, status, exec_plan_id, primary_session_id, primary_worktree_id, created_at, updated_at)
@@ -512,6 +516,8 @@ impl Store {
                 last_activity_at: None,
                 last_assistant_message_at: None,
                 has_active_session: false,
+                primary_session_id: None,
+                primary_worktree_id: None,
             })
         }))
     }
@@ -707,6 +713,8 @@ impl Store {
                     .transpose()
                     .ok()?,
                 has_active_session: has_active_session != 0,
+                primary_session_id: None,
+                primary_worktree_id: None,
             })
         }))
     }
@@ -2110,6 +2118,8 @@ impl Store {
                     .map(parse_dt)
                     .transpose()?,
                 has_active_session: has_active_session != 0,
+                primary_session_id: None,
+                primary_worktree_id: None,
             };
             task_rows.push((task, sort_at_dt));
         }
@@ -2265,6 +2275,8 @@ impl Store {
                     .map(parse_dt)
                     .transpose()?,
                 has_active_session: has_active_session != 0,
+                primary_session_id: None,
+                primary_worktree_id: None,
             };
             task_rows.push((task, sort_at_dt));
         }
@@ -2382,6 +2394,8 @@ impl Store {
                     .map(parse_dt)
                     .transpose()?,
                 has_active_session: has_active_session != 0,
+                primary_session_id: None,
+                primary_worktree_id: None,
             };
 
             let summaries = self
@@ -2765,6 +2779,8 @@ impl Store {
                     .map(parse_dt)
                     .transpose()?,
                 has_active_session: has_active_session != 0,
+                primary_session_id: None,
+                primary_worktree_id: None,
             };
             let summaries = self
                 .build_workspace_catchup_task_summaries(vec![(task, sort_at_dt)])

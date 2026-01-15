@@ -304,7 +304,6 @@ pub(crate) struct PopoverPlacement {
 #[derive(Clone, Debug)]
 pub(crate) struct DraftTrack {
     pub(crate) key: String,
-    pub(crate) label: String,
     pub(crate) provider_id: String,
     pub(crate) model_id: String,
 }
@@ -1301,24 +1300,27 @@ impl ShellView {
                     &ctx_client::CreateTaskRequest {
                         title,
                         description: None,
-                        create_default_track: Some(false),
+                        create_default_track: None,
                         default_track_label: None,
                     },
                 )
                 .await?;
 
             let mut first_session_id = None;
-            let mut first_track_id = None;
 
             let to_start = if tracks.is_empty() {
                 vec![DraftTrack {
                     key: "t1".to_string(),
-                    label: String::new(),
                     provider_id: "codex".to_string(),
                     model_id: String::new(),
                 }]
             } else {
                 tracks
+            };
+
+            let env_target = match env_target {
+                EnvTarget::Local => EnvTarget::Local,
+                EnvTarget::Worktree | EnvTarget::Unknown => EnvTarget::Worktree,
             };
 
             for dt in to_start {
@@ -1347,27 +1349,6 @@ impl ShellView {
                     )));
                 }
 
-                let label = workbench_label_for_track(&dt);
-                let label = if label.trim().is_empty() {
-                    None
-                } else {
-                    Some(label)
-                };
-                let env_target = match env_target {
-                    EnvTarget::Local => EnvTarget::Local,
-                    EnvTarget::Worktree | EnvTarget::Unknown => EnvTarget::Worktree,
-                };
-
-                let track = client
-                    .create_track(
-                        task.id,
-                        &ctx_client::CreateTrackRequest {
-                            label,
-                            env_target: Some(env_target),
-                        },
-                    )
-                    .await?;
-
                 let opts = provider_options.get(&dt.provider_id).cloned();
                 let model_ids = model_ids_from_provider_options(opts.as_ref());
                 let model_id = if !dt.model_id.trim().is_empty() {
@@ -1381,21 +1362,19 @@ impl ShellView {
                 };
 
                 let session = client
-                    .create_session(
-                        track.id,
+                    .create_task_session(
+                        task.id,
                         &ctx_client::CreateSessionRequest {
                             provider_id: dt.provider_id.clone(),
                             model_id,
-                            parent_session_id: None,
+                            parent_session_id: first_session_id,
                             relationship: None,
+                            env_target: Some(env_target.clone()),
+                            worktree_id: None,
                             initial_prompt: None,
                         },
                     )
                     .await?;
-
-                if first_track_id.is_none() {
-                    first_track_id = Some(track.id);
-                }
                 if first_session_id.is_none() {
                     first_session_id = Some(session.session.id);
                 }
@@ -1410,7 +1389,7 @@ impl ShellView {
                     .await?;
             }
 
-            Ok((task.id, first_track_id, first_session_id))
+            Ok((task.id, first_session_id))
         });
 
         cx.spawn(move |this: gpui::WeakEntity<ShellView>, cx: &mut AsyncApp| {
@@ -1420,7 +1399,7 @@ impl ShellView {
                 this.update(&mut cx, |view, cx| {
                     view.composer_start_busy = false;
                     match result {
-                        Ok((_task_id, _track_id, first_session_id)) => {
+                        Ok((_task_id, first_session_id)) => {
                             view.mark_composer_cleared();
                             view.composer_start_error = None;
                             view.start_data_load(cx);
@@ -2273,7 +2252,6 @@ impl ShellView {
         let model_id = self.composer_model_id.clone().unwrap_or_default();
         self.composer_draft_tracks.push(DraftTrack {
             key: "t1".to_string(),
-            label: String::new(),
             provider_id,
             model_id,
         });
@@ -2283,7 +2261,6 @@ impl ShellView {
         let model_id = self.composer_model_id.clone().unwrap_or_default();
         self.composer_draft_tracks = vec![DraftTrack {
             key: "t1".to_string(),
-            label: String::new(),
             provider_id,
             model_id,
         }];
@@ -2346,7 +2323,6 @@ impl ShellView {
             } else {
                 self.composer_draft_tracks.push(DraftTrack {
                     key: format!("t{}", self.composer_draft_tracks.len() + 1),
-                    label: String::new(),
                     provider_id: provider_id.to_string(),
                     model_id: String::new(),
                 });
@@ -2391,7 +2367,6 @@ impl ShellView {
         if existing.is_empty() {
             existing.push(DraftTrack {
                 key: format!("t{}", self.composer_draft_tracks.len() + 1),
-                label: String::new(),
                 provider_id: provider_id.clone(),
                 model_id: String::new(),
             });
@@ -2401,7 +2376,6 @@ impl ShellView {
         while existing.len() < clamped {
             existing.push(DraftTrack {
                 key: format!("t{}", self.composer_draft_tracks.len() + existing.len() + 1),
-                label: String::new(),
                 provider_id: provider_id.clone(),
                 model_id: String::new(),
             });
@@ -2444,7 +2418,6 @@ impl ShellView {
         }
         self.composer_draft_tracks.push(DraftTrack {
             key: format!("t{}", self.composer_draft_tracks.len() + 1),
-            label: String::new(),
             provider_id,
             model_id: String::new(),
         });
@@ -2503,7 +2476,6 @@ impl ShellView {
                 if !exists {
                     self.composer_draft_tracks.push(DraftTrack {
                         key: format!("t{}", self.composer_draft_tracks.len() + 1),
-                        label: String::new(),
                         provider_id: provider_id.clone(),
                         model_id: String::new(),
                     });
@@ -3327,14 +3299,6 @@ fn model_id_from_provider_options(opts: Option<&ProviderOptions>) -> Option<Stri
         .and_then(|value| value.as_str())
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
-}
-
-fn workbench_label_for_track(track: &DraftTrack) -> String {
-    if track.label.trim().is_empty() {
-        track.provider_id.clone()
-    } else {
-        format!("{} — {}", track.provider_id, track.label.trim())
-    }
 }
 
 fn compute_menu_placement(

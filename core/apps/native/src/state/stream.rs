@@ -12,8 +12,8 @@ use tokio_tungstenite::{
 
 use ctx_core::ids::{SessionId, WorkspaceId};
 use ctx_core::models::{
-    SessionCatchupSummary, SessionEvent, SessionHeadDelta, WorkspaceCatchupClientMessage,
-    WorkspaceCatchupEvent, WorkspaceCatchupSessionSubscription,
+    SessionEvent, SessionHeadDelta, SessionSnapshotSummary, WorkspaceActiveSnapshotEvent,
+    WorkspaceCatchupClientMessage, WorkspaceCatchupSessionSubscription,
 };
 
 use super::ShellView;
@@ -48,7 +48,7 @@ impl StreamStatus {
 
 enum StreamUpdate {
     Status(StreamStatus),
-    Event(WorkspaceCatchupEvent),
+    Event(WorkspaceActiveSnapshotEvent),
 }
 
 const MAX_SESSION_EVENTS: usize = 200;
@@ -198,31 +198,26 @@ impl ShellView {
         }
     }
 
-    fn apply_workspace_event(&mut self, event: WorkspaceCatchupEvent, cx: &mut Context<Self>) {
+    fn apply_workspace_event(&mut self, event: WorkspaceActiveSnapshotEvent, cx: &mut Context<Self>) {
         match event {
-            WorkspaceCatchupEvent::TaskUpsert { task, .. } => {
-                self.upsert_task_summary(task);
+            WorkspaceActiveSnapshotEvent::ActiveTaskUpsert { task, .. } => {
+                self.upsert_active_task_summary(*task);
                 self.send_stream_subscribe();
                 self.maybe_mark_selected_task_read(cx);
                 cx.notify();
             }
-            WorkspaceCatchupEvent::TaskDelete { task_id, .. } => {
+            WorkspaceActiveSnapshotEvent::ActiveTaskDelete { task_id, .. } => {
                 self.remove_task(task_id);
                 self.send_stream_subscribe();
                 cx.notify();
             }
-            WorkspaceCatchupEvent::TrackUpsert { track, .. } => {
-                self.apply_track_summary(track);
-                self.send_stream_subscribe();
-                cx.notify();
+            WorkspaceActiveSnapshotEvent::SessionSummary { summary, .. } => {
+                self.handle_session_summary(*summary, cx);
             }
-            WorkspaceCatchupEvent::SessionSummary { summary, .. } => {
-                self.handle_session_summary(summary, cx);
-            }
-            WorkspaceCatchupEvent::SessionHeadDelta { delta, .. } => {
+            WorkspaceActiveSnapshotEvent::SessionHeadDelta { delta, .. } => {
                 self.apply_session_head_delta(*delta, cx);
             }
-            WorkspaceCatchupEvent::SessionGap {
+            WorkspaceActiveSnapshotEvent::SessionGap {
                 session_id,
                 after_seq,
                 ..
@@ -233,7 +228,7 @@ impl ShellView {
         }
     }
 
-    fn handle_session_summary(&mut self, summary: SessionCatchupSummary, cx: &mut Context<Self>) {
+    fn handle_session_summary(&mut self, summary: SessionSnapshotSummary, cx: &mut Context<Self>) {
         let session_id = summary.session.id;
         let is_new = !self.session_summary_map.contains_key(&session_id);
         self.apply_session_summary(summary);
@@ -359,7 +354,7 @@ async fn run_workspace_stream(
         };
         if let Some(Ok(msg)) = ready {
             if let Some(event) = parse_workspace_stream_event(msg) {
-                if !matches!(event, WorkspaceCatchupEvent::Ready { .. }) {
+                if !matches!(event, WorkspaceActiveSnapshotEvent::Ready { .. }) {
                     let _ = update_tx.send(StreamUpdate::Event(event));
                 }
             }
@@ -405,7 +400,7 @@ async fn run_workspace_stream(
                     match msg {
                         Some(Ok(frame)) => {
                             if let Some(event) = parse_workspace_stream_event(frame) {
-                                if !matches!(event, WorkspaceCatchupEvent::Ready { .. }) {
+                                if !matches!(event, WorkspaceActiveSnapshotEvent::Ready { .. }) {
                                     if update_tx.send(StreamUpdate::Event(event)).is_err() {
                                         return Ok(());
                                     }
@@ -426,13 +421,13 @@ async fn run_workspace_stream(
     }
 }
 
-fn parse_workspace_stream_event(message: WsMessage) -> Option<WorkspaceCatchupEvent> {
+fn parse_workspace_stream_event(message: WsMessage) -> Option<WorkspaceActiveSnapshotEvent> {
     let text = match message {
         WsMessage::Text(text) => text.to_string(),
         WsMessage::Binary(bytes) => String::from_utf8(bytes.to_vec()).ok()?,
         _ => return None,
     };
-    serde_json::from_str::<WorkspaceCatchupEvent>(&text).ok()
+    serde_json::from_str::<WorkspaceActiveSnapshotEvent>(&text).ok()
 }
 
 async fn send_workspace_subscribe<S>(

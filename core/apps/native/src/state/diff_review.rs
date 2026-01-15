@@ -1,7 +1,7 @@
 use gpui::{AsyncApp, Context, WeakEntity};
 use gpui_tokio::Tokio;
 
-use ctx_core::ids::TrackId;
+use ctx_core::ids::WorktreeId;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum DiffLineKind {
@@ -77,7 +77,7 @@ const DIFF_LIST_MAX_WIDTH: f32 = 320.0;
 
 #[derive(Debug)]
 pub(crate) struct DiffReviewState {
-    pub(crate) track_id: Option<TrackId>,
+    pub(crate) worktree_id: Option<WorktreeId>,
     pub(crate) diff: String,
     pub(crate) files: Vec<DiffFile>,
     pub(crate) active_file_key: Option<String>,
@@ -92,7 +92,7 @@ pub(crate) struct DiffReviewState {
 impl DiffReviewState {
     pub(crate) fn new() -> Self {
         Self {
-            track_id: None,
+            worktree_id: None,
             diff: String::new(),
             files: Vec::new(),
             active_file_key: None,
@@ -105,13 +105,17 @@ impl DiffReviewState {
         }
     }
 
-    pub(crate) fn set_track_id(&mut self, track_id: Option<TrackId>, cx: &mut Context<Self>) {
-        if self.track_id == track_id {
+    pub(crate) fn set_worktree_id(
+        &mut self,
+        worktree_id: Option<WorktreeId>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.worktree_id == worktree_id {
             return;
         }
-        self.track_id = track_id;
+        self.worktree_id = worktree_id;
         self.reset_state();
-        if self.track_id.is_some() {
+        if self.worktree_id.is_some() {
             self.reload_diff(cx);
         } else {
             cx.notify();
@@ -133,7 +137,7 @@ impl DiffReviewState {
     }
 
     pub(crate) fn reload_diff(&mut self, cx: &mut Context<Self>) {
-        let Some(track_id) = self.track_id else {
+        let Some(worktree_id) = self.worktree_id else {
             return;
         };
         self.busy_key = Some("diff:load".to_string());
@@ -144,7 +148,7 @@ impl DiffReviewState {
         let task = Tokio::spawn_result(cx, async move {
             let config = ctx_client::resolve_daemon_config()?;
             let client = ctx_client::Client::new(config)?;
-            client.get_track_diff(track_id).await
+            client.get_worktree_diff(worktree_id).await
         });
 
         cx.spawn(move |this: WeakEntity<DiffReviewState>, cx: &mut AsyncApp| {
@@ -152,7 +156,7 @@ impl DiffReviewState {
             async move {
                 let result = task.await;
                 this.update(&mut cx, |view, cx| {
-                    if view.track_id != Some(track_id) {
+                    if view.worktree_id != Some(worktree_id) {
                         return;
                     }
                     view.busy_key = None;
@@ -254,7 +258,7 @@ impl DiffReviewState {
         status_message: String,
         cx: &mut Context<Self>,
     ) {
-        let Some(track_id) = self.track_id else {
+        let Some(worktree_id) = self.worktree_id else {
             return;
         };
         if self.busy_key.is_some() {
@@ -270,7 +274,7 @@ impl DiffReviewState {
             let config = ctx_client::resolve_daemon_config()?;
             let client = ctx_client::Client::new(config)?;
             client
-                .apply_track_diff_patch(track_id, &action_label, &patch)
+                .apply_worktree_diff_patch(worktree_id, &action_label, &patch)
                 .await
         });
 
@@ -279,7 +283,7 @@ impl DiffReviewState {
             async move {
                 let result = task.await;
                 this.update(&mut cx, |view, cx| {
-                    if view.track_id != Some(track_id) {
+                    if view.worktree_id != Some(worktree_id) {
                         return;
                     }
                     view.busy_key = None;

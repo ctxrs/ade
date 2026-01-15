@@ -1,4 +1,4 @@
-use gpui::{Context, div, prelude::*, px};
+use gpui::{ClickEvent, Context, div, prelude::*, px};
 
 use crate::{automation_tree, theme::ThemeMetrics};
 
@@ -7,6 +7,7 @@ use super::composer::{ComposerVariant, ComposerView};
 use super::diff_review::DiffReviewView;
 use super::messages::ThreadListView;
 use super::sessions_pane::SessionsPaneView;
+use super::super::icons::{Icon, IconName};
 use super::super::state::{DataLoadState, ShellView};
 
 pub(crate) struct SessionView<'a> {
@@ -34,6 +35,10 @@ impl<'a> SessionView<'a> {
                 .p(px(24.0))
                 .child(composer);
         }
+        let has_session = shell
+            .selected_session
+            .and_then(|index| shell.sessions.get(index))
+            .is_some();
         if !shell.show_sessions_pane {
             automation_tree::register_hidden(
                 "sessions-list",
@@ -72,6 +77,290 @@ impl<'a> SessionView<'a> {
                 Some("app-shell"),
             );
         }
+        let interrupt_color = if has_session {
+            shell.colors.text
+        } else {
+            shell.colors.muted
+        };
+        let interrupt_label = div()
+            .flex()
+            .items_center()
+            .gap_1()
+            .child(Icon::new(
+                IconName::Interrupt,
+                12.0,
+                interrupt_color,
+            ))
+            .child("Interrupt");
+        let mut interrupt_button = div()
+            // Match web pill-button-inner: 4px x 10px
+            .px(px(metrics.spacing.lg))
+            .py(px(metrics.spacing.xs))
+            .text_sm()
+            .border_1()
+            .border_color(shell.colors.border)
+            .rounded_full()
+            .child(interrupt_label)
+            .id("session-interrupt");
+
+        if has_session {
+            interrupt_button = interrupt_button
+                .bg(shell.colors.panel)
+                .cursor_pointer()
+                .active(|style| style.opacity(0.85))
+                .on_click(cx.listener(ShellView::on_interrupt_click));
+        } else {
+            interrupt_button = interrupt_button
+                .bg(shell.colors.panel_2)
+                .text_color(shell.colors.muted);
+        }
+
+        let cancel_color = if has_session {
+            shell.colors.warning
+        } else {
+            shell.colors.muted
+        };
+        let cancel_label = div()
+            .flex()
+            .items_center()
+            .gap_1()
+            .child(Icon::new(IconName::Cancel, 12.0, cancel_color))
+            .child("Cancel");
+        let mut cancel_button = div()
+            // Match web pill-button-inner: 4px x 10px
+            .px(px(metrics.spacing.lg))
+            .py(px(metrics.spacing.xs))
+            .text_sm()
+            .border_1()
+            .border_color(shell.colors.border)
+            .rounded_full()
+            .child(cancel_label)
+            .id("session-cancel");
+
+        if has_session {
+            cancel_button = cancel_button
+                .bg(shell.colors.panel)
+                .text_color(shell.colors.warning)
+                .cursor_pointer()
+                .active(|style| style.opacity(0.85))
+                .on_click(cx.listener(ShellView::on_cancel_click));
+        } else {
+            cancel_button = cancel_button
+                .bg(shell.colors.panel_2)
+                .text_color(shell.colors.muted);
+        }
+        let sessions_toggle = {
+            let (bg, color) = if shell.show_sessions_pane {
+                (shell.colors.panel, shell.colors.text)
+            } else {
+                (shell.colors.panel_2, shell.colors.muted)
+            };
+            div()
+                // Match web .wb-icon 22x22, radius 8
+                .w(px(22.0))
+                .h(px(22.0))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded_lg()
+                .bg(bg)
+                .child(Icon::new(IconName::Sessions, 14.0, color))
+                .cursor_pointer()
+                .id("pane-toggle-sessions")
+                .active(|style| style.opacity(0.85))
+                .on_click(cx.listener(ShellView::toggle_sessions_pane))
+        };
+
+        let diff_toggle = {
+            let (bg, color) = if shell.show_diff_pane {
+                (shell.colors.panel, shell.colors.text)
+            } else {
+                (shell.colors.panel_2, shell.colors.muted)
+            };
+            div()
+                // Match web .wb-icon 22x22, radius 8
+                .w(px(22.0))
+                .h(px(22.0))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded_lg()
+                .bg(bg)
+                .child(Icon::new(IconName::Diff, 14.0, color))
+                .cursor_pointer()
+                .id("pane-toggle-diff")
+                .active(|style| style.opacity(0.85))
+                .on_click(cx.listener(ShellView::toggle_diff_pane))
+        };
+
+        let artifacts_toggle = {
+            let (bg, color) = if shell.show_artifacts_pane {
+                (shell.colors.panel, shell.colors.text)
+            } else {
+                (shell.colors.panel_2, shell.colors.muted)
+            };
+            div()
+                // Match web .wb-icon 22x22, radius 8
+                .w(px(22.0))
+                .h(px(22.0))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded_lg()
+                .bg(bg)
+                .child(Icon::new(IconName::Image, 14.0, color))
+                .cursor_pointer()
+                .id("pane-toggle-artifacts")
+                .active(|style| style.opacity(0.85))
+                .on_click(cx.listener(ShellView::toggle_artifacts_pane))
+        };
+
+        let terminal_toggle = {
+            let (bg, color) = if shell.show_terminal_panel {
+                (shell.colors.panel, shell.colors.text)
+            } else {
+                (shell.colors.panel_2, shell.colors.muted)
+            };
+            div()
+                // Match web .wb-icon 22x22, radius 8
+                .w(px(22.0))
+                .h(px(22.0))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded_lg()
+                .bg(bg)
+                .child(Icon::new(IconName::Terminal, 14.0, color))
+                .cursor_pointer()
+                .id("pane-toggle-terminal")
+                .active(|style| style.opacity(0.85))
+                .on_click(cx.listener(ShellView::toggle_terminal_panel))
+        };
+
+        let status_pill = div()
+            // Match web .wb-pill: 2px x 8px, muted text
+            .px(px(metrics.spacing.md))
+            .py(px(metrics.spacing.xxs))
+            .text_sm()
+            .bg(shell.colors.panel)
+            .border_1()
+            .border_color(shell.colors.border)
+            .rounded_full()
+            .text_color(shell.colors.muted)
+            .child(shell.session.status.clone());
+
+        let selected_session_id = shell
+            .selected_session
+            .and_then(|index| shell.sessions.get(index))
+            .map(|summary| summary.session_id);
+        let mut provider_id = None;
+        let mut model_id = None;
+        let mut agent_role = None;
+        let mut worktree_id = None;
+        if let Some(session_id) = selected_session_id {
+            if let Some(summary) = shell.session_summary_map.get(&session_id) {
+                provider_id = Some(summary.session.provider_id.clone());
+                model_id = Some(summary.session.model_id.clone());
+                agent_role = Some(summary.session.agent_role.clone());
+                worktree_id = Some(summary.session.worktree_id.0.to_string());
+            }
+        }
+
+        let mut meta_items = Vec::new();
+        if let Some(provider_id) = provider_id.as_ref() {
+            if !provider_id.trim().is_empty() {
+                meta_items.push(provider_id.clone());
+            }
+        }
+        if let Some(model_id) = model_id.as_ref() {
+            if !model_id.trim().is_empty() {
+                meta_items.push(model_id.clone());
+            }
+        }
+        if let Some(agent_role) = agent_role.as_ref() {
+            if !agent_role.trim().is_empty() {
+                meta_items.push(agent_role.clone());
+            }
+        }
+        let meta_text = if meta_items.is_empty() {
+            shell.session.detail.clone()
+        } else {
+            meta_items.join(" / ")
+        };
+
+        let worktree_chip = worktree_id.as_ref().map(|worktree_id| {
+            let short_id = worktree_id.chars().take(8).collect::<String>();
+            let copy_key = format!("worktree:{worktree_id}");
+            let copy_value = worktree_id.clone();
+            div()
+                .flex()
+                .items_center()
+                .gap(px(metrics.spacing.xs))
+                .px(px(metrics.spacing.sm))
+                .py(px(metrics.spacing.xxs))
+                .rounded_full()
+                .border_1()
+                .border_color(shell.colors.border)
+                .bg(shell.colors.panel)
+                .text_sm()
+                .text_color(shell.colors.text)
+                .child(Icon::new(IconName::Folder, 12.0, shell.colors.text))
+                .child(format!("Worktree {short_id}"))
+                .cursor_pointer()
+                .id("session-worktree-chip")
+                .active(|style| style.opacity(0.85))
+                .on_click(cx.listener(move |view, _: &ClickEvent, _window, cx| {
+                    view.copy_text_with_key(copy_key.clone(), copy_value.clone(), cx);
+                }))
+        });
+
+        let title_row = div()
+            .flex()
+            .items_center()
+            // Tighten to web gap 8px between title and pill
+            .gap(px(metrics.spacing.md))
+            .child(div().text_lg().child(shell.session.title.clone()))
+            .child(status_pill);
+
+        let pane_toggle_row = div()
+            .flex()
+            .items_center()
+            .gap(px(metrics.spacing.md))
+            .child(artifacts_toggle)
+            .child(diff_toggle)
+            .child(sessions_toggle)
+            .child(terminal_toggle);
+
+        let control_row = div()
+            .flex()
+            .items_center()
+            .gap(px(metrics.spacing.lg))
+            .child(pane_toggle_row)
+            .child(interrupt_button)
+            .child(cancel_button);
+
+        let header_block = div()
+            .flex()
+            .flex_col()
+            .gap(px(metrics.spacing.sm))
+            .child(title_row)
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(metrics.spacing.md))
+                            .text_sm()
+                            .text_color(shell.colors.muted)
+                            .child(meta_text)
+                            .when_some(worktree_chip, |row, chip| row.child(chip)),
+                    )
+                    .child(control_row),
+            );
         let notice_block = match &shell.data_state {
             DataLoadState::Loading => Some(
                 div()
@@ -135,6 +424,7 @@ impl<'a> SessionView<'a> {
             .gap(px(metrics.spacing.xxl))
             .flex_1()
             .min_h(px(0.0))
+            .child(header_block)
             .child(thread_stack)
             .child(composer);
 

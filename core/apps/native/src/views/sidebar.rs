@@ -673,24 +673,26 @@ fn render_task_row(
     let mut has_error = false;
     let mut unread_session = false;
 
-    for track in &task.tracks {
-        for session in &track.sessions {
-            if session.activity.is_working {
-                working = true;
-            }
-            if matches!(
-                session.session.status,
-                SessionStatus::Failed | SessionStatus::Cancelled
-            ) {
-                has_error = true;
-            }
-            if session.unread.unwrap_or(false) {
-                unread_session = true;
-            }
-            let provider_id = session.session.provider_id.trim();
-            if !provider_id.is_empty() && provider_set.insert(provider_id.to_string()) {
-                provider_ids.push(provider_id.to_string());
-            }
+    let summaries = task
+        .primary_session
+        .iter()
+        .chain(task.sessions.iter());
+    for session in summaries {
+        if session.activity.is_working {
+            working = true;
+        }
+        if matches!(
+            session.session.status,
+            SessionStatus::Failed | SessionStatus::Cancelled
+        ) {
+            has_error = true;
+        }
+        if session.unread.unwrap_or(false) {
+            unread_session = true;
+        }
+        let provider_id = session.session.provider_id.trim();
+        if !provider_id.is_empty() && provider_set.insert(provider_id.to_string()) {
+            provider_ids.push(provider_id.to_string());
         }
     }
 

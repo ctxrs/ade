@@ -14,9 +14,9 @@ use url::{form_urlencoded, Url};
 use ctx_core::ids::{ArtifactId, SessionId, TaskId, TerminalId, WorkspaceId, WorktreeId};
 use ctx_core::models::{
     Artifact, AttachmentMode, AttachmentUpdatePolicy, Message, MessageAttachment, MessageDelivery,
-    Session, SessionEventsPage, SessionHead, SessionHistoryPage, SessionTurnTool, Task,
-    TerminalSession, Workspace, WorkspaceAttachment, WorkspaceAttachmentKind,
-    WorkspaceCatchupCursor, WorkspaceCatchupSnapshot,
+    Session, SessionEventsPage, SessionHead, SessionHistoryPage, SessionSnapshot, SessionTurnTool,
+    Task, TerminalSession, Workspace, WorkspaceActiveSnapshot, WorkspaceAttachment,
+    WorkspaceAttachmentKind, WorkspaceCatchupCursor, WorkspaceCatchupSnapshot,
 };
 use ctx_providers::adapters::ProviderStatus;
 
@@ -102,11 +102,11 @@ pub struct CreateSessionRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub relationship: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub initial_prompt: Option<String>,
+    pub env_target: Option<EnvTarget>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub worktree_id: Option<WorktreeId>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub env_target: Option<EnvTarget>,
+    pub initial_prompt: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -213,6 +213,11 @@ pub struct WorkspaceCatchupParams {
     pub archived_only: Option<bool>,
     pub active_cursor: Option<WorkspaceCatchupCursor>,
     pub archived_cursor: Option<WorkspaceCatchupCursor>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct WorkspaceActiveSnapshotParams {
+    pub limit: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -869,6 +874,23 @@ impl Client {
         self.request_json(Method::POST, &path, None::<&()>).await
     }
 
+    pub async fn get_workspace_active_snapshot(
+        &self,
+        workspace_id: WorkspaceId,
+        params: &WorkspaceActiveSnapshotParams,
+    ) -> Result<WorkspaceActiveSnapshot> {
+        let mut path = format!("/api/workspaces/{}/active_snapshot", workspace_id.0);
+        let mut search = Vec::new();
+        if let Some(limit) = params.limit {
+            search.push(format!("limit={}", limit));
+        }
+        if !search.is_empty() {
+            path.push('?');
+            path.push_str(&search.join("&"));
+        }
+        self.request_json(Method::GET, &path, None::<&()>).await
+    }
+
     pub async fn get_workspace_catchup(
         &self,
         workspace_id: WorkspaceId,
@@ -1001,6 +1023,30 @@ impl Client {
         include_events: Option<bool>,
     ) -> Result<SessionHead> {
         let mut path = format!("/api/sessions/{}/head", session_id.0);
+        let mut params = Vec::new();
+        if let Some(limit) = limit {
+            params.push(format!("limit={}", limit));
+        }
+        if let Some(include_events) = include_events {
+            params.push(format!(
+                "include_events={}",
+                if include_events { "1" } else { "0" }
+            ));
+        }
+        if !params.is_empty() {
+            path.push('?');
+            path.push_str(&params.join("&"));
+        }
+        self.request_json(Method::GET, &path, None::<&()>).await
+    }
+
+    pub async fn get_session_snapshot(
+        &self,
+        session_id: SessionId,
+        limit: Option<u32>,
+        include_events: Option<bool>,
+    ) -> Result<SessionSnapshot> {
+        let mut path = format!("/api/sessions/{}/snapshot", session_id.0);
         let mut params = Vec::new();
         if let Some(limit) = limit {
             params.push(format!("limit={}", limit));

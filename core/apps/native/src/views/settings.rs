@@ -1296,7 +1296,7 @@ impl SettingsState {
             .into_any_element(),
             settings_row(
                 "Mount paths",
-                Some("Reference repos are mounted inside each track."),
+                Some("Reference repos are mounted inside each worktree."),
                 settings_pill(".ctx/.refs/<name>", PillVariant::Default, true),
                 false,
             )

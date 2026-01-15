@@ -2740,7 +2740,7 @@ impl<'a> ComposerView<'a> {
                                             div()
                                                 .text_sm()
                                                 .text_color(tint(colors.text, 0.65))
-                                                .child("Track"),
+                                                .child("Agent"),
                                         )
                                         .child(
                                             input

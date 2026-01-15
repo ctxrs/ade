@@ -233,6 +233,7 @@ fn create_shell_view(
             verbosity: SessionViewVerbosity::Default,
             verbosity_menu_open: false,
             artifacts: Vec::new(),
+            artifacts_session_id: None,
             selected_artifact: None,
             artifact_preview: ArtifactPreviewState::None,
             session_events: Vec::new(),
