@@ -109,11 +109,16 @@ fn markdown_view(
         })
 }
 
-fn plain_text_view(text: impl Into<SharedString>, colors: ThemeColors) -> AnyElement {
-    div()
-        .text_color(colors.text)
-        .child(text.into())
-        .into_any_element()
+fn plain_text_view(
+    text: impl Into<SharedString>,
+    colors: ThemeColors,
+    max_lines: Option<usize>,
+) -> AnyElement {
+    let mut view = div().text_color(colors.text).child(text.into());
+    if let Some(lines) = max_lines {
+        view = view.line_clamp(lines);
+    }
+    view.into_any_element()
 }
 
 fn click_handler(
@@ -525,8 +530,13 @@ fn render_thread_item(
                     COLLAPSED_MESSAGE_MAX_CHARS,
                 )
             };
+            let user_max_lines = if expanded {
+                None
+            } else {
+                Some(COLLAPSED_MESSAGE_MAX_LINES)
+            };
             let content_view = match role {
-                MessageRole::User => plain_text_view(visible_text, colors),
+                MessageRole::User => plain_text_view(visible_text, colors, user_max_lines),
                 _ => markdown_view(
                     format!("msg-{id}"),
                     visible_text,
