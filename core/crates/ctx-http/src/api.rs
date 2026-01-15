@@ -7757,8 +7757,12 @@ async fn archive_task(
         let Some(root) = managed_worktree_root(&state, &workspace, worktree) else {
             continue;
         };
-        needs_prune = true;
-        if tokio::fs::metadata(&root).await.is_ok() {
+        if tokio::fs::metadata(&root).await.is_err() {
+            continue;
+        }
+        let is_git = is_git_worktree(&root).await.unwrap_or(false);
+        if is_git {
+            needs_prune = true;
             if let Err(err) = remove_worktree(&workspace.root_path, &root).await {
                 tracing::warn!(
                     task_id = %task_id.0,
@@ -7783,6 +7787,16 @@ async fn archive_task(
                     errors.push(err);
                 }
             }
+        } else if let Err(err) = tokio::fs::remove_dir_all(&root)
+            .await
+            .with_context(|| format!("removing non-git worktree dir at {}", root.display()))
+        {
+            tracing::warn!(
+                task_id = %task_id.0,
+                worktree_id = %worktree.id.0,
+                "failed to remove worktree dir: {err:#}"
+            );
+            errors.push(err);
         }
     }
     if needs_prune {
