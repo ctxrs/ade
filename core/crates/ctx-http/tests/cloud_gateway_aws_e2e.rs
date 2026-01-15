@@ -301,6 +301,9 @@ async fn cloud_gateway_aws_e2e() -> Result<()> {
     let base_url = format!("http://127.0.0.1:{port}");
     let mut client: Option<reqwest::Client> = None;
     let session_token = env_trim("AWS_SESSION_TOKEN");
+    let keep_resources = std::env::var("CTX_E2E_KEEP_RESOURCES")
+        .ok()
+        .is_some_and(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true"));
 
     let test_result: Result<()> = async {
         let ctx_bin = env!("CARGO_BIN_EXE_ctx");
@@ -362,6 +365,13 @@ async fn cloud_gateway_aws_e2e() -> Result<()> {
         )
         .await?;
         gateway = Some(gateway_resp.gateway.clone());
+        if let Some(instance_id) = gateway_resp.gateway.instance_id.as_deref() {
+            eprintln!(
+                "gateway instance_id={} url={}",
+                instance_id,
+                gateway_resp.gateway.gateway_url
+            );
+        }
         wait_for_gateway_health(&gateway_resp.gateway).await?;
 
         let track_worker: TrackWorker = send_json(
@@ -376,6 +386,11 @@ async fn cloud_gateway_aws_e2e() -> Result<()> {
                 })),
         )
         .await?;
+        eprintln!(
+            "worker started track_id={} worker_id={}",
+            track_worker.track_id.0,
+            track_worker.worker_id
+        );
         worker = Some(track_worker);
 
         let session: ctx_core::models::Session = send_json(
@@ -406,37 +421,39 @@ async fn cloud_gateway_aws_e2e() -> Result<()> {
     .await;
 
     let mut cleanup_errors = Vec::new();
-    if let (Some(track_worker), Some(client)) = (worker.as_ref(), client.as_ref()) {
-        let resp = client
-            .delete(format!(
-                "{base_url}/api/tracks/{}/worker",
-                track_worker.track_id.0
-            ))
-            .send()
-            .await;
-        if let Err(err) = resp {
-            cleanup_errors.push(format!("failed to stop worker: {err:#}"));
-        }
-    }
-
-    if let Some(gateway) = gateway.as_ref() {
-        if let Some(instance_id) = gateway.instance_id.as_deref() {
-            let region = gateway.region.as_deref().unwrap_or(region.as_str());
-            if let Err(err) = terminate_gateway_instance(
-                region,
-                &access_key_id,
-                &secret_access_key,
-                session_token.as_deref(),
-                instance_id,
-            )
-            .await
-            {
-                cleanup_errors.push(format!(
-                    "failed to terminate gateway instance {instance_id}: {err:#}"
-                ));
+    if !keep_resources {
+        if let (Some(track_worker), Some(client)) = (worker.as_ref(), client.as_ref()) {
+            let resp = client
+                .delete(format!(
+                    "{base_url}/api/tracks/{}/worker",
+                    track_worker.track_id.0
+                ))
+                .send()
+                .await;
+            if let Err(err) = resp {
+                cleanup_errors.push(format!("failed to stop worker: {err:#}"));
             }
-        } else {
-            cleanup_errors.push("gateway instance id missing in launch response".to_string());
+        }
+
+        if let Some(gateway) = gateway.as_ref() {
+            if let Some(instance_id) = gateway.instance_id.as_deref() {
+                let region = gateway.region.as_deref().unwrap_or(region.as_str());
+                if let Err(err) = terminate_gateway_instance(
+                    region,
+                    &access_key_id,
+                    &secret_access_key,
+                    session_token.as_deref(),
+                    instance_id,
+                )
+                .await
+                {
+                    cleanup_errors.push(format!(
+                        "failed to terminate gateway instance {instance_id}: {err:#}"
+                    ));
+                }
+            } else {
+                cleanup_errors.push("gateway instance id missing in launch response".to_string());
+            }
         }
     }
 

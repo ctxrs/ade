@@ -69,13 +69,30 @@ install_ca() {
 }
 
 fetch_bootstrap() {
-  local url="${CTX_GATEWAY_URL%/}/workers/${CTX_WORKER_ID}/bootstrap"
+  local gateway_base="${CTX_GATEWAY_URL%/}"
+  local gateway_host_port="${gateway_base#*://}"
+  gateway_host_port="${gateway_host_port%%/*}"
+  local gateway_host="${gateway_host_port%%:*}"
+  local gateway_port="${gateway_host_port##*:}"
+  if [ "$gateway_host_port" = "$gateway_host" ]; then
+    gateway_port="443"
+  fi
+  local url="${gateway_base}/workers/${CTX_WORKER_ID}/bootstrap"
   local args=()
   if [ -n "${CTX_WORKER_GATEWAY_TOKEN:-}" ]; then
     url="${url}?token=${CTX_WORKER_GATEWAY_TOKEN}"
   fi
+  local needs_resolve=""
+  if echo "$gateway_host" | grep -Eq '^([0-9]{1,3}\\.){3}[0-9]{1,3}$'; then
+    echo "${gateway_host} ctx-gateway" >> /etc/hosts
+    url="${url/$gateway_host_port/ctx-gateway:${gateway_port}}"
+    needs_resolve="1"
+  fi
   if [ -n "${CTX_GATEWAY_CA_PATH:-}" ]; then
     args+=(--cacert "$CTX_GATEWAY_CA_PATH")
+    if [ -n "$needs_resolve" ]; then
+      args+=(--resolve "ctx-gateway:${gateway_port}:${gateway_host}")
+    fi
   else
     args+=(--insecure)
   fi
@@ -192,18 +209,26 @@ pub fn render_bootstrap_script(spec: &BootstrapSpec<'_>) -> String {
     script.push_str(
         "  if [ -n \"${CTX_GATEWAY_CA_PATH:-}\" ] && [ -n \"${CTX_GATEWAY_URL:-}\" ]; then\n",
     );
-    script.push_str("    case \"$url\" in\n");
-    script.push_str("      \"${CTX_GATEWAY_URL%/}\"*)\n");
-    script.push_str("        local insecure=\"\"\n");
-    script.push_str("        if echo \"$CTX_GATEWAY_URL\" | grep -Eq '^https?://([0-9]{1,3}\\.){3}[0-9]{1,3}(:|/|$)'; then\n");
-    script.push_str("          insecure=\"--insecure\"\n");
-    script.push_str("        fi\n");
+    script.push_str("    local gateway_base=\"${CTX_GATEWAY_URL%/}\"\n");
+    script.push_str("    local gateway_host_port=\"${gateway_base#*://}\"\n");
+    script.push_str("    gateway_host_port=\"${gateway_host_port%%/*}\"\n");
+    script.push_str("    local gateway_host=\"${gateway_host_port%%:*}\"\n");
+    script.push_str("    local gateway_port=\"${gateway_host_port##*:}\"\n");
+    script.push_str("    if [ \"$gateway_host_port\" = \"$gateway_host\" ]; then\n");
+    script.push_str("      gateway_port=\"443\"\n");
+    script.push_str("    fi\n");
+    script.push_str("    if echo \"$gateway_host\" | grep -Eq '^([0-9]{1,3}\\\\.){3}[0-9]{1,3}$'; then\n");
+    script.push_str("      local resolved_url=\"${url/$gateway_host_port/ctx-gateway:${gateway_port}}\"\n");
+    script.push_str("      echo \"${gateway_host} ctx-gateway\" >> /etc/hosts\n");
     script.push_str(
-        "        curl $insecure --cacert \"$CTX_GATEWAY_CA_PATH\" -fsSL \"$url\" -o \"$dest\"\n",
+        "      curl --cacert \"$CTX_GATEWAY_CA_PATH\" --resolve \"ctx-gateway:${gateway_port}:${gateway_host}\" -fsSL \"$resolved_url\" -o \"$dest\"\n",
     );
-    script.push_str("        return $?\n");
-    script.push_str("        ;;\n");
-    script.push_str("    esac\n");
+    script.push_str("      return $?\n");
+    script.push_str("    fi\n");
+    script.push_str(
+        "    curl --cacert \"$CTX_GATEWAY_CA_PATH\" -fsSL \"$url\" -o \"$dest\"\n",
+    );
+    script.push_str("    return $?\n");
     script.push_str("  fi\n");
     script.push_str("  curl -fsSL \"$url\" -o \"$dest\"\n");
     script.push_str("}\n\n");
