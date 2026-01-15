@@ -80,6 +80,7 @@ fn retain_tool_summaries_for_turns(
     tool_summaries.retain(|tool| allowed.contains(&tool.turn_id));
 }
 
+#[allow(clippy::too_many_arguments)]
 fn trim_session_head_window(
     turns: &mut Vec<SessionTurn>,
     messages: &mut Vec<Message>,
@@ -420,8 +421,6 @@ impl Store {
                     .map(parse_dt)
                     .transpose()?,
                 has_active_session: has_active_session != 0,
-                primary_session_id: None,
-                primary_worktree_id: None,
             });
         }
         Ok(out)
@@ -450,8 +449,6 @@ impl Store {
             last_activity_at: None,
             last_assistant_message_at: None,
             has_active_session: false,
-            primary_session_id: None,
-            primary_worktree_id: None,
         };
         sqlx::query(
             r#"INSERT INTO tasks (id, workspace_id, title, description, status, exec_plan_id, primary_session_id, primary_worktree_id, created_at, updated_at)
@@ -516,8 +513,6 @@ impl Store {
                 last_activity_at: None,
                 last_assistant_message_at: None,
                 has_active_session: false,
-                primary_session_id: None,
-                primary_worktree_id: None,
             })
         }))
     }
@@ -713,8 +708,6 @@ impl Store {
                     .transpose()
                     .ok()?,
                 has_active_session: has_active_session != 0,
-                primary_session_id: None,
-                primary_worktree_id: None,
             })
         }))
     }
@@ -2118,8 +2111,6 @@ impl Store {
                     .map(parse_dt)
                     .transpose()?,
                 has_active_session: has_active_session != 0,
-                primary_session_id: None,
-                primary_worktree_id: None,
             };
             task_rows.push((task, sort_at_dt));
         }
@@ -2275,8 +2266,6 @@ impl Store {
                     .map(parse_dt)
                     .transpose()?,
                 has_active_session: has_active_session != 0,
-                primary_session_id: None,
-                primary_worktree_id: None,
             };
             task_rows.push((task, sort_at_dt));
         }
@@ -2394,8 +2383,6 @@ impl Store {
                     .map(parse_dt)
                     .transpose()?,
                 has_active_session: has_active_session != 0,
-                primary_session_id: None,
-                primary_worktree_id: None,
             };
 
             let summaries = self
@@ -2779,8 +2766,6 @@ impl Store {
                     .map(parse_dt)
                     .transpose()?,
                 has_active_session: has_active_session != 0,
-                primary_session_id: None,
-                primary_worktree_id: None,
             };
             let summaries = self
                 .build_workspace_catchup_task_summaries(vec![(task, sort_at_dt)])
@@ -3430,11 +3415,7 @@ impl Store {
         let activity = derive_activity_from_status(last_status, has_running_turn);
         let mut events = if include_events {
             let mut events = self
-                .list_session_events_tail_by_seq(
-                    session_id,
-                    SESSION_HEAD_EVENT_LIMIT as u32,
-                    false,
-                )
+                .list_session_events_tail_by_seq(session_id, SESSION_HEAD_EVENT_LIMIT as u32, false)
                 .await?;
             events.sort_by(|a, b| a.seq.cmp(&b.seq));
             events

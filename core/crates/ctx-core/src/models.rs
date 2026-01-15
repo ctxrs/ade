@@ -625,7 +625,7 @@ pub struct SessionSummaryCheckpoint {
     pub updated_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SessionHeadWindow {
     pub turn_limit: i64,
     pub message_limit: i64,
@@ -637,22 +637,6 @@ pub struct SessionHeadWindow {
     pub bytes: i64,
     #[serde(default, skip_serializing_if = "is_false")]
     pub truncated: bool,
-}
-
-impl Default for SessionHeadWindow {
-    fn default() -> Self {
-        Self {
-            turn_limit: 0,
-            message_limit: 0,
-            event_limit: 0,
-            byte_limit: 0,
-            turn_count: 0,
-            message_count: 0,
-            event_count: 0,
-            bytes: 0,
-            truncated: false,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

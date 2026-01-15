@@ -193,7 +193,6 @@ pub struct CachedFileCompletions {
     pub files: Arc<Vec<String>>,
 }
 
-#[derive(Clone)]
 impl AppState {
     pub fn new(
         data_root: PathBuf,

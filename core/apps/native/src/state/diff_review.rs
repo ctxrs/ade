@@ -121,12 +121,6 @@ impl DiffReviewState {
         }
     }
 
-    pub(crate) fn set_diff(&mut self, diff: String) {
-        self.diff = diff;
-        self.files = parse_unified_diff(&self.diff);
-        self.ensure_active_file();
-    }
-
     pub(crate) fn select_file(&mut self, key: String, cx: &mut Context<Self>) {
         if self.active_file_key.as_deref() == Some(key.as_str()) {
             return;
@@ -213,15 +207,6 @@ impl DiffReviewState {
         self.list_resize_state = None;
     }
 
-    fn ensure_active_file(&mut self) {
-        if let Some(active) = &self.active_file_key {
-            if self.files.iter().any(|file| &file.key == active) {
-                return;
-            }
-        }
-        self.active_file_key = self.files.first().map(|file| file.key.clone());
-    }
-
     fn apply_patch(
         &mut self,
         busy_key: String,
@@ -235,158 +220,5 @@ impl DiffReviewState {
         self.status = Some("Diff unavailable in trackless mode.".to_string());
         self.error = None;
         cx.notify();
-    }
-}
-
-#[derive(Clone, Debug)]
-struct RawDiffFile {
-    key: String,
-    old_path: String,
-    new_path: String,
-    section_lines: Vec<String>,
-    header_lines: Vec<String>,
-    hunks: Vec<DiffHunk>,
-}
-
-fn parse_unified_diff(diff_text: &str) -> Vec<DiffFile> {
-    let mut lines = diff_text.split('\n').collect::<Vec<_>>();
-    if matches!(lines.last(), Some(line) if line.is_empty()) {
-        lines.pop();
-    }
-    let mut files = Vec::new();
-    let mut current: Option<RawDiffFile> = None;
-    let mut current_hunk: Option<DiffHunk> = None;
-    let mut in_header = false;
-
-    for (idx, line) in lines.iter().enumerate() {
-        if line.starts_with("diff --git ") {
-            push_current(&mut files, &mut current, &mut current_hunk, &mut in_header);
-
-            let mut parts = line.trim_start_matches("diff --git ").split_whitespace();
-            let old_raw = parts.next().unwrap_or("");
-            let new_raw = parts.next().unwrap_or("");
-            let old_path = old_raw.strip_prefix("a/").unwrap_or(old_raw).to_string();
-            let new_path = new_raw.strip_prefix("b/").unwrap_or(new_raw).to_string();
-            let key = format!("{old_path}=>{new_path}:{idx}");
-            current = Some(RawDiffFile {
-                key,
-                old_path,
-                new_path,
-                section_lines: vec![line.to_string()],
-                header_lines: vec![line.to_string()],
-                hunks: Vec::new(),
-            });
-            in_header = true;
-            continue;
-        }
-
-        let Some(current_file) = current.as_mut() else {
-            continue;
-        };
-        current_file.section_lines.push((*line).to_string());
-
-        if line.starts_with("@@ ") {
-            if let Some(hunk) = current_hunk.take() {
-                current_file.hunks.push(hunk);
-            }
-            current_hunk = Some(DiffHunk {
-                key: format!("{}:h{}:{}", current_file.key, current_file.hunks.len(), idx),
-                header_line: (*line).to_string(),
-                lines: Vec::new(),
-            });
-            in_header = false;
-            continue;
-        }
-
-        if in_header {
-            current_file.header_lines.push((*line).to_string());
-        } else if let Some(hunk) = current_hunk.as_mut() {
-            hunk.lines.push((*line).to_string());
-        }
-    }
-
-    push_current(&mut files, &mut current, &mut current_hunk, &mut in_header);
-    files
-        .into_iter()
-        .filter(|file| file.section_lines.iter().any(|line| !line.trim().is_empty()))
-        .collect()
-}
-
-fn push_current(
-    files: &mut Vec<DiffFile>,
-    current: &mut Option<RawDiffFile>,
-    current_hunk: &mut Option<DiffHunk>,
-    in_header: &mut bool,
-) {
-    let Some(mut raw) = current.take() else {
-        return;
-    };
-    if let Some(hunk) = current_hunk.take() {
-        raw.hunks.push(hunk);
-    }
-    files.push(finalize_file(raw));
-    *in_header = false;
-}
-
-fn finalize_file(raw: RawDiffFile) -> DiffFile {
-    let file_path = if !raw.new_path.is_empty() && raw.new_path != "dev/null" {
-        raw.new_path.clone()
-    } else if !raw.old_path.is_empty() && raw.old_path != "dev/null" {
-        raw.old_path.clone()
-    } else {
-        "(unknown)".to_string()
-    };
-    let header_text = raw.header_lines.join("\n");
-    let is_new = raw.old_path == "dev/null"
-        || header_text.contains("new file mode")
-        || header_text.contains("--- /dev/null");
-    let is_deleted = raw.new_path == "dev/null"
-        || header_text.contains("deleted file mode")
-        || header_text.contains("+++ /dev/null");
-    let patch_text = raw.section_lines.join("\n");
-    let is_binary = patch_text.contains("GIT binary patch") || patch_text.contains("Binary files");
-
-    let mut added_lines = 0;
-    let mut deleted_lines = 0;
-    let mut has_render_lines = false;
-
-    for hunk in &raw.hunks {
-        for line in &hunk.lines {
-            if line.is_empty() {
-                continue;
-            }
-            let prefix = line.as_bytes()[0] as char;
-            match prefix {
-                '+' => {
-                    if !line.starts_with("+++") {
-                        added_lines += 1;
-                        has_render_lines = true;
-                    }
-                }
-                '-' => {
-                    if !line.starts_with("---") {
-                        deleted_lines += 1;
-                        has_render_lines = true;
-                    }
-                }
-                ' ' => {
-                    has_render_lines = true;
-                }
-                _ => {}
-            }
-        }
-    }
-
-    DiffFile {
-        key: raw.key,
-        file_path,
-        section_lines: raw.section_lines,
-        header_lines: raw.header_lines,
-        hunks: raw.hunks,
-        is_new,
-        is_deleted,
-        is_binary: is_binary || !has_render_lines,
-        added_lines,
-        deleted_lines,
     }
 }

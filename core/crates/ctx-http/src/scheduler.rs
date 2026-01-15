@@ -6,7 +6,6 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::{anyhow, Result};
-use base64::Engine;
 use chrono::Utc;
 use serde_json::{json, Value};
 use tokio::sync::mpsc;

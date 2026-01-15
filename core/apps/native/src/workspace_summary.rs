@@ -181,17 +181,13 @@ fn session_summary_from_catchup(summary: &SessionCatchupSummary) -> SessionSnaps
 fn archived_session_summaries(
     summary: &WorkspaceCatchupTaskSummary,
 ) -> (Option<SessionSnapshotSummary>, Vec<SessionSnapshotSummary>) {
-    let mut sessions = Vec::new();
-    for track in &summary.tracks {
-        for session in &track.sessions {
-            sessions.push(session_summary_from_catchup(session));
-        }
-    }
+    let sessions = summary
+        .sessions
+        .iter()
+        .map(session_summary_from_catchup)
+        .collect::<Vec<_>>();
 
-    let mut primary_id = summary.task.primary_session_id;
-    if primary_id.is_none() {
-        primary_id = summary.tracks.iter().find_map(|track| track.primary_session_id);
-    }
+    let primary_id = summary.task.primary_session_id;
 
     let mut primary = None;
     if let Some(id) = primary_id {

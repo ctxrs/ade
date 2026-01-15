@@ -4,12 +4,6 @@ use std::process::Stdio;
 use std::sync::Arc;
 
 use anyhow::{bail, Context};
-use aws_config::Region;
-use aws_credential_types::Credentials;
-use aws_sdk_ec2::Client as Ec2Client;
-use aws_sdk_s3::presigning::PresigningConfig;
-use aws_sdk_s3::Client as S3Client;
-use aws_sdk_sts::Client as StsClient;
 use axum::body::{Body, Bytes};
 use axum::extract::ws::{Message as WsMessage, WebSocket, WebSocketUpgrade};
 use axum::extract::{Extension, MatchedPath, Multipart, Path, Query, State};
@@ -28,7 +22,7 @@ use opentelemetry::KeyValue;
 use rand_core::RngCore;
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use tokio::io::{AsyncReadExt, AsyncSeekExt, SeekFrom};
 use tokio::process::Command;
 use tokio::sync::mpsc;
@@ -39,7 +33,6 @@ use tower::util::ServiceExt;
 use tower_http::services::{ServeDir, ServeFile};
 use url::Url;
 
-use chrono::Utc;
 use ctx_core::ids::*;
 use ctx_core::models::*;
 use ctx_fs::git::{assert_git_repo, list_tracked_files, list_untracked_files, rev_parse_head};
@@ -8025,10 +8018,24 @@ async fn create_task(
         .store
         .get_task_with_activity(task.id)
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?
     {
         Some(task) => task,
-        None => return Err(StatusCode::NOT_FOUND),
+        None => {
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(ApiErrorResp {
+                    error: "task not found".to_string(),
+                }),
+            ))
+        }
     };
 
     if let Err(e) = state.emit_workspace_task_upsert(task.id).await {
@@ -8660,7 +8667,7 @@ async fn get_workspace_catchup(
             )
         })?;
 
-    let (mut active_tasks, active_next) = if archived_only {
+    let (active_tasks, active_next) = if archived_only {
         (Vec::new(), None)
     } else {
         state
@@ -8684,7 +8691,7 @@ async fn get_workspace_catchup(
     };
 
     let archived_page = if include_archived {
-        let (mut archived_tasks, archived_next) = state
+        let (archived_tasks, archived_next) = state
             .store
             .list_workspace_catchup_page(workspace_id, archived_cursor, limit, true)
             .await

@@ -32,7 +32,7 @@ async fn setup() -> (
 }
 
 #[tokio::test]
-async fn workspace_catchup_snapshot_includes_tracks() {
+async fn workspace_catchup_snapshot_includes_sessions() {
     let (repo, _data_dir, store, server) = setup().await;
     let base = &server.base_url;
     let client = &server.client;
@@ -57,12 +57,13 @@ async fn workspace_catchup_snapshot_includes_tracks() {
         .await
         .unwrap();
 
-    let tracks = store.list_tracks_for_task(task_active.id).await.unwrap();
-    let track = &tracks[0];
-    client
-        .post(format!("{base}/api/tracks/{}/sessions", track.id.0))
+    let _session: ctx_core::models::Session = client
+        .post(format!("{base}/api/tasks/{}/sessions", task_active.id.0))
         .json(&json!({"provider_id":"fake","model_id":"fake-model"}))
         .send()
+        .await
+        .unwrap()
+        .json()
         .await
         .unwrap();
 
@@ -92,8 +93,7 @@ async fn workspace_catchup_snapshot_includes_tracks() {
     assert_eq!(snapshot.active.tasks.len(), 1);
     let summary = &snapshot.active.tasks[0];
     assert_eq!(summary.task.id, task_active.id);
-    assert_eq!(summary.tracks.len(), 1);
-    assert_eq!(summary.tracks[0].sessions.len(), 1);
+    assert_eq!(summary.sessions.len(), 1);
     assert_eq!(snapshot.active.total_count, 1);
 
     let snapshot_all: ctx_core::models::WorkspaceCatchupSnapshot = client
@@ -154,10 +154,8 @@ async fn workspace_stream_replays_from_after_seq() {
         .await
         .unwrap();
 
-    let tracks = store.list_tracks_for_task(task.id).await.unwrap();
-    let track = &tracks[0];
     let session: ctx_core::models::Session = client
-        .post(format!("{base}/api/tracks/{}/sessions", track.id.0))
+        .post(format!("{base}/api/tasks/{}/sessions", task.id.0))
         .json(&json!({"provider_id":"fake","model_id":"fake-model"}))
         .send()
         .await
@@ -275,10 +273,8 @@ async fn workspace_stream_replays_tool_events() {
         .await
         .unwrap();
 
-    let tracks = store.list_tracks_for_task(task.id).await.unwrap();
-    let track = &tracks[0];
     let session: ctx_core::models::Session = client
-        .post(format!("{base}/api/tracks/{}/sessions", track.id.0))
+        .post(format!("{base}/api/tasks/{}/sessions", task.id.0))
         .json(&json!({"provider_id":"fake","model_id":"fake-model"}))
         .send()
         .await

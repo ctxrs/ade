@@ -1300,8 +1300,7 @@ impl ShellView {
                     &ctx_client::CreateTaskRequest {
                         title,
                         description: None,
-                        create_default_track: None,
-                        default_track_label: None,
+                        create_default_session: Some(false),
                     },
                 )
                 .await?;
@@ -1362,7 +1361,7 @@ impl ShellView {
                 };
 
                 let session = client
-                    .create_task_session(
+                    .create_session(
                         task.id,
                         &ctx_client::CreateSessionRequest {
                             provider_id: dt.provider_id.clone(),
