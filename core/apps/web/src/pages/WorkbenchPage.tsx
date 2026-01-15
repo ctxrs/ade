@@ -957,9 +957,10 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       const activeTab = workbenchStore.getActiveTab();
       const prevSessionId =
         activeTab?.kind === "task" && activeTab.ref.taskId === taskId ? (activeTab.ref.sessionId ?? null) : null;
-      const wanted = prevSessionId ?? preferredSessionId ?? null;
       const sessionList = sessions.map((s) => s.session).filter(Boolean);
-      const nextSessionId = pickPreferredSessionId(sessionList, wanted);
+      const nextSessionId = preferredSessionId
+        ? preferredSessionId
+        : pickPreferredSessionId(sessionList, prevSessionId ?? null);
       if (activeTab?.kind === "task" && activeTab.ref.taskId === taskId && nextSessionId !== prevSessionId) {
         workbenchStore.setActiveSessionForActiveTask(nextSessionId, { source: "system" });
       }
@@ -1234,10 +1235,10 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     () => idToString(activeTaskSummary?.task.primary_session_id ?? ""),
     [activeTaskSummary?.task.primary_session_id],
   );
-  const activeTaskSessionIds = useMemo(
-    () => sessionIds,
-    [sessionIds],
-  );
+  const activeTaskSessionIds = useMemo(() => {
+    if (primarySessionId) return [primarySessionId];
+    return sessionIds;
+  }, [primarySessionId, sessionIds]);
 
   const warmSessionIds = useMemo(() => {
     const ids: { id: string; updatedAt: number; running: boolean }[] = [];
@@ -1264,7 +1265,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     if (!activeTaskId) {
       return;
     }
-    if (sessionIds.length === 0) {
+    if (sessionIds.length === 0 && !primarySessionId) {
       workbenchStore.setActiveSessionForActiveTask(null, { source: "system" });
       return;
     }
@@ -1817,35 +1818,14 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   }, []);
 
   const activeSessionId = useMemo(() => {
+    if (primarySessionId) return primarySessionId;
     if (activeSessionIdFromTab) return activeSessionIdFromTab;
-    return pickPreferredSessionId(sessions, primarySessionId || null);
+    return pickPreferredSessionId(sessions, null);
   }, [activeSessionIdFromTab, primarySessionId, sessions]);
 
-  const renderSessionBudget = 10;
-  const [recentSessionIds, setRecentSessionIds] = useState<string[]>([]);
-  useEffect(() => {
-    if (!activeSessionId) return;
-    setRecentSessionIds((prev) => {
-      const next = [activeSessionId, ...prev.filter((id) => id !== activeSessionId)];
-      return next.slice(0, Math.max(1, renderSessionBudget));
-    });
-  }, [activeSessionId, renderSessionBudget]);
-
   const sessionIdsToRender = useMemo(() => {
-    const ids: string[] = [];
-    const seen = new Set<string>();
-    const push = (value: string | null | undefined) => {
-      const id = String(value ?? "");
-      if (!id || seen.has(id)) return;
-      seen.add(id);
-      ids.push(id);
-    };
-    if (activeSessionId) push(activeSessionId);
-    activeTaskSessionIds.forEach((id) => push(id));
-    recentSessionIds.forEach((id) => push(id));
-    warmSessionIds.forEach((id) => push(id));
-    return ids.slice(0, Math.max(1, renderSessionBudget));
-  }, [activeSessionId, activeTaskSessionIds, recentSessionIds, warmSessionIds, renderSessionBudget]);
+    return activeSessionId ? [activeSessionId] : [];
+  }, [activeSessionId]);
   const preserveScrollOnFocus = true;
   useOpenSession(activeSessionId ?? "", { watchDiff: diffOpen });
 
@@ -2745,7 +2725,6 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   }, []);
 
   const activeTask = activeTaskSummary?.task ?? null;
-  const expectedActiveSessionCount = activeTaskSummary ? activeTaskSummary.sessions.length : null;
   const worktreeChip = useMemo(() => {
     const sess = activeEntry?.session ?? null;
     const worktreeRoot = String(activeWorktree?.root_path ?? "");
@@ -2768,8 +2747,8 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     };
   }, [activeEntry, activeWorktree?.git_branch, activeWorktree?.root_path, workspace?.root_path]);
   const singleSessionHeader = useMemo(() => {
-    if (sessions.length !== 1) return null;
     const sess = activeEntry?.session ?? null;
+    if (!sess) return null;
     const parsedModel = parseModelId(sess?.model_id ?? "");
     const harness =
       HARNESS_CATALOG.find((h) => h.id === (sess?.provider_id ?? ""))?.label ??
@@ -2804,7 +2783,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       modelBase: parsedModel.base || String(sess?.model_id ?? ""),
       effort: parsedModel.effort,
     };
-  }, [activeEntry, activeTask?.title, sessions.length]);
+  }, [activeEntry, activeTask?.title]);
 
   const singleSessionHeaderForRender = useMemo(() => {
     if (singleSessionHeader) return singleSessionHeader;
@@ -2818,13 +2797,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     };
   }, [activeTask?.title, activeTaskId, singleSessionHeader]);
 
-  const showSingleSessionHeader = Boolean(
-    activeTaskId &&
-      singleSessionHeaderForRender &&
-      (sessions.length === 1 ||
-        (sessions.length === 0 &&
-          (expectedActiveSessionCount === 1 || expectedActiveSessionCount === null))),
-  );
+  const showSingleSessionHeader = Boolean(activeTaskId && singleSessionHeaderForRender);
 
   const [worktreeCopied, setWorktreeCopied] = useState(false);
   const worktreeCopiedTimerRef = useRef<number | null>(null);
@@ -3421,39 +3394,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
                     </div>
                   </div>
                 </div>
-              ) : (
-                <div className="wb-trackbar" aria-busy={sessions.length === 0 ? "true" : undefined}>
-                  {sessions.length === 0 ? (
-                    <>
-                      <div className="wb-trackcard wb-trackcard-skeleton" aria-hidden="true" />
-                      <div className="wb-trackcard wb-trackcard-skeleton" aria-hidden="true" />
-                    </>
-                  ) : (
-                    sessionSummaries.map((summary) => {
-                      const sessionId = idToString(summary.session.id);
-                      if (!sessionId) return null;
-                      const selected = sessionId === activeSessionId;
-                      const liveSession = sessionCache.sessions[sessionId]?.session;
-                      const displaySession = liveSession ?? summary.session;
-                      const model = displaySession
-                        ? `${displaySession.provider_id} ${displaySession.model_id}`
-                        : "No session";
-                      const status = displaySession?.status ?? "unknown";
-                      return (
-                        <button
-                          key={sessionId}
-                          type="button"
-                          className={`wb-trackcard ${selected ? "wb-trackcard-active" : ""}`}
-                          onClick={() => workbenchStore.setActiveSessionForActiveTask(sessionId)}
-                        >
-                          <div className="wb-trackcard-title">{model}</div>
-                          <div className="wb-trackcard-sub">{status}</div>
-                        </button>
-                      );
-                    })
-                  )}
-                </div>
-              )}
+              ) : null}
 
               <div className="wb-session">
                 {sessionIdsToRender.map((sessionId) => {
