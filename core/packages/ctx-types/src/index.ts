@@ -311,6 +311,8 @@ export type SessionHead = {
   tool_summaries?: SessionTurnToolSummary[];
   events?: SessionEvent[];
   messages: Message[];
+  head_window?: number | null;
+  summary_checkpoint?: number | null;
   last_event_seq: number;
   activity?: SessionActivityState;
   has_more_turns: boolean;

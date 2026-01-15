@@ -244,6 +244,8 @@ struct SessionHead: Codable, Sendable {
     let toolSummaries: [SessionTurnToolSummary]?
     let events: [SessionEvent]?
     let messages: [Message]
+    let headWindow: Int?
+    let summaryCheckpoint: Int?
     let lastEventSeq: Int
     let activity: SessionActivityState?
     let hasMoreTurns: Bool

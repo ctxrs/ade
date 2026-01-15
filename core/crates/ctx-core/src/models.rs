@@ -632,6 +632,10 @@ pub struct SessionHead {
     pub events: Vec<SessionEvent>,
     #[serde(default)]
     pub messages: Vec<Message>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub head_window: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary_checkpoint: Option<i64>,
     pub last_event_seq: i64,
     #[serde(default)]
     pub activity: SessionActivityState,
