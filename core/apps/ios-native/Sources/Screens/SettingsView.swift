@@ -61,206 +61,134 @@ struct SettingsView: View {
                         .foregroundColor(.ctxTextPrimary)
 
                     SettingsSectionView(title: "Account") {
-                        VStack(alignment: .leading, spacing: 16) {
-                            SettingsRowView(title: "User", value: userLabel)
-                            NavigationLink {
-                                WorkspaceSwitchView()
-                            } label: {
-                                SettingsLinkRowView(title: "Workspace", value: workspaceLabel)
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityIdentifier("settings.workspace.link")
-                            SettingsRowView(title: "Plan", value: planLabel)
+                        NavigationLink {
+                            AccountSettingsView(
+                                userLabel: userLabel,
+                                workspaceLabel: workspaceLabel,
+                                planLabel: planLabel,
+                                entitlementsLoading: entitlementsLoading,
+                                entitlementsError: entitlementsError,
+                                hasSupabaseToken: hasSupabaseToken
+                            )
+                        } label: {
+                            SettingsNavigationRowView(
+                                title: "Account",
+                                subtitle: accountSummary,
+                                statusPills: []
+                            )
                         }
+                        .buttonStyle(.plain)
                     }
 
-                    if entitlementsLoading {
-                        Text("Loading entitlements...")
-                            .font(.caption)
-                            .foregroundColor(.ctxTextMuted)
-                    } else if let entitlementsError {
-                        Text(entitlementsError)
-                            .font(.caption)
-                            .foregroundColor(.ctxError)
-                    } else if !hasSupabaseToken {
-                        Text("Add a Supabase token to load entitlements.")
-                            .font(.caption)
-                            .foregroundColor(.ctxTextMuted)
-                    }
-
-                    SettingsSectionView(title: "Daemon Settings") {
-                        VStack(alignment: .leading, spacing: 16) {
-                            Toggle("Usage analytics", isOn: telemetryBinding)
-                                .tint(.ctxAccent)
-                                .disabled(!telemetryReady || telemetrySaving)
-                            SettingsRowView(title: "Dictation", value: dictationLabel)
-                            SettingsRowView(title: "Title generation", value: titleGenerationLabel)
-                            SettingsRowView(title: "Resource limits", value: resourceGovernanceLabel)
+                    SettingsSectionView(title: "Daemon") {
+                        NavigationLink {
+                            DaemonSettingsView(
+                                telemetryBinding: telemetryBinding,
+                                telemetryReady: telemetryReady,
+                                telemetrySaving: telemetrySaving,
+                                dictationLabel: dictationLabel,
+                                titleGenerationLabel: titleGenerationLabel,
+                                resourceGovernanceLabel: resourceGovernanceLabel,
+                                isLoadingSettings: isLoadingSettings,
+                                settingsError: settingsError
+                            )
+                        } label: {
+                            SettingsNavigationRowView(
+                                title: "Daemon Settings",
+                                subtitle: daemonSummary,
+                                statusPills: []
+                            )
                         }
-                        .foregroundColor(.ctxTextSecondary)
-                    }
-
-                    if isLoadingSettings {
-                        Text("Loading daemon settings...")
-                            .font(.caption)
-                            .foregroundColor(.ctxTextMuted)
-                    } else if let settingsError {
-                        Text(settingsError)
-                            .font(.caption)
-                            .foregroundColor(.ctxError)
+                        .buttonStyle(.plain)
                     }
 
                     SettingsSectionView(title: "Mobile Access") {
-                        VStack(alignment: .leading, spacing: 14) {
-                            NavigationLink {
-                                MobileAccessView()
-                            } label: {
-                                SettingsNavigationRowView(
-                                    title: "Mobile Access",
-                                    subtitle: "Manage remote tunnel access",
-                                    statusPills: [
-                                        StatusPill(text: mobileEntitlementLabel, tint: mobileEntitlementTint),
-                                        StatusPill(text: mobileStatusLabel, tint: mobileStatusTint),
-                                    ]
-                                )
-                            }
-                            .buttonStyle(.plain)
-
-                            if isLoadingMobileStatus {
-                                Text("Loading mobile access status...")
-                                    .font(.caption)
-                                    .foregroundColor(.ctxTextMuted)
-                            } else if let mobileStatusError {
-                                Text(mobileStatusError)
-                                    .font(.caption)
-                                    .foregroundColor(.ctxError)
-                            }
+                        NavigationLink {
+                            MobileAccessView()
+                        } label: {
+                            SettingsNavigationRowView(
+                                title: "Mobile Access",
+                                subtitle: "Manage remote tunnel access",
+                                statusPills: [
+                                    StatusPill(text: mobileEntitlementLabel, tint: mobileEntitlementTint),
+                                    StatusPill(text: mobileStatusLabel, tint: mobileStatusTint),
+                                ]
+                            )
                         }
+                        .buttonStyle(.plain)
                     }
 
                     SettingsSectionView(title: "Notifications") {
-                        VStack(alignment: .leading, spacing: 14) {
-                            Toggle("Push approvals", isOn: pushBinding)
-                                .tint(.ctxAccent)
-                                .disabled(pushToggleDisabled)
-                            SettingsStatusRowView(
-                                title: "Entitlement",
-                                value: pushEntitlementLabel,
-                                tint: pushEntitlementTint
+                        NavigationLink {
+                            NotificationsSettingsView(
+                                pushBinding: pushBinding,
+                                pushToggleDisabled: pushToggleDisabled,
+                                pushEntitlementLabel: pushEntitlementLabel,
+                                pushEntitlementTint: pushEntitlementTint,
+                                pushStatusLabel: pushStatusLabel,
+                                pushStatusTint: pushStatusTint,
+                                pushStatusMessage: pushStatusMessage,
+                                pushError: pushError,
+                                managerError: pushManager.lastError
                             )
-                            SettingsStatusRowView(
-                                title: "Status",
-                                value: pushStatusLabel,
-                                tint: pushStatusTint
+                        } label: {
+                            SettingsNavigationRowView(
+                                title: "Notifications",
+                                subtitle: notificationsSummary,
+                                statusPills: [
+                                    StatusPill(text: pushEntitlementLabel, tint: pushEntitlementTint)
+                                ]
                             )
-                            if let pushStatusMessage {
-                                Text(pushStatusMessage)
-                                    .font(.caption)
-                                    .foregroundColor(.ctxTextSecondary)
-                            }
-                            if let pushError {
-                                Text(pushError)
-                                    .font(.caption)
-                                    .foregroundColor(.ctxError)
-                            } else if let managerError = pushManager.lastError {
-                                Text(managerError)
-                                    .font(.caption)
-                                    .foregroundColor(.ctxError)
-                            }
                         }
+                        .buttonStyle(.plain)
                     }
 
                     SettingsSectionView(title: "Model Routing") {
-                        VStack(alignment: .leading, spacing: 14) {
-                            if !routingEnabled {
-                                Text("Select a workspace to set routing defaults.")
-                                    .font(.caption)
-                                    .foregroundColor(.ctxTextMuted)
-                            }
-                            Menu {
-                                ForEach(routingProviderChoices, id: \.self) { providerId in
-                                    Button(providerLabel(providerId)) {
-                                        routingProviderId = providerId
-                                        routingModelId = ""
-                                        routingError = nil
-                                    }
-                                }
-                            } label: {
-                                SettingsMenuRowView(title: "Harness", value: routingProviderLabel)
-                            }
-                            .disabled(!routingEnabled || routingProviderChoices.isEmpty)
-
-                            Menu {
-                                ForEach(routingModelChoices, id: \.self) { modelId in
-                                    Button(modelId) {
-                                        routingModelId = modelId
-                                        routingError = nil
-                                    }
-                                }
-                            } label: {
-                                SettingsMenuRowView(title: "Model", value: routingModelLabel)
-                            }
-                            .disabled(!routingEnabled || routingModelChoices.isEmpty || routingProviderId.isEmpty)
-
-                            if let routingEntry, !routingEntry.updatedAt.isEmpty {
-                                Text("Updated \(routingEntry.updatedAt)")
-                                    .font(.caption)
-                                    .foregroundColor(.ctxTextMuted)
-                            }
-                            if let routingError {
-                                Text(routingError)
-                                    .font(.caption)
-                                    .foregroundColor(.ctxError)
-                            }
-
-                            HStack(spacing: 12) {
-                                Button {
-                                    _Concurrency.Task { await saveRoutingDefaults() }
-                                } label: {
-                                    Text("Save routing")
-                                }
-                                .buttonStyle(CtxPrimaryButtonStyle())
-                                .disabled(!routingCanSave)
-
-                                if routingEntry != nil {
-                                    Button {
-                                        _Concurrency.Task { await clearRoutingDefaults() }
-                                    } label: {
-                                        Text("Clear")
-                                    }
-                                    .buttonStyle(CtxGhostButtonStyle())
-                                    .disabled(!routingEnabled)
-                                }
-                            }
+                        NavigationLink {
+                            ModelRoutingSettingsView(
+                                routingEnabled: routingEnabled,
+                                routingProviderChoices: routingProviderChoices,
+                                routingModelChoices: routingModelChoices,
+                                routingProviderId: $routingProviderId,
+                                routingModelId: $routingModelId,
+                                routingProviderLabel: routingProviderLabel,
+                                routingModelLabel: routingModelLabel,
+                                routingEntry: routingEntry,
+                                routingError: $routingError,
+                                routingCanSave: routingCanSave,
+                                providerLabel: providerLabel,
+                                onSave: { _Concurrency.Task { await saveRoutingDefaults() } },
+                                onClear: { _Concurrency.Task { await clearRoutingDefaults() } }
+                            )
+                        } label: {
+                            SettingsNavigationRowView(
+                                title: "Model Routing",
+                                subtitle: routingSummary,
+                                statusPills: []
+                            )
                         }
+                        .buttonStyle(.plain)
                     }
 
                     SettingsSectionView(title: "Providers") {
-                        VStack(alignment: .leading, spacing: 14) {
-                            if isLoadingProviders {
-                                ProgressView()
-                                    .tint(.ctxAccent)
-                            } else if let providersError {
-                                Text(providersError)
-                                    .font(.caption)
-                                    .foregroundColor(.ctxError)
-                            } else if visibleProviders.isEmpty {
-                                Text("No providers detected.")
-                                    .font(.caption)
-                                    .foregroundColor(.ctxTextMuted)
-                            } else {
-                                SettingsRowView(title: "Workspace", value: workspaceLabel)
-                                ForEach(visibleProviders, id: \.providerId) { provider in
-                                    ProviderRowView(
-                                        provider: provider,
-                                        detailText: providerDetailText(provider),
-                                        statusPill: providerStatusPill(provider)
-                                    ) {
-                                        providerActions(for: provider)
-                                    }
-                                }
-                            }
+                        NavigationLink {
+                            ProvidersSettingsView(
+                                workspaceLabel: workspaceLabel,
+                                isLoadingProviders: isLoadingProviders,
+                                providersError: providersError,
+                                visibleProviders: visibleProviders,
+                                providerDetailText: providerDetailText,
+                                providerStatusPill: providerStatusPill,
+                                providerActions: providerActions
+                            )
+                        } label: {
+                            SettingsNavigationRowView(
+                                title: "Providers",
+                                subtitle: providersSummary,
+                                statusPills: []
+                            )
                         }
+                        .buttonStyle(.plain)
                     }
                 }
                 .padding(.horizontal, 20)
@@ -317,6 +245,33 @@ struct SettingsView: View {
             return planLabel(for: entitlements.planType)
         }
         return hasSupabaseToken ? "Unknown" : "Sign in required"
+    }
+
+    private var accountSummary: String {
+        "\(userLabel) · \(planLabel)"
+    }
+
+    private var daemonSummary: String {
+        let parts = [dictationLabel, titleGenerationLabel, resourceGovernanceLabel]
+            .filter { !$0.isEmpty }
+        return parts.joined(separator: " · ")
+    }
+
+    private var notificationsSummary: String {
+        pushStatusLabel
+    }
+
+    private var routingSummary: String {
+        if !routingEnabled { return "Select a workspace" }
+        if routingProviderId.isEmpty && routingModelId.isEmpty { return "Not configured" }
+        if routingModelId.isEmpty { return routingProviderLabel }
+        return "\(routingProviderLabel) · \(routingModelLabel)"
+    }
+
+    private var providersSummary: String {
+        let count = visibleProviders.count
+        if count == 0 { return "No providers" }
+        return "\(count) provider" + (count == 1 ? "" : "s")
     }
 
     private var dictationLabel: String {
@@ -1309,6 +1264,329 @@ private struct SettingsStatusRowView: View {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .stroke(Color.ctxLine, lineWidth: 1)
         )
+    }
+}
+
+private struct AccountSettingsView: View {
+    let userLabel: String
+    let workspaceLabel: String
+    let planLabel: String
+    let entitlementsLoading: Bool
+    let entitlementsError: String?
+    let hasSupabaseToken: Bool
+
+    var body: some View {
+        ZStack {
+            CtxBackgroundView()
+            ScrollView(showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 20) {
+                    Text("Account")
+                        .font(.largeTitle.weight(.semibold))
+                        .foregroundColor(.ctxTextPrimary)
+                        .padding(.top, 12)
+
+                    SettingsSectionView(title: "Account") {
+                        VStack(alignment: .leading, spacing: 16) {
+                            SettingsRowView(title: "User", value: userLabel)
+                            NavigationLink {
+                                WorkspaceSwitchView()
+                            } label: {
+                                SettingsLinkRowView(title: "Workspace", value: workspaceLabel)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityIdentifier("settings.workspace.link")
+                            SettingsRowView(title: "Plan", value: planLabel)
+                        }
+                    }
+
+                    if entitlementsLoading {
+                        Text("Loading entitlements...")
+                            .font(.caption)
+                            .foregroundColor(.ctxTextMuted)
+                    } else if let entitlementsError {
+                        Text(entitlementsError)
+                            .font(.caption)
+                            .foregroundColor(.ctxError)
+                    } else if !hasSupabaseToken {
+                        Text("Add a Supabase token to load entitlements.")
+                            .font(.caption)
+                            .foregroundColor(.ctxTextMuted)
+                    }
+                }
+                .padding(.horizontal, 20)
+                .padding(.bottom, 40)
+            }
+        }
+        .navigationTitle("Account")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+private struct DaemonSettingsView: View {
+    let telemetryBinding: Binding<Bool>
+    let telemetryReady: Bool
+    let telemetrySaving: Bool
+    let dictationLabel: String
+    let titleGenerationLabel: String
+    let resourceGovernanceLabel: String
+    let isLoadingSettings: Bool
+    let settingsError: String?
+
+    var body: some View {
+        ZStack {
+            CtxBackgroundView()
+            ScrollView(showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 20) {
+                    Text("Daemon Settings")
+                        .font(.largeTitle.weight(.semibold))
+                        .foregroundColor(.ctxTextPrimary)
+                        .padding(.top, 12)
+
+                    SettingsSectionView(title: "Daemon Settings") {
+                        VStack(alignment: .leading, spacing: 16) {
+                            Toggle("Usage analytics", isOn: telemetryBinding)
+                                .tint(.ctxAccent)
+                                .disabled(!telemetryReady || telemetrySaving)
+                            SettingsRowView(title: "Dictation", value: dictationLabel)
+                            SettingsRowView(title: "Title generation", value: titleGenerationLabel)
+                            SettingsRowView(title: "Resource limits", value: resourceGovernanceLabel)
+                        }
+                        .foregroundColor(.ctxTextSecondary)
+                    }
+
+                    if isLoadingSettings {
+                        Text("Loading daemon settings...")
+                            .font(.caption)
+                            .foregroundColor(.ctxTextMuted)
+                    } else if let settingsError {
+                        Text(settingsError)
+                            .font(.caption)
+                            .foregroundColor(.ctxError)
+                    }
+                }
+                .padding(.horizontal, 20)
+                .padding(.bottom, 40)
+            }
+        }
+        .navigationTitle("Daemon Settings")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+private struct NotificationsSettingsView: View {
+    let pushBinding: Binding<Bool>
+    let pushToggleDisabled: Bool
+    let pushEntitlementLabel: String
+    let pushEntitlementTint: Color
+    let pushStatusLabel: String
+    let pushStatusTint: Color
+    let pushStatusMessage: String?
+    let pushError: String?
+    let managerError: String?
+
+    var body: some View {
+        ZStack {
+            CtxBackgroundView()
+            ScrollView(showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 20) {
+                    Text("Notifications")
+                        .font(.largeTitle.weight(.semibold))
+                        .foregroundColor(.ctxTextPrimary)
+                        .padding(.top, 12)
+
+                    SettingsSectionView(title: "Notifications") {
+                        VStack(alignment: .leading, spacing: 14) {
+                            Toggle("Push approvals", isOn: pushBinding)
+                                .tint(.ctxAccent)
+                                .disabled(pushToggleDisabled)
+                            SettingsStatusRowView(
+                                title: "Entitlement",
+                                value: pushEntitlementLabel,
+                                tint: pushEntitlementTint
+                            )
+                            SettingsStatusRowView(
+                                title: "Status",
+                                value: pushStatusLabel,
+                                tint: pushStatusTint
+                            )
+                            if let pushStatusMessage {
+                                Text(pushStatusMessage)
+                                    .font(.caption)
+                                    .foregroundColor(.ctxTextSecondary)
+                            }
+                            if let pushError {
+                                Text(pushError)
+                                    .font(.caption)
+                                    .foregroundColor(.ctxError)
+                            } else if let managerError {
+                                Text(managerError)
+                                    .font(.caption)
+                                    .foregroundColor(.ctxError)
+                            }
+                        }
+                    }
+                }
+                .padding(.horizontal, 20)
+                .padding(.bottom, 40)
+            }
+        }
+        .navigationTitle("Notifications")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+private struct ModelRoutingSettingsView: View {
+    let routingEnabled: Bool
+    let routingProviderChoices: [String]
+    let routingModelChoices: [String]
+    @Binding var routingProviderId: String
+    @Binding var routingModelId: String
+    let routingProviderLabel: String
+    let routingModelLabel: String
+    let routingEntry: ModelRoutingEntry?
+    @Binding var routingError: String?
+    let routingCanSave: Bool
+    let providerLabel: (String) -> String
+    let onSave: () -> Void
+    let onClear: () -> Void
+
+    var body: some View {
+        ZStack {
+            CtxBackgroundView()
+            ScrollView(showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 20) {
+                    Text("Model Routing")
+                        .font(.largeTitle.weight(.semibold))
+                        .foregroundColor(.ctxTextPrimary)
+                        .padding(.top, 12)
+
+                    SettingsSectionView(title: "Model Routing") {
+                        VStack(alignment: .leading, spacing: 14) {
+                            if !routingEnabled {
+                                Text("Select a workspace to set routing defaults.")
+                                    .font(.caption)
+                                    .foregroundColor(.ctxTextMuted)
+                            }
+                            Menu {
+                                ForEach(routingProviderChoices, id: \.self) { providerId in
+                                    Button(providerLabel(providerId)) {
+                                        routingProviderId = providerId
+                                        routingModelId = ""
+                                        routingError = nil
+                                    }
+                                }
+                            } label: {
+                                SettingsMenuRowView(title: "Harness", value: routingProviderLabel)
+                            }
+                            .disabled(!routingEnabled || routingProviderChoices.isEmpty)
+
+                            Menu {
+                                ForEach(routingModelChoices, id: \.self) { modelId in
+                                    Button(modelId) {
+                                        routingModelId = modelId
+                                        routingError = nil
+                                    }
+                                }
+                            } label: {
+                                SettingsMenuRowView(title: "Model", value: routingModelLabel)
+                            }
+                            .disabled(!routingEnabled || routingModelChoices.isEmpty || routingProviderId.isEmpty)
+
+                            if let routingEntry, !routingEntry.updatedAt.isEmpty {
+                                Text("Updated \(routingEntry.updatedAt)")
+                                    .font(.caption)
+                                    .foregroundColor(.ctxTextMuted)
+                            }
+                            if let routingError {
+                                Text(routingError)
+                                    .font(.caption)
+                                    .foregroundColor(.ctxError)
+                            }
+
+                            HStack(spacing: 12) {
+                                Button {
+                                    onSave()
+                                } label: {
+                                    Text("Save routing")
+                                }
+                                .buttonStyle(CtxPrimaryButtonStyle())
+                                .disabled(!routingCanSave)
+
+                                if routingEntry != nil {
+                                    Button {
+                                        onClear()
+                                    } label: {
+                                        Text("Clear")
+                                    }
+                                    .buttonStyle(CtxGhostButtonStyle())
+                                    .disabled(!routingEnabled)
+                                }
+                            }
+                        }
+                    }
+                }
+                .padding(.horizontal, 20)
+                .padding(.bottom, 40)
+            }
+        }
+        .navigationTitle("Model Routing")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+private struct ProvidersSettingsView<Actions: View>: View {
+    let workspaceLabel: String
+    let isLoadingProviders: Bool
+    let providersError: String?
+    let visibleProviders: [ProviderStatus]
+    let providerDetailText: (ProviderStatus) -> String
+    let providerStatusPill: (ProviderStatus) -> StatusPill
+    @ViewBuilder let providerActions: (ProviderStatus) -> Actions
+
+    var body: some View {
+        ZStack {
+            CtxBackgroundView()
+            ScrollView(showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 20) {
+                    Text("Providers")
+                        .font(.largeTitle.weight(.semibold))
+                        .foregroundColor(.ctxTextPrimary)
+                        .padding(.top, 12)
+
+                    SettingsSectionView(title: "Providers") {
+                        VStack(alignment: .leading, spacing: 14) {
+                            if isLoadingProviders {
+                                ProgressView()
+                                    .tint(.ctxAccent)
+                            } else if let providersError {
+                                Text(providersError)
+                                    .font(.caption)
+                                    .foregroundColor(.ctxError)
+                            } else if visibleProviders.isEmpty {
+                                Text("No providers detected.")
+                                    .font(.caption)
+                                    .foregroundColor(.ctxTextMuted)
+                            } else {
+                                SettingsRowView(title: "Workspace", value: workspaceLabel)
+                                ForEach(visibleProviders, id: \.providerId) { provider in
+                                    ProviderRowView(
+                                        provider: provider,
+                                        detailText: providerDetailText(provider),
+                                        statusPill: providerStatusPill(provider)
+                                    ) {
+                                        providerActions(provider)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                .padding(.horizontal, 20)
+                .padding(.bottom, 40)
+            }
+        }
+        .navigationTitle("Providers")
+        .navigationBarTitleDisplayMode(.inline)
     }
 }
 
