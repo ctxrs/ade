@@ -218,7 +218,12 @@ impl<'a> ThreadListView<'a> {
                 list_weak.clone(),
                 cx,
             )
-        });
+        })
+        .w_full()
+        .h_full()
+        .pb(px(metrics.spacing.md))
+        .overflow_hidden()
+        .bg(colors.bg);
 
         let sticky = if let Some(header) = &self.shell.sticky_turn_header {
             if self.shell.sticky_turn_header_at_top {
@@ -315,7 +320,7 @@ impl<'a> ThreadListView<'a> {
                     .flex_1()
                     .min_h(px(0.0))
                     .overflow_hidden()
-                    .child(list.w_full().h_full().pb(px(metrics.spacing.md))),
+                    .child(list),
             )
             .child(overlay)
     }
