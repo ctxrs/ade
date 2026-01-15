@@ -1,6 +1,8 @@
+import PhotosUI
 import SwiftUI
 import _Concurrency
 import UIKit
+import UniformTypeIdentifiers
 
 struct WorkbenchShellView: View {
     @EnvironmentObject private var connection: ConnectionStore
@@ -1574,6 +1576,28 @@ private struct WorkbenchNavigationFlowView: View {
     }
 }
 
+private enum WorkbenchEnvTarget: String, CaseIterable, Identifiable {
+    case local
+    case worktree
+    case cloud
+    case container
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .local:
+            return "Local"
+        case .worktree:
+            return "Worktree"
+        case .cloud:
+            return "Cloud"
+        case .container:
+            return "Container"
+        }
+    }
+}
+
 private struct WorkbenchNewTaskView: View {
     @EnvironmentObject private var connection: ConnectionStore
     @EnvironmentObject private var workbenchSelection: WorkbenchSelectionStore
@@ -1587,72 +1611,22 @@ private struct WorkbenchNewTaskView: View {
     @State private var models: [String] = []
     @State private var selectedProviderId = ""
     @State private var selectedModelId = ""
+    @State private var selectedEffortId = ""
+    @State private var selectedMode: ComposerMode = .default
+    @State private var selectedIsolation: WorkbenchEnvTarget = .worktree
     @State private var isLoadingProviders = false
     @State private var isLoadingModels = false
     @State private var errorMessage: String?
     @State private var isSubmitting = false
     @State private var routingEntry: ModelRoutingEntry?
+    @State private var selectedPhotos: [PhotosPickerItem] = []
+    @State private var pendingAttachments: [MessageAttachment] = []
     @FocusState private var isPromptFocused: Bool
 
     var body: some View {
         ScrollView(showsIndicators: false) {
             VStack(alignment: .leading, spacing: 16) {
-                Text("New task")
-                    .font(.title3.weight(.semibold))
-                    .foregroundColor(.ctxTextPrimary)
-
-                if isLoadingTasks {
-                    Text("Refreshing tasks...")
-                        .font(.caption)
-                        .foregroundColor(.ctxTextMuted)
-                } else if let taskError {
-                    WorkbenchInfoCard(text: taskError, tint: .ctxError)
-                }
-
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("Prompt")
-                        .font(.caption.weight(.semibold))
-                        .foregroundColor(.ctxTextMuted)
-                    CtxTextArea(
-                        placeholder: "Describe what you want...",
-                        text: $prompt,
-                        accessibilityId: "newtask.prompt",
-                        isFocused: $isPromptFocused
-                    )
-                }
-
-                WorkbenchInlineHarnessPicker(
-                    value: providerLabel,
-                    providerId: providerIconId,
-                    isDisabled: providerOptionsDisabled,
-                    options: availableProviderIds,
-                    displayName: formatProviderName,
-                    onSelect: { id in
-                        selectedProviderId = id
-                        selectedModelId = ""
-                    }
-                )
-
-                WorkbenchInlineMenuPicker(
-                    title: "Model",
-                    value: modelLabel,
-                    isDisabled: modelOptionsDisabled,
-                    options: modelChoices,
-                    onSelect: { id in
-                        selectedModelId = id
-                    }
-                )
-
-                if let errorMessage {
-                    WorkbenchInfoCard(text: errorMessage, tint: .ctxError)
-                }
-
-                Button(action: startTask) {
-                    Text(isSubmitting ? "Starting..." : "Start")
-                }
-                .buttonStyle(CtxPrimaryButtonStyle())
-                .disabled(!canSubmit)
-                .accessibilityIdentifier("newtask.start")
+                composerCard
             }
             .padding(.horizontal, 20)
             .padding(.bottom, 20)
@@ -1663,6 +1637,15 @@ private struct WorkbenchNewTaskView: View {
         }
         .task(id: effectiveProviderId) {
             await loadModels()
+        }
+        .onChange(of: selectedPhotos) { newItems in
+            _Concurrency.Task { await loadAttachments(from: newItems) }
+        }
+        .onChange(of: models) { _ in
+            syncEffortSelection()
+        }
+        .onChange(of: selectedModelId) { _, _ in
+            syncEffortSelection()
         }
         .onAppear {
             let env = ProcessInfo.processInfo.environment
@@ -1675,6 +1658,180 @@ private struct WorkbenchNewTaskView: View {
                 }
             }
         }
+    }
+
+    private var composerCard: some View {
+        let catalog = buildModelCatalog(modelChoices)
+        let resolvedModelId = resolveModelIdForUI()
+        let parsedModel = parseModelId(resolvedModelId, catalog: catalog)
+        let baseId = parsedModel.base.isEmpty ? resolvedModelId : parsedModel.base
+        let baseOptions = catalog.baseIds.isEmpty ? [resolvedModelId] : catalog.baseIds
+        let modelLabel = isLoadingModels ? "Loading..." : (catalog.displayNameByBase[baseId] ?? baseId)
+        let effortOptions = catalog.effortsByBase[baseId] ?? []
+        let resolvedEffortId = resolveEffortId(parsed: parsedModel, efforts: effortOptions)
+        let effortLabel = resolvedEffortId.map(formatEffortLabel) ?? "Effort"
+
+        let baseBinding = Binding<String>(
+            get: { baseId },
+            set: { selectBase($0, catalog: catalog) }
+        )
+        let effortBinding = Binding<String>(
+            get: { resolvedEffortId ?? "" },
+            set: { selectEffort($0, baseId: baseId, catalog: catalog) }
+        )
+
+        return VStack(alignment: .leading, spacing: 12) {
+            if isLoadingTasks {
+                Text("Refreshing tasks...")
+                    .font(.caption)
+                    .foregroundColor(.ctxTextMuted)
+            } else if let taskError {
+                WorkbenchInfoCard(text: taskError, tint: .ctxError)
+            }
+
+            if let errorMessage {
+                WorkbenchInfoCard(text: errorMessage, tint: .ctxError)
+            }
+
+            ZStack(alignment: .topLeading) {
+                if prompt.isEmpty {
+                    Text("@ for context, / for commands")
+                        .font(CtxChatStyle.bodyFont)
+                        .foregroundColor(.ctxTextMuted)
+                        .padding(.top, 2)
+                }
+                TextField("", text: $prompt, axis: .vertical)
+                    .lineLimit(1...6)
+                    .font(CtxChatStyle.bodyFont)
+                    .foregroundColor(.ctxTextPrimary)
+                    .tint(.ctxAccent)
+                    .focused($isPromptFocused)
+                    .accessibilityIdentifier("newtask.prompt")
+            }
+
+            if !pendingAttachments.isEmpty {
+                ComposerAttachmentsRow(attachments: pendingAttachments) { index in
+                    pendingAttachments.remove(at: index)
+                }
+            }
+
+            VStack(spacing: 8) {
+                WorkbenchInlineHarnessPicker(
+                    value: providerLabel,
+                    providerId: providerIconId,
+                    isDisabled: providerOptionsDisabled,
+                    options: availableProviderIds,
+                    displayName: formatProviderName,
+                    onSelect: { id in
+                        selectedProviderId = id
+                        selectedModelId = ""
+                        selectedEffortId = ""
+                    }
+                )
+
+                HStack(spacing: 12) {
+                    Menu {
+                        Picker("Model", selection: baseBinding) {
+                            ForEach(baseOptions, id: \.self) { base in
+                                let label = catalog.displayNameByBase[base] ?? base
+                                Text(label).tag(base)
+                            }
+                        }
+                        .pickerStyle(.inline)
+                    } label: {
+                        newTaskMenuLabel(modelLabel)
+                    }
+                    .disabled(modelOptionsDisabled || baseOptions.isEmpty)
+
+                    if !effortOptions.isEmpty {
+                        Menu {
+                            Picker("Effort", selection: effortBinding) {
+                                ForEach(effortOptions, id: \.self) { effort in
+                                    Text(formatEffortLabel(effort)).tag(effort)
+                                }
+                            }
+                            .pickerStyle(.inline)
+                        } label: {
+                            newTaskMenuLabel(effortLabel)
+                        }
+                        .disabled(modelOptionsDisabled)
+                    }
+
+                    Spacer(minLength: 0)
+                }
+
+                HStack(spacing: 12) {
+                    Menu {
+                        Picker("Mode", selection: $selectedMode) {
+                            ForEach(ComposerMode.allCases) { mode in
+                                Text(mode.label).tag(mode)
+                            }
+                        }
+                        .pickerStyle(.inline)
+                    } label: {
+                        newTaskMenuLabel(selectedMode.label)
+                    }
+
+                    Menu {
+                        Picker("Isolation", selection: $selectedIsolation) {
+                            ForEach(WorkbenchEnvTarget.allCases) { target in
+                                Text(target.label).tag(target)
+                            }
+                        }
+                        .pickerStyle(.inline)
+                    } label: {
+                        newTaskMenuLabel(selectedIsolation.label)
+                    }
+
+                    Spacer(minLength: 0)
+                }
+            }
+
+            HStack(spacing: 8) {
+                Button {
+                    insertToken("@")
+                } label: {
+                    ComposerToolIcon(name: .atSign)
+                }
+                .accessibilityIdentifier("newtask.insert.at")
+
+                Button {
+                    insertToken("/")
+                } label: {
+                    ComposerToolIcon(name: .slash)
+                }
+                .accessibilityIdentifier("newtask.insert.slash")
+
+                PhotosPicker(selection: $selectedPhotos, matching: .images) {
+                    ComposerToolIcon(name: .image)
+                }
+                .accessibilityIdentifier("newtask.attach")
+
+                Spacer(minLength: 0)
+
+                if isSendEnabled {
+                    ComposerCircleButton(icon: .arrowUp, accessibilityId: "newtask.send") {
+                        startTask()
+                    }
+                } else {
+                    Button {} label: {
+                        ComposerToolIcon(name: .mic)
+                    }
+                    .frame(width: CtxChatStyle.composerPrimarySize, height: CtxChatStyle.composerPrimarySize)
+                    .accessibilityIdentifier("newtask.mic")
+                }
+            }
+        }
+        .padding(.horizontal, CtxChatStyle.composerInnerHorizontalPadding)
+        .padding(.vertical, CtxChatStyle.composerInnerVerticalPadding)
+        .background(
+            Color.ctxSurfaceRaised,
+            in: RoundedRectangle(cornerRadius: CtxChatStyle.composerCornerRadius, style: .continuous)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: CtxChatStyle.composerCornerRadius, style: .continuous)
+                .stroke(Color.ctxLine, lineWidth: 1)
+        )
     }
 
     private var promptTrimmed: String {
@@ -1721,6 +1878,29 @@ private struct WorkbenchNewTaskView: View {
     }
 
     private var effectiveModelId: String {
+        resolveModelIdForUI()
+    }
+
+    private var providerOptionsDisabled: Bool {
+        isLoadingProviders || availableProviderIds.isEmpty
+    }
+
+    private var modelOptionsDisabled: Bool {
+        isLoadingModels || effectiveProviderId.isEmpty || modelChoices.isEmpty
+    }
+
+    private var isSendEnabled: Bool {
+        (!promptTrimmed.isEmpty || !pendingAttachments.isEmpty) && !effectiveProviderId.isEmpty && !effectiveModelId.isEmpty && !isSubmitting
+    }
+
+    private func formatProviderName(_ providerId: String) -> String {
+        providerId
+            .replacingOccurrences(of: "_", with: " ")
+            .replacingOccurrences(of: "-", with: " ")
+            .capitalized
+    }
+
+    private func resolveModelIdForUI() -> String {
         if !selectedModelId.isEmpty {
             return selectedModelId
         }
@@ -1732,29 +1912,101 @@ private struct WorkbenchNewTaskView: View {
         return modelChoices.first ?? "default"
     }
 
-    private var modelLabel: String {
-        if isLoadingModels { return "Loading..." }
-        if modelChoices.isEmpty { return "default" }
-        return effectiveModelId
+    private func newTaskMenuLabel(_ text: String) -> some View {
+        HStack(spacing: 6) {
+            Text(text)
+                .font(.footnote.weight(.semibold))
+                .foregroundColor(.ctxTextPrimary)
+                .lineLimit(1)
+            LucideIcon(name: .chevronDown, size: 12)
+                .foregroundColor(.ctxTextMuted)
+        }
+        .padding(.vertical, 6)
     }
 
-    private var providerOptionsDisabled: Bool {
-        isLoadingProviders || availableProviderIds.isEmpty
+    private func resolveEffortId(parsed: ParsedModelId, efforts: [String]) -> String? {
+        guard !efforts.isEmpty else { return nil }
+        if !selectedEffortId.isEmpty, efforts.contains(selectedEffortId) {
+            return selectedEffortId
+        }
+        if let parsedEffort = parsed.effort, efforts.contains(parsedEffort) {
+            return parsedEffort
+        }
+        return pickDefaultEffort(efforts)
     }
 
-    private var modelOptionsDisabled: Bool {
-        isLoadingModels || effectiveProviderId.isEmpty || modelChoices.isEmpty
+    private func selectBase(_ baseId: String, catalog: ModelCatalog) {
+        let preferredEffort = selectedEffortId.isEmpty ? nil : selectedEffortId
+        let nextModelId = deriveFullModelIdForBase(catalog: catalog, baseId: baseId, preferredEffort: preferredEffort)
+        selectedModelId = nextModelId
+        let parsed = parseModelId(nextModelId, catalog: catalog)
+        let nextEffort = resolveEffortId(parsed: parsed, efforts: catalog.effortsByBase[baseId] ?? []) ?? ""
+        if selectedEffortId != nextEffort {
+            selectedEffortId = nextEffort
+        }
     }
 
-    private var canSubmit: Bool {
-        !promptTrimmed.isEmpty && !effectiveProviderId.isEmpty && !effectiveModelId.isEmpty && !isSubmitting
+    private func selectEffort(_ effortId: String, baseId: String, catalog: ModelCatalog) {
+        selectedEffortId = effortId
+        let nextModelId = catalog.fullIdByBaseEffort[baseId]?[effortId] ?? composeModelId(base: baseId, effort: effortId)
+        selectedModelId = nextModelId
     }
 
-    private func formatProviderName(_ providerId: String) -> String {
-        providerId
-            .replacingOccurrences(of: "_", with: " ")
-            .replacingOccurrences(of: "-", with: " ")
-            .capitalized
+    private func syncEffortSelection() {
+        let choices = modelChoices
+        let catalog = buildModelCatalog(choices)
+        let fallbackModelId = choices.first ?? ""
+        var currentModelId = selectedModelId
+
+        if currentModelId.isEmpty {
+            if let routingEntry, routingEntry.providerId == effectiveProviderId,
+               (choices.isEmpty || choices.contains(routingEntry.modelId)) {
+                currentModelId = routingEntry.modelId
+            } else {
+                currentModelId = fallbackModelId
+            }
+            if !currentModelId.isEmpty {
+                selectedModelId = currentModelId
+            }
+        }
+
+        guard !currentModelId.isEmpty else { return }
+        let parsed = parseModelId(currentModelId, catalog: catalog)
+        let baseId = parsed.base.isEmpty ? currentModelId : parsed.base
+        let efforts = catalog.effortsByBase[baseId] ?? []
+
+        if efforts.isEmpty {
+            if !selectedEffortId.isEmpty {
+                selectedEffortId = ""
+            }
+            return
+        }
+
+        var nextEffort = selectedEffortId
+        if nextEffort.isEmpty || !efforts.contains(nextEffort) {
+            if let parsedEffort = parsed.effort, efforts.contains(parsedEffort) {
+                nextEffort = parsedEffort
+            } else {
+                nextEffort = pickDefaultEffort(efforts) ?? ""
+            }
+        }
+
+        if selectedEffortId != nextEffort {
+            selectedEffortId = nextEffort
+        }
+
+        let resolvedModelId = deriveFullModelIdForBase(catalog: catalog, baseId: baseId, preferredEffort: nextEffort)
+        if !resolvedModelId.isEmpty, selectedModelId != resolvedModelId {
+            selectedModelId = resolvedModelId
+        }
+    }
+
+    private func insertToken(_ token: String) {
+        if !prompt.isEmpty, let last = prompt.last, !last.isWhitespace {
+            prompt.append(" ")
+        }
+        prompt.append(token)
+        isPromptFocused = true
     }
 
     @MainActor
@@ -1809,13 +2061,17 @@ private struct WorkbenchNewTaskView: View {
             errorMessage = "Failed to load models."
         }
         isLoadingModels = false
+        syncEffortSelection()
     }
 
     private func startTask() {
         let promptValue = promptTrimmed
-        guard !promptValue.isEmpty else { return }
+        guard !promptValue.isEmpty || !pendingAttachments.isEmpty else { return }
         let providerId = effectiveProviderId
         let modelId = effectiveModelId
+        let attachments = pendingAttachments
+        let modeId = selectedMode.rawValue
+        let envTarget = selectedIsolation.rawValue
         guard !providerId.isEmpty, !modelId.isEmpty else { return }
         isSubmitting = true
         errorMessage = nil
@@ -1835,9 +2091,15 @@ private struct WorkbenchNewTaskView: View {
                     createDefaultTrack: false,
                     defaultTrackLabel: nil
                 )
-                let track = try await client.createTrack(taskId: task.id.stringValue, label: nil, envTarget: "worktree")
+                let track = try await client.createTrack(taskId: task.id.stringValue, label: nil, envTarget: envTarget)
                 let session = try await client.createSession(trackId: track.id.stringValue, providerId: providerId, modelId: modelId)
-                _ = try await client.postMessage(sessionId: session.id.stringValue, content: promptValue, delivery: .immediate, attachments: [])
+                try? await client.setSessionMode(sessionId: session.id.stringValue, modeId: modeId)
+                _ = try await client.postMessage(
+                    sessionId: session.id.stringValue,
+                    content: promptValue,
+                    delivery: .immediate,
+                    attachments: attachments
+                )
                 await MainActor.run {
                     workbenchSelection.setSelection(
                         taskId: task.id.stringValue,
@@ -1845,6 +2107,8 @@ private struct WorkbenchNewTaskView: View {
                         sessionId: session.id.stringValue
                     )
                     prompt = ""
+                    pendingAttachments = []
+                    selectedPhotos = []
                     onTaskCreated()
                 }
             } catch {
@@ -1856,6 +2120,38 @@ private struct WorkbenchNewTaskView: View {
                 isSubmitting = false
             }
         }
+    }
+
+    @MainActor
+    private func loadAttachments(from items: [PhotosPickerItem]) async {
+        guard !items.isEmpty else { return }
+        var nextAttachments: [MessageAttachment] = []
+        for item in items {
+            guard let data = try? await item.loadTransferable(type: Data.self) else { continue }
+            let contentType = item.supportedContentTypes.first
+            let mimeType = contentType?.preferredMIMEType ?? "image/*"
+            let fileExtension = contentType?.preferredFilenameExtension
+            let name = suggestedAttachmentName(extension: fileExtension)
+            nextAttachments.append(
+                MessageAttachment(
+                    kind: .image,
+                    mimeType: mimeType,
+                    dataBase64: data.base64EncodedString(),
+                    blobId: nil,
+                    name: name
+                )
+            )
+        }
+        if !nextAttachments.isEmpty {
+            pendingAttachments.append(contentsOf: nextAttachments)
+        }
+        selectedPhotos = []
+    }
+
+    private func suggestedAttachmentName(extension fileExtension: String?) -> String? {
+        let suffix = (fileExtension?.isEmpty == false) ? ".\(fileExtension ?? "")" : ""
+        let shortId = String(UUID().uuidString.prefix(8))
+        return "photo-\(shortId)\(suffix)"
     }
 }
 

@@ -6,6 +6,8 @@ enum LucideIconName {
     case monitor
     case terminal
     case ellipsis
+    case atSign
+    case slash
     case chevronDown
     case chevronRight
     case mic
@@ -65,6 +67,16 @@ struct LucideIcon: View {
             path.addEllipse(in: CGRect(x: 4, y: 11, width: 2, height: 2))
             path.addEllipse(in: CGRect(x: 11, y: 11, width: 2, height: 2))
             path.addEllipse(in: CGRect(x: 18, y: 11, width: 2, height: 2))
+        case .atSign:
+            path.addEllipse(in: CGRect(x: 8, y: 8, width: 8, height: 8))
+            path.move(to: CGPoint(x: 16, y: 8))
+            path.addLine(to: CGPoint(x: 16, y: 13))
+            path.addArc(center: CGPoint(x: 19, y: 13), radius: 3, startAngle: .degrees(180), endAngle: .degrees(0), clockwise: false)
+            path.addLine(to: CGPoint(x: 22, y: 12))
+            path.addArc(center: CGPoint(x: 12, y: 12), radius: 10, startAngle: .degrees(0), endAngle: .degrees(130), clockwise: true)
+        case .slash:
+            path.move(to: CGPoint(x: 22, y: 2))
+            path.addLine(to: CGPoint(x: 2, y: 22))
         case .chevronDown:
             path.move(to: CGPoint(x: 6, y: 9))
             path.addLine(to: CGPoint(x: 12, y: 15))
