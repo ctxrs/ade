@@ -319,6 +319,9 @@ async fn cloud_gateway_gcp_e2e() -> Result<()> {
         eprintln!("skipping: set CTX_E2E_TIER=3 to run this test");
         return Ok(());
     }
+    if let Err(err) = rustls::crypto::aws_lc_rs::default_provider().install_default() {
+        eprintln!("warning: failed to install rustls crypto provider: {err:?}");
+    }
 
     let Some(project_id) = env_trim("GCP_PROJECT_ID") else {
         eprintln!("skipping: missing GCP_PROJECT_ID");

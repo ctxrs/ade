@@ -323,6 +323,9 @@ async fn cloud_gateway_azure_e2e() -> Result<()> {
         eprintln!("skipping: set CTX_E2E_TIER=3 to run this test");
         return Ok(());
     }
+    if let Err(err) = rustls::crypto::aws_lc_rs::default_provider().install_default() {
+        eprintln!("warning: failed to install rustls crypto provider: {err:?}");
+    }
 
     let Some(subscription_id) = env_trim("AZURE_SUBSCRIPTION_ID") else {
         eprintln!("skipping: missing AZURE_SUBSCRIPTION_ID");
