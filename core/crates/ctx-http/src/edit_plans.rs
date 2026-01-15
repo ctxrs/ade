@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, Context, Result};
 use chrono::{DateTime, Utc};
-use ctx_core::ids::{SessionId, TrackId};
+use ctx_core::ids::{SessionId, WorktreeId};
 use lsp_types::{TextEdit, Uri, WorkspaceEdit};
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
@@ -37,7 +37,7 @@ pub struct EditPlanSummary {
 pub struct EditPlan {
     pub id: EditPlanId,
     pub session_id: SessionId,
-    pub track_id: TrackId,
+    pub worktree_id: WorktreeId,
     pub title: String,
     pub created_at: DateTime<Utc>,
     pub worktree_root: PathBuf,
@@ -212,7 +212,7 @@ pub fn workspace_edit_to_plan(
     root: &Path,
     worktree_root: &Path,
     session_id: SessionId,
-    track_id: TrackId,
+    worktree_id: WorktreeId,
     title: String,
     edit: WorkspaceEdit,
 ) -> Result<EditPlan> {
@@ -298,7 +298,7 @@ pub fn workspace_edit_to_plan(
     Ok(EditPlan {
         id: EditPlanId::new(),
         session_id,
-        track_id,
+        worktree_id,
         title,
         created_at: Utc::now(),
         worktree_root: worktree_root.to_path_buf(),
@@ -309,7 +309,7 @@ pub fn workspace_edit_to_plan(
 pub fn text_edits_to_plan(
     worktree_root: &Path,
     session_id: SessionId,
-    track_id: TrackId,
+    worktree_id: WorktreeId,
     title: String,
     rel_path: String,
     edits: Vec<TextEdit>,
@@ -323,7 +323,7 @@ pub fn text_edits_to_plan(
         return Ok(EditPlan {
             id: EditPlanId::new(),
             session_id,
-            track_id,
+            worktree_id,
             title,
             created_at: Utc::now(),
             worktree_root: worktree_root.to_path_buf(),
@@ -338,7 +338,7 @@ pub fn text_edits_to_plan(
     Ok(EditPlan {
         id: EditPlanId::new(),
         session_id,
-        track_id,
+        worktree_id,
         title,
         created_at: Utc::now(),
         worktree_root: worktree_root.to_path_buf(),

@@ -36,7 +36,6 @@ macro_rules! id_type {
 
 id_type!(WorkspaceId);
 id_type!(TaskId);
-id_type!(TrackId);
 id_type!(WorktreeId);
 id_type!(SessionId);
 id_type!(MessageId);

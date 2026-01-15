@@ -19,7 +19,7 @@ use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{connect_async, connect_async_tls_with_config, Connector};
 
-use ctx_core::ids::{SessionId, TaskId, TerminalId, TrackId, WorkspaceId, WorktreeId};
+use ctx_core::ids::{SessionId, TaskId, TerminalId, WorkspaceId, WorktreeId};
 use ctx_core::models::{TerminalSession, TerminalStatus};
 
 const DEFAULT_COLS: u16 = 80;
@@ -46,7 +46,6 @@ pub enum TerminalServerMessage {
 pub struct TerminalCreateRequest {
     pub workspace_id: WorkspaceId,
     pub task_id: Option<TaskId>,
-    pub track_id: Option<TrackId>,
     pub session_id: Option<SessionId>,
     pub worktree_id: Option<WorktreeId>,
     pub cwd: PathBuf,
@@ -315,7 +314,6 @@ impl TerminalManager {
             id,
             workspace_id: req.workspace_id,
             task_id: req.task_id,
-            track_id: req.track_id,
             session_id: req.session_id,
             worktree_id: req.worktree_id,
             cwd: req.cwd.to_string_lossy().to_string(),
@@ -372,7 +370,6 @@ impl TerminalManager {
             id,
             workspace_id: req.workspace_id,
             task_id: req.task_id,
-            track_id: req.track_id,
             session_id: req.session_id,
             worktree_id: req.worktree_id,
             cwd: req.cwd.to_string_lossy().to_string(),

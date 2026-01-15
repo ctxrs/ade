@@ -2,7 +2,7 @@ import Foundation
 
 private enum SelectionDefaults {
     static let workspaceVersion = 1
-    static let workbenchVersion = 1
+    static let workbenchVersion = 2
 
     static func normalizedKey(_ value: String?) -> String? {
         let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -48,7 +48,6 @@ private struct PersistedWorkspaceSelection: Codable {
 private struct PersistedWorkbenchSelection: Codable {
     let v: Int
     let taskId: String?
-    let trackId: String?
     let sessionId: String?
 }
 
@@ -96,7 +95,6 @@ final class WorkspaceSelectionStore: ObservableObject {
 @MainActor
 final class WorkbenchSelectionStore: ObservableObject {
     @Published private(set) var taskId: String?
-    @Published private(set) var trackId: String?
     @Published private(set) var sessionId: String?
 
     private var workspaceId: String?
@@ -111,17 +109,15 @@ final class WorkbenchSelectionStore: ObservableObject {
         loadSelection()
     }
 
-    func setSelection(taskId: String?, trackId: String?, sessionId: String?) {
-        let normalized = normalizedSelection(taskId: taskId, trackId: trackId, sessionId: sessionId)
+    func setSelection(taskId: String?, sessionId: String?) {
+        let normalized = normalizedSelection(taskId: taskId, sessionId: sessionId)
         self.taskId = normalized.taskId
-        self.trackId = normalized.trackId
         self.sessionId = normalized.sessionId
         persistSelection(normalized)
     }
 
     func clearSelection() {
         taskId = nil
-        trackId = nil
         sessionId = nil
         guard let daemonKey, let workspaceId else { return }
         SelectionDefaults.deleteRecord(key: SelectionDefaults.workbenchKey(daemonKey: daemonKey, workspaceId: workspaceId))
@@ -129,15 +125,13 @@ final class WorkbenchSelectionStore: ObservableObject {
 
     private func loadSelection() {
         taskId = nil
-        trackId = nil
         sessionId = nil
         guard let daemonKey, let workspaceId else { return }
         let key = SelectionDefaults.workbenchKey(daemonKey: daemonKey, workspaceId: workspaceId)
         guard let record = SelectionDefaults.loadRecord(PersistedWorkbenchSelection.self, key: key),
               record.v == SelectionDefaults.workbenchVersion else { return }
-        let normalized = normalizedSelection(taskId: record.taskId, trackId: record.trackId, sessionId: record.sessionId)
+        let normalized = normalizedSelection(taskId: record.taskId, sessionId: record.sessionId)
         taskId = normalized.taskId
-        trackId = normalized.trackId
         sessionId = normalized.sessionId
     }
 
@@ -146,16 +140,12 @@ final class WorkbenchSelectionStore: ObservableObject {
         SelectionDefaults.saveRecord(selection, key: SelectionDefaults.workbenchKey(daemonKey: daemonKey, workspaceId: workspaceId))
     }
 
-    private func normalizedSelection(taskId: String?, trackId: String?, sessionId: String?) -> PersistedWorkbenchSelection {
+    private func normalizedSelection(taskId: String?, sessionId: String?) -> PersistedWorkbenchSelection {
         let normalizedTaskId = SelectionDefaults.normalizedId(taskId)
-        let normalizedTrackId = normalizedTaskId == nil ? nil : SelectionDefaults.normalizedId(trackId)
-        let normalizedSessionId = (normalizedTaskId == nil || normalizedTrackId == nil)
-            ? nil
-            : SelectionDefaults.normalizedId(sessionId)
+        let normalizedSessionId = normalizedTaskId == nil ? nil : SelectionDefaults.normalizedId(sessionId)
         return PersistedWorkbenchSelection(
             v: SelectionDefaults.workbenchVersion,
             taskId: normalizedTaskId,
-            trackId: normalizedTrackId,
             sessionId: normalizedSessionId
         )
     }
@@ -164,7 +154,7 @@ final class WorkbenchSelectionStore: ObservableObject {
     func resolveTaskSelection(from tasks: [TaskSummary]) -> Bool {
         let taskIds = tasks.compactMap { SelectionDefaults.normalizedId($0.id) }
         guard !taskIds.isEmpty else {
-            let hadSelection = taskId != nil || trackId != nil || sessionId != nil
+            let hadSelection = taskId != nil || sessionId != nil
             if hadSelection {
                 clearSelection()
             }
@@ -173,41 +163,21 @@ final class WorkbenchSelectionStore: ObservableObject {
         let current = taskId
         let resolved = (current != nil && taskIds.contains(current!)) ? current : taskIds[0]
         guard resolved != current else { return false }
-        setSelection(taskId: resolved, trackId: nil, sessionId: nil)
-        return true
-    }
-
-    @discardableResult
-    func resolveTrackSelection(taskId: String, tracks: [TrackSummary]) -> Bool {
-        guard let normalizedTaskId = SelectionDefaults.normalizedId(taskId) else { return false }
-        let trackIds = tracks.compactMap { SelectionDefaults.normalizedId($0.id) }
-        let currentTaskId = self.taskId
-        let currentTrackId = self.trackId
-        let currentSessionId = self.sessionId
-        let validTrackId = currentTrackId.flatMap { trackIds.contains($0) ? $0 : nil }
-        let resolvedTrackId = validTrackId ?? trackIds.first
-        let taskChanged = currentTaskId != normalizedTaskId
-        let trackChanged = resolvedTrackId != currentTrackId || taskChanged
-        let nextSessionId = trackChanged ? nil : currentSessionId
-        guard taskChanged || resolvedTrackId != currentTrackId || nextSessionId != currentSessionId else { return false }
-        setSelection(taskId: normalizedTaskId, trackId: resolvedTrackId, sessionId: nextSessionId)
+        setSelection(taskId: resolved, sessionId: nil)
         return true
     }
 
     @discardableResult
     func resolveSessionSelection(
         taskId: String,
-        trackId: String,
         sessions: [SessionSummary],
         preferredSessionId: String? = nil
     ) -> Bool {
-        guard let normalizedTaskId = SelectionDefaults.normalizedId(taskId),
-              let normalizedTrackId = SelectionDefaults.normalizedId(trackId) else { return false }
+        guard let normalizedTaskId = SelectionDefaults.normalizedId(taskId) else { return false }
         let currentTaskId = self.taskId
-        let currentTrackId = self.trackId
         let currentSessionId = self.sessionId
         let normalizedPreferredSessionId = SelectionDefaults.normalizedId(preferredSessionId)
-        let persistedPreferredSessionId = (currentTaskId == normalizedTaskId && currentTrackId == normalizedTrackId)
+        let persistedPreferredSessionId = currentTaskId == normalizedTaskId
             ? currentSessionId
             : nil
         let sessionIds = Set(sessions.compactMap { SelectionDefaults.normalizedId($0.id) })
@@ -216,10 +186,8 @@ final class WorkbenchSelectionStore: ObservableObject {
             from: sessions,
             preferredSessionId: persistedValidSessionId ?? normalizedPreferredSessionId
         )
-        guard currentTaskId != normalizedTaskId
-            || currentTrackId != normalizedTrackId
-            || resolvedSessionId != currentSessionId else { return false }
-        setSelection(taskId: normalizedTaskId, trackId: normalizedTrackId, sessionId: resolvedSessionId)
+        guard currentTaskId != normalizedTaskId || resolvedSessionId != currentSessionId else { return false }
+        setSelection(taskId: normalizedTaskId, sessionId: resolvedSessionId)
         return true
     }
 

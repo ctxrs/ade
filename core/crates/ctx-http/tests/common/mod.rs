@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use axum::body::{to_bytes, Body};
 use axum::http::{Method, Request, StatusCode};
-use ctx_core::models::{Session, Task, Track, Workspace};
+use ctx_core::models::{Session, Task, Workspace};
 use ctx_http::api;
 use ctx_http::daemon::AppState;
 use ctx_providers::adapters::ProviderAdapter;
@@ -154,28 +154,16 @@ pub async fn create_task(app: &axum::Router, workspace_id: uuid::Uuid, title: &s
     task
 }
 
-pub async fn create_track(app: &axum::Router, task_id: uuid::Uuid, label: &str) -> Track {
-    let (status, track) = json_request(
-        app,
-        Method::POST,
-        format!("/api/tasks/{task_id}/tracks"),
-        Some(serde_json::json!({ "label": label })),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    track
-}
-
 pub async fn create_session(
     app: &axum::Router,
-    track_id: uuid::Uuid,
+    task_id: uuid::Uuid,
     provider_id: &str,
     model_id: &str,
 ) -> Session {
     let (status, session) = json_request(
         app,
         Method::POST,
-        format!("/api/tracks/{track_id}/sessions"),
+        format!("/api/tasks/{task_id}/sessions"),
         Some(serde_json::json!({ "provider_id": provider_id, "model_id": model_id })),
     )
     .await;

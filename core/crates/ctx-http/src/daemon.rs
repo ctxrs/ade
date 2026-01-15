@@ -17,9 +17,9 @@ use tokio::sync::{broadcast, mpsc, watch, Mutex, Notify};
 
 use crate::buffers::BufferStore;
 use crate::edit_plans::{EditPlan, EditPlanId};
-use ctx_core::ids::{MessageId, SessionId, TaskId, TrackId, WorkspaceId, WorktreeId};
+use ctx_core::ids::{MessageId, SessionId, TaskId, WorkspaceId, WorktreeId};
 use ctx_core::models::{
-    Session, SessionEvent, SessionEventType, SessionHeadDelta, SessionTurnStatus, TrackDiffSummary,
+    Session, SessionEvent, SessionEventType, SessionHeadDelta, SessionTurnStatus,
 };
 use ctx_lsp::Language as LspLanguage;
 use ctx_lsp::{LspManager, LspManagerConfig};
@@ -139,7 +139,6 @@ pub struct AppState {
     pub provider_matrix_cache: Mutex<crate::provider_matrix::ProviderMatrixCache>,
     pub provider_options_cache: Mutex<HashMap<String, CachedProviderOptions>>,
     pub provider_verify_cache: Mutex<HashMap<String, CachedProviderVerify>>,
-    pub diff_summary_cache: Mutex<HashMap<TrackId, CachedDiffSummary>>,
     pub file_completions_cache: Mutex<HashMap<WorktreeId, CachedFileCompletions>>,
     pub workspace_file_completions_cache: Mutex<HashMap<WorkspaceId, CachedFileCompletions>>,
     pub daemon_url: String,
@@ -195,12 +194,6 @@ pub struct CachedFileCompletions {
 }
 
 #[derive(Clone)]
-pub struct CachedDiffSummary {
-    pub cached_at: Instant,
-    pub summary: Option<TrackDiffSummary>,
-    pub too_large: bool,
-}
-
 impl AppState {
     pub fn new(
         data_root: PathBuf,
@@ -280,7 +273,6 @@ impl AppState {
             ),
             provider_options_cache: Mutex::new(HashMap::new()),
             provider_verify_cache: Mutex::new(HashMap::new()),
-            diff_summary_cache: Mutex::new(HashMap::new()),
             file_completions_cache: Mutex::new(HashMap::new()),
             workspace_file_completions_cache: Mutex::new(HashMap::new()),
             daemon_url,
@@ -445,20 +437,6 @@ impl AppState {
             let workspace_id = summary.task.workspace_id;
             self.workspace_catchup
                 .publish_task_upsert(workspace_id, summary)
-                .await;
-        }
-        Ok(())
-    }
-
-    pub async fn emit_workspace_track_upsert(&self, track_id: TrackId) -> Result<()> {
-        if let Some(summary) = self
-            .store
-            .get_workspace_catchup_track_summary(track_id)
-            .await?
-        {
-            let workspace_id = summary.track.workspace_id;
-            self.workspace_catchup
-                .publish_track_upsert(workspace_id, summary)
                 .await;
         }
         Ok(())

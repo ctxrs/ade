@@ -70,6 +70,7 @@ struct WorkbenchShellView: View {
                     isLoadingTasks: isLoadingTasks,
                     taskError: taskError,
                     selectedSession: resolvedSession,
+                    isArchivedTask: selectedTask?.task.archivedAt != nil,
                     isArtifactsPresented: $isArtifactsPresented,
                     artifactsCount: $artifactsCount,
                     hasTaskSelection: workbenchSelection.taskId != nil,
@@ -206,8 +207,7 @@ struct WorkbenchShellView: View {
             switch panel {
             case .diff:
                 WorkbenchDiffPanelView(
-                    trackId: activeTrackId,
-                    diffSummary: activeTrackSummary?.diffSummary
+                    session: resolvedSession
                 )
             case .sessions:
                 WorkbenchSessionsPanelView(sessionId: resolvedSession?.id)
@@ -215,7 +215,6 @@ struct WorkbenchShellView: View {
                 WorkbenchTerminalPanelView(
                     workspaceId: selectedWorkspace?.id,
                     taskId: workbenchSelection.taskId,
-                    trackId: workbenchSelection.trackId,
                     sessionId: resolvedSession?.id,
                     worktreeId: resolvedSession?.worktreeId
                 )
@@ -470,28 +469,15 @@ struct WorkbenchShellView: View {
     }
 
     private var resolvedSession: SessionSummary? {
+        resolvedSessionContext?.session
+    }
+
+    private var resolvedSessionContext: ResolvedPrimarySession? {
         guard let selectedTask else { return nil }
         return resolvePrimarySession(
             for: selectedTask,
-            preferredTrackId: workbenchSelection.trackId,
-            preferredSessionId: workbenchSelection.sessionId
-        ).session
-    }
-
-    private var activeTrackSummary: WorkspaceCatchupTrackSummary? {
-        guard let selectedTask else { return nil }
-        let resolved = resolvePrimarySession(
-            for: selectedTask,
-            preferredTrackId: workbenchSelection.trackId,
             preferredSessionId: workbenchSelection.sessionId
         )
-        let trackId = resolved.trackId ?? workbenchSelection.trackId
-        guard let trackId else { return nil }
-        return selectedTask.tracks.first(where: { $0.track.id.stringValue == trackId })
-    }
-
-    private var activeTrackId: String? {
-        activeTrackSummary?.track.id.stringValue
     }
 
     @MainActor
@@ -518,7 +504,7 @@ struct WorkbenchShellView: View {
             workbenchSelection.setContext(daemonKey: daemonKey, workspaceId: selectionWorkspaceId)
             resetSelectionIfNeeded()
             if selectionWorkspaceId != lastWorkspaceId {
-                workbenchSelection.setSelection(taskId: nil, trackId: nil, sessionId: nil)
+                workbenchSelection.setSelection(taskId: nil, sessionId: nil)
                 lastWorkspaceId = selectionWorkspaceId
             }
         } catch {
@@ -568,11 +554,10 @@ struct WorkbenchShellView: View {
               let task = selectedTask else { return }
         let resolved = resolvePrimarySession(
             for: task,
-            preferredTrackId: workbenchSelection.trackId,
             preferredSessionId: workbenchSelection.sessionId
         )
-        if resolved.trackId != workbenchSelection.trackId || resolved.sessionId != workbenchSelection.sessionId {
-            workbenchSelection.setSelection(taskId: taskId, trackId: resolved.trackId, sessionId: resolved.sessionId)
+        if resolved.sessionId != workbenchSelection.sessionId {
+            workbenchSelection.setSelection(taskId: taskId, sessionId: resolved.sessionId)
         }
         _Concurrency.Task { await markTaskReadIfNeeded(task) }
         guard resolved.sessionId == nil, task.task.archivedAt == nil else { return }
@@ -588,10 +573,9 @@ struct WorkbenchShellView: View {
     }
 
     private func selectTask(_ task: WorkspaceCatchupTaskSummary) {
-        let resolved = resolvePrimarySession(for: task, preferredTrackId: nil, preferredSessionId: nil)
+        let resolved = resolvePrimarySession(for: task, preferredSessionId: nil)
         workbenchSelection.setSelection(
             taskId: task.task.id.stringValue,
-            trackId: resolved.trackId,
             sessionId: resolved.sessionId
         )
         _Concurrency.Task { await markTaskReadIfNeeded(task) }
@@ -619,25 +603,22 @@ struct WorkbenchShellView: View {
 
             let resolved = resolvePrimarySession(
                 for: task,
-                preferredTrackId: workbenchSelection.trackId,
                 preferredSessionId: workbenchSelection.sessionId
             )
-            if let sessionId = resolved.sessionId, let trackId = resolved.trackId {
-                workbenchSelection.setSelection(taskId: taskId, trackId: trackId, sessionId: sessionId)
+            if let sessionId = resolved.sessionId {
+                workbenchSelection.setSelection(taskId: taskId, sessionId: sessionId)
                 return
             }
 
-            let trackId: String
-            if let resolvedTrackId = resolved.trackId {
-                trackId = resolvedTrackId
-            } else {
-                let createdTrack = try await client.createTrack(taskId: taskId, label: nil, envTarget: "worktree")
-                trackId = createdTrack.id.stringValue
-            }
-
             let (providerId, modelId) = try await resolveDefaultSessionConfig(client: client, workspaceId: workspaceId)
-            let session = try await client.createSession(trackId: trackId, providerId: providerId, modelId: modelId)
-            workbenchSelection.setSelection(taskId: taskId, trackId: trackId, sessionId: session.id.stringValue)
+            let session = try await client.createSessionForTask(
+                taskId: taskId,
+                providerId: providerId,
+                modelId: modelId,
+                worktreeId: task.task.primaryWorktreeId?.stringValue,
+                envTarget: "worktree"
+            )
+            workbenchSelection.setSelection(taskId: taskId, sessionId: session.id.stringValue)
             await loadTasks()
         } catch {
             taskError = "Failed to prepare session."
@@ -913,8 +894,6 @@ struct WorkbenchShellView: View {
             snapshotRev = rev
         case .taskDelete(_, let rev, _):
             snapshotRev = rev
-        case .trackUpsert(_, let rev, _):
-            snapshotRev = rev
         case .sessionSummary(_, let rev, _):
             snapshotRev = rev
         case .sessionHeadDelta(_, let rev, _):
@@ -938,8 +917,6 @@ struct WorkbenchShellView: View {
             upsertTaskSummary(task)
         case .taskDelete(_, _, let taskId):
             removeTask(taskId: taskId.stringValue)
-        case .trackUpsert(_, _, let track):
-            applyTrackSummary(track)
         case .sessionSummary(_, _, let summary):
             applySessionSummary(summary)
         case .sessionGap:
@@ -967,63 +944,26 @@ struct WorkbenchShellView: View {
         activeTasks.removeAll { $0.task.id.stringValue == taskId }
         archivedTasks.removeAll { $0.task.id.stringValue == taskId }
         if workbenchSelection.taskId == taskId {
-            workbenchSelection.setSelection(taskId: nil, trackId: nil, sessionId: nil)
+            workbenchSelection.setSelection(taskId: nil, sessionId: nil)
         }
-    }
-
-    @MainActor
-    private func applyTrackSummary(_ summary: WorkspaceCatchupTrackSummary) {
-        let taskId = summary.track.taskId.stringValue
-        let trackId = summary.track.id.stringValue
-        func update(_ tasks: inout [WorkspaceCatchupTaskSummary]) -> Bool {
-            guard let index = tasks.firstIndex(where: { $0.task.id.stringValue == taskId }) else { return false }
-            let taskSummary = tasks[index]
-            var tracks = taskSummary.tracks
-            if let trackIndex = tracks.firstIndex(where: { $0.track.id.stringValue == trackId }) {
-                tracks[trackIndex] = summary
-            } else {
-                tracks.append(summary)
-            }
-            tasks[index] = WorkspaceCatchupTaskSummary(
-                task: taskSummary.task,
-                tracks: tracks,
-                sortAt: taskSummary.sortAt
-            )
-            return true
-        }
-        if !update(&activeTasks) {
-            _ = update(&archivedTasks)
-        }
-        resolveSelectionForCurrentTask()
     }
 
     @MainActor
     private func applySessionSummary(_ summary: SessionCatchupSummary) {
         let taskId = summary.session.taskId.stringValue
-        let trackId = summary.session.trackId.stringValue
         let sessionId = summary.session.id.stringValue
         func update(_ tasks: inout [WorkspaceCatchupTaskSummary]) -> Bool {
             guard let taskIndex = tasks.firstIndex(where: { $0.task.id.stringValue == taskId }) else { return false }
             let taskSummary = tasks[taskIndex]
-            guard let trackIndex = taskSummary.tracks.firstIndex(where: { $0.track.id.stringValue == trackId }) else { return false }
-            let trackSummary = taskSummary.tracks[trackIndex]
-            var sessions = trackSummary.sessions
+            var sessions = taskSummary.sessions
             if let sessionIndex = sessions.firstIndex(where: { $0.session.id.stringValue == sessionId }) {
                 sessions[sessionIndex] = summary
             } else {
                 sessions.append(summary)
             }
-            let updatedTrack = WorkspaceCatchupTrackSummary(
-                track: trackSummary.track,
-                primarySessionId: trackSummary.primarySessionId,
-                sessions: sessions,
-                diffSummary: trackSummary.diffSummary
-            )
-            var tracks = taskSummary.tracks
-            tracks[trackIndex] = updatedTrack
             tasks[taskIndex] = WorkspaceCatchupTaskSummary(
                 task: taskSummary.task,
-                tracks: tracks,
+                sessions: sessions,
                 sortAt: taskSummary.sortAt
             )
             return true
@@ -1041,7 +981,7 @@ struct WorkbenchShellView: View {
             guard let index = tasks.firstIndex(where: { $0.task.id.stringValue == taskId }) else { return nil }
             let summary = tasks[index]
             tasks.remove(at: index)
-            return WorkspaceCatchupTaskSummary(task: task, tracks: summary.tracks, sortAt: summary.sortAt)
+            return WorkspaceCatchupTaskSummary(task: task, sessions: summary.sessions, sortAt: summary.sortAt)
         }
 
         if let updated = update(&activeTasks) {
@@ -1097,6 +1037,7 @@ private struct WorkbenchHomeView: View {
     let isLoadingTasks: Bool
     let taskError: String?
     let selectedSession: SessionSummary?
+    let isArchivedTask: Bool
     @Binding var isArtifactsPresented: Bool
     @Binding var artifactsCount: Int
     let hasTaskSelection: Bool
@@ -1112,6 +1053,7 @@ private struct WorkbenchHomeView: View {
                 isLoadingTasks: isLoadingTasks,
                 taskError: taskError,
                 selectedSession: selectedSession,
+                isArchivedTask: isArchivedTask,
                 isArtifactsPresented: $isArtifactsPresented,
                 artifactsCount: $artifactsCount,
                 hasTaskSelection: hasTaskSelection,
@@ -1515,6 +1457,7 @@ private struct WorkbenchNavigationFlowView: View {
     let isLoadingTasks: Bool
     let taskError: String?
     let selectedSession: SessionSummary?
+    let isArchivedTask: Bool
     @Binding var isArtifactsPresented: Bool
     @Binding var artifactsCount: Int
     let hasTaskSelection: Bool
@@ -1528,7 +1471,12 @@ private struct WorkbenchNavigationFlowView: View {
         } else if let workspace = selectedWorkspace {
             NavigationStack {
                 if let selectedSession {
-                    ChatDetailView(session: selectedSession, isArtifactsPresented: $isArtifactsPresented, artifactCount: $artifactsCount)
+                    ChatDetailView(
+                        session: selectedSession,
+                        isArchived: isArchivedTask,
+                        isArtifactsPresented: $isArtifactsPresented,
+                        artifactCount: $artifactsCount
+                    )
                 } else if hasTaskSelection {
                     if isPreparingSession {
                         WorkbenchEmptyStateView(
@@ -2072,11 +2020,15 @@ private struct WorkbenchNewTaskView: View {
                     workspaceId: workspace.id,
                     title: "New task",
                     description: nil,
-                    createDefaultTrack: false,
-                    defaultTrackLabel: nil
+                    createDefaultSession: false
                 )
-                let track = try await client.createTrack(taskId: task.id.stringValue, label: nil, envTarget: envTarget)
-                let session = try await client.createSession(trackId: track.id.stringValue, providerId: providerId, modelId: modelId)
+                let session = try await client.createSessionForTask(
+                    taskId: task.id.stringValue,
+                    providerId: providerId,
+                    modelId: modelId,
+                    worktreeId: nil,
+                    envTarget: envTarget
+                )
                 try? await client.setSessionMode(sessionId: session.id.stringValue, modeId: modeId)
                 _ = try await client.postMessage(
                     sessionId: session.id.stringValue,
@@ -2087,7 +2039,6 @@ private struct WorkbenchNewTaskView: View {
                 await MainActor.run {
                     workbenchSelection.setSelection(
                         taskId: task.id.stringValue,
-                        trackId: track.id.stringValue,
                         sessionId: session.id.stringValue
                     )
                     prompt = ""
@@ -2546,65 +2497,82 @@ private struct WorkbenchEmptyStateView: View {
 }
 
 private struct ResolvedPrimarySession {
-    let trackId: String?
     let sessionId: String?
     let session: SessionSummary?
+    let summary: SessionCatchupSummary?
 }
 
 private func resolvePrimarySession(
     for task: WorkspaceCatchupTaskSummary,
-    preferredTrackId: String?,
     preferredSessionId: String?
 ) -> ResolvedPrimarySession {
-    let tracks = task.tracks
-    guard !tracks.isEmpty else {
-        return ResolvedPrimarySession(trackId: nil, sessionId: nil, session: nil)
-    }
-    let selectedTrack = tracks.first(where: { $0.track.id.stringValue == preferredTrackId }) ?? tracks.first
-    guard let selectedTrack else {
-        return ResolvedPrimarySession(trackId: nil, sessionId: nil, session: nil)
-    }
-    let trackId = selectedTrack.track.id.stringValue
-    let sessions = selectedTrack.sessions
+    let sessions = task.sessions
     guard !sessions.isEmpty else {
-        return ResolvedPrimarySession(trackId: trackId, sessionId: nil, session: nil)
+        return ResolvedPrimarySession(
+            sessionId: nil,
+            session: nil,
+            summary: nil
+        )
     }
 
-    let nonSubagents = sessions.filter { $0.session.relationship != "sub_agent" }
-    let candidates = nonSubagents.isEmpty ? sessions : nonSubagents
+    let candidates = sessions.map { summary in
+        SessionCandidate(
+            summary: summary,
+            isPrimary: task.task.primarySessionId == summary.session.id
+        )
+    }
+
+    let nonSubagents = candidates.filter { $0.summary.session.relationship != "sub_agent" }
+    let pool = nonSubagents.isEmpty ? candidates : nonSubagents
 
     if let preferredSessionId,
-       let match = candidates.first(where: { $0.session.id.stringValue == preferredSessionId }) {
-        let summary = SessionSummary(session: match.session)
-        return ResolvedPrimarySession(trackId: trackId, sessionId: preferredSessionId, session: summary)
+       let match = pool.first(where: { $0.summary.session.id.stringValue == preferredSessionId }) {
+        return resolvedFromCandidate(match)
     }
 
-    if let primaryId = selectedTrack.primarySessionId?.stringValue,
-       let match = candidates.first(where: { $0.session.id.stringValue == primaryId }) {
-        let summary = SessionSummary(session: match.session)
-        return ResolvedPrimarySession(trackId: trackId, sessionId: primaryId, session: summary)
+    if let primary = pool.first(where: { $0.isPrimary }) {
+        return resolvedFromCandidate(primary)
     }
 
-    if let running = candidates.first(where: { $0.session.status == "active" || $0.session.status == "running" }) {
-        let summary = SessionSummary(session: running.session)
-        let sessionId = running.session.id.stringValue
-        return ResolvedPrimarySession(trackId: trackId, sessionId: sessionId, session: summary)
+    if let running = pool.first(where: { $0.summary.session.status == "active" || $0.summary.session.status == "running" }) {
+        return resolvedFromCandidate(running)
     }
 
-    if let recent = mostRecentSession(in: candidates) {
-        let summary = SessionSummary(session: recent.session)
-        let sessionId = recent.session.id.stringValue
-        return ResolvedPrimarySession(trackId: trackId, sessionId: sessionId, session: summary)
+    if let recent = mostRecentCandidate(in: pool) {
+        return resolvedFromCandidate(recent)
     }
 
-    return ResolvedPrimarySession(trackId: trackId, sessionId: nil, session: nil)
+    return resolvedFromCandidate(pool.first)
 }
 
-private func mostRecentSession(in sessions: [SessionCatchupSummary]) -> SessionCatchupSummary? {
-    sessions.max { left, right in
-        let leftKey = left.session.updatedAt ?? left.session.createdAt ?? ""
-        let rightKey = right.session.updatedAt ?? right.session.createdAt ?? ""
-        return leftKey < rightKey
+private struct SessionCandidate {
+    let summary: SessionCatchupSummary
+    let isPrimary: Bool
+}
+
+private func resolvedFromCandidate(_ candidate: SessionCandidate?) -> ResolvedPrimarySession {
+    guard let candidate else {
+        return ResolvedPrimarySession(
+            sessionId: nil,
+            session: nil,
+            summary: nil
+        )
+    }
+    let sessionId = candidate.summary.session.id.stringValue
+    return ResolvedPrimarySession(
+        sessionId: sessionId,
+        session: SessionSummary(session: candidate.summary.session),
+        summary: candidate.summary
+    )
+}
+
+private func mostRecentCandidate(in candidates: [SessionCandidate]) -> SessionCandidate? {
+    candidates.max { left, right in
+        let leftKey = left.summary.lastMessageAt ?? left.summary.session.updatedAt ?? left.summary.session.createdAt
+        let rightKey = right.summary.lastMessageAt ?? right.summary.session.updatedAt ?? right.summary.session.createdAt
+        let leftDate = parseIso(leftKey) ?? .distantPast
+        let rightDate = parseIso(rightKey) ?? .distantPast
+        return leftDate < rightDate
     }
 }
 
@@ -2982,20 +2950,16 @@ private enum TaskRowDotKind {
 }
 
 private func resolveTaskPreview(_ task: WorkspaceCatchupTaskSummary) -> String? {
-    for track in task.tracks {
-        if let primaryId = track.primarySessionId,
-           let summary = track.sessions.first(where: { $0.session.id == primaryId }),
-           let preview = summary.lastMessagePreview?.trimmingCharacters(in: .whitespacesAndNewlines),
+    if let primaryId = task.task.primarySessionId,
+       let summary = task.sessions.first(where: { $0.session.id == primaryId }),
+       let preview = summary.lastMessagePreview?.trimmingCharacters(in: .whitespacesAndNewlines),
+       !preview.isEmpty {
+        return preview
+    }
+    for summary in task.sessions {
+        if let preview = summary.lastMessagePreview?.trimmingCharacters(in: .whitespacesAndNewlines),
            !preview.isEmpty {
             return preview
-        }
-    }
-    for track in task.tracks {
-        for summary in track.sessions {
-            if let preview = summary.lastMessagePreview?.trimmingCharacters(in: .whitespacesAndNewlines),
-               !preview.isEmpty {
-                return preview
-            }
         }
     }
     return nil
@@ -3003,27 +2967,23 @@ private func resolveTaskPreview(_ task: WorkspaceCatchupTaskSummary) -> String? 
 
 
 private func taskHasWorkingSession(_ task: WorkspaceCatchupTaskSummary) -> Bool {
-    for track in task.tracks {
-        for summary in track.sessions {
-            let status = summary.session.status.lowercased()
-            if status == "failed" || status == "cancelled" || status == "completed" {
-                continue
-            }
-            if summary.activity?.isWorking == true {
-                return true
-            }
+    for summary in task.sessions {
+        let status = summary.session.status.lowercased()
+        if status == "failed" || status == "cancelled" || status == "completed" {
+            continue
+        }
+        if summary.activity?.isWorking == true {
+            return true
         }
     }
     return false
 }
 
 private func taskHasErrorSession(_ task: WorkspaceCatchupTaskSummary) -> Bool {
-    for track in task.tracks {
-        for summary in track.sessions {
-            let status = summary.session.status.lowercased()
-            if status == "failed" || status == "cancelled" {
-                return true
-            }
+    for summary in task.sessions {
+        let status = summary.session.status.lowercased()
+        if status == "failed" || status == "cancelled" {
+            return true
         }
     }
     return false
@@ -3043,13 +3003,11 @@ private func taskHasUnread(_ task: WorkspaceCatchupTaskSummary, isWorking: Bool)
 
 private func resolveProviderIds(for task: WorkspaceCatchupTaskSummary) -> [String] {
     var ordered: [String] = []
-    for track in task.tracks {
-        for summary in track.sessions {
-            let providerId = summary.session.providerId.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !providerId.isEmpty else { continue }
-            if !ordered.contains(providerId) {
-                ordered.append(providerId)
-            }
+    for summary in task.sessions {
+        let providerId = summary.session.providerId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !providerId.isEmpty else { continue }
+        if !ordered.contains(providerId) {
+            ordered.append(providerId)
         }
     }
     return ordered

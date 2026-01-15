@@ -9,10 +9,10 @@ use tempfile::NamedTempFile;
 use tokio::process::Command;
 use toml::Value as TomlValue;
 
-use ctx_core::ids::{TrackId, WorkspaceAttachmentId, WorkspaceId};
+use ctx_core::ids::{WorkspaceAttachmentId, WorkspaceId, WorktreeId};
 use ctx_core::models::{
-    AttachmentMode, AttachmentUpdatePolicy, Track, TrackAttachmentMount, TrackAttachmentStatus,
-    Workspace, WorkspaceAttachment, WorkspaceAttachmentKind, Worktree,
+    AttachmentMode, AttachmentUpdatePolicy, Workspace, WorkspaceAttachment,
+    WorkspaceAttachmentKind, Worktree, WorktreeAttachmentMount, WorktreeAttachmentStatus,
 };
 
 use crate::daemon::AppState;
@@ -105,18 +105,16 @@ pub async fn sync_workspace_attachments(
     Ok(out)
 }
 
-pub async fn ensure_track_attachment_mounts(
+pub async fn ensure_worktree_attachment_mounts(
     state: &AppState,
     workspace: &Workspace,
-    track: &Track,
     worktree: &Worktree,
     refresh: bool,
-) -> Result<Vec<TrackAttachmentMount>> {
+) -> Result<Vec<WorktreeAttachmentMount>> {
     let attachments = state.store.list_workspace_attachments(workspace.id).await?;
-    ensure_track_attachment_mounts_for_attachments(
+    ensure_worktree_attachment_mounts_for_attachments(
         state,
         workspace,
-        track,
         worktree,
         &attachments,
         refresh,
@@ -125,15 +123,14 @@ pub async fn ensure_track_attachment_mounts(
     .await
 }
 
-pub async fn ensure_track_attachment_mounts_for_attachments(
+pub async fn ensure_worktree_attachment_mounts_for_attachments(
     state: &AppState,
     workspace: &Workspace,
-    track: &Track,
     worktree: &Worktree,
     attachments: &[WorkspaceAttachment],
     refresh: bool,
     materialize: bool,
-) -> Result<Vec<TrackAttachmentMount>> {
+) -> Result<Vec<WorktreeAttachmentMount>> {
     if attachments.is_empty() {
         return Ok(vec![]);
     }
@@ -146,7 +143,7 @@ pub async fn ensure_track_attachment_mounts_for_attachments(
         match ensure_attachment_mount(
             state,
             workspace,
-            track.id,
+            worktree.id,
             &worktree_root,
             attachment,
             refresh,
@@ -157,21 +154,21 @@ pub async fn ensure_track_attachment_mounts_for_attachments(
             Ok(mount) => mounts.push(mount),
             Err(e) => {
                 let now = Utc::now();
-                let mount = TrackAttachmentMount {
-                    track_id: track.id,
+                let mount = WorktreeAttachmentMount {
+                    worktree_id: worktree.id,
                     attachment_id: attachment.id,
                     mount_abs_path: worktree_root
                         .join(&attachment.mount_relpath)
                         .to_string_lossy()
                         .to_string(),
                     materialized_id: revision_key(attachment),
-                    status: TrackAttachmentStatus::Error,
+                    status: WorktreeAttachmentStatus::Error,
                     last_sync_at: Some(now),
                     error_message: Some(e.to_string()),
                     created_at: now,
                     updated_at: now,
                 };
-                state.store.upsert_track_attachment_mount(&mount).await?;
+                state.store.upsert_worktree_attachment_mount(&mount).await?;
                 mounts.push(mount);
             }
         }
@@ -180,13 +177,13 @@ pub async fn ensure_track_attachment_mounts_for_attachments(
     Ok(mounts)
 }
 
-pub async fn ensure_workspace_attachments_for_tracks(
+pub async fn ensure_workspace_attachments_for_worktrees(
     state: &AppState,
     workspace: &Workspace,
     refresh: bool,
 ) -> Result<()> {
     let attachments = state.store.list_workspace_attachments(workspace.id).await?;
-    ensure_workspace_attachments_for_tracks_with_attachments(
+    ensure_workspace_attachments_for_worktrees_with_attachments(
         state,
         workspace,
         &attachments,
@@ -196,22 +193,18 @@ pub async fn ensure_workspace_attachments_for_tracks(
     .await
 }
 
-pub async fn ensure_workspace_attachments_for_tracks_with_attachments(
+pub async fn ensure_workspace_attachments_for_worktrees_with_attachments(
     state: &AppState,
     workspace: &Workspace,
     attachments: &[WorkspaceAttachment],
     refresh: bool,
     materialize: bool,
 ) -> Result<()> {
-    let tracks = state.store.list_tracks_for_workspace(workspace.id).await?;
-    for track in tracks {
-        let Some(worktree) = state.store.get_worktree(track.worktree_id).await? else {
-            continue;
-        };
-        let _ = ensure_track_attachment_mounts_for_attachments(
+    let worktrees = state.store.list_worktrees(workspace.id).await?;
+    for worktree in worktrees {
+        let _ = ensure_worktree_attachment_mounts_for_attachments(
             state,
             workspace,
-            &track,
             &worktree,
             attachments,
             refresh,
@@ -353,12 +346,12 @@ async fn maybe_materialize_attachment(
 async fn ensure_attachment_mount(
     state: &AppState,
     workspace: &Workspace,
-    track_id: TrackId,
+    worktree_id: WorktreeId,
     worktree_root: &Path,
     attachment: &WorkspaceAttachment,
     refresh: bool,
     materialize: bool,
-) -> Result<TrackAttachmentMount> {
+) -> Result<WorktreeAttachmentMount> {
     let materialized = if materialize {
         let should_refresh = refresh || attachment.update_policy != AttachmentUpdatePolicy::Manual;
         materialize_attachment(state, workspace, attachment, should_refresh).await?
@@ -387,18 +380,18 @@ async fn ensure_attachment_mount(
     ensure_mount(&mount_abs, &source_path).await?;
 
     let now = Utc::now();
-    let mount = TrackAttachmentMount {
-        track_id,
+    let mount = WorktreeAttachmentMount {
+        worktree_id,
         attachment_id: attachment.id,
         mount_abs_path: mount_abs.to_string_lossy().to_string(),
         materialized_id: materialized.materialized_id,
-        status: TrackAttachmentStatus::Ready,
+        status: WorktreeAttachmentStatus::Ready,
         last_sync_at: Some(now),
         error_message: None,
         created_at: now,
         updated_at: now,
     };
-    state.store.upsert_track_attachment_mount(&mount).await?;
+    state.store.upsert_worktree_attachment_mount(&mount).await?;
     Ok(mount)
 }
 
@@ -408,7 +401,7 @@ async fn cleanup_removed_attachment(
 ) -> Result<()> {
     let mounts = state
         .store
-        .list_track_attachment_mounts_for_attachment(attachment.id)
+        .list_worktree_attachment_mounts_for_attachment(attachment.id)
         .await?;
     for mount in mounts {
         let path = PathBuf::from(&mount.mount_abs_path);
@@ -416,7 +409,7 @@ async fn cleanup_removed_attachment(
     }
     state
         .store
-        .delete_track_attachment_mounts_for_attachment(attachment.id)
+        .delete_worktree_attachment_mounts_for_attachment(attachment.id)
         .await?;
     let root = materialized_root_for_attachment(state, attachment);
     if root.exists() {

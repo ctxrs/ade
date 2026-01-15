@@ -5,7 +5,7 @@ use tokio::sync::{broadcast, Mutex};
 use ctx_core::ids::{TaskId, WorkspaceId};
 use ctx_core::models::{
     SessionCatchupSummary, SessionHeadDelta, WorkspaceCatchupEvent, WorkspaceCatchupTaskSummary,
-    WorkspaceCatchupTrackSummary, WorktreeBootstrapNotice,
+    WorktreeBootstrapNotice,
 };
 
 pub struct WorkspaceCatchupHub {
@@ -82,23 +82,6 @@ impl WorkspaceCatchupHub {
             workspace_id,
             snapshot_rev: entry.rev,
             task_id,
-        });
-    }
-
-    pub async fn publish_track_upsert(
-        &self,
-        workspace_id: WorkspaceId,
-        track: WorkspaceCatchupTrackSummary,
-    ) {
-        let mut guard = self.inner.lock().await;
-        let entry = guard
-            .entry(workspace_id)
-            .or_insert_with(WorkspaceCatchupEntry::new);
-        entry.rev += 1;
-        let _ = entry.tx.send(WorkspaceCatchupEvent::TrackUpsert {
-            workspace_id,
-            snapshot_rev: entry.rev,
-            track,
         });
     }
 

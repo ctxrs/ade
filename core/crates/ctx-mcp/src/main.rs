@@ -905,11 +905,11 @@ async fn main() -> Result<()> {
                         {
                             "name": "list_edit_plans",
                             "title": "List Edit Plans",
-                            "description": "Lists pending edit plans for a track (or for the current session's track).",
+                            "description": "Lists pending edit plans for a worktree (or for the current session's worktree).",
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {
-                                    "track_id": { "type": "string" },
+                                    "worktree_id": { "type": "string" },
                                     "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." }
                                 },
                                 "additionalProperties": false
@@ -2596,36 +2596,36 @@ async fn list_edit_plans_call(
     daemon_url: &str,
     arguments: &Value,
 ) -> Result<Value> {
-    let track_id = arguments
-        .get("track_id")
+    let worktree_id = arguments
+        .get("worktree_id")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
-    let track_id = if let Some(tid) = track_id {
-        tid
+    let worktree_id = if let Some(wid) = worktree_id {
+        wid
     } else {
         let session_id = arguments
             .get("session_id")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
             .or_else(|| ctx_env_opt("SESSION_ID"))
-            .context("missing track_id and session_id")?;
+            .context("missing worktree_id and session_id")?;
         let head = daemon_get_json(
             client,
             daemon_url,
             &format!("/api/sessions/{}/head", session_id),
         )
         .await?;
-        let tid = head
+        let wid = head
             .get("session")
-            .and_then(|v| v.get("track_id"))
+            .and_then(|v| v.get("worktree_id"))
             .and_then(|v| v.as_str().or_else(|| v.get("0").and_then(|x| x.as_str())))
-            .context("session missing track_id")?;
-        tid.to_string()
+            .context("session missing worktree_id")?;
+        wid.to_string()
     };
     daemon_get_json(
         client,
         daemon_url,
-        &format!("/api/tracks/{}/edit_plans", track_id),
+        &format!("/api/worktrees/{}/edit_plans", worktree_id),
     )
     .await
 }

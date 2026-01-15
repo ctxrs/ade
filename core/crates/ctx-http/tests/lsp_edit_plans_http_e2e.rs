@@ -60,11 +60,7 @@ async fn create_workspace_task_session(
     app: &axum::Router,
     state: &Arc<AppState>,
     repo_root: &Path,
-) -> (
-    ctx_core::models::Track,
-    ctx_core::models::Session,
-    std::path::PathBuf,
-) {
+) -> (ctx_core::models::Session, std::path::PathBuf) {
     // create workspace
     let req = Request::builder()
         .method("POST")
@@ -83,7 +79,7 @@ async fn create_workspace_task_session(
     let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
     let ws: ctx_core::models::Workspace = serde_json::from_slice(&body).unwrap();
 
-    // create task (auto track + worktree)
+    // create task (auto worktree)
     let req = Request::builder()
         .method("POST")
         .uri(format!("/api/workspaces/{}/tasks", ws.id.0))
@@ -95,30 +91,10 @@ async fn create_workspace_task_session(
     let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
     let task: ctx_core::models::Task = serde_json::from_slice(&body).unwrap();
 
-    // fetch workspace catchup to locate the default track
-    let req = Request::builder()
-        .method("GET")
-        .uri(format!("/api/workspaces/{}/catchup", ws.id.0))
-        .body(Body::empty())
-        .unwrap();
-    let res = app.clone().oneshot(req).await.unwrap();
-    assert_eq!(res.status(), StatusCode::OK);
-    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
-    let snapshot: ctx_core::models::WorkspaceCatchupSnapshot =
-        serde_json::from_slice(&body).unwrap();
-    let track = snapshot
-        .active
-        .tasks
-        .iter()
-        .find(|summary| summary.task.id == task.id)
-        .and_then(|summary| summary.tracks.first())
-        .map(|summary| summary.track.clone())
-        .expect("default track missing");
-
     // create session
     let req = Request::builder()
         .method("POST")
-        .uri(format!("/api/tracks/{}/sessions", track.id.0))
+        .uri(format!("/api/tasks/{}/sessions", task.id.0))
         .header("content-type", "application/json")
         .body(Body::from(
             json!({"provider_id":"fake","model_id":"fake"}).to_string(),
@@ -143,7 +119,7 @@ async fn create_workspace_task_session(
         .await
         .unwrap();
 
-    (track, session, wt_root)
+    (session, wt_root)
 }
 
 async fn setup_state_and_app(
@@ -183,7 +159,7 @@ async fn edit_plan_persists_across_restart_and_discards() {
     let (data_dir, state, app) = setup_state_and_app(true).await;
     let repo = setup_git_repo().await;
 
-    let (track, session, _wt_root) = create_workspace_task_session(&app, &state, repo.path()).await;
+    let (session, _wt_root) = create_workspace_task_session(&app, &state, repo.path()).await;
 
     let req = Request::builder()
         .method("POST")
@@ -249,7 +225,10 @@ async fn edit_plan_persists_across_restart_and_discards() {
 
     let req = Request::builder()
         .method("GET")
-        .uri(format!("/api/tracks/{}/edit_plans", track.id.0))
+        .uri(format!(
+            "/api/worktrees/{}/edit_plans",
+            session.worktree_id.0
+        ))
         .body(Body::empty())
         .unwrap();
     let res = app2.clone().oneshot(req).await.unwrap();
@@ -280,7 +259,7 @@ async fn stale_plan_is_rejected_on_apply() {
     let (_data_dir, state, app) = setup_state_and_app(true).await;
     let repo = setup_git_repo().await;
 
-    let (_track, session, wt_root) = create_workspace_task_session(&app, &state, repo.path()).await;
+    let (session, wt_root) = create_workspace_task_session(&app, &state, repo.path()).await;
 
     let req = Request::builder()
         .method("POST")
@@ -329,7 +308,7 @@ async fn lsp_rename_plan_create_and_apply() {
     let (_data_dir, state, app) = setup_state_and_app(true).await;
     let repo = setup_git_repo().await;
 
-    let (track, session, wt_root) = create_workspace_task_session(&app, &state, repo.path()).await;
+    let (session, wt_root) = create_workspace_task_session(&app, &state, repo.path()).await;
 
     let req = Request::builder()
         .method("POST")
@@ -390,7 +369,10 @@ async fn lsp_rename_plan_create_and_apply() {
     // Plan removed after apply.
     let req = Request::builder()
         .method("GET")
-        .uri(format!("/api/tracks/{}/edit_plans", track.id.0))
+        .uri(format!(
+            "/api/worktrees/{}/edit_plans",
+            session.worktree_id.0
+        ))
         .body(Body::empty())
         .unwrap();
     let res = app.clone().oneshot(req).await.unwrap();
@@ -404,7 +386,7 @@ async fn lsp_rename_plan_create_and_apply() {
 async fn lsp_code_action_plan_create_and_apply() {
     let (_data_dir, state, app) = setup_state_and_app(true).await;
     let repo = setup_git_repo().await;
-    let (_track, session, wt_root) = create_workspace_task_session(&app, &state, repo.path()).await;
+    let (session, wt_root) = create_workspace_task_session(&app, &state, repo.path()).await;
 
     // Get code actions from the LSP endpoint so the JSON matches lsp-types expectations.
     let req = Request::builder()
@@ -489,7 +471,7 @@ async fn lsp_code_action_plan_create_and_apply() {
 async fn lsp_code_action_plan_supports_command_only_embedded_edit() {
     let (_data_dir, state, app) = setup_state_and_app(true).await;
     let repo = setup_git_repo().await;
-    let (_track, session, wt_root) = create_workspace_task_session(&app, &state, repo.path()).await;
+    let (session, wt_root) = create_workspace_task_session(&app, &state, repo.path()).await;
 
     let file = wt_root.join("src/lib.rs");
     let uri = file_uri(&file);
@@ -569,7 +551,7 @@ async fn lsp_code_action_plan_supports_command_only_embedded_edit() {
 async fn lsp_code_action_plan_supports_workspace_edit_file_ops() {
     let (_data_dir, state, app) = setup_state_and_app(true).await;
     let repo = setup_git_repo().await;
-    let (_track, session, wt_root) = create_workspace_task_session(&app, &state, repo.path()).await;
+    let (session, wt_root) = create_workspace_task_session(&app, &state, repo.path()).await;
 
     let create_path = wt_root.join("src/created.rs");
     let rename_from = wt_root.join("src/rename_from.rs");
@@ -706,7 +688,7 @@ async fn lsp_code_action_plan_supports_workspace_edit_file_ops() {
 async fn lsp_organize_imports_plan_create_and_apply() {
     let (_data_dir, state, app) = setup_state_and_app(true).await;
     let repo = setup_git_repo().await;
-    let (_track, session, wt_root) = create_workspace_task_session(&app, &state, repo.path()).await;
+    let (session, wt_root) = create_workspace_task_session(&app, &state, repo.path()).await;
 
     let req = Request::builder()
         .method("POST")
@@ -758,7 +740,7 @@ async fn lsp_organize_imports_plan_create_and_apply() {
 async fn lsp_execute_command_plan_create_and_apply() {
     let (_data_dir, state, app) = setup_state_and_app(true).await;
     let repo = setup_git_repo().await;
-    let (_track, session, wt_root) = create_workspace_task_session(&app, &state, repo.path()).await;
+    let (session, wt_root) = create_workspace_task_session(&app, &state, repo.path()).await;
 
     let req = Request::builder()
         .method("POST")
@@ -810,8 +792,7 @@ async fn lsp_code_actions_by_diagnostic_plan_creates_plans() {
     let (_data_dir, state, app) = setup_state_and_app(true).await;
     let repo = setup_git_repo().await;
 
-    let (_track, session, _wt_root) =
-        create_workspace_task_session(&app, &state, repo.path()).await;
+    let (session, _wt_root) = create_workspace_task_session(&app, &state, repo.path()).await;
 
     // Fetch diagnostics, pick the first one.
     let req = Request::builder()

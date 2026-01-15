@@ -11,12 +11,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use url::{form_urlencoded, Url};
 
-use ctx_core::ids::{ArtifactId, SessionId, TaskId, TerminalId, TrackId, WorkspaceId, WorktreeId};
+use ctx_core::ids::{ArtifactId, SessionId, TaskId, TerminalId, WorkspaceId, WorktreeId};
 use ctx_core::models::{
     Artifact, AttachmentMode, AttachmentUpdatePolicy, Message, MessageAttachment, MessageDelivery,
     Session, SessionEventsPage, SessionHead, SessionHistoryPage, SessionTurnTool, Task,
-    TerminalSession, Track, TrackDiffSummaryResponse, Workspace, WorkspaceAttachment,
-    WorkspaceAttachmentKind, WorkspaceCatchupCursor, WorkspaceCatchupSnapshot,
+    TerminalSession, Workspace, WorkspaceAttachment, WorkspaceAttachmentKind,
+    WorkspaceCatchupCursor, WorkspaceCatchupSnapshot,
 };
 use ctx_providers::adapters::ProviderStatus;
 
@@ -85,22 +85,12 @@ pub struct CreateTaskRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub create_default_track: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub default_track_label: Option<String>,
+    pub create_default_session: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct UpdateTaskTitleRequest<'a> {
     pub title: &'a str,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct CreateTrackRequest {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub label: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub env_target: Option<EnvTarget>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -113,14 +103,16 @@ pub struct CreateSessionRequest {
     pub relationship: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub initial_prompt: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub worktree_id: Option<WorktreeId>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub env_target: Option<EnvTarget>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct CreateTerminalRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub task_id: Option<TaskId>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub track_id: Option<TrackId>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_id: Option<SessionId>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -212,17 +204,6 @@ pub struct AskUserQuestionRequest {
 pub enum AskUserQuestionOutcome {
     Submitted,
     Cancelled,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct TrackDiffApplyRequest {
-    action: String,
-    patch: String,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct TrackDiffResponse {
-    diff: String,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -995,17 +976,12 @@ impl Client {
         self.request_empty(Method::DELETE, &path, None::<&()>).await
     }
 
-    pub async fn create_track(&self, task_id: TaskId, req: &CreateTrackRequest) -> Result<Track> {
-        let path = format!("/api/tasks/{}/tracks", task_id.0);
-        self.request_json(Method::POST, &path, Some(req)).await
-    }
-
     pub async fn create_session(
         &self,
-        track_id: TrackId,
+        task_id: TaskId,
         req: &CreateSessionRequest,
     ) -> Result<SessionWithEnv> {
-        let path = format!("/api/tracks/{}/sessions", track_id.0);
+        let path = format!("/api/tasks/{}/sessions", task_id.0);
         self.request_json(Method::POST, &path, Some(req)).await
     }
 
@@ -1249,32 +1225,6 @@ impl Client {
         }
         let bytes = resp.bytes().await.context("reading response body")?;
         Ok(bytes.to_vec())
-    }
-
-    pub async fn track_diff(&self, track_id: TrackId) -> Result<TrackDiffSummaryResponse> {
-        let path = format!("/api/tracks/{}/diff_summary", track_id.0);
-        self.request_json(Method::GET, &path, None::<&()>).await
-    }
-
-    pub async fn get_track_diff(&self, track_id: TrackId) -> Result<String> {
-        let path = format!("/api/tracks/{}/diff", track_id.0);
-        let resp: TrackDiffResponse = self.request_json(Method::GET, &path, None::<&()>).await?;
-        Ok(resp.diff)
-    }
-
-    pub async fn apply_track_diff_patch(
-        &self,
-        track_id: TrackId,
-        action: &str,
-        patch: &str,
-    ) -> Result<String> {
-        let path = format!("/api/tracks/{}/diff/apply", track_id.0);
-        let req = TrackDiffApplyRequest {
-            action: action.to_string(),
-            patch: patch.to_string(),
-        };
-        let resp: TrackDiffResponse = self.request_json(Method::POST, &path, Some(&req)).await?;
-        Ok(resp.diff)
     }
 
     pub async fn list_providers(&self) -> Result<Vec<ProviderStatus>> {
@@ -1546,7 +1496,6 @@ mod tests {
     fn session_with_env_parses() {
         let payload = serde_json::json!({
             "id": "11111111-1111-1111-1111-111111111111",
-            "track_id": "22222222-2222-2222-2222-222222222222",
             "task_id": "33333333-3333-3333-3333-333333333333",
             "workspace_id": "44444444-4444-4444-4444-444444444444",
             "worktree_id": "55555555-5555-5555-5555-555555555555",

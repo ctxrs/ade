@@ -136,7 +136,7 @@ mod tests {
         let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
         let ws: ctx_core::models::Workspace = serde_json::from_slice(&body).unwrap();
 
-        // create task (auto track + worktree)
+        // create task (auto worktree when requested)
         let req = Request::builder()
             .method("POST")
             .uri(format!("/api/workspaces/{}/tasks", ws.id.0))
@@ -150,29 +150,10 @@ mod tests {
         let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
         let task: ctx_core::models::Task = serde_json::from_slice(&body).unwrap();
 
-        // fetch workspace catchup to locate the default track
-        let req = Request::builder()
-            .method("GET")
-            .uri(format!("/api/workspaces/{}/catchup", ws.id.0))
-            .body(Body::empty())
-            .unwrap();
-        let res = app.clone().oneshot(req).await.unwrap();
-        assert_eq!(res.status(), StatusCode::OK);
-        let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
-        let snapshot: ctx_core::models::WorkspaceCatchupSnapshot =
-            serde_json::from_slice(&body).unwrap();
-        let track = snapshot
-            .active
-            .tasks
-            .iter()
-            .find(|summary| summary.task.id == task.id)
-            .and_then(|summary| summary.tracks.first())
-            .expect("default track missing");
-
         // create session
         let req = Request::builder()
             .method("POST")
-            .uri(format!("/api/tracks/{}/sessions", track.track.id.0))
+            .uri(format!("/api/tasks/{}/sessions", task.id.0))
             .header("content-type", "application/json")
             .body(Body::from(
                 json!({"provider_id":"fake","model_id":"fake-model"}).to_string(),
@@ -299,26 +280,9 @@ mod tests {
             .await
             .unwrap();
 
-        // fetch workspace catchup to locate the default track
-        let snapshot: ctx_core::models::WorkspaceCatchupSnapshot = client
-            .get(format!("{base}/api/workspaces/{}/catchup", ws.id.0))
-            .send()
-            .await
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
-        let track = snapshot
-            .active
-            .tasks
-            .iter()
-            .find(|summary| summary.task.id == task.id)
-            .and_then(|summary| summary.tracks.first())
-            .expect("default track missing");
-
         // create session
         let session: ctx_core::models::Session = client
-            .post(format!("{base}/api/tracks/{}/sessions", track.track.id.0))
+            .post(format!("{base}/api/tasks/{}/sessions", task.id.0))
             .json(&json!({"provider_id":"fake","model_id":"fake-model"}))
             .send()
             .await

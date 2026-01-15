@@ -101,7 +101,6 @@ pub async fn session_worker(
     };
     let mut worktree_event = OpsEvent::new("info", "worktree_resolved");
     worktree_event.session_id = Some(session.id.0.to_string());
-    worktree_event.track_id = Some(session.track_id.0.to_string());
     worktree_event.worktree_id = Some(session.worktree_id.0.to_string());
     worktree_event.worktree_root = Some(workdir.to_string_lossy().to_string());
     worktree_event.meta = Some(json!({
@@ -268,7 +267,6 @@ async fn start_turn(
 
     let mut run_event = OpsEvent::new("info", "provider_run_started");
     run_event.session_id = Some(session.id.0.to_string());
-    run_event.track_id = Some(session.track_id.0.to_string());
     run_event.worktree_id = Some(session.worktree_id.0.to_string());
     run_event.run_id = Some(run_id.0.to_string());
     run_event.turn_id = Some(turn_id.0.to_string());
@@ -393,32 +391,6 @@ async fn start_turn(
         provider_env.insert("CTX_SYSTEM_PROMPT_APPEND".to_string(), append.to_string());
     }
 
-    if let Ok(Some(worker)) = state.store.get_track_worker(session.track_id).await {
-        provider_env.insert("CTX_WORKER_GATEWAY_URL".to_string(), worker.gateway_url);
-        provider_env.insert("CTX_WORKER_ID".to_string(), worker.worker_id);
-        provider_env
-            .entry("CTX_MCP_DISABLED".to_string())
-            .or_insert_with(|| "1".to_string());
-        if let Ok(token) = std::env::var("CTX_WORKER_GATEWAY_TOKEN") {
-            let trimmed = token.trim();
-            if !trimmed.is_empty() {
-                provider_env.insert("CTX_WORKER_GATEWAY_TOKEN".to_string(), trimmed.to_string());
-            }
-        }
-        let settings = settings::load_settings(&state.data_root).await;
-        if let Some(pem) = settings
-            .cloud_workers
-            .and_then(|cw| cw.gateway)
-            .and_then(|gateway| gateway.gateway_ca_pem)
-        {
-            let trimmed = pem.trim();
-            if !trimmed.is_empty() {
-                let encoded = base64::engine::general_purpose::STANDARD.encode(trimmed.as_bytes());
-                provider_env.insert("CTX_WORKER_GATEWAY_CA_B64".to_string(), encoded);
-            }
-        }
-    }
-
     let run_started_at = Instant::now();
     let spawn_started_at = Instant::now();
     let handle = match adapter
@@ -469,7 +441,6 @@ async fn start_turn(
                 .await;
             let mut fail_event = OpsEvent::new("error", "provider_run_failed");
             fail_event.session_id = Some(session.id.0.to_string());
-            fail_event.track_id = Some(session.track_id.0.to_string());
             fail_event.worktree_id = Some(session.worktree_id.0.to_string());
             fail_event.run_id = Some(run_id.0.to_string());
             fail_event.turn_id = Some(turn_id.0.to_string());
@@ -490,7 +461,6 @@ async fn start_turn(
     let store = state.store.clone();
     let session_id = session.id;
     let task_id = session.task_id;
-    let track_id = session.track_id;
     let worktree_id = session.worktree_id;
     let provider_id = session.provider_id.clone();
     let model_id = session.model_id.clone();
@@ -591,7 +561,6 @@ async fn start_turn(
                 }
                 let mut event = OpsEvent::new("info", "tool_exec");
                 event.session_id = Some(session_id.0.to_string());
-                event.track_id = Some(track_id.0.to_string());
                 event.worktree_id = Some(worktree_id.0.to_string());
                 event.run_id = Some(run_id.0.to_string());
                 event.turn_id = Some(turn_id.0.to_string());
@@ -610,7 +579,6 @@ async fn start_turn(
                     if cwd_outside_worktree(cwd, &workdir_root, workdir_canonical.as_ref()) {
                         let mut warn_event = OpsEvent::new("warn", "tool_exec_anomaly");
                         warn_event.session_id = Some(session_id.0.to_string());
-                        warn_event.track_id = Some(track_id.0.to_string());
                         warn_event.worktree_id = Some(worktree_id.0.to_string());
                         warn_event.run_id = Some(run_id.0.to_string());
                         warn_event.turn_id = Some(turn_id.0.to_string());
@@ -689,7 +657,6 @@ async fn start_turn(
                                 &store,
                                 session_id,
                                 task_id,
-                                track_id,
                                 run_id,
                                 turn_id,
                                 assistant_partial.clone(),
@@ -799,7 +766,6 @@ async fn start_turn(
                                     &store,
                                     session_id,
                                     task_id,
-                                    track_id,
                                     run_id,
                                     turn_id,
                                     content,
@@ -1378,7 +1344,6 @@ async fn persist_assistant_message(
     store: &ctx_store::Store,
     session_id: ctx_core::ids::SessionId,
     task_id: ctx_core::ids::TaskId,
-    track_id: ctx_core::ids::TrackId,
     run_id: RunId,
     turn_id: TurnId,
     content: String,
@@ -1392,7 +1357,6 @@ async fn persist_assistant_message(
         id: ctx_core::ids::MessageId::new(),
         session_id,
         task_id,
-        track_id,
         run_id: Some(run_id),
         turn_id: Some(turn_id),
         turn_sequence: Some(turn_sequence),

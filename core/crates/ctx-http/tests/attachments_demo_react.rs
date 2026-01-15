@@ -101,10 +101,6 @@ async fn attachments_demo_react_smoketest() {
         .create_task(ws.id, "demo".to_string(), None)
         .await
         .unwrap();
-    let track = store
-        .create_track(task.id, ws.id, worktree.id, "demo".to_string())
-        .await
-        .unwrap();
 
     let providers: std::collections::HashMap<
         String,
@@ -121,7 +117,7 @@ async fn attachments_demo_react_smoketest() {
     attachments::sync_workspace_attachments(&state, &ws, true)
         .await
         .unwrap();
-    let mounts = attachments::ensure_track_attachment_mounts(&state, &ws, &track, &worktree, true)
+    let mounts = attachments::ensure_worktree_attachment_mounts(&state, &ws, &worktree, true)
         .await
         .unwrap();
 

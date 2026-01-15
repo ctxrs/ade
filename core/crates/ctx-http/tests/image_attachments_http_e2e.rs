@@ -81,7 +81,7 @@ async fn image_attachments_use_blobs_and_never_persist_base64() {
     let fetched = to_bytes(res.into_body(), usize::MAX).await.unwrap();
     assert_eq!(fetched.as_ref(), png_bytes.as_slice());
 
-    // 2) Create workspace/task/track/session and post message with legacy base64 attachment;
+    // 2) Create workspace/task/session and post message with legacy base64 attachment;
     //    server should normalize it to image_ref before persisting.
     let repo = common::init_git_repo(&[("README.md", "hello\n")]).await;
 
@@ -89,8 +89,7 @@ async fn image_attachments_use_blobs_and_never_persist_base64() {
     let task = common::create_task(&app, ws.id.0, "t1").await;
     let task_id = task.id.0;
 
-    let track = common::create_track(&app, task_id, "t").await;
-    let session = common::create_session(&app, track.id.0, "fake", "fake-model").await;
+    let session = common::create_session(&app, task_id, "fake", "fake-model").await;
 
     let data_base64 = base64::engine::general_purpose::STANDARD.encode(&png_bytes);
     let (status, msg): (StatusCode, ctx_core::models::Message) = common::json_request(

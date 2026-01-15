@@ -35,6 +35,10 @@ pub struct Task {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub exec_plan_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub primary_session_id: Option<SessionId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub primary_worktree_id: Option<WorktreeId>,
     #[serde(default)]
     pub archived_at: Option<DateTime<Utc>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -45,37 +49,6 @@ pub struct Task {
     pub last_assistant_message_at: Option<DateTime<Utc>>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub has_active_session: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum TrackStatus {
-    Pending,
-    Running,
-    Completed,
-    Failed,
-    Cancelled,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Track {
-    pub id: TrackId,
-    pub task_id: TaskId,
-    pub workspace_id: WorkspaceId,
-    pub worktree_id: WorktreeId,
-    pub label: String,
-    pub status: TrackStatus,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TrackWorker {
-    pub track_id: TrackId,
-    pub worker_id: String,
-    pub gateway_url: String,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -160,19 +133,19 @@ pub struct WorkspaceAttachment {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum TrackAttachmentStatus {
+pub enum WorktreeAttachmentStatus {
     Ready,
     Stale,
     Error,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TrackAttachmentMount {
-    pub track_id: TrackId,
+pub struct WorktreeAttachmentMount {
+    pub worktree_id: WorktreeId,
     pub attachment_id: WorkspaceAttachmentId,
     pub mount_abs_path: String,
     pub materialized_id: String,
-    pub status: TrackAttachmentStatus,
+    pub status: WorktreeAttachmentStatus,
     pub last_sync_at: Option<DateTime<Utc>>,
     pub error_message: Option<String>,
     pub created_at: DateTime<Utc>,
@@ -264,7 +237,6 @@ pub enum SessionStatus {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Session {
     pub id: SessionId,
-    pub track_id: TrackId,
     pub task_id: TaskId,
     pub workspace_id: WorkspaceId,
     pub worktree_id: WorktreeId,
@@ -334,8 +306,6 @@ pub struct TerminalSession {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub task_id: Option<TaskId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub track_id: Option<TrackId>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_id: Option<SessionId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub worktree_id: Option<WorktreeId>,
@@ -386,7 +356,6 @@ pub struct Message {
     pub id: MessageId,
     pub session_id: SessionId,
     pub task_id: TaskId,
-    pub track_id: TrackId,
     pub run_id: Option<RunId>,
     pub turn_id: Option<TurnId>,
     #[serde(default)]
@@ -404,7 +373,6 @@ pub struct Message {
 pub struct Artifact {
     pub id: ArtifactId,
     pub session_id: SessionId,
-    pub track_id: TrackId,
     pub task_id: TaskId,
     pub workspace_id: WorkspaceId,
     pub worktree_id: WorktreeId,
@@ -487,7 +455,6 @@ pub struct SessionTurnToolSummary {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionSummary {
     pub id: SessionId,
-    pub track_id: TrackId,
     pub task_id: TaskId,
     pub workspace_id: WorkspaceId,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -503,19 +470,12 @@ pub struct SessionSummary {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TrackSummary {
-    pub track: Track,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub sessions: Vec<SessionSummary>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkspaceTaskSummary {
     pub task: Task,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub provider_ids: Vec<String>,
-    #[serde(default)]
-    pub tracks: Vec<TrackSummary>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sessions: Vec<SessionSummary>,
     pub sort_at: DateTime<Utc>,
 }
 
@@ -573,34 +533,10 @@ pub struct SessionCatchupSummary {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TrackDiffSummary {
-    pub file_count: i64,
-    pub line_additions: i64,
-    pub line_deletions: i64,
-    pub updated_at: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TrackDiffSummaryResponse {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub summary: Option<TrackDiffSummary>,
-    pub too_large: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WorkspaceCatchupTrackSummary {
-    pub track: Track,
-    pub primary_session_id: Option<SessionId>,
-    #[serde(default)]
-    pub sessions: Vec<SessionCatchupSummary>,
-    pub diff_summary: Option<TrackDiffSummary>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkspaceCatchupTaskSummary {
     pub task: Task,
-    #[serde(default)]
-    pub tracks: Vec<WorkspaceCatchupTrackSummary>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sessions: Vec<SessionCatchupSummary>,
     pub sort_at: DateTime<Utc>,
 }
 
@@ -622,6 +558,49 @@ pub struct WorkspaceCatchupSnapshot {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionSummaryCheckpoint {
+    pub session_id: SessionId,
+    pub checkpoint_id: String,
+    pub summary: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_turn_id: Option<TurnId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_event_seq: Option<i64>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionHeadWindow {
+    pub turn_limit: i64,
+    pub message_limit: i64,
+    pub event_limit: i64,
+    pub byte_limit: i64,
+    pub turn_count: i64,
+    pub message_count: i64,
+    pub event_count: i64,
+    pub bytes: i64,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub truncated: bool,
+}
+
+impl Default for SessionHeadWindow {
+    fn default() -> Self {
+        Self {
+            turn_limit: 0,
+            message_limit: 0,
+            event_limit: 0,
+            byte_limit: 0,
+            turn_count: 0,
+            message_count: 0,
+            event_count: 0,
+            bytes: 0,
+            truncated: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionHead {
     pub session: Session,
     #[serde(default)]
@@ -640,6 +619,10 @@ pub struct SessionHead {
     #[serde(default)]
     pub activity: SessionActivityState,
     pub has_more_turns: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary_checkpoint: Option<SessionSummaryCheckpoint>,
+    #[serde(default)]
+    pub head_window: SessionHeadWindow,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -717,11 +700,6 @@ pub enum WorkspaceCatchupEvent {
         workspace_id: WorkspaceId,
         snapshot_rev: i64,
         task_id: TaskId,
-    },
-    TrackUpsert {
-        workspace_id: WorkspaceId,
-        snapshot_rev: i64,
-        track: WorkspaceCatchupTrackSummary,
     },
     SessionSummary {
         workspace_id: WorkspaceId,

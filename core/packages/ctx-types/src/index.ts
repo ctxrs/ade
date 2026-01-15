@@ -32,6 +32,8 @@ export type Task = {
   title: string;
   description?: string | null;
   status: string;
+  primary_session_id?: { 0: string } | string | null;
+  primary_worktree_id?: { 0: string } | string | null;
   created_at: string;
   updated_at: string;
   archived_at?: string | null;
@@ -39,25 +41,6 @@ export type Task = {
   last_activity_at?: string | null;
   last_assistant_message_at?: string | null;
   has_active_session?: boolean;
-};
-
-export type Track = {
-  id: { 0: string } | string;
-  task_id: { 0: string } | string;
-  workspace_id: { 0: string } | string;
-  worktree_id: { 0: string } | string;
-  label: string;
-  status: string;
-  created_at?: string;
-  updated_at?: string;
-};
-
-export type TrackWorker = {
-  track_id: { 0: string } | string;
-  worker_id: string;
-  gateway_url: string;
-  created_at: string;
-  updated_at: string;
 };
 
 export type Worktree = {
@@ -131,7 +114,6 @@ export type MergeQueueRun = {
 
 export type Session = {
   id: { 0: string } | string;
-  track_id: { 0: string } | string;
   task_id: { 0: string } | string;
   workspace_id: { 0: string } | string;
   worktree_id: { 0: string } | string;
@@ -153,7 +135,6 @@ export type TerminalSession = {
   id: { 0: string } | string;
   workspace_id: { 0: string } | string;
   task_id?: { 0: string } | string | null;
-  track_id?: { 0: string } | string | null;
   session_id?: { 0: string } | string | null;
   worktree_id?: { 0: string } | string | null;
   cwd: string;
@@ -167,7 +148,6 @@ export type TerminalSession = {
 
 export type SessionSummary = {
   id: { 0: string } | string;
-  track_id: { 0: string } | string;
   task_id: { 0: string } | string;
   workspace_id: { 0: string } | string;
   parent_session_id?: { 0: string } | string | null;
@@ -208,15 +188,10 @@ export type SubagentInvocation = {
   children: SubagentInvocationChild[];
 };
 
-export type TrackSummary = {
-  track: Track;
-  sessions?: SessionSummary[];
-};
-
 export type WorkspaceTaskSummary = {
   task: Task;
   provider_ids?: string[];
-  tracks: TrackSummary[];
+  sessions?: SessionSummary[];
   sort_at: string;
 };
 
@@ -267,28 +242,9 @@ export type SessionCatchupSummary = {
   unread?: boolean;
 };
 
-export type TrackDiffSummary = {
-  file_count: number;
-  line_additions: number;
-  line_deletions: number;
-  updated_at: string;
-};
-
-export type TrackDiffSummaryResponse = {
-  summary?: TrackDiffSummary | null;
-  too_large: boolean;
-};
-
-export type WorkspaceCatchupTrackSummary = {
-  track: Track;
-  primary_session_id?: { 0: string } | string | null;
-  sessions: SessionCatchupSummary[];
-  diff_summary?: TrackDiffSummary | null;
-};
-
 export type WorkspaceCatchupTaskSummary = {
   task: Task;
-  tracks: WorkspaceCatchupTrackSummary[];
+  sessions: SessionCatchupSummary[];
   sort_at: string;
 };
 
@@ -305,6 +261,28 @@ export type WorkspaceCatchupSnapshot = {
   archived?: WorkspaceCatchupPage | null;
 };
 
+export type SessionSummaryCheckpoint = {
+  session_id: { 0: string } | string;
+  checkpoint_id: string;
+  summary: string;
+  last_turn_id?: { 0: string } | string | null;
+  last_event_seq?: number | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type SessionHeadWindow = {
+  turn_limit: number;
+  message_limit: number;
+  event_limit: number;
+  byte_limit: number;
+  turn_count: number;
+  message_count: number;
+  event_count: number;
+  bytes: number;
+  truncated?: boolean;
+};
+
 export type SessionHead = {
   session: Session;
   turns: SessionTurn[];
@@ -316,6 +294,8 @@ export type SessionHead = {
   last_event_seq: number;
   activity?: SessionActivityState;
   has_more_turns: boolean;
+  summary_checkpoint?: SessionSummaryCheckpoint | null;
+  head_window?: SessionHeadWindow;
 };
 
 export type SessionHeadDelta = {
@@ -377,12 +357,6 @@ export type WorkspaceCatchupEvent =
       task_id: { 0: string } | string;
     }
   | {
-      type: "track_upsert";
-      workspace_id: { 0: string } | string;
-      snapshot_rev: number;
-      track: WorkspaceCatchupTrackSummary;
-    }
-  | {
       type: "session_summary";
       workspace_id: { 0: string } | string;
       snapshot_rev: number;
@@ -424,6 +398,7 @@ export type WorkspaceCatchupClientMessage =
 export type Message = {
   id: { 0: string } | string;
   session_id: { 0: string } | string;
+  task_id: { 0: string } | string;
   turn_id?: { 0: string } | string | null;
   turn_sequence?: number | null;
   role: "user" | "assistant" | "system";
@@ -436,7 +411,6 @@ export type Message = {
 export type Artifact = {
   id: { 0: string } | string;
   session_id: { 0: string } | string;
-  track_id: { 0: string } | string;
   task_id: { 0: string } | string;
   workspace_id: { 0: string } | string;
   worktree_id: { 0: string } | string;

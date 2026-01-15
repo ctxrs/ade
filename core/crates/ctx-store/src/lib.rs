@@ -122,13 +122,11 @@ mod tests {
                 .create_worktree(ws.id, "/tmp/test".into(), "deadbeef".into(), None)
                 .await
                 .unwrap();
-            let track = store
-                .create_track(task.id, ws.id, worktree.id, "t1".into())
-                .await
-                .unwrap();
             let session = store
                 .create_session(
-                    &track,
+                    task.id,
+                    ws.id,
+                    worktree.id,
                     "fake".into(),
                     "fake".into(),
                     "implementer".into(),
@@ -142,7 +140,6 @@ mod tests {
             let store = store.clone();
             let session_id = session.id;
             let task_id = session.task_id;
-            let track_id = session.track_id;
 
             const WORKERS: usize = 16;
             const WRITES_PER_WORKER: usize = 20;
@@ -171,7 +168,6 @@ mod tests {
                                 id: MessageId::new(),
                                 session_id,
                                 task_id,
-                                track_id,
                                 run_id: Some(run_id),
                                 turn_id: Some(turn_id),
                                 turn_sequence: None,
@@ -236,13 +232,11 @@ mod tests {
             bootstrap_script_path: None,
         };
         store.insert_worktree(worktree.clone()).await.unwrap();
-        let track = store
-            .create_track(task_active.id, ws.id, worktree.id, "default".into())
-            .await
-            .unwrap();
-        store
+        let session = store
             .create_session(
-                &track,
+                task_active.id,
+                ws.id,
+                worktree.id,
                 "fake".into(),
                 "fake-model".into(),
                 "implementer".into(),
@@ -250,6 +244,10 @@ mod tests {
                 None,
                 None,
             )
+            .await
+            .unwrap();
+        store
+            .set_task_primary_session(task_active.id, session.id, worktree.id)
             .await
             .unwrap();
 
@@ -267,12 +265,9 @@ mod tests {
         assert!(cursor.is_none());
         let summary = &page[0];
         assert_eq!(summary.task.id, task_active.id);
-        assert_eq!(summary.tracks.len(), 1);
-        assert_eq!(summary.tracks[0].sessions.len(), 1);
-        assert_eq!(
-            summary.tracks[0].primary_session_id,
-            Some(summary.tracks[0].sessions[0].session.id)
-        );
+        assert_eq!(summary.task.primary_session_id, Some(session.id));
+        assert_eq!(summary.sessions.len(), 1);
+        assert_eq!(summary.sessions[0].session.id, session.id);
 
         let (active_count, archived_count) = store.workspace_task_counts(ws.id).await.unwrap();
         assert_eq!(active_count, 1);
@@ -292,8 +287,8 @@ mod tests {
             .unwrap()
             .expect("summary exists");
         assert_eq!(summary.task.id, task_active.id);
-        assert_eq!(summary.tracks.len(), 1);
-        assert_eq!(summary.tracks[0].sessions.len(), 1);
+        assert_eq!(summary.sessions.len(), 1);
+        assert_eq!(summary.sessions[0].session.id, session.id);
     }
 
     #[tokio::test]
@@ -345,14 +340,12 @@ mod tests {
             .create_worktree(ws.id, "/tmp/test".into(), "deadbeef".into(), None)
             .await
             .unwrap();
-        let track = store
-            .create_track(task.id, ws.id, worktree.id, "t1".into())
-            .await
-            .unwrap();
 
         let parent = store
             .create_session(
-                &track,
+                task.id,
+                ws.id,
+                worktree.id,
                 "fake".into(),
                 "fake".into(),
                 "implementer".into(),
@@ -364,7 +357,9 @@ mod tests {
             .unwrap();
         let subagent = store
             .create_session(
-                &track,
+                task.id,
+                ws.id,
+                worktree.id,
                 "fake".into(),
                 "fake".into(),
                 "subagent".into(),
@@ -376,7 +371,9 @@ mod tests {
             .unwrap();
         let _reviewer = store
             .create_session(
-                &track,
+                task.id,
+                ws.id,
+                worktree.id,
                 "fake".into(),
                 "fake".into(),
                 "reviewer".into(),
@@ -398,7 +395,6 @@ mod tests {
                 id: MessageId::new(),
                 session_id: subagent.id,
                 task_id: subagent.task_id,
-                track_id: subagent.track_id,
                 run_id: Some(run_id),
                 turn_id: Some(turn_id),
                 turn_sequence: Some(1),

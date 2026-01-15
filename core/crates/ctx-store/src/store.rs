@@ -6,6 +6,7 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use ctx_core::ids::*;
 use ctx_core::models::*;
+use serde::Serialize;
 use serde_json::Value;
 use sqlx::{sqlite::SqlitePoolOptions, Pool, QueryBuilder, Row, Sqlite};
 
@@ -17,6 +18,136 @@ pub struct Store {
 pub struct SessionRetentionPruneStats {
     pub tool_summaries_deleted: u64,
     pub turn_thoughts_cleared: u64,
+}
+
+const SESSION_HEAD_MAX_TURNS: u32 = 200;
+const SESSION_HEAD_MESSAGE_LIMIT: usize = 200;
+const SESSION_HEAD_EVENT_LIMIT: usize = 200;
+const SESSION_HEAD_BYTE_LIMIT: usize = 1_500_000;
+
+#[derive(Serialize)]
+struct SessionHeadWindowPayload<'a> {
+    turns: &'a [SessionTurn],
+    tool_summaries: &'a [SessionTurnToolSummary],
+    events: &'a [SessionEvent],
+    messages: &'a [Message],
+}
+
+fn head_window_bytes(
+    turns: &[SessionTurn],
+    tool_summaries: &[SessionTurnToolSummary],
+    events: &[SessionEvent],
+    messages: &[Message],
+) -> usize {
+    let payload = SessionHeadWindowPayload {
+        turns,
+        tool_summaries,
+        events,
+        messages,
+    };
+    serde_json::to_vec(&payload)
+        .map(|bytes| bytes.len())
+        .unwrap_or(0)
+}
+
+fn retain_messages_for_turns(messages: &mut Vec<Message>, turns: &[SessionTurn]) {
+    if turns.is_empty() {
+        messages.clear();
+        return;
+    }
+    let mut allowed = std::collections::HashSet::new();
+    for turn in turns {
+        allowed.insert(turn.turn_id);
+    }
+    messages.retain(|msg| match msg.turn_id {
+        Some(turn_id) => allowed.contains(&turn_id),
+        None => true,
+    });
+}
+
+fn retain_tool_summaries_for_turns(
+    tool_summaries: &mut Vec<SessionTurnToolSummary>,
+    turns: &[SessionTurn],
+) {
+    if turns.is_empty() {
+        tool_summaries.clear();
+        return;
+    }
+    let mut allowed = std::collections::HashSet::new();
+    for turn in turns {
+        allowed.insert(turn.turn_id);
+    }
+    tool_summaries.retain(|tool| allowed.contains(&tool.turn_id));
+}
+
+fn trim_session_head_window(
+    turns: &mut Vec<SessionTurn>,
+    messages: &mut Vec<Message>,
+    tool_summaries: &mut Vec<SessionTurnToolSummary>,
+    events: &mut Vec<SessionEvent>,
+    has_more_turns: &mut bool,
+    turn_limit: usize,
+    message_limit: usize,
+    event_limit: usize,
+    byte_limit: usize,
+) -> SessionHeadWindow {
+    let mut truncated = false;
+
+    while turns.len() > turn_limit {
+        turns.remove(0);
+        truncated = true;
+        *has_more_turns = true;
+    }
+    retain_messages_for_turns(messages, turns);
+    retain_tool_summaries_for_turns(tool_summaries, turns);
+
+    while messages.len() > message_limit && !turns.is_empty() {
+        turns.remove(0);
+        truncated = true;
+        *has_more_turns = true;
+        retain_messages_for_turns(messages, turns);
+        retain_tool_summaries_for_turns(tool_summaries, turns);
+    }
+
+    if events.len() > event_limit {
+        let drop = events.len() - event_limit;
+        events.drain(0..drop);
+        truncated = true;
+    }
+
+    loop {
+        let bytes = head_window_bytes(turns, tool_summaries, events, messages);
+        if bytes <= byte_limit || (turns.is_empty() && events.is_empty()) {
+            break;
+        }
+        if !turns.is_empty() {
+            turns.remove(0);
+            truncated = true;
+            *has_more_turns = true;
+            retain_messages_for_turns(messages, turns);
+            retain_tool_summaries_for_turns(tool_summaries, turns);
+            continue;
+        }
+        if !events.is_empty() {
+            events.remove(0);
+            truncated = true;
+            continue;
+        }
+        break;
+    }
+
+    let bytes = head_window_bytes(turns, tool_summaries, events, messages);
+    SessionHeadWindow {
+        turn_limit: turn_limit as i64,
+        message_limit: message_limit as i64,
+        event_limit: event_limit as i64,
+        byte_limit: byte_limit as i64,
+        turn_count: turns.len() as i64,
+        message_count: messages.len() as i64,
+        event_count: events.len() as i64,
+        bytes: bytes as i64,
+        truncated,
+    }
 }
 
 fn serialize_bootstrap_status(status: &WorktreeBootstrapStatus) -> &'static str {
@@ -224,6 +355,7 @@ impl Store {
             r#"
             SELECT
               t.id, t.workspace_id, t.title, t.description, t.status, t.exec_plan_id,
+              t.primary_session_id, t.primary_worktree_id,
               t.created_at, t.updated_at, t.archived_at, t.assistant_seen_at,
               (
                 SELECT MAX(m.created_at)
@@ -257,6 +389,8 @@ impl Store {
             let updated_at: String = r.try_get("updated_at")?;
             let archived_at: Option<String> = r.try_get("archived_at")?;
             let assistant_seen_at: Option<String> = r.try_get("assistant_seen_at")?;
+            let primary_session_id: Option<String> = r.try_get("primary_session_id")?;
+            let primary_worktree_id: Option<String> = r.try_get("primary_worktree_id")?;
             let last_activity_at: Option<String> = r.try_get("last_activity_at")?;
             let last_assistant_message_at: Option<String> =
                 r.try_get("last_assistant_message_at")?;
@@ -270,6 +404,14 @@ impl Store {
                 created_at: parse_dt(&created_at)?,
                 updated_at: parse_dt(&updated_at)?,
                 exec_plan_id: r.try_get("exec_plan_id")?,
+                primary_session_id: primary_session_id
+                    .as_deref()
+                    .and_then(|value| uuid::Uuid::parse_str(value).ok())
+                    .map(SessionId),
+                primary_worktree_id: primary_worktree_id
+                    .as_deref()
+                    .and_then(|value| uuid::Uuid::parse_str(value).ok())
+                    .map(WorktreeId),
                 archived_at: archived_at.as_deref().map(parse_dt).transpose()?,
                 assistant_seen_at: assistant_seen_at.as_deref().map(parse_dt).transpose()?,
                 last_activity_at: last_activity_at.as_deref().map(parse_dt).transpose()?,
@@ -299,6 +441,8 @@ impl Store {
             created_at: now,
             updated_at: now,
             exec_plan_id: None,
+            primary_session_id: None,
+            primary_worktree_id: None,
             archived_at: None,
             assistant_seen_at: None,
             last_activity_at: None,
@@ -306,8 +450,8 @@ impl Store {
             has_active_session: false,
         };
         sqlx::query(
-            r#"INSERT INTO tasks (id, workspace_id, title, description, status, exec_plan_id, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)"#,
+            r#"INSERT INTO tasks (id, workspace_id, title, description, status, exec_plan_id, primary_session_id, primary_worktree_id, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
         )
         .bind(task.id.0.to_string())
         .bind(task.workspace_id.0.to_string())
@@ -315,6 +459,8 @@ impl Store {
         .bind(&task.description)
         .bind(task_status_to_str(&task.status))
         .bind(&task.exec_plan_id)
+        .bind(task.primary_session_id.map(|id| id.0.to_string()))
+        .bind(task.primary_worktree_id.map(|id| id.0.to_string()))
         .bind(task.created_at.to_rfc3339())
         .bind(task.updated_at.to_rfc3339())
         .execute(&self.pool)
@@ -324,7 +470,7 @@ impl Store {
 
     pub async fn get_task(&self, id: TaskId) -> Result<Option<Task>> {
         let row = sqlx::query(
-            r#"SELECT id, workspace_id, title, description, status, exec_plan_id, created_at, updated_at, archived_at, assistant_seen_at
+            r#"SELECT id, workspace_id, title, description, status, exec_plan_id, primary_session_id, primary_worktree_id, created_at, updated_at, archived_at, assistant_seen_at
                FROM tasks WHERE id = ?"#,
         )
         .bind(id.0.to_string())
@@ -338,6 +484,8 @@ impl Store {
             let updated_at: String = r.try_get("updated_at").ok()?;
             let archived_at: Option<String> = r.try_get("archived_at").ok()?;
             let assistant_seen_at: Option<String> = r.try_get("assistant_seen_at").ok()?;
+            let primary_session_id: Option<String> = r.try_get("primary_session_id").ok()?;
+            let primary_worktree_id: Option<String> = r.try_get("primary_worktree_id").ok()?;
             Some(Task {
                 id: TaskId(uuid::Uuid::parse_str(&id).ok()?),
                 workspace_id: WorkspaceId(uuid::Uuid::parse_str(&ws_id).ok()?),
@@ -347,6 +495,14 @@ impl Store {
                 created_at: parse_dt(&created_at).ok()?,
                 updated_at: parse_dt(&updated_at).ok()?,
                 exec_plan_id: r.try_get("exec_plan_id").ok()?,
+                primary_session_id: primary_session_id
+                    .as_deref()
+                    .and_then(|value| uuid::Uuid::parse_str(value).ok())
+                    .map(SessionId),
+                primary_worktree_id: primary_worktree_id
+                    .as_deref()
+                    .and_then(|value| uuid::Uuid::parse_str(value).ok())
+                    .map(WorktreeId),
                 archived_at: archived_at.as_deref().map(parse_dt).transpose().ok()?,
                 assistant_seen_at: assistant_seen_at
                     .as_deref()
@@ -404,6 +560,46 @@ impl Store {
         Ok(res.rows_affected() > 0)
     }
 
+    pub async fn set_task_primary_session(
+        &self,
+        id: TaskId,
+        session_id: SessionId,
+        worktree_id: WorktreeId,
+    ) -> Result<bool> {
+        let now = Utc::now().to_rfc3339();
+        let res = sqlx::query(
+            r#"UPDATE tasks
+               SET primary_session_id = ?, primary_worktree_id = ?, updated_at = ?
+               WHERE id = ?"#,
+        )
+        .bind(session_id.0.to_string())
+        .bind(worktree_id.0.to_string())
+        .bind(&now)
+        .bind(id.0.to_string())
+        .execute(&self.pool)
+        .await?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    pub async fn set_task_primary_worktree(
+        &self,
+        id: TaskId,
+        worktree_id: WorktreeId,
+    ) -> Result<bool> {
+        let now = Utc::now().to_rfc3339();
+        let res = sqlx::query(
+            r#"UPDATE tasks
+               SET primary_worktree_id = ?, updated_at = ?
+               WHERE id = ?"#,
+        )
+        .bind(worktree_id.0.to_string())
+        .bind(&now)
+        .bind(id.0.to_string())
+        .execute(&self.pool)
+        .await?;
+        Ok(res.rows_affected() > 0)
+    }
+
     pub async fn mark_task_read(&self, id: TaskId) -> Result<bool> {
         let now = Utc::now().to_rfc3339();
         let res = sqlx::query(
@@ -443,6 +639,7 @@ impl Store {
             r#"
             SELECT
               t.id, t.workspace_id, t.title, t.description, t.status, t.exec_plan_id,
+              t.primary_session_id, t.primary_worktree_id,
               t.created_at, t.updated_at, t.archived_at, t.assistant_seen_at,
               (
                 SELECT MAX(m.created_at)
@@ -474,6 +671,8 @@ impl Store {
             let updated_at: String = r.try_get("updated_at").ok()?;
             let archived_at: Option<String> = r.try_get("archived_at").ok()?;
             let assistant_seen_at: Option<String> = r.try_get("assistant_seen_at").ok()?;
+            let primary_session_id: Option<String> = r.try_get("primary_session_id").ok()?;
+            let primary_worktree_id: Option<String> = r.try_get("primary_worktree_id").ok()?;
             let last_activity_at: Option<String> = r.try_get("last_activity_at").ok()?;
             let last_assistant_message_at: Option<String> =
                 r.try_get("last_assistant_message_at").ok()?;
@@ -487,6 +686,14 @@ impl Store {
                 created_at: parse_dt(&created_at).ok()?,
                 updated_at: parse_dt(&updated_at).ok()?,
                 exec_plan_id: r.try_get("exec_plan_id").ok()?,
+                primary_session_id: primary_session_id
+                    .as_deref()
+                    .and_then(|value| uuid::Uuid::parse_str(value).ok())
+                    .map(SessionId),
+                primary_worktree_id: primary_worktree_id
+                    .as_deref()
+                    .and_then(|value| uuid::Uuid::parse_str(value).ok())
+                    .map(WorktreeId),
                 archived_at: archived_at.as_deref().map(parse_dt).transpose().ok()?,
                 assistant_seen_at: assistant_seen_at
                     .as_deref()
@@ -870,34 +1077,34 @@ impl Store {
         Ok(())
     }
 
-    pub async fn list_track_attachment_mounts(
+    pub async fn list_worktree_attachment_mounts(
         &self,
-        track_id: TrackId,
-    ) -> Result<Vec<TrackAttachmentMount>> {
+        worktree_id: WorktreeId,
+    ) -> Result<Vec<WorktreeAttachmentMount>> {
         let rows = sqlx::query(
-            r#"SELECT track_id, attachment_id, mount_abs_path, materialized_id, status,
+            r#"SELECT worktree_id, attachment_id, mount_abs_path, materialized_id, status,
                       last_sync_at, error_message, created_at, updated_at
-               FROM track_attachment_mounts
-               WHERE track_id = ?
+               FROM worktree_attachment_mounts
+               WHERE worktree_id = ?
                ORDER BY created_at ASC"#,
         )
-        .bind(track_id.0.to_string())
+        .bind(worktree_id.0.to_string())
         .fetch_all(&self.pool)
         .await?;
 
         let mut out = Vec::with_capacity(rows.len());
         for r in rows {
-            let track_id: String = r.try_get("track_id")?;
+            let worktree_id: String = r.try_get("worktree_id")?;
             let attachment_id: String = r.try_get("attachment_id")?;
             let status: String = r.try_get("status")?;
             let created_at: String = r.try_get("created_at")?;
             let updated_at: String = r.try_get("updated_at")?;
-            out.push(TrackAttachmentMount {
-                track_id: TrackId(uuid::Uuid::parse_str(&track_id)?),
+            out.push(WorktreeAttachmentMount {
+                worktree_id: WorktreeId(uuid::Uuid::parse_str(&worktree_id)?),
                 attachment_id: WorkspaceAttachmentId(uuid::Uuid::parse_str(&attachment_id)?),
                 mount_abs_path: r.try_get("mount_abs_path")?,
                 materialized_id: r.try_get("materialized_id")?,
-                status: parse_track_attachment_status(&status),
+                status: parse_worktree_attachment_status(&status),
                 last_sync_at: r
                     .try_get::<Option<String>, _>("last_sync_at")?
                     .and_then(|v| parse_dt(&v).ok()),
@@ -909,14 +1116,14 @@ impl Store {
         Ok(out)
     }
 
-    pub async fn list_track_attachment_mounts_for_attachment(
+    pub async fn list_worktree_attachment_mounts_for_attachment(
         &self,
         attachment_id: WorkspaceAttachmentId,
-    ) -> Result<Vec<TrackAttachmentMount>> {
+    ) -> Result<Vec<WorktreeAttachmentMount>> {
         let rows = sqlx::query(
-            r#"SELECT track_id, attachment_id, mount_abs_path, materialized_id, status,
+            r#"SELECT worktree_id, attachment_id, mount_abs_path, materialized_id, status,
                       last_sync_at, error_message, created_at, updated_at
-               FROM track_attachment_mounts
+               FROM worktree_attachment_mounts
                WHERE attachment_id = ?
                ORDER BY created_at ASC"#,
         )
@@ -926,17 +1133,17 @@ impl Store {
 
         let mut out = Vec::with_capacity(rows.len());
         for r in rows {
-            let track_id: String = r.try_get("track_id")?;
+            let worktree_id: String = r.try_get("worktree_id")?;
             let attachment_id: String = r.try_get("attachment_id")?;
             let status: String = r.try_get("status")?;
             let created_at: String = r.try_get("created_at")?;
             let updated_at: String = r.try_get("updated_at")?;
-            out.push(TrackAttachmentMount {
-                track_id: TrackId(uuid::Uuid::parse_str(&track_id)?),
+            out.push(WorktreeAttachmentMount {
+                worktree_id: WorktreeId(uuid::Uuid::parse_str(&worktree_id)?),
                 attachment_id: WorkspaceAttachmentId(uuid::Uuid::parse_str(&attachment_id)?),
                 mount_abs_path: r.try_get("mount_abs_path")?,
                 materialized_id: r.try_get("materialized_id")?,
-                status: parse_track_attachment_status(&status),
+                status: parse_worktree_attachment_status(&status),
                 last_sync_at: r
                     .try_get::<Option<String>, _>("last_sync_at")?
                     .and_then(|v| parse_dt(&v).ok()),
@@ -948,12 +1155,15 @@ impl Store {
         Ok(out)
     }
 
-    pub async fn upsert_track_attachment_mount(&self, mount: &TrackAttachmentMount) -> Result<()> {
+    pub async fn upsert_worktree_attachment_mount(
+        &self,
+        mount: &WorktreeAttachmentMount,
+    ) -> Result<()> {
         sqlx::query(
-            r#"INSERT INTO track_attachment_mounts
-               (track_id, attachment_id, mount_abs_path, materialized_id, status, last_sync_at, error_message, created_at, updated_at)
+            r#"INSERT INTO worktree_attachment_mounts
+               (worktree_id, attachment_id, mount_abs_path, materialized_id, status, last_sync_at, error_message, created_at, updated_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-               ON CONFLICT(track_id, attachment_id) DO UPDATE SET
+               ON CONFLICT(worktree_id, attachment_id) DO UPDATE SET
                  mount_abs_path = excluded.mount_abs_path,
                  materialized_id = excluded.materialized_id,
                  status = excluded.status,
@@ -961,11 +1171,11 @@ impl Store {
                  error_message = excluded.error_message,
                  updated_at = excluded.updated_at"#,
         )
-        .bind(mount.track_id.0.to_string())
+        .bind(mount.worktree_id.0.to_string())
         .bind(mount.attachment_id.0.to_string())
         .bind(&mount.mount_abs_path)
         .bind(&mount.materialized_id)
-        .bind(track_attachment_status_to_str(&mount.status))
+        .bind(worktree_attachment_status_to_str(&mount.status))
         .bind(mount.last_sync_at.map(|v| v.to_rfc3339()))
         .bind(&mount.error_message)
         .bind(mount.created_at.to_rfc3339())
@@ -975,191 +1185,12 @@ impl Store {
         Ok(())
     }
 
-    pub async fn delete_track_attachment_mounts_for_attachment(
+    pub async fn delete_worktree_attachment_mounts_for_attachment(
         &self,
         attachment_id: WorkspaceAttachmentId,
     ) -> Result<()> {
-        sqlx::query(r#"DELETE FROM track_attachment_mounts WHERE attachment_id = ?"#)
+        sqlx::query(r#"DELETE FROM worktree_attachment_mounts WHERE attachment_id = ?"#)
             .bind(attachment_id.0.to_string())
-            .execute(&self.pool)
-            .await?;
-        Ok(())
-    }
-
-    // Track APIs
-    pub async fn create_track(
-        &self,
-        task_id: TaskId,
-        workspace_id: WorkspaceId,
-        worktree_id: WorktreeId,
-        label: String,
-    ) -> Result<Track> {
-        let now = Utc::now();
-        let track = Track {
-            id: TrackId::new(),
-            task_id,
-            workspace_id,
-            worktree_id,
-            label,
-            status: TrackStatus::Pending,
-            created_at: now,
-            updated_at: now,
-        };
-        sqlx::query(
-            r#"INSERT INTO tracks (id, task_id, workspace_id, worktree_id, label, status, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)"#,
-        )
-        .bind(track.id.0.to_string())
-        .bind(track.task_id.0.to_string())
-        .bind(track.workspace_id.0.to_string())
-        .bind(track.worktree_id.0.to_string())
-        .bind(&track.label)
-        .bind(track_status_to_str(&track.status))
-        .bind(track.created_at.to_rfc3339())
-        .bind(track.updated_at.to_rfc3339())
-        .execute(&self.pool)
-        .await?;
-        Ok(track)
-    }
-
-    pub async fn list_tracks_for_task(&self, task_id: TaskId) -> Result<Vec<Track>> {
-        let rows = sqlx::query(
-            r#"SELECT id, task_id, workspace_id, worktree_id, label, status, created_at, updated_at
-               FROM tracks WHERE task_id = ? ORDER BY created_at ASC"#,
-        )
-        .bind(task_id.0.to_string())
-        .fetch_all(&self.pool)
-        .await?;
-
-        let mut out = Vec::with_capacity(rows.len());
-        for r in rows {
-            let id: String = r.try_get("id")?;
-            let task_id: String = r.try_get("task_id")?;
-            let ws_id: String = r.try_get("workspace_id")?;
-            let wt_id: String = r.try_get("worktree_id")?;
-            let created_at: String = r.try_get("created_at")?;
-            let updated_at: String = r.try_get("updated_at")?;
-            out.push(Track {
-                id: TrackId(uuid::Uuid::parse_str(&id)?),
-                task_id: TaskId(uuid::Uuid::parse_str(&task_id)?),
-                workspace_id: WorkspaceId(uuid::Uuid::parse_str(&ws_id)?),
-                worktree_id: WorktreeId(uuid::Uuid::parse_str(&wt_id)?),
-                label: r.try_get("label")?,
-                status: parse_track_status(r.try_get::<String, _>("status")?.as_str()),
-                created_at: parse_dt(&created_at)?,
-                updated_at: parse_dt(&updated_at)?,
-            });
-        }
-        Ok(out)
-    }
-
-    pub async fn list_tracks_for_workspace(&self, workspace_id: WorkspaceId) -> Result<Vec<Track>> {
-        let rows = sqlx::query(
-            r#"SELECT id, task_id, workspace_id, worktree_id, label, status, created_at, updated_at
-               FROM tracks
-               WHERE workspace_id = ?
-               ORDER BY created_at ASC"#,
-        )
-        .bind(workspace_id.0.to_string())
-        .fetch_all(&self.pool)
-        .await?;
-
-        let mut out = Vec::with_capacity(rows.len());
-        for r in rows {
-            let id: String = r.try_get("id")?;
-            let task_id: String = r.try_get("task_id")?;
-            let ws_id: String = r.try_get("workspace_id")?;
-            let worktree_id: String = r.try_get("worktree_id")?;
-            let status: String = r.try_get("status")?;
-            let created_at: String = r.try_get("created_at")?;
-            let updated_at: String = r.try_get("updated_at")?;
-            out.push(Track {
-                id: TrackId(uuid::Uuid::parse_str(&id)?),
-                task_id: TaskId(uuid::Uuid::parse_str(&task_id)?),
-                workspace_id: WorkspaceId(uuid::Uuid::parse_str(&ws_id)?),
-                worktree_id: WorktreeId(uuid::Uuid::parse_str(&worktree_id)?),
-                label: r.try_get("label")?,
-                status: parse_track_status(&status),
-                created_at: parse_dt(&created_at)?,
-                updated_at: parse_dt(&updated_at)?,
-            });
-        }
-        Ok(out)
-    }
-
-    pub async fn get_track(&self, id: TrackId) -> Result<Option<Track>> {
-        let row = sqlx::query(
-            r#"SELECT id, task_id, workspace_id, worktree_id, label, status, created_at, updated_at
-               FROM tracks WHERE id = ?"#,
-        )
-        .bind(id.0.to_string())
-        .fetch_optional(&self.pool)
-        .await?;
-
-        Ok(row.and_then(|r| {
-            let id: String = r.try_get("id").ok()?;
-            let task_id: String = r.try_get("task_id").ok()?;
-            let ws_id: String = r.try_get("workspace_id").ok()?;
-            let wt_id: String = r.try_get("worktree_id").ok()?;
-            let created_at: String = r.try_get("created_at").ok()?;
-            let updated_at: String = r.try_get("updated_at").ok()?;
-            Some(Track {
-                id: TrackId(uuid::Uuid::parse_str(&id).ok()?),
-                task_id: TaskId(uuid::Uuid::parse_str(&task_id).ok()?),
-                workspace_id: WorkspaceId(uuid::Uuid::parse_str(&ws_id).ok()?),
-                worktree_id: WorktreeId(uuid::Uuid::parse_str(&wt_id).ok()?),
-                label: r.try_get("label").ok()?,
-                status: parse_track_status(r.try_get::<String, _>("status").ok()?.as_str()),
-                created_at: parse_dt(&created_at).ok()?,
-                updated_at: parse_dt(&updated_at).ok()?,
-            })
-        }))
-    }
-
-    pub async fn get_track_worker(&self, track_id: TrackId) -> Result<Option<TrackWorker>> {
-        let row = sqlx::query(
-            r#"SELECT track_id, worker_id, gateway_url, created_at, updated_at
-               FROM track_workers WHERE track_id = ?"#,
-        )
-        .bind(track_id.0.to_string())
-        .fetch_optional(&self.pool)
-        .await?;
-
-        Ok(row.and_then(|r| {
-            let track_id: String = r.try_get("track_id").ok()?;
-            let created_at: String = r.try_get("created_at").ok()?;
-            let updated_at: String = r.try_get("updated_at").ok()?;
-            Some(TrackWorker {
-                track_id: TrackId(uuid::Uuid::parse_str(&track_id).ok()?),
-                worker_id: r.try_get("worker_id").ok()?,
-                gateway_url: r.try_get("gateway_url").ok()?,
-                created_at: parse_dt(&created_at).ok()?,
-                updated_at: parse_dt(&updated_at).ok()?,
-            })
-        }))
-    }
-
-    pub async fn upsert_track_worker(&self, worker: &TrackWorker) -> Result<()> {
-        sqlx::query(
-            r#"INSERT INTO track_workers (track_id, worker_id, gateway_url, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?)
-               ON CONFLICT(track_id) DO UPDATE SET worker_id = excluded.worker_id,
-                                                   gateway_url = excluded.gateway_url,
-                                                   updated_at = excluded.updated_at"#,
-        )
-        .bind(worker.track_id.0.to_string())
-        .bind(&worker.worker_id)
-        .bind(&worker.gateway_url)
-        .bind(worker.created_at.to_rfc3339())
-        .bind(worker.updated_at.to_rfc3339())
-        .execute(&self.pool)
-        .await?;
-        Ok(())
-    }
-
-    pub async fn delete_track_worker(&self, track_id: TrackId) -> Result<()> {
-        sqlx::query(r#"DELETE FROM track_workers WHERE track_id = ?"#)
-            .bind(track_id.0.to_string())
             .execute(&self.pool)
             .await?;
         Ok(())
@@ -1418,7 +1449,9 @@ impl Store {
     #[allow(clippy::too_many_arguments)]
     pub async fn create_session(
         &self,
-        track: &Track,
+        task_id: TaskId,
+        workspace_id: WorkspaceId,
+        worktree_id: WorktreeId,
         provider_id: String,
         model_id: String,
         agent_role: String,
@@ -1443,10 +1476,9 @@ impl Store {
         let now = Utc::now();
         let session = Session {
             id: SessionId::new(),
-            track_id: track.id,
-            task_id: track.task_id,
-            workspace_id: track.workspace_id,
-            worktree_id: track.worktree_id,
+            task_id,
+            workspace_id,
+            worktree_id,
             parent_session_id,
             relationship,
             provider_id,
@@ -1459,12 +1491,11 @@ impl Store {
             updated_at: now,
         };
         sqlx::query(
-            r#"INSERT INTO sessions (id, track_id, task_id, workspace_id, worktree_id, parent_session_id, relationship,
+            r#"INSERT INTO sessions (id, task_id, workspace_id, worktree_id, parent_session_id, relationship,
                provider_id, model_id, title, agent_role, status, provider_session_ref, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
         )
         .bind(session.id.0.to_string())
-        .bind(session.track_id.0.to_string())
         .bind(session.task_id.0.to_string())
         .bind(session.workspace_id.0.to_string())
         .bind(session.worktree_id.0.to_string())
@@ -1485,7 +1516,7 @@ impl Store {
 
     pub async fn get_session(&self, id: SessionId) -> Result<Option<Session>> {
         let row = sqlx::query(
-            r#"SELECT id, track_id, task_id, workspace_id, worktree_id, parent_session_id, relationship,
+            r#"SELECT id, task_id, workspace_id, worktree_id, parent_session_id, relationship,
                provider_id, model_id, agent_role, title, status, provider_session_ref, created_at, updated_at
                FROM sessions WHERE id = ?"#,
         )
@@ -1495,7 +1526,6 @@ impl Store {
 
         Ok(row.and_then(|r| {
             let id: String = r.try_get("id").ok()?;
-            let track_id: String = r.try_get("track_id").ok()?;
             let task_id: String = r.try_get("task_id").ok()?;
             let ws_id: String = r.try_get("workspace_id").ok()?;
             let wt_id: String = r.try_get("worktree_id").ok()?;
@@ -1503,7 +1533,6 @@ impl Store {
             let updated_at: String = r.try_get("updated_at").ok()?;
             Some(Session {
                 id: SessionId(uuid::Uuid::parse_str(&id).ok()?),
-                track_id: TrackId(uuid::Uuid::parse_str(&track_id).ok()?),
                 task_id: TaskId(uuid::Uuid::parse_str(&task_id).ok()?),
                 workspace_id: WorkspaceId(uuid::Uuid::parse_str(&ws_id).ok()?),
                 worktree_id: WorktreeId(uuid::Uuid::parse_str(&wt_id).ok()?),
@@ -1570,20 +1599,19 @@ impl Store {
         Ok(())
     }
 
-    pub async fn list_sessions_for_track(&self, track_id: TrackId) -> Result<Vec<Session>> {
+    pub async fn list_sessions_for_task(&self, task_id: TaskId) -> Result<Vec<Session>> {
         let rows = sqlx::query(
-            r#"SELECT id, track_id, task_id, workspace_id, worktree_id, parent_session_id, relationship,
+            r#"SELECT id, task_id, workspace_id, worktree_id, parent_session_id, relationship,
                provider_id, model_id, agent_role, title, status, provider_session_ref, created_at, updated_at
-               FROM sessions WHERE track_id = ? ORDER BY created_at ASC"#,
+               FROM sessions WHERE task_id = ? ORDER BY created_at ASC"#,
         )
-        .bind(track_id.0.to_string())
+        .bind(task_id.0.to_string())
         .fetch_all(&self.pool)
         .await?;
 
         let mut out = Vec::with_capacity(rows.len());
         for r in rows {
             let id: String = r.try_get("id")?;
-            let track_id: String = r.try_get("track_id")?;
             let task_id: String = r.try_get("task_id")?;
             let ws_id: String = r.try_get("workspace_id")?;
             let wt_id: String = r.try_get("worktree_id")?;
@@ -1591,7 +1619,6 @@ impl Store {
             let updated_at: String = r.try_get("updated_at")?;
             out.push(Session {
                 id: SessionId(uuid::Uuid::parse_str(&id)?),
-                track_id: TrackId(uuid::Uuid::parse_str(&track_id)?),
                 task_id: TaskId(uuid::Uuid::parse_str(&task_id)?),
                 workspace_id: WorkspaceId(uuid::Uuid::parse_str(&ws_id)?),
                 worktree_id: WorktreeId(uuid::Uuid::parse_str(&wt_id)?),
@@ -1615,7 +1642,7 @@ impl Store {
         parent_session_id: SessionId,
     ) -> Result<Vec<SessionSummary>> {
         let rows = sqlx::query(
-            r#"SELECT id, track_id, task_id, workspace_id, parent_session_id, relationship,
+            r#"SELECT id, task_id, workspace_id, parent_session_id, relationship,
                provider_id, model_id, title, status, created_at, updated_at
                FROM sessions
                WHERE parent_session_id = ? AND relationship = 'sub_agent'
@@ -1628,14 +1655,12 @@ impl Store {
         let mut out = Vec::with_capacity(rows.len());
         for r in rows {
             let id: String = r.try_get("id")?;
-            let track_id: String = r.try_get("track_id")?;
             let task_id: String = r.try_get("task_id")?;
             let ws_id: String = r.try_get("workspace_id")?;
             let created_at: String = r.try_get("created_at")?;
             let updated_at: String = r.try_get("updated_at")?;
             out.push(SessionSummary {
                 id: SessionId(uuid::Uuid::parse_str(&id)?),
-                track_id: TrackId(uuid::Uuid::parse_str(&track_id)?),
                 task_id: TaskId(uuid::Uuid::parse_str(&task_id)?),
                 workspace_id: WorkspaceId(uuid::Uuid::parse_str(&ws_id)?),
                 parent_session_id: r
@@ -1652,6 +1677,70 @@ impl Store {
             });
         }
         Ok(out)
+    }
+
+    pub async fn get_session_summary_checkpoint(
+        &self,
+        session_id: SessionId,
+    ) -> Result<Option<SessionSummaryCheckpoint>> {
+        let row = sqlx::query(
+            r#"SELECT session_id, checkpoint_id, summary, last_turn_id, last_event_seq, created_at, updated_at
+               FROM session_summary_checkpoints
+               WHERE session_id = ?"#,
+        )
+        .bind(session_id.0.to_string())
+        .fetch_optional(&self.pool)
+        .await?;
+
+        let row = match row {
+            Some(row) => row,
+            None => return Ok(None),
+        };
+        let session_id: String = row.try_get("session_id")?;
+        let last_turn_id: Option<String> = row.try_get("last_turn_id")?;
+        let created_at: String = row.try_get("created_at")?;
+        let updated_at: String = row.try_get("updated_at")?;
+
+        Ok(Some(SessionSummaryCheckpoint {
+            session_id: SessionId(uuid::Uuid::parse_str(&session_id)?),
+            checkpoint_id: row.try_get("checkpoint_id")?,
+            summary: row.try_get("summary")?,
+            last_turn_id: last_turn_id
+                .and_then(|value| uuid::Uuid::parse_str(&value).ok())
+                .map(TurnId),
+            last_event_seq: row.try_get("last_event_seq")?,
+            created_at: parse_dt(&created_at)?,
+            updated_at: parse_dt(&updated_at)?,
+        }))
+    }
+
+    pub async fn upsert_session_summary_checkpoint(
+        &self,
+        checkpoint: SessionSummaryCheckpoint,
+    ) -> Result<SessionSummaryCheckpoint> {
+        sqlx::query(
+            r#"INSERT INTO session_summary_checkpoints (
+                   session_id, checkpoint_id, summary, last_turn_id, last_event_seq, created_at, updated_at
+               )
+               VALUES (?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(session_id) DO UPDATE SET
+                   checkpoint_id = excluded.checkpoint_id,
+                   summary = excluded.summary,
+                   last_turn_id = excluded.last_turn_id,
+                   last_event_seq = excluded.last_event_seq,
+                   updated_at = excluded.updated_at"#,
+        )
+        .bind(checkpoint.session_id.0.to_string())
+        .bind(&checkpoint.checkpoint_id)
+        .bind(&checkpoint.summary)
+        .bind(checkpoint.last_turn_id.map(|id| id.0.to_string()))
+        .bind(checkpoint.last_event_seq)
+        .bind(checkpoint.created_at.to_rfc3339())
+        .bind(checkpoint.updated_at.to_rfc3339())
+        .execute(&self.pool)
+        .await?;
+
+        Ok(checkpoint)
     }
 
     pub async fn upsert_subagent_invocation(
@@ -1856,13 +1945,12 @@ impl Store {
             )
         };
         sqlx::query(
-            r#"INSERT INTO messages (id, session_id, task_id, track_id, run_id, turn_id, turn_sequence, role, content, attachments_json, delivery, delivered_at, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+            r#"INSERT INTO messages (id, session_id, task_id, run_id, turn_id, turn_sequence, role, content, attachments_json, delivery, delivered_at, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
         )
         .bind(message.id.0.to_string())
         .bind(message.session_id.0.to_string())
         .bind(message.task_id.0.to_string())
-        .bind(message.track_id.0.to_string())
         .bind(message.run_id.map(|r| r.0.to_string()))
         .bind(message.turn_id.map(|t| t.0.to_string()))
         .bind(message.turn_sequence)
@@ -1927,6 +2015,8 @@ impl Store {
               t.description,
               t.status,
               t.exec_plan_id,
+              t.primary_session_id,
+              t.primary_worktree_id,
               t.created_at,
               t.updated_at,
               t.archived_at,
@@ -1985,6 +2075,8 @@ impl Store {
             let updated_at: String = r.try_get("updated_at")?;
             let archived_at: Option<String> = r.try_get("archived_at")?;
             let assistant_seen_at: Option<String> = r.try_get("assistant_seen_at")?;
+            let primary_session_id: Option<String> = r.try_get("primary_session_id")?;
+            let primary_worktree_id: Option<String> = r.try_get("primary_worktree_id")?;
             let last_assistant_message_at: Option<String> =
                 r.try_get("last_assistant_message_at")?;
             let has_active_session: i64 = r.try_get("has_active_session")?;
@@ -2002,6 +2094,14 @@ impl Store {
                 created_at: parse_dt(&created_at)?,
                 updated_at: parse_dt(&updated_at)?,
                 exec_plan_id: r.try_get("exec_plan_id")?,
+                primary_session_id: primary_session_id
+                    .as_deref()
+                    .and_then(|value| uuid::Uuid::parse_str(value).ok())
+                    .map(SessionId),
+                primary_worktree_id: primary_worktree_id
+                    .as_deref()
+                    .and_then(|value| uuid::Uuid::parse_str(value).ok())
+                    .map(WorktreeId),
                 archived_at: archived_at.as_deref().map(parse_dt).transpose()?,
                 assistant_seen_at: assistant_seen_at.as_deref().map(parse_dt).transpose()?,
                 last_activity_at: Some(activity_at_dt),
@@ -2068,6 +2168,8 @@ impl Store {
               t.description,
               t.status,
               t.exec_plan_id,
+              t.primary_session_id,
+              t.primary_worktree_id,
               t.created_at,
               t.updated_at,
               t.archived_at,
@@ -2128,6 +2230,8 @@ impl Store {
             let updated_at: String = r.try_get("updated_at")?;
             let archived_at: Option<String> = r.try_get("archived_at")?;
             let assistant_seen_at: Option<String> = r.try_get("assistant_seen_at")?;
+            let primary_session_id: Option<String> = r.try_get("primary_session_id")?;
+            let primary_worktree_id: Option<String> = r.try_get("primary_worktree_id")?;
             let last_assistant_message_at: Option<String> =
                 r.try_get("last_assistant_message_at")?;
             let has_active_session: i64 = r.try_get("has_active_session")?;
@@ -2145,6 +2249,14 @@ impl Store {
                 created_at: parse_dt(&created_at)?,
                 updated_at: parse_dt(&updated_at)?,
                 exec_plan_id: r.try_get("exec_plan_id")?,
+                primary_session_id: primary_session_id
+                    .as_deref()
+                    .and_then(|value| uuid::Uuid::parse_str(value).ok())
+                    .map(SessionId),
+                primary_worktree_id: primary_worktree_id
+                    .as_deref()
+                    .and_then(|value| uuid::Uuid::parse_str(value).ok())
+                    .map(WorktreeId),
                 archived_at: archived_at.as_deref().map(parse_dt).transpose()?,
                 assistant_seen_at: assistant_seen_at.as_deref().map(parse_dt).transpose()?,
                 last_activity_at: Some(activity_at_dt),
@@ -2198,6 +2310,8 @@ impl Store {
               t.description,
               t.status,
               t.exec_plan_id,
+              t.primary_session_id,
+              t.primary_worktree_id,
               t.created_at,
               t.updated_at,
               t.archived_at,
@@ -2233,6 +2347,8 @@ impl Store {
             let updated_at: String = r.try_get("updated_at")?;
             let archived_at: Option<String> = r.try_get("archived_at")?;
             let assistant_seen_at: Option<String> = r.try_get("assistant_seen_at")?;
+            let primary_session_id: Option<String> = r.try_get("primary_session_id")?;
+            let primary_worktree_id: Option<String> = r.try_get("primary_worktree_id")?;
             let last_assistant_message_at: Option<String> =
                 r.try_get("last_assistant_message_at")?;
             let has_active_session: i64 = r.try_get("has_active_session")?;
@@ -2250,6 +2366,14 @@ impl Store {
                 created_at: parse_dt(&created_at)?,
                 updated_at: parse_dt(&updated_at)?,
                 exec_plan_id: r.try_get("exec_plan_id")?,
+                primary_session_id: primary_session_id
+                    .as_deref()
+                    .and_then(|value| uuid::Uuid::parse_str(value).ok())
+                    .map(SessionId),
+                primary_worktree_id: primary_worktree_id
+                    .as_deref()
+                    .and_then(|value| uuid::Uuid::parse_str(value).ok())
+                    .map(WorktreeId),
                 archived_at: archived_at.as_deref().map(parse_dt).transpose()?,
                 assistant_seen_at: assistant_seen_at.as_deref().map(parse_dt).transpose()?,
                 last_activity_at: Some(activity_at_dt),
@@ -2271,7 +2395,7 @@ impl Store {
 
     pub async fn list_messages_for_session(&self, session_id: SessionId) -> Result<Vec<Message>> {
         let rows = sqlx::query(
-            r#"SELECT id, session_id, task_id, track_id, run_id, turn_id, turn_sequence, role, content, attachments_json, delivery, delivered_at, created_at
+            r#"SELECT id, session_id, task_id, run_id, turn_id, turn_sequence, role, content, attachments_json, delivery, delivered_at, created_at
                FROM messages
                WHERE session_id = ?
                ORDER BY created_at ASC, turn_sequence ASC"#,
@@ -2285,7 +2409,6 @@ impl Store {
             let id: String = r.try_get("id")?;
             let session_id: String = r.try_get("session_id")?;
             let task_id: String = r.try_get("task_id")?;
-            let track_id: String = r.try_get("track_id")?;
             let created_at: String = r.try_get("created_at")?;
             let delivered_at: Option<String> = r.try_get("delivered_at")?;
             let run_id: Option<String> = r.try_get("run_id")?;
@@ -2300,7 +2423,6 @@ impl Store {
                 id: MessageId(uuid::Uuid::parse_str(&id)?),
                 session_id: SessionId(uuid::Uuid::parse_str(&session_id)?),
                 task_id: TaskId(uuid::Uuid::parse_str(&task_id)?),
-                track_id: TrackId(uuid::Uuid::parse_str(&track_id)?),
                 run_id: run_id
                     .as_deref()
                     .and_then(|s| uuid::Uuid::parse_str(s).ok())
@@ -2327,7 +2449,7 @@ impl Store {
         run_id: RunId,
     ) -> Result<Option<Message>> {
         let row = sqlx::query(
-            r#"SELECT id, session_id, task_id, track_id, run_id, turn_id, turn_sequence, role, content, attachments_json, delivery, delivered_at, created_at
+            r#"SELECT id, session_id, task_id, run_id, turn_id, turn_sequence, role, content, attachments_json, delivery, delivered_at, created_at
                FROM messages
                WHERE session_id = ? AND run_id = ? AND role = 'assistant'
                ORDER BY created_at DESC, turn_sequence DESC
@@ -2342,7 +2464,6 @@ impl Store {
             let id: String = r.try_get("id").ok()?;
             let session_id: String = r.try_get("session_id").ok()?;
             let task_id: String = r.try_get("task_id").ok()?;
-            let track_id: String = r.try_get("track_id").ok()?;
             let created_at: String = r.try_get("created_at").ok()?;
             let delivered_at: Option<String> = r.try_get("delivered_at").ok()?;
             let run_id: Option<String> = r.try_get("run_id").ok()?;
@@ -2357,7 +2478,6 @@ impl Store {
                 id: MessageId(uuid::Uuid::parse_str(&id).ok()?),
                 session_id: SessionId(uuid::Uuid::parse_str(&session_id).ok()?),
                 task_id: TaskId(uuid::Uuid::parse_str(&task_id).ok()?),
-                track_id: TrackId(uuid::Uuid::parse_str(&track_id).ok()?),
                 run_id: run_id
                     .as_deref()
                     .and_then(|s| uuid::Uuid::parse_str(s).ok())
@@ -2411,7 +2531,7 @@ impl Store {
         turn_ids: &[TurnId],
     ) -> Result<Vec<Message>> {
         let mut query = QueryBuilder::new(
-            "SELECT id, session_id, task_id, track_id, run_id, turn_id, turn_sequence, role, content, attachments_json, delivery, delivered_at, created_at
+            "SELECT id, session_id, task_id, run_id, turn_id, turn_sequence, role, content, attachments_json, delivery, delivered_at, created_at
              FROM messages
              WHERE session_id = ",
         );
@@ -2438,7 +2558,6 @@ impl Store {
             let id: String = r.try_get("id")?;
             let session_id: String = r.try_get("session_id")?;
             let task_id: String = r.try_get("task_id")?;
-            let track_id: String = r.try_get("track_id")?;
             let created_at: String = r.try_get("created_at")?;
             let delivered_at: Option<String> = r.try_get("delivered_at")?;
             let run_id: Option<String> = r.try_get("run_id")?;
@@ -2453,7 +2572,6 @@ impl Store {
                 id: MessageId(uuid::Uuid::parse_str(&id)?),
                 session_id: SessionId(uuid::Uuid::parse_str(&session_id)?),
                 task_id: TaskId(uuid::Uuid::parse_str(&task_id)?),
-                track_id: TrackId(uuid::Uuid::parse_str(&track_id)?),
                 run_id: run_id
                     .as_deref()
                     .and_then(|s| uuid::Uuid::parse_str(s).ok())
@@ -2489,68 +2607,28 @@ impl Store {
             summaries.push(WorkspaceTaskSummary {
                 task,
                 provider_ids: Vec::new(),
-                tracks: Vec::new(),
+                sessions: Vec::new(),
                 sort_at,
             });
         }
 
         let task_ids: Vec<TaskId> = summaries.iter().map(|s| s.task.id).collect();
 
-        let mut track_query =
-            QueryBuilder::new("SELECT id, task_id, workspace_id, worktree_id, label, status, created_at, updated_at FROM tracks WHERE task_id IN (");
-        let mut first = true;
-        for task_id in &task_ids {
-            if !first {
-                track_query.push(", ");
-            }
-            first = false;
-            track_query.push_bind(task_id.0.to_string());
-        }
-        track_query.push(") ORDER BY created_at ASC");
-
-        let track_rows = track_query.build().fetch_all(&self.pool).await?;
-
-        let mut track_index: HashMap<TrackId, (usize, usize)> = HashMap::new();
-
-        for r in track_rows {
-            let id: String = r.try_get("id")?;
-            let task_id: String = r.try_get("task_id")?;
-            let ws_id: String = r.try_get("workspace_id")?;
-            let wt_id: String = r.try_get("worktree_id")?;
-            let created_at: String = r.try_get("created_at")?;
-            let updated_at: String = r.try_get("updated_at")?;
-            let track = Track {
-                id: TrackId(uuid::Uuid::parse_str(&id)?),
-                task_id: TaskId(uuid::Uuid::parse_str(&task_id)?),
-                workspace_id: WorkspaceId(uuid::Uuid::parse_str(&ws_id)?),
-                worktree_id: WorktreeId(uuid::Uuid::parse_str(&wt_id)?),
-                label: r.try_get("label")?,
-                status: parse_track_status(r.try_get::<String, _>("status")?.as_str()),
-                created_at: parse_dt(&created_at)?,
-                updated_at: parse_dt(&updated_at)?,
-            };
-            if let Some(task_idx) = index_by_task.get(&track.task_id) {
-                let idx = *task_idx;
-                let track_pos = summaries[idx].tracks.len();
-                summaries[idx].tracks.push(TrackSummary {
-                    track,
-                    sessions: Vec::new(),
-                });
-                track_index.insert(summaries[idx].tracks[track_pos].track.id, (idx, track_pos));
-            }
-        }
-
-        if !track_index.is_empty() {
+        if !task_ids.is_empty() {
             let mut session_query = QueryBuilder::new(
                 "
-                SELECT id, track_id, task_id, workspace_id, worktree_id, parent_session_id, relationship,
+                SELECT id, task_id, workspace_id, parent_session_id, relationship,
                        provider_id, model_id, title, status, created_at, updated_at
                 FROM (
                     SELECT
                         s.*,
                         ROW_NUMBER() OVER (
-                            PARTITION BY s.track_id
+                            PARTITION BY s.task_id
                             ORDER BY
+                                CASE
+                                    WHEN s.relationship = 'sub_agent' THEN 1
+                                    ELSE 0
+                                END,
                                 CASE s.status
                                     WHEN 'active' THEN 0
                                     ELSE 1
@@ -2558,32 +2636,30 @@ impl Store {
                                 s.updated_at DESC
                         ) AS rn
                     FROM sessions s
-                    WHERE s.track_id IN (",
+                    WHERE s.task_id IN (",
             );
             let mut first = true;
-            for track_id in track_index.keys() {
+            for task_id in &task_ids {
                 if !first {
                     session_query.push(", ");
                 }
                 first = false;
-                session_query.push_bind(track_id.0.to_string());
+                session_query.push_bind(task_id.0.to_string());
             }
             session_query.push(")) WHERE rn <= ");
             session_query.push_bind(SESSION_LIMIT);
-            session_query.push(" ORDER BY track_id, rn");
+            session_query.push(" ORDER BY task_id, rn");
 
             let session_rows = session_query.build().fetch_all(&self.pool).await?;
 
             for r in session_rows {
                 let id: String = r.try_get("id")?;
-                let track_id: String = r.try_get("track_id")?;
                 let task_id: String = r.try_get("task_id")?;
                 let ws_id: String = r.try_get("workspace_id")?;
                 let created_at: String = r.try_get("created_at")?;
                 let updated_at: String = r.try_get("updated_at")?;
                 let summary = SessionSummary {
                     id: SessionId(uuid::Uuid::parse_str(&id)?),
-                    track_id: TrackId(uuid::Uuid::parse_str(&track_id)?),
                     task_id: TaskId(uuid::Uuid::parse_str(&task_id)?),
                     workspace_id: WorkspaceId(uuid::Uuid::parse_str(&ws_id)?),
                     parent_session_id: parse_optional_session_id(r.try_get("parent_session_id")?),
@@ -2595,13 +2671,8 @@ impl Store {
                     created_at: parse_dt(&created_at)?,
                     updated_at: parse_dt(&updated_at)?,
                 };
-                if let Some((task_idx, track_pos)) = track_index.get(&summary.track_id) {
-                    summaries[*task_idx].tracks[*track_pos]
-                        .sessions
-                        .push(summary.clone());
-                }
-
                 if let Some(task_idx) = index_by_task.get(&summary.task_id) {
+                    summaries[*task_idx].sessions.push(summary.clone());
                     let summary_task = &mut summaries[*task_idx];
                     let pid = summary.provider_id.trim().to_string();
                     if !pid.is_empty() && !summary_task.provider_ids.contains(&pid) {
@@ -2624,6 +2695,7 @@ impl Store {
     ) -> Result<Option<WorkspaceCatchupTaskSummary>> {
         let row = sqlx::query(
             r#"SELECT id, workspace_id, title, description, status, exec_plan_id,
+                      primary_session_id, primary_worktree_id,
                       created_at, updated_at, archived_at, assistant_seen_at,
                       (
                         SELECT MAX(m.created_at)
@@ -2658,6 +2730,8 @@ impl Store {
             let updated_at: String = r.try_get("updated_at")?;
             let archived_at: Option<String> = r.try_get("archived_at")?;
             let assistant_seen_at: Option<String> = r.try_get("assistant_seen_at")?;
+            let primary_session_id: Option<String> = r.try_get("primary_session_id")?;
+            let primary_worktree_id: Option<String> = r.try_get("primary_worktree_id")?;
             let last_assistant_message_at: Option<String> =
                 r.try_get("last_assistant_message_at")?;
             let has_active_session: i64 = r.try_get("has_active_session")?;
@@ -2675,6 +2749,14 @@ impl Store {
                 created_at: parse_dt(&created_at)?,
                 updated_at: parse_dt(&updated_at)?,
                 exec_plan_id: r.try_get("exec_plan_id")?,
+                primary_session_id: primary_session_id
+                    .as_deref()
+                    .and_then(|value| uuid::Uuid::parse_str(value).ok())
+                    .map(SessionId),
+                primary_worktree_id: primary_worktree_id
+                    .as_deref()
+                    .and_then(|value| uuid::Uuid::parse_str(value).ok())
+                    .map(WorktreeId),
                 archived_at: archived_at.as_deref().map(parse_dt).transpose()?,
                 assistant_seen_at: assistant_seen_at.as_deref().map(parse_dt).transpose()?,
                 last_activity_at: Some(activity_at_dt),
@@ -2692,91 +2774,6 @@ impl Store {
         Ok(None)
     }
 
-    pub async fn get_workspace_catchup_track_summary(
-        &self,
-        track_id: TrackId,
-    ) -> Result<Option<WorkspaceCatchupTrackSummary>> {
-        let row = sqlx::query(
-            r#"SELECT id, task_id, workspace_id, worktree_id, label, status, created_at, updated_at
-               FROM tracks WHERE id = ?"#,
-        )
-        .bind(track_id.0.to_string())
-        .fetch_optional(&self.pool)
-        .await?;
-
-        let row = match row {
-            Some(r) => r,
-            None => return Ok(None),
-        };
-
-        let id: String = row.try_get("id")?;
-        let task_id: String = row.try_get("task_id")?;
-        let ws_id: String = row.try_get("workspace_id")?;
-        let wt_id: String = row.try_get("worktree_id")?;
-        let created_at: String = row.try_get("created_at")?;
-        let updated_at: String = row.try_get("updated_at")?;
-
-        let track = Track {
-            id: TrackId(uuid::Uuid::parse_str(&id)?),
-            task_id: TaskId(uuid::Uuid::parse_str(&task_id)?),
-            workspace_id: WorkspaceId(uuid::Uuid::parse_str(&ws_id)?),
-            worktree_id: WorktreeId(uuid::Uuid::parse_str(&wt_id)?),
-            label: row.try_get("label")?,
-            status: parse_track_status(row.try_get::<String, _>("status")?.as_str()),
-            created_at: parse_dt(&created_at)?,
-            updated_at: parse_dt(&updated_at)?,
-        };
-
-        let mut summary = WorkspaceCatchupTrackSummary {
-            track,
-            primary_session_id: None,
-            sessions: Vec::new(),
-            diff_summary: None,
-        };
-
-        let session_rows = self.list_session_catchup_rows(&[track_id]).await?;
-
-        let mut primary: Option<(i32, DateTime<Utc>, SessionId)> = None;
-        for row in session_rows {
-            if row.session.track_id != track_id {
-                continue;
-            }
-            let is_subagent = row.session.relationship.as_deref() == Some("sub_agent");
-            summary.sessions.push(SessionCatchupSummary {
-                session: row.session.clone(),
-                last_message_at: row.last_message_at,
-                last_message_preview: row.last_message_preview.clone(),
-                last_event_seq: row.last_event_seq,
-                activity: row.activity.clone(),
-                unread: None,
-            });
-
-            if is_subagent {
-                continue;
-            }
-
-            let rank = if matches!(row.session.status, SessionStatus::Active) {
-                0
-            } else {
-                1
-            };
-            let candidate = (rank, row.session.updated_at, row.session.id);
-            if primary
-                .as_ref()
-                .map(|(r, t, _)| candidate.0 < *r || (candidate.0 == *r && candidate.1 > *t))
-                .unwrap_or(true)
-            {
-                primary = Some(candidate);
-            }
-        }
-
-        if let Some((_rank, _updated_at, session_id)) = primary {
-            summary.primary_session_id = Some(session_id);
-        }
-
-        Ok(Some(summary))
-    }
-
     async fn build_workspace_catchup_task_summaries(
         &self,
         rows: Vec<(Task, DateTime<Utc>)>,
@@ -2791,69 +2788,16 @@ impl Store {
             index_by_task.insert(task.id, idx);
             summaries.push(WorkspaceCatchupTaskSummary {
                 task,
-                tracks: Vec::new(),
+                sessions: Vec::new(),
                 sort_at,
             });
         }
 
         let task_ids: Vec<TaskId> = summaries.iter().map(|s| s.task.id).collect();
-
-        let mut track_query =
-            QueryBuilder::new("SELECT id, task_id, workspace_id, worktree_id, label, status, created_at, updated_at FROM tracks WHERE task_id IN (");
-        let mut first = true;
-        for task_id in &task_ids {
-            if !first {
-                track_query.push(", ");
-            }
-            first = false;
-            track_query.push_bind(task_id.0.to_string());
-        }
-        track_query.push(") ORDER BY created_at ASC");
-
-        let track_rows = track_query.build().fetch_all(&self.pool).await?;
-
-        let mut track_index: HashMap<TrackId, (usize, usize)> = HashMap::new();
-
-        for r in track_rows {
-            let id: String = r.try_get("id")?;
-            let task_id: String = r.try_get("task_id")?;
-            let ws_id: String = r.try_get("workspace_id")?;
-            let wt_id: String = r.try_get("worktree_id")?;
-            let created_at: String = r.try_get("created_at")?;
-            let updated_at: String = r.try_get("updated_at")?;
-            let track = Track {
-                id: TrackId(uuid::Uuid::parse_str(&id)?),
-                task_id: TaskId(uuid::Uuid::parse_str(&task_id)?),
-                workspace_id: WorkspaceId(uuid::Uuid::parse_str(&ws_id)?),
-                worktree_id: WorktreeId(uuid::Uuid::parse_str(&wt_id)?),
-                label: r.try_get("label")?,
-                status: parse_track_status(r.try_get::<String, _>("status")?.as_str()),
-                created_at: parse_dt(&created_at)?,
-                updated_at: parse_dt(&updated_at)?,
-            };
-            if let Some(task_idx) = index_by_task.get(&track.task_id) {
-                let idx = *task_idx;
-                let track_pos = summaries[idx].tracks.len();
-                summaries[idx].tracks.push(WorkspaceCatchupTrackSummary {
-                    track,
-                    primary_session_id: None,
-                    sessions: Vec::new(),
-                    diff_summary: None,
-                });
-                track_index.insert(summaries[idx].tracks[track_pos].track.id, (idx, track_pos));
-            }
-        }
-
-        if !track_index.is_empty() {
-            let session_rows = self
-                .list_session_catchup_rows(&track_index.keys().cloned().collect::<Vec<_>>())
-                .await?;
-
-            let mut primary_by_track: HashMap<TrackId, (i32, DateTime<Utc>, SessionId)> =
-                HashMap::new();
+        if !task_ids.is_empty() {
+            let session_rows = self.list_session_catchup_rows(&task_ids).await?;
 
             for row in session_rows {
-                let is_subagent = row.session.relationship.as_deref() == Some("sub_agent");
                 let summary = SessionCatchupSummary {
                     session: row.session.clone(),
                     last_message_at: row.last_message_at,
@@ -2863,34 +2807,18 @@ impl Store {
                     unread: None,
                 };
 
-                if let Some((task_idx, track_pos)) = track_index.get(&summary.session.track_id) {
-                    summaries[*task_idx].tracks[*track_pos]
-                        .sessions
-                        .push(summary);
-                }
-
-                if is_subagent {
-                    continue;
-                }
-
-                let rank = if matches!(row.session.status, SessionStatus::Active) {
-                    0
-                } else {
-                    1
-                };
-                let candidate = (rank, row.session.updated_at, row.session.id);
-                let replace = primary_by_track
-                    .get(&row.session.track_id)
-                    .map(|(r, t, _)| candidate.0 < *r || (candidate.0 == *r && candidate.1 > *t))
-                    .unwrap_or(true);
-                if replace {
-                    primary_by_track.insert(row.session.track_id, candidate);
-                }
-            }
-
-            for (track_id, (_rank, _updated_at, session_id)) in primary_by_track {
-                if let Some((task_idx, track_pos)) = track_index.get(&track_id) {
-                    summaries[*task_idx].tracks[*track_pos].primary_session_id = Some(session_id);
+                if let Some(task_idx) = index_by_task.get(&summary.session.task_id) {
+                    let primary_session_id = summaries[*task_idx].task.primary_session_id;
+                    let include = match primary_session_id {
+                        Some(primary_id) => {
+                            summary.session.id == primary_id
+                                || summary.session.parent_session_id == Some(primary_id)
+                        }
+                        None => summary.session.parent_session_id.is_none(),
+                    };
+                    if include {
+                        summaries[*task_idx].sessions.push(summary);
+                    }
                 }
             }
         }
@@ -2900,9 +2828,9 @@ impl Store {
 
     async fn list_session_catchup_rows(
         &self,
-        track_ids: &[TrackId],
+        task_ids: &[TaskId],
     ) -> Result<Vec<SessionCatchupRow>> {
-        if track_ids.is_empty() {
+        if task_ids.is_empty() {
             return Ok(Vec::new());
         }
 
@@ -2938,7 +2866,6 @@ impl Store {
             )
             SELECT
                 s.id,
-                s.track_id,
                 s.task_id,
                 s.workspace_id,
                 s.worktree_id,
@@ -2968,16 +2895,16 @@ impl Store {
               ON lt.session_id = s.id AND lt.rn = 1
             LEFT JOIN running_turns rt
               ON rt.session_id = s.id
-            WHERE s.track_id IN ("#,
+            WHERE s.task_id IN ("#,
         );
 
         let mut first = true;
-        for track_id in track_ids {
+        for task_id in task_ids {
             if !first {
                 session_query.push(", ");
             }
             first = false;
-            session_query.push_bind(track_id.0.to_string());
+            session_query.push_bind(task_id.0.to_string());
         }
         session_query.push(") ORDER BY s.created_at ASC");
 
@@ -2986,7 +2913,6 @@ impl Store {
 
         for r in session_rows {
             let id: String = r.try_get("id")?;
-            let track_id: String = r.try_get("track_id")?;
             let task_id: String = r.try_get("task_id")?;
             let ws_id: String = r.try_get("workspace_id")?;
             let wt_id: String = r.try_get("worktree_id")?;
@@ -3000,7 +2926,6 @@ impl Store {
 
             let session = Session {
                 id: SessionId(uuid::Uuid::parse_str(&id)?),
-                track_id: TrackId(uuid::Uuid::parse_str(&track_id)?),
                 task_id: TaskId(uuid::Uuid::parse_str(&task_id)?),
                 workspace_id: WorkspaceId(uuid::Uuid::parse_str(&ws_id)?),
                 worktree_id: WorktreeId(uuid::Uuid::parse_str(&wt_id)?),
@@ -3048,7 +2973,7 @@ impl Store {
         session_id: SessionId,
     ) -> Result<Vec<Message>> {
         let rows = sqlx::query(
-            r#"SELECT id, session_id, task_id, track_id, run_id, turn_id, turn_sequence, role, content, attachments_json, delivery, delivered_at, created_at
+            r#"SELECT id, session_id, task_id, run_id, turn_id, turn_sequence, role, content, attachments_json, delivery, delivered_at, created_at
                FROM messages
                WHERE session_id = ? AND delivery = 'queued' AND delivered_at IS NULL
                ORDER BY created_at ASC, turn_sequence ASC"#,
@@ -3062,7 +2987,6 @@ impl Store {
             let id: String = r.try_get("id")?;
             let session_id: String = r.try_get("session_id")?;
             let task_id: String = r.try_get("task_id")?;
-            let track_id: String = r.try_get("track_id")?;
             let created_at: String = r.try_get("created_at")?;
             let run_id: Option<String> = r.try_get("run_id")?;
             let turn_id: Option<String> = r.try_get("turn_id")?;
@@ -3076,7 +3000,6 @@ impl Store {
                 id: MessageId(uuid::Uuid::parse_str(&id)?),
                 session_id: SessionId(uuid::Uuid::parse_str(&session_id)?),
                 task_id: TaskId(uuid::Uuid::parse_str(&task_id)?),
-                track_id: TrackId(uuid::Uuid::parse_str(&track_id)?),
                 run_id: run_id
                     .as_deref()
                     .and_then(|s| uuid::Uuid::parse_str(s).ok())
@@ -3099,7 +3022,7 @@ impl Store {
 
     pub async fn get_message(&self, id: MessageId) -> Result<Option<Message>> {
         let row = sqlx::query(
-            r#"SELECT id, session_id, task_id, track_id, run_id, turn_id, turn_sequence, role, content, attachments_json, delivery, delivered_at, created_at
+            r#"SELECT id, session_id, task_id, run_id, turn_id, turn_sequence, role, content, attachments_json, delivery, delivered_at, created_at
                FROM messages WHERE id = ?"#,
         )
         .bind(id.0.to_string())
@@ -3110,7 +3033,6 @@ impl Store {
             let id: String = r.try_get("id").ok()?;
             let session_id: String = r.try_get("session_id").ok()?;
             let task_id: String = r.try_get("task_id").ok()?;
-            let track_id: String = r.try_get("track_id").ok()?;
             let created_at: String = r.try_get("created_at").ok()?;
             let delivered_at: Option<String> = r.try_get("delivered_at").ok()?;
             let run_id: Option<String> = r.try_get("run_id").ok()?;
@@ -3125,7 +3047,6 @@ impl Store {
                 id: MessageId(uuid::Uuid::parse_str(&id).ok()?),
                 session_id: SessionId(uuid::Uuid::parse_str(&session_id).ok()?),
                 task_id: TaskId(uuid::Uuid::parse_str(&task_id).ok()?),
-                track_id: TrackId(uuid::Uuid::parse_str(&track_id).ok()?),
                 run_id: run_id
                     .as_deref()
                     .and_then(|s| uuid::Uuid::parse_str(s).ok())
@@ -3422,12 +3343,11 @@ impl Store {
         limit: u32,
         include_events: bool,
     ) -> Result<Option<SessionHead>> {
-        const EVENT_HEAD_LIMIT: u32 = 200;
         let session = match self.get_session(session_id).await? {
             Some(session) => session,
             None => return Ok(None),
         };
-        let limit = limit.clamp(1, 200) as i64;
+        let limit = limit.clamp(1, SESSION_HEAD_MAX_TURNS) as i64;
         let rows = sqlx::query(
             r#"SELECT turn_id, session_id, run_id, user_message_id, status,
                       start_seq, end_seq, started_at, updated_at, assistant_partial, thought_partial,
@@ -3456,7 +3376,7 @@ impl Store {
         out.reverse();
 
         let turn_ids: Vec<TurnId> = out.iter().map(|t| t.turn_id).collect();
-        let messages = self.list_messages_for_turns(session_id, &turn_ids).await?;
+        let mut messages = self.list_messages_for_turns(session_id, &turn_ids).await?;
         let mut tool_summaries = self
             .list_turn_tool_summaries_for_turns(session_id, &turn_ids)
             .await?;
@@ -3492,15 +3412,32 @@ impl Store {
             .iter()
             .any(|turn| matches!(turn.status, SessionTurnStatus::Running));
         let activity = derive_activity_from_status(last_status, has_running_turn);
-        let events = if include_events {
+        let mut events = if include_events {
             let mut events = self
-                .list_session_events_tail_by_seq(session_id, EVENT_HEAD_LIMIT, false)
+                .list_session_events_tail_by_seq(
+                    session_id,
+                    SESSION_HEAD_EVENT_LIMIT as u32,
+                    false,
+                )
                 .await?;
             events.sort_by(|a, b| a.seq.cmp(&b.seq));
             events
         } else {
             Vec::new()
         };
+
+        let summary_checkpoint = self.get_session_summary_checkpoint(session_id).await?;
+        let head_window = trim_session_head_window(
+            &mut out,
+            &mut messages,
+            &mut tool_summaries,
+            &mut events,
+            &mut has_more_turns,
+            limit as usize,
+            SESSION_HEAD_MESSAGE_LIMIT,
+            SESSION_HEAD_EVENT_LIMIT,
+            SESSION_HEAD_BYTE_LIMIT,
+        );
 
         Ok(Some(SessionHead {
             session,
@@ -3513,6 +3450,8 @@ impl Store {
             last_event_seq,
             activity,
             has_more_turns,
+            summary_checkpoint,
+            head_window,
         }))
     }
 
@@ -3761,7 +3700,7 @@ impl Store {
     // Artifact APIs
     pub async fn list_session_artifacts(&self, session_id: SessionId) -> Result<Vec<Artifact>> {
         let rows = sqlx::query(
-            r#"SELECT id, session_id, track_id, task_id, workspace_id, worktree_id,
+            r#"SELECT id, session_id, task_id, workspace_id, worktree_id,
                       name, absolute_path, mime_type, bytes, created_at
                FROM artifacts
                WHERE session_id = ?
@@ -3782,7 +3721,7 @@ impl Store {
 
     pub async fn get_artifact(&self, id: ArtifactId) -> Result<Option<Artifact>> {
         let row = sqlx::query(
-            r#"SELECT id, session_id, track_id, task_id, workspace_id, worktree_id,
+            r#"SELECT id, session_id, task_id, workspace_id, worktree_id,
                       name, absolute_path, mime_type, bytes, created_at
                FROM artifacts
                WHERE id = ?"#,
@@ -3808,14 +3747,13 @@ impl Store {
         for (idx, artifact) in artifacts.iter().enumerate() {
             sqlx::query(
                 r#"INSERT INTO artifacts (
-                        id, session_id, track_id, task_id, workspace_id, worktree_id,
+                        id, session_id, task_id, workspace_id, worktree_id,
                         position, name, absolute_path, mime_type, bytes, created_at
                    )
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
             )
             .bind(artifact.id.0.to_string())
             .bind(artifact.session_id.0.to_string())
-            .bind(artifact.track_id.0.to_string())
             .bind(artifact.task_id.0.to_string())
             .bind(artifact.workspace_id.0.to_string())
             .bind(artifact.worktree_id.0.to_string())
@@ -4664,27 +4602,6 @@ fn parse_task_status(value: &str) -> TaskStatus {
     }
 }
 
-fn track_status_to_str(status: &TrackStatus) -> &'static str {
-    match status {
-        TrackStatus::Pending => "pending",
-        TrackStatus::Running => "running",
-        TrackStatus::Completed => "completed",
-        TrackStatus::Failed => "failed",
-        TrackStatus::Cancelled => "cancelled",
-    }
-}
-
-fn parse_track_status(value: &str) -> TrackStatus {
-    match value {
-        "pending" => TrackStatus::Pending,
-        "running" => TrackStatus::Running,
-        "completed" => TrackStatus::Completed,
-        "failed" => TrackStatus::Failed,
-        "cancelled" => TrackStatus::Cancelled,
-        _ => TrackStatus::Pending,
-    }
-}
-
 fn session_status_to_str(status: &SessionStatus) -> &'static str {
     match status {
         SessionStatus::Active => "active",
@@ -4827,20 +4744,20 @@ fn parse_attachment_update_policy(value: &str) -> AttachmentUpdatePolicy {
     }
 }
 
-fn track_attachment_status_to_str(status: &TrackAttachmentStatus) -> &'static str {
+fn worktree_attachment_status_to_str(status: &WorktreeAttachmentStatus) -> &'static str {
     match status {
-        TrackAttachmentStatus::Ready => "ready",
-        TrackAttachmentStatus::Stale => "stale",
-        TrackAttachmentStatus::Error => "error",
+        WorktreeAttachmentStatus::Ready => "ready",
+        WorktreeAttachmentStatus::Stale => "stale",
+        WorktreeAttachmentStatus::Error => "error",
     }
 }
 
-fn parse_track_attachment_status(value: &str) -> TrackAttachmentStatus {
+fn parse_worktree_attachment_status(value: &str) -> WorktreeAttachmentStatus {
     match value {
-        "ready" => TrackAttachmentStatus::Ready,
-        "stale" => TrackAttachmentStatus::Stale,
-        "error" => TrackAttachmentStatus::Error,
-        _ => TrackAttachmentStatus::Error,
+        "ready" => WorktreeAttachmentStatus::Ready,
+        "stale" => WorktreeAttachmentStatus::Stale,
+        "error" => WorktreeAttachmentStatus::Error,
+        _ => WorktreeAttachmentStatus::Error,
     }
 }
 
@@ -5026,7 +4943,6 @@ fn build_subagent_invocation_child_from_row(
 fn build_artifact_from_row(r: sqlx::sqlite::SqliteRow) -> Result<Artifact> {
     let id: String = r.try_get("id")?;
     let session_id: String = r.try_get("session_id")?;
-    let track_id: String = r.try_get("track_id")?;
     let task_id: String = r.try_get("task_id")?;
     let workspace_id: String = r.try_get("workspace_id")?;
     let worktree_id: String = r.try_get("worktree_id")?;
@@ -5035,7 +4951,6 @@ fn build_artifact_from_row(r: sqlx::sqlite::SqliteRow) -> Result<Artifact> {
     Ok(Artifact {
         id: ArtifactId(uuid::Uuid::parse_str(&id)?),
         session_id: SessionId(uuid::Uuid::parse_str(&session_id)?),
-        track_id: TrackId(uuid::Uuid::parse_str(&track_id)?),
         task_id: TaskId(uuid::Uuid::parse_str(&task_id)?),
         workspace_id: WorkspaceId(uuid::Uuid::parse_str(&workspace_id)?),
         worktree_id: WorktreeId(uuid::Uuid::parse_str(&worktree_id)?),

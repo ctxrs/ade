@@ -1712,7 +1712,7 @@ struct WorkspaceSwitchView: View {
     private func selectWorkspace(_ workspace: WorkspaceSummary) {
         workspaceSelection.setWorkspace(workspace, daemonKey: connection.baseURLText)
         workbenchSelection.setContext(daemonKey: connection.baseURLText, workspaceId: workspace.id)
-        workbenchSelection.setSelection(taskId: nil, trackId: nil, sessionId: nil)
+        workbenchSelection.setSelection(taskId: nil, sessionId: nil)
         dismiss()
     }
 

@@ -13,6 +13,8 @@ struct Task: Codable, Sendable, Identifiable {
     let title: String
     let description: String?
     let status: String
+    let primarySessionId: CtxID?
+    let primaryWorktreeId: CtxID?
     let createdAt: String
     let updatedAt: String
     let archivedAt: String?
@@ -20,17 +22,6 @@ struct Task: Codable, Sendable, Identifiable {
     let lastActivityAt: String?
     let lastAssistantMessageAt: String?
     let hasActiveSession: Bool?
-}
-
-struct Track: Codable, Sendable, Identifiable {
-    let id: CtxID
-    let taskId: CtxID
-    let workspaceId: CtxID
-    let worktreeId: CtxID
-    let label: String
-    let status: String
-    let createdAt: String?
-    let updatedAt: String?
 }
 
 struct Worktree: Codable, Sendable, Identifiable {
@@ -64,7 +55,6 @@ struct WorktreeSummary: Codable, Sendable, Identifiable {
 
 struct Session: Codable, Sendable, Identifiable {
     let id: CtxID
-    let trackId: CtxID
     let taskId: CtxID
     let workspaceId: CtxID
     let worktreeId: CtxID
@@ -106,7 +96,6 @@ struct TerminalSession: Codable, Sendable, Identifiable {
     let id: CtxID
     let workspaceId: CtxID
     let taskId: CtxID?
-    let trackId: CtxID?
     let sessionId: CtxID?
     let worktreeId: CtxID?
     let cwd: String
@@ -144,7 +133,6 @@ struct Message: Codable, Sendable, Identifiable {
 struct Artifact: Codable, Sendable, Identifiable {
     let id: CtxID
     let sessionId: CtxID
-    let trackId: CtxID
     let taskId: CtxID
     let workspaceId: CtxID
     let worktreeId: CtxID
@@ -238,6 +226,28 @@ struct SessionTurnToolSummary: Codable, Sendable {
     let updatedAt: String
 }
 
+struct SessionSummaryCheckpoint: Codable, Sendable {
+    let sessionId: CtxID
+    let checkpointId: String
+    let summary: String
+    let lastTurnId: CtxID?
+    let lastEventSeq: Int?
+    let createdAt: String
+    let updatedAt: String
+}
+
+struct SessionHeadWindow: Codable, Sendable {
+    let turnLimit: Int
+    let messageLimit: Int
+    let eventLimit: Int
+    let byteLimit: Int
+    let turnCount: Int
+    let messageCount: Int
+    let eventCount: Int
+    let bytes: Int
+    let truncated: Bool?
+}
+
 struct SessionHead: Codable, Sendable {
     let session: Session
     let turns: [SessionTurn]
@@ -249,6 +259,8 @@ struct SessionHead: Codable, Sendable {
     let lastEventSeq: Int
     let activity: SessionActivityState?
     let hasMoreTurns: Bool
+    let summaryCheckpoint: SessionSummaryCheckpoint?
+    let headWindow: SessionHeadWindow?
 }
 
 struct SessionHeadDelta: Codable, Sendable {
@@ -281,28 +293,9 @@ struct SessionCatchupSummary: Codable, Sendable {
     let unread: Bool?
 }
 
-struct TrackDiffSummary: Codable, Sendable {
-    let fileCount: Int
-    let lineAdditions: Int
-    let lineDeletions: Int
-    let updatedAt: String
-}
-
-struct TrackDiffSummaryResponse: Codable, Sendable {
-    let summary: TrackDiffSummary?
-    let tooLarge: Bool
-}
-
-struct WorkspaceCatchupTrackSummary: Codable, Sendable {
-    let track: Track
-    let primarySessionId: CtxID?
-    let sessions: [SessionCatchupSummary]
-    let diffSummary: TrackDiffSummary?
-}
-
 struct WorkspaceCatchupTaskSummary: Codable, Sendable {
     let task: Task
-    let tracks: [WorkspaceCatchupTrackSummary]
+    let sessions: [SessionCatchupSummary]
     let sortAt: String
 }
 
@@ -340,7 +333,6 @@ enum WorkspaceCatchupEvent: Codable, Sendable {
     case ready(workspaceId: CtxID, snapshotRev: Int)
     case taskUpsert(workspaceId: CtxID, snapshotRev: Int, task: WorkspaceCatchupTaskSummary)
     case taskDelete(workspaceId: CtxID, snapshotRev: Int, taskId: CtxID)
-    case trackUpsert(workspaceId: CtxID, snapshotRev: Int, track: WorkspaceCatchupTrackSummary)
     case sessionSummary(workspaceId: CtxID, snapshotRev: Int, summary: SessionCatchupSummary)
     case sessionHeadDelta(workspaceId: CtxID, snapshotRev: Int, delta: SessionHeadDelta)
     case sessionGap(workspaceId: CtxID, snapshotRev: Int, sessionId: CtxID, afterSeq: Int, reason: String?)
@@ -350,7 +342,6 @@ enum WorkspaceCatchupEvent: Codable, Sendable {
         case ready
         case taskUpsert = "task_upsert"
         case taskDelete = "task_delete"
-        case trackUpsert = "track_upsert"
         case sessionSummary = "session_summary"
         case sessionHeadDelta = "session_head_delta"
         case sessionGap = "session_gap"
@@ -363,7 +354,6 @@ enum WorkspaceCatchupEvent: Codable, Sendable {
         case snapshotRev
         case task
         case taskId
-        case track
         case summary
         case delta
         case sessionId
@@ -386,9 +376,6 @@ enum WorkspaceCatchupEvent: Codable, Sendable {
         case .taskDelete:
             let taskId = try container.decode(CtxID.self, forKey: .taskId)
             self = .taskDelete(workspaceId: workspaceId, snapshotRev: snapshotRev, taskId: taskId)
-        case .trackUpsert:
-            let track = try container.decode(WorkspaceCatchupTrackSummary.self, forKey: .track)
-            self = .trackUpsert(workspaceId: workspaceId, snapshotRev: snapshotRev, track: track)
         case .sessionSummary:
             let summary = try container.decode(SessionCatchupSummary.self, forKey: .summary)
             self = .sessionSummary(workspaceId: workspaceId, snapshotRev: snapshotRev, summary: summary)
@@ -423,11 +410,6 @@ enum WorkspaceCatchupEvent: Codable, Sendable {
             try container.encode(workspaceId, forKey: .workspaceId)
             try container.encode(snapshotRev, forKey: .snapshotRev)
             try container.encode(taskId, forKey: .taskId)
-        case .trackUpsert(let workspaceId, let snapshotRev, let track):
-            try container.encode(EventType.trackUpsert, forKey: .type)
-            try container.encode(workspaceId, forKey: .workspaceId)
-            try container.encode(snapshotRev, forKey: .snapshotRev)
-            try container.encode(track, forKey: .track)
         case .sessionSummary(let workspaceId, let snapshotRev, let summary):
             try container.encode(EventType.sessionSummary, forKey: .type)
             try container.encode(workspaceId, forKey: .workspaceId)
@@ -692,17 +674,8 @@ struct TaskSummary: Codable, Sendable, Identifiable {
     let lastActivityAt: String?
 }
 
-struct TrackSummary: Codable, Sendable, Identifiable {
-    let id: String
-    let taskId: String
-    let label: String
-    let status: String
-    let worktreeId: String
-}
-
 struct SessionSummary: Codable, Sendable, Identifiable {
     let id: String
-    let trackId: String
     let taskId: String?
     let workspaceId: String?
     let worktreeId: String?
@@ -749,23 +722,10 @@ extension TaskSummary {
     }
 }
 
-extension TrackSummary {
-    init(track: Track) {
-        self.init(
-            id: track.id.stringValue,
-            taskId: track.taskId.stringValue,
-            label: track.label,
-            status: track.status,
-            worktreeId: track.worktreeId.stringValue
-        )
-    }
-}
-
 extension SessionSummary {
     init(session: Session) {
         self.init(
             id: session.id.stringValue,
-            trackId: session.trackId.stringValue,
             taskId: session.taskId.stringValue,
             workspaceId: session.workspaceId.stringValue,
             worktreeId: session.worktreeId.stringValue,

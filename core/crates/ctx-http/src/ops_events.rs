@@ -47,8 +47,6 @@ pub struct OpsEvent {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub track_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub worktree_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub run_id: Option<String>,
@@ -77,7 +75,6 @@ impl OpsEvent {
             level: level.to_string(),
             event: event.to_string(),
             session_id: None,
-            track_id: None,
             worktree_id: None,
             run_id: None,
             turn_id: None,
