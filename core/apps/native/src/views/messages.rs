@@ -114,7 +114,11 @@ fn plain_text_view(
     colors: ThemeColors,
     max_lines: Option<usize>,
 ) -> AnyElement {
-    let mut view = div().text_color(colors.text).child(text.into());
+    let mut view = div()
+        .text_color(colors.text)
+        .w_full()
+        .overflow_hidden()
+        .child(text.into());
     if let Some(lines) = max_lines {
         view = view.line_clamp(lines);
     }
@@ -550,7 +554,11 @@ fn render_thread_item(
                 .into_any_element(),
             };
             let body = if expanded {
-                content_view
+                div()
+                    .relative()
+                    .overflow_hidden()
+                    .child(content_view)
+                    .into_any_element()
             } else {
                 div()
                     .relative()
