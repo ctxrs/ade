@@ -36,14 +36,50 @@ function normalizeWsUrl(value, httpUrl) {
     if (!trimmed) {
       throw new Error("wsUrl must not be empty");
     }
-    if (/^[a-z]+:\/\//i.test(trimmed)) {
-      return new URL(trimmed);
+    const url = /^[a-z]+:\/\//i.test(trimmed)
+      ? new URL(trimmed)
+      : new URL(`ws://${trimmed}`);
+    if (url.protocol === "http:") {
+      url.protocol = "ws:";
+    } else if (url.protocol === "https:") {
+      url.protocol = "wss:";
     }
-    return new URL(`ws://${trimmed}`);
+    return url;
   }
   const wsUrl = new URL(DEFAULT_WS_PATH, httpUrl);
   wsUrl.protocol = httpUrl.protocol === "https:" ? "wss:" : "ws:";
   return wsUrl;
+}
+
+async function ensureWebSocketGlobal() {
+  if (typeof WebSocket !== "undefined") {
+    return;
+  }
+  try {
+    const undici = await import("undici");
+    if (undici.WebSocket) {
+      globalThis.WebSocket = undici.WebSocket;
+      return;
+    }
+  } catch (_) {
+    // ignore
+  }
+  try {
+    const ws = await import("ws");
+    if (ws.WebSocket) {
+      globalThis.WebSocket = ws.WebSocket;
+      return;
+    }
+    if (typeof ws.default === "function") {
+      globalThis.WebSocket = ws.default;
+      return;
+    }
+  } catch (_) {
+    // ignore
+  }
+  throw new Error(
+    "WebSocket is not available. Install ws or use Node 20+.",
+  );
 }
 
 function sleep(ms) {
@@ -572,6 +608,7 @@ export function expect(locator, options = {}) {
 }
 
 export async function connect(options = {}) {
+  await ensureWebSocketGlobal();
   const httpUrl = normalizeHttpUrl(options.httpUrl);
   const wsUrl = normalizeWsUrl(options.wsUrl, httpUrl);
   const ws = new WebSocket(wsUrl.href);

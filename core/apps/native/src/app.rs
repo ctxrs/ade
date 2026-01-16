@@ -303,6 +303,7 @@ fn create_shell_view(
             composer_subscriptions_set: false,
             thread_list_state: ListState::new(0, ListAlignment::Bottom, px(160.0)),
             thread_list_len: 0,
+            thread_item_layout_hashes: HashMap::new(),
             thread_auto_follow: true,
             new_thread_item_count: 0,
             copied_flags: HashMap::new(),
@@ -498,14 +499,28 @@ impl Render for ShellView {
             .flex_col()
             .bg(self.colors.bg)
             .text_color(self.colors.text)
-            .on_key_down(cx.listener(|view, event: &KeyDownEvent, _window, cx| {
+            .on_key_down(cx.listener(|view, event: &KeyDownEvent, window, cx| {
                 let modifiers = event.keystroke.modifiers;
                 let key = event.keystroke.key.to_lowercase();
-                if key == "b" && (modifiers.platform || modifiers.control) {
+                let has_modifier = modifiers.platform || modifiers.control;
+                if !has_modifier || modifiers.alt || modifiers.shift {
+                    return;
+                }
+                if key == "b" {
                     if view.route == ShellRoute::Workbench {
                         let collapsed = view.sidebar_collapsed;
                         view.set_sidebar_collapsed(!collapsed, cx);
                     }
+                    window.prevent_default();
+                    cx.stop_propagation();
+                    return;
+                }
+                if key == "n" {
+                    if view.route != ShellRoute::Workbench {
+                        view.set_route(ShellRoute::Workbench, cx);
+                    }
+                    view.focus_new_task_shortcut(cx);
+                    window.prevent_default();
                     cx.stop_propagation();
                 }
             }))

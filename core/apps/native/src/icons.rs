@@ -31,7 +31,10 @@ const TERMINAL_SVG: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="24"
 const ARCHIVE_SVG: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="5" x="2" y="3" rx="1" /><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8" /><path d="M10 12h4" /></svg>"#;
 const CHEVRON_LEFT_SVG: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6" /></svg>"#;
 const CHEVRON_RIGHT_SVG: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6" /></svg>"#;
+const CHEVRONS_LEFT_SVG: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="11 17 6 12 11 7" /><polyline points="18 17 13 12 18 7" /></svg>"#;
+const CHEVRONS_RIGHT_SVG: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="13 17 18 12 13 7" /><polyline points="6 17 11 12 6 7" /></svg>"#;
 const LAYERS_PLUS_SVG: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 .83.18 2 2 0 0 0 .83-.18l8.58-3.9a1 1 0 0 0 0-1.831z" /><path d="M16 17h6" /><path d="M19 14v6" /><path d="M2 12a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 .825.178" /><path d="M2 17a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l2.116-.962" /></svg>"#;
+const SQUARE_PEN_SVG: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.375 2.625a1 1 0 0 1 3 3l-9.013 9.014a2 2 0 0 1-.853.505l-2.873.84a.5.5 0 0 1-.62-.62l.84-2.873a2 2 0 0 1 .506-.852z"/></svg>"#;
 const SPINNER_ARC_SVG: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="6" r="5" stroke-dasharray="7.9 23.5" transform="rotate(-90 6 6)" /></svg>"#;
 
 #[derive(Clone, Copy, Debug)]
@@ -60,7 +63,10 @@ pub(crate) enum IconName {
     Archive,
     ChevronLeft,
     ChevronRight,
+    ChevronsLeft,
+    ChevronsRight,
     LayersPlus,
+    SquarePen,
     SpinnerArc,
 }
 
@@ -91,7 +97,10 @@ impl IconName {
             Self::Archive => "icons/archive.svg",
             Self::ChevronLeft => "icons/chevron-left.svg",
             Self::ChevronRight => "icons/chevron-right.svg",
+            Self::ChevronsLeft => "icons/chevrons-left.svg",
+            Self::ChevronsRight => "icons/chevrons-right.svg",
             Self::LayersPlus => "icons/layers-plus.svg",
+            Self::SquarePen => "icons/square-pen.svg",
             Self::SpinnerArc => "icons/spinner-arc.svg",
         }
     }
@@ -122,7 +131,10 @@ impl IconName {
             Self::Archive => ARCHIVE_SVG,
             Self::ChevronLeft => CHEVRON_LEFT_SVG,
             Self::ChevronRight => CHEVRON_RIGHT_SVG,
+            Self::ChevronsLeft => CHEVRONS_LEFT_SVG,
+            Self::ChevronsRight => CHEVRONS_RIGHT_SVG,
             Self::LayersPlus => LAYERS_PLUS_SVG,
+            Self::SquarePen => SQUARE_PEN_SVG,
             Self::SpinnerArc => SPINNER_ARC_SVG,
         }
     }
@@ -164,7 +176,10 @@ impl AssetSource for IconAssets {
             "icons/archive.svg" => IconName::Archive.svg(),
             "icons/chevron-left.svg" => IconName::ChevronLeft.svg(),
             "icons/chevron-right.svg" => IconName::ChevronRight.svg(),
+            "icons/chevrons-left.svg" => IconName::ChevronsLeft.svg(),
+            "icons/chevrons-right.svg" => IconName::ChevronsRight.svg(),
             "icons/layers-plus.svg" => IconName::LayersPlus.svg(),
+            "icons/square-pen.svg" => IconName::SquarePen.svg(),
             "icons/spinner-arc.svg" => IconName::SpinnerArc.svg(),
             _ => return Ok(None),
         };
@@ -203,7 +218,10 @@ impl AssetSource for IconAssets {
                 SharedString::from("archive.svg"),
                 SharedString::from("chevron-left.svg"),
                 SharedString::from("chevron-right.svg"),
+                SharedString::from("chevrons-left.svg"),
+                SharedString::from("chevrons-right.svg"),
                 SharedString::from("layers-plus.svg"),
+                SharedString::from("square-pen.svg"),
                 SharedString::from("spinner-arc.svg"),
             ])
         } else {
