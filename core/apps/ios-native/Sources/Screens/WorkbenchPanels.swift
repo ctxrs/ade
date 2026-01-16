@@ -249,13 +249,8 @@ struct WorkbenchDiffPanelView: View {
     }
 
     private func fetchDiff(client: DaemonAPIClient, sessionId: String) async throws -> String {
-        do {
-            let response = try await client.fetchSessionGitDiff(sessionId: sessionId)
-            return response.diff
-        } catch {
-            let response = try await client.fetchSessionDiff(sessionId: sessionId)
-            return response.diff
-        }
+        let response = try await client.fetchSessionDiff(sessionId: sessionId)
+        return response.diff
     }
 
     private func toggleFile(_ fileId: String) {

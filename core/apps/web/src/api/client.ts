@@ -1011,7 +1011,9 @@ export const createSession = (
 export const getWorktree = (worktreeId: string) =>
   apiAny<Worktree>(`/api/worktrees/${worktreeId}`);
 
-export type WorktreeDiffSummary = {
+export type SessionDiffSummary = {
+  base_commit_sha?: string;
+  head_commit_sha?: string;
   file_count?: number;
   files?: number;
   line_additions?: number;
@@ -1021,20 +1023,19 @@ export type WorktreeDiffSummary = {
 };
 
 export type GitStatusSummary = {
-  summary?: string;
   raw?: string;
+  summary_line?: string;
+  summaryLine?: string;
+  summary?: string;
   status?: string;
   lines?: string[];
 };
 
-export const getWorktreeDiff = (worktreeId: string) =>
-  apiAny<{ diff: string }>(`/api/worktrees/${worktreeId}/diff`);
+export const getSessionGitStatusSummary = (sessionId: string) =>
+  apiAny<GitStatusSummary | string>(`/api/sessions/${sessionId}/git/status`);
 
-export const getWorktreeDiffSummary = (worktreeId: string) =>
-  apiAny<WorktreeDiffSummary>(`/api/worktrees/${worktreeId}/diff/summary`);
-
-export const getWorktreeGitStatusSummary = (worktreeId: string) =>
-  apiAny<GitStatusSummary | string>(`/api/worktrees/${worktreeId}/git/status`);
+export const getSessionDiffSummary = (sessionId: string) =>
+  apiAny<SessionDiffSummary>(`/api/sessions/${sessionId}/diff/summary`);
 
 export const getWorktreeBootstrapLogs = async (worktreeId: string): Promise<string> => {
   const resp = await daemonFetchRaw(`/api/worktrees/${worktreeId}/bootstrap/logs`);

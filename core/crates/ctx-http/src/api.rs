@@ -9139,6 +9139,7 @@ struct SessionDiffSummaryResponse {
 
 #[derive(Debug, Serialize)]
 struct SessionGitStatusResponse {
+    raw: String,
     summary_line: String,
     branch: Option<String>,
     upstream: Option<String>,
@@ -9243,28 +9244,7 @@ async fn get_session_diff(
                 }),
             )
         })?;
-    let workspace = state
-        .store
-        .get_workspace(session.workspace_id)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&e.to_string()),
-                }),
-            )
-        })?
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(ApiErrorResp {
-                    error: "workspace not found".to_string(),
-                }),
-            )
-        })?;
-    let base_commit_sha =
-        resolve_session_diff_base(&state, &workspace, &worktree, &q).await?;
+    let base_commit_sha = resolve_session_diff_base(&workspace, &worktree, &q).await?;
     let diff = ctx_fs::worktrees::diff_worktree(&worktree.root_path, &base_commit_sha)
         .await
         .map_err(|e| {
@@ -9351,8 +9331,7 @@ async fn get_session_diff_summary(
                 }),
             )
         })?;
-    let base_commit_sha =
-        resolve_session_diff_base(&state, &workspace, &worktree, &q).await?;
+    let base_commit_sha = resolve_session_diff_base(&workspace, &worktree, &q).await?;
     let (file_count, line_additions, line_deletions) =
         ctx_fs::worktrees::diff_worktree_summary(&worktree.root_path, &base_commit_sha)
             .await
@@ -9438,16 +9417,19 @@ async fn get_session_git_status(
         )
     })?;
     let branch_info = parse_git_status_short(&status_text);
-    let entries = git_status_porcelain(&worktree.root_path).await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiErrorResp {
-                error: logs::redact_sensitive(&e.to_string()),
-            }),
-        )
-    })?;
+    let entries = git_status_porcelain(&worktree.root_path)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
     let (staged, unstaged, untracked) = count_git_status_entries(&entries);
     let resp = SessionGitStatusResponse {
+        raw: status_text,
         summary_line: branch_info.summary_line,
         branch: branch_info.branch,
         upstream: branch_info.upstream,
@@ -9511,7 +9493,7 @@ fn parse_git_status_short(output: &str) -> GitStatusBranchInfo {
             counts = &counts[..counts.len() - 1];
         }
         for part in counts.split(',') {
-            let mut iter = part.trim().split_whitespace();
+            let mut iter = part.split_whitespace();
             let Some(kind) = iter.next() else {
                 continue;
             };
@@ -9553,7 +9535,6 @@ fn count_git_status_entries(entries: &[String]) -> (i64, i64, i64) {
 }
 
 async fn resolve_session_diff_base(
-    state: &Arc<AppState>,
     workspace: &Workspace,
     worktree: &Worktree,
     query: &SessionDiffQuery,
@@ -9613,10 +9594,21 @@ async fn maybe_emit_git_status_snapshot(
     snapshot: &SessionGitStatusResponse,
 ) {
     const GIT_STATUS_DEBOUNCE_MS: u64 = 1500;
+    let summary = serde_json::json!({
+        "summary_line": snapshot.summary_line,
+        "branch": snapshot.branch,
+        "upstream": snapshot.upstream,
+        "ahead": snapshot.ahead,
+        "behind": snapshot.behind,
+        "detached": snapshot.detached,
+        "staged": snapshot.staged,
+        "unstaged": snapshot.unstaged,
+        "untracked": snapshot.untracked,
+    });
     let payload = serde_json::json!({
         "kind": "git_status_snapshot",
         "worktree_id": worktree_id.0.to_string(),
-        "summary": snapshot,
+        "summary": summary,
     });
     let payload_raw = match serde_json::to_string(&payload) {
         Ok(value) => value,
@@ -9625,10 +9617,12 @@ async fn maybe_emit_git_status_snapshot(
     let now = Instant::now();
     {
         let mut cache = state.git_status_snapshots.lock().await;
-        let entry = cache.entry(worktree_id).or_insert_with(|| GitStatusSnapshotCacheEntry {
-            payload: String::new(),
-            emitted_at: now - Duration::from_millis(GIT_STATUS_DEBOUNCE_MS + 1),
-        });
+        let entry = cache
+            .entry(worktree_id)
+            .or_insert_with(|| GitStatusSnapshotCacheEntry {
+                payload: String::new(),
+                emitted_at: now - Duration::from_millis(GIT_STATUS_DEBOUNCE_MS + 1),
+            });
         if entry.payload == payload_raw {
             return;
         }
@@ -9723,6 +9717,26 @@ async fn apply_session_diff_patch(
                 }),
             )
         })?;
+    let workspace = state
+        .store
+        .get_workspace(session.workspace_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(ApiErrorResp {
+                    error: "workspace not found".to_string(),
+                }),
+            )
+        })?;
 
     ctx_fs::git::git_apply_patch(
         &worktree.root_path,
@@ -9741,8 +9755,7 @@ async fn apply_session_diff_patch(
     })?;
 
     let base_commit_sha =
-        resolve_session_diff_base(&state, &workspace, &worktree, &SessionDiffQuery::default())
-            .await?;
+        resolve_session_diff_base(&workspace, &worktree, &SessionDiffQuery::default()).await?;
     let diff = ctx_fs::worktrees::diff_worktree(&worktree.root_path, &base_commit_sha)
         .await
         .map_err(|e| {

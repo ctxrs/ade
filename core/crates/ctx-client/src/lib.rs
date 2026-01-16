@@ -219,14 +219,30 @@ pub struct SessionDiffResponse {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct SessionDiffSummaryResponse {
+    #[serde(default)]
+    pub base_commit_sha: Option<String>,
+    #[serde(default)]
+    pub head_commit_sha: Option<String>,
+    #[serde(default, alias = "files", alias = "fileCount")]
     pub file_count: i64,
-    pub additions: i64,
-    pub deletions: i64,
+    #[serde(default, alias = "additions", alias = "added")]
+    pub line_additions: i64,
+    #[serde(default, alias = "deletions", alias = "deleted")]
+    pub line_deletions: i64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct SessionDiffStatusResponse {
-    pub lines: Vec<String>,
+pub struct SessionGitStatusResponse {
+    pub raw: String,
+    pub summary_line: String,
+    pub branch: Option<String>,
+    pub upstream: Option<String>,
+    pub ahead: i64,
+    pub behind: i64,
+    pub detached: bool,
+    pub staged: i64,
+    pub unstaged: i64,
+    pub untracked: i64,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -1042,11 +1058,11 @@ impl Client {
         self.request_json(Method::GET, &path, None::<&()>).await
     }
 
-    pub async fn get_session_diff_status(
+    pub async fn get_session_git_status(
         &self,
         session_id: SessionId,
-    ) -> Result<SessionDiffStatusResponse> {
-        let path = format!("/api/sessions/{}/diff/status", session_id.0);
+    ) -> Result<SessionGitStatusResponse> {
+        let path = format!("/api/sessions/{}/git/status", session_id.0);
         self.request_json(Method::GET, &path, None::<&()>).await
     }
 

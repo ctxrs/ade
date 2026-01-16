@@ -22,7 +22,6 @@ pub(crate) struct DiffFile {
     pub(crate) key: String,
     pub(crate) file_path: String,
     pub(crate) section_lines: Vec<String>,
-    pub(crate) header_lines: Vec<String>,
     pub(crate) hunks: Vec<DiffHunk>,
     pub(crate) is_new: bool,
     pub(crate) is_deleted: bool,
@@ -131,7 +130,7 @@ impl DiffReviewState {
         let status_task = Tokio::spawn_result(cx, async move {
             let config = ctx_client::resolve_daemon_config()?;
             let client = ctx_client::Client::new(config)?;
-            client.get_session_diff_status(session_id).await
+            client.get_session_git_status(session_id).await
         });
 
         let summary_task = Tokio::spawn_result(cx, async move {
@@ -174,7 +173,14 @@ impl DiffReviewState {
                     }
                     match result {
                         Ok(status) => {
-                            view.git_status = Some(status.lines);
+                            let raw = if status.raw.trim().is_empty() {
+                                status.summary_line
+                            } else {
+                                status.raw
+                            };
+                            view.git_status = Some(
+                                raw.lines().map(|line| line.trim_end().to_string()).collect(),
+                            );
                         }
                         Err(_) => {
                             view.git_status = Some(vec!["Git status unavailable.".to_string()]);
@@ -199,8 +205,8 @@ impl DiffReviewState {
                         Ok(summary) => {
                             view.diff_summary = Some(DiffSummary {
                                 file_count: summary.file_count,
-                                additions: summary.additions,
-                                deletions: summary.deletions,
+                                additions: summary.line_additions,
+                                deletions: summary.line_deletions,
                             });
                         }
                         Err(_) => {
@@ -256,7 +262,6 @@ struct RawDiffFile {
     old_path: String,
     new_path: String,
     section_lines: Vec<String>,
-    header_lines: Vec<String>,
     hunks: Vec<DiffHunk>,
 }
 
@@ -285,7 +290,6 @@ fn parse_unified_diff(diff_text: &str) -> Vec<DiffFile> {
                 old_path,
                 new_path,
                 section_lines: vec![line.to_string()],
-                header_lines: vec![line.to_string()],
                 hunks: Vec::new(),
             });
             in_header = true;
@@ -311,7 +315,6 @@ fn parse_unified_diff(diff_text: &str) -> Vec<DiffFile> {
         }
 
         if in_header {
-            current_file.header_lines.push((*line).to_string());
         } else if let Some(hunk) = current_hunk.as_mut() {
             hunk.lines.push((*line).to_string());
         }
@@ -348,7 +351,7 @@ fn finalize_file(raw: RawDiffFile) -> DiffFile {
     } else {
         "(unknown)".to_string()
     };
-    let header_text = raw.header_lines.join("\n");
+    let header_text = raw.section_lines.join("\n");
     let is_new = raw.old_path == "dev/null"
         || header_text.contains("new file mode")
         || header_text.contains("--- /dev/null");
@@ -393,7 +396,6 @@ fn finalize_file(raw: RawDiffFile) -> DiffFile {
         key: raw.key,
         file_path,
         section_lines: raw.section_lines,
-        header_lines: raw.header_lines,
         hunks: raw.hunks,
         is_new,
         is_deleted,

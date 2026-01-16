@@ -79,8 +79,7 @@ pub async fn submit_merge_queue_entry(
                     .join("\n")
             );
         }
-        let up_to_date =
-            git_is_ancestor(&worktree.root_path, &target_branch, "HEAD").await?;
+        let up_to_date = git_is_ancestor(&worktree.root_path, &target_branch, "HEAD").await?;
         if !up_to_date {
             bail!("worktree HEAD is behind target branch {target_branch}");
         }
@@ -253,7 +252,7 @@ async fn run_entry(
             entry.error_message = None;
             entry.updated_at = now;
             run.status = MergeQueueRunStatus::Passed;
-            run.result_commit_sha = Some(commit_sha);
+            run.result_commit_sha = Some(commit_sha.clone());
             run.finished_at = Some(now);
             state.store.update_merge_queue_entry(&entry).await?;
             state.store.update_merge_queue_run(&run).await?;
@@ -649,6 +648,9 @@ async fn maybe_sync_originating_worktree(
     if !dirty.is_empty() {
         return Ok(());
     }
+    let previous_head = rev_parse_ref(&worktree.root_path, "HEAD")
+        .await
+        .unwrap_or_else(|_| "unknown".to_string());
     reset_worktree_to_commit(&worktree.root_path, commit_sha).await?;
     let updated = state
         .store
@@ -663,6 +665,7 @@ async fn maybe_sync_originating_worktree(
             session_id,
             &worktree,
             &entry.target_branch,
+            &previous_head,
             commit_sha,
         )
         .await?;
@@ -675,11 +678,13 @@ async fn emit_merge_queue_sync_notice(
     session_id: SessionId,
     worktree: &Worktree,
     target_branch: &str,
+    previous_commit_sha: &str,
     commit_sha: &str,
 ) -> Result<()> {
+    let previous_short = previous_commit_sha.get(0..8).unwrap_or(previous_commit_sha);
     let short_sha = commit_sha.get(0..8).unwrap_or(commit_sha);
     let message = format!(
-        "merge queue applied; synced worktree to {target_branch} ({short_sha})"
+        "merge queue applied; reset worktree from {previous_short} to {target_branch} ({short_sha})"
     );
     let notice = state
         .store
@@ -693,6 +698,7 @@ async fn emit_merge_queue_sync_notice(
                 "message": message,
                 "worktree_id": worktree.id.0.to_string(),
                 "target_branch": target_branch,
+                "previous_commit_sha": previous_commit_sha,
                 "commit_sha": commit_sha,
                 "base_commit_sha": commit_sha,
             }),

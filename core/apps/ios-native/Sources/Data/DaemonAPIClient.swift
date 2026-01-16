@@ -32,18 +32,6 @@ actor DaemonAPIClient {
                 return
             }
             let container = try decoder.container(keyedBy: CodingKeys.self)
-            if let summary = try container.decodeIfPresent(String.self, forKey: .summary) {
-                self.summary = summary
-                return
-            }
-            if let summary = try container.decodeIfPresent(String.self, forKey: .statusSummary) {
-                self.summary = summary
-                return
-            }
-            if let summary = try container.decodeIfPresent(String.self, forKey: .status) {
-                self.summary = summary
-                return
-            }
             if let summary = try container.decodeIfPresent(String.self, forKey: .raw) {
                 self.summary = summary
                 return
@@ -56,11 +44,33 @@ actor DaemonAPIClient {
                 self.summary = lines.joined(separator: "\n")
                 return
             }
+            if let summary = try container.decodeIfPresent(String.self, forKey: .summary) {
+                self.summary = summary
+                return
+            }
+            if let summary = try container.decodeIfPresent(String.self, forKey: .summaryLine) {
+                self.summary = summary
+                return
+            }
+            if let summary = try container.decodeIfPresent(String.self, forKey: .summaryLineSnake) {
+                self.summary = summary
+                return
+            }
+            if let summary = try container.decodeIfPresent(String.self, forKey: .statusSummary) {
+                self.summary = summary
+                return
+            }
+            if let summary = try container.decodeIfPresent(String.self, forKey: .status) {
+                self.summary = summary
+                return
+            }
             self.summary = ""
         }
 
         private enum CodingKeys: String, CodingKey {
             case summary
+            case summaryLine = "summaryLine"
+            case summaryLineSnake = "summary_line"
             case statusSummary
             case status
             case raw
@@ -84,14 +94,17 @@ actor DaemonAPIClient {
             let container = try decoder.container(keyedBy: CodingKeys.self)
             let fileCount = try container.decodeIfPresent(Int.self, forKey: .fileCount)
                 ?? container.decodeIfPresent(Int.self, forKey: .files)
+                ?? container.decodeIfPresent(Int.self, forKey: .fileCountSnake)
                 ?? container.decodeIfPresent(Int.self, forKey: .changedFiles)
                 ?? container.decodeIfPresent(Int.self, forKey: .filesChanged)
                 ?? 0
             let additions = try container.decodeIfPresent(Int.self, forKey: .additions)
+                ?? container.decodeIfPresent(Int.self, forKey: .lineAdditions)
                 ?? container.decodeIfPresent(Int.self, forKey: .added)
                 ?? container.decodeIfPresent(Int.self, forKey: .insertions)
                 ?? 0
             let deletions = try container.decodeIfPresent(Int.self, forKey: .deletions)
+                ?? container.decodeIfPresent(Int.self, forKey: .lineDeletions)
                 ?? container.decodeIfPresent(Int.self, forKey: .deleted)
                 ?? container.decodeIfPresent(Int.self, forKey: .removed)
                 ?? 0
@@ -103,12 +116,15 @@ actor DaemonAPIClient {
         private enum CodingKeys: String, CodingKey {
             case fileCount
             case files
+            case fileCountSnake = "file_count"
             case changedFiles
             case filesChanged
             case additions
+            case lineAdditions = "line_additions"
             case added
             case insertions
             case deletions
+            case lineDeletions = "line_deletions"
             case deleted
             case removed
         }
@@ -364,11 +380,11 @@ actor DaemonAPIClient {
     }
 
     func fetchSessionGitDiffSummary(sessionId: String) async throws -> SessionGitDiffSummaryResponse {
-        try await request("/api/sessions/\(sessionId)/git/diff/summary")
+        try await request("/api/sessions/\(sessionId)/diff/summary")
     }
 
     func fetchSessionGitDiff(sessionId: String) async throws -> SessionDiffResponse {
-        try await request("/api/sessions/\(sessionId)/git/diff")
+        try await request("/api/sessions/\(sessionId)/diff")
     }
 
     func fetchSessionDiff(sessionId: String) async throws -> SessionDiffResponse {

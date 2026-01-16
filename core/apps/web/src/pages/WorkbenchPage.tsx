@@ -38,9 +38,8 @@ import {
   getDaemonBaseUrl,
   getHealth,
   getSessionDiff,
-  getWorktreeDiff,
-  getWorktreeDiffSummary,
-  getWorktreeGitStatusSummary,
+  getSessionDiffSummary,
+  getSessionGitStatusSummary,
   resolveDaemonWsBaseUrl,
   getInstall,
   getProviderOptions,
@@ -2082,14 +2081,17 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const gitStatusText = useMemo(() => {
     if (!gitStatusSummary) return "";
     if (typeof gitStatusSummary === "string") return gitStatusSummary.trim();
-    const lines = (gitStatusSummary as any).lines;
-    if (Array.isArray(lines) && lines.length > 0) return lines.map((line) => String(line)).join("\n");
     const raw =
-      (gitStatusSummary as any).summary ??
       (gitStatusSummary as any).raw ??
+      (gitStatusSummary as any).summary_line ??
+      (gitStatusSummary as any).summaryLine ??
+      (gitStatusSummary as any).summary ??
       (gitStatusSummary as any).status ??
       "";
-    return String(raw || "").trim();
+    if (raw) return String(raw).trim();
+    const lines = (gitStatusSummary as any).lines;
+    if (Array.isArray(lines) && lines.length > 0) return lines.map((line) => String(line)).join("\n");
+    return "";
   }, [gitStatusSummary]);
   const showReviewPane = diffOpen;
   const showArtifactsPane = artifactsOpen;
@@ -2575,7 +2577,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   };
 
   useEffect(() => {
-    if (!diffOpen || !activeSessionId || !activeWorktreeId) {
+    if (!diffOpen || !activeSessionId) {
       setDiffLoading(false);
       setDiffSummaryLoading(false);
       setGitStatusLoading(false);
@@ -2591,7 +2593,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
 
     const loadStatus = async () => {
       try {
-        const status = await getWorktreeGitStatusSummary(activeWorktreeId);
+        const status = await getSessionGitStatusSummary(activeSessionId);
         if (!cancelled) setGitStatusSummary(status ?? null);
       } catch (e: any) {
         if (!cancelled) {
@@ -2605,7 +2607,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
 
     const loadSummary = async () => {
       try {
-        const summary = await getWorktreeDiffSummary(activeWorktreeId);
+        const summary = await getSessionDiffSummary(activeSessionId);
         if (!cancelled) setDiffSummary((summary as any) ?? null);
       } catch {
         if (!cancelled) setDiffSummary(null);
@@ -2616,15 +2618,10 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
 
     const loadDiff = async () => {
       try {
-        const resp = await getWorktreeDiff(activeWorktreeId);
+        const resp = await getSessionDiff(activeSessionId);
         if (!cancelled) supervisor.setDiff(activeSessionId, resp.diff ?? "");
       } catch {
-        try {
-          const resp = await getSessionDiff(activeSessionId);
-          if (!cancelled) supervisor.setDiff(activeSessionId, resp.diff ?? "");
-        } catch {
-          if (!cancelled) supervisor.setDiff(activeSessionId, "");
-        }
+        if (!cancelled) supervisor.setDiff(activeSessionId, "");
       } finally {
         if (!cancelled) setDiffLoading(false);
       }
@@ -2637,7 +2634,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     return () => {
       cancelled = true;
     };
-  }, [activeSessionId, activeWorktreeId, diffOpen, supervisor]);
+  }, [activeSessionId, diffOpen, supervisor]);
 
   const onSplitterMouseDown = (e: React.MouseEvent) => {
     e.preventDefault();
