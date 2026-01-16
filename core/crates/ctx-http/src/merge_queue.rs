@@ -11,9 +11,11 @@ use tokio::process::Command;
 use ctx_core::ids::{MergeQueueEntryId, MergeQueueRunId, SessionId, WorkspaceId, WorktreeId};
 use ctx_core::models::{
     MergeQueueEntry, MergeQueueEntryStatus, MergeQueuePatchSource, MergeQueueRun,
-    MergeQueueRunStatus, Workspace, Worktree,
+    MergeQueueRunStatus, SessionEventType, Workspace, Worktree,
 };
-use ctx_fs::git::{assert_git_repo, git_merge_base, git_status_porcelain, rev_parse_ref};
+use ctx_fs::git::{
+    assert_git_repo, git_is_ancestor, git_merge_base, git_status_porcelain, rev_parse_ref,
+};
 use ctx_fs::patch::build_worktree_patch;
 use ctx_fs::worktrees::{create_worktree, remove_worktree};
 
@@ -76,6 +78,11 @@ pub async fn submit_merge_queue_entry(
                     .collect::<Vec<_>>()
                     .join("\n")
             );
+        }
+        let up_to_date =
+            git_is_ancestor(&worktree.root_path, &target_branch, "HEAD").await?;
+        if !up_to_date {
+            bail!("worktree HEAD is behind target branch {target_branch}");
         }
         let merge_base = git_merge_base(&worktree.root_path, &target_branch, "HEAD").await?;
         let patch = build_worktree_patch(&worktree.root_path, &merge_base).await?;
@@ -250,6 +257,11 @@ async fn run_entry(
             run.finished_at = Some(now);
             state.store.update_merge_queue_entry(&entry).await?;
             state.store.update_merge_queue_run(&run).await?;
+            if let Err(err) =
+                maybe_sync_originating_worktree(state, workspace, &entry, &commit_sha).await
+            {
+                tracing::warn!("merge queue sync failed: {err:#}");
+            }
         }
         Err(QueueError::Conflict { message }) => {
             entry.status = MergeQueueEntryStatus::Conflict;
@@ -613,6 +625,98 @@ async fn run_verify_command(
             Some(output.status.code().unwrap_or(1) as i64),
             None,
         ));
+    }
+    Ok(())
+}
+
+async fn maybe_sync_originating_worktree(
+    state: &Arc<AppState>,
+    workspace: &Workspace,
+    entry: &MergeQueueEntry,
+    commit_sha: &str,
+) -> Result<()> {
+    let Some(worktree_id) = entry.worktree_id else {
+        return Ok(());
+    };
+    let Some(worktree) = state.store.get_worktree(worktree_id).await? else {
+        return Ok(());
+    };
+    if worktree.workspace_id != workspace.id {
+        return Ok(());
+    }
+    assert_git_repo(&worktree.root_path).await?;
+    let dirty = git_status_porcelain(&worktree.root_path).await?;
+    if !dirty.is_empty() {
+        return Ok(());
+    }
+    reset_worktree_to_commit(&worktree.root_path, commit_sha).await?;
+    let updated = state
+        .store
+        .update_worktree_base_commit(worktree_id, commit_sha)
+        .await?;
+    if !updated {
+        return Ok(());
+    }
+    if let Some(session_id) = entry.session_id {
+        emit_merge_queue_sync_notice(
+            state,
+            session_id,
+            &worktree,
+            &entry.target_branch,
+            commit_sha,
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+async fn emit_merge_queue_sync_notice(
+    state: &Arc<AppState>,
+    session_id: SessionId,
+    worktree: &Worktree,
+    target_branch: &str,
+    commit_sha: &str,
+) -> Result<()> {
+    let short_sha = commit_sha.get(0..8).unwrap_or(commit_sha);
+    let message = format!(
+        "merge queue applied; synced worktree to {target_branch} ({short_sha})"
+    );
+    let notice = state
+        .store
+        .append_session_event(
+            session_id,
+            None,
+            None,
+            SessionEventType::Notice,
+            serde_json::json!({
+                "kind": "merge_queue_sync",
+                "message": message,
+                "worktree_id": worktree.id.0.to_string(),
+                "target_branch": target_branch,
+                "commit_sha": commit_sha,
+                "base_commit_sha": commit_sha,
+            }),
+        )
+        .await?;
+    state.publish_event(notice).await;
+    Ok(())
+}
+
+async fn reset_worktree_to_commit(worktree_path: &str, commit_sha: &str) -> Result<()> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(worktree_path)
+        .args(["reset", "--hard", commit_sha])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .await
+        .context("running git reset --hard")?;
+    if !output.status.success() {
+        bail!(
+            "git reset --hard failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
     Ok(())
 }

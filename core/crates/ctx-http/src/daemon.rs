@@ -143,6 +143,7 @@ pub struct AppState {
     pub provider_verify_cache: Mutex<HashMap<String, CachedProviderVerify>>,
     pub file_completions_cache: Mutex<HashMap<WorktreeId, CachedFileCompletions>>,
     pub workspace_file_completions_cache: Mutex<HashMap<WorkspaceId, CachedFileCompletions>>,
+    pub git_status_snapshots: Mutex<HashMap<WorktreeId, GitStatusSnapshotCacheEntry>>,
     pub daemon_url: String,
     pub auth_token: Option<String>,
     pub lsp_cfg: LspManagerConfig,
@@ -195,6 +196,11 @@ pub struct CachedProviderVerify {
 pub struct CachedFileCompletions {
     pub cached_at: Instant,
     pub files: Arc<Vec<String>>,
+}
+
+pub struct GitStatusSnapshotCacheEntry {
+    pub payload: String,
+    pub emitted_at: Instant,
 }
 
 impl AppState {
@@ -278,6 +284,7 @@ impl AppState {
             provider_verify_cache: Mutex::new(HashMap::new()),
             file_completions_cache: Mutex::new(HashMap::new()),
             workspace_file_completions_cache: Mutex::new(HashMap::new()),
+            git_status_snapshots: Mutex::new(HashMap::new()),
             daemon_url,
             auth_token,
             lsp_cfg,
