@@ -149,11 +149,13 @@
 .wb-sidebar-tab-open {
   left: calc(var(--wb-sidebar-width, 260px) - 29px);
   border-radius: 8px 0 0 8px;
+  border-right: 0;
 }
 
 .wb-sidebar-tab-collapsed {
   left: 0;
   border-radius: 0 8px 8px 0;
+  border-left: 0;
 }
 
 .wb-sidebar-section {
@@ -613,6 +615,10 @@
   padding: 0 12px;
   border-bottom: 1px solid var(--border);
   background: rgba(255, 255, 255, 0.02);
+}
+
+.wb-root.wb-root-collapsed .wb-topbar {
+  padding-left: calc(12px + 28px);
 }
 
 
