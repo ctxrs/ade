@@ -342,7 +342,7 @@ impl<'a> SidebarView<'a> {
 
         div()
             .pl(px(12.0))
-            .pr(px(30.0))
+            .pr(px(36.0))
             .py(px(12.0))
             .flex()
             .items_center()
