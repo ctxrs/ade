@@ -217,6 +217,18 @@ pub struct SessionDiffResponse {
     pub diff: String,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct SessionDiffSummaryResponse {
+    pub file_count: i64,
+    pub additions: i64,
+    pub deletions: i64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SessionDiffStatusResponse {
+    pub lines: Vec<String>,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct WorkspaceActiveSnapshotParams {
     pub limit: Option<u32>,
@@ -1019,6 +1031,22 @@ impl Client {
 
     pub async fn get_session_diff(&self, session_id: SessionId) -> Result<SessionDiffResponse> {
         let path = format!("/api/sessions/{}/diff", session_id.0);
+        self.request_json(Method::GET, &path, None::<&()>).await
+    }
+
+    pub async fn get_session_diff_summary(
+        &self,
+        session_id: SessionId,
+    ) -> Result<SessionDiffSummaryResponse> {
+        let path = format!("/api/sessions/{}/diff/summary", session_id.0);
+        self.request_json(Method::GET, &path, None::<&()>).await
+    }
+
+    pub async fn get_session_diff_status(
+        &self,
+        session_id: SessionId,
+    ) -> Result<SessionDiffStatusResponse> {
+        let path = format!("/api/sessions/{}/diff/status", session_id.0);
         self.request_json(Method::GET, &path, None::<&()>).await
     }
 

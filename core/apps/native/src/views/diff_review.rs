@@ -8,7 +8,7 @@ use crate::theme::{ThemeColors, ThemeMetrics};
 
 use super::super::icons::{Icon, IconName};
 use super::super::state::diff_review::{
-    DiffFile, DiffLineKind, DiffListResizeState, DiffPatchAction, DiffReviewState,
+    DiffFile, DiffLineKind, DiffListResizeState, DiffReviewState,
 };
 
 const MONO_FONT_FAMILY: &str =
@@ -71,20 +71,46 @@ impl<'a> DiffReviewView<'a> {
             );
         }
 
-        if let Some(status) = &self.state.status {
-            root = root.child(
-                div()
-                    .px(px(metrics.spacing.md))
-                    .py(px(metrics.spacing.sm))
-                    .border_1()
-                    .border_color(self.colors.success)
-                    .rounded_sm()
-                    .bg(self.colors.panel_2)
-                    .text_sm()
-                    .text_color(self.colors.success)
-                    .child(status.clone()),
-            );
-        }
+        let status_lines = if let Some(lines) = &self.state.git_status {
+            lines.clone()
+        } else if self.state.session_id.is_none() {
+            vec!["Select a session to view status.".to_string()]
+        } else if is_loading {
+            vec!["Loading git status...".to_string()]
+        } else {
+            vec!["Git status unavailable.".to_string()]
+        };
+        let status_body = status_lines.into_iter().fold(
+            div().flex().flex_col().gap_1(),
+            |body, line| {
+                body.child(
+                    div()
+                        .text_sm()
+                        .font_family(MONO_FONT_FAMILY)
+                        .text_color(self.colors.text)
+                        .child(line),
+                )
+            },
+        );
+        root = root.child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .px(px(metrics.spacing.md))
+                .py(px(metrics.spacing.sm))
+                .border_1()
+                .border_color(self.colors.border)
+                .rounded_sm()
+                .bg(self.colors.panel_2)
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(self.colors.muted)
+                        .child("git status -sb"),
+                )
+                .child(status_body),
+        );
 
         if is_loading {
             root = root.child(
@@ -106,74 +132,6 @@ impl<'a> DiffReviewView<'a> {
                     .child("No changes."),
             );
         }
-
-        let can_apply_all = self.state.session_id.is_some() && self.state.busy_key.is_none();
-        let apply_all_busy = self
-            .state
-            .busy_key
-            .as_deref()
-            .map(|key| key.starts_with("diff:apply:"))
-            .unwrap_or(false);
-
-        let apply_all_actions = if apply_all_busy {
-            div()
-                .text_sm()
-                .text_color(self.colors.muted)
-                .child("Applying...")
-        } else {
-            let approve_message = "Approved all changes.".to_string();
-            let on_approve = cx.listener(move |view, _: &ClickEvent, _window, cx| {
-                view.apply_all_patch(DiffPatchAction::Accept, approve_message.clone(), cx);
-            });
-            let reject_message = "Rejected all changes.".to_string();
-            let on_reject = cx.listener(move |view, _: &ClickEvent, _window, cx| {
-                view.apply_all_patch(DiffPatchAction::Reject, reject_message.clone(), cx);
-            });
-
-            let mut reject_button = div()
-                .px(px(metrics.spacing.xxl))
-                .py(px(metrics.spacing.sm))
-                .text_sm()
-                .border_1()
-                .border_color(self.colors.border)
-                .rounded_full()
-                .child("Reject")
-                .bg(self.colors.panel)
-                .id("diff-reject-all");
-            let mut approve_button = div()
-                .px(px(metrics.spacing.xxl))
-                .py(px(metrics.spacing.sm))
-                .text_sm()
-                .border_1()
-                .border_color(self.colors.border)
-                .rounded_full()
-                .child("Approve")
-                .bg(self.colors.accent)
-                .text_color(self.colors.text)
-                .id("diff-approve-all");
-
-            if can_apply_all {
-                reject_button = reject_button
-                    .text_color(self.colors.text)
-                    .cursor_pointer()
-                    .active(|style| style.opacity(0.92))
-                    .on_click(on_reject);
-                approve_button = approve_button
-                    .cursor_pointer()
-                    .active(|style| style.opacity(0.92))
-                    .on_click(on_approve);
-            } else {
-                reject_button = reject_button.text_color(self.colors.muted).bg(self.colors.panel_2);
-                approve_button = approve_button.text_color(self.colors.muted).bg(self.colors.panel_2);
-            }
-
-            div()
-                .flex()
-                .items_center()
-                .gap_2()
-                .child(approve_button)
-                .child(reject_button)
-        };
 
         let can_refresh = self.state.session_id.is_some() && self.state.busy_key.is_none();
         let on_refresh = cx.listener(|view, _: &ClickEvent, _window, cx| {
@@ -212,11 +170,31 @@ impl<'a> DiffReviewView<'a> {
                 .text_color(self.colors.muted);
         }
 
-        let file_count = self.state.files.len();
-        let total_added: usize = self.state.files.iter().map(|file| file.added_lines).sum();
-        let total_deleted: usize = self.state.files.iter().map(|file| file.deleted_lines).sum();
+        let (file_count, total_added, total_deleted) = if let Some(summary) =
+            self.state.diff_summary
+        {
+            (
+                summary.file_count,
+                summary.additions,
+                summary.deletions,
+            )
+        } else {
+            (
+                self.state.files.len() as i64,
+                self.state
+                    .files
+                    .iter()
+                    .map(|file| file.added_lines as i64)
+                    .sum(),
+                self.state
+                    .files
+                    .iter()
+                    .map(|file| file.deleted_lines as i64)
+                    .sum(),
+            )
+        };
         let pending_label = format!(
-            "{} Pending Change{}",
+            "{} File{}",
             file_count,
             if file_count == 1 { "" } else { "s" }
         );
@@ -280,8 +258,7 @@ impl<'a> DiffReviewView<'a> {
                     .flex()
                     .items_center()
                     .gap_2()
-                    .child(refresh_button)
-                    .child(apply_all_actions),
+                    .child(refresh_button),
             );
 
         let list = if self.state.files.is_empty() {
@@ -335,88 +312,6 @@ impl<'a> DiffReviewView<'a> {
 
         let detail = if let Some(active_key) = self.state.active_file_key.as_deref() {
             if let Some(file) = self.state.files.iter().find(|file| file.key == active_key) {
-                let file_busy = self.state.busy_key.as_deref() == Some(file.key.as_str());
-                let can_apply = self.state.session_id.is_some() && self.state.busy_key.is_none();
-                let patch = file.patch_text();
-
-                let actions = if file_busy {
-                    div()
-                        .text_sm()
-                        .text_color(self.colors.muted)
-                        .child("Applying...")
-                } else {
-                    let keep_key = file.key.clone();
-                    let keep_patch = patch.clone();
-                    let keep_message =
-                        format!("Kept changes in {}.", file.file_path.as_str());
-                    let on_keep = cx.listener(move |view, _: &ClickEvent, _window, cx| {
-                        view.apply_file_patch(
-                            keep_key.clone(),
-                            DiffPatchAction::Accept,
-                            keep_patch.clone(),
-                            keep_message.clone(),
-                            cx,
-                        );
-                    });
-                    let undo_key = file.key.clone();
-                    let undo_patch = patch.clone();
-                    let undo_message =
-                        format!("Undid changes in {}.", file.file_path.as_str());
-                    let on_undo = cx.listener(move |view, _: &ClickEvent, _window, cx| {
-                        view.apply_file_patch(
-                            undo_key.clone(),
-                            DiffPatchAction::Reject,
-                            undo_patch.clone(),
-                            undo_message.clone(),
-                            cx,
-                        );
-                    });
-
-                    let mut undo_button = div()
-                        .px(px(metrics.spacing.xxl))
-                        .py(px(metrics.spacing.sm))
-                        .text_sm()
-                        .border_1()
-                        .border_color(self.colors.border)
-                        .rounded_full()
-                        .bg(self.colors.panel)
-                        .child("Undo")
-                        .id(format!("diff-file-undo-{}", file.key));
-                    let mut keep_button = div()
-                        .px(px(metrics.spacing.xxl))
-                        .py(px(metrics.spacing.sm))
-                        .text_sm()
-                        .border_1()
-                        .border_color(self.colors.border)
-                        .rounded_full()
-                        .bg(self.colors.panel)
-                        .child("Keep")
-                        .id(format!("diff-file-keep-{}", file.key));
-
-                    if can_apply {
-                        undo_button = undo_button
-                            .text_color(self.colors.error)
-                            .cursor_pointer()
-                            .active(|style| style.opacity(0.92))
-                            .on_click(on_undo);
-                        keep_button = keep_button
-                            .text_color(self.colors.success)
-                            .cursor_pointer()
-                            .active(|style| style.opacity(0.92))
-                            .on_click(on_keep);
-                    } else {
-                        undo_button = undo_button.text_color(self.colors.muted);
-                        keep_button = keep_button.text_color(self.colors.muted);
-                    }
-
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap_2()
-                        .child(undo_button)
-                        .child(keep_button)
-                };
-
                 let summary = file_summary(file, self.colors);
                 let detail_header = div()
                     .flex()
@@ -429,8 +324,7 @@ impl<'a> DiffReviewView<'a> {
                     .border_color(self.colors.border)
                     .child(div().text_sm().child(file.file_path.clone()))
                     .child(summary)
-                    .child(div().flex_1())
-                    .child(actions);
+                    .child(div().flex_1());
 
                 let preview = if file.is_binary {
                     div()
@@ -439,7 +333,7 @@ impl<'a> DiffReviewView<'a> {
                         .child("Binary or metadata-only diff.")
                         .into_any_element()
                 } else {
-                    render_inline_diff(file, self.state, self.colors, cx).into_any_element()
+                    render_inline_diff(file, self.colors).into_any_element()
                 };
 
                 div()
@@ -583,9 +477,7 @@ fn file_summary(file: &DiffFile, colors: ThemeColors) -> impl IntoElement {
 
 fn render_inline_diff(
     file: &DiffFile,
-    state: &DiffReviewState,
     colors: ThemeColors,
-    cx: &mut Context<DiffReviewState>,
 ) -> impl IntoElement {
     if file.hunks.is_empty() {
         return div()
@@ -596,89 +488,8 @@ fn render_inline_diff(
 
     let metrics = ThemeMetrics::default();
     let mut hunks = div().flex().flex_col().gap_2();
-    let can_apply = state.session_id.is_some() && state.busy_key.is_none();
 
     for hunk in &file.hunks {
-        let hunk_busy = state.busy_key.as_deref() == Some(hunk.key.as_str());
-        let hunk_patch = file.hunk_patch_text(hunk);
-
-            let actions = if hunk_busy {
-                div()
-                    .text_sm()
-                    .text_color(colors.muted)
-                    .child("Applying...")
-            } else {
-            let keep_key = hunk.key.clone();
-            let keep_patch = hunk_patch.clone();
-            let keep_message = format!("Kept hunk in {}.", file.file_path.as_str());
-            let on_keep = cx.listener(move |view, _: &ClickEvent, _window, cx| {
-                view.apply_hunk_patch(
-                    keep_key.clone(),
-                    DiffPatchAction::Accept,
-                    keep_patch.clone(),
-                    keep_message.clone(),
-                    cx,
-                );
-            });
-
-            let undo_key = hunk.key.clone();
-            let undo_patch = hunk_patch.clone();
-            let undo_message = format!("Undid hunk in {}.", file.file_path.as_str());
-            let on_undo = cx.listener(move |view, _: &ClickEvent, _window, cx| {
-                view.apply_hunk_patch(
-                    undo_key.clone(),
-                    DiffPatchAction::Reject,
-                    undo_patch.clone(),
-                    undo_message.clone(),
-                    cx,
-                );
-            });
-
-            let mut undo_button = div()
-                .px(px(metrics.spacing.xxl))
-                .py(px(metrics.spacing.sm))
-                .text_sm()
-                .border_1()
-                .border_color(colors.border)
-                .rounded_full()
-                .bg(colors.panel)
-                .child("Undo")
-                .id(format!("diff-hunk-undo-{}", hunk.key));
-            let mut keep_button = div()
-                .px(px(metrics.spacing.xxl))
-                .py(px(metrics.spacing.sm))
-                .text_sm()
-                .border_1()
-                .border_color(colors.border)
-                .rounded_full()
-                .bg(colors.panel)
-                .child("Keep")
-                .id(format!("diff-hunk-keep-{}", hunk.key));
-
-            if can_apply {
-                undo_button = undo_button
-                    .text_color(colors.error)
-                    .cursor_pointer()
-                    .active(|style| style.opacity(0.92))
-                    .on_click(on_undo);
-                keep_button = keep_button
-                    .text_color(colors.success)
-                    .cursor_pointer()
-                    .active(|style| style.opacity(0.92))
-                    .on_click(on_keep);
-            } else {
-                undo_button = undo_button.text_color(colors.muted);
-                keep_button = keep_button.text_color(colors.muted);
-            }
-
-            div()
-                .flex()
-                .items_center()
-                .gap_2()
-                .child(undo_button)
-                .child(keep_button)
-        };
-
         let header = div()
             .flex()
             .items_center()
@@ -695,8 +506,7 @@ fn render_inline_diff(
                     .text_color(colors.muted)
                     .child(hunk.header_line.clone()),
             )
-            .child(div().flex_1())
-            .child(actions);
+            .child(div().flex_1());
 
         let mut lines = div()
             .flex()

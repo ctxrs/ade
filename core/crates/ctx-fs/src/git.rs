@@ -314,6 +314,28 @@ pub async fn git_status_porcelain(root_path: impl AsRef<Path>) -> Result<Vec<Str
     Ok(out)
 }
 
+pub async fn git_status_short(root_path: impl AsRef<Path>) -> Result<Vec<String>> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root_path.as_ref())
+        .arg("status")
+        .arg("-sb")
+        .arg("--untracked-files=all")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .await
+        .context("running git status -sb")?;
+    if !output.status.success() {
+        bail!(
+            "git status -sb failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    Ok(text.lines().map(|line| line.trim_end().to_string()).collect())
+}
+
 pub async fn list_tracked_files(root_path: impl AsRef<Path>) -> Result<Vec<String>> {
     let output = Command::new("git")
         .arg("-C")

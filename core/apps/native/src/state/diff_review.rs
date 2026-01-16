@@ -31,40 +31,6 @@ pub(crate) struct DiffFile {
     pub(crate) deleted_lines: usize,
 }
 
-impl DiffFile {
-    pub(crate) fn patch_text(&self) -> String {
-        let mut patch = self.section_lines.join("\n");
-        patch.push('\n');
-        patch
-    }
-
-    pub(crate) fn hunk_patch_text(&self, hunk: &DiffHunk) -> String {
-        let mut lines =
-            Vec::with_capacity(self.header_lines.len() + hunk.lines.len() + 1);
-        lines.extend(self.header_lines.iter().cloned());
-        lines.push(hunk.header_line.clone());
-        lines.extend(hunk.lines.iter().cloned());
-        let mut patch = lines.join("\n");
-        patch.push('\n');
-        patch
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum DiffPatchAction {
-    Accept,
-    Reject,
-}
-
-impl DiffPatchAction {
-    fn as_str(self) -> &'static str {
-        match self {
-            DiffPatchAction::Accept => "accept",
-            DiffPatchAction::Reject => "reject",
-        }
-    }
-}
-
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct DiffListResizeState {
     pub(crate) start_x: f32,
@@ -75,6 +41,13 @@ const DIFF_LIST_DEFAULT_WIDTH: f32 = 220.0;
 const DIFF_LIST_MIN_WIDTH: f32 = 160.0;
 const DIFF_LIST_MAX_WIDTH: f32 = 320.0;
 
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct DiffSummary {
+    pub(crate) file_count: i64,
+    pub(crate) additions: i64,
+    pub(crate) deletions: i64,
+}
+
 #[derive(Debug)]
 pub(crate) struct DiffReviewState {
     pub(crate) session_id: Option<SessionId>,
@@ -82,7 +55,8 @@ pub(crate) struct DiffReviewState {
     pub(crate) files: Vec<DiffFile>,
     pub(crate) active_file_key: Option<String>,
     pub(crate) busy_key: Option<String>,
-    pub(crate) status: Option<String>,
+    pub(crate) git_status: Option<Vec<String>>,
+    pub(crate) diff_summary: Option<DiffSummary>,
     pub(crate) error: Option<String>,
     pub(crate) list_width: f32,
     pub(crate) list_resizing: bool,
@@ -97,7 +71,8 @@ impl DiffReviewState {
             files: Vec::new(),
             active_file_key: None,
             busy_key: None,
-            status: None,
+            git_status: None,
+            diff_summary: None,
             error: None,
             list_width: DIFF_LIST_DEFAULT_WIDTH,
             list_resizing: false,
@@ -130,9 +105,10 @@ impl DiffReviewState {
 
     pub(crate) fn select_file(&mut self, key: String, cx: &mut Context<Self>) {
         if self.active_file_key.as_deref() == Some(key.as_str()) {
-            return;
+            self.active_file_key = None;
+        } else {
+            self.active_file_key = Some(key);
         }
-        self.active_file_key = Some(key);
         cx.notify();
     }
 
@@ -141,7 +117,8 @@ impl DiffReviewState {
             return;
         };
         self.busy_key = Some("diff:load".to_string());
-        self.status = None;
+        self.git_status = None;
+        self.diff_summary = None;
         self.error = None;
         cx.notify();
 
@@ -149,6 +126,18 @@ impl DiffReviewState {
             let config = ctx_client::resolve_daemon_config()?;
             let client = ctx_client::Client::new(config)?;
             client.get_session_diff(session_id).await
+        });
+
+        let status_task = Tokio::spawn_result(cx, async move {
+            let config = ctx_client::resolve_daemon_config()?;
+            let client = ctx_client::Client::new(config)?;
+            client.get_session_diff_status(session_id).await
+        });
+
+        let summary_task = Tokio::spawn_result(cx, async move {
+            let config = ctx_client::resolve_daemon_config()?;
+            let client = ctx_client::Client::new(config)?;
+            client.get_session_diff_summary(session_id).await
         });
 
         cx.spawn(move |this: WeakEntity<DiffReviewState>, cx: &mut AsyncApp| {
@@ -174,47 +163,56 @@ impl DiffReviewState {
             }
         })
         .detach();
-    }
 
-    pub(crate) fn apply_file_patch(
-        &mut self,
-        file_key: String,
-        action: DiffPatchAction,
-        patch: String,
-        status_message: String,
-        cx: &mut Context<Self>,
-    ) {
-        self.apply_patch(file_key, action, patch, status_message, cx);
-    }
+        cx.spawn(move |this: WeakEntity<DiffReviewState>, cx: &mut AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                let result = status_task.await;
+                this.update(&mut cx, |view, cx| {
+                    if view.session_id != Some(session_id) {
+                        return;
+                    }
+                    match result {
+                        Ok(status) => {
+                            view.git_status = Some(status.lines);
+                        }
+                        Err(_) => {
+                            view.git_status = Some(vec!["Git status unavailable.".to_string()]);
+                        }
+                    }
+                    cx.notify();
+                })
+                .ok();
+            }
+        })
+        .detach();
 
-    pub(crate) fn apply_hunk_patch(
-        &mut self,
-        hunk_key: String,
-        action: DiffPatchAction,
-        patch: String,
-        status_message: String,
-        cx: &mut Context<Self>,
-    ) {
-        self.apply_patch(hunk_key, action, patch, status_message, cx);
-    }
-
-    pub(crate) fn apply_all_patch(
-        &mut self,
-        action: DiffPatchAction,
-        status_message: String,
-        cx: &mut Context<Self>,
-    ) {
-        if self.diff.trim().is_empty() {
-            return;
-        }
-        let patch = self.diff.clone();
-        self.apply_patch(
-            format!("diff:apply:{}", action.as_str()),
-            action,
-            patch,
-            status_message,
-            cx,
-        );
+        cx.spawn(move |this: WeakEntity<DiffReviewState>, cx: &mut AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                let result = summary_task.await;
+                this.update(&mut cx, |view, cx| {
+                    if view.session_id != Some(session_id) {
+                        return;
+                    }
+                    match result {
+                        Ok(summary) => {
+                            view.diff_summary = Some(DiffSummary {
+                                file_count: summary.file_count,
+                                additions: summary.additions,
+                                deletions: summary.deletions,
+                            });
+                        }
+                        Err(_) => {
+                            view.diff_summary = None;
+                        }
+                    }
+                    cx.notify();
+                })
+                .ok();
+            }
+        })
+        .detach();
     }
 
     pub(crate) fn set_list_width(&mut self, width: f32, cx: &mut Context<Self>) {
@@ -235,7 +233,8 @@ impl DiffReviewState {
         self.files.clear();
         self.active_file_key = None;
         self.busy_key = None;
-        self.status = None;
+        self.git_status = None;
+        self.diff_summary = None;
         self.error = None;
         self.list_resizing = false;
         self.list_resize_state = None;
@@ -247,61 +246,7 @@ impl DiffReviewState {
                 return;
             }
         }
-        self.active_file_key = self.files.first().map(|file| file.key.clone());
-    }
-
-    fn apply_patch(
-        &mut self,
-        busy_key: String,
-        action: DiffPatchAction,
-        patch: String,
-        status_message: String,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(session_id) = self.session_id else {
-            return;
-        };
-        if self.busy_key.is_some() {
-            return;
-        }
-        self.busy_key = Some(busy_key);
-        self.status = None;
-        self.error = None;
-        cx.notify();
-
-        let action_label = action.as_str().to_string();
-        let task = Tokio::spawn_result(cx, async move {
-            let config = ctx_client::resolve_daemon_config()?;
-            let client = ctx_client::Client::new(config)?;
-            client
-                .apply_session_diff_patch(session_id, &action_label, &patch)
-                .await
-        });
-
-        cx.spawn(move |this: WeakEntity<DiffReviewState>, cx: &mut AsyncApp| {
-            let mut cx = cx.clone();
-            async move {
-                let result = task.await;
-                this.update(&mut cx, |view, cx| {
-                    if view.session_id != Some(session_id) {
-                        return;
-                    }
-                    view.busy_key = None;
-                    match result {
-                        Ok(diff) => {
-                            view.set_diff(diff.diff);
-                            view.status = Some(status_message);
-                        }
-                        Err(err) => {
-                            view.error = Some(err.to_string());
-                        }
-                    }
-                    cx.notify();
-                })
-                .ok();
-            }
-        })
-        .detach();
+        self.active_file_key = None;
     }
 }
 
