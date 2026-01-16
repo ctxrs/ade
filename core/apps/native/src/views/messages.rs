@@ -325,6 +325,7 @@ impl<'a> ThreadListView<'a> {
                     .flex_1()
                     .min_h(px(0.0))
                     .overflow_hidden()
+                    .bg(colors.bg)
                     .child(list),
             )
             .child(overlay)
