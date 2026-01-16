@@ -1,8 +1,6 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import Editor from "@monaco-editor/react";
-import { Check, ChevronDown, ChevronUp, MessageSquare, X } from "lucide-react";
-import { guessMonacoLanguage } from "../utils/monacoLanguage";
-import { FileBufferEditor } from "./FileBufferEditor";
+import { ChevronDown, ChevronUp } from "lucide-react";
 import { FileIcon } from "./FileIcon";
 
 type DiffFile = {
@@ -30,95 +28,34 @@ type DiffHunk = {
 
 const DiffReviewPane = memo(function DiffReviewPane({
   diff,
-  sessionId,
-  onDiffUpdated,
-  onApplyPatch,
-  onFileSaved,
   labels,
 }: {
   diff: string;
-  sessionId?: string;
-  onDiffUpdated: (diff: string) => void;
-  onApplyPatch?: (action: "accept" | "reject", patch: string) => Promise<string | null | undefined>;
-  onFileSaved?: () => void;
   labels?: Partial<{
-    title: string;
     empty: string;
-    acceptAll: string;
-    rejectAll: string;
-    accept: string;
-    reject: string;
   }>;
 }) {
-  const [editingPath, setEditingPath] = useState<string | null>(null);
   const [expandedFiles, setExpandedFiles] = useState<Record<string, boolean>>({});
-  const [activeFileKey, setActiveFileKey] = useState<string | null>(null);
-  const [busyKey, setBusyKey] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [hoverKeepKey, setHoverKeepKey] = useState<string | null>(null);
-  const tooltipTimeoutRef = useRef<number | null>(null);
-  const canApply = Boolean(onApplyPatch);
 
   useEffect(() => {
-    setEditingPath(null);
     setExpandedFiles({});
-    setActiveFileKey(null);
-    setBusyKey(null);
-    setError(null);
-    setHoverKeepKey(null);
-  }, [sessionId]);
+  }, [diff]);
 
   const files = useMemo(() => parseUnifiedDiff(diff), [diff]);
 
-  const doApply = async (key: string, action: "accept" | "reject", patch: string) => {
-    if (!onApplyPatch) return;
-    setBusyKey(key);
-    setError(null);
-    try {
-      const nextDiff = await onApplyPatch(action, patch);
-      if (typeof nextDiff === "string") {
-        onDiffUpdated(nextDiff);
-      }
-    } catch (e: any) {
-      setError(e?.message ?? String(e));
-    } finally {
-      setBusyKey(null);
-    }
-  };
-
-  const toggleFile = (key: string) => setExpandedFiles((prev) => ({ ...prev, [key]: !(prev[key] ?? true) }));
+  const toggleFile = (key: string) => setExpandedFiles((prev) => ({ ...prev, [key]: !(prev[key] ?? false) }));
 
   const hasChanges = diff.trim().length > 0;
 
-  if (editingPath && sessionId) {
-    return (
-      <div className="diff-pane">
-        <div style={{ padding: 12 }}>
-          <FileBufferEditor
-            sessionId={sessionId}
-            path={editingPath}
-            onClose={() => setEditingPath(null)}
-            onSaved={onFileSaved}
-          />
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="diff-pane">
-      {error && <div className="banner">{error}</div>}
-
       {!hasChanges && <div className="muted">{labels?.empty ?? "No changes."}</div>}
 
       {hasChanges && (
         <div className="cursor-diff">
           <div className="cursor-diff-list">
             {files.map((f) => {
-              const isOpen = expandedFiles[f.key] ?? true;
-              const filePatch = f.sectionLines.join("\n") + "\n";
-              const fileBusy = busyKey === `file:${f.key}`;
-              const canEdit = Boolean(sessionId) && f.filePath !== "(unknown)";
+              const isOpen = expandedFiles[f.key] ?? false;
 
               const summary = (
                 <span className="cursor-diff-summary" aria-label="Diff summary">
@@ -144,7 +81,7 @@ const DiffReviewPane = memo(function DiffReviewPane({
               return (
                 <div
                   key={f.key}
-                  className={`cursor-diff-file ${fileAccentClass(f)} ${activeFileKey === f.key ? "cursor-diff-file-active" : ""}`}
+                  className={`cursor-diff-file ${fileAccentClass(f)}`}
                 >
                   <div className="cursor-diff-file-header">
                     <button
@@ -157,79 +94,15 @@ const DiffReviewPane = memo(function DiffReviewPane({
                       {isOpen ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
                     </button>
                     <FileIcon path={f.filePath} size={14} className="cursor-diff-file-icon" />
-                    <span
-                      className="cursor-diff-file-path"
-                      title={f.filePath}
-                      onDoubleClick={() => {
-                        if (canEdit) setEditingPath(f.filePath);
-                      }}
-                    >
+                    <span className="cursor-diff-file-path" title={f.filePath}>
                       {f.filePath}
                     </span>
                     {summary}
                     <div className="cursor-diff-spacer" />
-
-                    <div className="cursor-diff-file-actions" aria-label="File actions">
-                      <button
-                        type="button"
-                        className="cursor-diff-icon-btn"
-                        aria-label="Comment"
-                        disabled
-                        title="Comment"
-                      >
-                        <MessageSquare size={14} />
-                      </button>
-                      <button
-                        type="button"
-                        className="cursor-diff-icon-btn"
-                        aria-label={isOpen ? "Collapse" : "Expand"}
-                        title={isOpen ? "Collapse" : "Expand"}
-                        onClick={() => toggleFile(f.key)}
-                      >
-                        {isOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-                      </button>
-                      <button
-                        type="button"
-                        className="cursor-diff-icon-btn cursor-diff-icon-btn-danger"
-                        aria-label="Undo"
-                        title="Undo"
-                        disabled={!canApply || fileBusy || busyKey !== null}
-                        onClick={() => doApply(`file:${f.key}`, "reject", filePatch)}
-                      >
-                        <X size={14} />
-                      </button>
-                      <button
-                        type="button"
-                        className="cursor-diff-icon-btn cursor-diff-icon-btn-keep"
-                        aria-label="Keep"
-                        onMouseEnter={() => {
-                          if (tooltipTimeoutRef.current) window.clearTimeout(tooltipTimeoutRef.current);
-                          setHoverKeepKey(f.key);
-                        }}
-                        onMouseLeave={() => {
-                          tooltipTimeoutRef.current = window.setTimeout(() => setHoverKeepKey(null), 80);
-                        }}
-                        title="Keep"
-                        disabled={!canApply || fileBusy || busyKey !== null}
-                        onClick={() => doApply(`file:${f.key}`, "accept", filePatch)}
-                      >
-                        <Check size={14} />
-                      </button>
-                      {hoverKeepKey === f.key && (
-                        <div className="cursor-diff-tooltip" role="tooltip">
-                          Keep changes in this file
-                        </div>
-                      )}
-                    </div>
                   </div>
 
                   {isOpen && (
-                    <div
-                      className="cursor-diff-file-body"
-                      onMouseDown={() => setActiveFileKey(f.key)}
-                      role="region"
-                      aria-label={`Diff for ${f.filePath}`}
-                    >
+                    <div className="cursor-diff-file-body" role="region" aria-label={`Diff for ${f.filePath}`}>
                       {f.isBinary ? (
                         <div className="muted" style={{ padding: 12 }}>
                           Binary or metadata-only diff.
@@ -239,27 +112,6 @@ const DiffReviewPane = memo(function DiffReviewPane({
                           <div className="cursor-diff-editor-shell">
                             <DecoratedDiffEditor file={f} />
                           </div>
-
-                          {activeFileKey === f.key && (
-                            <div className="cursor-diff-overlay" aria-label="Quick actions">
-                              <button
-                                type="button"
-                                className="cursor-diff-overlay-btn"
-                                disabled={!canApply || fileBusy || busyKey !== null}
-                                onClick={() => doApply(`file:${f.key}`, "reject", filePatch)}
-                              >
-                                Undo <span className="cursor-diff-kbd">⌘N</span>
-                              </button>
-                              <button
-                                type="button"
-                                className="cursor-diff-overlay-btn cursor-diff-overlay-btn-keep"
-                                disabled={!canApply || fileBusy || busyKey !== null}
-                                onClick={() => doApply(`file:${f.key}`, "accept", filePatch)}
-                              >
-                                Keep <span className="cursor-diff-kbd">⌘Y</span>
-                              </button>
-                            </div>
-                          )}
                         </>
                       )}
                     </div>
@@ -432,7 +284,7 @@ function DecoratedDiffEditor({ file }: { file: DiffFile }) {
     <Editor
       key={file.key}
       height={`${estimateDiffHeightPx(file)}px`}
-      language={guessMonacoLanguage(file.filePath)}
+      language="diff"
       path={modelPath}
       value={file.renderText}
       theme="vs-dark"
@@ -454,6 +306,7 @@ function DecoratedDiffEditor({ file }: { file: DiffFile }) {
         fontSize: 12,
         lineHeight: 22,
         renderLineHighlight: "none",
+        renderValidationDecorations: "off",
         fixedOverflowWidgets: true,
         padding: { top: 10, bottom: 10 },
         wordWrap: "off",

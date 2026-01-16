@@ -1011,6 +1011,31 @@ export const createSession = (
 export const getWorktree = (worktreeId: string) =>
   apiAny<Worktree>(`/api/worktrees/${worktreeId}`);
 
+export type WorktreeDiffSummary = {
+  file_count?: number;
+  files?: number;
+  line_additions?: number;
+  additions?: number;
+  line_deletions?: number;
+  deletions?: number;
+};
+
+export type GitStatusSummary = {
+  summary?: string;
+  raw?: string;
+  status?: string;
+  lines?: string[];
+};
+
+export const getWorktreeDiff = (worktreeId: string) =>
+  apiAny<{ diff: string }>(`/api/worktrees/${worktreeId}/diff`);
+
+export const getWorktreeDiffSummary = (worktreeId: string) =>
+  apiAny<WorktreeDiffSummary>(`/api/worktrees/${worktreeId}/diff/summary`);
+
+export const getWorktreeGitStatusSummary = (worktreeId: string) =>
+  apiAny<GitStatusSummary | string>(`/api/worktrees/${worktreeId}/git/status`);
+
 export const getWorktreeBootstrapLogs = async (worktreeId: string): Promise<string> => {
   const resp = await daemonFetchRaw(`/api/worktrees/${worktreeId}/bootstrap/logs`);
   if (resp.status >= 400) {
