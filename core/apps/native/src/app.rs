@@ -301,6 +301,7 @@ fn create_shell_view(
             composer_subscriptions_set: false,
             thread_list_state: ListState::new(0, ListAlignment::Bottom, px(160.0)),
             thread_list_len: 0,
+            thread_item_layout_hashes: HashMap::new(),
             thread_auto_follow: true,
             new_thread_item_count: 0,
             copied_flags: HashMap::new(),

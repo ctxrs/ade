@@ -262,6 +262,7 @@ pub(crate) struct ShellView {
     pub(crate) composer_subscriptions_set: bool,
     pub(crate) thread_list_state: ListState,
     pub(crate) thread_list_len: usize,
+    pub(crate) thread_item_layout_hashes: HashMap<String, u64>,
     pub(crate) thread_auto_follow: bool,
     pub(crate) new_thread_item_count: usize,
     pub(crate) copied_flags: HashMap<String, Instant>,

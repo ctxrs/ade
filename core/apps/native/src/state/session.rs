@@ -13,7 +13,7 @@ use gpui_tokio::Tokio;
 use ctx_core::ids::{SessionId, TurnId};
 use ctx_core::models::{
     MessageRole, SessionEvent, SessionHeadSnapshot, SessionHistoryPage, SessionSnapshot,
-    SessionTurn,
+    SessionTurn, SessionTurnStatus,
 };
 use ctx_client;
 
@@ -21,7 +21,7 @@ use super::{ArtifactPreviewState, ShellView};
 use super::super::models::{
     attachment_cache_key, build_message_items, build_thread_list_items, message_item_from_model,
     session_info_from_head, session_info_from_summary, MessageAttachment, MessageItem,
-    SessionInfo, ThreadItem, ThreadListItem, TurnToolSnapshot, WorkbenchTurnHeader,
+    SessionInfo, ThreadItem, ThreadListItem, ThreadToolItem, TurnToolSnapshot, WorkbenchTurnHeader,
 };
 use super::SessionViewVerbosity;
 
@@ -68,6 +68,8 @@ impl SessionThreadCache {
 const COPIED_TIMEOUT: Duration = Duration::from_millis(1_000);
 const SESSION_HISTORY_PAGE_LIMIT: u32 = 60;
 const SESSION_HISTORY_PREFETCH_THRESHOLD: usize = 6;
+const LAYOUT_HASH_SEED: u64 = 0xcbf29ce484222325;
+const LAYOUT_HASH_PRIME: u64 = 0x100000001b3;
 
 #[derive(Clone, Copy)]
 enum SessionControlAction {
@@ -689,6 +691,7 @@ impl ShellView {
                                 view.session_turns.clear();
                                 view.session_turn_tools.clear();
                                 view.thread_items.clear();
+                                view.thread_item_layout_hashes.clear();
                                 view.thread_list_state.reset(0);
                                 view.thread_list_len = 0;
                                 view.sticky_turn_header = None;
@@ -716,6 +719,7 @@ impl ShellView {
                             view.session_turns.clear();
                             view.session_turn_tools.clear();
                             view.thread_items.clear();
+                            view.thread_item_layout_hashes.clear();
                             view.thread_list_state.reset(0);
                             view.thread_list_len = 0;
                             view.sticky_turn_header = None;
@@ -801,6 +805,7 @@ impl ShellView {
         self.session_history_loading = false;
         self.session_turn_tools.clear();
         self.thread_items.clear();
+        self.thread_item_layout_hashes.clear();
         self.thread_list_state.reset(0);
         self.thread_list_len = 0;
         self.thread_auto_follow = true;
@@ -840,6 +845,7 @@ impl ShellView {
 
     fn apply_thread_items(&mut self, items: Vec<ThreadListItem>) {
         let old_items = std::mem::take(&mut self.thread_items);
+        let old_layout_hashes = std::mem::take(&mut self.thread_item_layout_hashes);
         let old_len = old_items.len();
         let new_len = items.len();
 
@@ -861,6 +867,19 @@ impl ShellView {
             end_new -= 1;
         }
 
+        let mut layout_invalidations = Vec::new();
+        let mut new_layout_hashes = HashMap::with_capacity(new_len);
+        for (index, item) in items.iter().enumerate() {
+            let layout_hash = self.thread_item_layout_hash(item);
+            let id = item.id().to_string();
+            if let Some(old_hash) = old_layout_hashes.get(&id) {
+                if *old_hash != layout_hash {
+                    layout_invalidations.push(index);
+                }
+            }
+            new_layout_hashes.insert(id, layout_hash);
+        }
+
         if !(start == end_old && start == end_new) {
             self.thread_list_state
                 .splice(start..end_old, end_new - start);
@@ -868,31 +887,199 @@ impl ShellView {
 
         self.thread_items = items;
         self.thread_list_len = new_len;
+        self.thread_item_layout_hashes = new_layout_hashes;
+
+        for index in layout_invalidations {
+            self.thread_list_state.splice(index..index + 1, 1);
+        }
     }
 
     fn invalidate_thread_item(&mut self, id: &str) {
-        let Some(index) = self.thread_items.iter().position(|item| item.id() == id) else {
+        let Some((index, item)) = self
+            .thread_items
+            .iter()
+            .enumerate()
+            .find(|(_, item)| item.id() == id)
+        else {
             return;
         };
+        let layout_hash = self.thread_item_layout_hash(item);
+        self.thread_item_layout_hashes
+            .insert(id.to_string(), layout_hash);
         self.thread_list_state.splice(index..index + 1, 1);
     }
 
     fn invalidate_thread_items_for_attachment(&mut self, cache_key: &str) {
-        let indexes = self
+        let updates = self
             .thread_items
             .iter()
             .enumerate()
             .filter_map(|(index, item)| {
                 if thread_item_contains_attachment(item, cache_key) {
-                    Some(index)
+                    Some((index, item.id().to_string(), self.thread_item_layout_hash(item)))
                 } else {
                     None
                 }
             })
             .collect::<Vec<_>>();
-        for index in indexes {
+        for (index, id, layout_hash) in updates {
+            self.thread_item_layout_hashes.insert(id, layout_hash);
             self.thread_list_state.splice(index..index + 1, 1);
         }
+    }
+
+    fn thread_item_layout_hash(&self, item: &ThreadListItem) -> u64 {
+        let mut hash = LAYOUT_HASH_SEED;
+        match item {
+            ThreadListItem::TurnHeader { id, header } => {
+                let lines = line_count(&header.plain_text);
+                let is_long = lines > 4 || header.plain_text.len() > 280;
+                let expanded = self
+                    .expanded_turn_headers
+                    .get(id)
+                    .copied()
+                    .unwrap_or(!is_long);
+                hash_mix(&mut hash, 1);
+                hash_mix(&mut hash, expanded as u64);
+                hash_mix(&mut hash, is_long as u64);
+                hash_mix(&mut hash, header.plain_text.len() as u64);
+                hash_mix(&mut hash, lines as u64);
+                hash_mix(&mut hash, header.content.trim().is_empty() as u64);
+                hash_mix(&mut hash, self.attachments_layout_hash(&header.attachments));
+            }
+            ThreadListItem::Item(ThreadItem::Message {
+                id,
+                role,
+                content,
+                attachments,
+                ..
+            }) => {
+                let lines = line_count(content);
+                let is_long = lines > 20 || content.len() > 1500;
+                let expanded = self.expanded_messages.get(id).copied().unwrap_or(!is_long);
+                let role_tag = match role {
+                    MessageRole::User => 1,
+                    MessageRole::Assistant => 2,
+                    MessageRole::System => 3,
+                };
+                hash_mix(&mut hash, 2);
+                hash_mix(&mut hash, role_tag);
+                hash_mix(&mut hash, expanded as u64);
+                hash_mix(&mut hash, is_long as u64);
+                hash_mix(&mut hash, content.len() as u64);
+                hash_mix(&mut hash, lines as u64);
+                hash_mix(&mut hash, self.attachments_layout_hash(attachments));
+            }
+            ThreadListItem::Item(ThreadItem::Assistant { content, .. }) => {
+                let lines = line_count(content);
+                hash_mix(&mut hash, 3);
+                hash_mix(&mut hash, content.len() as u64);
+                hash_mix(&mut hash, lines as u64);
+            }
+            ThreadListItem::Item(ThreadItem::Thought { content, .. }) => {
+                let lines = line_count(content);
+                hash_mix(&mut hash, 4);
+                hash_mix(&mut hash, content.len() as u64);
+                hash_mix(&mut hash, lines as u64);
+            }
+            ThreadListItem::Item(ThreadItem::TurnStatus {
+                status,
+                custom_status,
+                assistant_messages_content,
+                ..
+            }) => {
+                let status_tag = match status {
+                    SessionTurnStatus::Queued => 1,
+                    SessionTurnStatus::Running => 2,
+                    SessionTurnStatus::Completed => 3,
+                    SessionTurnStatus::Interrupted => 4,
+                    SessionTurnStatus::Failed => 5,
+                };
+                let custom_len = custom_status.as_ref().map(|value| value.len()).unwrap_or(0);
+                let has_copy_button = matches!(status, SessionTurnStatus::Completed)
+                    && assistant_messages_content
+                        .as_ref()
+                        .map(|content| !content.trim().is_empty())
+                        .unwrap_or(false);
+                hash_mix(&mut hash, 5);
+                hash_mix(&mut hash, status_tag);
+                hash_mix(&mut hash, custom_len as u64);
+                hash_mix(&mut hash, has_copy_button as u64);
+            }
+            ThreadListItem::Item(ThreadItem::Tool(tool)) => {
+                let expanded = self.expanded_tools.get(&tool.id).copied().unwrap_or(false);
+                hash_mix(&mut hash, 6);
+                hash_mix(&mut hash, self.thread_tool_layout_hash(tool, expanded));
+            }
+            ThreadListItem::Item(ThreadItem::ToolGroup { id, tools, .. }) => {
+                let expanded = self
+                    .expanded_turn_details
+                    .get(id)
+                    .copied()
+                    .unwrap_or(false);
+                hash_mix(&mut hash, 7);
+                hash_mix(&mut hash, expanded as u64);
+                hash_mix(&mut hash, tools.len() as u64);
+                if expanded {
+                    for tool in tools {
+                        let tool_expanded =
+                            self.expanded_tools.get(&tool.id).copied().unwrap_or(false);
+                        hash_mix(&mut hash, self.thread_tool_layout_hash(tool, tool_expanded));
+                    }
+                }
+            }
+            ThreadListItem::Item(ThreadItem::Spacer { .. }) => {
+                hash_mix(&mut hash, 8);
+            }
+        }
+        hash
+    }
+
+    fn attachments_layout_hash(&self, attachments: &[MessageAttachment]) -> u64 {
+        let mut hash = LAYOUT_HASH_SEED;
+        let mut loaded = 0u64;
+        let mut loading = 0u64;
+        let mut failed = 0u64;
+        for attachment in attachments {
+            match attachment {
+                MessageAttachment::ImageRef { blob_id, .. } => {
+                    if self.composer_attachment_loading.contains(blob_id) {
+                        loading += 1;
+                    } else if self.attachment_fetch_failed.contains(blob_id) {
+                        failed += 1;
+                    } else if self.composer_attachment_images.contains_key(blob_id) {
+                        loaded += 1;
+                    }
+                }
+                MessageAttachment::Image { .. } => {
+                    loaded += 1;
+                }
+            }
+        }
+        hash_mix(&mut hash, attachments.len() as u64);
+        hash_mix(&mut hash, loaded);
+        hash_mix(&mut hash, loading);
+        hash_mix(&mut hash, failed);
+        hash
+    }
+
+    fn thread_tool_layout_hash(&self, tool: &ThreadToolItem, expanded: bool) -> u64 {
+        let mut hash = LAYOUT_HASH_SEED;
+        hash_mix(&mut hash, expanded as u64);
+        hash_mix(&mut hash, tool.title.len() as u64);
+        hash_mix(&mut hash, tool.status.len() as u64);
+        if expanded {
+            let input_len = tool
+                .input
+                .as_ref()
+                .map(|value| value.to_string().len())
+                .unwrap_or(0);
+            hash_mix(&mut hash, tool.output_text.len() as u64);
+            hash_mix(&mut hash, input_len as u64);
+            hash_mix(&mut hash, tool.output_text.trim().is_empty() as u64);
+            hash_mix(&mut hash, (input_len == 0) as u64);
+        }
+        hash
     }
 
     fn update_sticky_turn_header(&mut self, visible_range: std::ops::Range<usize>) {
@@ -916,6 +1103,22 @@ impl ShellView {
         }
         self.sticky_turn_header = header;
     }
+}
+
+fn hash_mix(state: &mut u64, value: u64) {
+    *state ^= value;
+    *state = state.wrapping_mul(LAYOUT_HASH_PRIME);
+}
+
+fn line_count(text: &str) -> usize {
+    if text.is_empty() {
+        return 1;
+    }
+    text.as_bytes()
+        .iter()
+        .filter(|byte| **byte == b'\n')
+        .count()
+        + 1
 }
 
 fn build_turn_tool_snapshots(
