@@ -28,7 +28,6 @@ use super::super::state::{
 const SIDEBAR_BG: Rgba = rgba(24, 24, 24, 1.0);
 const SEARCH_BG: Rgba = rgba(255, 255, 255, 0.04);
 const BUTTON_BG: Rgba = rgba(255, 255, 255, 0.04);
-const COLLAPSE_BG: Rgba = rgba(255, 255, 255, 0.03);
 const HOVER_BG: Rgba = rgba(255, 255, 255, 0.04);
 const ACTIVE_BG: Rgba = rgba(255, 255, 255, 0.06);
 const MUTED_ICON: Rgba = rgba(255, 255, 255, 0.62);
@@ -214,6 +213,7 @@ impl<'a> SidebarView<'a> {
             .id("sidebar")
             .flex()
             .flex_col()
+            .relative()
             .w(px(sidebar_width))
             .min_w(px(0.0))
             .overflow_hidden()
@@ -297,20 +297,24 @@ impl<'a> SidebarView<'a> {
         let shell = self.shell;
 
         let new_task_button = div()
-            .w_full()
-            .px(px(10.0))
-            .py(px(7.0))
-            .rounded(px(10.0))
+            .w(px(28.0))
+            .h(px(28.0))
+            .rounded(px(8.0))
             .border_1()
             .border_color(shell.colors.border)
             .bg(BUTTON_BG)
-            .text_size(px(13.0))
-            .text_center()
-            .child("New Task")
+            .flex()
+            .items_center()
+            .justify_center()
             .cursor_pointer()
             .id("sidebar-new-task")
             .active(|style| style.opacity(0.85))
-            .on_click(cx.listener(ShellView::focus_new_task));
+            .on_click(cx.listener(ShellView::focus_new_task))
+            .child(Icon::new(
+                IconName::SquarePen,
+                14.0,
+                shell.colors.text,
+            ));
         let new_task = div()
             .on_children_prepainted(automation_tree::track_children_bounds(
                 "sidebar-new-task",
@@ -319,34 +323,6 @@ impl<'a> SidebarView<'a> {
                 Some("app-shell"),
             ))
             .child(new_task_button);
-
-        let collapse = div()
-            .w(px(26.0))
-            .h(px(26.0))
-            .rounded(px(8.0))
-            .border_1()
-            .border_color(shell.colors.border)
-            .bg(COLLAPSE_BG)
-            .flex()
-            .items_center()
-            .justify_center()
-            .text_size(px(16.0))
-            .text_color(shell.colors.text)
-            .child("‹")
-            .cursor_pointer()
-            .id("sidebar-collapse")
-            .active(|style| style.opacity(0.85))
-            .on_click(cx.listener(|view, _: &ClickEvent, _window, cx| {
-                view.set_sidebar_collapsed(true, cx);
-            }));
-        let collapse = div()
-            .on_children_prepainted(automation_tree::track_children_bounds(
-                "sidebar-collapse",
-                "button",
-                Some("Collapse"),
-                Some("app-shell"),
-            ))
-            .child(collapse);
 
         let search = Input::new(&shell.task_search_input)
             .appearance(false)
@@ -361,25 +337,20 @@ impl<'a> SidebarView<'a> {
             .bg(SEARCH_BG)
             .text_size(px(13.0))
             .text_color(shell.colors.text)
-            .w_full();
+            .flex_1()
+            .min_w(px(0.0));
 
         div()
-            .px(px(12.0))
+            .pl(px(12.0))
+            .pr(px(30.0))
             .py(px(12.0))
             .flex()
-            .flex_col()
-            .gap(px(10.0))
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .gap(px(8.0))
-                    .child(new_task)
-                    .child(collapse),
-            )
+            .items_center()
+            .gap(px(8.0))
             .child(search)
+            .child(new_task)
     }
+
 
     fn render_task_list(&self, cx: &mut Context<ShellView>) -> impl IntoElement {
         let shell = self.shell;

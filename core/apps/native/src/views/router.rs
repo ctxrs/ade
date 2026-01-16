@@ -38,6 +38,11 @@ impl<'a> RouterView<'a> {
         } else {
             div().into_any_element()
         };
+        let sidebar_collapse = if self.shell.route == ShellRoute::Workbench && !self.shell.sidebar_collapsed {
+            self.render_sidebar_collapse_tab(cx).into_any_element()
+        } else {
+            div().into_any_element()
+        };
 
         div()
             .flex()
@@ -48,6 +53,7 @@ impl<'a> RouterView<'a> {
             .child(main)
             .child(resizer)
             .child(sidebar_expand)
+            .child(sidebar_collapse)
     }
 
     fn render_sidebar_resizer(&self, cx: &mut Context<ShellView>) -> impl IntoElement {
@@ -101,27 +107,31 @@ impl<'a> RouterView<'a> {
 
     fn render_sidebar_expand(&self, cx: &mut Context<ShellView>) -> impl IntoElement {
         let metrics = ThemeMetrics::default();
+        let tab_bg = rgba(255, 255, 255, 0.04);
         let expand_button = div()
             .id("sidebar-expand")
             .absolute()
             .top(px(metrics.spacing.xl))
-            .left_0()
-            .w(px(24.0))
-            .h(px(36.0))
+            .left(px(0.0))
+            .w(px(28.0))
+            .h(px(28.0))
             .flex()
             .items_center()
             .justify_center()
-            .rounded_lg()
+            .rounded_tl(px(8.0))
+            .rounded_bl(px(8.0))
+            .rounded_tr(px(0.0))
+            .rounded_br(px(0.0))
             .border_1()
             .border_color(self.shell.colors.border)
-            .bg(self.shell.colors.panel_2)
+            .bg(tab_bg)
             .cursor_pointer()
             .active(|style| style.opacity(0.85))
             .on_click(cx.listener(|view, _: &ClickEvent, _window, cx| {
                 view.set_sidebar_collapsed(false, cx);
             }))
             .child(Icon::new(
-                IconName::ChevronRight,
+                IconName::ChevronsRight,
                 14.0,
                 self.shell.colors.text,
             ));
@@ -133,6 +143,47 @@ impl<'a> RouterView<'a> {
                 Some("app-shell"),
             ))
             .child(expand_button)
+    }
+
+    fn render_sidebar_collapse_tab(&self, cx: &mut Context<ShellView>) -> impl IntoElement {
+        let metrics = ThemeMetrics::default();
+        let tab_bg = rgba(255, 255, 255, 0.04);
+        let left = (self.shell.sidebar_width - 29.0).max(0.0);
+        let collapse_button = div()
+            .id("sidebar-collapse")
+            .absolute()
+            .top(px(metrics.spacing.xl))
+            .left(px(left))
+            .w(px(28.0))
+            .h(px(28.0))
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded_tr(px(8.0))
+            .rounded_br(px(8.0))
+            .rounded_tl(px(0.0))
+            .rounded_bl(px(0.0))
+            .border_1()
+            .border_color(self.shell.colors.border)
+            .bg(tab_bg)
+            .cursor_pointer()
+            .active(|style| style.opacity(0.85))
+            .on_click(cx.listener(|view, _: &ClickEvent, _window, cx| {
+                view.set_sidebar_collapsed(true, cx);
+            }))
+            .child(Icon::new(
+                IconName::ChevronsLeft,
+                14.0,
+                self.shell.colors.text,
+            ));
+        div()
+            .on_children_prepainted(automation_tree::track_children_bounds(
+                "sidebar-collapse",
+                "button",
+                Some("Collapse"),
+                Some("app-shell"),
+            ))
+            .child(collapse_button)
     }
 
     fn render_workbench(&self, cx: &mut Context<ShellView>) -> impl IntoElement {
