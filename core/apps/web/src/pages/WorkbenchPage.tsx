@@ -35,6 +35,7 @@ import {
   deleteTask,
   daemonFetchRaw,
   getDaemonBaseUrl,
+  getHealth,
   getSessionDiff,
   resolveDaemonWsBaseUrl,
   getInstall,
@@ -112,6 +113,18 @@ function deriveTaskTitle(_prompt: string): string {
 }
 
 const ARCHIVE_CONFIRM_STORAGE_KEY = "wb.archiveConfirmDismissed";
+
+const joinDaemonPath = (root: string, ...parts: string[]) => {
+  const sep = root.includes("\") ? "\" : "/";
+  const cleanedRoot = root.replace(/[\/]+$/, "");
+  const cleanedParts = parts.map((part) => String(part).replace(/^[\/]+|[\/]+$/g, ""));
+  return [cleanedRoot, ...cleanedParts].filter(Boolean).join(sep);
+};
+
+const deriveManagedWorktreeRoot = (dataRoot: string | null, workspaceId: string, worktreeId: string): string => {
+  if (!dataRoot) return "";
+  return joinDaemonPath(dataRoot, "worktrees", workspaceId, worktreeId);
+};
 
 type AnchorRect = {
   left: number;
@@ -651,6 +664,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const [sidebarWidth, setSidebarWidth] = useState(260);
   const [sidebarResizing, setSidebarResizing] = useState(false);
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
+  const [daemonDataRoot, setDaemonDataRoot] = useState<string | null>(null);
   const [providers, setProviders] = useState<ProviderStatus[]>([]);
   const [providerInstallsById, setProviderInstallsById] = useState<
     Record<
@@ -992,6 +1006,24 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       cancelled = true;
     };
   }, [navigate, workspaceId]);
+
+  useEffect(() => {
+    if (!workspaceId) return;
+    let cancelled = false;
+    getHealth()
+      .then((health) => {
+        if (cancelled) return;
+        const root = String(health.data_root ?? "").trim();
+        setDaemonDataRoot(root || null);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setDaemonDataRoot(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [workspaceId]);
 
   const attachProviderInstall = useCallback((providerId: string, installId: string) => {
     setProviderInstallsById((prev) => {
@@ -1854,10 +1886,13 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const activeEntry = useSessionEntry(activeSessionId ?? "");
   const activeSessionDiff = activeEntry?.diff ?? "";
   const activeWorktreeId = activeEntry?.session ? idToString(activeEntry.session.worktree_id) : "";
+  const activeTaskArchived = Boolean(activeTaskSummary?.task?.archived_at);
   const [webSessions, setWebSessions] = useState<WebSessionInfo[]>([]);
   const [webSessionsLoading, setWebSessionsLoading] = useState(false);
   const [activeWebSessionId, setActiveWebSessionId] = useState<string | null>(null);
   const [activeSessionKind, setActiveSessionKind] = useState("web");
+  // TODO: Re-enable web sessions once the feature is ready to ship again.
+  const webSessionsEnabled = false;
 
   useEffect(() => {
     if (!activeWorktreeId) {
@@ -1865,8 +1900,26 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       return;
     }
     const cached = worktreeCacheRef.current.get(activeWorktreeId);
-    if (cached) {
+    if (cached && (!activeTaskArchived || cached.base_commit_sha)) {
       setActiveWorktree(cached);
+      return;
+    }
+    if (!activeTaskArchived) {
+      const cachedRoot = workspaceSnapshotStore.getWorktreeRoot(activeWorktreeId);
+      const derivedRoot = cachedRoot || deriveManagedWorktreeRoot(daemonDataRoot, workspaceId, activeWorktreeId);
+      if (derivedRoot) {
+        const derived: Worktree = {
+          id: activeWorktreeId,
+          workspace_id: workspaceId,
+          root_path: derivedRoot,
+          base_commit_sha: "",
+          created_at: "",
+        };
+        worktreeCacheRef.current.set(activeWorktreeId, derived);
+        setActiveWorktree(derived);
+      } else {
+        setActiveWorktree(null);
+      }
       return;
     }
 
@@ -1896,7 +1949,14 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     return () => {
       cancelled = true;
     };
-  }, [activeWorktreeId]);
+  }, [
+    activeTaskArchived,
+    activeWorktreeId,
+    daemonDataRoot,
+    workspaceId,
+    workspaceSnapshot,
+    workspaceSnapshotStore,
+  ]);
 
   const refreshWebSessions = useCallback(async () => {
     if (!activeSessionId) {
@@ -1920,6 +1980,8 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   }, [activeSessionId]);
 
   useEffect(() => {
+    // TODO: Re-enable web sessions polling/refresh when the feature returns.
+    /*
     let cancelled = false;
     const run = async () => {
       if (cancelled) return;
@@ -1932,6 +1994,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       cancelled = true;
       window.clearInterval(timer);
     };
+    */
   }, [activeSessionId, refreshWebSessions]);
 
   useEffect(() => {
@@ -1945,16 +2008,16 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   }, [activeWebSessionId, webSessions]);
 
   const daemonBaseUrl = useMemo(() => getDaemonBaseUrl() ?? window.location.origin, []);
-  const sessionSections = useMemo(
-    () => [
+  const sessionSections = useMemo(() => {
+    if (!webSessionsEnabled) return [];
+    return [
       {
         key: "web",
         label: "Web Sessions",
         sessions: webSessions,
       },
-    ],
-    [webSessions],
-  );
+    ];
+  }, [webSessions, webSessionsEnabled]);
 
   useEffect(() => {
     if (!sessionSections.length) return;
@@ -1966,7 +2029,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const hasDiff = activeSessionDiff.trim().length > 0;
   const showReviewPane = diffOpen;
   const showArtifactsPane = artifactsOpen;
-  const showSessionsPane = sessionsOpen;
+  const showSessionsPane = webSessionsEnabled && sessionsOpen;
   const rightPaneOpen = showReviewPane || showArtifactsPane || showSessionsPane;
   const artifacts = useMemo(() => {
     if (!activeSessionId) return [];
@@ -1976,7 +2039,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     ? sessionCache.sessions[activeSessionId]?.artifactsLoading ?? false
     : false;
   const artifactsCount = artifacts.length;
-  const sessionsCount = webSessions.length;
+  const sessionsCount = webSessionsEnabled ? webSessions.length : 0;
   const diffFileCount = useMemo(() => {
     if (!hasDiff) return 0;
     const m = activeSessionDiff.match(/^diff --git /gm);

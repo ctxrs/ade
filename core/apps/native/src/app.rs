@@ -39,9 +39,9 @@ mod views;
 use self::icons::{AppAssets, Icon, IconName};
 use self::models::{MessageItem, SessionInfo};
 use self::state::{
-    ArtifactPreviewState, ComposerAutocompleteState, ComposerDraft, ComposerVerbosity, DataLoadState,
-    DiffReviewState, SessionViewVerbosity, SettingsState, StreamStatus, TaskFetchState,
-    TerminalPanelState, WorkbenchModeId,
+    ArtifactPreviewState, AtsCache, ComposerAutocompleteState, ComposerDraft, ComposerVerbosity,
+    DataLoadState, DiffReviewState, SessionViewVerbosity, SettingsState, StreamStatus,
+    TaskFetchState, TerminalPanelState, WorkbenchModeId,
 };
 use ctx_client::EnvTarget;
 use self::views::RouterView;
@@ -234,6 +234,7 @@ fn create_shell_view(
             artifact_preview: ArtifactPreviewState::None,
             session_events: Vec::new(),
             session_thread_cache: HashMap::new(),
+            session_head_meta: HashMap::new(),
             session_summary_map: HashMap::new(),
             session_last_event_seq: HashMap::new(),
             session: SessionInfo::placeholder(),
@@ -297,6 +298,7 @@ fn create_shell_view(
             composer_attachment_images: HashMap::new(),
             composer_attachment_loading: HashSet::new(),
             attachment_fetch_failed: HashSet::new(),
+            ats_cache: AtsCache::new(),
             composer_subscriptions: Vec::new(),
             composer_subscriptions_set: false,
             thread_list_state: ListState::new(0, ListAlignment::Bottom, px(160.0)),

@@ -201,7 +201,7 @@ impl ShellView {
     fn apply_workspace_event(&mut self, event: WorkspaceActiveSnapshotEvent, cx: &mut Context<Self>) {
         match event {
             WorkspaceActiveSnapshotEvent::ActiveTaskUpsert { task, .. } => {
-                self.upsert_active_task_summary(*task);
+                self.upsert_active_task_summary(*task, cx);
                 self.send_stream_subscribe();
                 self.maybe_mark_selected_task_read(cx);
                 cx.notify();
@@ -252,6 +252,7 @@ impl ShellView {
         if !self.is_session_selected(session_id) {
             if let Some(cache) = self.session_thread_cache.get_mut(&session_id) {
                 apply_delta_to_cache(cache, delta);
+                self.persist_cached_session_head(session_id, cx);
             }
             return;
         }
@@ -290,6 +291,7 @@ impl ShellView {
         }
 
         self.cache_session_thread_state(session_id);
+        self.persist_cached_session_head(session_id, cx);
         cx.notify();
     }
 

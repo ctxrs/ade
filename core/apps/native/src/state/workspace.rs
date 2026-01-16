@@ -172,7 +172,7 @@ impl ShellView {
                 }
                 match result {
                     Ok(data) => {
-                        view.apply_active_snapshot(data.active_snapshot);
+                        view.apply_active_snapshot(data.active_snapshot, cx);
                         let keep_new_task = view.new_task_mode_locked;
                         let selected_session_id = if keep_new_task {
                             None
@@ -314,7 +314,11 @@ impl ShellView {
         }
     }
 
-    fn apply_active_snapshot(&mut self, snapshot: WorkspaceActiveSnapshot) {
+    fn apply_active_snapshot(
+        &mut self,
+        snapshot: WorkspaceActiveSnapshot,
+        cx: &mut Context<Self>,
+    ) {
         self.task_store_initialized = true;
         self.task_fetch_active = super::TaskFetchState::Idle;
         self.task_fetch_archived = super::TaskFetchState::Idle;
@@ -325,12 +329,13 @@ impl ShellView {
         self.task_active_order.clear();
         self.task_archived_order.clear();
         self.session_thread_cache.clear();
+        self.session_head_meta.clear();
         self.session_last_event_seq.clear();
 
         for summary in snapshot.active.tasks {
             let item = TaskSummaryItem::from_active(&summary);
             self.tasks_by_id.insert(item.id, item);
-            self.cache_session_snapshot(&summary.primary_session, &summary.primary_session_head);
+            self.cache_session_snapshot(&summary.primary_session, &summary.primary_session_head, cx);
         }
         self.rebuild_task_orders();
         self.rebuild_session_state();
@@ -365,9 +370,9 @@ impl ShellView {
             let mut cx = cx.clone();
             async move {
                 let result = task.await;
-                this.update(&mut cx, |view, _cx| match result {
+                this.update(&mut cx, |view, cx| match result {
                     Ok(snapshot) => {
-                        view.apply_active_snapshot(snapshot);
+                        view.apply_active_snapshot(snapshot, cx);
                         view.send_stream_subscribe();
                         view.task_fetch_active = super::TaskFetchState::Idle;
                     }
@@ -472,10 +477,14 @@ impl ShellView {
         }
     }
 
-    pub(crate) fn upsert_active_task_summary(&mut self, summary: WorkspaceActiveTaskSummary) {
+    pub(crate) fn upsert_active_task_summary(
+        &mut self,
+        summary: WorkspaceActiveTaskSummary,
+        cx: &mut Context<Self>,
+    ) {
         let item = TaskSummaryItem::from_active(&summary);
         self.tasks_by_id.insert(item.id, item);
-        self.cache_session_snapshot(&summary.primary_session, &summary.primary_session_head);
+        self.cache_session_snapshot(&summary.primary_session, &summary.primary_session_head, cx);
         self.rebuild_task_orders();
         self.rebuild_session_state();
     }
@@ -541,15 +550,18 @@ impl ShellView {
         &mut self,
         summary: &SessionSnapshotSummary,
         head: &SessionHeadSnapshot,
+        cx: &mut Context<Self>,
     ) {
         let cache = SessionThreadCache::from_snapshot(head);
         self.session_thread_cache
             .insert(summary.session.id, cache);
+        self.update_session_head_meta(summary.session.id, head);
         let mut seq = summary.last_event_seq.unwrap_or(head.last_event_seq);
         if let Some(prev) = self.session_last_event_seq.get(&summary.session.id) {
             seq = seq.max(*prev);
         }
         self.session_last_event_seq.insert(summary.session.id, seq);
+        self.persist_cached_session_head(summary.session.id, cx);
     }
 
     pub(crate) fn focus_task(

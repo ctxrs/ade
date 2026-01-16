@@ -26,6 +26,7 @@ export type WorkspaceActiveSnapshotItem = {
   task: Task;
   sessions: SessionSnapshotSummary[];
   primarySessionHead?: SessionHeadSnapshot | null;
+  primarySessionId?: string | null;
   sort_at?: string | null;
   sortAtMs: number;
 };
@@ -52,6 +53,8 @@ export type WorkspaceActiveSnapshotEventSource = {
   subscribe: (listener: () => void) => () => void;
   subscribeEvents: (listener: (event: WorkspaceActiveSnapshotEvent) => void) => () => void;
   getSnapshot: () => WorkspaceActiveSnapshotState;
+  getSessionHeadSnapshot: (sessionId: string) => SessionHeadSnapshot | null;
+  getWorktreeRoot: (worktreeId: string) => string | null;
   setSubscriptions: (subscriptions: WorkspaceActiveSnapshotSessionSubscription[]) => void;
 };
 
@@ -108,6 +111,8 @@ class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSo
   private eventListeners = new Set<(event: WorkspaceActiveSnapshotEvent) => void>();
   private snapshot: WorkspaceActiveSnapshotState;
   private tasks = new Map<string, WorkspaceActiveSnapshotItem>();
+  private sessionHeadsById = new Map<string, SessionHeadSnapshot>();
+  private worktreeRootsById = new Map<string, string>();
   private activeOrder: string[] = [];
   private archivedOrder: string[] = [];
   private totalActive = 0;
@@ -156,6 +161,18 @@ class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSo
   };
 
   getSnapshot = (): WorkspaceActiveSnapshotState => this.snapshot;
+
+  getSessionHeadSnapshot = (sessionId: string): SessionHeadSnapshot | null => {
+    const id = idToString(sessionId);
+    if (!id) return null;
+    return this.sessionHeadsById.get(id) ?? null;
+  };
+
+  getWorktreeRoot = (worktreeId: string): string | null => {
+    const id = idToString(worktreeId);
+    if (!id) return null;
+    return this.worktreeRootsById.get(id) ?? null;
+  };
 
   setSubscriptions = (subscriptions: WorkspaceActiveSnapshotSessionSubscription[]) => {
     const next = normalizeSubscriptions(subscriptions, this.sessionLastEventSeq);
@@ -249,6 +266,7 @@ class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSo
           }
         }
         this.activeOrder = [];
+        this.sessionHeadsById.clear();
       }
 
       const activeTasks = snapshot.active.tasks ?? [];
@@ -472,8 +490,16 @@ class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSo
         break;
       case "session_head_delta":
       case "session_gap":
-      case "worktree_bootstrap":
         break;
+      case "worktree_bootstrap": {
+        const worktreeId = idToString(evt.notice.worktree_id);
+        const root = String(evt.notice.worktree_root ?? "").trim();
+        if (worktreeId && root && this.worktreeRootsById.get(worktreeId) !== root) {
+          this.worktreeRootsById.set(worktreeId, root);
+          this.publish();
+        }
+        break;
+      }
       default:
         break;
     }
@@ -519,6 +545,9 @@ class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSo
     if (!deleteId) return;
     const existing = this.tasks.get(deleteId);
     if (!existing) return;
+    if (existing.primarySessionId) {
+      this.sessionHeadsById.delete(existing.primarySessionId);
+    }
     this.tasks.delete(deleteId);
     this.activeOrder = this.activeOrder.filter((id) => id !== deleteId);
     this.archivedOrder = this.archivedOrder.filter((id) => id !== deleteId);
@@ -535,6 +564,9 @@ class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSo
   private upsertActiveSummary(summary: WorkspaceActiveTaskSummary) {
     const normalized = this.normalizeActiveSummary(summary);
     const existing = this.tasks.get(normalized.id);
+    if (existing?.primarySessionId && existing.primarySessionId !== normalized.primarySessionId) {
+      this.sessionHeadsById.delete(existing.primarySessionId);
+    }
     this.tasks.set(normalized.id, normalized);
     if (existing) {
       this.updateCountsForMove(existing, normalized);
@@ -594,6 +626,11 @@ class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSo
   private normalizeActiveSummary(summary: WorkspaceActiveTaskSummary): WorkspaceActiveSnapshotItem {
     const id = idToString(summary.task.id);
     const sortAtMs = Date.parse(summary.sort_at ?? "") || Date.now();
+    const primarySessionId = idToString(summary.primary_session?.session?.id ?? "");
+    const primaryHeadId = idToString(summary.primary_session_head?.session?.id ?? "");
+    if (primaryHeadId) {
+      this.sessionHeadsById.set(primaryHeadId, summary.primary_session_head);
+    }
     const primary = summary.primary_session ? [this.normalizeSessionSummary(summary.primary_session)] : [];
     const sessions = summary.sessions.map((s) => this.normalizeSessionSummary(s));
     const merged: SessionSnapshotSummary[] = [];
@@ -612,6 +649,7 @@ class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSo
       task: { ...summary.task },
       sessions: sortSessionSummaries(merged),
       primarySessionHead: summary.primary_session_head ?? null,
+      primarySessionId: primarySessionId || null,
       sortAtMs,
       sort_at: summary.sort_at ?? null,
     };

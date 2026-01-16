@@ -956,6 +956,8 @@ async fn main() -> Result<()> {
                                 "additionalProperties": false
                             }
                         },
+                        // TODO: Re-enable web session MCP tool definitions.
+                        /*
                         {
                             "name": "session_create",
                             "title": "Create Session",
@@ -1058,6 +1060,7 @@ async fn main() -> Result<()> {
                                 "additionalProperties": false
                             }
                         }
+                        */
                     ]
                 }),
             ),
@@ -1762,6 +1765,8 @@ async fn main() -> Result<()> {
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
+                    // TODO: Re-enable web session MCP tool handlers.
+                    /*
                     "session_create" => {
                         match session_create_call(&client, &daemon_url, &arguments).await {
                             Ok(val) => ok(id.unwrap(), tool_ok(val)),
@@ -1798,6 +1803,7 @@ async fn main() -> Result<()> {
                             Err(e) => ok(id.unwrap(), tool_err(e)),
                         }
                     }
+                    */
                     _ => error(
                         id.unwrap(),
                         -32601,
@@ -2713,6 +2719,7 @@ async fn discard_edit_plan_call(
     Ok(res.json::<Value>().await?)
 }
 
+#[allow(dead_code)]
 async fn session_create_call(
     client: &reqwest::Client,
     daemon_url: &str,
@@ -2763,6 +2770,7 @@ async fn session_create_call(
     .await
 }
 
+#[allow(dead_code)]
 async fn session_list_call(
     client: &reqwest::Client,
     daemon_url: &str,
@@ -2776,6 +2784,7 @@ async fn session_list_call(
     daemon_get_json(client, daemon_url, "/api/sessions/web").await
 }
 
+#[allow(dead_code)]
 async fn session_info_call(
     client: &reqwest::Client,
     daemon_url: &str,
@@ -2793,6 +2802,7 @@ async fn session_info_call(
     .await
 }
 
+#[allow(dead_code)]
 async fn session_run_call(
     client: &reqwest::Client,
     daemon_url: &str,
@@ -2823,6 +2833,7 @@ async fn session_run_call(
     .await
 }
 
+#[allow(dead_code)]
 async fn session_close_call(
     client: &reqwest::Client,
     daemon_url: &str,

@@ -19,8 +19,10 @@ vi.mock("../api/client", () => {
 vi.mock("./uiStateStore", () => ({
   loadSessionAcpMetaV1: vi.fn(async () => null),
   loadSessionHeadV1: vi.fn(async () => null),
+  loadSessionHistoryPageV1: vi.fn(async () => null),
   saveSessionAcpMetaV1: vi.fn(async () => {}),
   saveSessionHeadV1: vi.fn(async () => {}),
+  saveSessionHistoryPageV1: vi.fn(async () => {}),
 }));
 
 import { getSessionSnapshot } from "../api/client";
@@ -113,6 +115,8 @@ describe("SessionSupervisor", () => {
         return () => listeners.delete(listener);
       },
       setSubscriptions: (_subs) => {},
+      getSessionHeadSnapshot: () => null,
+      getWorktreeRoot: () => null,
       getSnapshot: () => ({
         workspaceId: "ws-1",
         initialized: true,

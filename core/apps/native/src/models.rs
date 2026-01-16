@@ -10,12 +10,12 @@ use ctx_core::models::{
     SessionHeadSnapshot, SessionHistoryPage, SessionMetadata, SessionSnapshotSummary,
     SessionStatus, SessionTurn, SessionTurnStatus, SessionTurnTool, SessionTurnToolSummary,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 pub(crate) use ctx_core::models::MessageAttachment;
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct MessageItem {
     pub(crate) id: Option<MessageId>,
     pub(crate) turn_id: Option<TurnId>,
@@ -388,7 +388,7 @@ impl ThreadListItem {
 }
 
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct TurnToolSnapshot {
     pub(crate) tool_call_id: String,
     pub(crate) turn_id: TurnId,

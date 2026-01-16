@@ -23,7 +23,14 @@ import {
   type WorkspaceActiveSnapshotEvent,
 } from "../api/client";
 import type { WorkspaceActiveSnapshotEventSource, WorkspaceActiveSnapshotState } from "./workspaceActiveSnapshotStore";
-import { loadSessionAcpMetaV1, loadSessionHeadV1, saveSessionAcpMetaV1, saveSessionHeadV1 } from "./uiStateStore";
+import {
+  loadSessionAcpMetaV1,
+  loadSessionHeadV1,
+  loadSessionHistoryPageV1,
+  saveSessionAcpMetaV1,
+  saveSessionHeadV1,
+  saveSessionHistoryPageV1,
+} from "./uiStateStore";
 
 const readTunableInt = (key: string, fallback: number) => {
   try {
@@ -260,6 +267,18 @@ export class SessionSupervisor {
     }
     entry.fetching.history = true;
     try {
+      const cached = await loadSessionHistoryPageV1(sessionId, beforeSeq, TURN_PAGE_LIMIT);
+      if (cached?.page) {
+        const page = cached.page;
+        this.mergeTurns(entry, page.turns);
+        this.mergeMessages(entry, page.messages);
+        entry.hasMoreTurns = page.has_more;
+        entry.oldestTurnSeq = page.next_cursor ?? entry.oldestTurnSeq;
+        entry.updatedAtMs = Date.now();
+        this.publish();
+        await this.persistHead(entry);
+        return;
+      }
       const page = await getSessionHistory(sessionId, beforeSeq, TURN_PAGE_LIMIT);
       this.mergeTurns(entry, page.turns);
       this.mergeMessages(entry, page.messages);
@@ -267,6 +286,7 @@ export class SessionSupervisor {
       entry.oldestTurnSeq = page.next_cursor ?? entry.oldestTurnSeq;
       entry.updatedAtMs = Date.now();
       this.publish();
+      await saveSessionHistoryPageV1(sessionId, beforeSeq, TURN_PAGE_LIMIT, page);
       await this.persistHead(entry);
     } finally {
       entry.fetching.history = false;
@@ -596,6 +616,9 @@ export class SessionSupervisor {
     try {
       const cached = await loadSessionHeadV1(entry.sessionId);
       if (!cached?.head) return;
+      const cachedSeq = typeof cached.head.last_event_seq === "number" ? cached.head.last_event_seq : -1;
+      const currentSeq = typeof entry.lastEventSeq === "number" ? entry.lastEventSeq : -1;
+      if (currentSeq >= 0 && cachedSeq >= 0 && cachedSeq < currentSeq) return;
       if (entry.turnsHydrated && !entry.headFromCache) return;
       this.applyHead(entry, cached.head, { fromCache: true });
       const cachedMeta = await loadSessionAcpMetaV1(entry.sessionId);
@@ -622,13 +645,7 @@ export class SessionSupervisor {
   private seedHeadFromActiveSnapshot(entry: InternalEntry): boolean {
     const store = this.snapshotStore;
     if (!store) return false;
-    const state = store.getSnapshot();
-    for (const taskId of state.activeIds) {
-      const item = state.tasksById[taskId];
-      const head = item?.primarySessionHead;
-      if (!head) continue;
-      const sessionId = idToString(head.session?.id);
-      if (!sessionId || sessionId !== entry.sessionId) continue;
+    const applySnapshot = (head: SessionHeadSnapshot): boolean => {
       const nextSeq = typeof head.last_event_seq === "number" ? head.last_event_seq : -1;
       const prevSeq = typeof entry.lastEventSeq === "number" ? entry.lastEventSeq : -1;
       if (entry.turnsHydrated && prevSeq >= nextSeq) {
@@ -640,6 +657,19 @@ export class SessionSupervisor {
       }
       this.applyHead(entry, head as SessionHead);
       return true;
+    };
+
+    const direct = store.getSessionHeadSnapshot(entry.sessionId);
+    if (direct && applySnapshot(direct)) return true;
+
+    const state = store.getSnapshot();
+    for (const taskId of state.activeIds) {
+      const item = state.tasksById[taskId];
+      const head = item?.primarySessionHead;
+      if (!head) continue;
+      const sessionId = idToString(head.session?.id);
+      if (!sessionId || sessionId !== entry.sessionId) continue;
+      return applySnapshot(head);
     }
     return false;
   }
@@ -1121,6 +1151,7 @@ export class SessionSupervisor {
       return false;
     }
     this.applyHead(entry, head as SessionHead);
+    void this.persistHead(entry);
     entry.error = undefined;
     return true;
   }

@@ -534,6 +534,9 @@ struct WorkbenchShellView: View {
         do {
             let params = DaemonAPIClient.WorkspaceActiveSnapshotParams(limit: 50)
             let activeSnapshot = try await client.getWorkspaceActiveSnapshot(workspaceId: workspaceId, params: params)
+            _Concurrency.Task {
+                await ATSHeadCache.shared.store(heads: activeSnapshot.active.tasks.map { $0.primarySessionHead })
+            }
             lastStreamSnapshotRev = activeSnapshot.snapshotRev
             let activeSummaries = activeSnapshot.active.tasks.map(WorkspaceTaskSummary.init)
             let workspaceTasks = try await client.listWorkspaceTasks(workspaceId: workspaceId)
@@ -922,10 +925,13 @@ struct WorkbenchShellView: View {
         switch event {
         case .activeTaskUpsert(_, _, let task):
             upsertTaskSummary(WorkspaceTaskSummary(activeSummary: task))
+            _Concurrency.Task { await ATSHeadCache.shared.store(head: task.primarySessionHead) }
         case .activeTaskDelete(_, _, let taskId):
             removeTask(taskId: taskId.stringValue)
         case .sessionSummary(_, _, let summary):
             applySessionSummary(summary)
+        case .sessionHeadDelta(_, _, let delta):
+            _Concurrency.Task { await ATSHeadCache.shared.apply(delta: delta) }
         case .sessionGap:
             _Concurrency.Task { await loadTasks() }
         default:

@@ -1,4 +1,5 @@
 pub(super) mod artifacts;
+pub(super) mod ats_cache;
 pub(super) mod composer;
 pub(super) mod diff_review;
 pub(super) mod session;
@@ -35,6 +36,8 @@ use super::ui_state::UiStateStore;
 
 use super::models::{MessageItem, SessionInfo, ThreadListItem, TurnToolSnapshot, WorkbenchTurnHeader};
 use super::workspace_summary::{SessionSummaryItem, TaskSummaryItem};
+pub(crate) use ats_cache::AtsCache;
+use ats_cache::SessionHeadMeta;
 use session::SessionThreadCache;
 
 pub(crate) use artifacts::ArtifactPreviewState;
@@ -196,6 +199,7 @@ pub(crate) struct ShellView {
     pub(crate) artifact_preview: ArtifactPreviewState,
     pub(crate) session_events: Vec<SessionEvent>,
     pub(crate) session_thread_cache: HashMap<SessionId, SessionThreadCache>,
+    pub(crate) session_head_meta: HashMap<SessionId, SessionHeadMeta>,
     pub(crate) session_summary_map: HashMap<SessionId, SessionSnapshotSummary>,
     pub(crate) session: SessionInfo,
     pub(crate) data_state: DataLoadState,
@@ -258,6 +262,7 @@ pub(crate) struct ShellView {
     pub(crate) composer_attachment_images: HashMap<String, Arc<Image>>,
     pub(crate) composer_attachment_loading: HashSet<String>,
     pub(crate) attachment_fetch_failed: HashSet<String>,
+    pub(crate) ats_cache: AtsCache,
     pub(crate) composer_subscriptions: Vec<Subscription>,
     pub(crate) composer_subscriptions_set: bool,
     pub(crate) thread_list_state: ListState,

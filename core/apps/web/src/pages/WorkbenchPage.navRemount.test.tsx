@@ -89,6 +89,13 @@ vi.mock("../api/client", () => ({
   createTask: vi.fn(async () => ({})),
   deleteTask: vi.fn(async () => ({})),
   getDaemonBaseUrl: vi.fn(() => ""),
+  getHealth: vi.fn(async () => ({
+    version: "0.0.0",
+    pid: 1,
+    data_root: "/tmp/ctx",
+    daemon_url: "",
+    auth_required: false,
+  })),
   resolveDaemonWsBaseUrl: vi.fn(() => "ws://localhost:4399"),
   getInstall: vi.fn(async () => ({})),
   getProviderOptions: vi.fn(async () => ({})),
@@ -125,6 +132,7 @@ vi.mock("../state/workspaceActiveSnapshotStore", () => ({
   useWorkspaceActiveSnapshotStore: () => ({
     applyTaskUpdate: vi.fn(),
     ensureArchivedLoaded: vi.fn(),
+    getWorktreeRoot: vi.fn(() => null),
     loadMoreActive: vi.fn(),
     loadMoreArchived: vi.fn(),
   }),

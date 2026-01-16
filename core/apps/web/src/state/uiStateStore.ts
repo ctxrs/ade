@@ -7,6 +7,7 @@ export type UiKvRecord = {
 const DB_NAME = "ctx-ui";
 const DB_VERSION = 1;
 const STORE_NAME = "kv";
+const SESSION_HISTORY_PAGE_LIMIT = 120;
 
 let dbPromise: Promise<IDBDatabase> | null = null;
 
@@ -139,6 +140,80 @@ export async function saveSessionHeadV1(
     head,
     updatedAtMs: Date.now(),
   } satisfies PersistedSessionHeadV1);
+}
+
+export type PersistedSessionHistoryPageV1 = {
+  v: 1;
+  sessionId: string;
+  beforeSeq: number;
+  limit: number;
+  page: import("@ctx/types").SessionHistoryPage;
+  updatedAtMs: number;
+};
+
+type PersistedSessionHistoryIndexV1 = {
+  v: 1;
+  entries: Array<{ key: string; updatedAtMs: number }>;
+};
+
+function sessionHistoryIndexKeyV1() {
+  return "wb.session_history_index.v1";
+}
+
+export function sessionHistoryPageKeyV1(sessionId: string, beforeSeq: number, limit: number) {
+  return "wb.session_history_page.v1." + sessionId + "." + beforeSeq + "." + limit;
+}
+
+function decodeSessionHistoryIndexV1(raw: unknown): PersistedSessionHistoryIndexV1 {
+  if (!raw || typeof raw !== "object") return { v: 1, entries: [] };
+  const rec = raw as PersistedSessionHistoryIndexV1;
+  if (rec.v !== 1 || !Array.isArray(rec.entries)) return { v: 1, entries: [] };
+  const entries = rec.entries.filter(
+    (entry) => entry && typeof entry.key === "string" && typeof entry.updatedAtMs === "number",
+  );
+  return { v: 1, entries };
+}
+
+export async function loadSessionHistoryPageV1(
+  sessionId: string,
+  beforeSeq: number,
+  limit: number,
+): Promise<PersistedSessionHistoryPageV1 | null> {
+  const raw = await uiStateGet(sessionHistoryPageKeyV1(sessionId, beforeSeq, limit));
+  if (!raw || typeof raw !== "object") return null;
+  const rec = raw as PersistedSessionHistoryPageV1;
+  if (rec.v !== 1 || rec.sessionId !== sessionId) return null;
+  return rec;
+}
+
+export async function saveSessionHistoryPageV1(
+  sessionId: string,
+  beforeSeq: number,
+  limit: number,
+  page: PersistedSessionHistoryPageV1["page"],
+): Promise<void> {
+  const key = sessionHistoryPageKeyV1(sessionId, beforeSeq, limit);
+  const now = Date.now();
+  await uiStateSet(key, {
+    v: 1,
+    sessionId,
+    beforeSeq,
+    limit,
+    page,
+    updatedAtMs: now,
+  } satisfies PersistedSessionHistoryPageV1);
+
+  const index = decodeSessionHistoryIndexV1(await uiStateGet(sessionHistoryIndexKeyV1()));
+  const entries = index.entries.filter((entry) => entry.key !== key);
+  entries.unshift({ key, updatedAtMs: now });
+  entries.sort((a, b) => b.updatedAtMs - a.updatedAtMs);
+
+  const pruned = entries.slice(SESSION_HISTORY_PAGE_LIMIT);
+  const trimmed = entries.slice(0, SESSION_HISTORY_PAGE_LIMIT);
+  await uiStateSet(sessionHistoryIndexKeyV1(), { v: 1, entries: trimmed } satisfies PersistedSessionHistoryIndexV1);
+  for (const entry of pruned) {
+    await uiStateDelete(entry.key);
+  }
 }
 
 export type PersistedSessionAcpMetaV1 = {

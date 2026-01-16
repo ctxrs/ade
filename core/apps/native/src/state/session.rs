@@ -30,6 +30,11 @@ struct SessionLoadResult {
     session_snapshot: Option<SessionSnapshot>,
 }
 
+enum HistoryLoadResult {
+    Cached(SessionHistoryPage),
+    Fetched(SessionHistoryPage),
+}
+
 #[derive(Clone, Default)]
 pub(crate) struct SessionThreadCache {
     pub(super) messages: Vec<MessageItem>,
@@ -216,13 +221,24 @@ impl ShellView {
         };
 
         self.session_history_loading = true;
+        let cache = self.ats_cache.clone();
         let task = Tokio::spawn_result(cx, async move {
+            if let Ok(Some(history)) = cache
+                .load_session_history_page(session_id, before_seq, SESSION_HISTORY_PAGE_LIMIT)
+                .await
+            {
+                return Ok(HistoryLoadResult::Cached(history));
+            }
+
             let config = ctx_client::resolve_daemon_config()?;
             let client = ctx_client::Client::new(config)?;
             let history = client
                 .get_session_history(session_id, Some(before_seq), Some(SESSION_HISTORY_PAGE_LIMIT))
                 .await?;
-            Ok(history)
+            let _ = cache
+                .save_session_history_page(before_seq, SESSION_HISTORY_PAGE_LIMIT, &history)
+                .await;
+            Ok(HistoryLoadResult::Fetched(history))
         });
 
         cx.spawn(move |this: WeakEntity<ShellView>, cx: &mut AsyncApp| {
@@ -235,7 +251,8 @@ impl ShellView {
                     }
                     view.session_history_loading = false;
                     match result {
-                        Ok(history) => {
+                        Ok(HistoryLoadResult::Cached(history))
+                        | Ok(HistoryLoadResult::Fetched(history)) => {
                             view.session_history_cursor = history.next_cursor;
                             view.session_history_has_more = history.has_more;
                             view.prepend_session_history(history, cx);

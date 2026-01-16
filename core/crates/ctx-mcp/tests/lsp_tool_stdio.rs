@@ -103,6 +103,7 @@ async fn mcp_lsp_diagnostics_calls_daemon_http() {
 }
 
 #[tokio::test]
+#[ignore = "Web sessions temporarily disabled; re-enable when MCP web session tools return."]
 async fn mcp_web_session_tools_call_daemon_http() {
     let app = Router::new()
         .route(

@@ -3237,37 +3237,53 @@ final class ChatViewModel: ObservableObject {
         guard isArchivedSession, historyHasMore, !isHistoryLoading else { return }
         guard historyCursor != nil else { return }
         let generation = sessionGeneration
+        let beforeSeq = historyCursor
+        let limit = 200
         isHistoryLoading = true
         _Concurrency.Task {
             defer { isHistoryLoading = false }
             guard let client else { return }
             let resolved = await resolveSessionId()
             guard let resolved, generation == sessionGeneration else { return }
-            do {
-                let page = try await client.getSessionHistory(sessionId: resolved, beforeSeq: historyCursor, limit: 200)
+            if let cached = await SessionHistoryPageCache.shared.load(
+                sessionId: resolved,
+                beforeSeq: beforeSeq,
+                limit: limit
+            ) {
                 guard generation == sessionGeneration else { return }
-                let nextMessages = page.messages.map { message in
-                    ChatMessage(
-                        id: message.id.stringValue,
-                        role: roleForMessage(message.role),
-                        text: message.content,
-                        attachments: message.attachments ?? [],
-                        createdAt: message.createdAt
-                    )
-                }
-                historyMessages = mergeMessages(historyMessages, nextMessages)
-                historyTurns = mergeTurns(historyTurns, page.turns)
-                historyCursor = page.nextCursor
-                historyHasMore = page.hasMore
-                latestTurns = historyTurns + headTurns
-                messages = mergeMessages(historyMessages, headMessages)
-                rebuildThreadItems()
+                applyHistoryPage(cached)
+                return
+            }
+            do {
+                let page = try await client.getSessionHistory(sessionId: resolved, beforeSeq: beforeSeq, limit: limit)
+                guard generation == sessionGeneration else { return }
+                await SessionHistoryPageCache.shared.store(page, sessionId: resolved, beforeSeq: beforeSeq, limit: limit)
+                applyHistoryPage(page)
             } catch {
                 if generation == sessionGeneration {
                     errorMessage = "Failed to load older messages."
                 }
             }
         }
+    }
+
+    private func applyHistoryPage(_ page: SessionHistoryPage) {
+        let nextMessages = page.messages.map { message in
+            ChatMessage(
+                id: message.id.stringValue,
+                role: roleForMessage(message.role),
+                text: message.content,
+                attachments: message.attachments ?? [],
+                createdAt: message.createdAt
+            )
+        }
+        historyMessages = mergeMessages(historyMessages, nextMessages)
+        historyTurns = mergeTurns(historyTurns, page.turns)
+        historyCursor = page.nextCursor
+        historyHasMore = page.hasMore
+        latestTurns = historyTurns + headTurns
+        messages = mergeMessages(historyMessages, headMessages)
+        rebuildThreadItems()
     }
 
     private func refreshQueue() async {
@@ -3799,6 +3815,7 @@ final class ChatViewModel: ObservableObject {
             workspaceId = workspace.id
             let params = DaemonAPIClient.WorkspaceActiveSnapshotParams(limit: 50)
             let snapshot = try await client.getWorkspaceActiveSnapshot(workspaceId: workspace.id, params: params)
+            await ATSHeadCache.shared.store(heads: snapshot.active.tasks.map { $0.primarySessionHead })
             var tasks = snapshot.active.tasks.map(WorkspaceTaskSummary.init)
             if tasks.isEmpty {
                 let workspaceTasks = try await client.listWorkspaceTasks(workspaceId: workspace.id)
@@ -4051,6 +4068,7 @@ final class ChatViewModel: ObservableObject {
         case .sessionHeadDelta(_, _, let delta):
             let eventSessionId = delta.sessionId.stringValue
             if eventSessionId == currentSessionId {
+                _Concurrency.Task { await ATSHeadCache.shared.apply(delta: delta) }
                 lastEventSeq = delta.lastEventSeq
                 if let turn = delta.turn {
                     applyTurnDelta(turn)
