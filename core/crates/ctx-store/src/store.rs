@@ -2196,7 +2196,7 @@ impl Store {
             WHERE t.workspace_id = ?
               AND t.archived_at IS NULL
               AND EXISTS (SELECT 1 FROM sessions s WHERE s.task_id = t.id)
-            ORDER BY activity_at DESC, t.id DESC
+            ORDER BY t.created_at DESC, t.id DESC
             LIMIT ?
             "#,
             activity_expr = ACTIVITY_EXPR,
@@ -2250,7 +2250,8 @@ impl Store {
                     .transpose()?,
                 has_active_session: has_active_session != 0,
             };
-            task_rows.push((task, activity_at_dt));
+            let sort_at = task.created_at;
+            task_rows.push((task, sort_at));
         }
 
         if task_rows.is_empty() {
@@ -2449,8 +2450,9 @@ impl Store {
                 has_active_session: has_active_session != 0,
             };
 
+            let sort_at = task.created_at;
             let summaries = self
-                .build_workspace_active_task_summaries(vec![(task, activity_at_dt)])
+                .build_workspace_active_task_summaries(vec![(task, sort_at)])
                 .await?;
             return Ok(summaries.into_iter().next());
         }
