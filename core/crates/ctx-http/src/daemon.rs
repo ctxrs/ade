@@ -36,7 +36,9 @@ use crate::installs::{InstallId, InstallProgressEvent, InstallState, InstallStat
 use crate::mobile_tunnel::MobileTunnelManager;
 use crate::ops_events::OpsEvents;
 use crate::perf_telemetry::PerfTelemetry;
+use crate::provider_accounts;
 use crate::provider_guard;
+use crate::provider_usage;
 use crate::resource_governance::{self, ResourceGovernanceRuntime};
 use crate::resource_telemetry;
 use crate::resource_utilization::ResourceSampler;
@@ -154,6 +156,8 @@ pub struct AppState {
     pub perf_telemetry: PerfTelemetry,
     pub resource_governance: Mutex<ResourceGovernanceRuntime>,
     pub provider_guard: Mutex<provider_guard::ProviderGuardRuntime>,
+    pub provider_usage_cache: Mutex<HashMap<String, provider_usage::ProviderUsageSnapshot>>,
+    pub codex_login_sessions: Mutex<HashMap<String, provider_accounts::CodexLoginStatus>>,
     pub resource_sampler: Mutex<ResourceSampler>,
     pub workspace_active_snapshot: WorkspaceActiveSnapshotHub,
     pub terminals: TerminalManager,
@@ -287,6 +291,8 @@ impl AppState {
             perf_telemetry,
             resource_governance: Mutex::new(ResourceGovernanceRuntime::default()),
             provider_guard: Mutex::new(provider_guard::ProviderGuardRuntime::default()),
+            provider_usage_cache: Mutex::new(HashMap::new()),
+            codex_login_sessions: Mutex::new(HashMap::new()),
             resource_sampler: Mutex::new(ResourceSampler::new()),
             workspace_active_snapshot,
             terminals: TerminalManager::default(),
@@ -1089,6 +1095,7 @@ pub async fn serve(bind: String, data_dir: Option<String>) -> Result<()> {
     resource_telemetry::spawn_resource_telemetry(state.clone());
     provider_guard::spawn_provider_guard(state.clone());
     crate::merge_queue::spawn_merge_queue_runner(state.clone());
+    provider_usage::spawn_provider_usage_poller(state.clone());
 
     // Reconnect managed mobile access tunnel on daemon start when enabled.
     {

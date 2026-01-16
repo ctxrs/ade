@@ -107,6 +107,16 @@ fn apply_system_prompt_append_args(
     agent
 }
 
+fn codex_auth_signature(env: &HashMap<String, String>) -> String {
+    if let Some(path) = env.get("CTX_CODEX_AUTH_PATH") {
+        return format!("auth:{path}");
+    }
+    if let Some(home) = env.get("CODEX_HOME") {
+        return format!("home:{home}");
+    }
+    "default".to_string()
+}
+
 const ACP_MEMORY_MAX_FRACTION: f64 = 0.9;
 const ACP_MEMORY_MIN_MB: u64 = 256;
 
@@ -126,6 +136,7 @@ pub struct AcpSessionPool {
     process: Mutex<Option<Arc<AcpProcess>>>,
     sessions: Mutex<HashMap<String, AcpContextSession>>,
     active_prompts: Arc<StdMutex<HashSet<String>>>,
+    auth_signature: Mutex<Option<String>>,
 }
 
 #[derive(Debug, Clone)]
@@ -189,6 +200,7 @@ impl AcpSessionPool {
             process: Mutex::new(None),
             sessions: Mutex::new(HashMap::new()),
             active_prompts: Arc::new(StdMutex::new(HashSet::new())),
+            auth_signature: Mutex::new(None),
         }
     }
 
@@ -202,6 +214,7 @@ impl AcpSessionPool {
             process: Mutex::new(None),
             sessions: Mutex::new(HashMap::new()),
             active_prompts: Arc::new(StdMutex::new(HashSet::new())),
+            auth_signature: Mutex::new(None),
         }
     }
 
@@ -482,6 +495,7 @@ impl AcpSessionPool {
         env: HashMap<String, String>,
         event_sink: mpsc::Sender<NormalizedEvent>,
     ) -> Result<()> {
+        self.maybe_reset_for_auth(&env).await;
         let mut guard = self.process.lock().await;
         if guard.is_none() {
             let process_env = filter_process_env(env);
@@ -531,6 +545,34 @@ impl AcpSessionPool {
             },
         );
         Ok(created.session_id)
+    }
+
+    async fn reset_for_auth(&self) {
+        let mut guard = self.process.lock().await;
+        if let Some(proc) = guard.take() {
+            proc.shutdown().await;
+        }
+        let mut sessions = self.sessions.lock().await;
+        sessions.clear();
+        if let Ok(mut active) = self.active_prompts.lock() {
+            active.clear();
+        }
+    }
+
+    async fn maybe_reset_for_auth(&self, env: &HashMap<String, String>) {
+        if self.agent.provider_id != "codex" {
+            return;
+        }
+        let desired = codex_auth_signature(env);
+        let mut guard = self.auth_signature.lock().await;
+        let changed = guard.as_deref() != Some(desired.as_str());
+        if changed {
+            *guard = Some(desired);
+        }
+        drop(guard);
+        if changed {
+            self.reset_for_auth().await;
+        }
     }
 
     pub async fn process_pid(&self) -> Option<u32> {
@@ -644,6 +686,11 @@ impl AcpProcess {
         }
         let child = self.child.lock().await;
         child.id()
+    }
+
+    async fn shutdown(&self) {
+        let mut child = self.child.lock().await;
+        let _ = child.kill().await;
     }
 
     async fn spawn(
