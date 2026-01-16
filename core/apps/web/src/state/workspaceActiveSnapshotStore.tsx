@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import type {
   Session,
+  SessionHeadSnapshot,
   SessionSnapshotSummary,
   Task,
   WorkspaceActiveSnapshotEvent,
@@ -24,6 +25,7 @@ export type WorkspaceActiveSnapshotItem = {
   id: string;
   task: Task;
   sessions: SessionSnapshotSummary[];
+  primarySessionHead?: SessionHeadSnapshot | null;
   sort_at?: string | null;
   sortAtMs: number;
 };
@@ -609,6 +611,7 @@ class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSo
       id,
       task: { ...summary.task },
       sessions: sortSessionSummaries(merged),
+      primarySessionHead: summary.primary_session_head ?? null,
       sortAtMs,
       sort_at: summary.sort_at ?? null,
     };

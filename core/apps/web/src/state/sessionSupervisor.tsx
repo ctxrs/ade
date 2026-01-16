@@ -13,6 +13,7 @@ import {
   type Session,
   type SessionEvent,
   type SessionHead,
+  type SessionHeadSnapshot,
   type SessionHeadWindow,
   type SessionSummaryCheckpoint,
   type SessionTurn,
@@ -21,7 +22,7 @@ import {
   type SubagentInvocation,
   type WorkspaceActiveSnapshotEvent,
 } from "../api/client";
-import type { WorkspaceActiveSnapshotEventSource } from "./workspaceActiveSnapshotStore";
+import type { WorkspaceActiveSnapshotEventSource, WorkspaceActiveSnapshotState } from "./workspaceActiveSnapshotStore";
 import { loadSessionAcpMetaV1, loadSessionHeadV1, saveSessionAcpMetaV1, saveSessionHeadV1 } from "./uiStateStore";
 
 const readTunableInt = (key: string, fallback: number) => {
@@ -185,6 +186,7 @@ export class SessionSupervisor {
       const state = store.getSnapshot();
       const next = this.mapConnection(state.connection);
       this.setConnection(next);
+      this.syncActiveSnapshot(state);
     });
     this.setConnection(this.mapConnection(store.getSnapshot().connection));
     this.refreshSubscriptions();
@@ -512,6 +514,15 @@ export class SessionSupervisor {
       entry.loadedFromCache = true;
       void this.loadCachedHead(entry);
     }
+    const seeded = this.seedHeadFromActiveSnapshot(entry);
+    if (seeded) {
+      entry.error = undefined;
+      entry.updatedAtMs = Date.now();
+      if (entry.turnsHydrated && !opts?.force && !entry.headFromCache) {
+        this.publish();
+        return;
+      }
+    }
     if (entry.fetching.head) return;
     if (entry.turnsHydrated && !opts?.force && !entry.headFromCache) {
       return;
@@ -608,6 +619,31 @@ export class SessionSupervisor {
     }
   }
 
+  private seedHeadFromActiveSnapshot(entry: InternalEntry): boolean {
+    const store = this.snapshotStore;
+    if (!store) return false;
+    const state = store.getSnapshot();
+    for (const taskId of state.activeIds) {
+      const item = state.tasksById[taskId];
+      const head = item?.primarySessionHead;
+      if (!head) continue;
+      const sessionId = idToString(head.session?.id);
+      if (!sessionId || sessionId !== entry.sessionId) continue;
+      const nextSeq = typeof head.last_event_seq === "number" ? head.last_event_seq : -1;
+      const prevSeq = typeof entry.lastEventSeq === "number" ? entry.lastEventSeq : -1;
+      if (entry.turnsHydrated && prevSeq >= nextSeq) {
+        if (!entry.session) {
+          entry.session = head.session;
+          return true;
+        }
+        return false;
+      }
+      this.applyHead(entry, head as SessionHead);
+      return true;
+    }
+    return false;
+  }
+
   private applyHead(
     entry: InternalEntry,
     head: SessionHead,
@@ -702,7 +738,8 @@ export class SessionSupervisor {
     }
     for (const sessionId of next) {
       if (!prevSet.has(sessionId)) {
-        this.ensureLoaded(sessionId, { silent: true }).catch(() => {});
+        const entry = this.ensureEntry(sessionId);
+        entry.subscribed = true;
       }
     }
     if (this.snapshotStore) {
@@ -721,6 +758,8 @@ export class SessionSupervisor {
 
   private refreshSubscribedHeads() {
     for (const sessionId of this.subscribedSessionIds) {
+      const entry = this.entries.get(sessionId);
+      if (!entry || entry.refCount === 0) continue;
       this.ensureLoaded(sessionId, { force: true, silent: true }).catch(() => {});
     }
   }
@@ -979,6 +1018,21 @@ export class SessionSupervisor {
       this.ensureLoaded(sid, { force: true, silent: true }).catch(() => {});
       return;
     }
+    if (evt.type === "active_task_upsert") {
+      const head = evt.task.primary_session_head;
+      if (head) {
+        const sessionId = idToString(head.session?.id);
+        if (sessionId) {
+          const entry = this.ensureEntry(sessionId);
+          const applied = this.applyActiveSnapshotHead(entry, head);
+          if (applied) {
+            entry.updatedAtMs = Date.now();
+            this.publish();
+          }
+        }
+      }
+      return;
+    }
     if (evt.type !== "session_head_delta") return;
     const delta = evt.delta;
     const sid = idToString(delta.session_id);
@@ -1035,6 +1089,40 @@ export class SessionSupervisor {
       entry.updatedAtMs = Date.now();
       this.publish();
     }
+  }
+
+  private syncActiveSnapshot(state: WorkspaceActiveSnapshotState) {
+    let changed = false;
+    for (const taskId of state.activeIds) {
+      const item = state.tasksById[taskId];
+      const head = item?.primarySessionHead;
+      if (!head) continue;
+      const sessionId = idToString(head.session?.id);
+      if (!sessionId) continue;
+      const entry = this.ensureEntry(sessionId);
+      if (this.applyActiveSnapshotHead(entry, head)) {
+        entry.updatedAtMs = Date.now();
+        changed = true;
+      }
+    }
+    if (changed) {
+      this.publish();
+    }
+  }
+
+  private applyActiveSnapshotHead(entry: InternalEntry, head: SessionHead | SessionHeadSnapshot): boolean {
+    const nextSeq = typeof head.last_event_seq === "number" ? head.last_event_seq : -1;
+    const prevSeq = typeof entry.lastEventSeq === "number" ? entry.lastEventSeq : -1;
+    if (entry.turnsHydrated && prevSeq >= nextSeq) {
+      if (!entry.session) {
+        entry.session = head.session;
+        return true;
+      }
+      return false;
+    }
+    this.applyHead(entry, head as SessionHead);
+    entry.error = undefined;
+    return true;
   }
 
   private resetEntryForGap(entry: InternalEntry) {

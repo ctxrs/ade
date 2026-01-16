@@ -345,6 +345,7 @@ function formatMemoryMb(value?: number | null): string {
 export function SessionView({
   sessionId,
   isActive = true,
+  autoOpenSession = true,
   draft,
   onDraftChange,
   onDraftPersistNow,
@@ -374,6 +375,7 @@ export function SessionView({
       virtuosoState?: unknown | null;
     },
   ) => void) | null;
+  autoOpenSession?: boolean;
 }) {
   const id = sessionId;
   const supervisor = useSessionSupervisor();
@@ -705,7 +707,7 @@ export function SessionView({
     setFileOpenError(message);
   }, []);
 
-  useOpenSession(id ?? "", { watchDiff: true });
+  useOpenSession(autoOpenSession ? id ?? "" : "", { watchDiff: true });
   const refreshAll = useCallback(async () => {
     if (!id) return;
     await supervisor.refreshQueue(id);
