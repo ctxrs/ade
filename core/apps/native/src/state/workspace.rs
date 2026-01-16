@@ -58,6 +58,11 @@ impl ShellView {
         cx.notify();
     }
 
+    pub(crate) fn focus_new_task_shortcut(&mut self, cx: &mut Context<Self>) {
+        self.clear_task_focus("Select a task to begin.", cx);
+        cx.notify();
+    }
+
     pub(crate) fn select_workspace(&mut self, index: usize, cx: &mut Context<Self>) {
         let Some(workspace) = self.workspaces.get(index) else {
             return;

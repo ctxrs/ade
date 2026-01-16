@@ -88,28 +88,16 @@
 
 .wb-sidebar-top {
   padding: 12px;
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 10px;
 }
 
 .wb-sidebar-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
-}
-
-.wb-sidebar-collapse {
-  width: 26px;
-  height: 26px;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  background: rgba(255, 255, 255, 0.03);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  color: var(--text);
+  padding-right: 28px;
 }
 
 .wb-sidebar-title {
@@ -120,21 +108,52 @@
 }
 
 .wb-search {
-  width: 100%;
   padding: 6px 8px;
   border-radius: 8px;
   border: 1px solid var(--border);
   background: rgba(255, 255, 255, 0.04);
   color: var(--text);
   outline: none;
+  flex: 1;
+  min-width: 0;
 }
 
-.wb-new-agent {
-  width: 100%;
-  padding: 7px 10px;
-  border-radius: 10px;
+.wb-sidebar-action {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
   border: 1px solid var(--border);
-  background: rgba(255, 255, 255, 0.04);
+  background: rgba(255, 255, 255, 0.03);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  color: var(--text);
+}
+
+.wb-sidebar-tab {
+  position: absolute;
+  top: 48px;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.03);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  color: var(--text);
+  z-index: 6;
+}
+
+.wb-sidebar-tab-open {
+  left: calc(var(--wb-sidebar-width, 260px) - 29px);
+  border-radius: 8px 0 0 8px;
+}
+
+.wb-sidebar-tab-collapsed {
+  left: 0;
+  border-radius: 0 8px 8px 0;
 }
 
 .wb-sidebar-section {
@@ -596,18 +615,6 @@
   background: rgba(255, 255, 255, 0.02);
 }
 
-.wb-topbar-expand {
-  width: 26px;
-  height: 26px;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  background: rgba(255, 255, 255, 0.03);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  color: var(--text);
-}
 
 .wb-topbar-title {
   font-weight: 600;

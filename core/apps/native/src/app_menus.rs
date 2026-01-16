@@ -11,6 +11,7 @@ actions!(
         OpenSettings,
         NewSettingsWindow,
         NewLauncherWindow,
+        NewTask,
         ToggleSidebar,
         Quit,
         Hide,
@@ -23,6 +24,7 @@ pub(crate) fn init(cx: &mut App) {
     cx.on_action(open_settings);
     cx.on_action(new_settings_window);
     cx.on_action(new_launcher_window);
+    cx.on_action(new_task);
     cx.on_action(toggle_sidebar);
     cx.on_action(quit);
     cx.on_action(hide);
@@ -30,7 +32,10 @@ pub(crate) fn init(cx: &mut App) {
     cx.on_action(show_all);
 
     cx.bind_keys([
-        KeyBinding::new("cmd-n", NewLauncherWindow, None),
+        KeyBinding::new("cmd-n", NewTask, None),
+        KeyBinding::new("ctrl-n", NewTask, None),
+        KeyBinding::new("shift-cmd-n", NewLauncherWindow, None),
+        KeyBinding::new("shift-ctrl-n", NewLauncherWindow, None),
         KeyBinding::new("cmd-,", OpenSettings, None),
         KeyBinding::new("shift-cmd-,", NewSettingsWindow, None),
         KeyBinding::new("cmd-b", ToggleSidebar, None),
@@ -66,7 +71,10 @@ fn set_app_menus(cx: &mut App) {
 
     app_items.push(MenuItem::action("Quit ctx", Quit));
 
-    let file_items = vec![MenuItem::action("New Launcher Window", NewLauncherWindow)];
+    let file_items = vec![
+        MenuItem::action("New Task", NewTask),
+        MenuItem::action("New Launcher Window", NewLauncherWindow),
+    ];
     let view_items = vec![MenuItem::action("Toggle Sidebar", ToggleSidebar)];
 
     cx.set_menus(vec![
@@ -104,6 +112,30 @@ fn new_launcher_window(_: &NewLauncherWindow, cx: &mut App) {
     if let Err(err) = open_shell_window(cx, ShellRoute::AppSettings) {
         eprintln!("ctx-native: open launcher window failed: {err}");
     }
+}
+
+fn new_task(_: &NewTask, cx: &mut App) {
+    let Some(active_window) = cx.active_window() else {
+        return;
+    };
+
+    let _ = active_window.update(cx, |root_view, _window, cx| {
+        let Ok(root) = root_view.downcast::<Root>() else {
+            return;
+        };
+
+        root.update(cx, |root, cx| {
+            let Ok(shell_view) = root.view().clone().downcast::<ShellView>() else {
+                return;
+            };
+            let _ = shell_view.update(cx, |view, cx| {
+                if view.route != ShellRoute::Workbench {
+                    view.set_route(ShellRoute::Workbench, cx);
+                }
+                view.focus_new_task_shortcut(cx);
+            });
+        });
+    });
 }
 
 fn toggle_sidebar(_: &ToggleSidebar, cx: &mut App) {

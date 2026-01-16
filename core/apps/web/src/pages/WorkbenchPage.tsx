@@ -7,15 +7,17 @@ import {
   AtSign,
   ChevronDown,
   Check,
+  ChevronsLeft,
+  ChevronsRight,
   Copy,
   Ellipsis,
   GitBranch,
   Image,
   Laptop,
-  Monitor,
   LayersPlus,
-  MessageSquare,
+  Monitor,
   Mic,
+  SquarePen,
   Settings,
   Terminal,
 } from "lucide-react";
@@ -942,6 +944,25 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [toggleTerminalPanel]);
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.defaultPrevented) return;
+      if (e.altKey || e.shiftKey) return;
+      const hasModifier = e.metaKey || e.ctrlKey;
+      if (!hasModifier) return;
+      const key = e.key.toLowerCase();
+      if (key === "b") {
+        e.preventDefault();
+        setSidebarCollapsed((prev) => !prev);
+      } else if (key === "n") {
+        e.preventDefault();
+        focusNewTask();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [focusNewTask]);
 
   useEffect(() => {
     if (useMultipleAgents) return;
@@ -3041,17 +3062,6 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     >
       <WorktreeBootstrapSnackbar />
       <div className="wb-topbar">
-        {sidebarCollapsed && (
-          <button
-            type="button"
-            className="wb-topbar-expand"
-            aria-label="Show sidebar"
-            title="Show sidebar"
-            onClick={() => setSidebarCollapsed(false)}
-          >
-            ›
-          </button>
-        )}
         <div className="wb-topbar-title">{workspace?.name ?? "Workspace"}</div>
         {activeTask && <div className="wb-topbar-sub">{activeTask.title}</div>}
         <div className="wb-topbar-right">
@@ -3094,33 +3104,47 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
         </div>
       )}
 
+      {sidebarCollapsed ? (
+        <button
+          type="button"
+          className="wb-sidebar-tab wb-sidebar-tab-collapsed"
+          aria-label="Show sidebar"
+          title="Show sidebar"
+          onClick={() => setSidebarCollapsed(false)}
+        >
+          <ChevronsRight size={16} />
+        </button>
+      ) : (
+        <button
+          type="button"
+          className="wb-sidebar-tab wb-sidebar-tab-open"
+          aria-label="Collapse sidebar"
+          title="Collapse"
+          onClick={() => setSidebarCollapsed(true)}
+        >
+          <ChevronsLeft size={16} />
+        </button>
+      )}
+
       <div className="wb-sidebar" aria-hidden={sidebarCollapsed}>
         <div className="wb-sidebar-top">
           <div className="wb-sidebar-header">
+            <input
+              className="wb-search"
+              placeholder="Search Tasks"
+              value={taskQuery}
+              onChange={(e) => setTaskQuery(e.target.value)}
+            />
             <button
               type="button"
-              className="wb-new-agent"
+              className="wb-sidebar-action"
+              aria-label="New task"
+              title="New Task"
               onClick={focusNewTask}
             >
-              New Task
-            </button>
-            <button
-              type="button"
-              className="wb-sidebar-collapse"
-              aria-label="Collapse sidebar"
-              title="Collapse"
-              onClick={() => setSidebarCollapsed(true)}
-            >
-              ‹
+              <SquarePen size={16} />
             </button>
           </div>
-
-          <input
-            className="wb-search"
-            placeholder="Search Tasks"
-            value={taskQuery}
-            onChange={(e) => setTaskQuery(e.target.value)}
-          />
         </div>
 
         <div className="wb-sidebar-section wb-sidebar-grow" style={{ minHeight: 0, display: "flex" }}>
