@@ -11,10 +11,8 @@ import type {
 import {
   getDaemonBaseUrl,
   getHealth,
-  getSessionSnapshot,
   getWorkspaceActiveSnapshot,
   idToString,
-  listTaskSessions,
   listWorkspaceTasks,
   type WorkspaceActiveSnapshotClientMessage,
   type WorkspaceActiveSnapshotParams,
@@ -676,34 +674,21 @@ class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSo
     return idx >= 0 ? idx + 1 : 0;
   }
 
-  private async buildArchivedItem(task: Task): Promise<WorkspaceActiveSnapshotItem | null> {
+  private buildArchivedItem(task: Task): WorkspaceActiveSnapshotItem | null {
     const id = idToString(task.id);
     if (!id) return null;
-    const sessions = await listTaskSessions(id);
-    let summaries = sessions.map((session) => this.sessionToSummary(session));
-    const preferredId = this.pickArchivedSessionId(task, sessions);
-    if (preferredId) {
-      try {
-        const snapshot = await getSessionSnapshot(preferredId, 200, false);
-        const snapshotId = idToString(snapshot.summary.session.id);
-        if (snapshotId) {
-          const normalized = this.normalizeSessionSummary(snapshot.summary);
-          const idx = summaries.findIndex((summary) => idToString(summary.session.id) === snapshotId);
-          if (idx >= 0) {
-            summaries[idx] = normalized;
-          } else {
-            summaries.push(normalized);
-          }
-        }
-      } catch {
-        // ignore snapshot errors for archived sessions
-      }
-    }
+    const existing = this.tasks.get(id);
+    const summaries = existing?.sessions ?? [];
+    const sessionList = summaries.map((summary) => summary.session).filter(Boolean);
+    const primarySessionId = this.pickArchivedSessionId(task, sessionList);
+    // TODO: hydrate archived session summaries on selection (avoid list fan-out).
     const sortAt = this.taskSortAt(task);
     return {
       id,
       task: { ...task },
       sessions: sortSessionSummaries(summaries),
+      primarySessionId: primarySessionId || null,
+      primarySessionHead: existing?.primarySessionHead ?? null,
       sortAtMs: Date.parse(sortAt) || Date.now(),
       sort_at: sortAt || null,
     };
