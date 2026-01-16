@@ -13,6 +13,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { ChevronDown, Plus, SplitSquareVertical, Terminal as TerminalIcon, X } from "lucide-react";
 import type { TerminalSession } from "@ctx/types";
 import {
+  authToken,
   createWorkspaceTerminal,
   deleteTerminal,
   resolveDaemonWsBaseUrl,
@@ -225,7 +226,10 @@ function removeTerminalFromLayout(node: TerminalLayoutNode | null, terminalId: s
 
 function buildTerminalWsUrl(terminalId: string): string {
   const wsBase = resolveDaemonWsBaseUrl();
-  return `${wsBase}/api/terminals/${terminalId}/stream`;
+  const baseUrl = `${wsBase}/api/terminals/${terminalId}/stream`;
+  const token = authToken();
+  if (!token) return baseUrl;
+  return `${baseUrl}?token=${encodeURIComponent(token)}`;
 }
 
 function terminalTheme() {

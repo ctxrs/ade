@@ -149,7 +149,7 @@ impl<'a> RouterView<'a> {
     fn render_sidebar_collapse_tab(&self, cx: &mut Context<ShellView>) -> impl IntoElement {
         let metrics = ThemeMetrics::default();
         let tab_bg = rgba(255, 255, 255, 0.04);
-        let left = (self.shell.sidebar_width - 29.0).max(0.0);
+        let left = (self.shell.sidebar_width - 28.0).max(0.0);
         let collapse_button = div()
             .id("sidebar-collapse")
             .absolute()

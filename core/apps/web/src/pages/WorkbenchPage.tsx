@@ -117,7 +117,7 @@ function deriveTaskTitle(_prompt: string): string {
 const ARCHIVE_CONFIRM_STORAGE_KEY = "wb.archiveConfirmDismissed";
 
 const joinDaemonPath = (root: string, ...parts: string[]) => {
-  const sep = root.includes("\") ? "\" : "/";
+  const sep = root.includes("\\") ? "\\" : "/";
   const cleanedRoot = root.replace(/[\/]+$/, "");
   const cleanedParts = parts.map((part) => String(part).replace(/^[\/]+|[\/]+$/g, ""));
   return [cleanedRoot, ...cleanedParts].filter(Boolean).join(sep);

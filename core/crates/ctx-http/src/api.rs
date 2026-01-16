@@ -4001,6 +4001,14 @@ async fn perf_middleware(
     response
 }
 
+fn is_websocket_upgrade(headers: &HeaderMap) -> bool {
+    headers
+        .get(axum::http::header::UPGRADE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.eq_ignore_ascii_case("websocket"))
+        || headers.contains_key("sec-websocket-key")
+}
+
 async fn auth_middleware(
     State(state): State<Arc<AppState>>,
     mut req: Request<axum::body::Body>,
@@ -4020,25 +4028,34 @@ async fn auth_middleware(
         return Ok(next.run(req).await);
     }
 
-    let mut token = req
+    let is_terminal_stream = path.starts_with("/api/terminals/") && path.ends_with("/stream");
+    let is_ws = is_terminal_stream && is_websocket_upgrade(req.headers());
+    let header_token = req
         .headers()
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|h| h.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
         .map(|v| v.to_string());
-
-    if token.is_none() {
-        token = req.uri().query().and_then(|q| {
-            q.split('&').find_map(|kv| {
-                let (k, v) = kv.split_once('=')?;
-                if k == "token" {
-                    Some(v.to_string())
-                } else {
-                    None
-                }
-            })
-        });
-    }
+    let query_token = req.uri().query().and_then(|q| {
+        q.split('&').find_map(|kv| {
+            let (k, v) = kv.split_once('=')?;
+            if k == "token" {
+                Some(v.to_string())
+            } else {
+                None
+            }
+        })
+    });
+    let token = if is_ws {
+        if header_token.is_some() {
+            tracing::warn!(
+                "Authorization header is deprecated for terminal websocket auth; use ?token="
+            );
+        }
+        query_token.or(header_token)
+    } else {
+        header_token.or(query_token)
+    };
 
     if token.as_deref() == state.auth_token.as_deref() {
         return Ok(next.run(req).await);

@@ -280,7 +280,7 @@ export type EditPlanSummary = {
   diff: string;
 };
 
-const authToken = (): string | null => {
+export const authToken = (): string | null => {
   try {
     return sessionStorage.getItem("ctxAuthToken");
   } catch {
