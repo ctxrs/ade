@@ -19,6 +19,101 @@ actor DaemonAPIClient {
         let diff: String
     }
 
+    struct SessionGitStatusResponse: Codable, Sendable {
+        let summary: String
+
+        init(summary: String) {
+            self.summary = summary
+        }
+
+        init(from decoder: Decoder) throws {
+            if let single = try? decoder.singleValueContainer().decode(String.self) {
+                self.summary = single
+                return
+            }
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            if let summary = try container.decodeIfPresent(String.self, forKey: .summary) {
+                self.summary = summary
+                return
+            }
+            if let summary = try container.decodeIfPresent(String.self, forKey: .statusSummary) {
+                self.summary = summary
+                return
+            }
+            if let summary = try container.decodeIfPresent(String.self, forKey: .status) {
+                self.summary = summary
+                return
+            }
+            if let summary = try container.decodeIfPresent(String.self, forKey: .raw) {
+                self.summary = summary
+                return
+            }
+            if let summary = try container.decodeIfPresent(String.self, forKey: .output) {
+                self.summary = summary
+                return
+            }
+            if let lines = try container.decodeIfPresent([String].self, forKey: .lines) {
+                self.summary = lines.joined(separator: "\n")
+                return
+            }
+            self.summary = ""
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case summary
+            case statusSummary
+            case status
+            case raw
+            case output
+            case lines
+        }
+    }
+
+    struct SessionGitDiffSummaryResponse: Codable, Sendable {
+        let fileCount: Int
+        let additions: Int
+        let deletions: Int
+
+        init(fileCount: Int, additions: Int, deletions: Int) {
+            self.fileCount = fileCount
+            self.additions = additions
+            self.deletions = deletions
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            let fileCount = try container.decodeIfPresent(Int.self, forKey: .fileCount)
+                ?? container.decodeIfPresent(Int.self, forKey: .files)
+                ?? container.decodeIfPresent(Int.self, forKey: .changedFiles)
+                ?? container.decodeIfPresent(Int.self, forKey: .filesChanged)
+                ?? 0
+            let additions = try container.decodeIfPresent(Int.self, forKey: .additions)
+                ?? container.decodeIfPresent(Int.self, forKey: .added)
+                ?? container.decodeIfPresent(Int.self, forKey: .insertions)
+                ?? 0
+            let deletions = try container.decodeIfPresent(Int.self, forKey: .deletions)
+                ?? container.decodeIfPresent(Int.self, forKey: .deleted)
+                ?? container.decodeIfPresent(Int.self, forKey: .removed)
+                ?? 0
+            self.fileCount = fileCount
+            self.additions = additions
+            self.deletions = deletions
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case fileCount
+            case files
+            case changedFiles
+            case filesChanged
+            case additions
+            case added
+            case insertions
+            case deletions
+            case deleted
+            case removed
+        }
+    }
+
     struct ProviderOptions: Codable, Sendable {
         let providerId: String
         let workspaceId: String
@@ -262,6 +357,18 @@ actor DaemonAPIClient {
         let payload = Payload(toolCallId: toolCallId, outcome: outcome, answers: answers)
         let request = try buildRequest(path: "/api/sessions/\(sessionId)/ask_user_question", method: .post, body: payload)
         try await performVoid(request)
+    }
+
+    func fetchSessionGitStatus(sessionId: String) async throws -> SessionGitStatusResponse {
+        try await request("/api/sessions/\(sessionId)/git/status")
+    }
+
+    func fetchSessionGitDiffSummary(sessionId: String) async throws -> SessionGitDiffSummaryResponse {
+        try await request("/api/sessions/\(sessionId)/git/diff/summary")
+    }
+
+    func fetchSessionGitDiff(sessionId: String) async throws -> SessionDiffResponse {
+        try await request("/api/sessions/\(sessionId)/git/diff")
     }
 
     func fetchSessionDiff(sessionId: String) async throws -> SessionDiffResponse {
