@@ -617,11 +617,6 @@
   background: rgba(255, 255, 255, 0.02);
 }
 
-.wb-root.wb-root-collapsed .wb-topbar {
-  padding-left: calc(12px + 28px);
-}
-
-
 .wb-topbar-title {
   font-weight: 600;
 }
@@ -2233,6 +2228,10 @@
 .wb-single-track-header {
   padding: 14px 16px 12px 16px;
   border-bottom: 1px solid var(--border);
+}
+
+.wb-root.wb-root-collapsed .wb-single-track-header {
+  padding-left: calc(16px + 28px);
 }
 
 .wb-single-track-title {
