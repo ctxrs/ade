@@ -555,6 +555,12 @@ impl Render for TerminalPanelState {
                                     .rounded_sm()
                                     .bg(colors.panel)
                                     .p(px(metrics.spacing.md))
+                                    .on_children_prepainted(automation_tree::track_children_bounds(
+                                        "terminal-input",
+                                        "textbox",
+                                        Some("Terminal Input"),
+                                        Some("terminal-panel"),
+                                    ))
                                     .child(input_field),
                             )
                             .child(send_button),

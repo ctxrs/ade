@@ -940,6 +940,9 @@ impl Client {
         };
         url.set_path(&path);
         url.set_query(None);
+        if let Some(token) = &self.auth_token {
+            url.query_pairs_mut().append_pair("token", token);
+        }
         Ok(url.to_string())
     }
 
