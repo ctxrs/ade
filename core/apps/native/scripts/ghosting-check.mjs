@@ -189,7 +189,11 @@ function normalizeAddr(value) {
 function wsUrlFromHttp(addr) {
   const url = new URL(addr);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-  url.pathname = url.pathname.replace(/\/?$/, "/ws");
+  if (!url.pathname || url.pathname === "/") {
+    url.pathname = "/ws";
+  } else if (!url.pathname.endsWith("/ws")) {
+    url.pathname = `${url.pathname.replace(/\/$/, "")}/ws`;
+  }
   return url.toString();
 }
 
@@ -220,8 +224,17 @@ async function safeClose(app) {
 }
 
 async function runNativeScrollCheck(args, repoRoot) {
+  const scriptPath = "/tmp/native-scroll-check.mjs";
+  try {
+    await fs.stat(scriptPath);
+  } catch (_) {
+    console.warn(
+      `[ghosting-check] ${scriptPath} not found; skipping scroll capture.`,
+    );
+    return;
+  }
   const command = "node";
-  const nodeArgs = ["--experimental-websocket", "/tmp/native-scroll-check.mjs"];
+  const nodeArgs = ["--experimental-websocket", scriptPath];
   if (args.httpUrl) {
     nodeArgs.push("--http", args.httpUrl);
   }
@@ -269,7 +282,9 @@ async function ensureWebSocketGlobal() {
   } catch (_) {
     // ignore
   }
-  throw new Error("WebSocket is not available. Run with --experimental-websocket.");
+  throw new Error(
+    "WebSocket is not available. Install ws or use Node 20+.",
+  );
 }
 
 function findNodeById(node, id) {

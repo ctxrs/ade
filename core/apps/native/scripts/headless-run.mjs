@@ -188,6 +188,25 @@ function parseArgs(argv) {
   return args;
 }
 
+function resolveAddr(value) {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  const trimmed = String(value).trim();
+  if (!trimmed) {
+    return null;
+  }
+  const url = new URL(/^[a-z]+:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`);
+  if (!url.port) {
+    throw new Error('--addr must include a port');
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    throw new Error('--addr must be http(s)://host:port or host:port');
+  }
+  const hostPort = url.hostname === 'localhost' ? `127.0.0.1:${url.port}` : url.host;
+  return { hostPort, httpUrl: `http://${hostPort}` };
+}
+
 async function main() {
   const t0 = now();
   const args = parseArgs(process.argv);
@@ -270,8 +289,9 @@ async function main() {
   const tBuild1 = now();
 
   // Run app
-  const port = args.addr ? Number(String(args.addr).split(':').pop()) : await findFreePort();
-  const addr = args.addr || `127.0.0.1:${port}`;
+  const addrInfo = resolveAddr(args.addr);
+  const port = addrInfo ? Number(addrInfo.hostPort.split(':').pop()) : await findFreePort();
+  const addr = addrInfo?.hostPort || `127.0.0.1:${port}`;
   const targetDir = process.env.CARGO_TARGET_DIR || path.join(REPO_ROOT, 'target');
   const appBin = path.join(targetDir, 'debug', os.platform() === 'win32' ? 'ctx.exe' : 'ctx');
   const appArgs = [ '--automation-addr', addr, '--screenshot-dir', shotsDir, '--window-size', winSize ];
@@ -287,17 +307,24 @@ async function main() {
   const app = spawnLogged(appBin, appArgs, { cwd: REPO_ROOT, env: appEnv }, logs.app);
 
   // Wait for /ready
-  const httpUrl = `http://${addr}`;
+  const httpUrl = addrInfo?.httpUrl || `http://${addr}`;
   const readyUrl = `${httpUrl}/ready?timeout_ms=${args.readyTimeoutMs}`;
   const tReady0 = now();
   let readyOk = false;
+  let appExit = null;
+  app.on('exit', (code, signal) => {
+    appExit = { code, signal };
+  });
   const readyDeadline = tReady0 + Math.max(args.readyTimeoutMs + 5000, 20000);
   while (!readyOk && now() < readyDeadline) {
     try { const res = await httpGet(readyUrl, Math.max(5000, args.readyTimeoutMs)); readyOk = res.statusCode === 200; if (readyOk) break; } catch (_) {}
     await sleep(250);
   }
   const tReady1 = now();
-  if (!readyOk) throw new Error('App did not become ready in time');
+  if (!readyOk) {
+    const exitNote = appExit ? ` (app exited code=${appExit.code ?? 'null'} signal=${appExit.signal ?? 'null'})` : '';
+    throw new Error(`App did not become ready in time${exitNote}. See ${logs.app}`);
+  }
 
   // Run automation script
   const tAuto0 = now();
@@ -314,7 +341,14 @@ async function main() {
     child.stdout.on('data', (d) => logStream.write(d));
     child.stderr.on('data', (d) => logStream.write(d));
     child.on('error', (e) => { logStream.end(); reject(e); });
-    child.on('close', () => { logStream.end(); resolve(); });
+    child.on('close', (code) => {
+      logStream.end();
+      if (code && code !== 0) {
+        reject(new Error(`Automation script failed with exit code ${code}. See ${logs.automation}`));
+        return;
+      }
+      resolve();
+    });
   });
   const tAuto1 = now();
 
