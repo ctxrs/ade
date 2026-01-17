@@ -276,7 +276,7 @@ impl<'a> SessionView<'a> {
 
         let mut title_row = div()
             .flex()
-            .items_center()
+            .items_end()
             .gap(px(metrics.spacing.md))
             .min_w(px(0.0))
             .child(
