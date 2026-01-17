@@ -3,6 +3,11 @@ use std::{
     time::Duration,
 };
 
+use alacritty_terminal::event::VoidListener;
+use alacritty_terminal::grid::Dimensions;
+use alacritty_terminal::index::{Column, Line};
+use alacritty_terminal::term::{cell::Flags, Config, Term};
+use alacritty_terminal::vte::ansi;
 use futures_util::{SinkExt, StreamExt};
 use gpui::{ClickEvent, ClipboardItem, Context, FocusHandle, KeyDownEvent, Window};
 use gpui_tokio::Tokio;
@@ -64,12 +69,108 @@ impl TerminalStreamState {
     }
 }
 
-const MAX_STREAM_OUTPUT: usize = 20_000;
+const DEFAULT_TERMINAL_COLUMNS: usize = 120;
+const DEFAULT_TERMINAL_LINES: usize = 200;
+const DEFAULT_TERMINAL_SCROLLBACK: usize = 1000;
 const MAX_TERMINAL_STREAMS: usize = 8;
 
-#[derive(Clone, Debug)]
+struct TerminalGridSize {
+    columns: usize,
+    screen_lines: usize,
+}
+
+impl TerminalGridSize {
+    fn new(columns: usize, screen_lines: usize) -> Self {
+        Self {
+            columns,
+            screen_lines,
+        }
+    }
+}
+
+impl Dimensions for TerminalGridSize {
+    fn total_lines(&self) -> usize {
+        self.screen_lines
+    }
+
+    fn screen_lines(&self) -> usize {
+        self.screen_lines
+    }
+
+    fn columns(&self) -> usize {
+        self.columns
+    }
+}
+
+struct TerminalEmulator {
+    term: Term<VoidListener>,
+    parser: ansi::Processor,
+}
+
+impl TerminalEmulator {
+    fn new() -> Self {
+        let size = TerminalGridSize::new(DEFAULT_TERMINAL_COLUMNS, DEFAULT_TERMINAL_LINES);
+        let config = Config {
+            scrolling_history: DEFAULT_TERMINAL_SCROLLBACK,
+            ..Default::default()
+        };
+        let term = Term::new(config, &size, VoidListener);
+        let parser = ansi::Processor::new();
+        Self { term, parser }
+    }
+
+    fn reset(&mut self) {
+        *self = Self::new();
+    }
+
+    fn feed_bytes(&mut self, bytes: &[u8]) {
+        self.parser.advance(&mut self.term, bytes);
+    }
+
+    fn render_text(&self) -> String {
+        let grid = self.term.grid();
+        let columns = grid.columns();
+        let display_offset = grid.display_offset();
+        let screen_lines = grid.screen_lines();
+        let start_line = -(display_offset as i32);
+        let end_line = start_line + screen_lines as i32;
+        let mut lines = Vec::with_capacity(screen_lines);
+
+        for line in start_line..end_line {
+            let row = &grid[Line(line)];
+            let mut line_buf = String::with_capacity(columns);
+            for column in 0..columns {
+                let cell = &row[Column(column)];
+                if cell.flags.contains(Flags::WIDE_CHAR_SPACER)
+                    || cell.flags.contains(Flags::LEADING_WIDE_CHAR_SPACER)
+                {
+                    continue;
+                }
+                if cell.flags.contains(Flags::HIDDEN) {
+                    line_buf.push(' ');
+                } else {
+                    line_buf.push(cell.c);
+                }
+                if let Some(zerowidth) = cell.zerowidth() {
+                    for ch in zerowidth {
+                        line_buf.push(*ch);
+                    }
+                }
+            }
+            lines.push(line_buf.trim_end_matches(' ').to_string());
+        }
+
+        while matches!(lines.last(), Some(line) if line.is_empty()) {
+            lines.pop();
+        }
+
+        lines.join("\n")
+    }
+}
+
 struct TerminalStreamEntry {
     output: String,
+    emulator: TerminalEmulator,
     state: TerminalStreamState,
     stop_tx: Option<watch::Sender<bool>>,
     input_tx: Option<mpsc::UnboundedSender<String>>,
@@ -78,8 +179,11 @@ struct TerminalStreamEntry {
 
 impl TerminalStreamEntry {
     fn new(state: TerminalStreamState) -> Self {
+        let emulator = TerminalEmulator::new();
+        let output = emulator.render_text();
         Self {
-            output: String::new(),
+            output,
+            emulator,
             state,
             stop_tx: None,
             input_tx: None,
@@ -88,14 +192,16 @@ impl TerminalStreamEntry {
     }
 
     fn with_channels(
-        output: String,
+        emulator: TerminalEmulator,
         state: TerminalStreamState,
         stop_tx: watch::Sender<bool>,
         input_tx: mpsc::UnboundedSender<String>,
         generation: u64,
     ) -> Self {
+        let output = emulator.render_text();
         Self {
             output,
+            emulator,
             state,
             stop_tx: Some(stop_tx),
             input_tx: Some(input_tx),
@@ -107,11 +213,13 @@ impl TerminalStreamEntry {
         if chunk.is_empty() {
             return;
         }
-        self.output.push_str(chunk);
-        if self.output.len() > MAX_STREAM_OUTPUT {
-            let overflow = self.output.len() - MAX_STREAM_OUTPUT;
-            self.output.drain(0..overflow);
-        }
+        self.emulator.feed_bytes(chunk.as_bytes());
+        self.output = self.emulator.render_text();
+    }
+
+    fn clear_output(&mut self) {
+        self.emulator.reset();
+        self.output.clear();
     }
 }
 
@@ -431,7 +539,7 @@ impl TerminalPanelState {
             return;
         }
         if let Some(entry) = self.active_stream_entry_mut() {
-            entry.output.clear();
+            entry.clear_output();
         }
         cx.notify();
     }
@@ -559,7 +667,7 @@ impl TerminalPanelState {
                 }
             }
         }
-        let preserved_output = if force {
+        let preserved_emulator = if force {
             self.stop_terminal_stream(terminal_id);
             None
         } else {
@@ -571,9 +679,11 @@ impl TerminalPanelState {
         let url = match stream_url {
             Ok(url) => url,
             Err(err) => {
-                let mut entry = TerminalStreamEntry::new(TerminalStreamState::Error(err.to_string()));
-                if let Some(output) = preserved_output {
-                    entry.output = output;
+                let mut entry =
+                    TerminalStreamEntry::new(TerminalStreamState::Error(err.to_string()));
+                if let Some(emulator) = preserved_emulator {
+                    entry.emulator = emulator;
+                    entry.output = entry.emulator.render_text();
                 }
                 self.terminal_streams.insert(terminal_id, entry);
                 self.touch_stream_lru(terminal_id);
@@ -588,9 +698,9 @@ impl TerminalPanelState {
 
         self.stream_generation_counter = self.stream_generation_counter.wrapping_add(1);
         let generation = self.stream_generation_counter;
-        let output = preserved_output.unwrap_or_default();
+        let emulator = preserved_emulator.unwrap_or_else(TerminalEmulator::new);
         let entry = TerminalStreamEntry::with_channels(
-            output,
+            emulator,
             TerminalStreamState::Connecting,
             stop_tx,
             input_tx,
@@ -653,13 +763,13 @@ impl TerminalPanelState {
         }
     }
 
-    fn stop_terminal_stream(&mut self, terminal_id: TerminalId) -> Option<String> {
+    fn stop_terminal_stream(&mut self, terminal_id: TerminalId) -> Option<TerminalEmulator> {
         if let Some(entry) = self.terminal_streams.remove(&terminal_id) {
             if let Some(stop_tx) = entry.stop_tx {
                 let _ = stop_tx.send(true);
             }
             self.remove_from_lru(terminal_id);
-            return Some(entry.output);
+            return Some(entry.emulator);
         }
         None
     }
