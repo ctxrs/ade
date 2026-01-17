@@ -3300,39 +3300,9 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
             <div className="wb-convo">
               {showSingleSessionHeader ? (
                 <div className="wb-single-track-header" aria-busy={sessions.length === 0 ? "true" : undefined}>
-                  <div className="wb-single-track-title">{singleSessionHeaderForRender?.title ?? "Conversation"}</div>
-                  <div className="wb-single-track-meta">
-                    <div className="wb-single-track-meta-left">
-                      <span>
-                        <RelativeAgeLabel
-                          iso={singleSessionHeaderForRender?.lastIso}
-                          fallback={singleSessionHeader ? "Now" : "Loading…"}
-                        />
-                      </span>
-                      {singleSessionHeaderForRender?.harness ? (
-                        <>
-                          <span className="wb-single-track-dot" aria-hidden="true">
-                            ·
-                          </span>
-                          <span>{singleSessionHeaderForRender.harness}</span>
-                        </>
-                      ) : null}
-                      {singleSessionHeaderForRender?.modelBase && (
-                        <>
-                          <span className="wb-single-track-dot" aria-hidden="true">
-                            ·
-                          </span>
-                          <span>{singleSessionHeaderForRender.modelBase}</span>
-                        </>
-                      )}
-                      {singleSessionHeaderForRender?.effort && (
-                        <>
-                          <span className="wb-single-track-dot" aria-hidden="true">
-                            ·
-                          </span>
-                          <span>{singleSessionHeaderForRender.effort}</span>
-                        </>
-                      )}
+                  <div className="wb-single-track-row">
+                    <div className="wb-single-track-title-row">
+                      <div className="wb-single-track-title">{singleSessionHeaderForRender?.title ?? "Conversation"}</div>
                       {worktreeChip.worktreeLabel && (
                         <>
                           <span className="wb-single-track-dot" aria-hidden="true">

@@ -2247,11 +2247,31 @@
   padding-left: calc(16px + 28px);
 }
 
+.wb-single-track-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-width: 0;
+}
+
+.wb-single-track-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+
 .wb-single-track-title {
-  font-size: 22px;
-  font-weight: 600;
-  line-height: 1.15;
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 1.25;
   color: var(--text);
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .wb-single-track-path {
@@ -2280,6 +2300,8 @@
 
 .wb-single-track-dot {
   opacity: 0.65;
+  color: var(--muted);
+  font-size: 13px;
 }
 
 .wb-worktree-chip {
@@ -2303,6 +2325,8 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  color: var(--muted);
+  font-size: 13px;
 }
 
 .wb-worktree-action {
