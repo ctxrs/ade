@@ -2264,8 +2264,8 @@
 }
 
 .wb-single-track-title {
-  font-size: 16px;
-  font-weight: 400;
+  font-size: 15px;
+  font-weight: 500;
   line-height: 1.25;
   color: var(--text);
   min-width: 0;
@@ -2300,6 +2300,8 @@
 
 .wb-single-track-dot {
   opacity: 0.65;
+  color: var(--muted);
+  font-size: 13px;
 }
 
 .wb-worktree-chip {
@@ -2323,6 +2325,8 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  color: var(--muted);
+  font-size: 13px;
 }
 
 .wb-worktree-action {

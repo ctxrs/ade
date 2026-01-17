@@ -263,7 +263,7 @@ impl<'a> SessionView<'a> {
                 .border_color(shell.colors.border)
                 .bg(shell.colors.panel)
                 .text_sm()
-                .text_color(shell.colors.text)
+                .text_color(shell.colors.muted)
                 .child(Icon::new(IconName::Folder, 12.0, shell.colors.text))
                 .child(format!("Worktree {short_id}"))
                 .cursor_pointer()
@@ -281,8 +281,8 @@ impl<'a> SessionView<'a> {
             .min_w(px(0.0))
             .child(
                 div()
-                    .text_size(px(16.0))
-                    .font_weight(FontWeight(400.0))
+                    .text_size(px(15.0))
+                    .font_weight(FontWeight(500.0))
                     .child(shell.session.title.clone()),
             );
         if let Some(chip) = worktree_chip {
