@@ -1,17 +1,14 @@
-use gpui::{CursorStyle, div, prelude::*, px, Window};
-use gpui_component::scroll::ScrollableElement;
-
+use gpui::{AnyElement, CursorStyle, MouseButton, StyledText, div, prelude::*, px, Window};
+use gpui_component::ElementExt;
 use ctx_core::models::TerminalStatus;
 
 use crate::automation_tree;
 
 use super::super::icons::{Icon, IconName};
 use super::super::state::terminal::{
-    TerminalLoadState, TerminalPanelState, TerminalScope, TerminalStreamState,
+    terminal_line_height, MONO_FONT_FAMILY, TerminalLoadState, TerminalPanelState, TerminalScope,
+    TerminalStreamState, TERMINAL_FONT_SIZE,
 };
-
-const MONO_FONT_FAMILY: &str =
-    "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, \"Liberation Mono\", \"Courier New\", monospace";
 
 fn terminal_status_text(terminal: &ctx_core::models::TerminalSession) -> String {
     match terminal.status {
@@ -24,7 +21,7 @@ fn terminal_status_text(terminal: &ctx_core::models::TerminalSession) -> String 
 }
 
 impl Render for TerminalPanelState {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = self.colors;
         let metrics = crate::theme::ThemeMetrics::default();
         let scope_terminals = self.scope_terminals();
@@ -276,16 +273,24 @@ impl Render for TerminalPanelState {
 
         let output_text = if selected_terminal.is_none() {
             "Select a terminal to view output.".to_string()
-        } else if active_stream_output.is_empty() {
-            "No output yet.".to_string()
         } else {
-            active_stream_output.to_string()
+            "No output yet.".to_string()
         };
-        let output_is_empty = selected_terminal.is_none() || active_stream_output.is_empty();
-        let output_color = if output_is_empty {
+        let output_is_empty = selected_terminal.is_none();
+        let rendered_output = self.active_stream_rendered();
+        let output_color = if output_is_empty || rendered_output.is_none() {
             colors.muted
         } else {
             colors.text
+        };
+        let output_body: AnyElement = if output_is_empty {
+            div().child(output_text.clone()).into_any_element()
+        } else if let Some(rendered) = rendered_output {
+            StyledText::new(rendered.text.clone())
+                .with_runs(rendered.runs.clone())
+                .into_any_element()
+        } else {
+            div().child(output_text.clone()).into_any_element()
         };
         let can_clear_output = !active_stream_output.is_empty();
         let can_copy_output = !active_stream_output.trim().is_empty();
@@ -416,19 +421,69 @@ impl Render for TerminalPanelState {
                     .child(copy_button)
                     .child(clear_button),
             );
+        let output_padding = px(metrics.spacing.md);
+        let output_line_height = terminal_line_height(window);
         let output_view = div()
             .text_sm()
+            .text_size(px(TERMINAL_FONT_SIZE))
+            .line_height(output_line_height)
             .font_family(MONO_FONT_FAMILY)
             .text_color(output_color)
             .whitespace_nowrap()
-            .overflow_scrollbar()
+            .overflow_hidden()
             .border_1()
             .border_color(colors.border)
             .rounded_sm()
             .bg(colors.panel)
-            .p(px(metrics.spacing.md))
+            .p(output_padding)
             .h(px(220.0))
-            .child(output_text);
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(TerminalPanelState::on_output_mouse_down),
+            )
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(TerminalPanelState::on_output_mouse_down),
+            )
+            .on_mouse_down(
+                MouseButton::Middle,
+                cx.listener(TerminalPanelState::on_output_mouse_down),
+            )
+            .on_mouse_move(cx.listener(TerminalPanelState::on_output_mouse_move))
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(TerminalPanelState::on_output_mouse_up),
+            )
+            .on_mouse_up(
+                MouseButton::Right,
+                cx.listener(TerminalPanelState::on_output_mouse_up),
+            )
+            .on_mouse_up(
+                MouseButton::Middle,
+                cx.listener(TerminalPanelState::on_output_mouse_up),
+            )
+            .on_mouse_up_out(
+                MouseButton::Left,
+                cx.listener(TerminalPanelState::on_output_mouse_up_out),
+            )
+            .on_mouse_up_out(
+                MouseButton::Right,
+                cx.listener(TerminalPanelState::on_output_mouse_up_out),
+            )
+            .on_mouse_up_out(
+                MouseButton::Middle,
+                cx.listener(TerminalPanelState::on_output_mouse_up_out),
+            )
+            .on_scroll_wheel(cx.listener(TerminalPanelState::on_output_scroll_wheel))
+            .on_prepaint({
+                let view = cx.entity();
+                move |bounds, window, cx| {
+                    view.update(cx, |view, cx| {
+                        view.update_terminal_output_bounds(bounds, output_padding, window, cx);
+                    });
+                }
+            })
+            .child(output_body);
 
         let header = div()
             .flex()

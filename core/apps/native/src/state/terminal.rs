@@ -4,12 +4,18 @@ use std::{
 };
 
 use alacritty_terminal::event::VoidListener;
-use alacritty_terminal::grid::Dimensions;
-use alacritty_terminal::index::{Column, Line};
-use alacritty_terminal::term::{cell::Flags, Config, Term};
-use alacritty_terminal::vte::ansi;
+use alacritty_terminal::grid::{Dimensions, Indexed, Scroll};
+use alacritty_terminal::index::{Column, Line, Point as TermPoint, Side};
+use alacritty_terminal::selection::{Selection, SelectionRange, SelectionType};
+use alacritty_terminal::term::color::Colors;
+use alacritty_terminal::term::{cell::Flags, viewport_to_point, Config, Term, TermMode};
+use alacritty_terminal::vte::ansi::{self, Color, CursorShape, NamedColor, Rgb};
 use futures_util::{SinkExt, StreamExt};
-use gpui::{ClickEvent, ClipboardItem, Context, FocusHandle, KeyDownEvent, Window};
+use gpui::{
+    font, px, Bounds, ClickEvent, ClipboardItem, Context, FocusHandle, Hsla, KeyDownEvent,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point as UiPoint, Rgba,
+    ScrollWheelEvent, SharedString, StrikethroughStyle, TextRun, UnderlineStyle, Window,
+};
 use gpui_tokio::Tokio;
 use tokio::sync::{mpsc, watch};
 use tokio_tungstenite::{connect_async, tungstenite::Message as WsMessage};
@@ -73,6 +79,35 @@ const DEFAULT_TERMINAL_COLUMNS: usize = 120;
 const DEFAULT_TERMINAL_LINES: usize = 200;
 const DEFAULT_TERMINAL_SCROLLBACK: usize = 1000;
 const MAX_TERMINAL_STREAMS: usize = 8;
+pub(crate) const TERMINAL_FONT_SIZE: f32 = 12.0;
+pub(crate) const TERMINAL_LINE_HEIGHT: f32 = 16.0;
+pub(crate) const MONO_FONT_FAMILY: &str =
+    "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, \"Liberation Mono\", \"Courier New\", monospace";
+const DIM_FACTOR: f32 = 0.66;
+const DEFAULT_ANSI_COLORS: [Rgb; 16] = [
+    Rgb { r: 0, g: 0, b: 0 },
+    Rgb { r: 205, g: 0, b: 0 },
+    Rgb { r: 0, g: 205, b: 0 },
+    Rgb { r: 205, g: 205, b: 0 },
+    Rgb { r: 0, g: 0, b: 238 },
+    Rgb { r: 205, g: 0, b: 205 },
+    Rgb { r: 0, g: 205, b: 205 },
+    Rgb { r: 229, g: 229, b: 229 },
+    Rgb { r: 127, g: 127, b: 127 },
+    Rgb { r: 255, g: 0, b: 0 },
+    Rgb { r: 0, g: 255, b: 0 },
+    Rgb { r: 255, g: 255, b: 0 },
+    Rgb { r: 92, g: 92, b: 255 },
+    Rgb { r: 255, g: 0, b: 255 },
+    Rgb { r: 0, g: 255, b: 255 },
+    Rgb { r: 255, g: 255, b: 255 },
+];
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct TerminalRenderSnapshot {
+    pub(crate) text: SharedString,
+    pub(crate) runs: Vec<TextRun>,
+}
 
 struct TerminalGridSize {
     columns: usize,
@@ -107,6 +142,28 @@ struct TerminalEmulator {
     parser: ansi::Processor,
 }
 
+#[derive(Clone, PartialEq)]
+struct TerminalTextStyle {
+    font: gpui::Font,
+    color: Hsla,
+    background_color: Option<Hsla>,
+    underline: Option<UnderlineStyle>,
+    strikethrough: Option<StrikethroughStyle>,
+}
+
+impl TerminalTextStyle {
+    fn to_run(&self, len: usize) -> TextRun {
+        TextRun {
+            len,
+            font: self.font.clone(),
+            color: self.color,
+            background_color: self.background_color,
+            underline: self.underline,
+            strikethrough: self.strikethrough,
+        }
+    }
+}
+
 impl TerminalEmulator {
     fn new() -> Self {
         let size = TerminalGridSize::new(DEFAULT_TERMINAL_COLUMNS, DEFAULT_TERMINAL_LINES);
@@ -127,7 +184,7 @@ impl TerminalEmulator {
         self.parser.advance(&mut self.term, bytes);
     }
 
-    fn render_text(&self) -> String {
+    fn render_plain_text(&self) -> String {
         let grid = self.term.grid();
         let columns = grid.columns();
         let display_offset = grid.display_offset();
@@ -166,10 +223,215 @@ impl TerminalEmulator {
 
         lines.join("\n")
     }
+
+    fn render_snapshot(&self, theme: ThemeColors) -> TerminalRenderSnapshot {
+        let grid = self.term.grid();
+        let columns = grid.columns();
+        let display_offset = grid.display_offset();
+        let screen_lines = grid.screen_lines();
+        let start_line = -(display_offset as i32);
+        let end_line = start_line + screen_lines as i32;
+        let content = self.term.renderable_content();
+        let cursor = content.cursor;
+        let cursor_rgb = resolve_named_color(NamedColor::Cursor, content.colors, theme);
+        let default_fg = resolve_named_color(NamedColor::Foreground, content.colors, theme);
+        let selection_range: Option<SelectionRange> =
+            self.term.selection.as_ref().and_then(|selection| selection.to_range(&self.term));
+        let selection_bg = rgba_to_rgb(theme.accent);
+        let selection_fg = rgba_to_rgb(theme.bg);
+
+        let mut text = String::with_capacity(columns * screen_lines);
+        let mut runs = Vec::new();
+        let mut current_style: Option<TerminalTextStyle> = None;
+        let mut current_len = 0usize;
+
+        let base_font = font(MONO_FONT_FAMILY);
+        let newline_style = TerminalTextStyle {
+            font: base_font.clone(),
+            color: rgb_to_hsla(default_fg),
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        };
+
+        for line in start_line..end_line {
+            let row = &grid[Line(line)];
+            for column in 0..columns {
+                let cell = &row[Column(column)];
+                if cell.flags.contains(Flags::WIDE_CHAR_SPACER)
+                    || cell.flags.contains(Flags::LEADING_WIDE_CHAR_SPACER)
+                {
+                    continue;
+                }
+                let point = TermPoint::new(Line(line), Column(column));
+
+                let mut bold = cell.flags.contains(Flags::BOLD);
+                let italic = cell.flags.contains(Flags::ITALIC);
+                let dim = cell.flags.contains(Flags::DIM);
+                let underline_flag = cell.flags.intersects(Flags::ALL_UNDERLINES);
+                let strike = cell.flags.contains(Flags::STRIKEOUT);
+
+                let mut fg =
+                    resolve_color(cell.fg, content.colors, theme, true, bold, dim);
+                let mut bg =
+                    resolve_color(cell.bg, content.colors, theme, false, false, false);
+
+                if cell.flags.contains(Flags::INVERSE) {
+                    std::mem::swap(&mut fg, &mut bg);
+                }
+
+                if cell.flags.contains(Flags::HIDDEN) {
+                    fg = bg;
+                }
+
+                let is_selected = selection_range
+                    .as_ref()
+                    .map(|range| {
+                        range.contains_cell(
+                            &Indexed { point, cell },
+                            cursor.point,
+                            cursor.shape,
+                        )
+                    })
+                    .unwrap_or(false);
+                let is_cursor = cursor.shape != CursorShape::Hidden
+                    && cursor.point.line.0 == line
+                    && cursor.point.column.0 == column;
+
+                let mut underline = if underline_flag {
+                    let color = cell
+                        .underline_color()
+                        .map(|color| resolve_color(color, content.colors, theme, true, false, false))
+                        .unwrap_or(fg);
+                    Some(underline_style_for_cell(cell, color))
+                } else {
+                    None
+                };
+
+                let strikethrough = if strike {
+                    Some(StrikethroughStyle {
+                        thickness: px(1.0),
+                        color: Some(rgb_to_hsla(fg)),
+                    })
+                } else {
+                    None
+                };
+
+                if is_selected {
+                    fg = selection_fg;
+                    bg = selection_bg;
+                }
+
+                if is_cursor {
+                    match cursor.shape {
+                        CursorShape::Block | CursorShape::HollowBlock => {
+                            let cursor_fg = bg;
+                            fg = cursor_fg;
+                            bg = cursor_rgb;
+                            bold = true;
+                        }
+                        CursorShape::Underline | CursorShape::Beam => {
+                            underline = Some(UnderlineStyle {
+                                thickness: px(1.0),
+                                color: Some(rgb_to_hsla(cursor_rgb)),
+                                wavy: false,
+                            });
+                        }
+                        CursorShape::Hidden => {}
+                    }
+                }
+
+                let mut font = base_font.clone();
+                if bold {
+                    font = font.bold();
+                }
+                if italic {
+                    font = font.italic();
+                }
+
+                let style = TerminalTextStyle {
+                    font,
+                    color: rgb_to_hsla(fg),
+                    background_color: Some(rgb_to_hsla(bg)),
+                    underline,
+                    strikethrough,
+                };
+
+                let ch = if cell.flags.contains(Flags::HIDDEN) { ' ' } else { cell.c };
+                push_styled_char(
+                    &mut text,
+                    &mut runs,
+                    &mut current_style,
+                    &mut current_len,
+                    &style,
+                    ch,
+                );
+
+                if let Some(zerowidth) = cell.zerowidth() {
+                    for &ch in zerowidth {
+                        push_styled_char(
+                            &mut text,
+                            &mut runs,
+                            &mut current_style,
+                            &mut current_len,
+                            &style,
+                            ch,
+                        );
+                    }
+                }
+            }
+
+            if line + 1 < end_line {
+                push_styled_char(
+                    &mut text,
+                    &mut runs,
+                    &mut current_style,
+                    &mut current_len,
+                    &newline_style,
+                    '\n',
+                );
+            }
+        }
+
+        if let Some(style) = current_style {
+            if current_len > 0 {
+                runs.push(style.to_run(current_len));
+            }
+        }
+
+        TerminalRenderSnapshot {
+            text: SharedString::from(text),
+            runs,
+        }
+    }
+
+    fn mode(&self) -> TermMode {
+        *self.term.mode()
+    }
+
+    fn scroll_display(&mut self, scroll: Scroll) {
+        self.term.scroll_display(scroll);
+    }
+
+    fn start_selection(&mut self, point: TermPoint) {
+        self.term.selection = Some(Selection::new(SelectionType::Simple, point, Side::Left));
+    }
+
+    fn update_selection(&mut self, point: TermPoint) {
+        if let Some(selection) = self.term.selection.as_mut() {
+            selection.update(point, Side::Right);
+            selection.include_all();
+        }
+    }
+
+    fn selection_to_string(&self) -> Option<String> {
+        self.term.selection_to_string()
+    }
 }
 
 struct TerminalStreamEntry {
     output: String,
+    rendered: TerminalRenderSnapshot,
     emulator: TerminalEmulator,
     state: TerminalStreamState,
     stop_tx: Option<watch::Sender<bool>>,
@@ -178,11 +440,13 @@ struct TerminalStreamEntry {
 }
 
 impl TerminalStreamEntry {
-    fn new(state: TerminalStreamState) -> Self {
+    fn new(state: TerminalStreamState, theme: ThemeColors) -> Self {
         let emulator = TerminalEmulator::new();
-        let output = emulator.render_text();
+        let output = emulator.render_plain_text();
+        let rendered = emulator.render_snapshot(theme);
         Self {
             output,
+            rendered,
             emulator,
             state,
             stop_tx: None,
@@ -197,10 +461,13 @@ impl TerminalStreamEntry {
         stop_tx: watch::Sender<bool>,
         input_tx: mpsc::UnboundedSender<String>,
         generation: u64,
+        theme: ThemeColors,
     ) -> Self {
-        let output = emulator.render_text();
+        let output = emulator.render_plain_text();
+        let rendered = emulator.render_snapshot(theme);
         Self {
             output,
+            rendered,
             emulator,
             state,
             stop_tx: Some(stop_tx),
@@ -209,17 +476,24 @@ impl TerminalStreamEntry {
         }
     }
 
-    fn append_output(&mut self, chunk: &str) {
+    fn append_output(&mut self, chunk: &str, theme: ThemeColors) {
         if chunk.is_empty() {
             return;
         }
         self.emulator.feed_bytes(chunk.as_bytes());
-        self.output = self.emulator.render_text();
+        self.output = self.emulator.render_plain_text();
+        self.rendered = self.emulator.render_snapshot(theme);
     }
 
-    fn clear_output(&mut self) {
+    fn clear_output(&mut self, theme: ThemeColors) {
         self.emulator.reset();
-        self.output.clear();
+        self.output = self.emulator.render_plain_text();
+        self.rendered = self.emulator.render_snapshot(theme);
+    }
+
+    fn refresh_render(&mut self, theme: ThemeColors) {
+        self.output = self.emulator.render_plain_text();
+        self.rendered = self.emulator.render_snapshot(theme);
     }
 }
 
@@ -246,6 +520,11 @@ pub(crate) struct TerminalPanelState {
     pub(crate) last_error: Option<String>,
     pub(crate) input: ComposerState,
     pub(crate) input_focus: FocusHandle,
+    terminal_output_bounds: Option<Bounds<Pixels>>,
+    terminal_cell_metrics: Option<TerminalCellMetrics>,
+    terminal_mouse_selecting: bool,
+    terminal_mouse_button: Option<MouseButton>,
+    terminal_scroll_remainder: f32,
 }
 
 impl TerminalPanelState {
@@ -263,6 +542,11 @@ impl TerminalPanelState {
             last_error: None,
             input: ComposerState::new(),
             input_focus,
+            terminal_output_bounds: None,
+            terminal_cell_metrics: None,
+            terminal_mouse_selecting: false,
+            terminal_mouse_button: None,
+            terminal_scroll_remainder: 0.0,
         }
     }
 
@@ -538,8 +822,9 @@ impl TerminalPanelState {
         if self.active_stream_output().is_empty() {
             return;
         }
+        let colors = self.colors;
         if let Some(entry) = self.active_stream_entry_mut() {
-            entry.clear_output();
+            entry.clear_output(colors);
         }
         cx.notify();
     }
@@ -555,6 +840,275 @@ impl TerminalPanelState {
             return;
         }
         cx.write_to_clipboard(ClipboardItem::new_string(output.to_string()));
+        cx.notify();
+    }
+
+    pub(crate) fn update_terminal_output_bounds(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        padding: Pixels,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let (cell_width, line_height) = terminal_cell_dimensions(window);
+        let metrics = TerminalCellMetrics {
+            cell_width,
+            line_height,
+            padding,
+        };
+
+        if self.terminal_output_bounds != Some(bounds) || self.terminal_cell_metrics != Some(metrics)
+        {
+            self.terminal_output_bounds = Some(bounds);
+            self.terminal_cell_metrics = Some(metrics);
+        }
+
+        self.resize_active_terminal_to_bounds(bounds, metrics, cx);
+    }
+
+    fn resize_active_terminal_to_bounds(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        metrics: TerminalCellMetrics,
+        cx: &mut Context<Self>,
+    ) {
+        let colors = self.colors;
+        let Some(entry) = self.active_stream_entry_mut() else {
+            return;
+        };
+
+        let padding = metrics.padding + metrics.padding;
+        let border = px(2.0);
+        let inner_width: f32 = (bounds.size.width - padding - border).into();
+        let inner_height: f32 = (bounds.size.height - padding - border).into();
+        let inner_width = inner_width.max(0.0);
+        let inner_height = inner_height.max(0.0);
+        if inner_width == 0.0 || inner_height == 0.0 {
+            return;
+        }
+
+        let cell_width: f32 = metrics.cell_width.into();
+        let line_height: f32 = metrics.line_height.into();
+        if cell_width <= 0.0 || line_height <= 0.0 {
+            return;
+        }
+
+        let columns = (inner_width / cell_width).floor() as usize;
+        let screen_lines = (inner_height / line_height).floor() as usize;
+        let columns = columns.clamp(1, u16::MAX as usize);
+        let screen_lines = screen_lines.clamp(1, u16::MAX as usize);
+
+        let (current_cols, current_lines) = {
+            let grid = entry.emulator.term.grid();
+            (grid.columns(), grid.screen_lines())
+        };
+        if current_cols == columns && current_lines == screen_lines {
+            return;
+        }
+
+        entry
+            .emulator
+            .term
+            .resize(TerminalGridSize::new(columns, screen_lines));
+        entry.refresh_render(colors);
+        if let Some(input_tx) = entry.input_tx.as_ref() {
+            let payload =
+                format!("{{\"type\":\"resize\",\"cols\":{columns},\"rows\":{screen_lines}}}");
+            let _ = input_tx.send(payload);
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn on_output_mouse_down(
+        &mut self,
+        event: &MouseDownEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let bounds = self.terminal_output_bounds;
+        let metrics = self.terminal_cell_metrics;
+        let colors = self.colors;
+        let (mode, point) = {
+            let Some(entry) = self.active_stream_entry() else {
+                return;
+            };
+            let Some(point) = terminal_mouse_point(bounds, metrics, entry, event.position) else {
+                return;
+            };
+            (entry.emulator.mode(), point)
+        };
+
+        if terminal_mouse_reporting_enabled(mode) {
+            if let Some(payload) = mouse_report_payload(
+                mode,
+                MouseReportKind::Press(event.button),
+                point,
+                event.modifiers,
+            ) {
+                self.terminal_mouse_button = Some(event.button);
+                self.send_input(payload, cx);
+            }
+            self.terminal_mouse_selecting = false;
+            return;
+        }
+
+        if event.button != MouseButton::Left {
+            return;
+        }
+
+        if let Some(entry) = self.active_stream_entry_mut() {
+            entry.emulator.start_selection(point.grid_point);
+            entry.refresh_render(colors);
+        }
+        self.terminal_mouse_selecting = true;
+        cx.notify();
+    }
+
+    pub(crate) fn on_output_mouse_move(
+        &mut self,
+        event: &MouseMoveEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let bounds = self.terminal_output_bounds;
+        let metrics = self.terminal_cell_metrics;
+        let pressed_button = event.pressed_button.or(self.terminal_mouse_button);
+        let selecting = self.terminal_mouse_selecting;
+        let colors = self.colors;
+        let (mode, point) = {
+            let Some(entry) = self.active_stream_entry() else {
+                return;
+            };
+            let Some(point) = terminal_mouse_point(bounds, metrics, entry, event.position) else {
+                return;
+            };
+            (entry.emulator.mode(), point)
+        };
+
+        if terminal_mouse_reporting_enabled(mode) {
+            if !terminal_should_report_motion(mode, pressed_button) {
+                return;
+            }
+            if let Some(payload) = mouse_report_payload(
+                mode,
+                MouseReportKind::Motion(pressed_button),
+                point,
+                event.modifiers,
+            ) {
+                self.send_input(payload, cx);
+            }
+            return;
+        }
+
+        if !selecting {
+            return;
+        }
+        if let Some(entry) = self.active_stream_entry_mut() {
+            entry.emulator.update_selection(point.grid_point);
+            entry.refresh_render(colors);
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn on_output_mouse_up(
+        &mut self,
+        event: &MouseUpEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.finish_output_mouse(event.button, event.position, event.modifiers, cx);
+    }
+
+    pub(crate) fn on_output_mouse_up_out(
+        &mut self,
+        event: &MouseUpEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.finish_output_mouse(event.button, event.position, event.modifiers, cx);
+    }
+
+    pub(crate) fn on_output_scroll_wheel(
+        &mut self,
+        event: &ScrollWheelEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let bounds = self.terminal_output_bounds;
+        let metrics = self.terminal_cell_metrics;
+        let colors = self.colors;
+        let line_height = self
+            .terminal_cell_metrics
+            .map(|metrics| metrics.line_height)
+            .unwrap_or(px(TERMINAL_LINE_HEIGHT));
+        let (mode, point) = {
+            let Some(entry) = self.active_stream_entry() else {
+                return;
+            };
+            let point = if terminal_mouse_reporting_enabled(entry.emulator.mode()) {
+                terminal_mouse_point(bounds, metrics, entry, event.position)
+            } else {
+                None
+            };
+            (entry.emulator.mode(), point)
+        };
+
+        window.prevent_default();
+
+        if terminal_mouse_reporting_enabled(mode) {
+            let Some(point) = point else {
+                return;
+            };
+            let direction = if event.delta.pixel_delta(line_height).y >= px(0.0) {
+                ScrollDirection::Down
+            } else {
+                ScrollDirection::Up
+            };
+            if let Some(payload) = mouse_report_payload(
+                mode,
+                MouseReportKind::Scroll(direction),
+                point,
+                event.modifiers,
+            ) {
+                self.send_input(payload, cx);
+            }
+            return;
+        }
+
+        if terminal_should_alternate_scroll(mode) {
+            let delta = event.delta.pixel_delta(line_height);
+            let direction = if delta.y >= px(0.0) {
+                ScrollDirection::Down
+            } else {
+                ScrollDirection::Up
+            };
+            let line_height_value = f32::from(line_height);
+            let mut steps = (f32::from(delta.y) / line_height_value)
+                .abs()
+                .ceil() as usize;
+            if steps == 0 {
+                steps = 1;
+            }
+            steps = steps.min(12);
+            let sequence = match direction {
+                ScrollDirection::Up => "\u{1b}[A",
+                ScrollDirection::Down => "\u{1b}[B",
+            };
+            self.send_input(sequence.repeat(steps), cx);
+            return;
+        }
+
+        let delta = event.delta.pixel_delta(line_height);
+        self.terminal_scroll_remainder += f32::from(delta.y) / f32::from(line_height);
+        let lines = self.terminal_scroll_remainder.trunc() as i32;
+        if lines == 0 {
+            return;
+        }
+        self.terminal_scroll_remainder -= lines as f32;
+        if let Some(entry) = self.active_stream_entry_mut() {
+            entry.emulator.scroll_display(Scroll::Delta(-lines));
+            entry.refresh_render(colors);
+        }
         cx.notify();
     }
 
@@ -679,11 +1233,13 @@ impl TerminalPanelState {
         let url = match stream_url {
             Ok(url) => url,
             Err(err) => {
-                let mut entry =
-                    TerminalStreamEntry::new(TerminalStreamState::Error(err.to_string()));
+                let mut entry = TerminalStreamEntry::new(
+                    TerminalStreamState::Error(err.to_string()),
+                    self.colors,
+                );
                 if let Some(emulator) = preserved_emulator {
                     entry.emulator = emulator;
-                    entry.output = entry.emulator.render_text();
+                    entry.refresh_render(self.colors);
                 }
                 self.terminal_streams.insert(terminal_id, entry);
                 self.touch_stream_lru(terminal_id);
@@ -705,6 +1261,7 @@ impl TerminalPanelState {
             stop_tx,
             input_tx,
             generation,
+            self.colors,
         );
         self.terminal_streams.insert(terminal_id, entry);
         self.touch_stream_lru(terminal_id);
@@ -755,7 +1312,7 @@ impl TerminalPanelState {
                 entry.state = status;
             }
             TerminalStreamUpdate::Output(chunk) => {
-                entry.append_output(&chunk);
+                entry.append_output(&chunk, self.colors);
             }
         }
         if self.selected_terminal_id == Some(terminal_id) {
@@ -852,10 +1409,330 @@ impl TerminalPanelState {
             .unwrap_or("")
     }
 
+    pub(crate) fn active_stream_rendered(&self) -> Option<&TerminalRenderSnapshot> {
+        self.active_stream_entry().map(|entry| &entry.rendered)
+    }
+
     fn active_stream_input_tx(&self) -> Option<mpsc::UnboundedSender<String>> {
         self.active_stream_entry()
             .and_then(|entry| entry.input_tx.clone())
     }
+
+    fn finish_output_mouse(
+        &mut self,
+        button: MouseButton,
+        position: UiPoint<Pixels>,
+        modifiers: gpui::Modifiers,
+        cx: &mut Context<Self>,
+    ) {
+        let bounds = self.terminal_output_bounds;
+        let metrics = self.terminal_cell_metrics;
+        let colors = self.colors;
+        let (mode, point) = {
+            let Some(entry) = self.active_stream_entry() else {
+                return;
+            };
+            let point = terminal_mouse_point(bounds, metrics, entry, position);
+            (entry.emulator.mode(), point)
+        };
+
+        if terminal_mouse_reporting_enabled(mode) {
+            if let Some(point) = point {
+                if let Some(payload) =
+                    mouse_report_payload(mode, MouseReportKind::Release(button), point, modifiers)
+                {
+                    self.send_input(payload, cx);
+                }
+            }
+            self.terminal_mouse_button = None;
+            self.terminal_mouse_selecting = false;
+            return;
+        }
+
+        if button != MouseButton::Left {
+            return;
+        }
+
+        let selection_text = if let Some(entry) = self.active_stream_entry_mut() {
+            if let Some(point) = point {
+                entry.emulator.update_selection(point.grid_point);
+            }
+            entry.refresh_render(colors);
+            entry.emulator.selection_to_string()
+        } else {
+            None
+        };
+        self.terminal_mouse_selecting = false;
+        if let Some(text) = selection_text {
+            if !text.is_empty() {
+                cx.write_to_clipboard(ClipboardItem::new_string(text));
+            }
+        }
+        cx.notify();
+    }
+}
+
+fn terminal_mouse_point(
+    bounds: Option<Bounds<Pixels>>,
+    metrics: Option<TerminalCellMetrics>,
+    entry: &TerminalStreamEntry,
+    position: UiPoint<Pixels>,
+) -> Option<TerminalMousePoint> {
+    let bounds = bounds?;
+    let metrics = metrics?;
+    let origin = bounds.origin + gpui::point(metrics.padding, metrics.padding);
+    let x = position.x - origin.x;
+    let y = position.y - origin.y;
+    if x < px(0.0) || y < px(0.0) {
+        return None;
+    }
+
+    let columns = entry.emulator.term.grid().columns();
+    let screen_lines = entry.emulator.term.grid().screen_lines();
+    let col = ((x / metrics.cell_width).floor() as i32).clamp(0, columns as i32 - 1);
+    let row = ((y / metrics.line_height).floor() as i32).clamp(0, screen_lines as i32 - 1);
+
+    let display_offset = entry.emulator.term.grid().display_offset();
+    let grid_point =
+        viewport_to_point(display_offset, TermPoint::new(row as usize, Column(col as usize)));
+
+    Some(TerminalMousePoint {
+        grid_point,
+        column: col as usize + 1,
+        line: row as usize + 1,
+    })
+}
+
+fn terminal_mouse_reporting_enabled(mode: TermMode) -> bool {
+    mode.contains(TermMode::MOUSE_MODE)
+}
+
+fn terminal_should_report_motion(mode: TermMode, pressed_button: Option<MouseButton>) -> bool {
+    mode.contains(TermMode::MOUSE_MOTION)
+        || (mode.contains(TermMode::MOUSE_DRAG) && pressed_button.is_some())
+}
+
+fn terminal_should_alternate_scroll(mode: TermMode) -> bool {
+    mode.contains(TermMode::ALTERNATE_SCROLL) && mode.contains(TermMode::ALT_SCREEN)
+}
+
+fn push_styled_char(
+    text: &mut String,
+    runs: &mut Vec<TextRun>,
+    current_style: &mut Option<TerminalTextStyle>,
+    current_len: &mut usize,
+    style: &TerminalTextStyle,
+    ch: char,
+) {
+    if current_style.as_ref() != Some(style) {
+        if let Some(prev) = current_style.take() {
+            if *current_len > 0 {
+                runs.push(prev.to_run(*current_len));
+            }
+        }
+        *current_len = 0;
+        *current_style = Some(style.clone());
+    }
+
+    text.push(ch);
+    *current_len += ch.len_utf8();
+}
+
+fn rgba_to_rgb(color: Rgba) -> Rgb {
+    Rgb {
+        r: (color.r * 255.0).round().clamp(0.0, 255.0) as u8,
+        g: (color.g * 255.0).round().clamp(0.0, 255.0) as u8,
+        b: (color.b * 255.0).round().clamp(0.0, 255.0) as u8,
+    }
+}
+
+fn rgb_to_hsla(color: Rgb) -> Hsla {
+    let rgba = Rgba {
+        r: color.r as f32 / 255.0,
+        g: color.g as f32 / 255.0,
+        b: color.b as f32 / 255.0,
+        a: 1.0,
+    };
+    Hsla::from(rgba)
+}
+
+fn dim_rgb(color: Rgb) -> Rgb {
+    Rgb {
+        r: (f32::from(color.r) * DIM_FACTOR).round().clamp(0.0, 255.0) as u8,
+        g: (f32::from(color.g) * DIM_FACTOR).round().clamp(0.0, 255.0) as u8,
+        b: (f32::from(color.b) * DIM_FACTOR).round().clamp(0.0, 255.0) as u8,
+    }
+}
+
+fn resolve_color(
+    color: Color,
+    palette: &Colors,
+    theme: ThemeColors,
+    is_fg: bool,
+    bold: bool,
+    dim: bool,
+) -> Rgb {
+    match color {
+        Color::Named(named) => {
+            let mut name = named;
+            let mut apply_dim = dim;
+
+            if dim {
+                if let Some(dimmed) = dim_named_color(name) {
+                    name = dimmed;
+                    apply_dim = false;
+                }
+            } else if is_fg && bold {
+                name = name.to_bright();
+            }
+
+            let mut rgb = palette[name].unwrap_or_else(|| fallback_named_color(name, theme));
+            if apply_dim && is_fg {
+                rgb = dim_rgb(rgb);
+            }
+            rgb
+        }
+        Color::Indexed(index) => {
+            let mut idx = index;
+            if is_fg && bold && idx < 8 {
+                idx += 8;
+            }
+            let mut rgb = palette[idx as usize].unwrap_or_else(|| xterm_color(idx, theme));
+            if dim && is_fg {
+                rgb = dim_rgb(rgb);
+            }
+            rgb
+        }
+        Color::Spec(rgb) => {
+            if dim && is_fg {
+                dim_rgb(rgb)
+            } else {
+                rgb
+            }
+        }
+    }
+}
+
+fn resolve_named_color(name: NamedColor, palette: &Colors, theme: ThemeColors) -> Rgb {
+    palette[name].unwrap_or_else(|| fallback_named_color(name, theme))
+}
+
+fn fallback_named_color(color: NamedColor, theme: ThemeColors) -> Rgb {
+    match color {
+        NamedColor::Foreground | NamedColor::BrightForeground => rgba_to_rgb(theme.text),
+        NamedColor::Background => rgba_to_rgb(theme.panel),
+        NamedColor::Cursor => rgba_to_rgb(theme.accent),
+        NamedColor::DimForeground => rgba_to_rgb(theme.muted),
+        NamedColor::Black => DEFAULT_ANSI_COLORS[0],
+        NamedColor::Red => DEFAULT_ANSI_COLORS[1],
+        NamedColor::Green => DEFAULT_ANSI_COLORS[2],
+        NamedColor::Yellow => DEFAULT_ANSI_COLORS[3],
+        NamedColor::Blue => DEFAULT_ANSI_COLORS[4],
+        NamedColor::Magenta => DEFAULT_ANSI_COLORS[5],
+        NamedColor::Cyan => DEFAULT_ANSI_COLORS[6],
+        NamedColor::White => DEFAULT_ANSI_COLORS[7],
+        NamedColor::BrightBlack => DEFAULT_ANSI_COLORS[8],
+        NamedColor::BrightRed => DEFAULT_ANSI_COLORS[9],
+        NamedColor::BrightGreen => DEFAULT_ANSI_COLORS[10],
+        NamedColor::BrightYellow => DEFAULT_ANSI_COLORS[11],
+        NamedColor::BrightBlue => DEFAULT_ANSI_COLORS[12],
+        NamedColor::BrightMagenta => DEFAULT_ANSI_COLORS[13],
+        NamedColor::BrightCyan => DEFAULT_ANSI_COLORS[14],
+        NamedColor::BrightWhite => DEFAULT_ANSI_COLORS[15],
+        NamedColor::DimBlack => dim_rgb(DEFAULT_ANSI_COLORS[0]),
+        NamedColor::DimRed => dim_rgb(DEFAULT_ANSI_COLORS[1]),
+        NamedColor::DimGreen => dim_rgb(DEFAULT_ANSI_COLORS[2]),
+        NamedColor::DimYellow => dim_rgb(DEFAULT_ANSI_COLORS[3]),
+        NamedColor::DimBlue => dim_rgb(DEFAULT_ANSI_COLORS[4]),
+        NamedColor::DimMagenta => dim_rgb(DEFAULT_ANSI_COLORS[5]),
+        NamedColor::DimCyan => dim_rgb(DEFAULT_ANSI_COLORS[6]),
+        NamedColor::DimWhite => dim_rgb(DEFAULT_ANSI_COLORS[7]),
+    }
+}
+
+fn xterm_color(index: u8, theme: ThemeColors) -> Rgb {
+    match index {
+        0..=15 => fallback_named_color(
+            match index {
+                0 => NamedColor::Black,
+                1 => NamedColor::Red,
+                2 => NamedColor::Green,
+                3 => NamedColor::Yellow,
+                4 => NamedColor::Blue,
+                5 => NamedColor::Magenta,
+                6 => NamedColor::Cyan,
+                7 => NamedColor::White,
+                8 => NamedColor::BrightBlack,
+                9 => NamedColor::BrightRed,
+                10 => NamedColor::BrightGreen,
+                11 => NamedColor::BrightYellow,
+                12 => NamedColor::BrightBlue,
+                13 => NamedColor::BrightMagenta,
+                14 => NamedColor::BrightCyan,
+                _ => NamedColor::BrightWhite,
+            },
+            theme,
+        ),
+        16..=231 => {
+            let idx = index - 16;
+            let r = idx / 36;
+            let g = (idx % 36) / 6;
+            let b = idx % 6;
+            Rgb {
+                r: color_cube_value(r),
+                g: color_cube_value(g),
+                b: color_cube_value(b),
+            }
+        }
+        232..=255 => {
+            let value = 8 + (index - 232) * 10;
+            Rgb {
+                r: value,
+                g: value,
+                b: value,
+            }
+        }
+    }
+}
+
+fn color_cube_value(index: u8) -> u8 {
+    match index {
+        0 => 0,
+        _ => 55 + (index * 40),
+    }
+}
+
+fn dim_named_color(color: NamedColor) -> Option<NamedColor> {
+    match color {
+        NamedColor::Foreground => Some(NamedColor::DimForeground),
+        NamedColor::Black | NamedColor::BrightBlack => Some(NamedColor::DimBlack),
+        NamedColor::Red | NamedColor::BrightRed => Some(NamedColor::DimRed),
+        NamedColor::Green | NamedColor::BrightGreen => Some(NamedColor::DimGreen),
+        NamedColor::Yellow | NamedColor::BrightYellow => Some(NamedColor::DimYellow),
+        NamedColor::Blue | NamedColor::BrightBlue => Some(NamedColor::DimBlue),
+        NamedColor::Magenta | NamedColor::BrightMagenta => Some(NamedColor::DimMagenta),
+        NamedColor::Cyan | NamedColor::BrightCyan => Some(NamedColor::DimCyan),
+        NamedColor::White | NamedColor::BrightWhite => Some(NamedColor::DimWhite),
+        _ => None,
+    }
+}
+
+fn underline_style_for_cell(
+    cell: &alacritty_terminal::term::cell::Cell,
+    color: Rgb,
+) -> UnderlineStyle {
+    let mut style = UnderlineStyle {
+        thickness: px(1.0),
+        color: Some(rgb_to_hsla(color)),
+        wavy: false,
+    };
+    if cell.flags.contains(Flags::DOUBLE_UNDERLINE) {
+        style.thickness = px(2.0);
+    }
+    if cell.flags.contains(Flags::UNDERCURL) {
+        style.wavy = true;
+    }
+    style
 }
 
 fn clean_opt_string(value: Option<String>) -> Option<String> {
@@ -1031,4 +1908,108 @@ fn terminal_input_payload(event: &KeyDownEvent) -> Option<String> {
         }
     }
     None
+}
+
+fn terminal_cell_dimensions(window: &Window) -> (Pixels, Pixels) {
+    let text_system = window.text_system();
+    let font_id = text_system.resolve_font(&font(MONO_FONT_FAMILY));
+    let font_size = px(TERMINAL_FONT_SIZE);
+    let cell_width = text_system.em_advance(font_id, font_size).unwrap_or(px(8.0));
+    let line_height = text_system.ascent(font_id, font_size)
+        + text_system.descent(font_id, font_size);
+    let line_height = if f32::from(line_height) > 0.0 {
+        line_height
+    } else {
+        px(TERMINAL_LINE_HEIGHT)
+    };
+    (cell_width, line_height)
+}
+
+pub(crate) fn terminal_line_height(window: &Window) -> Pixels {
+    terminal_cell_dimensions(window).1
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct TerminalCellMetrics {
+    cell_width: Pixels,
+    line_height: Pixels,
+    padding: Pixels,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct TerminalMousePoint {
+    grid_point: TermPoint,
+    column: usize,
+    line: usize,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum ScrollDirection {
+    Up,
+    Down,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum MouseReportKind {
+    Press(MouseButton),
+    Release(MouseButton),
+    Motion(Option<MouseButton>),
+    Scroll(ScrollDirection),
+}
+
+fn mouse_report_payload(
+    mode: TermMode,
+    kind: MouseReportKind,
+    point: TerminalMousePoint,
+    modifiers: gpui::Modifiers,
+) -> Option<String> {
+    let modifier_bits = (modifiers.shift as u8) * 4
+        + (modifiers.alt as u8) * 8
+        + (modifiers.control as u8) * 16;
+
+    let (button_code, release) = match kind {
+        MouseReportKind::Press(button) => (mouse_button_code(button)?, false),
+        MouseReportKind::Release(button) => (mouse_button_code(button)?, true),
+        MouseReportKind::Motion(button) => {
+            let base = button.and_then(mouse_button_code).unwrap_or(3);
+            (base + 32, false)
+        }
+        MouseReportKind::Scroll(direction) => (
+            match direction {
+                ScrollDirection::Up => 64,
+                ScrollDirection::Down => 65,
+            },
+            false,
+        ),
+    };
+
+    let button = button_code + modifier_bits;
+    if mode.contains(TermMode::SGR_MOUSE) {
+        let suffix = if release { 'm' } else { 'M' };
+        return Some(format!(
+            "\u{1b}[<{button};{};{}{suffix}",
+            point.column, point.line
+        ));
+    }
+
+    let encoded_button = if release { 3 } else { button };
+    Some(format!(
+        "\u{1b}[M{}{}{}",
+        encode_mouse_byte(encoded_button + 32),
+        encode_mouse_byte(point.column as u8 + 32),
+        encode_mouse_byte(point.line as u8 + 32),
+    ))
+}
+
+fn mouse_button_code(button: MouseButton) -> Option<u8> {
+    match button {
+        MouseButton::Left => Some(0),
+        MouseButton::Middle => Some(1),
+        MouseButton::Right => Some(2),
+        _ => None,
+    }
+}
+
+fn encode_mouse_byte(value: u8) -> char {
+    char::from_u32(value as u32).unwrap_or('\u{0}')
 }
