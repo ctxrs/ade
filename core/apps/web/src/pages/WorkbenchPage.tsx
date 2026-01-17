@@ -1486,6 +1486,8 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     archivedCollapsed,
     archivedLoaded: workspaceSnapshot.archivedLoaded,
     fetchState: workspaceSnapshot.fetchState.archived,
+    activeInitialized: workspaceSnapshot.initialized,
+    activeFetchState: workspaceSnapshot.fetchState.active,
     ensureArchivedLoaded: workspaceSnapshotStore.ensureArchivedLoaded,
   });
 
@@ -1642,9 +1644,10 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       const unread = !working && lastAssistantMs !== null && (seenMs === null || lastAssistantMs > seenMs);
       const ageIso = t.last_activity_at ?? t.updated_at ?? t.created_at;
       const dotKind = hasError ? "error" : unread ? "unread" : null;
-      const summaryProviders = summary.sessions
-        .map((s) => String(s.session.provider_id ?? "").trim())
-        .filter(Boolean);
+      const summaryProviders =
+        summary.providerIds && summary.providerIds.length
+          ? summary.providerIds
+          : summary.sessions.map((s) => String(s.session.provider_id ?? "").trim()).filter(Boolean);
       const providerIds =
         (providerIdsByTaskFromSessions[tid] ?? []).length > 0 ? providerIdsByTaskFromSessions[tid] : summaryProviders;
       const providerCount = new Set(providerIds).size;

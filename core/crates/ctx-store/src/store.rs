@@ -1992,6 +1992,28 @@ impl Store {
         limit: i64,
         include_archived: bool,
     ) -> Result<(Vec<WorkspaceTaskSummary>, Option<WorkspaceIndexCursor>)> {
+        let filter = if include_archived { None } else { Some(false) };
+        self.list_workspace_index_page_filtered(workspace_id, cursor, limit, filter)
+            .await
+    }
+
+    pub async fn list_workspace_archived_page(
+        &self,
+        workspace_id: WorkspaceId,
+        cursor: Option<WorkspaceIndexCursor>,
+        limit: i64,
+    ) -> Result<(Vec<WorkspaceTaskSummary>, Option<WorkspaceIndexCursor>)> {
+        self.list_workspace_index_page_filtered(workspace_id, cursor, limit, Some(true))
+            .await
+    }
+
+    async fn list_workspace_index_page_filtered(
+        &self,
+        workspace_id: WorkspaceId,
+        cursor: Option<WorkspaceIndexCursor>,
+        limit: i64,
+        archived_only: Option<bool>,
+    ) -> Result<(Vec<WorkspaceTaskSummary>, Option<WorkspaceIndexCursor>)> {
         const MAX_LIMIT: i64 = 200;
         let limit = limit.clamp(1, MAX_LIMIT);
 
@@ -2042,8 +2064,12 @@ impl Store {
             sort_expr = SORT_EXPR,
         );
 
-        if !include_archived {
-            sql.push_str(" AND t.archived_at IS NULL");
+        if let Some(archived_only) = archived_only {
+            if archived_only {
+                sql.push_str(" AND t.archived_at IS NOT NULL");
+            } else {
+                sql.push_str(" AND t.archived_at IS NULL");
+            }
         }
 
         if cursor.is_some() {

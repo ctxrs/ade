@@ -7,13 +7,15 @@ import type {
   WorkspaceActiveSnapshotEvent,
   WorkspaceActiveSnapshotSessionSubscription,
   WorkspaceActiveTaskSummary,
+  WorkspaceIndexCursor,
+  WorkspaceTaskSummary,
 } from "@ctx/types";
 import {
   getDaemonBaseUrl,
   getHealth,
   getWorkspaceActiveSnapshot,
   idToString,
-  listWorkspaceTasks,
+  listWorkspaceArchivedTaskSummaries,
   type WorkspaceActiveSnapshotClientMessage,
   type WorkspaceActiveSnapshotParams,
 } from "../api/client";
@@ -29,6 +31,7 @@ export type WorkspaceActiveSnapshotItem = {
   id: string;
   task: Task;
   sessions: SessionSnapshotSummary[];
+  providerIds?: string[];
   primarySessionHead?: SessionHeadSnapshot | null;
   primarySessionId?: string | null;
   sort_at?: string | null;
@@ -125,9 +128,7 @@ class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSo
   private hasMoreArchived = false;
   private archivedLoaded = false;
   private activeLimit = ACTIVE_PAGE_SIZE;
-  private archivedCursor: { sort_at: string; task_id: { 0: string } | string } | null = null;
-  private archivedIndex: Task[] = [];
-  private archivedIndexLoaded = false;
+  private archivedCursor: WorkspaceIndexCursor | null = null;
   private ws: WebSocket | null = null;
   private reconnectTimer: number | null = null;
   private reconnectDelayMs = 1000;
@@ -252,7 +253,9 @@ class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSo
     };
     this.tasks.set(id, updated);
     if (prevArchived !== nextArchived) {
-      this.archivedIndexLoaded = false;
+      this.archivedLoaded = false;
+      this.archivedCursor = null;
+      this.hasMoreArchived = true;
     }
     this.updateCountsForMove(existing, updated);
     this.placeInOrders(updated);
@@ -437,7 +440,6 @@ class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSo
     if (this.destroyed) return;
     if (firstLoad) {
       this.archivedCursor = null;
-      this.archivedIndexLoaded = false;
     }
     if (!firstLoad && !this.archivedCursor) {
       this.hasMoreArchived = false;
@@ -446,34 +448,20 @@ class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSo
     }
     this.setFetchState("archived", "loading");
     try {
-      if (!this.archivedIndexLoaded) {
-        const tasks = await listWorkspaceTasks(this.workspaceId);
-        this.archivedIndex = tasks
-          .filter((task) => Boolean(task.archived_at))
-          .sort((a, b) => {
-            const aSort = this.taskSortMs(a);
-            const bSort = this.taskSortMs(b);
-            if (aSort !== bSort) return bSort - aSort;
-            return String(idToString(b.id)).localeCompare(String(idToString(a.id)));
-          });
-        this.archivedIndexLoaded = true;
-        this.totalArchived = this.archivedIndex.length;
-      }
-
-      const startIndex = this.archivedCursor ? this.findArchivedStartIndex(this.archivedCursor) : 0;
-      const pageTasks = this.archivedIndex.slice(startIndex, startIndex + ACTIVE_PAGE_SIZE);
-      const summaries = await Promise.all(pageTasks.map((task) => this.buildArchivedItem(task)));
+      const page = await listWorkspaceArchivedTaskSummaries(this.workspaceId, {
+        limit: ACTIVE_PAGE_SIZE,
+        cursor: this.archivedCursor ?? undefined,
+      });
+      this.totalArchived = page.total_archived ?? this.totalArchived;
+      const summaries = await Promise.all(page.tasks.map((task) => this.buildArchivedItem(task)));
       summaries.forEach((summary) => {
         if (summary) {
           this.upsertArchivedItem(summary, { adjustCounts: false });
         }
       });
 
-      const hasMore = startIndex + pageTasks.length < this.archivedIndex.length;
-      this.archivedCursor = hasMore && pageTasks.length
-        ? { sort_at: this.taskSortAt(pageTasks[pageTasks.length - 1]), task_id: pageTasks[pageTasks.length - 1].id }
-        : null;
-      this.hasMoreArchived = hasMore;
+      this.archivedCursor = page.next_cursor ?? null;
+      this.hasMoreArchived = Boolean(page.next_cursor);
       this.archivedLoaded = true;
       this.publish();
     } catch {
@@ -799,29 +787,14 @@ class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSo
     return task.archived_at ?? task.created_at ?? task.updated_at ?? "";
   }
 
-  private taskSortMs(task: Task): number {
-    return Date.parse(this.taskSortAt(task)) || 0;
-  }
-
-  private findArchivedStartIndex(cursor: { sort_at: string; task_id: { 0: string } | string }): number {
-    const cursorId = idToString(cursor.task_id);
-    if (!cursorId) return 0;
-    const cursorSortMs = Date.parse(cursor.sort_at ?? "") || 0;
-    const idx = this.archivedIndex.findIndex((task) => {
-      const id = idToString(task.id);
-      if (!id || id !== cursorId) return false;
-      const sortMs = this.taskSortMs(task);
-      return sortMs === cursorSortMs;
-    });
-    return idx >= 0 ? idx + 1 : 0;
-  }
-
-  private buildArchivedItem(task: Task): WorkspaceActiveSnapshotItem | null {
+  private buildArchivedItem(summary: WorkspaceTaskSummary): WorkspaceActiveSnapshotItem | null {
+    const task = summary.task;
     const id = idToString(task.id);
     if (!id) return null;
     const existing = this.tasks.get(id);
+    const providerIds = (summary.provider_ids ?? []).filter(Boolean);
     const summaries = existing?.sessions ?? [];
-    const sessionList = summaries.map((summary) => summary.session).filter(Boolean);
+    const sessionList = summaries.map((item) => item.session).filter(Boolean);
     const primarySessionId = this.pickArchivedSessionId(task, sessionList);
     // TODO: hydrate archived session summaries on selection (avoid list fan-out).
     const sortAt = this.taskSortAt(task);
@@ -829,6 +802,7 @@ class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSo
       id,
       task: { ...task },
       sessions: sortSessionSummaries(summaries),
+      providerIds: providerIds.length ? providerIds : existing?.providerIds,
       primarySessionId: primarySessionId || null,
       primarySessionHead: existing?.primarySessionHead ?? null,
       sortAtMs: Date.parse(sortAt) || Date.now(),

@@ -434,6 +434,10 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
             "/api/workspaces/:id/tasks",
             get(list_workspace_tasks).post(create_task),
         )
+        .route(
+            "/api/workspaces/:id/archived_task_summaries",
+            get(list_workspace_archived_task_summaries),
+        )
         .route("/api/tasks/:id", delete(delete_task))
         .route("/api/tasks/:id/title", post(update_task_title))
         .route("/api/tasks/:id/archive", post(archive_task))
@@ -8514,6 +8518,56 @@ async fn list_workspace_tasks(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(tasks))
+}
+
+#[derive(Debug, Deserialize)]
+struct WorkspaceArchivedQuery {
+    limit: Option<u32>,
+    cursor_sort_at: Option<String>,
+    cursor_task_id: Option<String>,
+}
+
+async fn list_workspace_archived_task_summaries(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Query(query): Query<WorkspaceArchivedQuery>,
+) -> Result<Json<WorkspaceArchivedPage>, StatusCode> {
+    let workspace_id =
+        WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
+    let limit = query.limit.unwrap_or(50) as i64;
+    let cursor = match (
+        query.cursor_sort_at.as_deref(),
+        query.cursor_task_id.as_deref(),
+    ) {
+        (None, None) => None,
+        (Some(sort_at), Some(task_id)) => {
+            let sort_at = DateTime::parse_from_rfc3339(sort_at)
+                .map_err(|_| StatusCode::BAD_REQUEST)?
+                .with_timezone(&Utc);
+            let task_id =
+                TaskId(uuid::Uuid::parse_str(task_id).map_err(|_| StatusCode::BAD_REQUEST)?);
+            Some(WorkspaceIndexCursor { sort_at, task_id })
+        }
+        _ => return Err(StatusCode::BAD_REQUEST),
+    };
+
+    let (tasks, next_cursor) = state
+        .store
+        .list_workspace_archived_page(workspace_id, cursor, limit)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let (_, total_archived) = state
+        .store
+        .workspace_task_counts(workspace_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    Ok(Json(WorkspaceArchivedPage {
+        workspace_id,
+        tasks,
+        next_cursor,
+        total_archived,
+    }))
 }
 
 async fn list_task_sessions(

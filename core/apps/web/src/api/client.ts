@@ -36,6 +36,8 @@ import type {
   WorkspaceActiveSnapshotEvent,
   WorkspaceActiveSnapshotSessionSubscription,
   WorkspaceActiveTaskSummary,
+  WorkspaceArchivedPage,
+  WorkspaceIndexCursor,
   Worktree,
   WorkspaceAttachment,
   WorkspaceAttachmentKind,
@@ -81,6 +83,8 @@ export type {
   WorkspaceActiveSnapshotEvent,
   WorkspaceActiveSnapshotSessionSubscription,
   WorkspaceActiveTaskSummary,
+  WorkspaceArchivedPage,
+  WorkspaceIndexCursor,
   Worktree,
   WorkspaceAttachment,
   WorkspaceAttachmentKind,
@@ -918,6 +922,28 @@ export const getWorkspaceActiveSnapshot = (workspaceId: string, params?: Workspa
 
 export const listWorkspaceTasks = (workspaceId: string) =>
   apiAny<Task[]>(`/api/workspaces/${workspaceId}/tasks`);
+
+export type WorkspaceArchivedPageParams = {
+  limit?: number;
+  cursor?: WorkspaceIndexCursor | null;
+};
+
+export const listWorkspaceArchivedTaskSummaries = (
+  workspaceId: string,
+  params?: WorkspaceArchivedPageParams,
+) => {
+  const search = new URLSearchParams();
+  if (params?.limit) search.set("limit", String(params.limit));
+  if (params?.cursor) {
+    const cursorSortAt = String(params.cursor.sort_at ?? "").trim();
+    const cursorTaskId = idToString(params.cursor.task_id);
+    if (cursorSortAt) search.set("cursor_sort_at", cursorSortAt);
+    if (cursorTaskId) search.set("cursor_task_id", cursorTaskId);
+  }
+  const qs = search.toString();
+  const suffix = qs ? `?${qs}` : "";
+  return apiAny<WorkspaceArchivedPage>(`/api/workspaces/${workspaceId}/archived_task_summaries${suffix}`);
+};
 
 export const listTaskSessions = (taskId: string) =>
   apiAny<Session[]>(`/api/tasks/${taskId}/sessions`);

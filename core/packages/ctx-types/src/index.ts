@@ -212,6 +212,13 @@ export type WorkspaceIndexPage = {
   total_archived: number;
 };
 
+export type WorkspaceArchivedPage = {
+  workspace_id: { 0: string } | string;
+  tasks: WorkspaceTaskSummary[];
+  next_cursor?: WorkspaceIndexCursor | null;
+  total_archived: number;
+};
+
 export type WorkspaceIndexEvent =
   | {
       type: "ready";
