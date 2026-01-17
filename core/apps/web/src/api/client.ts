@@ -1058,9 +1058,6 @@ export const submitMergeQueueEntry = (payload: {
   worktree_id?: string;
   target_branch?: string;
   message?: string;
-  patch?: string;
-  base_commit_sha?: string;
-  head_commit_sha?: string;
 }) =>
   apiAny<MergeQueueEntry>("/api/merge-queue/entries", {
     method: "POST",

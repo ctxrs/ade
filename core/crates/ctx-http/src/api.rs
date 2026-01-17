@@ -612,9 +612,6 @@ async fn submit_merge_queue_entry(
         worktree_id,
         target_branch: req.target_branch,
         message: req.message,
-        patch: req.patch,
-        base_commit_sha: req.base_commit_sha,
-        head_commit_sha: req.head_commit_sha,
     };
     let entry = merge_queue::submit_merge_queue_entry(&state, params)
         .await
@@ -750,12 +747,6 @@ struct MergeQueueSubmitReq {
     target_branch: Option<String>,
     #[serde(default)]
     message: Option<String>,
-    #[serde(default)]
-    patch: Option<String>,
-    #[serde(default)]
-    base_commit_sha: Option<String>,
-    #[serde(default)]
-    head_commit_sha: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
