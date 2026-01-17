@@ -478,9 +478,11 @@ impl ShellView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.composer_has_focus = true;
         self.active_composer_input()
             .update(cx, |state, cx| state.focus(window, cx));
     }
+
 
     fn handle_composer_input_event(
         &mut self,
@@ -494,10 +496,14 @@ impl ShellView {
                 self.on_composer_press_enter(*secondary, window, cx);
             }
             InputEvent::Focus => {
+                self.composer_has_focus = true;
                 self.sync_composer_autocomplete(cx);
                 self.update_autocomplete_positions(window, cx);
             }
-            InputEvent::Blur => self.dismiss_autocomplete(cx),
+            InputEvent::Blur => {
+                self.composer_has_focus = false;
+                self.dismiss_autocomplete(cx);
+            }
         }
     }
 
@@ -509,11 +515,12 @@ impl ShellView {
     ) {
         if self.new_task_mode {
             self.new_task_mode_locked = true;
-            self.focus_composer(&ClickEvent::default(), window, cx);
+            self.composer_focus_pending = true;
             return;
         }
         self.new_task_mode = true;
         self.new_task_mode_locked = true;
+        self.composer_focus_pending = true;
         self.apply_active_composer_state(window, cx);
     }
 
@@ -528,6 +535,7 @@ impl ShellView {
         }
         self.new_task_mode = false;
         self.new_task_mode_locked = false;
+        self.composer_focus_pending = false;
         self.apply_active_composer_state(window, cx);
     }
 
@@ -1512,8 +1520,14 @@ impl ShellView {
 
         self.composer_mode_id = draft.mode_id;
         let draft_text = draft.text.clone();
+        let focus_after = self.composer_has_focus;
         self.composer_input_for_target(target)
-            .update(cx, move |state, cx| state.set_value(draft_text, window, cx));
+            .update(cx, move |state, cx| {
+                state.set_value(draft_text, window, cx);
+                if focus_after {
+                    state.focus(window, cx);
+                }
+            });
 
         self.composer_attachments = match self.composer_target() {
             ComposerTarget::NewTask => self.composer_new_attachments.clone(),

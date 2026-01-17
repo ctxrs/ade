@@ -119,7 +119,7 @@ pub struct ThemeColors {
 
 impl ThemeTokens {
     pub fn dark_from_web() -> Result<Self> {
-        let css = include_str!("../../web/src/styles.css");
+        let css = include_str!("../../web/src/styles/base.css");
         Self::from_css(css)
     }
 

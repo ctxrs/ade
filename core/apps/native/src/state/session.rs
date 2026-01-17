@@ -589,6 +589,7 @@ impl ShellView {
         self.selected_session = Some(index);
         self.new_task_mode = false;
         self.new_task_mode_locked = false;
+        self.composer_focus_pending = false;
         self.apply_active_composer_state(window, cx);
         self.session = self
             .session_summary_map

@@ -339,6 +339,12 @@ impl<'a> ComposerView<'a> {
             .id("composer-input-wrap")
             .on_key_down(cx.listener(ShellView::on_composer_key_down))
             .on_key_up(cx.listener(ShellView::on_composer_key_up))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|view, _: &gpui::MouseDownEvent, window, cx| {
+                    view.focus_composer(&ClickEvent::default(), window, cx);
+                }),
+            )
             .on_mouse_up(MouseButton::Left, cx.listener(ShellView::on_composer_mouse_up))
             .on_click(cx.listener(ShellView::focus_composer))
             .on_prepaint({
@@ -346,6 +352,13 @@ impl<'a> ComposerView<'a> {
                 move |bounds, window, cx| {
                     view.update(cx, |view, cx| {
                         view.update_composer_input_bounds(bounds, window, cx);
+                        if view.composer_focus_pending
+                            && view.new_task_mode
+                            && !view.composer_start_busy
+                        {
+                            view.composer_focus_pending = false;
+                            view.focus_composer(&ClickEvent::default(), window, cx);
+                        }
                     });
                 }
             })
@@ -1239,7 +1252,11 @@ impl<'a> ComposerView<'a> {
             });
 
         if is_new {
-            container = container.p(px(12.0)).min_h(px(150.0));
+            container = container
+                .w_full()
+                .max_w(px(825.0))
+                .p(px(12.0))
+                .min_h(px(150.0));
             container.style().box_shadow = Some(vec![BoxShadow {
                 color: Hsla::from(Rgba {
                     r: 0.0,

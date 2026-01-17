@@ -260,6 +260,7 @@ impl ShellView {
                 .or_else(|| self.task_active_order.first().copied())
         };
         self.new_task_mode = keep_new_task || self.selected_session.is_none();
+        self.composer_focus_pending = self.new_task_mode;
         self.hydrate_pane_state();
         self.composer_needs_apply = true;
         self.session = if keep_new_task {
@@ -788,6 +789,7 @@ impl ShellView {
         self.selected_session = None;
         self.new_task_mode = true;
         self.new_task_mode_locked = true;
+        self.composer_focus_pending = true;
         self.composer_needs_apply = true;
         self.show_sessions_pane = false;
         self.show_diff_pane = false;

@@ -215,6 +215,8 @@ pub(crate) struct ShellView {
     pub(crate) composer_start_busy: bool,
     pub(crate) composer_start_error: Option<String>,
     pub(crate) composer_needs_apply: bool,
+    pub(crate) composer_focus_pending: bool,
+    pub(crate) composer_has_focus: bool,
     pub(crate) composer_notice: Option<String>,
     pub(crate) composer_open_menu: Option<ComposerMenuId>,
     pub(crate) composer_menu_trigger_bounds: HashMap<ComposerMenuId, Bounds<Pixels>>,

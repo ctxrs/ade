@@ -91,10 +91,26 @@ function hasXvfb() {
   return result.status === 0;
 }
 
-async function findFreeDisplay(start = 210, end = 230) {
+function listDisplayIdsFromProcesses() {
+  const result = spawnSync('ps', ['-ef'], { encoding: 'utf8' });
+  if (result.status !== 0) return new Set();
+  const output = result.stdout || '';
+  const regex = /\b(?:Xvfb|Xorg)\s+:(\d+)\b/g;
+  const ids = new Set();
+  let match;
+  while ((match = regex.exec(output)) !== null) {
+    ids.add(Number(match[1]));
+  }
+  return ids;
+}
+
+async function findFreeDisplay(start = 210, end = 260) {
+  const processDisplays = listDisplayIdsFromProcesses();
   for (let d = start; d <= end; d++) {
     const sock = `/tmp/.X11-unix/X${d}`;
-    if (!existsSync(sock)) return d;
+    const lock = `/tmp/.X${d}-lock`;
+    if (processDisplays.has(d)) continue;
+    if (!existsSync(sock) && !existsSync(lock)) return d;
   }
   throw new Error(`No free DISPLAY found in range :${start}-:${end}`);
 }
@@ -164,7 +180,8 @@ function parseArgs(argv) {
     fixture: null,
     automationScript: null,
     useXvfb: null,
-    automationDelayMs: null,
+    automationSettleMs: null,
+    automationNewTaskText: null,
   };
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i];
@@ -180,8 +197,12 @@ function parseArgs(argv) {
     else if (a.startsWith('--fixture=')) { args.fixture = a.slice('--fixture='.length); }
     else if (a === '--automation-script' && argv[i+1]) { args.automationScript = argv[++i]; }
     else if (a.startsWith('--automation-script=')) { args.automationScript = a.slice('--automation-script='.length); }
-    else if (a === '--automation-delay-ms' && argv[i+1]) { args.automationDelayMs = Number(argv[++i]); }
-    else if (a.startsWith('--automation-delay-ms=')) { args.automationDelayMs = Number(a.slice('--automation-delay-ms='.length)); }
+    else if (a === '--automation-settle-ms' && argv[i+1]) { args.automationSettleMs = Number(argv[++i]); }
+    else if (a.startsWith('--automation-settle-ms=')) { args.automationSettleMs = Number(a.slice('--automation-settle-ms='.length)); }
+    else if (a === '--automation-delay-ms' && argv[i+1]) { args.automationSettleMs = Number(argv[++i]); }
+    else if (a.startsWith('--automation-delay-ms=')) { args.automationSettleMs = Number(a.slice('--automation-delay-ms='.length)); }
+    else if (a === '--automation-new-task-text' && argv[i+1]) { args.automationNewTaskText = argv[++i]; }
+    else if (a.startsWith('--automation-new-task-text=')) { args.automationNewTaskText = a.slice('--automation-new-task-text='.length); }
     else if (a === '--xvfb') { args.useXvfb = true; }
     else if (a === '--no-xvfb') { args.useXvfb = false; }
   }
@@ -333,8 +354,11 @@ async function main() {
     : AUTOMATION_SCRIPT;
   await new Promise((resolve, reject) => {
     const automationArgs = ['--addr', httpUrl, '--ready-timeout-ms', String(args.readyTimeoutMs)];
-    if (Number.isFinite(args.automationDelayMs)) {
-      automationArgs.push('--delay-ms', String(args.automationDelayMs));
+    if (Number.isFinite(args.automationSettleMs)) {
+      automationArgs.push('--settle-ms', String(args.automationSettleMs));
+    }
+    if (args.automationNewTaskText) {
+      automationArgs.push('--new-task-text', args.automationNewTaskText);
     }
     const child = spawn('node', ['--experimental-websocket', automationScript, ...automationArgs], { cwd: REPO_ROOT, env: appEnv });
     const logStream = createWriteStream(logs.automation, { flags: 'a' });

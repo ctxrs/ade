@@ -14,12 +14,14 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
+use futures_util::future::{Either, select};
+use futures_util::{FutureExt, pin_mut};
 use gpui::{
     App, AppContext, ClickEvent, Context, Keystroke, Modifiers, MouseButton, MouseDownEvent,
     MouseMoveEvent, MouseUpEvent, PlatformInput, ScrollDelta, ScrollStrategy, ScrollWheelEvent,
     TouchPhase, Window, WindowHandle, px, size, point,
 };
-use gpui_component::Root;
+use gpui_component::{Root, input::set_force_cursor_visible};
 use image::{ColorType, ImageFormat};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Map, json, Value};
@@ -47,9 +49,12 @@ pub fn start(app: &mut App, window: WindowHandle<Root>, config: AutomationConfig
     let Some(addr) = config.effective_addr() else {
         return;
     };
+    set_force_cursor_visible(true);
     let (ready_tx, ready_rx) = watch::channel(false);
     let (command_tx, command_rx) = mpsc::channel(32);
     let (render_tx, render_rx) = watch::channel(0u64);
+    let (draw_tx, draw_rx) = watch::channel(0u64);
+    let (input_render_tx, input_render_rx) = watch::channel(0u64);
     let state = Arc::new(AutomationState {
         ready_tx,
         ready_rx,
@@ -57,8 +62,17 @@ pub fn start(app: &mut App, window: WindowHandle<Root>, config: AutomationConfig
         config: config.clone(),
         render_tx,
         render_rx,
+        draw_tx,
+        draw_rx,
+        input_render_tx,
+        input_render_rx,
         render_counter: AtomicU64::new(0),
         last_input_frame: AtomicU64::new(0),
+        input_epoch: AtomicU64::new(0),
+        rendered_input_epoch: AtomicU64::new(0),
+        pending_input_paint_epoch: AtomicU64::new(0),
+        draw_epoch: AtomicU64::new(0),
+        pending_draw_epoch: AtomicU64::new(0),
     });
 
     let command_state = Arc::clone(&state);
@@ -95,13 +109,14 @@ pub fn start(app: &mut App, window: WindowHandle<Root>, config: AutomationConfig
             });
         }
     }
-    let _ = state.ready_tx.send(true);
-
     let frame_state = Arc::clone(&state);
     let _ = window.update(app, |_, window, _cx| {
         start_frame_tracking(window, frame_state);
+        window.refresh();
         ()
     });
+    let _ = state.ready_tx.send(true);
+    start_render_pump(app, window, Arc::clone(&state));
 }
 
 struct AutomationState {
@@ -111,16 +126,136 @@ struct AutomationState {
     config: AutomationConfig,
     render_tx: watch::Sender<u64>,
     render_rx: watch::Receiver<u64>,
+    draw_tx: watch::Sender<u64>,
+    draw_rx: watch::Receiver<u64>,
+    input_render_tx: watch::Sender<u64>,
+    input_render_rx: watch::Receiver<u64>,
     render_counter: AtomicU64,
     last_input_frame: AtomicU64,
+    input_epoch: AtomicU64,
+    rendered_input_epoch: AtomicU64,
+    pending_input_paint_epoch: AtomicU64,
+    draw_epoch: AtomicU64,
+    pending_draw_epoch: AtomicU64,
 }
 
 fn start_frame_tracking(window: &mut Window, state: Arc<AutomationState>) {
     window.on_next_frame(move |window, _cx| {
-        let next = state.render_counter.fetch_add(1, Ordering::SeqCst) + 1;
-        let _ = state.render_tx.send(next);
+        record_render(&state);
         start_frame_tracking(window, state);
     });
+}
+
+fn record_render(state: &AutomationState) -> u64 {
+    let next = state.render_counter.fetch_add(1, Ordering::SeqCst) + 1;
+    let _ = state.render_tx.send(next);
+    if next == 1 {
+        let _ = state.ready_tx.send(true);
+    }
+    next
+}
+
+fn record_draw(state: &AutomationState) -> u64 {
+    let next = state.draw_epoch.fetch_add(1, Ordering::SeqCst) + 1;
+    let _ = state.draw_tx.send(next);
+    next
+}
+
+fn record_input_paint_epoch(root: &Root, cx: &App, state: &AutomationState) {
+    let Some(paint_epoch) = active_composer_paint_epoch(root, cx) else {
+        return;
+    };
+    let rendered_epoch = state.rendered_input_epoch.load(Ordering::SeqCst);
+    if paint_epoch > rendered_epoch {
+        state
+            .rendered_input_epoch
+            .store(paint_epoch, Ordering::SeqCst);
+        let _ = state.input_render_tx.send(paint_epoch);
+    }
+}
+
+fn active_composer_paint_epoch(root: &Root, cx: &App) -> Option<u64> {
+    let shell_view = root.view().clone().downcast::<ShellView>().ok()?;
+    Some(
+        shell_view
+            .read(cx)
+            .active_composer_input()
+            .read(cx)
+            .paint_epoch(),
+    )
+}
+
+async fn render_frame(
+    cx: &gpui::AsyncApp,
+    window: &WindowHandle<Root>,
+    state: &Arc<AutomationState>,
+) -> Result<Value, String> {
+    let (render_tx, render_rx) = oneshot::channel();
+    let mut cx_window = cx.clone();
+    window
+        .update(&mut cx_window, |_, window, cx| {
+            window.refresh();
+            let state = Arc::clone(state);
+            window.defer(cx, move |window, cx| {
+                let result = (|| {
+                    let clear = window.draw(cx);
+                    clear.clear();
+                    record_draw(&state);
+                    if let Some(root) = window.root::<Root>().and_then(|root| root) {
+                        let root_ref = root.read(cx);
+                        record_input_paint_epoch(&*root_ref, cx, &state);
+                    }
+                    Ok::<_, String>(())
+                })();
+                let _ = render_tx.send(result);
+            });
+        })
+        .map_err(|err| err.to_string())?;
+
+    let timer = cx.background_executor().timer(Duration::from_millis(2_000));
+    let render_rx = render_rx.fuse();
+    let timer = timer.fuse();
+    pin_mut!(render_rx, timer);
+
+    match select(render_rx, timer).await {
+        Either::Left((result, _timer)) => {
+            result
+                .map_err(|_| "render frame canceled".to_string())?
+                .map_err(|err| err.to_string())?;
+        }
+        Either::Right((_result, _render_rx)) => {
+            return Err("timeout waiting for render frame".to_string());
+        }
+    }
+    Ok(json!({ "rendered": true }))
+}
+
+fn start_render_pump(app: &mut App, window: WindowHandle<Root>, state: Arc<AutomationState>) {
+    app.spawn(move |cx: &mut gpui::AsyncApp| {
+        let mut cx = cx.clone();
+        async move {
+            let mut last_render = state.render_counter.load(Ordering::SeqCst);
+            loop {
+                cx.background_executor()
+                    .timer(Duration::from_millis(33))
+                    .await;
+                let current = state.render_counter.load(Ordering::SeqCst);
+                if current == last_render {
+                    if window
+                        .update(&mut cx, |_, window, _cx| {
+                            window.refresh();
+                        })
+                        .is_err()
+                    {
+                        break;
+                    }
+                } else {
+                    last_render = current;
+                }
+            }
+        }
+    })
+    .detach();
 }
 
 async fn run_http_server(addr: SocketAddr, state: Arc<AutomationState>) {
@@ -202,8 +337,10 @@ async fn ready_handler(
 #[derive(Debug, Deserialize, Clone, Copy)]
 #[serde(rename_all = "snake_case")]
 enum FocusTarget {
+    NewTask,
     Main,
     ArchivedTasks,
+    TaskSearch,
     Composer,
     ComposerAttachments,
     ComposerProviderMenu,
@@ -217,8 +354,10 @@ enum FocusTarget {
 impl FocusTarget {
     fn as_str(&self) -> &'static str {
         match self {
+            FocusTarget::NewTask => "new_task",
             FocusTarget::Main => "main",
             FocusTarget::ArchivedTasks => "archived_tasks",
+            FocusTarget::TaskSearch => "task_search",
             FocusTarget::Composer => "composer",
             FocusTarget::ComposerAttachments => "composer_attachments",
             FocusTarget::ComposerProviderMenu => "composer_provider_menu",
@@ -259,27 +398,21 @@ struct ScreenshotRequest {
     path: Option<PathBuf>,
 }
 
+const SCREENSHOT_INPUT_WAIT_MS: u64 = 2_000;
+
 async fn screenshot_handler(
     State(state): State<Arc<AutomationState>>,
     Json(request): Json<ScreenshotRequest>,
 ) -> (StatusCode, Json<ApiResponse<Value>>) {
-    // Wait for at least one render after the last input before capturing to avoid blank frames.
-    {
-        let current = *state.render_rx.borrow();
-        let mut render_rx = state.render_rx.clone();
-        if timeout(Duration::from_millis(200), render_rx.changed()).await.is_ok() {
-            let next = *render_rx.borrow();
-            eprintln!("ctx-native: screenshot waited for render {} -> {}", current, next);
-        } else {
-            eprintln!("ctx-native: screenshot render wait timed out at {}", current);
-        }
-    }
-
-
     let path = match resolve_screenshot_path(request, &state.config) {
         Ok(path) => path,
         Err(message) => return err(StatusCode::BAD_REQUEST, message),
     };
+
+    if let Err(rpc_err) = wait_for_input_rendered_if_needed(&state, SCREENSHOT_INPUT_WAIT_MS).await
+    {
+        return err(StatusCode::INTERNAL_SERVER_ERROR, rpc_err.message);
+    }
 
     let response =
         dispatch_command(&state, AutomationCommand::Screenshot { path }).await;
@@ -375,6 +508,7 @@ struct AutomationRequest {
 
 enum AutomationCommand {
     Focus { target: FocusTarget },
+    RenderFrame,
     Screenshot { path: PathBuf },
     Resize { width: f32, height: f32 },
     Click { x: f32, y: f32, button: MouseButton },
@@ -385,6 +519,7 @@ enum AutomationCommand {
         delta_y: f32,
         precise: bool,
     },
+    ComposerStatus,
     SelectSession { index: usize },
     Type { text: String },
     KeyPress { keystroke: Keystroke },
@@ -408,15 +543,51 @@ async fn run_command_loop(
                         with_shell_view(root, cx, |view, cx| {
                             apply_focus_target(view, window, cx, target);
                         })?;
+                        if matches!(
+                            target,
+                            FocusTarget::NewTask
+                                | FocusTarget::Composer
+                                | FocusTarget::ComposerAttachments
+                                | FocusTarget::ComposerProviderMenu
+                                | FocusTarget::ComposerModelMenu
+                                | FocusTarget::TaskSearch
+                        ) {
+                            mark_input_paint_needed(&state);
+                        }
                         mark_input(&state);
                         Ok(json!({ "target": target.as_str() }))
                     })
                     .map_err(|err| err.to_string())
                     .and_then(|result| result)
             }
-            AutomationCommand::Screenshot { path } => capture_window(&cx, &window, path)
+            AutomationCommand::RenderFrame => {
+                render_frame(&cx, &window, &state).await
+            }
+            AutomationCommand::ComposerStatus => {
+                let mut cx = cx.clone();
+                window
+                    .update(&mut cx, |root, _window, cx| {
+                        let status = with_shell_view(root, cx, |view, cx| {
+                            let input = view.active_composer_input().read(cx);
+                            let text = input.value().to_string();
+                            let paint_epoch = input.paint_epoch();
+                            json!({
+                                "focused": view.composer_has_focus,
+                                "new_task_mode": view.new_task_mode,
+                                "text": text,
+                                "paint_epoch": paint_epoch,
+                            })
+                        })?;
+                        Ok(status)
+                    })
+                    .map_err(|err| err.to_string())
+                    .and_then(|result| result)
+            }
+            AutomationCommand::Screenshot { path } => {
+                capture_window(&cx, &window, &state, path)
                 .await
-                .map(|path| json!({ "path": path.to_string_lossy() })),
+                .map(|path| json!({ "path": path.to_string_lossy() }))
+            }
             AutomationCommand::Resize { width, height } => {
                 let mut cx = cx.clone();
                 window
@@ -436,6 +607,7 @@ async fn run_command_loop(
                 window
                     .update(&mut cx, |_, window, cx| {
                         dispatch_click(window, cx, x, y, button);
+                        window.refresh();
                         mark_input(&state);
                         Ok(json!({ "x": x, "y": y }))
                     })
@@ -453,6 +625,7 @@ async fn run_command_loop(
                 window
                     .update(&mut cx, |_, window, cx| {
                         dispatch_scroll(window, cx, x, y, delta_x, delta_y, precise);
+                        window.refresh();
                         mark_input(&state);
                         Ok(json!({
                             "x": x,
@@ -480,20 +653,29 @@ async fn run_command_loop(
             }
             AutomationCommand::Type { text } => {
                 let mut cx = cx.clone();
-                cx.update_window(any_window, |_, window, cx| {
-                    for ch in text.chars() {
-                        let keystroke = keystroke_for_char(ch);
-                        window.dispatch_keystroke(keystroke, cx);
-                    }
-                    mark_input(&state);
-                    json!({ "text": text, "chars": text.chars().count() })
-                })
-                .map_err(|err| err.to_string())
+                window
+                    .update(&mut cx, |root, window, cx| {
+                        with_shell_view(root, cx, |view, cx| {
+                            let input = view.active_composer_input();
+                            input.update(cx, |state, cx| {
+                                let next = format!("{}{}", state.value(), text);
+                                state.set_value(next, window, cx);
+                            });
+                        })?;
+                        window.refresh();
+                        mark_input_paint_needed(&state);
+                        mark_input(&state);
+                        Ok(json!({ "text": text, "chars": text.chars().count() }))
+                    })
+                    .map_err(|err| err.to_string())
+                    .and_then(|result| result)
             }
             AutomationCommand::KeyPress { keystroke } => {
                 let mut cx = cx.clone();
                 cx.update_window(any_window, |_, window, cx| {
                     window.dispatch_keystroke(keystroke.clone(), cx);
+                    window.refresh();
+                    mark_input_paint_needed(&state);
                     mark_input(&state);
                     json!({ "key": keystroke.to_string() })
                 })
@@ -518,6 +700,22 @@ async fn run_command_loop(
 fn mark_input(state: &AutomationState) {
     let current = state.render_counter.load(Ordering::SeqCst);
     state.last_input_frame.store(current, Ordering::SeqCst);
+    state.input_epoch.fetch_add(1, Ordering::SeqCst);
+    mark_draw_needed(state);
+}
+
+fn mark_draw_needed(state: &AutomationState) {
+    let current_draw = state.draw_epoch.load(Ordering::SeqCst);
+    state
+        .pending_draw_epoch
+        .store(current_draw.saturating_add(1), Ordering::SeqCst);
+}
+
+fn mark_input_paint_needed(state: &AutomationState) {
+    let current_paint = state.rendered_input_epoch.load(Ordering::SeqCst);
+    state
+        .pending_input_paint_epoch
+        .store(current_paint.saturating_add(1), Ordering::SeqCst);
 }
 
 fn dispatch_click(window: &mut Window, cx: &mut App, x: f32, y: f32, button: MouseButton) {
@@ -579,20 +777,6 @@ fn dispatch_scroll(
     );
 }
 
-fn keystroke_for_char(ch: char) -> Keystroke {
-    let key = match ch {
-        '\n' | '\r' => "enter".to_string(),
-        '\t' => "tab".to_string(),
-        ' ' => "space".to_string(),
-        _ => ch.to_string(),
-    };
-    Keystroke::parse(&key).unwrap_or_else(|_| Keystroke {
-        modifiers: Modifiers::none(),
-        key: key.clone(),
-        key_char: Some(key),
-    })
-}
-
 fn apply_focus_target(
     view: &mut ShellView,
     window: &mut Window,
@@ -605,12 +789,20 @@ fn apply_focus_target(
     view.show_terminal_panel = false;
 
     match target {
+        FocusTarget::NewTask => {
+            view.focus_new_task(&ClickEvent::default(), window, cx);
+        }
         FocusTarget::Main => {}
         FocusTarget::ArchivedTasks => {
             view.set_archived_collapsed(false, cx);
             view.ensure_archived_loaded(cx);
             view.task_list_scroll_handle
                 .scroll_to_item(0, ScrollStrategy::Top);
+        }
+        FocusTarget::TaskSearch => {
+            view.composer_has_focus = false;
+            view.task_search_input
+                .update(cx, |state, cx| state.focus(window, cx));
         }
         FocusTarget::Composer => {
             view.focus_composer(&ClickEvent::default(), window, cx);
@@ -660,18 +852,48 @@ fn with_shell_view<R, C: AppContext>(
     Ok(shell_view.update(cx, f))
 }
 
+
 async fn capture_window(
     cx: &gpui::AsyncApp,
     window: &WindowHandle<Root>,
+    state: &Arc<AutomationState>,
     path: PathBuf,
 ) -> Result<PathBuf, String> {
-    // Use GPUI's in-process render for all platforms.
-    let image = {
-        let mut cx_window = cx.clone();
-        window
-            .update(&mut cx_window, |_, window, _cx| window.render_to_image())
-            .map_err(|err| err.to_string())?
-            .map_err(|err| err.to_string())?
+    let (image_tx, image_rx) = oneshot::channel();
+    let mut cx_window = cx.clone();
+    window
+        .update(&mut cx_window, |_, window, cx| {
+            window.refresh();
+            let state = Arc::clone(state);
+            window.defer(cx, move |window, cx| {
+                let result = (|| {
+                    let clear = window.draw(cx);
+                    clear.clear();
+                    record_draw(&state);
+                    let image = window.render_to_image().map_err(|err| err.to_string());
+                    if let Some(root) = window.root::<Root>().and_then(|root| root) {
+                        let root_ref = root.read(cx);
+                        record_input_paint_epoch(&*root_ref, cx, &state);
+                    }
+                    image
+                })();
+                let _ = image_tx.send(result);
+            });
+        })
+        .map_err(|err| err.to_string())?;
+
+    let timer = cx.background_executor().timer(Duration::from_millis(2_000));
+    let image_rx = image_rx.fuse();
+    let timer = timer.fuse();
+    pin_mut!(image_rx, timer);
+
+    let image = match select(image_rx, timer).await {
+        Either::Left((result, _timer)) => result
+            .map_err(|_| "screenshot capture canceled".to_string())?
+            .map_err(|err| err.to_string())?,
+        Either::Right((_result, _image_rx)) => {
+            return Err("timeout waiting for screenshot capture".to_string());
+        }
     };
 
     if let Some(parent) = path.parent() {
@@ -926,6 +1148,11 @@ async fn handle_rpc_method(
     params: Option<Value>,
 ) -> Result<Value, RpcError> {
     match method {
+        "automation.composer.status" => {
+            dispatch_command(state, AutomationCommand::ComposerStatus)
+                .await
+                .map_err(RpcError::server_error)
+        }
         "automation.ready" => {
             let params: ReadyQuery = parse_params(params)?;
             let ready = wait_ready(state, params.timeout_ms.unwrap_or(30_000))
@@ -943,6 +1170,12 @@ async fn handle_rpc_method(
             let keystroke = Keystroke::parse(&normalized)
                 .map_err(|err| RpcError::invalid_params(err.to_string()))?;
             dispatch_command(state, AutomationCommand::KeyPress { keystroke })
+                .await
+                .map_err(RpcError::server_error)
+        }
+        "automation.keyboard.type" => {
+            let params: KeyTypeParams = parse_params(params)?;
+            dispatch_command(state, AutomationCommand::Type { text: params.text })
                 .await
                 .map_err(RpcError::server_error)
         }
@@ -1021,6 +1254,7 @@ async fn handle_rpc_method(
             let params: ScreenshotRequest = parse_params(params)?;
             let path = resolve_screenshot_path(params, &state.config)
                 .map_err(RpcError::invalid_params)?;
+            wait_for_input_rendered_if_needed(state, SCREENSHOT_INPUT_WAIT_MS).await?;
             let result = dispatch_command(state, AutomationCommand::Screenshot { path })
                 .await
                 .map_err(RpcError::server_error)?;
@@ -1158,6 +1392,8 @@ fn focus_target_for_selector(selector: &Selector) -> Option<FocusTarget> {
     }
     match selector.value.as_str() {
         "app-shell" => Some(FocusTarget::Main),
+        "sidebar-new-task" => Some(FocusTarget::NewTask),
+        "task-search-input" => Some(FocusTarget::TaskSearch),
         "composer-input" | "composer-send" => Some(FocusTarget::Composer),
         "sessions-list" => Some(FocusTarget::SessionsPane),
         "diff-pane" => Some(FocusTarget::DiffPane),
@@ -1213,6 +1449,11 @@ struct KeyPressParams {
     key: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct KeyTypeParams {
+    text: String,
+}
+
 fn parse_mouse_button(button: Option<String>) -> Result<MouseButton, RpcError> {
     let normalized = button
         .as_deref()
@@ -1233,39 +1474,172 @@ fn parse_mouse_button(button: Option<String>) -> Result<MouseButton, RpcError> {
 struct WaitIdleParams {
     timeout_ms: Option<u64>,
     frames: Option<u64>,
+    settle_ms: Option<u64>,
 }
 
-async fn wait_for_idle(state: &AutomationState, params: WaitIdleParams) -> Result<Value, RpcError> {
-    let frames = params.frames.unwrap_or(2).max(1);
-    let timeout_ms = params.timeout_ms.unwrap_or(3_000);
-    let target = state
-        .last_input_frame
-        .load(Ordering::SeqCst)
-        .saturating_add(frames);
+async fn wait_for_input_rendered_if_needed(
+    state: &AutomationState,
+    timeout_ms: u64,
+) -> Result<u64, RpcError> {
+    let target_epoch = state.pending_input_paint_epoch.load(Ordering::SeqCst);
+    let rendered_epoch = state.rendered_input_epoch.load(Ordering::SeqCst);
+    if target_epoch == 0 || target_epoch <= rendered_epoch {
+        return Ok(rendered_epoch);
+    }
+    wait_for_input_rendered(state, target_epoch, timeout_ms).await
+}
 
-    let mut render_rx = state.render_rx.clone();
-    if *render_rx.borrow() >= target {
-        return Ok(json!({ "frames": frames, "render_count": *render_rx.borrow() }));
+async fn wait_for_input_rendered(
+    state: &AutomationState,
+    target_epoch: u64,
+    timeout_ms: u64,
+) -> Result<u64, RpcError> {
+    if state.rendered_input_epoch.load(Ordering::SeqCst) >= target_epoch {
+        return Ok(state.rendered_input_epoch.load(Ordering::SeqCst));
     }
 
+    dispatch_command(state, AutomationCommand::RenderFrame)
+        .await
+        .map_err(RpcError::server_error)?;
+
+    if state.rendered_input_epoch.load(Ordering::SeqCst) >= target_epoch {
+        return Ok(state.rendered_input_epoch.load(Ordering::SeqCst));
+    }
+
+    let mut input_render_rx = state.input_render_rx.clone();
     let wait_result = timeout(Duration::from_millis(timeout_ms), async {
         loop {
-            render_rx
+            input_render_rx
                 .changed()
                 .await
-                .map_err(|_| RpcError::server_error("render counter closed"))?;
-            if *render_rx.borrow() >= target {
+                .map_err(|_| RpcError::server_error("input render counter closed"))?;
+            if *input_render_rx.borrow() >= target_epoch {
                 break;
             }
         }
-        Ok::<_, RpcError>(*render_rx.borrow())
+        Ok::<_, RpcError>(*input_render_rx.borrow())
+    })
+    .await;
+
+    let epoch = match wait_result {
+        Ok(Ok(epoch)) => epoch,
+        Ok(Err(err)) => return Err(err),
+        Err(_) => return Err(RpcError::server_error("timeout waiting for input render")),
+    };
+
+    dispatch_command(state, AutomationCommand::RenderFrame)
+        .await
+        .map_err(RpcError::server_error)?;
+
+    Ok(epoch)
+}
+
+async fn wait_for_draw_if_needed(
+    state: &AutomationState,
+    timeout_ms: u64,
+) -> Result<u64, RpcError> {
+    let target_epoch = state.pending_draw_epoch.load(Ordering::SeqCst);
+    let drawn_epoch = state.draw_epoch.load(Ordering::SeqCst);
+    if target_epoch == 0 || target_epoch <= drawn_epoch {
+        return Ok(drawn_epoch);
+    }
+    wait_for_draw(state, target_epoch, timeout_ms).await
+}
+
+async fn wait_for_draw(
+    state: &AutomationState,
+    target_epoch: u64,
+    timeout_ms: u64,
+) -> Result<u64, RpcError> {
+    if state.draw_epoch.load(Ordering::SeqCst) >= target_epoch {
+        return Ok(state.draw_epoch.load(Ordering::SeqCst));
+    }
+
+    dispatch_command(state, AutomationCommand::RenderFrame)
+        .await
+        .map_err(RpcError::server_error)?;
+
+    if state.draw_epoch.load(Ordering::SeqCst) >= target_epoch {
+        return Ok(state.draw_epoch.load(Ordering::SeqCst));
+    }
+
+    let mut draw_rx = state.draw_rx.clone();
+    let wait_result = timeout(Duration::from_millis(timeout_ms), async {
+        loop {
+            draw_rx
+                .changed()
+                .await
+                .map_err(|_| RpcError::server_error("draw counter closed"))?;
+            if *draw_rx.borrow() >= target_epoch {
+                break;
+            }
+        }
+        Ok::<_, RpcError>(*draw_rx.borrow())
     })
     .await;
 
     match wait_result {
-        Ok(Ok(render_count)) => Ok(json!({ "frames": frames, "render_count": render_count })),
+        Ok(Ok(epoch)) => Ok(epoch),
         Ok(Err(err)) => Err(err),
-        Err(_) => Err(RpcError::server_error("timeout waiting for idle frames")),
+        Err(_) => Err(RpcError::server_error("timeout waiting for draw")),
+    }
+}
+
+async fn wait_for_idle(state: &AutomationState, params: WaitIdleParams) -> Result<Value, RpcError> {
+    let frames = params.frames.map(|frames| frames.max(1));
+    let timeout_ms = params.timeout_ms.unwrap_or(3_000);
+    let settle_ms = params.settle_ms.unwrap_or(0);
+    let render_rx = state.render_rx.clone();
+    let mut draw_rx = state.draw_rx.clone();
+
+    let wait_result = timeout(Duration::from_millis(timeout_ms), async {
+        if let Some(frames) = frames {
+            let target = state
+                .last_input_frame
+                .load(Ordering::SeqCst)
+                .saturating_add(frames);
+            loop {
+                if *render_rx.borrow() >= target {
+                    break;
+                }
+                dispatch_command(state, AutomationCommand::RenderFrame)
+                    .await
+                    .map_err(RpcError::server_error)?;
+            }
+        } else {
+            wait_for_input_rendered_if_needed(state, timeout_ms).await?;
+            wait_for_draw_if_needed(state, timeout_ms).await?;
+        }
+
+        let mut render_count = *render_rx.borrow();
+        let mut draw_count = *draw_rx.borrow();
+        if settle_ms > 0 {
+            loop {
+                let sleep = tokio::time::sleep(Duration::from_millis(settle_ms));
+                tokio::pin!(sleep);
+                tokio::select! {
+                    _ = &mut sleep => break,
+                    changed = draw_rx.changed() => {
+                        changed.map_err(|_| RpcError::server_error("draw counter closed"))?;
+                    }
+                }
+            }
+            render_count = *render_rx.borrow();
+            draw_count = *draw_rx.borrow();
+        }
+        Ok::<_, RpcError>((render_count, draw_count))
+    })
+    .await;
+
+    match wait_result {
+        Ok(Ok((render_count, draw_count))) => Ok(json!({
+            "frames": frames.unwrap_or(0),
+            "render_count": render_count,
+            "draw_count": draw_count,
+            "settle_ms": settle_ms,
+        })),
+        Ok(Err(err)) => Err(err),
+        Err(_) => Err(RpcError::server_error("timeout waiting for idle render")),
     }
 }
 

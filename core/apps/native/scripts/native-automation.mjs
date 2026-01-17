@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 
+import { connect } from "./native-driver.mjs";
+
 const DEFAULT_ADDR = "http://127.0.0.1:6160";
 const DEFAULT_READY_TIMEOUT_MS = 30000;
-const DEFAULT_DELAY_MS = 150;
+const DEFAULT_SETTLE_MS = 150;
 const DEFAULT_REQUEST_TIMEOUT_MS = 15000;
 
 function printHelp() {
@@ -11,7 +13,9 @@ function printHelp() {
 Options:
   --addr <host:port|url>     Automation server address (default: ${DEFAULT_ADDR})
   --ready-timeout-ms <ms>    Timeout for /ready (default: ${DEFAULT_READY_TIMEOUT_MS})
-  --delay-ms <ms>            Delay after focus before screenshot (default: ${DEFAULT_DELAY_MS})
+  --settle-ms <ms>           Wait for a stable render before screenshot (default: ${DEFAULT_SETTLE_MS})
+  --delay-ms <ms>            Deprecated alias for --settle-ms
+  --new-task-text <text>     Optional text to type in the new task composer
   -h, --help                 Show this help
 `);
 }
@@ -47,7 +51,8 @@ function parseArgs(argv) {
   const args = {
     addr: DEFAULT_ADDR,
     readyTimeoutMs: DEFAULT_READY_TIMEOUT_MS,
-    delayMs: DEFAULT_DELAY_MS,
+    settleMs: DEFAULT_SETTLE_MS,
+    newTaskText: null,
     showHelp: false,
   };
 
@@ -81,16 +86,40 @@ function parseArgs(argv) {
       args.readyTimeoutMs = arg.slice("--ready-timeout-ms=".length);
       continue;
     }
+    if (arg === "--settle-ms") {
+      if (i + 1 >= argv.length) {
+        throw new Error("--settle-ms requires a value");
+      }
+      args.settleMs = argv[i + 1];
+      i += 1;
+      continue;
+    }
+    if (arg.startsWith("--settle-ms=")) {
+      args.settleMs = arg.slice("--settle-ms=".length);
+      continue;
+    }
     if (arg === "--delay-ms") {
       if (i + 1 >= argv.length) {
         throw new Error("--delay-ms requires a value");
       }
-      args.delayMs = argv[i + 1];
+      args.settleMs = argv[i + 1];
       i += 1;
       continue;
     }
     if (arg.startsWith("--delay-ms=")) {
-      args.delayMs = arg.slice("--delay-ms=".length);
+      args.settleMs = arg.slice("--delay-ms=".length);
+      continue;
+    }
+    if (arg === "--new-task-text") {
+      if (i + 1 >= argv.length) {
+        throw new Error("--new-task-text requires a value");
+      }
+      args.newTaskText = argv[i + 1];
+      i += 1;
+      continue;
+    }
+    if (arg.startsWith("--new-task-text=")) {
+      args.newTaskText = arg.slice("--new-task-text=".length);
       continue;
     }
 
@@ -99,15 +128,8 @@ function parseArgs(argv) {
 
   args.addr = normalizeAddr(args.addr);
   args.readyTimeoutMs = toPositiveInt(args.readyTimeoutMs, "--ready-timeout-ms");
-  args.delayMs = toNonNegativeInt(args.delayMs, "--delay-ms");
+  args.settleMs = toNonNegativeInt(args.settleMs, "--settle-ms");
   return args;
-}
-
-function sleep(ms) {
-  if (ms <= 0) {
-    return Promise.resolve();
-  }
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function callJson(baseUrl, path, options = {}) {
@@ -151,6 +173,48 @@ async function callJson(baseUrl, path, options = {}) {
   }
 }
 
+async function typeNewTaskText(httpUrl, text) {
+  if (!text) {
+    return;
+  }
+  if (typeof WebSocket === "undefined") {
+    throw new Error(
+      "--new-task-text requires WebSocket support (run node with --experimental-websocket)",
+    );
+  }
+  const app = await connect({ httpUrl });
+  try {
+    await app.page.keyboard.press("escape");
+    await app.page.locator("#composer-input").click();
+    await app.page.locator("#composer-input").type(String(text));
+    const status = await app.rpc("automation.composer.status");
+    console.log("Composer status after type:", status);
+    const tree = await app.rpc("automation.tree.snapshot");
+    const composerNode = findNodeById(tree, "composer-input");
+    console.log("Composer node after type:", composerNode);
+  } finally {
+    await app.close();
+  }
+}
+
+function findNodeById(node, id) {
+  if (!node || typeof node !== "object") {
+    return null;
+  }
+  if (node.id === id) {
+    return node;
+  }
+  if (Array.isArray(node.children)) {
+    for (const child of node.children) {
+      const found = findNodeById(child, id);
+      if (found) {
+        return found;
+      }
+    }
+  }
+  return null;
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   if (args.showHelp) {
@@ -159,13 +223,13 @@ async function main() {
   }
 
   const targets = [
+    { target: "new_task", name: "web-workbench-new-task" },
     { target: "sessions_pane", name: "sessions-pane" },
     { target: "diff_pane", name: "diff-pane" },
     { target: "artifacts_pane", name: "artifacts-pane" },
     { target: "terminal_panel", name: "terminal-panel" },
     { target: "main", name: "web-workbench-task-list" },
     { target: "archived_tasks", name: "web-workbench-archived-tasks" },
-    { target: "composer", name: "web-workbench-new-task" },
     { target: "composer_provider_menu", name: "web-workbench-harness-menu" },
     { target: "composer_model_menu", name: "web-workbench-model-menu" },
   ];
@@ -174,29 +238,56 @@ async function main() {
   let runError = null;
   try {
     const readyTimeout = Math.max(args.readyTimeoutMs + 5000, DEFAULT_REQUEST_TIMEOUT_MS);
-    // Small delay to allow first render before screenshots
-    await sleep(500);
     await callJson(args.addr, `/ready?timeout_ms=${args.readyTimeoutMs}`, {
       timeoutMs: readyTimeout,
     });
 
+    if (args.newTaskText) {
+      const waitTimeout = DEFAULT_REQUEST_TIMEOUT_MS;
+      await callJson(args.addr, "/focus", {
+        method: "POST",
+        body: { target: "new_task" },
+      });
+      try {
+        await callJson(args.addr, "/wait", {
+          method: "POST",
+          body: { settle_ms: args.settleMs, timeout_ms: waitTimeout },
+          timeoutMs: waitTimeout + 10000,
+        });
+      } catch (err) {
+        console.error(`Wait for render idle failed: ${err.message}`);
+      }
+      await typeNewTaskText(args.addr, args.newTaskText);
+      try {
+        await callJson(args.addr, "/wait", {
+          method: "POST",
+          body: { settle_ms: args.settleMs, timeout_ms: waitTimeout },
+          timeoutMs: waitTimeout + 10000,
+        });
+      } catch (err) {
+        console.error(`Wait for render idle failed: ${err.message}`);
+      }
+      await callJson(args.addr, "/screenshot", {
+        method: "POST",
+        body: { name: "web-workbench-new-task-typed" },
+      });
+    }
     for (const { target, name } of targets) {
       await callJson(args.addr, "/focus", {
         method: "POST",
         body: { target },
       });
-      if (target === "archived_tasks") {
-        try {
-          await callJson(args.addr, "/wait", {
-            method: "POST",
-            body: { frames: 2, timeout_ms: archivedWaitMs },
-            timeoutMs: archivedWaitMs + 10000,
-          });
-        } catch (err) {
-          console.error(`Wait for archived tasks failed: ${err.message}`);
-        }
+      const waitTimeout =
+        target === "archived_tasks" ? archivedWaitMs : DEFAULT_REQUEST_TIMEOUT_MS;
+      try {
+        await callJson(args.addr, "/wait", {
+          method: "POST",
+          body: { settle_ms: args.settleMs, timeout_ms: waitTimeout },
+          timeoutMs: waitTimeout + 10000,
+        });
+      } catch (err) {
+        console.error(`Wait for render idle failed: ${err.message}`);
       }
-      await sleep(Math.max(args.delayMs, 500));
       await callJson(args.addr, "/screenshot", {
         method: "POST",
         body: { name },

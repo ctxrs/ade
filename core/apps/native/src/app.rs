@@ -251,6 +251,8 @@ fn create_shell_view(
             composer_start_busy: false,
             composer_start_error: None,
             composer_needs_apply: false,
+            composer_focus_pending: true,
+            composer_has_focus: false,
             composer_notice: None,
             composer_open_menu: None,
             composer_menu_trigger_bounds: HashMap::new(),

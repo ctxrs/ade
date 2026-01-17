@@ -30,10 +30,11 @@ impl<'a> SessionView<'a> {
                 .flex()
                 .flex_col()
                 .flex_1()
+                .w_full()
                 .items_center()
                 .justify_center()
                 .p(px(24.0))
-                .child(composer);
+                .child(div().w_full().flex().justify_center().child(composer));
         }
         let has_session = shell
             .selected_session

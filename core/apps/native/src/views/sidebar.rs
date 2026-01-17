@@ -339,6 +339,14 @@ impl<'a> SidebarView<'a> {
             .text_color(shell.colors.text)
             .flex_1()
             .min_w(px(0.0));
+        let search = div()
+            .on_children_prepainted(automation_tree::track_children_bounds(
+                "task-search-input",
+                "input",
+                Some("Search Tasks"),
+                Some("app-shell"),
+            ))
+            .child(search);
 
         div()
             .pl(px(12.0))
