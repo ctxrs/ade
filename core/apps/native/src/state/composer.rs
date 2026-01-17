@@ -21,6 +21,7 @@ use ctx_providers::adapters::ProviderHealth;
 use super::ShellView;
 use super::super::models::MessageItem;
 
+#[allow(dead_code)]
 const COMPOSER_HISTORY_LIMIT: usize = 20;
 const FILE_COMPLETION_LIMIT: u32 = 10;
 const AUTOCOMPLETE_DEBOUNCE_MS: u64 = 120;
@@ -45,6 +46,7 @@ pub(crate) struct ComposerState {
     history_draft: Option<String>,
 }
 
+#[allow(dead_code)]
 impl ComposerState {
     pub(crate) fn new() -> Self {
         Self {
