@@ -6,6 +6,7 @@ type EnsureArchivedLoadedParams = {
   fetchState: "idle" | "loading" | "error";
   activeInitialized: boolean;
   activeFetchState: "idle" | "loading" | "error";
+  prefetchAfterActive?: boolean;
   ensureArchivedLoaded: () => void;
 };
 
@@ -15,10 +16,11 @@ export function useEnsureArchivedLoaded({
   fetchState,
   activeInitialized,
   activeFetchState,
+  prefetchAfterActive,
   ensureArchivedLoaded,
 }: EnsureArchivedLoadedParams) {
   useEffect(() => {
-    if (archivedCollapsed) return;
+    if (!prefetchAfterActive && archivedCollapsed) return;
     if (archivedLoaded) return;
     if (fetchState === "loading") return;
     if (!activeInitialized) return;

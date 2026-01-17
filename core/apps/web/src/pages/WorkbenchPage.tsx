@@ -1488,6 +1488,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     fetchState: workspaceSnapshot.fetchState.archived,
     activeInitialized: workspaceSnapshot.initialized,
     activeFetchState: workspaceSnapshot.fetchState.active,
+    prefetchAfterActive: true,
     ensureArchivedLoaded: workspaceSnapshotStore.ensureArchivedLoaded,
   });
 
