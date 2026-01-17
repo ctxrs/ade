@@ -1899,6 +1899,19 @@
   background: var(--panel);
 }
 
+.wb-terminal-group {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  min-height: 0;
+  min-width: 0;
+}
+
+.wb-terminal-group-hidden {
+  visibility: hidden;
+  pointer-events: none;
+}
+
 .wb-terminal-empty {
   color: var(--muted);
   font-size: 12px;

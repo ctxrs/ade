@@ -6803,9 +6803,24 @@ async fn delete_terminal(
     Err(StatusCode::NOT_FOUND)
 }
 
+fn terminal_stream_tail_bytes(params: &HashMap<String, String>) -> usize {
+    params
+        .get("tail")
+        .and_then(|value| {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                trimmed.parse::<usize>().ok()
+            }
+        })
+        .unwrap_or(crate::terminals::DEFAULT_OUTPUT_TAIL_BYTES)
+}
+
 async fn terminal_stream_ws(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
     ws: WebSocketUpgrade,
 ) -> Result<Response, StatusCode> {
     let terminal_id = TerminalId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
@@ -6816,14 +6831,16 @@ async fn terminal_stream_ws(
         .await
         .ok_or(StatusCode::NOT_FOUND)?;
 
+    let tail_bytes = terminal_stream_tail_bytes(&params);
     Ok(ws.on_upgrade(move |socket| async move {
-        handle_terminal_socket(socket, session).await;
+        handle_terminal_socket(socket, session, tail_bytes).await;
     }))
 }
 
 async fn handle_terminal_socket(
     mut socket: WebSocket,
     session: Arc<crate::terminals::TerminalSessionHandle>,
+    snapshot_tail: usize,
 ) {
     let snapshot = session.snapshot();
     let status_payload = serde_json::to_string(&TerminalServerMessage::Status {
@@ -6833,7 +6850,7 @@ async fn handle_terminal_socket(
     .unwrap_or_else(|_| "{\"type\":\"status\",\"status\":\"running\"}".to_string());
     let _ = socket.send(WsMessage::Text(status_payload)).await;
 
-    let buffer = session.output_snapshot();
+    let buffer = session.output_snapshot_tail(snapshot_tail);
     if !buffer.is_empty() {
         let _ = socket.send(WsMessage::Binary(buffer)).await;
     }

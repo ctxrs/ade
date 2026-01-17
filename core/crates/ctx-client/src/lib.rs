@@ -923,6 +923,7 @@ impl Client {
     }
 
     /// Terminal websocket auth uses `?token=` for browser compatibility; headers are deprecated.
+    /// Append `tail=<bytes>` to cap the initial snapshot size.
     pub fn terminal_stream_url(&self, terminal_id: TerminalId) -> Result<String> {
         let mut url = Url::parse(&self.base_url)
             .with_context(|| format!("invalid base url: {}", self.base_url))?;

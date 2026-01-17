@@ -474,6 +474,7 @@ export const TerminalPanel = forwardRef<TerminalPanelHandle, TerminalPanelProps>
     const activeId = scopeState.activeGroupId ?? scopeState.groups[0].id;
     return scopeState.groups.find((group) => group.id === activeId) ?? scopeState.groups[0];
   }, [scopeState]);
+  const activeGroupId = activeGroup?.id ?? null;
   const activeLayout = activeGroup?.layout ?? null;
   const activeLeafId = resolveActiveLeafId(activeLayout, activeGroup?.activeLeafId ?? null);
   const activeTerminalId = activeLayout ? findTerminalIdForLeaf(activeLayout, activeLeafId) : null;
@@ -894,6 +895,11 @@ export const TerminalPanel = forwardRef<TerminalPanelHandle, TerminalPanelProps>
     };
   }, [height, open, scheduleFitAll]);
 
+  useLayoutEffect(() => {
+    if (!open) return;
+    scheduleFitAll();
+  }, [activeGroupId, open, scheduleFitAll]);
+
   useEffect(() => {
     if (!open) return;
     const onResize = () => {
@@ -1037,14 +1043,25 @@ export const TerminalPanel = forwardRef<TerminalPanelHandle, TerminalPanelProps>
           </div>
         </div>
         <div className="wb-terminal-view">
-          {activeLayout ? (
-            <TerminalSplitView
-              node={activeLayout}
-              activeLeafId={activeLeafId}
-              onActivate={handleLayoutActivate}
-              onResize={handleSplitResize}
-              clients={clientsRef}
-            />
+          {scopeState.groups.length > 0 ? (
+            scopeState.groups.map((group) => {
+              const groupActiveLeafId = resolveActiveLeafId(group.layout, group.activeLeafId);
+              const isActive = group.id === (activeGroupId ?? scopeState.groups[0].id);
+              return (
+                <div
+                  key={group.id}
+                  className={`wb-terminal-group ${isActive ? "wb-terminal-group-active" : "wb-terminal-group-hidden"}`}
+                >
+                  <TerminalSplitView
+                    node={group.layout}
+                    activeLeafId={groupActiveLeafId}
+                    onActivate={handleLayoutActivate}
+                    onResize={handleSplitResize}
+                    clients={clientsRef}
+                  />
+                </div>
+              );
+            })
           ) : (
             <div className="wb-terminal-empty">No terminals yet.</div>
           )}
@@ -1128,12 +1145,23 @@ export const TerminalPanel = forwardRef<TerminalPanelHandle, TerminalPanelProps>
 
     let socket: WebSocket | null = null;
     let element: HTMLElement | null = null;
+    const canFit = () => {
+      if (!element || !element.isConnected) return false;
+      if (element.closest(".wb-terminal-group-hidden")) return false;
+      return element.clientWidth > 0 && element.clientHeight > 0;
+    };
 
     const sendResize = () => {
       if (!socket || socket.readyState !== WebSocket.OPEN) return;
       const cols = term.cols;
       const rows = term.rows;
       socket.send(JSON.stringify({ type: "resize", cols, rows }));
+    };
+
+    const fitNow = () => {
+      if (!canFit()) return;
+      fitAddon.fit();
+      sendResize();
     };
 
     const connect = () => {
@@ -1191,15 +1219,10 @@ export const TerminalPanel = forwardRef<TerminalPanelHandle, TerminalPanelProps>
         } else {
           term.open(el);
         }
-        requestAnimationFrame(() => {
-          fitAddon.fit();
-          sendResize();
-        });
+        requestAnimationFrame(fitNow);
       },
       fit: () => {
-        if (!element) return;
-        fitAddon.fit();
-        sendResize();
+        fitNow();
       },
       focus: () => {
         term.focus();
