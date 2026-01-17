@@ -1722,9 +1722,6 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     activeTaskSummaries.forEach((summary) => items.push({ kind: "active-task", summary }));
     items.push({ kind: "archived-header" });
     if (!archivedCollapsed) {
-      if (workspaceSnapshot.fetchState.archived === "loading") {
-        items.push({ kind: "archived-loading" });
-      }
       if (workspaceSnapshot.fetchState.archived === "error") {
         items.push({ kind: "archived-error" });
       }
@@ -1735,6 +1732,9 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
         workspaceSnapshot.fetchState.archived !== "loading"
       ) {
         items.push({ kind: "archived-empty" });
+      }
+      if (workspaceSnapshot.fetchState.archived === "loading") {
+        items.push({ kind: "archived-loading" });
       }
     }
     return items;
