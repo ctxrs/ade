@@ -101,16 +101,14 @@ async fn main() -> Result<()> {
                         {
                             "name": "merge_queue_submit",
                             "title": "Merge Queue Submit",
-                            "description": "Submit the current worktree to the merge queue.",
+                            "description": "Submit the current worktree to the merge queue and wait for completion.",
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {
                                     "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
+                                    "worktree_id": { "type": "string", "description": "Optional ctx worktree id (overrides session worktree when set)." },
                                     "target_branch": { "type": "string" },
-                                    "message": { "type": "string" },
-                                    "patch": { "type": "string" },
-                                    "base_commit_sha": { "type": "string" },
-                                    "head_commit_sha": { "type": "string" }
+                                    "message": { "type": "string" }
                                 },
                                 "additionalProperties": false
                             }
@@ -1915,6 +1913,10 @@ async fn merge_queue_submit_call(
         .and_then(|v| v.as_str())
         .map(|s| s.to_string())
         .or_else(|| ctx_env_opt("SESSION_ID"));
+    let worktree_id = args
+        .get("worktree_id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
     let target_branch = args
         .get("target_branch")
         .and_then(|v| v.as_str())
@@ -1923,23 +1925,16 @@ async fn merge_queue_submit_call(
         .get("message")
         .and_then(|v| v.as_str())
         .map(|v| v.to_string());
-    let patch = args
-        .get("patch")
-        .and_then(|v| v.as_str())
-        .map(|v| v.to_string());
-    let base_commit_sha = args
-        .get("base_commit_sha")
-        .and_then(|v| v.as_str())
-        .map(|v| v.to_string());
-    let head_commit_sha = args
-        .get("head_commit_sha")
-        .and_then(|v| v.as_str())
-        .map(|v| v.to_string());
 
     let mut body = json!({});
     if let Some(session_id) = session_id {
         if let Some(obj) = body.as_object_mut() {
             obj.insert("session_id".to_string(), Value::String(session_id));
+        }
+    }
+    if let Some(worktree_id) = worktree_id {
+        if let Some(obj) = body.as_object_mut() {
+            obj.insert("worktree_id".to_string(), Value::String(worktree_id));
         }
     }
     if let Some(target_branch) = target_branch {
@@ -1950,27 +1945,6 @@ async fn merge_queue_submit_call(
     if let Some(message) = message {
         if let Some(obj) = body.as_object_mut() {
             obj.insert("message".to_string(), Value::String(message));
-        }
-    }
-    if let Some(patch) = patch {
-        if let Some(obj) = body.as_object_mut() {
-            obj.insert("patch".to_string(), Value::String(patch));
-        }
-    }
-    if let Some(base_commit_sha) = base_commit_sha {
-        if let Some(obj) = body.as_object_mut() {
-            obj.insert(
-                "base_commit_sha".to_string(),
-                Value::String(base_commit_sha),
-            );
-        }
-    }
-    if let Some(head_commit_sha) = head_commit_sha {
-        if let Some(obj) = body.as_object_mut() {
-            obj.insert(
-                "head_commit_sha".to_string(),
-                Value::String(head_commit_sha),
-            );
         }
     }
 

@@ -196,13 +196,7 @@ pub async fn diff_worktree(
     base_commit_sha: &str,
 ) -> Result<String> {
     let root = worktree_path.as_ref();
-    // For edit review parity with Zed, treat the git index as the "accepted baseline":
-    // - Unstaged changes are pending review.
-    // - Staging a hunk/file marks it as accepted (and removes it from this diff).
-    //
-    // The base commit is still used for worktree creation, but not for the review diff.
-    let _ = base_commit_sha;
-    let mut out = git::git_diff_unstaged(root).await?;
+    let mut out = git::git_diff(root, base_commit_sha).await?;
 
     // `git diff <base>` does not include untracked files, but we want the UI to show newly created
     // files even before they are staged.
@@ -211,8 +205,8 @@ pub async fn diff_worktree(
         // Avoid dumping huge blobs into the diff view.
         let abs = root.join(&rel);
         if let Ok(meta) = tokio::fs::metadata(&abs).await {
-            const MAX_BYTES: u64 = 512 * 1024;
-            if meta.len() > MAX_BYTES {
+            const MAX_UNTRACKED_BYTES: u64 = 512 * 1024;
+            if meta.len() > MAX_UNTRACKED_BYTES {
                 out.push_str(&format!(
                     "\n# untracked: {} ({} bytes; omitted)\n",
                     rel,
@@ -233,13 +227,16 @@ pub async fn diff_worktree(
     Ok(out)
 }
 
-pub async fn diff_worktree_summary(worktree_path: impl AsRef<Path>) -> Result<(i64, i64, i64)> {
+pub async fn diff_worktree_summary(
+    worktree_path: impl AsRef<Path>,
+    base_commit_sha: &str,
+) -> Result<(i64, i64, i64)> {
     let root = worktree_path.as_ref();
     let mut file_count: i64 = 0;
     let mut additions: i64 = 0;
     let mut deletions: i64 = 0;
 
-    let numstats = git::git_diff_numstat_unstaged(root).await?;
+    let numstats = git::git_diff_numstat(root, base_commit_sha).await?;
     for (add, del, _path) in numstats {
         file_count += 1;
         additions += add;
@@ -252,8 +249,8 @@ pub async fn diff_worktree_summary(worktree_path: impl AsRef<Path>) -> Result<(i
             file_count += 1;
             let abs = root.join(&rel);
             if let Ok(meta) = tokio::fs::metadata(&abs).await {
-                const MAX_BYTES: u64 = 512 * 1024;
-                if meta.len() > MAX_BYTES {
+                const MAX_UNTRACKED_BYTES: u64 = 512 * 1024;
+                if meta.len() > MAX_UNTRACKED_BYTES {
                     continue;
                 }
             }

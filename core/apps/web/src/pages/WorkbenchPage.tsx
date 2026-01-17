@@ -30,7 +30,6 @@ import {
   WebSessionInfo,
   Worktree,
   Workspace,
-  applySessionDiffPatch,
   archiveTask,
   createSession,
   createTask,
@@ -39,6 +38,8 @@ import {
   getDaemonBaseUrl,
   getHealth,
   getSessionDiff,
+  getSessionDiffSummary,
+  getSessionGitStatusSummary,
   resolveDaemonWsBaseUrl,
   getInstall,
   getProviderOptions,
@@ -784,6 +785,12 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const [diffResizing, setDiffResizing] = useState(false);
   const [diffOpen, setDiffOpen] = useState(false);
   const [diffOpenHydrated, setDiffOpenHydrated] = useState(false);
+  const [diffLoading, setDiffLoading] = useState(false);
+  const [diffSummary, setDiffSummary] = useState<null | Record<string, unknown>>(null);
+  const [diffSummaryLoading, setDiffSummaryLoading] = useState(false);
+  const [gitStatusSummary, setGitStatusSummary] = useState<string | Record<string, unknown> | null>(null);
+  const [gitStatusLoading, setGitStatusLoading] = useState(false);
+  const [gitStatusError, setGitStatusError] = useState<string | null>(null);
   const [artifactsOpen, setArtifactsOpen] = useState(false);
   const [artifactsOpenHydrated, setArtifactsOpenHydrated] = useState(false);
   const [artifactsOpenSeeded, setArtifactsOpenSeeded] = useState(false);
@@ -2055,7 +2062,41 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     }
   }, [activeSessionKind, sessionSections]);
 
-  const hasDiff = activeSessionDiff.trim().length > 0;
+  const diffSummaryCount = useMemo(() => {
+    if (!diffSummary) return null;
+    const raw =
+      (diffSummary as any).file_count ??
+      (diffSummary as any).files ??
+      (diffSummary as any).fileCount ??
+      null;
+    const count = Number(raw);
+    if (!Number.isFinite(count)) return null;
+    return count;
+  }, [diffSummary]);
+
+  const fallbackDiffFileCount = useMemo(() => {
+    if (!activeSessionDiff.trim()) return 0;
+    const m = activeSessionDiff.match(/^diff --git /gm);
+    return m ? m.length : 1;
+  }, [activeSessionDiff]);
+
+  const diffFileCount = diffSummaryCount ?? fallbackDiffFileCount;
+  const hasDiff = diffSummaryCount !== null ? diffSummaryCount > 0 : activeSessionDiff.trim().length > 0;
+  const gitStatusText = useMemo(() => {
+    if (!gitStatusSummary) return "";
+    if (typeof gitStatusSummary === "string") return gitStatusSummary.trim();
+    const raw =
+      (gitStatusSummary as any).raw ??
+      (gitStatusSummary as any).summary_line ??
+      (gitStatusSummary as any).summaryLine ??
+      (gitStatusSummary as any).summary ??
+      (gitStatusSummary as any).status ??
+      "";
+    if (raw) return String(raw).trim();
+    const lines = (gitStatusSummary as any).lines;
+    if (Array.isArray(lines) && lines.length > 0) return lines.map((line) => String(line)).join("\n");
+    return "";
+  }, [gitStatusSummary]);
   const showReviewPane = diffOpen;
   const showArtifactsPane = artifactsOpen;
   const showSessionsPane = webSessionsEnabled && sessionsOpen;
@@ -2069,11 +2110,6 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     : false;
   const artifactsCount = artifacts.length;
   const sessionsCount = webSessionsEnabled ? webSessions.length : 0;
-  const diffFileCount = useMemo(() => {
-    if (!hasDiff) return 0;
-    const m = activeSessionDiff.match(/^diff --git /gm);
-    return m ? m.length : 1;
-  }, [activeSessionDiff, hasDiff]);
 
   const toggleDiffPane = useCallback(() => {
     setDiffOpen((open) => {
@@ -2544,51 +2580,65 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     }
   };
 
-  const applyDiffPatch = useCallback(
-    async (action: "accept" | "reject", patch: string) => {
-      if (!activeSessionId) return null;
-      const resp = await applySessionDiffPatch(activeSessionId, action, patch);
-      const next = resp.diff ?? "";
-      supervisor.setDiff(activeSessionId, next);
-      return next;
-    },
-    [activeSessionId, supervisor],
-  );
+  useEffect(() => {
+    if (!diffOpen || !activeSessionId) {
+      setDiffLoading(false);
+      setDiffSummaryLoading(false);
+      setGitStatusLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setDiffLoading(true);
+    setDiffSummaryLoading(true);
+    setGitStatusLoading(true);
+    setDiffSummary(null);
+    setGitStatusSummary(null);
+    setGitStatusError(null);
 
-  const approveAll = async () => {
-    if (!activeSessionId || !hasDiff) return;
-    await applyDiffPatch("accept", activeSessionDiff);
-  };
+    const loadStatus = async () => {
+      try {
+        const status = await getSessionGitStatusSummary(activeSessionId);
+        if (!cancelled) setGitStatusSummary(status ?? null);
+      } catch (e: any) {
+        if (!cancelled) {
+          setGitStatusSummary(null);
+          setGitStatusError(e?.message ?? "Failed to load git status.");
+        }
+      } finally {
+        if (!cancelled) setGitStatusLoading(false);
+      }
+    };
 
-  const rejectAll = async () => {
-    if (!activeSessionId || !hasDiff) return;
-    await applyDiffPatch("reject", activeSessionDiff);
-  };
+    const loadSummary = async () => {
+      try {
+        const summary = await getSessionDiffSummary(activeSessionId);
+        if (!cancelled) setDiffSummary((summary as any) ?? null);
+      } catch {
+        if (!cancelled) setDiffSummary(null);
+      } finally {
+        if (!cancelled) setDiffSummaryLoading(false);
+      }
+    };
 
-  const refreshActiveDiff = useCallback(async () => {
-    if (!activeSessionId) return;
-    const d = await getSessionDiff(activeSessionId);
-    supervisor.setDiff(activeSessionId, d.diff ?? "");
-  }, [activeSessionId, supervisor]);
+    const loadDiff = async () => {
+      try {
+        const resp = await getSessionDiff(activeSessionId);
+        if (!cancelled) supervisor.setDiff(activeSessionId, resp.diff ?? "");
+      } catch {
+        if (!cancelled) supervisor.setDiff(activeSessionId, "");
+      } finally {
+        if (!cancelled) setDiffLoading(false);
+      }
+    };
 
-  const handleDiffUpdated = useCallback(
-    (next: string) => {
-      if (!activeSessionId) return;
-      supervisor.setDiff(activeSessionId, next);
-    },
-    [activeSessionId, supervisor],
-  );
+    void loadStatus();
+    void loadSummary();
+    void loadDiff();
 
-  const diffLabels = useMemo(
-    () => ({
-      title: "Pending Changes",
-      acceptAll: "Approve all",
-      rejectAll: "Reject all",
-      accept: "Approve",
-      reject: "Reject",
-    }),
-    [],
-  );
+    return () => {
+      cancelled = true;
+    };
+  }, [activeSessionId, diffOpen, supervisor]);
 
   const onSplitterMouseDown = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -3454,40 +3504,40 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
                             >
                               All Changes
                             </button>
-                            {reviewTab === "git" && (
-                              <div className="wb-diff-pill">
-                                {diffFileCount} Pending Change{diffFileCount === 1 ? "" : "s"}
-                              </div>
-                            )}
+                          {reviewTab === "git" && (
+                            <div className="wb-diff-pill">
+                              {diffSummaryLoading && diffSummaryCount === null ? "..." : diffFileCount} Pending Change
+                              {diffFileCount === 1 ? "" : "s"}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      {reviewTab === "git" && (
+                        <div className="wb-diff-status">
+                          <div className="wb-diff-status-header">
+                            <span className="wb-diff-status-title">git status -sb</span>
+                            {gitStatusLoading && <span className="wb-diff-status-meta">Updating...</span>}
                           </div>
-                          <div className="wb-diff-actions">
-                            {reviewTab === "git" && hasDiff && (
-                              <>
-                                <button type="button" className="wb-primary" onClick={approveAll}>
-                                  Approve
-                                </button>
-                                <button type="button" className="wb-small" onClick={rejectAll}>
-                                  Reject
-                                </button>
-                              </>
-                            )}
+                          {gitStatusError ? (
+                            <div className="wb-diff-status-error">{gitStatusError}</div>
+                          ) : (
+                            <pre className="wb-diff-status-body">
+                              {gitStatusText || (gitStatusLoading ? "Loading git status..." : "No status data.")}
+                            </pre>
+                          )}
+                        </div>
+                      )}
+
+                      {reviewTab === "git" && hasDiff ? (
+                        <DiffReviewPane diff={activeSessionDiff} />
+                      ) : (
+                        <div className="wb-diff-empty">
+                          <div className="wb-muted">
+                            {diffLoading ? "Loading changes..." : "No changes on this worktree."}
                           </div>
                         </div>
-
-                        {reviewTab === "git" && hasDiff ? (
-                          <DiffReviewPane
-                            diff={activeSessionDiff}
-                            sessionId={activeSessionId || undefined}
-                            onDiffUpdated={handleDiffUpdated}
-                            onApplyPatch={applyDiffPatch}
-                            onFileSaved={refreshActiveDiff}
-                            labels={diffLabels}
-                          />
-                        ) : (
-                          <div className="wb-diff-empty">
-                            <div className="wb-muted">No unstaged changes on this branch.</div>
-                          </div>
-                        )}
+                      )}
                       </div>
                       <div className="wb-right-splitter" onMouseDown={onArtifactsSplitterMouseDown} />
                       <div className="wb-right-pane" style={{ height: artifactsHeight }}>
@@ -3506,36 +3556,36 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
                           </button>
                           {reviewTab === "git" && (
                             <div className="wb-diff-pill">
-                              {diffFileCount} Pending Change{diffFileCount === 1 ? "" : "s"}
+                              {diffSummaryLoading && diffSummaryCount === null ? "..." : diffFileCount} Pending Change
+                              {diffFileCount === 1 ? "" : "s"}
                             </div>
-                          )}
-                        </div>
-                        <div className="wb-diff-actions">
-                          {reviewTab === "git" && hasDiff && (
-                            <>
-                              <button type="button" className="wb-primary" onClick={approveAll}>
-                                Approve
-                              </button>
-                              <button type="button" className="wb-small" onClick={rejectAll}>
-                                Reject
-                              </button>
-                            </>
                           )}
                         </div>
                       </div>
 
+                      {reviewTab === "git" && (
+                        <div className="wb-diff-status">
+                          <div className="wb-diff-status-header">
+                            <span className="wb-diff-status-title">git status -sb</span>
+                            {gitStatusLoading && <span className="wb-diff-status-meta">Updating...</span>}
+                          </div>
+                          {gitStatusError ? (
+                            <div className="wb-diff-status-error">{gitStatusError}</div>
+                          ) : (
+                            <pre className="wb-diff-status-body">
+                              {gitStatusText || (gitStatusLoading ? "Loading git status..." : "No status data.")}
+                            </pre>
+                          )}
+                        </div>
+                      )}
+
                       {reviewTab === "git" && hasDiff ? (
-                        <DiffReviewPane
-                          diff={activeSessionDiff}
-                          sessionId={activeSessionId || undefined}
-                          onDiffUpdated={handleDiffUpdated}
-                          onApplyPatch={applyDiffPatch}
-                          onFileSaved={refreshActiveDiff}
-                          labels={diffLabels}
-                        />
+                        <DiffReviewPane diff={activeSessionDiff} />
                       ) : (
                         <div className="wb-diff-empty">
-                          <div className="wb-muted">No unstaged changes on this branch.</div>
+                          <div className="wb-muted">
+                            {diffLoading ? "Loading changes..." : "No changes on this worktree."}
+                          </div>
                         </div>
                       )}
                     </div>

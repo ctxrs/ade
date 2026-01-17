@@ -1011,6 +1011,32 @@ export const createSession = (
 export const getWorktree = (worktreeId: string) =>
   apiAny<Worktree>(`/api/worktrees/${worktreeId}`);
 
+export type SessionDiffSummary = {
+  base_commit_sha?: string;
+  head_commit_sha?: string;
+  file_count?: number;
+  files?: number;
+  line_additions?: number;
+  additions?: number;
+  line_deletions?: number;
+  deletions?: number;
+};
+
+export type GitStatusSummary = {
+  raw?: string;
+  summary_line?: string;
+  summaryLine?: string;
+  summary?: string;
+  status?: string;
+  lines?: string[];
+};
+
+export const getSessionGitStatusSummary = (sessionId: string) =>
+  apiAny<GitStatusSummary | string>(`/api/sessions/${sessionId}/git/status`);
+
+export const getSessionDiffSummary = (sessionId: string) =>
+  apiAny<SessionDiffSummary>(`/api/sessions/${sessionId}/diff/summary`);
+
 export const getWorktreeBootstrapLogs = async (worktreeId: string): Promise<string> => {
   const resp = await daemonFetchRaw(`/api/worktrees/${worktreeId}/bootstrap/logs`);
   if (resp.status >= 400) {
@@ -1032,9 +1058,6 @@ export const submitMergeQueueEntry = (payload: {
   worktree_id?: string;
   target_branch?: string;
   message?: string;
-  patch?: string;
-  base_commit_sha?: string;
-  head_commit_sha?: string;
 }) =>
   apiAny<MergeQueueEntry>("/api/merge-queue/entries", {
     method: "POST",

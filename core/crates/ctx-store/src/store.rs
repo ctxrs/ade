@@ -954,6 +954,23 @@ impl Store {
         Ok(out)
     }
 
+    pub async fn update_worktree_base_commit(
+        &self,
+        worktree_id: WorktreeId,
+        base_commit_sha: &str,
+    ) -> Result<bool> {
+        let result = sqlx::query(
+            r#"UPDATE worktrees
+               SET base_commit_sha = ?
+               WHERE id = ?"#,
+        )
+        .bind(base_commit_sha)
+        .bind(worktree_id.0.to_string())
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
     pub async fn update_worktree_bootstrap_result(
         &self,
         update: WorktreeBootstrapResultUpdate,
@@ -5089,6 +5106,7 @@ fn is_transient_session_event(
             "provider_guard_warning"
                 | "provider_guard_kill"
                 | "title_generated"
+                | "git_status_snapshot"
                 | "auth_started"
                 | "auth_finished"
                 | "auth_failed"

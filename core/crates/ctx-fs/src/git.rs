@@ -79,6 +79,35 @@ pub async fn git_merge_base(root_path: impl AsRef<Path>, a: &str, b: &str) -> Re
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
+pub async fn git_is_ancestor(
+    root_path: impl AsRef<Path>,
+    ancestor: &str,
+    descendant: &str,
+) -> Result<bool> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root_path.as_ref())
+        .arg("merge-base")
+        .arg("--is-ancestor")
+        .arg(ancestor)
+        .arg(descendant)
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .output()
+        .await
+        .context("running git merge-base --is-ancestor")?;
+    if output.status.success() {
+        return Ok(true);
+    }
+    if output.status.code() == Some(1) {
+        return Ok(false);
+    }
+    bail!(
+        "git merge-base --is-ancestor failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    )
+}
+
 pub async fn git_diff(root_path: impl AsRef<Path>, base_commit_sha: &str) -> Result<String> {
     let output = Command::new("git")
         .arg("-C")
@@ -97,6 +126,57 @@ pub async fn git_diff(root_path: impl AsRef<Path>, base_commit_sha: &str) -> Res
         );
     }
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+pub async fn git_diff_numstat(
+    root_path: impl AsRef<Path>,
+    base_commit_sha: &str,
+) -> Result<Vec<(i64, i64, String)>> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root_path.as_ref())
+        .arg("diff")
+        .arg("--numstat")
+        .arg("-z")
+        .arg(base_commit_sha)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .await
+        .context("running git diff --numstat")?;
+    if !output.status.success() {
+        bail!(
+            "git diff --numstat failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let bytes = output.stdout;
+    let mut out = Vec::new();
+    let mut parts = bytes.split(|b| *b == 0);
+    loop {
+        let Some(add) = parts.next() else {
+            break;
+        };
+        if add.is_empty() {
+            continue;
+        }
+        let Some(del) = parts.next() else {
+            break;
+        };
+        let Some(path) = parts.next() else {
+            break;
+        };
+        let add = String::from_utf8_lossy(add);
+        let del = String::from_utf8_lossy(del);
+        let path = String::from_utf8_lossy(path).to_string();
+        if path.trim().is_empty() {
+            continue;
+        }
+        let add_count = add.parse::<i64>().unwrap_or(0);
+        let del_count = del.parse::<i64>().unwrap_or(0);
+        out.push((add_count, del_count, path));
+    }
+    Ok(out)
 }
 
 pub async fn git_diff_unstaged(root_path: impl AsRef<Path>) -> Result<String> {
@@ -153,6 +233,27 @@ pub async fn git_diff_numstat_unstaged(
         out.push((add_count, del_count, path.to_string()));
     }
     Ok(out)
+}
+
+pub async fn git_status_short(root_path: impl AsRef<Path>) -> Result<String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root_path.as_ref())
+        .arg("status")
+        .arg("-sb")
+        .arg("--untracked-files=all")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .await
+        .context("running git status -sb")?;
+    if !output.status.success() {
+        bail!(
+            "git status -sb failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
 pub async fn list_untracked_files(root_path: impl AsRef<Path>) -> Result<Vec<String>> {

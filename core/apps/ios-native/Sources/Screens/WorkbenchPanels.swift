@@ -98,8 +98,22 @@ struct WorkbenchDiffPanelView: View {
     let session: SessionSummary?
 
     @State private var diffText = ""
+    @State private var diffFiles: [DiffFile] = []
+    @State private var expandedFileIds: Set<String> = []
+    @State private var statusSummary = ""
+    @State private var diffSummary: DiffSummary?
     @State private var isLoading = false
     @State private var errorMessage: String?
+
+    private var hasChanges: Bool {
+        !diffText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var fileCountLabel: String? {
+        guard !isLoading, errorMessage == nil else { return nil }
+        let count = diffSummary?.fileCount ?? diffFiles.count
+        return "\(count) file" + (count == 1 ? "" : "s")
+    }
 
     var body: some View {
         WorkbenchPanelScaffold(
@@ -108,20 +122,63 @@ struct WorkbenchDiffPanelView: View {
             icon: .gitBranch,
             onRefresh: { _Concurrency.Task { await loadDiff() } }
         ) {
-            GlassPanel {
-                if isLoading {
-                    ProgressView()
-                        .tint(.ctxAccent)
-                } else if let errorMessage {
-                    Text(errorMessage)
-                        .font(.caption)
-                        .foregroundColor(.ctxError)
-                } else if diffText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    Text("No unstaged changes.")
-                        .font(.caption)
-                        .foregroundColor(.ctxTextMuted)
-                } else {
-                    DiffTextView(diffText: diffText)
+            VStack(alignment: .leading, spacing: 16) {
+                GlassPanel {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(alignment: .center, spacing: 8) {
+                            Text("Git Status")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundColor(.ctxTextPrimary)
+
+                            Spacer()
+
+                            if let fileCountLabel {
+                                GlassPill(text: fileCountLabel, tint: .ctxAccent)
+                            }
+                        }
+
+                        if isLoading && statusSummary.isEmpty {
+                            ProgressView()
+                                .tint(.ctxAccent)
+                        } else if statusSummary.isEmpty {
+                            Text("Status unavailable.")
+                                .font(.caption)
+                                .foregroundColor(.ctxTextMuted)
+                        } else {
+                            Text(verbatim: statusSummary)
+                                .font(.system(size: 12, weight: .regular, design: .monospaced))
+                                .foregroundColor(.ctxTextSecondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .textSelection(.enabled)
+                        }
+                    }
+                }
+
+                GlassPanel {
+                    if isLoading {
+                        ProgressView()
+                            .tint(.ctxAccent)
+                    } else if let errorMessage {
+                        Text(errorMessage)
+                            .font(.caption)
+                            .foregroundColor(.ctxError)
+                    } else if !hasChanges {
+                        Text("No pending changes.")
+                            .font(.caption)
+                            .foregroundColor(.ctxTextMuted)
+                    } else if diffFiles.isEmpty {
+                        DiffTextView(diffText: diffText)
+                    } else {
+                        VStack(alignment: .leading, spacing: 12) {
+                            ForEach(diffFiles) { file in
+                                DiffFileRow(
+                                    file: file,
+                                    isExpanded: expandedFileIds.contains(file.id),
+                                    onToggle: { toggleFile(file.id) }
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -134,24 +191,74 @@ struct WorkbenchDiffPanelView: View {
     private func loadDiff() async {
         guard let sessionId = session?.id, !sessionId.isEmpty else {
             diffText = ""
+            diffFiles = []
+            statusSummary = ""
+            diffSummary = nil
+            expandedFileIds = []
             errorMessage = "Select a task session to view a diff."
             return
         }
         guard let client = connection.apiClient else {
             diffText = ""
+            diffFiles = []
+            statusSummary = ""
+            diffSummary = nil
+            expandedFileIds = []
             errorMessage = "Connect to a daemon first."
             return
         }
         isLoading = true
         errorMessage = nil
+        statusSummary = ""
+        diffSummary = nil
+        expandedFileIds = []
         do {
-            let response = try await client.fetchSessionDiff(sessionId: sessionId)
-            diffText = response.diff
+            async let statusResponse = client.fetchSessionGitStatus(sessionId: sessionId)
+            async let summaryResponse = client.fetchSessionGitDiffSummary(sessionId: sessionId)
+
+            let diff = try await fetchDiff(client: client, sessionId: sessionId)
+            diffText = diff
+
+            let parseResult = parseUnifiedDiff(diff)
+            diffFiles = parseResult.files
+            let fallbackSummary = DiffSummary(
+                fileCount: parseResult.files.count,
+                additions: parseResult.additions,
+                deletions: parseResult.deletions
+            )
+
+            if let summary = try? await summaryResponse {
+                diffSummary = DiffSummary(
+                    fileCount: summary.fileCount,
+                    additions: summary.additions,
+                    deletions: summary.deletions
+                )
+            } else {
+                diffSummary = fallbackSummary
+            }
+
+            if let status = try? await statusResponse {
+                statusSummary = status.summary
+            }
         } catch {
             diffText = ""
+            diffFiles = []
             errorMessage = "Failed to load diff."
         }
         isLoading = false
+    }
+
+    private func fetchDiff(client: DaemonAPIClient, sessionId: String) async throws -> String {
+        let response = try await client.fetchSessionDiff(sessionId: sessionId)
+        return response.diff
+    }
+
+    private func toggleFile(_ fileId: String) {
+        if expandedFileIds.contains(fileId) {
+            expandedFileIds.remove(fileId)
+        } else {
+            expandedFileIds.insert(fileId)
+        }
     }
 }
 
@@ -189,6 +296,187 @@ private struct DiffTextView: View {
         }
         return .ctxTextPrimary
     }
+}
+
+private struct DiffSummary: Equatable {
+    let fileCount: Int
+    let additions: Int
+    let deletions: Int
+}
+
+private struct DiffFile: Identifiable, Hashable {
+    let id: String
+    let filePath: String
+    let diffText: String
+    let addedLines: Int
+    let deletedLines: Int
+    let isNew: Bool
+    let isDeleted: Bool
+}
+
+private struct DiffParseResult {
+    let files: [DiffFile]
+    let additions: Int
+    let deletions: Int
+}
+
+private struct DiffFileRow: View {
+    let file: DiffFile
+    let isExpanded: Bool
+    let onToggle: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Button(action: onToggle) {
+                HStack(spacing: 8) {
+                    LucideIcon(name: isExpanded ? .chevronDown : .chevronRight, size: 14)
+                        .foregroundColor(.ctxTextSecondary)
+
+                    Text(file.filePath)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundColor(.ctxTextPrimary)
+                        .lineLimit(1)
+
+                    Spacer()
+
+                    DiffFileSummaryBadge(file: file)
+                }
+                .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.plain)
+
+            if isExpanded {
+                DiffTextView(diffText: file.diffText)
+            }
+        }
+        .padding(12)
+        .background(Color.ctxSurface.opacity(0.5), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(Color.ctxLine, lineWidth: 0.8)
+        )
+    }
+}
+
+private struct DiffFileSummaryBadge: View {
+    let file: DiffFile
+
+    var body: some View {
+        HStack(spacing: 6) {
+            if file.isNew {
+                Text("New")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundColor(.ctxDiffAdded)
+            } else if file.isDeleted {
+                Text("Deleted")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundColor(.ctxDiffRemoved)
+            }
+
+            if file.addedLines > 0 {
+                Text("+\(file.addedLines)")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundColor(.ctxDiffAdded)
+            }
+
+            if file.deletedLines > 0 {
+                Text("-\(file.deletedLines)")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundColor(.ctxDiffRemoved)
+            }
+
+            if file.addedLines == 0 && file.deletedLines == 0 && !file.isNew && !file.isDeleted {
+                Text("Binary")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundColor(.ctxTextMuted)
+            }
+        }
+    }
+}
+
+private func parseUnifiedDiff(_ diffText: String) -> DiffParseResult {
+    let lines = diffText.split(omittingEmptySubsequences: false) { $0.isNewline }
+    var files: [DiffFile] = []
+    var currentLines: [String] = []
+    var currentPath: String?
+    var currentAdded = 0
+    var currentDeleted = 0
+    var isNew = false
+    var isDeleted = false
+    var fileIndex = 0
+    var totalAdditions = 0
+    var totalDeletions = 0
+
+    func finalize() {
+        guard let path = currentPath else { return }
+        let id = "\(fileIndex)-\(path)"
+        let diffText = currentLines.joined(separator: "\n")
+        let file = DiffFile(
+            id: id,
+            filePath: path,
+            diffText: diffText,
+            addedLines: currentAdded,
+            deletedLines: currentDeleted,
+            isNew: isNew,
+            isDeleted: isDeleted
+        )
+        files.append(file)
+        totalAdditions += currentAdded
+        totalDeletions += currentDeleted
+    }
+
+    func normalizePath(_ raw: Substring) -> String {
+        var path = String(raw)
+        path = path.trimmingCharacters(in: CharacterSet(charactersIn: "\""))
+        if path.hasPrefix("a/") || path.hasPrefix("b/") {
+            path.removeFirst(2)
+        }
+        return path
+    }
+
+    for line in lines {
+        let text = String(line)
+        if text.hasPrefix("diff --git ") {
+            if currentPath != nil {
+                finalize()
+                fileIndex += 1
+            }
+            currentLines = [text]
+            currentAdded = 0
+            currentDeleted = 0
+            isNew = false
+            isDeleted = false
+            let parts = text.split(separator: " ")
+            if parts.count >= 4 {
+                currentPath = normalizePath(parts[3])
+            } else {
+                currentPath = "(unknown)"
+            }
+            continue
+        }
+
+        guard currentPath != nil else { continue }
+        currentLines.append(text)
+
+        if text.hasPrefix("new file mode") || text == "--- /dev/null" {
+            isNew = true
+        }
+        if text.hasPrefix("deleted file mode") || text == "+++ /dev/null" {
+            isDeleted = true
+        }
+
+        if text.hasPrefix("+"), !text.hasPrefix("+++") {
+            currentAdded += 1
+        } else if text.hasPrefix("-"), !text.hasPrefix("---") {
+            currentDeleted += 1
+        }
+    }
+
+    if currentPath != nil {
+        finalize()
+    }
+
+    return DiffParseResult(files: files, additions: totalAdditions, deletions: totalDeletions)
 }
 
 struct WorkbenchSessionsPanelView: View {
