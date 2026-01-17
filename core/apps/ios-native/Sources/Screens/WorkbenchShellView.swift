@@ -1164,6 +1164,7 @@ private struct WorkbenchTopBar: View {
                     }
                     .accessibilityIdentifier("topbar.diff")
 
+                    /*
                     Button(action: onSessionsTap) {
                         LucideIcon(name: .monitor, size: 16)
                             .foregroundColor(
@@ -1174,6 +1175,7 @@ private struct WorkbenchTopBar: View {
                     }
                     .accessibilityIdentifier("topbar.sessions")
                     .disabled(!isSessionsEnabled)
+                    */
 
                     Button(action: onTerminalTap) {
                         LucideIcon(name: .terminal, size: 16)

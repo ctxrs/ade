@@ -380,7 +380,7 @@ export default function LauncherPage() {
           </button>
         </div>
         <p className="muted" style={{ marginTop: 4 }}>
-          Generate HTTPS + API-token QR codes for the Expo app. Tokens are only shown once.
+          Generate HTTPS + API-token QR codes for the ctx mobile app. Tokens are only shown once.
         </p>
         {mobileProfilesError && <div className="error" style={{ marginTop: 6 }}>{mobileProfilesError}</div>}
         <div style={{ marginTop: 12 }}>
@@ -489,7 +489,7 @@ export default function LauncherPage() {
         <div className="modal">
           <h3>Scan with ctx mobile</h3>
           <p className="muted">
-            Scan this QR in the Expo app or copy the token below. Store it securely—it's only shown once.
+            Scan this QR in the ctx mobile app or copy the token below. Store it securely—it's only shown once.
           </p>
           <div style={{ display: "flex", justifyContent: "center", marginBottom: 12 }}>
             <QRCodeSVG value={JSON.stringify(qrModal.qr_payload)} size={220} bgColor="transparent" fgColor="#f5f7ff" />

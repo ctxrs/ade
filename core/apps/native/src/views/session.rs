@@ -149,6 +149,7 @@ impl<'a> SessionView<'a> {
                 .bg(shell.colors.panel_2)
                 .text_color(shell.colors.muted);
         }
+        /*
         let sessions_toggle = {
             let (bg, color) = if shell.show_sessions_pane {
                 (shell.colors.panel, shell.colors.text)
@@ -170,6 +171,7 @@ impl<'a> SessionView<'a> {
                 .active(|style| style.opacity(0.85))
                 .on_click(cx.listener(ShellView::toggle_sessions_pane))
         };
+        */
 
         let diff_toggle = {
             let (bg, color) = if shell.show_diff_pane {
@@ -297,7 +299,7 @@ impl<'a> SessionView<'a> {
             .gap(px(metrics.spacing.md))
             .child(artifacts_toggle)
             .child(diff_toggle)
-            .child(sessions_toggle)
+            // .child(sessions_toggle)
             .child(terminal_toggle);
 
         let control_row = div()

@@ -6,16 +6,12 @@
   "private": true,
   "exports": {
     ".": "./src/index.ts",
-    "./native": "./src/native.ts",
     "./web": "./src/web.ts"
   },
   "typesVersions": {
     "*": {
       "*": [
         "src/index.ts"
-      ],
-      "native": [
-        "src/native.ts"
       ],
       "web": [
         "src/web.ts"
@@ -28,7 +24,6 @@
   "devDependencies": {
     "@types/react": "~19.1.0",
     "react": "19.1.0",
-    "react-native": "0.81.5",
     "typescript": "^5.6.3"
   }
 }

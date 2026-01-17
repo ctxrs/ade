@@ -15,7 +15,6 @@ import {
   Image,
   Laptop,
   LayersPlus,
-  Monitor,
   Mic,
   SquarePen,
   Settings,
@@ -3417,18 +3416,20 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
                       >
                         <GitBranch size={14} />
                       </button>
-                      <button
-                        type="button"
-                        className={`wb-icon ${showSessionsPane ? "wb-icon-active" : ""}`}
-                        aria-label="Toggle sessions view"
-                        aria-pressed={showSessionsPane}
-                        title={showSessionsPane ? "Hide sessions view" : "Show sessions view"}
-                        onClick={toggleSessionsPane}
-                        disabled={!activeSessionId}
-                      >
-                        <Monitor size={14} />
-                        {sessionsCount > 0 && <span className="wb-icon-badge">{sessionsCount}</span>}
-                      </button>
+                      {/*
+                        <button
+                          type="button"
+                          className={`wb-icon ${showSessionsPane ? "wb-icon-active" : ""}`}
+                          aria-label="Toggle sessions view"
+                          aria-pressed={showSessionsPane}
+                          title={showSessionsPane ? "Hide sessions view" : "Show sessions view"}
+                          onClick={toggleSessionsPane}
+                          disabled={!activeSessionId}
+                        >
+                          <Monitor size={14} />
+                          {sessionsCount > 0 && <span className="wb-icon-badge">{sessionsCount}</span>}
+                        </button>
+                      */}
                       <button
                         type="button"
                         className={`wb-icon ${terminalOpen ? "wb-icon-active" : ""}`}

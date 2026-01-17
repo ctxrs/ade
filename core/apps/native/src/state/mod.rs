@@ -484,6 +484,7 @@ impl ShellView {
         self.relative_time_task = Some(update_task);
     }
 
+    #[allow(dead_code)]
     pub(crate) fn toggle_sessions_pane(
         &mut self,
         _: &ClickEvent,
