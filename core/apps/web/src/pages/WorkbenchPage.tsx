@@ -1788,7 +1788,11 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
             </div>
           );
         case "archived-loading":
-          return <div className="wb-muted">Loading archived tasks…</div>;
+          return (
+            <div className="wb-archived-loading" aria-live="polite" aria-label="Loading archived tasks">
+              <span className="wb-archived-spinner" aria-hidden="true" />
+            </div>
+          );
         case "archived-error":
           return <div className="wb-muted">Failed to load archived tasks. Retry.</div>;
         case "archived-empty":

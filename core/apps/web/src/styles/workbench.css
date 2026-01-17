@@ -590,6 +590,21 @@
   font-size: 12px;
 }
 
+.wb-archived-loading {
+  display: flex;
+  justify-content: center;
+  padding: 6px 0 10px;
+}
+
+.wb-archived-spinner {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  border: 2px solid rgba(255, 255, 255, 0.18);
+  border-top-color: var(--muted);
+  animation: wb-spin 800ms linear infinite;
+}
+
 .wb-main {
   grid-area: main;
   min-width: 0;
