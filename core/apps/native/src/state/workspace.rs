@@ -151,6 +151,7 @@ impl ShellView {
         self.stop_workspace_stream();
         self.data_state = DataLoadState::Loading;
         self.reset_workspace_view("Loading workspace data...", cx);
+        self.hydrate_cached_active_snapshot(workspace_id, cx);
         cx.notify();
 
         let task = Tokio::spawn_result(cx, async move {
@@ -177,80 +178,19 @@ impl ShellView {
                 }
                 match result {
                     Ok(data) => {
-                        view.apply_active_snapshot(data.active_snapshot, cx);
-                        let keep_new_task = view.new_task_mode_locked;
-                        let selected_session_id = if keep_new_task {
-                            None
-                        } else {
-                            view.task_active_order
-                                .first()
-                                .and_then(|task_id| view.tasks_by_id.get(task_id))
-                                .and_then(|task| view.preferred_session_for_task(task))
-                        };
-                        view.selected_session = selected_session_id.and_then(|id| {
-                            view.sessions
-                                .iter()
-                                .position(|summary| summary.session_id == id)
-                        });
-                        view.selected_task = if keep_new_task {
-                            None
-                        } else {
-                            view.selected_session
-                                .and_then(|index| view.sessions.get(index))
-                                .and_then(|summary| {
-                                    view.session_summary_map
-                                        .get(&summary.session_id)
-                                        .map(|summary| summary.session.task_id)
-                                })
-                                .or_else(|| view.task_active_order.first().copied())
-                        };
-                        view.new_task_mode = keep_new_task || view.selected_session.is_none();
-                        view.hydrate_pane_state();
-                        view.composer_needs_apply = true;
-                        view.session = if keep_new_task {
-                            SessionInfo::placeholder()
-                        } else {
-                            selected_session_id
-                                .and_then(|id| view.session_summary_map.get(&id))
-                                .map(session_info_from_summary)
-                                .unwrap_or_else(SessionInfo::placeholder)
-                        };
-                        view.sync_composer_defaults();
-                        view.session_events.clear();
-                        view.session_turns.clear();
-                        view.session_turn_tools.clear();
-                        view.session_history_cursor = None;
-                        view.session_history_has_more = false;
-                        view.session_history_loading = false;
-                        view.replace_messages(Vec::new(), cx);
-                        if let Some(session_id) = view.selected_session_id() {
-                            if !view.apply_cached_thread_state(session_id, cx) {
-                                view.replace_messages(
-                                    vec![MessageItem::new(
-                                        MessageRole::Assistant,
-                                        "No messages yet. Create one to begin.",
-                                    )],
-                                    cx,
-                                );
-                            }
-                            if view.show_artifacts_pane {
-                                view.load_session_artifacts(session_id, cx);
-                            }
-                        } else {
-                            view.replace_messages(
-                                vec![MessageItem::new(
-                                    MessageRole::Assistant,
-                                    "Select a task to begin.",
-                                )],
-                                cx,
-                            );
-                        }
+                        view.apply_active_snapshot(&data.active_snapshot, cx);
+                        view.persist_active_snapshot(&data.active_snapshot, cx);
+                        view.hydrate_loaded_snapshot_state(cx);
                         view.data_state = DataLoadState::Loaded;
                         view.start_workspace_stream(workspace_id, cx);
                     }
                     Err(err) => {
-                        view.reset_workspace_view("Unable to load workspace data.", cx);
-                        view.data_state = DataLoadState::Error(err.to_string());
+                        if view.task_store_initialized {
+                            view.data_state = DataLoadState::Error(err.to_string());
+                        } else {
+                            view.reset_workspace_view("Unable to load workspace data.", cx);
+                            view.data_state = DataLoadState::Error(err.to_string());
+                        }
                         view.stream_status = StreamStatus::Idle;
                     }
                 }
@@ -258,6 +198,115 @@ impl ShellView {
                 })
                 .ok();
             }
+        })
+        .detach();
+    }
+
+    fn hydrate_cached_active_snapshot(&mut self, workspace_id: WorkspaceId, cx: &mut Context<Self>) {
+        let cache = self.ats_cache.clone();
+        let task = Tokio::spawn_result(cx, async move {
+            cache.load_active_snapshot(workspace_id).await
+        });
+
+        cx.spawn(move |this: WeakEntity<ShellView>, cx: &mut AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                let result = task.await;
+                this.update(&mut cx, |view, cx| {
+                    if view.selected_workspace != Some(workspace_id) {
+                        return;
+                    }
+                    if view.task_store_initialized {
+                        return;
+                    }
+                    let Ok(Some(snapshot)) = result else {
+                        return;
+                    };
+                    view.apply_active_snapshot(&snapshot, cx);
+                    view.hydrate_loaded_snapshot_state(cx);
+                    cx.notify();
+                })
+                .ok();
+            }
+        })
+        .detach();
+    }
+
+    fn hydrate_loaded_snapshot_state(&mut self, cx: &mut Context<Self>) {
+        let keep_new_task = self.new_task_mode_locked;
+        let selected_session_id = if keep_new_task {
+            None
+        } else {
+            self.task_active_order
+                .first()
+                .and_then(|task_id| self.tasks_by_id.get(task_id))
+                .and_then(|task| self.preferred_session_for_task(task))
+        };
+        self.selected_session = selected_session_id.and_then(|id| {
+            self.sessions
+                .iter()
+                .position(|summary| summary.session_id == id)
+        });
+        self.selected_task = if keep_new_task {
+            None
+        } else {
+            self.selected_session
+                .and_then(|index| self.sessions.get(index))
+                .and_then(|summary| {
+                    self.session_summary_map
+                        .get(&summary.session_id)
+                        .map(|summary| summary.session.task_id)
+                })
+                .or_else(|| self.task_active_order.first().copied())
+        };
+        self.new_task_mode = keep_new_task || self.selected_session.is_none();
+        self.hydrate_pane_state();
+        self.composer_needs_apply = true;
+        self.session = if keep_new_task {
+            SessionInfo::placeholder()
+        } else {
+            selected_session_id
+                .and_then(|id| self.session_summary_map.get(&id))
+                .map(session_info_from_summary)
+                .unwrap_or_else(SessionInfo::placeholder)
+        };
+        self.sync_composer_defaults();
+        self.session_events.clear();
+        self.session_turns.clear();
+        self.session_turn_tools.clear();
+        self.session_history_cursor = None;
+        self.session_history_has_more = false;
+        self.session_history_loading = false;
+        self.replace_messages(Vec::new(), cx);
+        if let Some(session_id) = self.selected_session_id() {
+            if !self.apply_cached_thread_state(session_id, cx) {
+                self.replace_messages(
+                    vec![MessageItem::new(
+                        MessageRole::Assistant,
+                        "No messages yet. Create one to begin.",
+                    )],
+                    cx,
+                );
+            }
+            if self.show_artifacts_pane {
+                self.load_session_artifacts(session_id, cx);
+            }
+        } else {
+            self.replace_messages(
+                vec![MessageItem::new(
+                    MessageRole::Assistant,
+                    "Select a task to begin.",
+                )],
+                cx,
+            );
+        }
+    }
+
+    fn persist_active_snapshot(&self, snapshot: &WorkspaceActiveSnapshot, cx: &mut Context<Self>) {
+        let snapshot = snapshot.clone();
+        let ats_cache = self.ats_cache.clone();
+        Tokio::spawn(cx, async move {
+            let _ = ats_cache.save_active_snapshot(&snapshot).await;
         })
         .detach();
     }
@@ -321,7 +370,7 @@ impl ShellView {
 
     fn apply_active_snapshot(
         &mut self,
-        snapshot: WorkspaceActiveSnapshot,
+        snapshot: &WorkspaceActiveSnapshot,
         cx: &mut Context<Self>,
     ) {
         self.task_store_initialized = true;
@@ -337,7 +386,7 @@ impl ShellView {
         self.session_head_meta.clear();
         self.session_last_event_seq.clear();
 
-        for summary in snapshot.active.tasks {
+        for summary in &snapshot.active.tasks {
             let item = TaskSummaryItem::from_active(&summary);
             self.tasks_by_id.insert(item.id, item);
             self.cache_session_snapshot(&summary.primary_session, &summary.primary_session_head, cx);
@@ -377,7 +426,8 @@ impl ShellView {
                 let result = task.await;
                 this.update(&mut cx, |view, cx| match result {
                     Ok(snapshot) => {
-                        view.apply_active_snapshot(snapshot, cx);
+                        view.apply_active_snapshot(&snapshot, cx);
+                        view.persist_active_snapshot(&snapshot, cx);
                         view.send_stream_subscribe();
                         view.task_fetch_active = super::TaskFetchState::Idle;
                     }

@@ -523,6 +523,7 @@ struct WorkbenchShellView: View {
             isRefreshingTasks = false
             return
         }
+        await hydrateTasksFromCache(workspaceId: workspaceId)
         let hasTasks = !(activeTasks.isEmpty && archivedTasks.isEmpty)
         let showBlocking = !hasTasks
         if showBlocking {
@@ -537,6 +538,7 @@ struct WorkbenchShellView: View {
             _Concurrency.Task {
                 await ATSHeadCache.shared.store(heads: activeSnapshot.active.tasks.map { $0.primarySessionHead })
             }
+            _Concurrency.Task { await WorkspaceActiveSnapshotCache.shared.store(snapshot: activeSnapshot) }
             lastStreamSnapshotRev = activeSnapshot.snapshotRev
             let activeSummaries = activeSnapshot.active.tasks.map(WorkspaceTaskSummary.init)
             let workspaceTasks = try await client.listWorkspaceTasks(workspaceId: workspaceId)
@@ -564,6 +566,19 @@ struct WorkbenchShellView: View {
         }
         isLoadingTasks = false
         isRefreshingTasks = false
+    }
+
+    @MainActor
+    private func hydrateTasksFromCache(workspaceId: String) async {
+        guard activeTasks.isEmpty && archivedTasks.isEmpty else { return }
+        guard let cached = await WorkspaceActiveSnapshotCache.shared.load(workspaceId: workspaceId) else { return }
+        let summaries = cached.tasks.map { WorkspaceTaskSummary(cachedActiveSummary: $0) }
+        guard !summaries.isEmpty else { return }
+        activeTasks = sortTasksBySortAt(summaries)
+        archivedTasks = []
+        taskError = nil
+        lastStreamSnapshotRev = max(lastStreamSnapshotRev, cached.snapshotRev)
+        resolveSelectionForCurrentTask()
     }
 
     private func resolveSelectionForCurrentTask() {
@@ -896,6 +911,7 @@ struct WorkbenchShellView: View {
 
     @MainActor
     private func handleWorkspaceStreamEvent(_ event: WorkspaceActiveSnapshotEvent) {
+        _Concurrency.Task { await WorkspaceActiveSnapshotCache.shared.apply(event: event) }
         let snapshotRev: Int
         switch event {
         case .ready(_, let rev):

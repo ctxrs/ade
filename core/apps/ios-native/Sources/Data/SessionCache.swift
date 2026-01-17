@@ -122,6 +122,93 @@ actor SessionHistoryPageCache {
     }
 }
 
+struct CachedWorkspaceActiveTaskSummary: Codable, Sendable {
+    let task: Task
+    let primarySession: SessionSnapshotSummary
+    let sessions: [SessionSnapshotSummary]
+    let sortAt: String
+
+    init(activeSummary: WorkspaceActiveTaskSummary) {
+        task = activeSummary.task
+        primarySession = activeSummary.primarySession
+        sessions = activeSummary.sessions
+        sortAt = activeSummary.sortAt
+    }
+}
+
+struct CachedWorkspaceActiveSnapshot: Codable, Sendable {
+    let workspaceId: String
+    var snapshotRev: Int
+    var tasks: [CachedWorkspaceActiveTaskSummary]
+    var cachedAt: TimeInterval
+
+    init(workspaceId: String, snapshotRev: Int, tasks: [CachedWorkspaceActiveTaskSummary]) {
+        self.workspaceId = workspaceId
+        self.snapshotRev = snapshotRev
+        self.tasks = tasks
+        self.cachedAt = Date().timeIntervalSince1970
+    }
+
+    mutating func upsert(_ activeSummary: WorkspaceActiveTaskSummary) {
+        let taskId = activeSummary.task.id.stringValue
+        tasks.removeAll { $0.task.id.stringValue == taskId }
+        tasks.append(CachedWorkspaceActiveTaskSummary(activeSummary: activeSummary))
+    }
+
+    mutating func remove(taskId: String) {
+        tasks.removeAll { $0.task.id.stringValue == taskId }
+    }
+}
+
+actor WorkspaceActiveSnapshotCache {
+    static let shared = WorkspaceActiveSnapshotCache()
+    private let cache = DiskCache<CachedWorkspaceActiveSnapshot>(cacheName: "ats-active-snapshots", maxEntries: 12)
+
+    func load(workspaceId: String) async -> CachedWorkspaceActiveSnapshot? {
+        await cache.get(makeKey(workspaceId: workspaceId))
+    }
+
+    func store(snapshot: WorkspaceActiveSnapshot) async {
+        let tasks = snapshot.active.tasks.map(CachedWorkspaceActiveTaskSummary.init)
+        let cached = CachedWorkspaceActiveSnapshot(
+            workspaceId: snapshot.workspaceId.stringValue,
+            snapshotRev: snapshot.snapshotRev,
+            tasks: tasks
+        )
+        await cache.set(cached, for: makeKey(workspaceId: snapshot.workspaceId.stringValue))
+    }
+
+    func apply(event: WorkspaceActiveSnapshotEvent) async {
+        switch event {
+        case .activeTaskUpsert(let workspaceId, let snapshotRev, let task):
+            await update(workspaceId: workspaceId.stringValue, snapshotRev: snapshotRev) { cached in
+                cached.upsert(task)
+            }
+        case .activeTaskDelete(let workspaceId, let snapshotRev, let taskId):
+            await update(workspaceId: workspaceId.stringValue, snapshotRev: snapshotRev) { cached in
+                cached.remove(taskId: taskId.stringValue)
+            }
+        case .ready(let workspaceId, let snapshotRev):
+            await update(workspaceId: workspaceId.stringValue, snapshotRev: snapshotRev) { _ in }
+        default:
+            break
+        }
+    }
+
+    private func update(workspaceId: String, snapshotRev: Int, mutate: (inout CachedWorkspaceActiveSnapshot) -> Void) async {
+        let key = makeKey(workspaceId: workspaceId)
+        guard var cached = await cache.get(key) else { return }
+        cached.snapshotRev = max(cached.snapshotRev, snapshotRev)
+        cached.cachedAt = Date().timeIntervalSince1970
+        mutate(&cached)
+        await cache.set(cached, for: key)
+    }
+
+    private func makeKey(workspaceId: String) -> String {
+        "v1|\(workspaceId)"
+    }
+}
+
 struct CachedSessionHead: Codable, Sendable {
     let session: Session
     var turns: [SessionTurn]
@@ -195,6 +282,10 @@ actor ATSHeadCache {
     static let shared = ATSHeadCache()
     private let cache = DiskCache<CachedSessionHead>(cacheName: "ats-heads", maxEntries: 100)
 
+    func load(sessionId: String) async -> CachedSessionHead? {
+        await cache.get(sessionId)
+    }
+
     func store(head: SessionHead) async {
         await cache.set(CachedSessionHead(head: head), for: head.session.id.stringValue)
     }
@@ -210,5 +301,19 @@ actor ATSHeadCache {
         guard var cached = await cache.get(key) else { return }
         cached.apply(delta: delta)
         await cache.set(cached, for: key)
+    }
+}
+
+extension WorkspaceTaskSummary {
+    init(cachedActiveSummary: CachedWorkspaceActiveTaskSummary) {
+        var sessions = [cachedActiveSummary.primarySession] + cachedActiveSummary.sessions
+        var seen = Set<String>()
+        sessions = sessions.filter { summary in
+            let id = summary.session.id.stringValue
+            guard !seen.contains(id) else { return false }
+            seen.insert(id)
+            return true
+        }
+        self.init(task: cachedActiveSummary.task, sessions: sessions, sortAt: cachedActiveSummary.sortAt)
     }
 }

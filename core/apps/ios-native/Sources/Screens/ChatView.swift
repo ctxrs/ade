@@ -3091,6 +3091,7 @@ final class ChatViewModel: ObservableObject {
         contextWindowInfo = nil
         updateWorkingState()
         _Concurrency.Task {
+            await hydrateFromCacheIfNeeded(sessionId: sessionId, generation: sessionGeneration)
             if !isArchivedSession {
                 await primeStreamCursor()
             }
@@ -3101,6 +3102,41 @@ final class ChatViewModel: ObservableObject {
                 await sendStreamSubscriptionIfNeeded()
             }
         }
+    }
+
+    private func hydrateFromCacheIfNeeded(sessionId: String?, generation: Int) async {
+        guard !isArchivedSession else { return }
+        guard messages.isEmpty && latestTurns.isEmpty else { return }
+        guard let sessionId else { return }
+        guard let cached = await ATSHeadCache.shared.load(sessionId: sessionId) else { return }
+        guard generation == sessionGeneration, sessionId == self.sessionId else { return }
+        applyCachedHead(cached)
+    }
+
+    private func applyCachedHead(_ cached: CachedSessionHead) {
+        let nextMessages = cached.messages.map { message in
+            ChatMessage(
+                id: message.id.stringValue,
+                role: roleForMessage(message.role),
+                text: message.content,
+                attachments: message.attachments ?? [],
+                createdAt: message.createdAt
+            )
+        }
+        let nextWithStreaming = applyStreamingAssistantState(to: nextMessages)
+        messages = nextWithStreaming
+        latestTurns = cached.turns
+        latestEvents = cached.events ?? []
+        latestToolSummaries = cached.toolSummaries ?? []
+        lastEventSeq = cached.lastEventSeq
+        workspaceId = workspaceId ?? cached.session.workspaceId.stringValue
+        if let turn = mostRecentTurn(in: cached.turns) {
+            updateTurnStatus(from: turn)
+            updateContextWindow(from: turn)
+        }
+        lastSetModelId = cached.session.modelId
+        rebuildThreadItems()
+        updateWorkingState()
     }
 
     func startPolling() {

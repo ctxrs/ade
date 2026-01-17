@@ -10,9 +10,10 @@ use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, S
 use sqlx::{Pool, Row, Sqlite};
 use tokio::sync::OnceCell;
 
-use ctx_core::ids::SessionId;
+use ctx_core::ids::{SessionId, WorkspaceId};
 use ctx_core::models::{
     SessionHeadSnapshot, SessionHeadWindow, SessionHistoryPage, SessionSummaryCheckpoint,
+    WorkspaceActiveSnapshot,
 };
 
 use super::session::SessionThreadCache;
@@ -120,6 +121,67 @@ impl AtsCache {
         .await?;
 
         Ok(())
+    }
+
+    pub(crate) async fn save_active_snapshot(
+        &self,
+        snapshot: &WorkspaceActiveSnapshot,
+    ) -> Result<()> {
+        let Some(pool) = self.pool().await else {
+            return Ok(());
+        };
+
+        let snapshot_json = serde_json::to_string(snapshot)?;
+        let updated_at = Utc::now().timestamp_millis();
+
+        sqlx::query(
+            r#"
+            INSERT INTO ats_active_snapshots (
+                workspace_id,
+                snapshot_json,
+                updated_at
+            )
+            VALUES (?, ?, ?)
+            ON CONFLICT(workspace_id) DO UPDATE SET
+                snapshot_json = excluded.snapshot_json,
+                updated_at = excluded.updated_at
+            "#,
+        )
+        .bind(snapshot.workspace_id.0.to_string())
+        .bind(snapshot_json)
+        .bind(updated_at)
+        .execute(pool)
+        .await?;
+
+        Ok(())
+    }
+
+    pub(crate) async fn load_active_snapshot(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> Result<Option<WorkspaceActiveSnapshot>> {
+        let Some(pool) = self.pool().await else {
+            return Ok(None);
+        };
+
+        let row = sqlx::query(
+            r#"
+            SELECT snapshot_json
+            FROM ats_active_snapshots
+            WHERE workspace_id = ?
+            "#,
+        )
+        .bind(workspace_id.0.to_string())
+        .fetch_optional(pool)
+        .await?;
+
+        let Some(row) = row else {
+            return Ok(None);
+        };
+
+        let snapshot_json: String = row.try_get("snapshot_json")?;
+        let snapshot = serde_json::from_str(&snapshot_json)?;
+        Ok(Some(snapshot))
     }
 
     pub(crate) async fn load_session_history_page(
@@ -311,6 +373,18 @@ async fn init_db(path: &PathBuf) -> Result<Pool<Sqlite>> {
         .connect_with(options)
         .await
         .context("opening native cache sqlite db")?;
+
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS ats_active_snapshots (
+            workspace_id TEXT PRIMARY KEY,
+            snapshot_json TEXT NOT NULL,
+            updated_at INTEGER NOT NULL
+        )
+        "#,
+    )
+    .execute(&pool)
+    .await?;
 
     sqlx::query(
         r#"

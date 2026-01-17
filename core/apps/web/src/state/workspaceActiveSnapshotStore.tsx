@@ -17,6 +17,12 @@ import {
   type WorkspaceActiveSnapshotClientMessage,
   type WorkspaceActiveSnapshotParams,
 } from "../api/client";
+import {
+  loadWorkspaceActiveSnapshotV1,
+  saveWorkspaceActiveSnapshotV1,
+  type PersistedWorkspaceActiveSnapshotV1,
+  type PersistedWorkspaceActiveTaskSummaryV1,
+} from "./uiStateStore";
 import { parseWsJson } from "../utils/wsJson";
 
 export type WorkspaceActiveSnapshotItem = {
@@ -129,6 +135,9 @@ class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSo
   private subscriptions: WorkspaceActiveSnapshotSessionSubscription[] = [];
   private sessionLastEventSeq = new Map<string, number>();
   private subscriptionKey = "";
+  private cacheHydrated = false;
+  private liveSnapshotApplied = false;
+  private cachePersistTimer: number | null = null;
   private destroyed = false;
 
   constructor(private workspaceId: string) {
@@ -183,6 +192,7 @@ class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSo
 
   init = () => {
     this.destroyed = false;
+    void this.hydrateFromCache();
     this.ensureActiveSnapshot(true).catch(() => {});
     this.connectStream().catch(() => {});
   };
@@ -200,6 +210,10 @@ class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSo
     if (this.reconnectTimer) {
       window.clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
+    }
+    if (this.cachePersistTimer) {
+      window.clearTimeout(this.cachePersistTimer);
+      this.cachePersistTimer = null;
     }
     this.listeners.clear();
     this.eventListeners.clear();
@@ -243,6 +257,112 @@ class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSo
     this.updateCountsForMove(existing, updated);
     this.placeInOrders(updated);
     this.publish();
+    this.schedulePersistCache();
+  }
+
+  private async hydrateFromCache() {
+    if (this.cacheHydrated) return;
+    this.cacheHydrated = true;
+    try {
+      const cached = await loadWorkspaceActiveSnapshotV1(this.workspaceId);
+      if (!cached || this.destroyed || this.liveSnapshotApplied) return;
+      this.applyCachedActiveSnapshot(cached);
+    } catch {
+      // ignore cache errors
+    }
+  }
+
+  private applyCachedActiveSnapshot(cached: PersistedWorkspaceActiveSnapshotV1) {
+    const activeTasks = Array.isArray(cached.active.tasks) ? cached.active.tasks : [];
+    for (const [id, item] of this.tasks.entries()) {
+      if (!item.task.archived_at) {
+        this.tasks.delete(id);
+      }
+    }
+    this.activeOrder = [];
+    this.sessionHeadsById.clear();
+
+    const nextActiveIds = new Set<string>();
+    for (const summary of activeTasks) {
+      const task = summary?.task;
+      if (!task || typeof task !== "object") continue;
+      if (task.archived_at) continue;
+      const normalized = this.normalizeActiveSummary(summary);
+      nextActiveIds.add(normalized.id);
+      this.tasks.set(normalized.id, normalized);
+      this.placeInOrders(normalized);
+    }
+
+    const totalCount = Number.isFinite(cached.active.totalCount) ? cached.active.totalCount : nextActiveIds.size;
+    this.totalActive = Math.max(totalCount, nextActiveIds.size);
+    this.snapshotRev = Math.max(this.snapshotRev, cached.snapshotRev ?? 0);
+    this.rebuildSessionLastEventSeq();
+    this.snapshot.initialized = true;
+    this.publish();
+  }
+
+  private schedulePersistCache() {
+    if (this.destroyed || this.cachePersistTimer) return;
+    this.cachePersistTimer = window.setTimeout(() => {
+      this.cachePersistTimer = null;
+      this.persistCache().catch(() => {});
+    }, 300);
+  }
+
+  private async persistCache() {
+    if (this.destroyed) return;
+    const tasks: PersistedWorkspaceActiveTaskSummaryV1[] = [];
+    for (const id of this.activeOrder) {
+      const item = this.tasks.get(id);
+      if (!item || item.task.archived_at) continue;
+      const summary = this.buildPersistedSummary(item);
+      if (summary) tasks.push(summary);
+    }
+    const totalCount = Math.max(this.totalActive, tasks.length);
+    try {
+      await saveWorkspaceActiveSnapshotV1(this.workspaceId, {
+        snapshotRev: this.snapshotRev,
+        tasks,
+        totalCount,
+      });
+    } catch {
+      // ignore cache errors
+    }
+  }
+
+  private buildPersistedSummary(
+    item: WorkspaceActiveSnapshotItem,
+  ): PersistedWorkspaceActiveTaskSummaryV1 | null {
+    if (!item.task) return null;
+    const sessions = Array.isArray(item.sessions) ? item.sessions : [];
+    const primaryId =
+      item.primarySessionId ||
+      idToString(item.primarySessionHead?.session?.id ?? "");
+    let primary = primaryId
+      ? sessions.find((summary) => idToString(summary.session.id) === primaryId) ?? null
+      : null;
+    if (!primary && sessions.length > 0) {
+      primary = sessions[0] ?? null;
+    }
+    if (!primary && item.primarySessionHead?.session) {
+      primary = this.sessionToSummary(item.primarySessionHead.session);
+    }
+    const head =
+      item.primarySessionHead ||
+      (primaryId ? this.sessionHeadsById.get(primaryId) ?? null : null);
+    const sortAt =
+      item.sort_at ||
+      this.taskSortAt(item.task) ||
+      item.task.updated_at ||
+      item.task.created_at ||
+      "";
+    return {
+      task: item.task,
+      primary_session: primary ?? null,
+      primary_session_head: head ?? null,
+      sessions,
+      sort_at: sortAt,
+    };
   }
 
   private async ensureActiveSnapshot(reset: boolean) {
@@ -290,7 +410,9 @@ class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSo
 
       this.rebuildSessionLastEventSeq();
       this.snapshot.initialized = true;
+      this.liveSnapshotApplied = true;
       this.publish();
+      this.schedulePersistCache();
     } catch {
       this.setFetchState("active", "error");
       return;
@@ -557,6 +679,7 @@ class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSo
       }
     }
     this.rebuildSessionLastEventSeq();
+    this.schedulePersistCache();
   }
 
   private upsertActiveSummary(summary: WorkspaceActiveTaskSummary) {
@@ -573,6 +696,7 @@ class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSo
     }
     this.placeInOrders(normalized);
     this.rebuildSessionLastEventSeq();
+    this.schedulePersistCache();
   }
 
   private upsertArchivedItem(item: WorkspaceActiveSnapshotItem, opts?: { adjustCounts?: boolean }) {
@@ -619,18 +743,23 @@ class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSo
     }
     this.tasks.set(taskId, { ...task, sessions: sortSessionSummaries(nextSessions) });
     this.rebuildSessionLastEventSeq();
+    this.schedulePersistCache();
   }
 
-  private normalizeActiveSummary(summary: WorkspaceActiveTaskSummary): WorkspaceActiveSnapshotItem {
+  private normalizeActiveSummary(
+    summary: WorkspaceActiveTaskSummary | PersistedWorkspaceActiveTaskSummaryV1,
+  ): WorkspaceActiveSnapshotItem {
     const id = idToString(summary.task.id);
-    const sortAtMs = Date.parse(summary.sort_at ?? "") || Date.now();
+    const sortAt = summary.sort_at ?? this.taskSortAt(summary.task) ?? "";
+    const sortAtMs = Date.parse(sortAt) || Date.now();
     const primarySessionId = idToString(summary.primary_session?.session?.id ?? "");
     const primaryHeadId = idToString(summary.primary_session_head?.session?.id ?? "");
-    if (primaryHeadId) {
+    if (primaryHeadId && summary.primary_session_head) {
       this.sessionHeadsById.set(primaryHeadId, summary.primary_session_head);
     }
     const primary = summary.primary_session ? [this.normalizeSessionSummary(summary.primary_session)] : [];
-    const sessions = summary.sessions.map((s) => this.normalizeSessionSummary(s));
+    const sessionsRaw = Array.isArray(summary.sessions) ? summary.sessions : [];
+    const sessions = sessionsRaw.map((s) => this.normalizeSessionSummary(s));
     const merged: SessionSnapshotSummary[] = [];
     const seen = new Set<string>();
     const addSummary = (item: SessionSnapshotSummary) => {
@@ -649,7 +778,7 @@ class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSo
       primarySessionHead: summary.primary_session_head ?? null,
       primarySessionId: primarySessionId || null,
       sortAtMs,
-      sort_at: summary.sort_at ?? null,
+      sort_at: sortAt || null,
     };
   }
 

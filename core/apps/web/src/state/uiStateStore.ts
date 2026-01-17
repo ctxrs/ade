@@ -111,6 +111,52 @@ export async function clearWorkbenchSelectionV1(workspaceId: string): Promise<vo
   await uiStateDelete(workbenchSelectionKeyV1(workspaceId));
 }
 
+export type PersistedWorkspaceActiveTaskSummaryV1 = {
+  task: import("@ctx/types").Task;
+  primary_session: import("@ctx/types").SessionSnapshotSummary | null;
+  primary_session_head: import("@ctx/types").SessionHeadSnapshot | null;
+  sessions: import("@ctx/types").SessionSnapshotSummary[];
+  sort_at?: string | null;
+};
+
+export type PersistedWorkspaceActiveSnapshotV1 = {
+  v: 1;
+  workspaceId: string;
+  snapshotRev?: number;
+  active: {
+    tasks: PersistedWorkspaceActiveTaskSummaryV1[];
+    totalCount?: number;
+  };
+  updatedAtMs: number;
+};
+
+export function workspaceActiveSnapshotKeyV1(workspaceId: string) {
+  return `wb.active_snapshot.v1.${workspaceId}`;
+}
+
+export async function loadWorkspaceActiveSnapshotV1(
+  workspaceId: string,
+): Promise<PersistedWorkspaceActiveSnapshotV1 | null> {
+  const raw = await uiStateGet(workspaceActiveSnapshotKeyV1(workspaceId));
+  if (!raw || typeof raw !== "object") return null;
+  const rec = raw as PersistedWorkspaceActiveSnapshotV1;
+  if (rec.v !== 1 || rec.workspaceId !== workspaceId) return null;
+  if (!rec.active || !Array.isArray(rec.active.tasks)) return null;
+  return rec;
+}
+
+export async function saveWorkspaceActiveSnapshotV1(
+  workspaceId: string,
+  payload: Omit<PersistedWorkspaceActiveSnapshotV1, "v" | "workspaceId" | "updatedAtMs">,
+): Promise<void> {
+  await uiStateSet(workspaceActiveSnapshotKeyV1(workspaceId), {
+    v: 1,
+    workspaceId,
+    updatedAtMs: Date.now(),
+    ...payload,
+  } satisfies PersistedWorkspaceActiveSnapshotV1);
+}
+
 export type PersistedSessionHeadV1 = {
   v: 1;
   sessionId: string;
