@@ -273,7 +273,7 @@ class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSo
   }
 
   private applyCachedActiveSnapshot(cached: PersistedWorkspaceActiveSnapshotV1) {
-    const activeTasks = Array.isArray(cached.active.tasks) ? cached.active.tasks : [];
+    const activeTasks = Array.isArray(cached.active?.tasks) ? cached.active.tasks : [];
     for (const [id, item] of this.tasks.entries()) {
       if (!item.task.archived_at) {
         this.tasks.delete(id);
@@ -293,12 +293,23 @@ class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSo
       this.placeInOrders(normalized);
     }
 
-    const totalCount = Number.isFinite(cached.active.totalCount) ? cached.active.totalCount : nextActiveIds.size;
+    const totalCount = Number.isFinite(cached.active?.totalCount) ? cached.active.totalCount : nextActiveIds.size;
     this.totalActive = Math.max(totalCount, nextActiveIds.size);
     this.snapshotRev = Math.max(this.snapshotRev, cached.snapshotRev ?? 0);
     this.rebuildSessionLastEventSeq();
     this.snapshot.initialized = true;
     this.publish();
+    if (this.needsCacheMigration(cached)) {
+      this.schedulePersistCache();
+    }
+  }
+
+  private needsCacheMigration(cached: PersistedWorkspaceActiveSnapshotV1): boolean {
+    const legacy = cached as PersistedWorkspaceActiveSnapshotV1 & {
+      tasks?: PersistedWorkspaceActiveTaskSummaryV1[];
+      totalCount?: number;
+    };
+    return Array.isArray(legacy.tasks);
   }
 
   private schedulePersistCache() {
@@ -322,8 +333,10 @@ class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSo
     try {
       await saveWorkspaceActiveSnapshotV1(this.workspaceId, {
         snapshotRev: this.snapshotRev,
-        tasks,
-        totalCount,
+        active: {
+          tasks,
+          totalCount,
+        },
       });
     } catch {
       // ignore cache errors
