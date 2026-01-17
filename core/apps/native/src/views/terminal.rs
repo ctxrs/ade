@@ -44,7 +44,9 @@ impl Render for TerminalPanelState {
             TerminalLoadState::Loaded => (None, colors.muted),
             TerminalLoadState::Error(message) => (Some(message.clone()), colors.error),
         };
-        let (stream_label, stream_color) = match &self.stream_state {
+        let active_stream_state = self.active_stream_state();
+        let active_stream_output = self.active_stream_output();
+        let (stream_label, stream_color) = match &active_stream_state {
             TerminalStreamState::Idle => ("Stream: Idle".to_string(), colors.muted),
             TerminalStreamState::Connecting => ("Stream: Connecting".to_string(), colors.muted),
             TerminalStreamState::Connected => ("Stream: Connected".to_string(), colors.success),
@@ -53,8 +55,7 @@ impl Render for TerminalPanelState {
             }
             TerminalStreamState::Error(message) => (format!("Stream error: {message}"), colors.error),
         };
-        let stream_detail = self
-            .stream_state
+        let stream_detail = active_stream_state
             .detail()
             .map(|detail| format!("Detail: {detail}"));
         let terminal_status = selected_terminal.map(|terminal| {
@@ -275,19 +276,19 @@ impl Render for TerminalPanelState {
 
         let output_text = if selected_terminal.is_none() {
             "Select a terminal to view output.".to_string()
-        } else if self.stream_output.is_empty() {
+        } else if active_stream_output.is_empty() {
             "No output yet.".to_string()
         } else {
-            self.stream_output.clone()
+            active_stream_output.to_string()
         };
-        let output_is_empty = selected_terminal.is_none() || self.stream_output.is_empty();
+        let output_is_empty = selected_terminal.is_none() || active_stream_output.is_empty();
         let output_color = if output_is_empty {
             colors.muted
         } else {
             colors.text
         };
-        let can_clear_output = !self.stream_output.is_empty();
-        let can_copy_output = !self.stream_output.trim().is_empty();
+        let can_clear_output = !active_stream_output.is_empty();
+        let can_copy_output = !active_stream_output.trim().is_empty();
         let mut copy_button = div()
             .px(px(metrics.spacing.md))
             .py(px(metrics.spacing.sm))

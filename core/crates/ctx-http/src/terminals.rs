@@ -25,6 +25,7 @@ use ctx_core::models::{TerminalSession, TerminalStatus};
 const DEFAULT_COLS: u16 = 80;
 const DEFAULT_ROWS: u16 = 24;
 const MAX_OUTPUT_BYTES: usize = 1024 * 1024;
+pub(crate) const DEFAULT_OUTPUT_TAIL_BYTES: usize = 20 * 1024;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -124,6 +125,16 @@ impl TerminalSessionHandle {
     pub fn output_snapshot(&self) -> Vec<u8> {
         let buffer = self.output_buffer.lock().expect("terminal buffer lock");
         buffer.iter().copied().collect()
+    }
+
+    pub fn output_snapshot_tail(&self, tail: usize) -> Vec<u8> {
+        let buffer = self.output_buffer.lock().expect("terminal buffer lock");
+        let len = buffer.len();
+        if len == 0 || tail == 0 {
+            return Vec::new();
+        }
+        let tail = tail.min(len);
+        buffer.iter().skip(len - tail).copied().collect()
     }
 
     pub fn send_input(&self, data: Vec<u8>) {
