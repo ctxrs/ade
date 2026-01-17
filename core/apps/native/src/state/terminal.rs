@@ -465,89 +465,11 @@ impl TerminalPanelState {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let modifiers = event.keystroke.modifiers;
-
-        if modifiers.control && !modifiers.platform {
-            match event.keystroke.key.as_str() {
-                "c" => {
-                    self.send_input("\u{3}".to_string(), cx);
-                    return;
-                }
-                "d" => {
-                    self.send_input("\u{4}".to_string(), cx);
-                    return;
-                }
-                _ => {}
-            }
+        if self.selected_terminal_id.is_none() {
+            return;
         }
-
-        match event.keystroke.key.as_str() {
-            "enter" => {
-                self.send_buffered_input(cx);
-            }
-            "backspace" => {
-                if self.input.delete_backward() {
-                    cx.notify();
-                }
-            }
-            "delete" => {
-                if self.input.delete_forward() {
-                    cx.notify();
-                }
-            }
-            "tab" => {
-                self.input.insert_text("\t");
-                cx.notify();
-            }
-            "left" => {
-                self.input.move_left(modifiers.shift);
-                cx.notify();
-            }
-            "right" => {
-                self.input.move_right(modifiers.shift);
-                cx.notify();
-            }
-            "home" => {
-                self.input.move_home(modifiers.shift);
-                cx.notify();
-            }
-            "end" => {
-                self.input.move_end(modifiers.shift);
-                cx.notify();
-            }
-            "up" => {
-                if !modifiers.shift
-                    && !modifiers.alt
-                    && !modifiers.control
-                    && !modifiers.platform
-                    && !modifiers.function
-                    && self.input.history_prev()
-                {
-                    cx.notify();
-                }
-            }
-            "down" => {
-                if !modifiers.shift
-                    && !modifiers.alt
-                    && !modifiers.control
-                    && !modifiers.platform
-                    && !modifiers.function
-                    && self.input.history_next()
-                {
-                    cx.notify();
-                }
-            }
-            _ => {
-                if modifiers.control || modifiers.alt || modifiers.platform || modifiers.function {
-                    return;
-                }
-                if let Some(text) = event.keystroke.key_char.as_ref() {
-                    if text != "\n" && text != "\r" {
-                        self.input.insert_text(text);
-                        cx.notify();
-                    }
-                }
-            }
+        if let Some(payload) = terminal_input_payload(event) {
+            self.send_input(payload, cx);
         }
     }
 
@@ -583,15 +505,7 @@ impl TerminalPanelState {
     }
 
     fn send_buffered_input(&mut self, cx: &mut Context<Self>) {
-        let input = self.input.text().to_string();
-        if input.is_empty() {
-            self.send_input("\r".to_string(), cx);
-            self.input.clear();
-            cx.notify();
-            return;
-        }
-        self.input.push_history(input.clone());
-        self.send_input(format!("{input}\r"), cx);
+        self.send_input("\r".to_string(), cx);
         self.input.clear();
         cx.notify();
     }
@@ -943,4 +857,68 @@ fn parse_terminal_stream_output(message: WsMessage) -> Option<String> {
         WsMessage::Binary(bytes) => Some(String::from_utf8_lossy(&bytes).to_string()),
         _ => None,
     }
+}
+
+fn terminal_input_payload(event: &KeyDownEvent) -> Option<String> {
+    let modifiers = event.keystroke.modifiers;
+    if modifiers.platform {
+        return None;
+    }
+
+    if modifiers.control && !modifiers.platform {
+        if let Some(text) = event.keystroke.key_char.as_ref() {
+            if let Some(ch) = text.chars().next() {
+                if ch.is_ascii() {
+                    let upper = ch.to_ascii_uppercase();
+                    let code = (upper as u8) & 0x1f;
+                    if code != 0 {
+                        return Some((code as char).to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    match event.keystroke.key.as_str() {
+        "enter" => return Some("\r".to_string()),
+        "tab" => {
+            return if modifiers.shift {
+                Some("\u{1b}[Z".to_string())
+            } else {
+                Some("\t".to_string())
+            };
+        }
+        "backspace" => return Some("\u{7f}".to_string()),
+        "delete" => return Some("\u{1b}[3~".to_string()),
+        "left" => return Some("\u{1b}[D".to_string()),
+        "right" => return Some("\u{1b}[C".to_string()),
+        "up" => return Some("\u{1b}[A".to_string()),
+        "down" => return Some("\u{1b}[B".to_string()),
+        "home" => return Some("\u{1b}[H".to_string()),
+        "end" => return Some("\u{1b}[F".to_string()),
+        "pageup" => return Some("\u{1b}[5~".to_string()),
+        "pagedown" => return Some("\u{1b}[6~".to_string()),
+        "escape" => return Some("\u{1b}".to_string()),
+        _ => {}
+    }
+
+    if modifiers.alt {
+        if let Some(text) = event.keystroke.key_char.as_ref() {
+            if !text.is_empty() {
+                return Some(format!("\u{1b}{text}"));
+            }
+        }
+        return None;
+    }
+
+    if modifiers.control || modifiers.function {
+        return None;
+    }
+
+    if let Some(text) = event.keystroke.key_char.as_ref() {
+        if text != "\n" && text != "\r" {
+            return Some(text.to_string());
+        }
+    }
+    None
 }

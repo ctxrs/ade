@@ -330,7 +330,7 @@ impl Render for TerminalPanelState {
                 .text_color(colors.muted);
         }
         let input_placeholder = if selected_terminal.is_some() {
-            "Type input and press Enter..."
+            "Type to send keystrokes..."
         } else {
             "Select a terminal to send input."
         };
