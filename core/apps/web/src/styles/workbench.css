@@ -2272,7 +2272,7 @@
 
 .wb-single-track-title-row {
   display: flex;
-  align-items: flex-end;
+  align-items: baseline;
   gap: 8px;
   min-width: 0;
   flex: 1;
