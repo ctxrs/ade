@@ -66,6 +66,7 @@ aws-sdk-ec2 = "1"
 aws-sdk-s3 = "1"
 aws-sdk-sts = "1"
 aws-credential-types = "1"
+notify.workspace = true
 toml_edit = "0.22"
 
 [dev-dependencies]
