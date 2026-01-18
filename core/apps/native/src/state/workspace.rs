@@ -949,8 +949,11 @@ impl ShellView {
                 this.update(&mut cx, |view, cx| {
                     if let Ok(updated) = result {
                         view.apply_task_update(updated);
-                        if next_archived && was_selected {
-                            view.clear_task_focus("Select a task to begin.", cx);
+                        if next_archived {
+                            view.artifact_prefetch_cache.purge_task(task_id);
+                            if was_selected {
+                                view.clear_task_focus("Select a task to begin.", cx);
+                            }
                         }
                     }
                     view.archive_pending.remove(&task_id);
