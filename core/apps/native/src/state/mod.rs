@@ -117,6 +117,13 @@ pub(crate) enum SessionViewVerbosity {
     Verbose,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RightPaneMode {
+    Sessions,
+    Diff,
+    Artifacts,
+}
+
 impl SessionViewVerbosity {
     #[allow(dead_code)]
     pub(crate) fn label(self) -> &'static str {
@@ -281,9 +288,7 @@ pub(crate) struct ShellView {
     pub(crate) stream_stop_tx: Option<watch::Sender<bool>>,
     pub(crate) session_last_event_seq: HashMap<SessionId, i64>,
     pub(crate) thread_list_handler_set: bool,
-    pub(crate) show_sessions_pane: bool,
-    pub(crate) show_diff_pane: bool,
-    pub(crate) show_artifacts_pane: bool,
+    pub(crate) right_pane: Option<RightPaneMode>,
     pub(crate) show_terminal_panel: bool,
     pub(crate) diff_review_state: Entity<DiffReviewState>,
     pub(crate) terminal_panel_state: Entity<TerminalPanelState>,
@@ -378,25 +383,32 @@ impl ShellView {
 
     pub(crate) fn hydrate_pane_state(&mut self) {
         let Some(workspace_id) = self.selected_workspace else {
-            self.show_sessions_pane = false;
-            self.show_diff_pane = false;
-            self.show_artifacts_pane = false;
+            self.right_pane = None;
             self.show_terminal_panel = false;
             return;
         };
 
-        self.show_sessions_pane = self
+        let sessions_open = self
             .sessions_pane_scope()
             .and_then(|scope| self.ui_state.sessions_pane_open(workspace_id, &scope))
             .unwrap_or(false);
-        self.show_diff_pane = self
+        let diff_open = self
             .diff_pane_scope()
             .and_then(|scope| self.ui_state.diff_pane_open(workspace_id, &scope))
             .unwrap_or(false);
-        self.show_artifacts_pane = self
+        let artifacts_open = self
             .artifacts_pane_scope()
             .and_then(|scope| self.ui_state.artifacts_pane_open(workspace_id, &scope))
             .unwrap_or(false);
+        self.right_pane = if sessions_open {
+            Some(RightPaneMode::Sessions)
+        } else if diff_open {
+            Some(RightPaneMode::Diff)
+        } else if artifacts_open {
+            Some(RightPaneMode::Artifacts)
+        } else {
+            None
+        };
         self.show_terminal_panel = self
             .ui_state
             .terminal_panel_open(workspace_id)
@@ -407,17 +419,20 @@ impl ShellView {
         let Some(workspace_id) = self.selected_workspace else {
             return;
         };
+        let show_sessions = matches!(self.right_pane, Some(RightPaneMode::Sessions));
+        let show_diff = matches!(self.right_pane, Some(RightPaneMode::Diff));
+        let show_artifacts = matches!(self.right_pane, Some(RightPaneMode::Artifacts));
         if let Some(scope) = self.sessions_pane_scope() {
             self.ui_state
-                .set_sessions_pane_open(workspace_id, &scope, self.show_sessions_pane);
+                .set_sessions_pane_open(workspace_id, &scope, show_sessions);
         }
         if let Some(scope) = self.diff_pane_scope() {
             self.ui_state
-                .set_diff_pane_open(workspace_id, &scope, self.show_diff_pane);
+                .set_diff_pane_open(workspace_id, &scope, show_diff);
         }
         if let Some(scope) = self.artifacts_pane_scope() {
             self.ui_state
-                .set_artifacts_pane_open(workspace_id, &scope, self.show_artifacts_pane);
+                .set_artifacts_pane_open(workspace_id, &scope, show_artifacts);
         }
         self.ui_state
             .set_terminal_panel_open(workspace_id, self.show_terminal_panel);
@@ -495,12 +510,11 @@ impl ShellView {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let next = !self.show_sessions_pane;
-        self.show_sessions_pane = next;
-        if next {
-            self.show_diff_pane = false;
-            self.show_artifacts_pane = false;
-        }
+        self.right_pane = if self.right_pane == Some(RightPaneMode::Sessions) {
+            None
+        } else {
+            Some(RightPaneMode::Sessions)
+        };
         self.persist_pane_state();
         cx.notify();
     }
@@ -511,11 +525,11 @@ impl ShellView {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let next = !self.show_diff_pane;
-        self.show_diff_pane = next;
-        if next {
-            self.show_sessions_pane = false;
-        }
+        self.right_pane = if self.right_pane == Some(RightPaneMode::Diff) {
+            None
+        } else {
+            Some(RightPaneMode::Diff)
+        };
         self.persist_pane_state();
         cx.notify();
     }
@@ -526,10 +540,13 @@ impl ShellView {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let next = !self.show_artifacts_pane;
-        self.show_artifacts_pane = next;
-        if next {
-            self.show_sessions_pane = false;
+        let opening = self.right_pane != Some(RightPaneMode::Artifacts);
+        self.right_pane = if opening {
+            Some(RightPaneMode::Artifacts)
+        } else {
+            None
+        };
+        if opening {
             if let Some(session_id) = self.selected_session_id() {
                 self.load_session_artifacts(session_id, cx);
             }

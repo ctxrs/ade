@@ -435,7 +435,7 @@ struct ChatDetailView: View {
     let session: SessionSummary
     let isArchived: Bool
     @StateObject private var viewModel: ChatViewModel
-    @Binding var isArtifactsPresented: Bool
+    @Binding var activePanel: WorkbenchPanel?
     @Binding var artifactCount: Int
     @State private var availableModels: [String] = []
     @State private var isLoadingModels = false
@@ -444,10 +444,10 @@ struct ChatDetailView: View {
     @State private var selectedMode: ComposerMode = .default
     @State private var selectedVerbosity: ComposerVerbosity = .default
 
-    init(session: SessionSummary, isArchived: Bool, isArtifactsPresented: Binding<Bool>, artifactCount: Binding<Int>) {
+    init(session: SessionSummary, isArchived: Bool, activePanel: Binding<WorkbenchPanel?>, artifactCount: Binding<Int>) {
         self.session = session
         self.isArchived = isArchived
-        _isArtifactsPresented = isArtifactsPresented
+        _activePanel = activePanel
         _artifactCount = artifactCount
         _selectedModelId = State(initialValue: session.modelId)
         _viewModel = StateObject(
@@ -455,6 +455,19 @@ struct ChatDetailView: View {
                 initialSessionId: session.id,
                 initialWorkspaceId: session.workspaceId
             )
+        )
+    }
+
+    private var isArtifactsPresented: Binding<Bool> {
+        Binding(
+            get: { activePanel == .artifacts },
+            set: { newValue in
+                if newValue {
+                    activePanel = .artifacts
+                } else if activePanel == .artifacts {
+                    activePanel = nil
+                }
+            }
         )
     }
 
@@ -503,7 +516,7 @@ struct ChatDetailView: View {
             .onChange(of: viewModel.artifacts.count) { _, newCount in
                 artifactCount = newCount
             }
-            .sheet(isPresented: $isArtifactsPresented) {
+            .sheet(isPresented: isArtifactsPresented) {
                 ArtifactsListView(
                     artifacts: viewModel.artifacts,
                     assetContext: viewModel.assetContext,

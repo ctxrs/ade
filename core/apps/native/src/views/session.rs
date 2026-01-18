@@ -8,7 +8,7 @@ use super::diff_review::DiffReviewView;
 use super::messages::ThreadListView;
 use super::sessions_pane::SessionsPaneView;
 use super::super::icons::{Icon, IconName};
-use super::super::state::{DataLoadState, ShellView};
+use super::super::state::{DataLoadState, RightPaneMode, ShellView};
 
 pub(crate) struct SessionView<'a> {
     pub(super) shell: &'a ShellView,
@@ -19,6 +19,9 @@ impl<'a> SessionView<'a> {
     pub(super) fn render(&self, cx: &mut Context<ShellView>) -> impl IntoElement {
         let shell = self.shell;
         let metrics = ThemeMetrics::default();
+        let show_sessions_pane = matches!(shell.right_pane, Some(RightPaneMode::Sessions));
+        let show_diff_pane = matches!(shell.right_pane, Some(RightPaneMode::Diff));
+        let show_artifacts_pane = matches!(shell.right_pane, Some(RightPaneMode::Artifacts));
         if shell.new_task_mode {
             let composer = ComposerView {
                 shell,
@@ -40,7 +43,7 @@ impl<'a> SessionView<'a> {
             .selected_session
             .and_then(|index| shell.sessions.get(index))
             .is_some();
-        if !shell.show_sessions_pane {
+        if !show_sessions_pane {
             automation_tree::register_hidden(
                 "sessions-list",
                 "list",
@@ -54,7 +57,7 @@ impl<'a> SessionView<'a> {
                 Some("app-shell"),
             );
         }
-        if !shell.show_diff_pane {
+        if !show_diff_pane {
             automation_tree::register_hidden(
                 "diff-pane",
                 "pane",
@@ -62,7 +65,7 @@ impl<'a> SessionView<'a> {
                 Some("app-shell"),
             );
         }
-        if !shell.show_artifacts_pane {
+        if !show_artifacts_pane {
             automation_tree::register_hidden(
                 "artifacts-pane",
                 "pane",
@@ -152,7 +155,7 @@ impl<'a> SessionView<'a> {
         }
         /*
         let sessions_toggle = {
-            let (bg, color) = if shell.show_sessions_pane {
+            let (bg, color) = if show_sessions_pane {
                 (shell.colors.panel, shell.colors.text)
             } else {
                 (shell.colors.panel_2, shell.colors.muted)
@@ -175,7 +178,7 @@ impl<'a> SessionView<'a> {
         */
 
         let diff_toggle = {
-            let (bg, color) = if shell.show_diff_pane {
+            let (bg, color) = if show_diff_pane {
                 (shell.colors.panel, shell.colors.text)
             } else {
                 (shell.colors.panel_2, shell.colors.muted)
@@ -197,7 +200,7 @@ impl<'a> SessionView<'a> {
         };
 
         let artifacts_toggle = {
-            let (bg, color) = if shell.show_artifacts_pane {
+            let (bg, color) = if show_artifacts_pane {
                 (shell.colors.panel, shell.colors.text)
             } else {
                 (shell.colors.panel_2, shell.colors.muted)
@@ -386,7 +389,7 @@ impl<'a> SessionView<'a> {
             .child(composer);
 
         let show_right_pane =
-            shell.show_sessions_pane || shell.show_diff_pane || shell.show_artifacts_pane;
+            show_sessions_pane || show_diff_pane || show_artifacts_pane;
         let mut content_row = div()
             .flex()
             .flex_row()
@@ -417,7 +420,7 @@ impl<'a> SessionView<'a> {
                 .pl(px(metrics.spacing.sm))
                 .min_h(px(0.0));
 
-            if shell.show_sessions_pane {
+            if show_sessions_pane {
                 right_pane = right_pane.child(
                     div()
                         .on_children_prepainted(automation_tree::track_children_bounds(
@@ -447,9 +450,7 @@ impl<'a> SessionView<'a> {
                             .into_any_element(),
                         ),
                 );
-            }
-
-            if shell.show_diff_pane {
+            } else if show_diff_pane {
                 let diff_review_view = cx.update_entity(&shell.diff_review_state, |state, cx| {
                     DiffReviewView {
                         colors: shell.colors,
@@ -479,9 +480,7 @@ impl<'a> SessionView<'a> {
                         .p(px(metrics.spacing.xl))
                         .child(diff_review_view),
                 );
-            }
-
-            if shell.show_artifacts_pane {
+            } else if show_artifacts_pane {
                 right_pane = right_pane.child(
                     div()
                         .on_children_prepainted(automation_tree::track_children_bounds(

@@ -796,31 +796,29 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const dictationFinalizeWaiterRef = useRef<{ promise: Promise<void>; resolve: () => void } | null>(null);
   const dictationSuppressUpdatesRef = useRef(false);
 
+  const [rightPaneMode, setRightPaneMode] = useState<"diff" | "artifacts" | "sessions" | null>(null);
   const [diffWidth, setDiffWidth] = useState(480);
   const [diffResizing, setDiffResizing] = useState(false);
-  const [diffOpen, setDiffOpen] = useState(false);
   const [diffOpenHydrated, setDiffOpenHydrated] = useState(false);
   const [diffLoading, setDiffLoading] = useState(false);
   const [diffSummary, setDiffSummary] = useState<null | Record<string, unknown>>(null);
   const [gitStatusLoading, setGitStatusLoading] = useState(false);
   const [gitStatusError, setGitStatusError] = useState<string | null>(null);
-  const [artifactsOpen, setArtifactsOpen] = useState(false);
   const [artifactsOpenHydrated, setArtifactsOpenHydrated] = useState(false);
   const [artifactsOpenSeeded, setArtifactsOpenSeeded] = useState(false);
   const [, setArtifactsAutoOpenPending] = useState(false);
-  const [artifactsHeight, setArtifactsHeight] = useState(260);
-  const [artifactsResizing, setArtifactsResizing] = useState(false);
   const artifactsPaneScopeRef = useRef<string | null>(null);
-  const [sessionsOpen, setSessionsOpen] = useState(false);
   const [sessionsOpenHydrated, setSessionsOpenHydrated] = useState(false);
   const sessionsPaneScopeRef = useRef<string | null>(null);
-  const rightPaneRef = useRef<HTMLDivElement | null>(null);
   const reviewTab: "git" = "git";
   const terminalPanelRef = useRef<TerminalPanelHandle | null>(null);
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [terminalHeight, setTerminalHeight] = useState(260);
   const [terminalResizing, setTerminalResizing] = useState(false);
   const [terminalOpenHydrated, setTerminalOpenHydrated] = useState(false);
+  const diffOpen = rightPaneMode === "diff";
+  const artifactsOpen = rightPaneMode === "artifacts";
+  const sessionsOpen = rightPaneMode === "sessions";
 
   const toggleTerminalPanel = useCallback(() => {
     setTerminalOpen((open) => {
@@ -847,22 +845,15 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     return Math.min(max, Math.max(min, Math.round(value)));
   }, []);
 
-  const clampArtifactsHeight = useCallback((value: number) => {
-    const min = 180;
-    const max = Math.max(min, window.innerHeight - 200);
-    return Math.min(max, Math.max(min, Math.round(value)));
-  }, []);
-
   useEffect(() => {
     const onResize = () => {
       const max = Math.max(170, window.innerWidth - 240);
       setSidebarWidth((w) => Math.min(max, Math.max(170, Math.round(w))));
       setTerminalHeight((h) => clampTerminalHeight(h));
-      setArtifactsHeight((h) => clampArtifactsHeight(h));
     };
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
-  }, [clampArtifactsHeight, clampTerminalHeight]);
+  }, [clampTerminalHeight]);
 
   useEffect(() => {
     if (!workspaceId) return;
@@ -2266,26 +2257,19 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   ]);
 
   const toggleDiffPane = useCallback(() => {
-    setDiffOpen((open) => {
-      const next = !open;
-      if (next) setSessionsOpen(false);
-      return next;
-    });
+    setRightPaneMode((mode) => (mode === "diff" ? null : "diff"));
   }, []);
 
   const toggleArtifactsPane = useCallback(() => {
     setArtifactsOpenSeeded(true);
     setArtifactsAutoOpenPending(false);
-    setSessionsOpen(false);
-    setArtifactsOpen((open) => !open);
+    setRightPaneMode((mode) => (mode === "artifacts" ? null : "artifacts"));
   }, []);
 
   const toggleSessionsPane = useCallback(() => {
     setArtifactsOpenSeeded(true);
     setArtifactsAutoOpenPending(false);
-    setArtifactsOpen(false);
-    setDiffOpen(false);
-    setSessionsOpen((open) => !open);
+    setRightPaneMode((mode) => (mode === "sessions" ? null : "sessions"));
   }, []);
 
   const diffPaneScope = useMemo(() => {
@@ -2304,11 +2288,11 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   useEffect(() => {
     setDiffOpenHydrated(false);
     if (!workspaceId || !diffPaneScope) {
-      setDiffOpen(false);
+      setRightPaneMode((mode) => (mode === "diff" ? null : mode));
       setDiffOpenHydrated(true);
       return;
     }
-    setDiffOpen(false);
+    setRightPaneMode((mode) => (mode === "diff" ? null : mode));
     setDiffOpenHydrated(true);
   }, [workspaceId, diffPaneScope]);
 
@@ -2317,12 +2301,12 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     setArtifactsOpenSeeded(false);
     setArtifactsAutoOpenPending(false);
     if (!workspaceId || !artifactsPaneScope) {
-      setArtifactsOpen(false);
+      setRightPaneMode((mode) => (mode === "artifacts" ? null : mode));
       setArtifactsOpenHydrated(true);
       artifactsPaneScopeRef.current = null;
       return;
     }
-    setArtifactsOpen(false);
+    setRightPaneMode((mode) => (mode === "artifacts" ? null : mode));
     setArtifactsOpenSeeded(true);
     setArtifactsAutoOpenPending(false);
     setArtifactsOpenHydrated(true);
@@ -2332,12 +2316,12 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   useEffect(() => {
     setSessionsOpenHydrated(false);
     if (!workspaceId || !sessionsPaneScope) {
-      setSessionsOpen(false);
+      setRightPaneMode((mode) => (mode === "sessions" ? null : mode));
       setSessionsOpenHydrated(true);
       sessionsPaneScopeRef.current = null;
       return;
     }
-    setSessionsOpen(false);
+    setRightPaneMode((mode) => (mode === "sessions" ? null : mode));
     setSessionsOpenHydrated(true);
     sessionsPaneScopeRef.current = sessionsPaneScope;
   }, [workspaceId, sessionsPaneScope]);
@@ -2361,14 +2345,6 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     if (sessionsPaneScopeRef.current !== sessionsPaneScope) return;
     saveWorkbenchSessionsPaneOpenV1(workspaceId, sessionsPaneScope, sessionsOpen).catch(() => {});
   }, [sessionsOpen, sessionsOpenHydrated, workspaceId, sessionsPaneScope]);
-
-  useEffect(() => {
-    if (!sessionsOpenHydrated) return;
-    if (!sessionsOpen) return;
-    if (diffOpen) setDiffOpen(false);
-    if (artifactsOpen) setArtifactsOpen(false);
-  }, [artifactsOpen, diffOpen, sessionsOpen, sessionsOpenHydrated]);
-
 
   useEffect(() => {
     setTerminalOpenHydrated(false);
@@ -2775,28 +2751,6 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     };
     const onUp = () => {
       setDiffResizing(false);
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
-    };
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
-  };
-
-  const onArtifactsSplitterMouseDown = (e: React.MouseEvent) => {
-    e.preventDefault();
-    const startY = e.clientY;
-    const startH = artifactsHeight;
-    const containerHeight = rightPaneRef.current?.getBoundingClientRect().height ?? window.innerHeight;
-    const min = 180;
-    const max = Math.max(min, containerHeight - min - 6);
-    setArtifactsResizing(true);
-    const onMove = (ev: MouseEvent) => {
-      const dy = startY - ev.clientY;
-      const next = Math.min(max, Math.max(min, Math.round(startH + dy)));
-      setArtifactsHeight(next);
-    };
-    const onUp = () => {
-      setArtifactsResizing(false);
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
     };
@@ -3281,7 +3235,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   if (!workbenchSnap.hydrated) {
     return (
       <div
-        className={`wb-root ${sidebarCollapsed ? "wb-root-collapsed" : ""} ${sidebarResizing ? "wb-root-resizing" : ""} ${diffResizing ? "wb-root-diff-resizing" : ""} ${terminalResizing ? "wb-root-terminal-resizing" : ""} ${artifactsResizing ? "wb-root-artifacts-resizing" : ""}`}
+        className={`wb-root ${sidebarCollapsed ? "wb-root-collapsed" : ""} ${sidebarResizing ? "wb-root-resizing" : ""} ${diffResizing ? "wb-root-diff-resizing" : ""} ${terminalResizing ? "wb-root-terminal-resizing" : ""}`}
         style={rootStyle}
       >
         <WorktreeBootstrapSnackbar />
@@ -3301,7 +3255,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
 
   return (
     <div
-      className={`wb-root ${sidebarCollapsed ? "wb-root-collapsed" : ""} ${sidebarResizing ? "wb-root-resizing" : ""} ${diffResizing ? "wb-root-diff-resizing" : ""} ${terminalResizing ? "wb-root-terminal-resizing" : ""} ${artifactsResizing ? "wb-root-artifacts-resizing" : ""}`}
+      className={`wb-root ${sidebarCollapsed ? "wb-root-collapsed" : ""} ${sidebarResizing ? "wb-root-resizing" : ""} ${diffResizing ? "wb-root-diff-resizing" : ""} ${terminalResizing ? "wb-root-terminal-resizing" : ""}`}
       style={rootStyle}
     >
       <WorktreeBootstrapSnackbar />
@@ -3601,7 +3555,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
             {rightPaneOpen && (
               <>
                 <div className="wb-splitter" onMouseDown={onSplitterMouseDown} />
-                <div className="wb-right" style={{ width: diffWidth }} ref={rightPaneRef}>
+                <div className="wb-right" style={{ width: diffWidth }}>
                   {showSessionsPane ? (
                     <div className="wb-right-pane">
                       <SessionsPane
@@ -3613,43 +3567,6 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
                         daemonBaseUrl={daemonBaseUrl}
                         loading={webSessionsLoading}
                       />
-                    </div>
-                  ) : showReviewPane && showArtifactsPane ? (
-                    <div className="wb-right-stack">
-                      <div
-                        className="wb-right-pane wb-diff"
-                        style={{ height: `calc(100% - ${artifactsHeight}px - 6px)` }}
-                      >
-                        {reviewTab === "git" && (
-                          <div className="wb-diff-status">
-                            <div className="wb-diff-status-header">
-                              <span className="wb-diff-status-title">git status -sb</span>
-                              {gitStatusLoading && <span className="wb-diff-status-meta">Updating...</span>}
-                            </div>
-                            {gitStatusError ? (
-                              <div className="wb-diff-status-error">{gitStatusError}</div>
-                            ) : (
-                              <pre className="wb-diff-status-body">
-                                {gitStatusText || (gitStatusLoading ? "Loading git status..." : "No status data.")}
-                              </pre>
-                            )}
-                          </div>
-                        )}
-
-                        {reviewTab === "git" && hasDiff ? (
-                          <DiffReviewPane diff={activeSessionDiff} />
-                        ) : (
-                          <div className="wb-diff-empty">
-                            <div className="wb-muted">
-                              {diffLoading ? "Loading changes..." : "No changes on this worktree."}
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                      <div className="wb-right-splitter" onMouseDown={onArtifactsSplitterMouseDown} />
-                      <div className="wb-right-pane" style={{ height: artifactsHeight }}>
-                        <ArtifactsPane artifacts={artifacts} loading={artifactsLoading} />
-                      </div>
                     </div>
                   ) : showReviewPane ? (
                     <div className="wb-right-pane wb-diff">

@@ -1899,11 +1899,6 @@
   height: 2px;
 }
 
-.wb-root.wb-root-artifacts-resizing .wb-right-splitter::after {
-  background: rgba(78, 163, 255, 0.35);
-  height: 2px;
-}
-
 .wb-terminal-panel {
   background: var(--panel);
   border-top: none;
@@ -3396,43 +3391,12 @@
   min-width: 0;
 }
 
-.wb-right-stack {
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  flex: 1;
-}
-
 .wb-right-pane {
   display: flex;
   flex-direction: column;
   min-height: 0;
   min-width: 0;
   overflow: auto;
-}
-
-.wb-right-splitter {
-  position: relative;
-  height: 6px;
-  cursor: row-resize;
-  background: linear-gradient(to bottom, transparent 0 50%, rgba(255, 255, 255, 0.01) 50% 100%);
-}
-
-.wb-right-splitter::after {
-  content: "";
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 50%;
-  height: 1px;
-  background: var(--border);
-  transform: translateY(-50%);
-  transition: background 120ms ease, height 120ms ease;
-}
-
-.wb-right-splitter:hover::after {
-  background: rgba(78, 163, 255, 0.35);
-  height: 2px;
 }
 
 .wb-diff {

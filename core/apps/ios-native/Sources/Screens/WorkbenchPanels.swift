@@ -3,6 +3,7 @@ import WebKit
 import _Concurrency
 
 enum WorkbenchPanel: String, Identifiable {
+    case artifacts
     case diff
     case sessions
     case terminal

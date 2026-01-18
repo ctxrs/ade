@@ -44,7 +44,7 @@ use self::state::{
     StreamStatus, TaskFetchState, TerminalPanelState, WorkbenchModeId,
 };
 use self::views::RouterView;
-pub(crate) use self::state::{ShellRoute, ShellView};
+pub(crate) use self::state::{RightPaneMode, ShellRoute, ShellView};
 #[cfg(feature = "automation")]
 pub(crate) use self::state::ComposerMenuId;
 
@@ -315,9 +315,7 @@ fn create_shell_view(
             stream_subscribe_tx: None,
             stream_stop_tx: None,
             thread_list_handler_set: false,
-            show_sessions_pane: false,
-            show_diff_pane: false,
-            show_artifacts_pane: false,
+            right_pane: None,
             show_terminal_panel: false,
             diff_review_state,
             terminal_panel_state,

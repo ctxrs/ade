@@ -28,7 +28,7 @@ use serde_json::{Map, json, Value};
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio::time::timeout;
 
-use crate::app::{ComposerMenuId, ShellView};
+use crate::app::{ComposerMenuId, RightPaneMode, ShellView};
 use crate::automation_tree;
 
 #[derive(Clone, Debug, Default)]
@@ -783,9 +783,7 @@ fn apply_focus_target(
     cx: &mut Context<ShellView>,
     target: FocusTarget,
 ) {
-    view.show_sessions_pane = false;
-    view.show_diff_pane = false;
-    view.show_artifacts_pane = false;
+    view.right_pane = None;
     view.show_terminal_panel = false;
 
     match target {
@@ -823,13 +821,13 @@ fn apply_focus_target(
             view.focus_composer(&ClickEvent::default(), window, cx);
         }
         FocusTarget::SessionsPane => {
-            view.show_sessions_pane = true;
+            view.right_pane = Some(RightPaneMode::Sessions);
         }
         FocusTarget::DiffPane => {
-            view.show_diff_pane = true;
+            view.right_pane = Some(RightPaneMode::Diff);
         }
         FocusTarget::ArtifactsPane => {
-            view.show_artifacts_pane = true;
+            view.right_pane = Some(RightPaneMode::Artifacts);
         }
         FocusTarget::TerminalPanel => {
             view.show_terminal_panel = true;

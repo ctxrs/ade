@@ -30,7 +30,6 @@ struct WorkbenchShellView: View {
     @State private var markReadInFlight: Set<String> = []
     @State private var deleteInFlight: Set<String> = []
     @State private var deleteAlert: WorkbenchDeleteAlert?
-    @State private var isArtifactsPresented = false
     @State private var artifactsCount = 0
     @State private var activePanel: WorkbenchPanel?
     @State private var topBarAlert: WorkbenchTopBarAlert?
@@ -54,6 +53,22 @@ struct WorkbenchShellView: View {
         return decoder
     }()
 
+    private var activeSheetPanel: Binding<WorkbenchPanel?> {
+        Binding(
+            get: {
+                switch activePanel {
+                case .diff, .sessions, .terminal:
+                    return activePanel
+                case .artifacts, .none:
+                    return nil
+                }
+            },
+            set: { newValue in
+                activePanel = newValue
+            }
+        )
+    }
+
     var body: some View {
         GeometryReader { proxy in
             let drawerWidth = min(320, proxy.size.width * 0.78)
@@ -70,7 +85,7 @@ struct WorkbenchShellView: View {
                     isLoadingTasks: isLoadingTasks,
                     taskError: taskError,
                     selectedSession: resolvedSession,
-                    isArtifactsPresented: $isArtifactsPresented,
+                    activePanel: $activePanel,
                     artifactsCount: $artifactsCount,
                     hasTaskSelection: workbenchSelection.taskId != nil,
                     isPreparingSession: isPreparingSession,
@@ -202,7 +217,7 @@ struct WorkbenchShellView: View {
         .sheet(item: $sharePayload) { payload in
             ShareSheet(items: payload.items)
         }
-        .sheet(item: $activePanel) { panel in
+        .sheet(item: activeSheetPanel) { panel in
             switch panel {
             case .diff:
                 WorkbenchDiffPanelView(
@@ -217,6 +232,8 @@ struct WorkbenchShellView: View {
                     sessionId: resolvedSession?.id,
                     worktreeId: resolvedSession?.worktreeId
                 )
+            case .artifacts:
+                EmptyView()
             }
         }
         .sheet(isPresented: $isRenaming) {
@@ -270,7 +287,7 @@ struct WorkbenchShellView: View {
         switch action {
         case .artifacts:
             if resolvedSession != nil {
-                isArtifactsPresented = true
+                togglePanel(.artifacts)
             } else {
                 topBarAlert = WorkbenchTopBarAlert(
                     title: "Artifacts",
@@ -1070,7 +1087,7 @@ private struct WorkbenchHomeView: View {
     let isLoadingTasks: Bool
     let taskError: String?
     let selectedSession: SessionSummary?
-    @Binding var isArtifactsPresented: Bool
+    @Binding var activePanel: WorkbenchPanel?
     @Binding var artifactsCount: Int
     let hasTaskSelection: Bool
     let isPreparingSession: Bool
@@ -1085,7 +1102,7 @@ private struct WorkbenchHomeView: View {
                 isLoadingTasks: isLoadingTasks,
                 taskError: taskError,
                 selectedSession: selectedSession,
-                isArtifactsPresented: $isArtifactsPresented,
+                activePanel: $activePanel,
                 artifactsCount: $artifactsCount,
                 hasTaskSelection: hasTaskSelection,
                 isPreparingSession: isPreparingSession,
@@ -1150,6 +1167,7 @@ private struct WorkbenchTopBar: View {
                     Button(action: onArtifactsTap) {
                         ZStack(alignment: .topTrailing) {
                             LucideIcon(name: .image, size: 16)
+                                .foregroundColor(activePanel == .artifacts ? .ctxAccent : .ctxTextPrimary)
                             if artifactsCount > 0 {
                                 WorkbenchIconBadge(count: artifactsCount)
                                     .offset(x: 8, y: -6)
@@ -1496,7 +1514,7 @@ private struct WorkbenchNavigationFlowView: View {
     let isLoadingTasks: Bool
     let taskError: String?
     let selectedSession: SessionSummary?
-    @Binding var isArtifactsPresented: Bool
+    @Binding var activePanel: WorkbenchPanel?
     @Binding var artifactsCount: Int
     let hasTaskSelection: Bool
     let isPreparingSession: Bool
@@ -1518,7 +1536,12 @@ private struct WorkbenchNavigationFlowView: View {
         } else if let workspace = selectedWorkspace {
             NavigationStack {
                 if let selectedSession {
-                    ChatDetailView(session: selectedSession, isArchived: selectedTask?.task.archivedAt != nil, isArtifactsPresented: $isArtifactsPresented, artifactCount: $artifactsCount)
+                    ChatDetailView(
+                        session: selectedSession,
+                        isArchived: selectedTask?.task.archivedAt != nil,
+                        activePanel: $activePanel,
+                        artifactCount: $artifactsCount
+                    )
                 } else if hasTaskSelection {
                     if isPreparingSession {
                         WorkbenchEmptyStateView(

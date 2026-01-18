@@ -17,7 +17,7 @@ use ctx_core::models::{
 };
 use ctx_client;
 
-use super::{ArtifactPreviewState, ShellView};
+use super::{ArtifactPreviewState, RightPaneMode, ShellView};
 use super::super::models::{
     attachment_cache_key, build_message_items, build_thread_list_items, message_item_from_model,
     session_info_from_head, session_info_from_summary, MessageAttachment, MessageItem,
@@ -616,7 +616,7 @@ impl ShellView {
         cx.notify();
         if !used_cache {
             self.load_session_details(session_id, cx);
-        } else if self.show_artifacts_pane {
+        } else if matches!(self.right_pane, Some(RightPaneMode::Artifacts)) {
             self.load_session_artifacts(session_id, cx);
         }
     }
@@ -695,7 +695,7 @@ impl ShellView {
                                     head.session.id,
                                     head.last_event_seq,
                                 );
-                                if view.show_artifacts_pane {
+                                if matches!(view.right_pane, Some(RightPaneMode::Artifacts)) {
                                     view.load_session_artifacts(data.session_id, cx);
                                 }
                                 if view.resyncing_session == Some(session_id) {

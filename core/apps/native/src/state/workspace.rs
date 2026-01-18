@@ -11,7 +11,7 @@ use ctx_core::models::{
 use ctx_providers::adapters::ProviderStatus;
 
 use super::{
-    AnchorRect, ArchiveConfirmState, ArtifactPreviewState, ShellView, StreamStatus,
+    AnchorRect, ArchiveConfirmState, ArtifactPreviewState, RightPaneMode, ShellView, StreamStatus,
     TaskArchiveAction, TaskMenuState,
 };
 use super::session::SessionThreadCache;
@@ -289,7 +289,7 @@ impl ShellView {
                     cx,
                 );
             }
-            if self.show_artifacts_pane {
+            if matches!(self.right_pane, Some(RightPaneMode::Artifacts)) {
                 self.load_session_artifacts(session_id, cx);
             }
         } else {
@@ -323,9 +323,7 @@ impl ShellView {
         self.task_active_order.clear();
         self.task_archived_order.clear();
         self.task_query.clear();
-        self.show_sessions_pane = false;
-        self.show_diff_pane = false;
-        self.show_artifacts_pane = false;
+        self.right_pane = None;
         self.selected_task = None;
         self.sessions.clear();
         self.selected_session = None;
@@ -792,9 +790,7 @@ impl ShellView {
         self.new_task_mode_locked = true;
         self.composer_focus_pending = true;
         self.composer_needs_apply = true;
-        self.show_sessions_pane = false;
-        self.show_diff_pane = false;
-        self.show_artifacts_pane = false;
+        self.right_pane = None;
         self.session = SessionInfo::placeholder();
         self.replace_messages(
             vec![MessageItem::new(MessageRole::Assistant, message)],
