@@ -819,18 +819,13 @@
   cursor: not-allowed;
 }
 
+.wb-switcher-harness {
+  color: rgba(255, 255, 255, 0.90);
+}
+
 .wb-switcher:focus-visible {
   outline: 2px solid rgba(55, 148, 255, 0.45);
   outline-offset: 2px;
-}
-
-.wb-switcher-icon {
-  width: 16px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  color: currentColor;
-  font-size: 12px;
 }
 
 .wb-switcher-label {

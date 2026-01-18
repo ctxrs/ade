@@ -1,20 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type React from "react";
 import { createPortal } from "react-dom";
-import {
-  ArrowUp,
-  AtSign,
-  ChevronDown,
-  Container,
-  Ellipsis,
-  GitBranch,
-  Image,
-  Info,
-  Laptop,
-  Mic,
-  Slash,
-  Square,
-} from "lucide-react";
+import { ArrowUp, ChevronDown, Ellipsis, Image, Info, Mic, Square } from "lucide-react";
 import {
   authenticateProviderForWorkspace,
   blobUrl,
@@ -32,7 +19,6 @@ import { imageFilesToInlineAttachments } from "../utils/messageAttachments";
 import type { SessionViewVerbosity } from "../state/uiStateStore";
 
 export type WorkbenchModeId = "default" | "research" | "plan" | "review";
-export type WorkbenchEnvTarget = "local" | "worktree" | "cloud" | "container";
 export type ContextWindowInfo = {
   windowTokens?: number;
   usedTokens?: number;
@@ -45,7 +31,6 @@ const MENU_DESCRIPTIONS = {
   model: `You can switch between different models here. Model selection offers a tradeoff between cost, latency, and intelligence - but it also offers an opportunity to leverage the differences in their weights for collaboration. Even if two different models score similarly on popular coding benchmarks, they might have different "habits" - or biases. This means that if you are working on a pernicious bug fix, you might want multiple different models to both look at the problem from a different angle.`,
   effort: `Some models have a "thinking effort" or "reasoning effort" setting, while others do not. The effort level simply corresponds to how many tokens a model spends on thinking while solving a problem. Models that offer high or extra high can sometimes be very powerful, at the expense of latency and cost. However, you can also experience an unintended negative consequence from extra high thinking: if the model is emitting lots of thinking tokens that don't add much value, this will cause the context window to fill up faster (not just from thinking tokens alone, but also from more excessive tool calls like reading files). Performance on coding tasks declines as context increases beyond the minimum context needed to solve the problem, so effort level is a key lever in tuning your agent for optimal performance.`,
   mode: `Modes are basically just prompts, sometimes combined with access limitations. For example, the review mode is nothing more than prompting the agent to tell it to review the code and putting it in a read-only access level. That sounds fairly simple, but there is a hidden benefit: developers who build agent harnesses and models in conjunction will often train their custom model to use their bespoke harness, including its different modes. So in a way, this prompt can be more than just a regular prompt. It is a special prompt than has been trained on via reinforcement learning to achieve certain outcomes. For example, OpenAI trained their codex model to use their codex harness in review mode, so as to output only high value review comments with priority details. If you give the exact same prompt to a model that has not undergone the same RL, it will emit much less useful review comments. We recommend using RPIR (Research, Plan, Implement, Review) pattern for most changes except for small and easy ones.`,
-  isolation: `If you are new to using an ADE, you likely have your agents running in Local isolation mode, which basically means no isolation. In local mode, your agents work on the locally checked-out branch and could collide with other agents or your own changes. This results in dirty working branches, possible collisions, and risks of lost changes. An improvement is using git worktrees. They create a totally separate workspace that is disk-efficient. You can spin up many agents to all work in different worktrees and they won't collide with eachother. When they are done, you can approve and merge their changes back into the local working branch. This is a very powerful and resource-efficient isolation pattern. Cloud isolation runs each track on a remote VM so you can scale concurrency beyond your local machine while keeping code isolated. Finally there is container-level isolation. This is the most isolated environment, but it consumes many more resources: you have to run all of your processes again inside the container, and you have to copy all of the disk space. Despite the additional overhead, container-based isolation is most powerful when your agents need to test your application on the same ports. A simple example: if you have a key part of your application that always runs on port 3000 and you want your agent to be able to test it, worktrees won't save you: only one process can serve requests on that port. Containers solve that problem because you could have many agents working in different containers, and they can all claim their own port 3000 as theirs without worrying about collisions. Depending on your application, you may or may not need this. Containers of course also improved security isolation properties which worktrees cannot.`,
   verbosity: `Verbosity controls how much activity is shown during a turn. Terse hides tools and thoughts, default shows summaries and thoughts, and verbose will eventually expand full tool details.`,
 } as const;
 
@@ -233,7 +218,7 @@ export type DraftTrack = {
   modelId: string;
 };
 
-type OpenMenuId = "harness" | "model" | "effort" | "mode" | "env" | "verbosity";
+type OpenMenuId = "harness" | "model" | "effort" | "mode" | "verbosity";
 
 type SharedProps = {
   variant: "newSession" | "activeSession";
@@ -282,9 +267,6 @@ type NewSessionProps = SharedProps & {
   defaultProviderId: string;
   useMultipleAgents: boolean;
   setUseMultipleAgents: (next: boolean) => void;
-
-  envTarget: WorkbenchEnvTarget;
-  setEnvTarget: (next: WorkbenchEnvTarget) => void;
 };
 
 type ActiveSessionProps = SharedProps & {
@@ -292,8 +274,6 @@ type ActiveSessionProps = SharedProps & {
   harnessLabel: string;
   harnessLogoSrc?: string;
   harnessLogoInvert?: boolean;
-
-  envLabel: string;
 
   availableModels: Array<{ id: string; name?: string }>;
   currentModelId: string;
@@ -303,15 +283,6 @@ type ActiveSessionProps = SharedProps & {
 };
 
 export type WorkbenchComposerProps = NewSessionProps | ActiveSessionProps;
-
-function insertTextAtCursor(value: string, insert: string, el: HTMLTextAreaElement | null) {
-  if (!el) return { nextText: value + insert, nextCursor: (value + insert).length };
-  const start = el.selectionStart ?? value.length;
-  const end = el.selectionEnd ?? value.length;
-  const nextText = value.slice(0, start) + insert + value.slice(end);
-  const nextCursor = start + insert.length;
-  return { nextText, nextCursor };
-}
 
 function labelForMode(mode: WorkbenchModeId): string {
   if (mode === "default") return "Default";
@@ -440,7 +411,6 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
   } = props;
 
   const newSession = variant === "newSession" ? (props as NewSessionProps) : null;
-  const multiTrackMode = (newSession?.draftTracks.length ?? 0) > 1;
   const verbosity = props.verbosity ?? "default";
   const canAdjustVerbosity = typeof props.onSetVerbosity === "function";
   const contextWindow =
@@ -474,12 +444,6 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
     };
   }, [contextWindow]);
 
-  useEffect(() => {
-    if (!newSession) return;
-    if (!multiTrackMode) return;
-    if (newSession.envTarget === "local") newSession.setEnvTarget("worktree");
-  }, [multiTrackMode, newSession?.envTarget, newSession?.setEnvTarget]);
-
   const [openMenu, setOpenMenu] = useState<OpenMenuId | null>(null);
   const [menuStyle, setMenuStyle] = useState<React.CSSProperties | null>(null);
 
@@ -491,7 +455,6 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
   const modelTriggerRef = useRef<HTMLButtonElement | null>(null);
   const effortTriggerRef = useRef<HTMLButtonElement | null>(null);
   const modeTriggerRef = useRef<HTMLButtonElement | null>(null);
-  const envTriggerRef = useRef<HTMLButtonElement | null>(null);
   const verbosityTriggerRef = useRef<HTMLButtonElement | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -548,7 +511,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
       if (id === "effort") return effortTriggerRef.current;
       if (id === "mode") return modeTriggerRef.current;
       if (id === "verbosity") return verbosityTriggerRef.current;
-      return envTriggerRef.current;
+      return null;
     },
     [],
   );
@@ -654,21 +617,6 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
       window.removeEventListener("scroll", onAnyScroll, true);
     };
   }, [openMenu, recomputeMenuPosition]);
-
-  const onInsert = useCallback(
-    (text: string) => {
-      const el = textareaRef.current;
-      const out = insertTextAtCursor(value, text, el);
-      setValue(out.nextText);
-      requestAnimationFrame(() => {
-        if (!el) return;
-        el.focus();
-        el.setSelectionRange(out.nextCursor, out.nextCursor);
-        requestAnimationFrame(() => autocomplete.syncFromDom());
-      });
-    },
-    [autocomplete, setValue, value],
-  );
 
   const modeMenu = (
     <div className="wb-menu" role="menu" ref={menuRef} style={menuStyle ?? undefined}>
@@ -859,79 +807,6 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
       ))}
     </div>
   );
-
-  const envControl = useMemo(() => {
-    if (variant === "activeSession") {
-      return { label: (props as ActiveSessionProps).envLabel, locked: true };
-    }
-    const ns = props as NewSessionProps;
-    const effective = ns.draftTracks.length > 1 && ns.envTarget === "local" ? "worktree" : ns.envTarget;
-    const label =
-      effective === "worktree"
-        ? "Worktree"
-        : effective === "local"
-          ? "Local"
-          : effective === "cloud"
-            ? "Cloud"
-            : "Container";
-    return { label, locked: false };
-  }, [props, variant]);
-
-  const envMenu =
-    variant === "newSession"
-      ? (() => {
-          const ns = props as NewSessionProps;
-          const localDisabled = ns.draftTracks.length > 1;
-          const effective = localDisabled && ns.envTarget === "local" ? "worktree" : ns.envTarget;
-          return (
-            <div className="wb-menu wb-exec-menu" role="menu" ref={menuRef} style={menuStyle ?? undefined}>
-              <div className="wb-menu-top">
-                <MenuTitleRow title="Isolation" description={MENU_DESCRIPTIONS.isolation} tooltipId="wb-menu-tooltip-isolation" />
-              </div>
-              <button
-                type="button"
-                className={`wb-menu-item ${effective === "worktree" ? "wb-menu-item-active" : ""}`}
-                onClick={() => {
-                  ns.setEnvTarget("worktree");
-                  setOpenMenu(null);
-                }}
-              >
-                Worktree
-              </button>
-              <div
-                title={localDisabled ? "Local is disabled in multi-track mode" : undefined}
-                style={localDisabled ? { display: "block", cursor: "not-allowed" } : undefined}
-              >
-                <button
-                  type="button"
-                  className={`wb-menu-item ${effective === "local" ? "wb-menu-item-active" : ""}`}
-                  disabled={localDisabled}
-                  style={localDisabled ? { pointerEvents: "none" } : undefined}
-                  onClick={() => {
-                    ns.setEnvTarget("local");
-                    setOpenMenu(null);
-                  }}
-                >
-                  Local
-                </button>
-              </div>
-              <button
-                type="button"
-                className={`wb-menu-item ${effective === "cloud" ? "wb-menu-item-active" : ""}`}
-                onClick={() => {
-                  ns.setEnvTarget("cloud");
-                  setOpenMenu(null);
-                }}
-              >
-                Cloud
-              </button>
-              <button type="button" className="wb-menu-item" disabled>
-                Container (soon)
-              </button>
-            </div>
-          );
-        })()
-      : null;
 
   const harnessControl = useMemo(() => {
     if (variant === "activeSession") {
@@ -1610,7 +1485,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
           <div className="wb-switcher-wrap">
             <button
               type="button"
-              className="wb-switcher wb-menu-trigger"
+              className="wb-switcher wb-menu-trigger wb-switcher-harness"
               ref={harnessTriggerRef}
               onClick={() => {
                 if (variant !== "newSession") return;
@@ -1620,7 +1495,8 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
               }}
               aria-haspopup={variant === "newSession" ? "menu" : undefined}
               aria-expanded={openMenu === "harness"}
-              disabled={variant !== "newSession"}
+              aria-disabled={variant !== "newSession" ? true : undefined}
+              aria-label={harnessControl.label || "Harness"}
               title="Harness"
             >
               {harnessControl.logoSrc ? (
@@ -1632,7 +1508,6 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
               ) : (
                 <span className="wb-switcher-logo-fallback" />
               )}
-              <span className="wb-switcher-label">{harnessControl.label}</span>
               {variant === "newSession" && <ChevronDown size={14} />}
             </button>
             {openMenu === "harness" && harnessMenu}
@@ -1700,35 +1575,6 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
             {openMenu === "mode" && modeMenu}
           </div>
 
-          {/* Isolation */}
-          <div className="wb-switcher-wrap">
-            <button
-              type="button"
-              className="wb-switcher wb-menu-trigger"
-              ref={envTriggerRef}
-              onClick={() => {
-                if (envControl.locked) return;
-                setOpenMenu((v) => (v === "env" ? null : "env"));
-              }}
-              aria-haspopup={!envControl.locked ? "menu" : undefined}
-              aria-expanded={openMenu === "env"}
-              disabled={envControl.locked}
-              title="Isolation"
-            >
-              <span className="wb-switcher-icon">
-                {(() => {
-                  const target = variant === "newSession" ? (props as NewSessionProps).envTarget : null;
-                  const label = envControl.label.toLowerCase();
-                  if (target === "worktree" || label.includes("worktree")) return <GitBranch size={14} />;
-                  if (target === "container" || label.includes("container")) return <Container size={14} />;
-                  return <Laptop size={14} />;
-                })()}
-              </span>
-              <span className="wb-switcher-label">{envControl.label}</span>
-              {!envControl.locked && <ChevronDown size={14} />}
-            </button>
-            {openMenu === "env" && envMenu}
-          </div>
         </div>
 
         <div className="wb-action-row">
@@ -1755,25 +1601,6 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
               {openMenu === "verbosity" && verbosityMenu}
             </>
           ) : null}
-
-          <button
-            type="button"
-            className="wb-icon wb-menu-trigger"
-            onClick={() => onInsert("@")}
-            aria-label="Insert @"
-            title="Insert @"
-          >
-            <AtSign size={14} />
-          </button>
-          <button
-            type="button"
-            className="wb-icon wb-menu-trigger"
-            onClick={() => onInsert("/")}
-            aria-label="Insert /"
-            title="Insert /"
-          >
-            <Slash size={14} />
-          </button>
 
           <button
             type="button"

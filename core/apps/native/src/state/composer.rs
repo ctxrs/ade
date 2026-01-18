@@ -291,7 +291,6 @@ pub(crate) enum ComposerMenuId {
     Model,
     Effort,
     Mode,
-    Isolation,
     Verbosity,
 }
 
@@ -664,36 +663,6 @@ impl ShellView {
         if self.handle_autocomplete_escape(cx) {
             cx.stop_propagation();
         }
-    }
-
-    pub(crate) fn insert_composer_text(
-        &mut self,
-        value: &str,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let insert_text = value.to_string();
-        self.active_composer_input()
-            .update(cx, move |state, cx| state.insert(insert_text, window, cx));
-        self.sync_composer_autocomplete(cx);
-    }
-
-    pub(crate) fn on_insert_at(
-        &mut self,
-        _: &ClickEvent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.insert_composer_text("@", window, cx);
-    }
-
-    pub(crate) fn on_insert_slash(
-        &mut self,
-        _: &ClickEvent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.insert_composer_text("/", window, cx);
     }
 
     pub(crate) fn on_attach_click(
@@ -1175,11 +1144,6 @@ impl ShellView {
         cx.notify();
     }
 
-    pub(crate) fn set_env_target(&mut self, target: EnvTarget, cx: &mut Context<Self>) {
-        self.composer_env_target = target;
-        cx.notify();
-    }
-
     pub(crate) fn toggle_recording(
         &mut self,
         _: &ClickEvent,
@@ -1294,7 +1258,6 @@ impl ShellView {
 
         let tracks = self.composer_draft_tracks.clone();
         let attachments = self.composer_attachments.clone();
-        let env_target = self.composer_env_target.clone();
         let content_clone = content.clone();
         let providers = self.providers.clone();
         let provider_options = self.composer_provider_options.clone();
@@ -1325,11 +1288,6 @@ impl ShellView {
                 }]
             } else {
                 tracks
-            };
-
-            let env_target = match env_target {
-                EnvTarget::Local => EnvTarget::Local,
-                EnvTarget::Worktree | EnvTarget::Unknown => EnvTarget::Worktree,
             };
 
             for dt in to_start {
@@ -1378,7 +1336,7 @@ impl ShellView {
                             model_id,
                             parent_session_id: first_session_id,
                             relationship: None,
-                            env_target: Some(env_target.clone()),
+                            env_target: Some(EnvTarget::Worktree),
                             worktree_id: None,
                             initial_prompt: None,
                         },
@@ -2286,9 +2244,6 @@ impl ShellView {
             return;
         }
         self.composer_use_multiple_agents = enabled;
-        if enabled {
-            self.composer_env_target = EnvTarget::Worktree;
-        }
         if !enabled {
             if let Some(primary) = self.composer_draft_tracks.first().cloned() {
                 self.composer_provider_id = Some(primary.provider_id.clone());

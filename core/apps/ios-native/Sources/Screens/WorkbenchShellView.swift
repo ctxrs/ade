@@ -1566,7 +1566,6 @@ private struct WorkbenchNewTaskView: View {
     @State private var selectedModelId = ""
     @State private var selectedEffortId = ""
     @State private var selectedMode: ComposerMode = .default
-    @State private var selectedIsolation: WorkbenchEnvTarget = .worktree
     @State private var isLoadingProviders = false
     @State private var isLoadingModels = false
     @State private var errorMessage: String?
@@ -1721,36 +1720,11 @@ private struct WorkbenchNewTaskView: View {
                         newTaskMenuLabel(selectedMode.label)
                     }
 
-                    Menu {
-                        Picker("Isolation", selection: $selectedIsolation) {
-                            ForEach(WorkbenchEnvTarget.allCases) { target in
-                                Text(target.label).tag(target)
-                            }
-                        }
-                        .pickerStyle(.inline)
-                    } label: {
-                        newTaskMenuLabel(selectedIsolation.label)
-                    }
-
                     Spacer(minLength: 0)
                 }
             }
 
             HStack(spacing: 8) {
-                Button {
-                    insertToken("@")
-                } label: {
-                    ComposerToolIcon(name: .atSign)
-                }
-                .accessibilityIdentifier("newtask.insert.at")
-
-                Button {
-                    insertToken("/")
-                } label: {
-                    ComposerToolIcon(name: .slash)
-                }
-                .accessibilityIdentifier("newtask.insert.slash")
-
                 PhotosPicker(selection: $selectedPhotos, matching: .images) {
                     ComposerToolIcon(name: .image)
                 }
@@ -1936,14 +1910,6 @@ private struct WorkbenchNewTaskView: View {
         }
     }
 
-    private func insertToken(_ token: String) {
-        if !prompt.isEmpty, let last = prompt.last, !last.isWhitespace {
-            prompt.append(" ")
-        }
-        prompt.append(token)
-        isPromptFocused = true
-    }
-
     private func selectBase(_ baseId: String, catalog: ModelCatalog) {
         selectedModelId = baseId
         selectedEffortId = ""
@@ -1994,7 +1960,7 @@ private struct WorkbenchNewTaskView: View {
         let modelId = effectiveModelId
         let attachments = pendingAttachments
         let modeId = selectedMode.rawValue
-        let envTarget = selectedIsolation.rawValue
+        let envTarget = "worktree"
         guard !providerId.isEmpty, !modelId.isEmpty else { return }
         isSubmitting = true
         errorMessage = nil
@@ -2291,16 +2257,14 @@ private struct WorkbenchInlineHarnessPicker: View {
         } label: {
             HStack(spacing: 10) {
                 HarnessLogoView(providerId: providerId)
-                Text(value)
-                    .foregroundColor(.ctxTextPrimary)
-                    .font(.subheadline.weight(.semibold))
                 Spacer()
                 LucideIcon(name: .chevronDown, size: 12)
                     .foregroundColor(.ctxTextSecondary)
             }
             .padding(.vertical, 6)
+            .accessibilityLabel(value)
         }
-        .disabled(isDisabled)
+        .allowsHitTesting(!isDisabled)
     }
 }
 

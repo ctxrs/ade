@@ -41,7 +41,6 @@ const MENU_DESC_HARNESS: &str = "Agent harnesses are the low-level wrappers arou
 const MENU_DESC_MODEL: &str = "You can switch between different models here. Model selection offers a tradeoff between cost, latency, and intelligence - but it also offers an opportunity to leverage the differences in their weights for collaboration. Even if two different models score similarly on popular coding benchmarks, they might have different \"habits\" - or biases. This means that if you are working on a pernicious bug fix, you might want multiple different models to both look at the problem from a different angle.";
 const MENU_DESC_EFFORT: &str = "Some models have a \"thinking effort\" or \"reasoning effort\" setting, while others do not. The effort level simply corresponds to how many tokens a model spends on thinking while solving a problem. Models that offer high or extra high can sometimes be very powerful, at the expense of latency and cost. However, you can also experience an unintended negative consequence from extra high thinking: if the model is emitting lots of thinking tokens that don't add much value, this will cause the context window to fill up faster (not just from thinking tokens alone, but also from more excessive tool calls like reading files). Performance on coding tasks declines as context increases beyond the minimum context needed to solve the problem, so effort level is a key lever in tuning your agent for optimal performance.";
 const MENU_DESC_MODE: &str = "Modes are basically just prompts, sometimes combined with access limitations. For example, the review mode is nothing more than prompting the agent to tell it to review the code and putting it in a read-only access level. That sounds fairly simple, but there is a hidden benefit: developers who build agent harnesses and models in conjunction will often train their custom model to use their bespoke harness, including its different modes. So in a way, this prompt can be more than just a regular prompt. It is a special prompt than has been trained on via reinforcement learning to achieve certain outcomes. For example, OpenAI trained their codex model to use their codex harness in review mode, so as to output only high value review comments with priority details. If you give the exact same prompt to a model that has not undergone the same RL, it will emit much less useful review comments. We recommend using RPIR (Research, Plan, Implement, Review) pattern for most changes except for small and easy ones.";
-const MENU_DESC_ISOLATION: &str = "If you are new to using an ADE, you likely have your agents running in Local isolation mode, which basically means no isolation. In local mode, your agents work on the locally checked-out branch and could collide with other agents or your own changes. This results in dirty working branches, possible collisions, and risks of lost changes. An improvement is using git worktrees. They create a totally separate workspace that is disk-efficient. You can spin up many agents to all work in different worktrees and they won't collide with eachother. When they are done, you can approve and merge their changes back into the local working branch. This is a very powerful and resource-efficient isolation pattern. Finally there is container-level isolation. This is the most isolated environment, but it consumes many more resources: you have to run all of your processes again inside the container, and you have to copy all of the disk space. Despite the additional overhead, container-based isolation is most powerful when your agents need to test your application on the same ports. A simple example: if you have a key part of your application that always runs on port 3000 and you want your agent to be able to test it, worktrees won't save you: only one process can serve requests on that port. Containers solve that problem because you could have many agents working in different containers, and they can all claim their own port 3000 as theirs without worrying about collisions. Depending on your application, you may or may not need this. Containers of course also improved security isolation properties which worktrees cannot.";
 const MENU_DESC_VERBOSITY: &str = "Verbosity controls how much activity is shown during a turn. Terse hides tools and thoughts, default shows summaries and thoughts, and verbose will eventually expand full tool details.";
 
 fn attachment_label(att: &MessageAttachment) -> String {
@@ -656,9 +655,6 @@ impl<'a> ComposerView<'a> {
 
         let provider_id = active_provider_id(shell, is_new).unwrap_or_else(|| "".to_string());
         let provider_entry = harness_entry(&provider_id);
-        let provider_label = provider_entry
-            .map(|entry| entry.label.to_string())
-            .unwrap_or_else(|| if provider_id.is_empty() { "Harness".to_string() } else { provider_id.clone() });
         let provider_logo = provider_entry.map(|entry| harness_logo(entry, shell.is_dark));
 
         let session_models_value = if is_new {
@@ -796,7 +792,6 @@ impl<'a> ComposerView<'a> {
                 .items_center()
                 .gap(px(6.0))
                 .text_sm()
-                .text_color(tint(colors.text, 0.62))
                 .id("composer-harness-button");
 
             if let Some(logo) = provider_logo {
@@ -809,14 +804,6 @@ impl<'a> ComposerView<'a> {
                         .bg(tint(colors.text, 0.08)),
                 );
             }
-
-            button = button.child(
-                div()
-                    .max_w(px(360.0))
-                    .text_sm()
-                    .truncate()
-                    .child(provider_label),
-            );
 
             if is_new {
                 button = button
@@ -833,8 +820,6 @@ impl<'a> ComposerView<'a> {
                     .on_click(cx.listener(|view, _: &ClickEvent, window, cx| {
                         view.toggle_menu(ComposerMenuId::Harness, window, cx);
                     }));
-            } else {
-                button = button.opacity(0.55).cursor(CursorStyle::OperationNotAllowed);
             }
             button
         };
@@ -860,43 +845,6 @@ impl<'a> ComposerView<'a> {
         )
         .child(Icon::current(IconName::ChevronDown, 14.0));
         let mode_button = register_menu_trigger(view.clone(), ComposerMenuId::Mode, mode_button);
-
-        let local_disabled =
-            is_new && shell.composer_use_multiple_agents && shell.composer_draft_tracks.len() > 1;
-        let env_target = if local_disabled {
-            ctx_client::EnvTarget::Worktree
-        } else {
-            shell.composer_env_target.clone()
-        };
-        let env_label = if is_new {
-            match env_target {
-                ctx_client::EnvTarget::Worktree => "Worktree",
-                ctx_client::EnvTarget::Local => "Local",
-                ctx_client::EnvTarget::Unknown => "Worktree",
-            }
-        } else {
-            "Worktree"
-        };
-        let env_icon = match env_target {
-            ctx_client::EnvTarget::Worktree => IconName::Diff,
-            ctx_client::EnvTarget::Local => IconName::Laptop,
-            ctx_client::EnvTarget::Unknown => IconName::Diff,
-        };
-        let env_locked = !is_new;
-        let mut env_button = switcher_button(
-            env_label.to_string(),
-            Some(env_icon),
-            env_locked,
-            ElementId::from("composer-env-button"),
-            Box::new(cx.listener(|view, _: &ClickEvent, window, cx| {
-                view.toggle_menu(ComposerMenuId::Isolation, window, cx);
-            })),
-        );
-        if !env_locked {
-            env_button = env_button.child(Icon::current(IconName::ChevronDown, 14.0));
-        }
-        let env_button =
-            register_menu_trigger(view.clone(), ComposerMenuId::Isolation, env_button);
 
         let provider_for_models = provider_id.clone();
         let model_button = switcher_button(
@@ -980,11 +928,6 @@ impl<'a> ComposerView<'a> {
                     .child(mode_button),
             );
 
-            row = row.child(
-                div()
-                    .child(env_button),
-            );
-
             row
         };
 
@@ -1057,28 +1000,13 @@ impl<'a> ComposerView<'a> {
                 row = row.child(div().child(verbosity_button));
             }
 
-            row = row
-                .child(action_icon(
-                    IconName::AtSign,
-                    false,
-                    false,
-                    ElementId::from("composer-insert-at"),
-                    Box::new(cx.listener(ShellView::on_insert_at)),
-                ))
-                .child(action_icon(
-                    IconName::Slash,
-                    false,
-                    false,
-                    ElementId::from("composer-insert-slash"),
-                    Box::new(cx.listener(ShellView::on_insert_slash)),
-                ))
-                .child(action_icon(
-                    IconName::Image,
-                    false,
-                    false,
-                    ElementId::from("composer-attach-image"),
-                    Box::new(cx.listener(ShellView::on_attach_click)),
-                ))
+            row = row.child(action_icon(
+                IconName::Image,
+                false,
+                false,
+                ElementId::from("composer-attach-image"),
+                Box::new(cx.listener(ShellView::on_attach_click)),
+            ))
                 .child(action_icon(
                     if shell.composer_recording {
                         IconName::Square
@@ -1185,18 +1113,6 @@ impl<'a> ComposerView<'a> {
             Some(ComposerMenuId::Mode) => self
                 .render_menu_layer(ComposerMenuId::Mode, self.render_mode_menu(cx), cx)
                 .into_any_element(),
-            Some(ComposerMenuId::Isolation) => {
-                if matches!(self.variant, ComposerVariant::NewTask) {
-                    self.render_menu_layer(
-                        ComposerMenuId::Isolation,
-                        self.render_env_menu(cx),
-                        cx,
-                    )
-                    .into_any_element()
-                } else {
-                    div().into_any_element()
-                }
-            }
             Some(ComposerMenuId::Verbosity) => {
                 if matches!(self.variant, ComposerVariant::ActiveSession) {
                     self.render_menu_layer(
@@ -1745,7 +1661,6 @@ impl<'a> ComposerView<'a> {
             ComposerMenuId::Model => ("composer-menu-model", "Model"),
             ComposerMenuId::Effort => ("composer-menu-effort", "Effort"),
             ComposerMenuId::Mode => ("composer-menu-mode", "Mode"),
-            ComposerMenuId::Isolation => ("composer-menu-isolation", "Isolation"),
             ComposerMenuId::Verbosity => ("composer-menu-verbosity", "Verbosity"),
         }
     }
@@ -2024,72 +1939,6 @@ impl<'a> ComposerView<'a> {
         )
         .max_w(px(420.0))
         .min_w(px(320.0))
-    }
-
-    fn render_env_menu(&self, cx: &mut Context<ShellView>) -> gpui::Div {
-        let shell = self.shell;
-        let colors = shell.colors;
-        if !matches!(self.variant, ComposerVariant::NewTask) {
-            return div();
-        }
-        let local_disabled = shell.composer_use_multiple_agents && shell.composer_draft_tracks.len() > 1;
-        let active = if local_disabled {
-            ctx_client::EnvTarget::Worktree
-        } else {
-            shell.composer_env_target.clone()
-        };
-        let top = div()
-            .px(px(4.0))
-            .pt(px(4.0))
-            .pb(px(8.0))
-            .border_b_1()
-            .border_color(tint(colors.text, 0.08))
-            .mb(px(6.0))
-            .flex()
-            .flex_col()
-            .gap(px(8.0))
-            .child(self.render_menu_title_row(
-                ComposerMenuId::Isolation,
-                "Isolation",
-                MENU_DESC_ISOLATION,
-                cx,
-            ));
-        let list = div()
-            .flex()
-            .flex_col()
-            .child(self.menu_item(
-                ElementId::from("composer-env-worktree"),
-                "Worktree",
-                matches!(active, ctx_client::EnvTarget::Worktree),
-                false,
-                cx.listener(|view, _: &ClickEvent, _window, cx| {
-                    view.set_env_target(ctx_client::EnvTarget::Worktree, cx);
-                    view.close_menu(cx);
-                }),
-            ))
-            .child(self.menu_item(
-                ElementId::from("composer-env-local"),
-                "Local",
-                matches!(active, ctx_client::EnvTarget::Local),
-                local_disabled,
-                cx.listener(|view, _: &ClickEvent, _window, cx| {
-                    view.set_env_target(ctx_client::EnvTarget::Local, cx);
-                    view.close_menu(cx);
-                }),
-            ))
-            .child(self.menu_item(
-                ElementId::from("composer-env-container"),
-                "Container (soon)",
-                false,
-                true,
-                cx.listener(|view, _: &ClickEvent, _window, cx| {
-                    view.close_menu(cx);
-                }),
-            ));
-        self.render_menu_shell(
-            ComposerMenuId::Isolation,
-            div().flex().flex_col().child(top).child(list),
-        )
     }
 
     fn render_verbosity_menu(&self, cx: &mut Context<ShellView>) -> gpui::Div {

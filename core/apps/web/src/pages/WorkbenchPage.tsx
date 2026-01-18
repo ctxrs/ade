@@ -70,7 +70,7 @@ import { TerminalPanel, type TerminalPanelHandle } from "../components/TerminalP
 import { WorktreeBootstrapSnackbar } from "../components/WorktreeBootstrapSnackbar";
 import { SessionView, buildWorkbenchThreadViewModel } from "./SessionPage";
 import { HARNESS_CATALOG } from "../utils/harnessCatalog";
-import { WorkbenchComposer, type DraftTrack, type WorkbenchEnvTarget, type WorkbenchModeId } from "../components/WorkbenchComposer";
+import { WorkbenchComposer, type DraftTrack, type WorkbenchModeId } from "../components/WorkbenchComposer";
 import type { SlashCommandDescriptor } from "../state/useComposerAutocomplete";
 import { startMicPcmStream } from "../utils/micPcmStream";
 import { desktopSaveTextFile, isDesktopApp } from "../utils/desktop";
@@ -747,7 +747,6 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const [draftTracks, setDraftTracks] = useState<DraftTrack[]>([
     { key: "t1", label: "", providerId: "codex", modelId: "" },
   ]);
-  const [execTarget, setExecTarget] = useState<WorkbenchEnvTarget>("worktree");
   const [startBusy, setStartBusy] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
   const [installAllBusy, setInstallAllBusy] = useState(false);
@@ -2554,7 +2553,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
             diag ? `Harness “${dt.providerId}” unavailable: ${diag}` : `Harness “${dt.providerId}” unavailable.`,
           );
         }
-        const env_target = execTarget === "local" ? "local" : execTarget === "cloud" ? "cloud" : "worktree";
+        const env_target = "worktree";
         const opts = await ensureProviderOptions(dt.providerId).catch(() => undefined);
         const modelIds = modelIdsFromOptions(opts ?? providerOptions[dt.providerId]);
         const modelId = dt.modelId || modelIds[0] || (dt.providerId === "fake" ? "fake-model" : "default");
@@ -3337,8 +3336,6 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
                 defaultProviderId={defaultProviderId}
                 useMultipleAgents={useMultipleAgents}
                 setUseMultipleAgents={setUseMultipleAgents}
-                envTarget={execTarget}
-                setEnvTarget={setExecTarget}
               />
 
               {dictationDebugText && <div className="wb-banner">{dictationDebugText}</div>}

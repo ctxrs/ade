@@ -43,7 +43,6 @@ use self::state::{
     DataLoadState, DiffReviewState, SessionViewVerbosity, SettingsState, StreamStatus,
     TaskFetchState, TerminalPanelState, WorkbenchModeId,
 };
-use ctx_client::EnvTarget;
 use self::views::RouterView;
 pub(crate) use self::state::{ShellRoute, ShellView};
 #[cfg(feature = "automation")]
@@ -266,7 +265,6 @@ fn create_shell_view(
             composer_mode_id: WorkbenchModeId::Default,
             composer_verbosity: ComposerVerbosity::Default,
             composer_context_window: None,
-            composer_env_target: EnvTarget::Worktree,
             composer_use_multiple_agents: false,
             composer_draft_tracks: Vec::new(),
             composer_provider_options: HashMap::new(),

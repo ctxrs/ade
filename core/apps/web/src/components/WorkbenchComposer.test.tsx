@@ -3,7 +3,7 @@ import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WorkbenchComposer } from "./WorkbenchComposer";
 import type { MessageAttachment, ProviderOptions, ProviderStatus } from "../api/client";
-import type { DraftTrack, WorkbenchEnvTarget, WorkbenchModeId } from "./WorkbenchComposer";
+import type { DraftTrack, WorkbenchModeId } from "./WorkbenchComposer";
 import type { HarnessCatalogEntry } from "../utils/harnessCatalog";
 
 function mockRaf() {
@@ -49,8 +49,6 @@ describe("WorkbenchComposer textarea sizing", () => {
         { key: "t1", label: "Track 1", providerId: "codex", modelId: "o3" },
       ]);
       const [useMultipleAgents, setUseMultipleAgents] = useState(false);
-      const [envTarget, setEnvTarget] = useState<WorkbenchEnvTarget>("worktree");
-
       const harnessCatalog: HarnessCatalogEntry[] = [{ id: "codex", label: "Codex", logoSrc: "" }];
       const providersById: Record<string, ProviderStatus> = {
         codex: { provider_id: "codex", installed: true, health: "ok", diagnostics: [] },
@@ -87,8 +85,6 @@ describe("WorkbenchComposer textarea sizing", () => {
           defaultProviderId="codex"
           useMultipleAgents={useMultipleAgents}
           setUseMultipleAgents={setUseMultipleAgents}
-          envTarget={envTarget}
-          setEnvTarget={setEnvTarget}
         />
       );
     };
@@ -141,7 +137,6 @@ describe("WorkbenchComposer textarea sizing", () => {
           setModeId={setModeId}
           recording={true}
           harnessLabel="Codex"
-          envLabel="Worktree"
           availableModels={[{ id: "o3", name: "o3" }]}
           currentModelId="o3"
           onSetModelId={vi.fn()}
@@ -167,4 +162,3 @@ describe("WorkbenchComposer textarea sizing", () => {
     expect(textarea.scrollTop).toBe(textarea.scrollHeight);
   });
 });
-

@@ -22,7 +22,7 @@ use gpui::{
 };
 use gpui_component::{VirtualListScrollHandle, input::InputState};
 use gpui_tokio::Tokio;
-use ctx_client::{EnvTarget, ProviderOptions};
+use ctx_client::ProviderOptions;
 use tokio::sync::watch;
 
 use ctx_core::ids::{SessionId, TaskId, TurnId, WorkspaceId};
@@ -230,7 +230,6 @@ pub(crate) struct ShellView {
     pub(crate) composer_mode_id: WorkbenchModeId,
     pub(crate) composer_verbosity: ComposerVerbosity,
     pub(crate) composer_context_window: Option<ContextWindowInfo>,
-    pub(crate) composer_env_target: EnvTarget,
     pub(crate) composer_use_multiple_agents: bool,
     pub(crate) composer_draft_tracks: Vec<DraftTrack>,
     pub(crate) composer_provider_options: HashMap<String, ProviderOptions>,
