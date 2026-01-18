@@ -1,6 +1,6 @@
 #![recursion_limit = "256"]
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use clap::Parser;
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -2123,6 +2123,19 @@ fn tool_err(e: anyhow::Error) -> Value {
     })
 }
 
+fn extract_error_message(body: &str) -> Option<String> {
+    let trimmed = body.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if let Ok(value) = serde_json::from_str::<Value>(trimmed) {
+        if let Some(error) = value.get("error").and_then(|v| v.as_str()) {
+            return Some(error.to_string());
+        }
+    }
+    Some(trimmed.to_string())
+}
+
 fn bearer_token() -> Option<String> {
     ctx_env_opt("AUTH_TOKEN")
 }
@@ -2133,8 +2146,21 @@ async fn daemon_get_json(client: &reqwest::Client, daemon_url: &str, path: &str)
     if let Some(token) = bearer_token() {
         req = req.bearer_auth(token);
     }
-    let res = req.send().await?.error_for_status()?;
-    Ok(res.json::<Value>().await?)
+    let res = req.send().await?;
+    let status = res.status();
+    let text = res.text().await?;
+    if !status.is_success() {
+        let detail = extract_error_message(&text).unwrap_or_else(|| "unknown error".to_string());
+        bail!(
+            "HTTP {} {}: {}",
+            status.as_u16(),
+            status.canonical_reason().unwrap_or(""),
+            detail
+        );
+    }
+    let value = serde_json::from_str(&text)
+        .with_context(|| format!("parsing JSON response from {path}"))?;
+    Ok(value)
 }
 
 async fn daemon_post_json(
@@ -2148,8 +2174,21 @@ async fn daemon_post_json(
     if let Some(token) = bearer_token() {
         req = req.bearer_auth(token);
     }
-    let res = req.json(body).send().await?.error_for_status()?;
-    Ok(res.json::<Value>().await?)
+    let res = req.json(body).send().await?;
+    let status = res.status();
+    let text = res.text().await?;
+    if !status.is_success() {
+        let detail = extract_error_message(&text).unwrap_or_else(|| "unknown error".to_string());
+        bail!(
+            "HTTP {} {}: {}",
+            status.as_u16(),
+            status.canonical_reason().unwrap_or(""),
+            detail
+        );
+    }
+    let value = serde_json::from_str(&text)
+        .with_context(|| format!("parsing JSON response from {path}"))?;
+    Ok(value)
 }
 
 fn tool_call_id_from_params(params: &Value) -> Option<String> {
