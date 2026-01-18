@@ -13,6 +13,7 @@ const SEND_SVG: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="24" hei
 const ARROW_UP_SVG: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 7-7 7 7"/><path d="M12 19V5"/></svg>"#;
 const INTERRUPT_SVG: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><rect x="9" y="9" width="6" height="6" rx="1"/></svg>"#;
 const SQUARE_SVG: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/></svg>"#;
+const SQUARE_FILLED_SVG: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="currentColor" stroke="none"><rect width="18" height="18" x="3" y="3" rx="2"/></svg>"#;
 const CHEVRON_DOWN_SVG: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>"#;
 const AT_SIGN_SVG: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-4 8"/></svg>"#;
 const SLASH_SVG: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 2 22"/></svg>"#;
@@ -45,6 +46,7 @@ pub(crate) enum IconName {
     ArrowUp,
     Interrupt,
     Square,
+    SquareFilled,
     ChevronDown,
     AtSign,
     Slash,
@@ -79,6 +81,7 @@ impl IconName {
             Self::ArrowUp => "icons/arrow-up.svg",
             Self::Interrupt => "icons/circle-stop.svg",
             Self::Square => "icons/square.svg",
+            Self::SquareFilled => "icons/square-filled.svg",
             Self::ChevronDown => "icons/chevron-down.svg",
             Self::AtSign => "icons/at-sign.svg",
             Self::Slash => "icons/slash.svg",
@@ -113,6 +116,7 @@ impl IconName {
             Self::ArrowUp => ARROW_UP_SVG,
             Self::Interrupt => INTERRUPT_SVG,
             Self::Square => SQUARE_SVG,
+            Self::SquareFilled => SQUARE_FILLED_SVG,
             Self::ChevronDown => CHEVRON_DOWN_SVG,
             Self::AtSign => AT_SIGN_SVG,
             Self::Slash => SLASH_SVG,
@@ -158,6 +162,7 @@ impl AssetSource for IconAssets {
             "icons/arrow-up.svg" => IconName::ArrowUp.svg(),
             "icons/circle-stop.svg" => IconName::Interrupt.svg(),
             "icons/square.svg" => IconName::Square.svg(),
+            "icons/square-filled.svg" => IconName::SquareFilled.svg(),
             "icons/chevron-down.svg" => IconName::ChevronDown.svg(),
             "icons/at-sign.svg" => IconName::AtSign.svg(),
             "icons/slash.svg" => IconName::Slash.svg(),
@@ -200,6 +205,7 @@ impl AssetSource for IconAssets {
                 SharedString::from("arrow-up.svg"),
                 SharedString::from("circle-stop.svg"),
                 SharedString::from("square.svg"),
+                SharedString::from("square-filled.svg"),
                 SharedString::from("chevron-down.svg"),
                 SharedString::from("at-sign.svg"),
                 SharedString::from("slash.svg"),

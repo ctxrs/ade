@@ -1,3 +1,6 @@
+#![allow(unexpected_cfgs)]
+#![cfg(feature = "cloud_gateway_e2e")]
+
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;

@@ -2532,8 +2532,8 @@ struct ComposerBar: View {
                     }
                     .accessibilityIdentifier("chat.composer.attach")
 
-                    if isWorking {
-                        ComposerCircleButton(icon: .square, accessibilityId: "chat.composer.stop") {
+                    if isWorking && !isSendEnabled {
+                        ComposerCircleButton(icon: .square, style: .fill, accessibilityId: "chat.composer.stop") {
                             onInterrupt()
                         }
                     } else if isSendEnabled {
@@ -2583,13 +2583,15 @@ struct ComposerBar: View {
             }
         }
         .fullScreenCover(isPresented: $isFullscreenPresented) {
-            ComposerFullscreenView(
-                text: $text,
-                isSendEnabled: isSendEnabled,
-                onSend: onSend,
-                onClose: { isFullscreenPresented = false }
-            )
-        }
+                ComposerFullscreenView(
+                    text: $text,
+                    isSendEnabled: isSendEnabled,
+                    isWorking: isWorking,
+                    onSend: onSend,
+                    onInterrupt: onInterrupt,
+                    onClose: { isFullscreenPresented = false }
+                )
+            }
     }
 
     private func resolveEffortId(parsed: ParsedModelId, efforts: [String]) -> String? {
@@ -2645,11 +2647,14 @@ private struct ContextWindowIndicator: View {
 private struct ComposerFullscreenView: View {
     @Binding var text: String
     var isSendEnabled: Bool
+    var isWorking: Bool
     var onSend: () -> Void
+    var onInterrupt: () -> Void
     var onClose: () -> Void
     @FocusState private var isFocused: Bool
 
     var body: some View {
+        let showStop = isWorking && !isSendEnabled
         VStack(spacing: 16) {
             HStack {
                 Button(action: onClose) {
@@ -2686,11 +2691,17 @@ private struct ComposerFullscreenView: View {
 
             HStack {
                 Spacer(minLength: 0)
-                ComposerCircleButton(icon: .arrowUp, accessibilityId: "chat.composer.fullscreen.send") {
-                    onSend()
+                if showStop {
+                    ComposerCircleButton(icon: .square, style: .fill, accessibilityId: "chat.composer.fullscreen.stop") {
+                        onInterrupt()
+                    }
+                } else {
+                    ComposerCircleButton(icon: .arrowUp, accessibilityId: "chat.composer.fullscreen.send") {
+                        onSend()
+                    }
+                    .disabled(!isSendEnabled)
+                    .opacity(isSendEnabled ? 1 : 0.4)
                 }
-                .disabled(!isSendEnabled)
-                .opacity(isSendEnabled ? 1 : 0.4)
             }
             .padding(.horizontal, 20)
             .padding(.bottom, 24)
@@ -2778,18 +2789,25 @@ struct ComposerHarnessIcon: View {
 
 struct ComposerCircleButton: View {
     let icon: LucideIconName
+    let iconStyle: LucideIconStyle
     let accessibilityId: String?
     let action: () -> Void
 
-    init(icon: LucideIconName, accessibilityId: String? = nil, action: @escaping () -> Void) {
+    init(
+        icon: LucideIconName,
+        style: LucideIconStyle = .stroke,
+        accessibilityId: String? = nil,
+        action: @escaping () -> Void
+    ) {
         self.icon = icon
+        self.iconStyle = style
         self.accessibilityId = accessibilityId
         self.action = action
     }
 
     var body: some View {
         Button(action: action) {
-            LucideIcon(name: icon, size: 18)
+            LucideIcon(name: icon, size: 18, style: iconStyle)
                 .foregroundColor(.white)
                 .frame(width: CtxChatStyle.composerPrimarySize, height: CtxChatStyle.composerPrimarySize)
                 .background(

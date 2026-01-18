@@ -514,6 +514,7 @@ export function SessionView({
   }, []);
 
   const input = draft?.text ?? inputInternal;
+  const hasDraftContent = input.trim().length > 0 || draftAttachments.length > 0;
   const setInput = useCallback(
     (next: string) => {
       if (draft) {
@@ -2366,9 +2367,10 @@ export function SessionView({
           attachments={draftAttachments}
           setAttachments={setDraftAttachments}
           onSend={sendNow}
-          sendDisabled={sendBusy || !input.trim()}
-          sendDisabledReason={sendBusy ? "Sending..." : !input.trim() ? "Enter a message." : null}
+          sendDisabled={sendBusy || !hasDraftContent}
+          sendDisabledReason={sendBusy ? "Sending..." : !hasDraftContent ? "Enter a message." : null}
           onInterrupt={id ? () => interruptSession(id) : null}
+          isWorking={hasActiveTurn}
           verbosity={verbosity}
           onSetVerbosity={setVerbosityPref}
           modeId={workbenchMode}

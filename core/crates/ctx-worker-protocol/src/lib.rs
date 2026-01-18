@@ -7,7 +7,6 @@ use uuid::Uuid;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StartWorkerRequest {
     pub task_id: String,
-    pub track_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -31,7 +30,6 @@ pub struct StartWorkerResponse {
 pub struct WorkerInfo {
     pub worker_id: String,
     pub task_id: String,
-    pub track_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

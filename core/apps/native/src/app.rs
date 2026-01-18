@@ -44,9 +44,11 @@ use self::state::{
     StreamStatus, TaskFetchState, TerminalPanelState, WorkbenchModeId,
 };
 use self::views::RouterView;
-pub(crate) use self::state::{RightPaneMode, ShellRoute, ShellView};
+pub(crate) use self::state::{ShellRoute, ShellView};
 #[cfg(feature = "automation")]
 pub(crate) use self::state::ComposerMenuId;
+#[cfg(feature = "automation")]
+pub(crate) use self::state::RightPaneMode;
 
 #[derive(Clone, Debug)]
 pub struct AppOptions {

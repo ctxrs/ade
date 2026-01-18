@@ -111,10 +111,6 @@ impl AwsDriver {
                 .key("ctx-task-id")
                 .value(&spec.task_id)
                 .build(),
-            Tag::builder()
-                .key("ctx-track-id")
-                .value(&spec.track_id)
-                .build(),
         ];
         TagSpecification::builder()
             .resource_type(resource_type)

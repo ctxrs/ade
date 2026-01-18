@@ -22,17 +22,30 @@ enum LucideIconName {
     case plus
 }
 
+enum LucideIconStyle {
+    case stroke
+    case fill
+}
+
 struct LucideIcon: View {
     let name: LucideIconName
     var size: CGFloat = 16
+    var style: LucideIconStyle = .stroke
 
     var body: some View {
         let scale = size / 24
         let lineWidth = size * 2 / 24
-        lucidePath(name)
+        let path = lucidePath(name)
             .applying(CGAffineTransform(scaleX: scale, y: scale))
-            .stroke(style: StrokeStyle(lineWidth: lineWidth, lineCap: .round, lineJoin: .round))
-            .frame(width: size, height: size)
+        if style == .fill {
+            path
+                .fill()
+                .frame(width: size, height: size)
+        } else {
+            path
+                .stroke(style: StrokeStyle(lineWidth: lineWidth, lineCap: .round, lineJoin: .round))
+                .frame(width: size, height: size)
+        }
     }
 
     private func lucidePath(_ name: LucideIconName) -> Path {

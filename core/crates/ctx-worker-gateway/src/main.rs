@@ -563,7 +563,6 @@ struct WorkerRecord {
     worker_id: String,
     spec: StartWorkerRequest,
     task_id: String,
-    track_id: String,
     provider_id: Option<String>,
     model_id: Option<String>,
     base_commit_sha: String,
@@ -933,7 +932,6 @@ async fn start_worker(
         worker_id: worker_id.clone(),
         spec,
         task_id: request.task_id.clone(),
-        track_id: request.track_id.clone(),
         provider_id: request.provider_id.clone(),
         model_id: request.model_id.clone(),
         base_commit_sha: base_commit.clone(),
@@ -992,7 +990,6 @@ async fn get_worker(
     Ok(Json(WorkerInfo {
         worker_id: record.worker_id.clone(),
         task_id: record.task_id.clone(),
-        track_id: record.track_id.clone(),
         provider_id: record.provider_id.clone(),
         model_id: record.model_id.clone(),
         state: record.state.clone(),

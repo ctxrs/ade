@@ -310,6 +310,17 @@ impl<'a> ComposerView<'a> {
         let pad = px(2.0);
 
         let input_disabled = is_new && shell.composer_start_busy;
+        let session_is_working = shell
+            .selected_session
+            .and_then(|index| shell.sessions.get(index))
+            .and_then(|summary| shell.session_summary_map.get(&summary.session_id))
+            .map(|summary| summary.activity.is_working)
+            .unwrap_or(false);
+        let can_send_message = shell.can_send_message(cx);
+        let show_stop = !is_new
+            && shell.selected_session.is_some()
+            && session_is_working
+            && !can_send_message;
 
         let mut input = Input::new(shell.active_composer_input())
             .appearance(false)
@@ -971,18 +982,6 @@ impl<'a> ComposerView<'a> {
         let action_row = {
             let mut row = div().flex().flex_row().items_center().gap(px(6.0));
 
-            if matches!(self.variant, ComposerVariant::ActiveSession)
-                && shell.selected_session.is_some()
-            {
-                row = row.child(action_icon(
-                    IconName::Square,
-                    false,
-                    false,
-                    ElementId::from("composer-interrupt"),
-                    Box::new(cx.listener(ShellView::on_interrupt_click)),
-                ));
-            }
-
             if !is_new {
                 let verbosity_button = register_menu_trigger(
                     view.clone(),
@@ -1019,14 +1018,16 @@ impl<'a> ComposerView<'a> {
                     Box::new(cx.listener(ShellView::toggle_recording)),
                 ));
 
-            let send_disabled = !shell.can_send_message(cx)
-                || (matches!(self.variant, ComposerVariant::NewTask)
-                    && shell.composer_start_busy);
+            let send_disabled = !show_stop
+                && (!can_send_message
+                    || (matches!(self.variant, ComposerVariant::NewTask)
+                        && shell.composer_start_busy));
             let send_foreground = if shell.is_dark {
                 tint(colors.text, 0.98)
             } else {
                 tint(colors.bg, 0.98)
             };
+            let send_label = if show_stop { "Stop" } else { "Send" };
             let mut send_button = div()
                 .w(px(24.0))
                 .h(px(24.0))
@@ -1038,7 +1039,14 @@ impl<'a> ComposerView<'a> {
                 .items_center()
                 .justify_center()
                 .text_color(send_foreground)
-                .child(Icon::current(IconName::ArrowUp, 14.0))
+                .child(Icon::current(
+                    if show_stop {
+                        IconName::SquareFilled
+                    } else {
+                        IconName::ArrowUp
+                    },
+                    14.0,
+                ))
                 .id("composer-send");
 
             if send_disabled {
@@ -1051,16 +1059,20 @@ impl<'a> ComposerView<'a> {
                             .bg(tint(colors.accent, 0.26))
                             .border_color(tint(colors.accent, 0.70))
                     })
-                    .on_click(cx.listener(ShellView::on_send_click));
+                    .on_click(cx.listener(if show_stop {
+                        ShellView::on_interrupt_click
+                    } else {
+                        ShellView::on_send_click
+                    }));
             }
 
             row.child(
                 div()
-                    .on_children_prepainted(automation_tree::track_children_bounds(
-                        "composer-send",
-                        "button",
-                        Some("Send"),
-                        Some("app-shell"),
+                    .on_children_prepainted(automation_tree::track_children_bounds_dynamic(
+                        "composer-send".to_string(),
+                        "button".to_string(),
+                        Some(send_label.to_string()),
+                        Some("app-shell".to_string()),
                     ))
                     .child(send_button),
             )

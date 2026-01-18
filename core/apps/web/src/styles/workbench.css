@@ -997,6 +997,11 @@
   padding: 0;
 }
 
+.wb-stop-icon {
+  fill: currentColor;
+  stroke: none;
+}
+
 .wb-send:hover:not(:disabled) {
   background: rgba(78, 163, 255, 0.26);
   border-color: rgba(78, 163, 255, 0.70);

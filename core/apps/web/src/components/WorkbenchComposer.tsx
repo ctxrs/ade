@@ -240,6 +240,7 @@ type SharedProps = {
   sendDisabled?: boolean;
 
   onInterrupt?: (() => void) | null;
+  isWorking?: boolean;
   verbosity?: SessionViewVerbosity;
   onSetVerbosity?: (next: SessionViewVerbosity) => void;
 
@@ -400,6 +401,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
     sendDisabled,
     sendDisabledReason,
     onInterrupt,
+    isWorking,
     modeId,
     setModeId,
     sessionIdForAutocomplete,
@@ -415,6 +417,11 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
   const canAdjustVerbosity = variant === "newSession" && typeof props.onSetVerbosity === "function";
   const contextWindow =
     variant === "activeSession" ? (props as ActiveSessionProps).contextWindow ?? null : null;
+  const hasDraft = value.trim().length > 0 || attachments.length > 0;
+  const showStop = !!onInterrupt && !!isWorking && !hasDraft;
+  const sendActionDisabled = !showStop && (!!sendDisabled || !!sendDisabledReason);
+  const sendActionTitle = showStop ? "Stop" : sendDisabledReason ?? "Send";
+  const sendActionLabel = showStop ? "Stop" : "Send";
   const contextWindowDisplay = useMemo(() => {
     if (!contextWindow?.windowTokens) return null;
     let usedTokens = contextWindow.usedTokens;
@@ -1597,12 +1604,6 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
         </div>
 
         <div className="wb-action-row">
-          {onInterrupt ? (
-            <button type="button" className="wb-icon wb-menu-trigger" onClick={onInterrupt} aria-label="Interrupt" title="Interrupt">
-              <Square size={14} />
-            </button>
-          ) : null}
-
           {canAdjustVerbosity ? (
             <>
               <button
@@ -1658,12 +1659,18 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
           <button
             type="button"
             className="wb-send"
-            onClick={onSend}
-            disabled={!!sendDisabled || !!sendDisabledReason}
-            title={sendDisabledReason ?? "Send"}
-            aria-label="Send"
+            onClick={() => {
+              if (showStop) {
+                onInterrupt?.();
+                return;
+              }
+              onSend();
+            }}
+            disabled={sendActionDisabled}
+            title={sendActionTitle}
+            aria-label={sendActionLabel}
           >
-            <ArrowUp size={14} />
+            {showStop ? <Square size={14} className="wb-stop-icon" /> : <ArrowUp size={14} />}
           </button>
         </div>
       </div>
