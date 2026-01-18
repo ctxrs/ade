@@ -134,6 +134,47 @@ const formatGitStatusEntry = (entry: NonNullable<GitStatusSummary["entries"]>[nu
   return `${prefix} ${path}`.trimEnd();
 };
 
+const formatGitStatusPath = (entry: NonNullable<GitStatusSummary["entries"]>[number]): string =>
+  entry.orig_path ? `${entry.orig_path} -> ${entry.path}` : entry.path;
+
+const gitStatusCodeClass = (code: string): string => {
+  switch (code) {
+    case "A":
+    case "C":
+      return "wb-git-status-code-added";
+    case "M":
+    case "T":
+      return "wb-git-status-code-modified";
+    case "D":
+      return "wb-git-status-code-deleted";
+    case "R":
+      return "wb-git-status-code-renamed";
+    case "?":
+      return "wb-git-status-code-untracked";
+    case "U":
+      return "wb-git-status-code-conflict";
+    case "!":
+      return "wb-git-status-code-ignored";
+    default:
+      return "wb-git-status-code-neutral";
+  }
+};
+
+const normalizeGitStatusCode = (value?: string): string => {
+  const code = value?.[0] ?? " ";
+  return code || " ";
+};
+
+const gitStatusCodeLabel = (code: string): string => (code === " " ? "" : code);
+
+const readGitStatusSummaryLine = (summary: GitStatusSummary | null): string => {
+  if (!summary) return "";
+  const raw = summary.raw ?? summary.summary ?? summary.status ?? "";
+  const summaryLine =
+    summary.summary_line ?? summary.summaryLine ?? (raw ? String(raw).split("\n")[0].trim() : "");
+  return summaryLine || "";
+};
+
 const joinDaemonPath = (root: string, ...parts: string[]) => {
   const sep = root.includes("\\") ? "\\" : "/";
   const cleanedRoot = root.replace(/[\/]+$/, "");
@@ -2086,6 +2127,13 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   }, [diffSummary]);
 
   const hasDiff = diffSummaryCount !== null ? diffSummaryCount > 0 : activeSessionDiff.trim().length > 0;
+  const gitStatusSummaryLine = useMemo(() => readGitStatusSummaryLine(gitStatusSummary), [gitStatusSummary]);
+  const gitStatusEntries = useMemo(() => {
+    if (!gitStatusSummary) return [];
+    const entries = gitStatusSummary.entries;
+    return Array.isArray(entries) ? entries : [];
+  }, [gitStatusSummary]);
+  const hasGitStatusEntries = gitStatusEntries.length > 0;
   const gitStatusText = useMemo(() => {
     if (!gitStatusSummary) return "";
     const raw =
@@ -2093,20 +2141,16 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       gitStatusSummary.summary ??
       gitStatusSummary.status ??
       "";
-    const summaryLine =
-      gitStatusSummary.summary_line ??
-      gitStatusSummary.summaryLine ??
-      (raw ? String(raw).split("\n")[0].trim() : "");
     const entries = gitStatusSummary.entries;
     if (Array.isArray(entries) && entries.length > 0) {
-      const header = summaryLine || "git status -sb";
+      const header = gitStatusSummaryLine || "git status -sb";
       return [header, ...entries.map(formatGitStatusEntry)].join("\n");
     }
     if (raw) return String(raw).trim();
     const lines = gitStatusSummary.lines;
     if (Array.isArray(lines) && lines.length > 0) return lines.map((line) => String(line)).join("\n");
-    return summaryLine || "";
-  }, [gitStatusSummary]);
+    return gitStatusSummaryLine || "";
+  }, [gitStatusSummary, gitStatusSummaryLine]);
   const gitStatusBadgeCount = useMemo(() => {
     if (!gitStatusSummary) return 0;
     const entries = gitStatusSummary.entries;
@@ -3578,6 +3622,36 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
                           </div>
                           {gitStatusError ? (
                             <div className="wb-diff-status-error">{gitStatusError}</div>
+                          ) : hasGitStatusEntries ? (
+                            <div className="wb-git-status-body">
+                              {gitStatusSummaryLine && (
+                                <div className="wb-git-status-line wb-git-status-summary">
+                                  {gitStatusSummaryLine}
+                                </div>
+                              )}
+                              {gitStatusEntries.map((entry) => {
+                                const indexStatus = normalizeGitStatusCode(entry.index_status);
+                                const worktreeStatus = normalizeGitStatusCode(entry.worktree_status);
+                                const entryKey = `${indexStatus}${worktreeStatus}:${entry.orig_path ?? ""}:${entry.path}`;
+                                return (
+                                  <div className="wb-git-status-line" key={entryKey}>
+                                    <span className="wb-git-status-code">
+                                      <span
+                                        className={`wb-git-status-code-char ${gitStatusCodeClass(indexStatus)}`}
+                                      >
+                                        {gitStatusCodeLabel(indexStatus)}
+                                      </span>
+                                      <span
+                                        className={`wb-git-status-code-char ${gitStatusCodeClass(worktreeStatus)}`}
+                                      >
+                                        {gitStatusCodeLabel(worktreeStatus)}
+                                      </span>
+                                    </span>
+                                    <span className="wb-git-status-path">{formatGitStatusPath(entry)}</span>
+                                  </div>
+                                );
+                              })}
+                            </div>
                           ) : (
                             <pre className="wb-diff-status-body">
                               {gitStatusText || (gitStatusLoading ? "Loading git status..." : "No status data.")}

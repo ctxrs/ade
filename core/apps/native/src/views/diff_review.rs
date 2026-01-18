@@ -4,6 +4,8 @@ use gpui::{
 };
 use gpui_component::scroll::ScrollableElement;
 
+use ctx_client::GitStatusEntry;
+
 use crate::theme::{ThemeColors, ThemeMetrics};
 
 use super::super::icons::{Icon, IconName};
@@ -13,6 +15,67 @@ use super::super::state::diff_review::{
 
 const MONO_FONT_FAMILY: &str =
     "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, \"Liberation Mono\", \"Courier New\", monospace";
+const GIT_STATUS_CODE_WIDTH: f32 = 12.0;
+
+fn git_status_code_char(value: &str) -> char {
+    value.chars().next().unwrap_or(' ')
+}
+
+fn git_status_code_color(colors: ThemeColors, code: char) -> Rgba {
+    match code {
+        'A' | 'C' => colors.success,
+        'M' | 'T' => colors.warning,
+        'D' => colors.error,
+        'R' | '?' => colors.accent,
+        'U' => colors.error,
+        '!' => colors.muted,
+        _ => colors.muted,
+    }
+}
+
+fn format_git_status_path(entry: &GitStatusEntry) -> String {
+    if let Some(orig_path) = &entry.orig_path {
+        format!("{orig_path} -> {}", entry.path)
+    } else {
+        entry.path.clone()
+    }
+}
+
+fn render_git_status_entry(entry: &GitStatusEntry, colors: ThemeColors) -> impl IntoElement {
+    let index_status = git_status_code_char(&entry.index_status);
+    let worktree_status = git_status_code_char(&entry.worktree_status);
+    let path = format_git_status_path(entry);
+    let code_cell = |code: char| {
+        let label = if code == ' ' {
+            String::new()
+        } else {
+            code.to_string()
+        };
+        div()
+            .w(px(GIT_STATUS_CODE_WIDTH))
+            .flex()
+            .flex_none()
+            .items_center()
+            .justify_center()
+            .text_sm()
+            .font_family(MONO_FONT_FAMILY)
+            .text_color(git_status_code_color(colors, code))
+            .child(label)
+    };
+    div()
+        .flex()
+        .items_center()
+        .gap_1()
+        .child(code_cell(index_status))
+        .child(code_cell(worktree_status))
+        .child(
+            div()
+                .text_sm()
+                .font_family(MONO_FONT_FAMILY)
+                .text_color(colors.text)
+                .child(path),
+        )
+}
 
 pub(super) struct DiffReviewView<'a> {
     pub(super) colors: ThemeColors,
@@ -71,27 +134,65 @@ impl<'a> DiffReviewView<'a> {
             );
         }
 
-        let status_lines = if let Some(lines) = &self.state.git_status {
-            lines.clone()
-        } else if self.state.session_id.is_none() {
-            vec!["Select a session to view status.".to_string()]
-        } else if is_loading {
-            vec!["Loading git status...".to_string()]
-        } else {
-            vec!["Git status unavailable.".to_string()]
-        };
-        let status_body = status_lines.into_iter().fold(
-            div().flex().flex_col().gap_1(),
-            |body, line| {
-                body.child(
+        let mut status_body = div().flex().flex_col().gap_1();
+        if let Some(status) = &self.state.git_status {
+            if !status.entries.is_empty() {
+                if !status.summary_line.trim().is_empty() {
+                    status_body = status_body.child(
+                        div()
+                            .text_sm()
+                            .font_family(MONO_FONT_FAMILY)
+                            .text_color(self.colors.muted)
+                            .child(status.summary_line.clone()),
+                    );
+                }
+                for entry in &status.entries {
+                    status_body = status_body.child(render_git_status_entry(entry, self.colors));
+                }
+            } else if !status.lines.is_empty() {
+                for line in &status.lines {
+                    status_body = status_body.child(
+                        div()
+                            .text_sm()
+                            .font_family(MONO_FONT_FAMILY)
+                            .text_color(self.colors.text)
+                            .child(line.clone()),
+                    );
+                }
+            } else {
+                status_body = status_body.child(
                     div()
                         .text_sm()
                         .font_family(MONO_FONT_FAMILY)
                         .text_color(self.colors.text)
-                        .child(line),
-                )
-            },
-        );
+                        .child("Git status unavailable."),
+                );
+            }
+        } else if self.state.session_id.is_none() {
+            status_body = status_body.child(
+                div()
+                    .text_sm()
+                    .font_family(MONO_FONT_FAMILY)
+                    .text_color(self.colors.text)
+                    .child("Select a session to view status."),
+            );
+        } else if is_loading {
+            status_body = status_body.child(
+                div()
+                    .text_sm()
+                    .font_family(MONO_FONT_FAMILY)
+                    .text_color(self.colors.text)
+                    .child("Loading git status..."),
+            );
+        } else {
+            status_body = status_body.child(
+                div()
+                    .text_sm()
+                    .font_family(MONO_FONT_FAMILY)
+                    .text_color(self.colors.text)
+                    .child("Git status unavailable."),
+            );
+        }
         root = root.child(
             div()
                 .flex()

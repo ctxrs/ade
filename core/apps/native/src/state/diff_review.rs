@@ -1,6 +1,7 @@
 use gpui::{AsyncApp, Context, WeakEntity};
 use gpui_tokio::Tokio;
 
+use ctx_client::GitStatusEntry;
 use ctx_core::ids::SessionId;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -47,6 +48,13 @@ pub(crate) struct DiffSummary {
     pub(crate) deletions: i64,
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct GitStatusViewData {
+    pub(crate) summary_line: String,
+    pub(crate) entries: Vec<GitStatusEntry>,
+    pub(crate) lines: Vec<String>,
+}
+
 #[derive(Debug)]
 pub(crate) struct DiffReviewState {
     pub(crate) session_id: Option<SessionId>,
@@ -54,7 +62,7 @@ pub(crate) struct DiffReviewState {
     pub(crate) files: Vec<DiffFile>,
     pub(crate) active_file_key: Option<String>,
     pub(crate) busy_key: Option<String>,
-    pub(crate) git_status: Option<Vec<String>>,
+    pub(crate) git_status: Option<GitStatusViewData>,
     pub(crate) diff_summary: Option<DiffSummary>,
     pub(crate) error: Option<String>,
     pub(crate) list_width: f32,
@@ -173,17 +181,28 @@ impl DiffReviewState {
                     }
                     match result {
                         Ok(status) => {
+                            let summary_line = status.summary_line.clone();
                             let raw = if status.raw.trim().is_empty() {
-                                status.summary_line
+                                summary_line.clone()
                             } else {
-                                status.raw
+                                status.raw.clone()
                             };
-                            view.git_status = Some(
-                                raw.lines().map(|line| line.trim_end().to_string()).collect(),
-                            );
+                            let lines = raw
+                                .lines()
+                                .map(|line| line.trim_end().to_string())
+                                .collect();
+                            view.git_status = Some(GitStatusViewData {
+                                summary_line,
+                                entries: status.entries,
+                                lines,
+                            });
                         }
                         Err(_) => {
-                            view.git_status = Some(vec!["Git status unavailable.".to_string()]);
+                            view.git_status = Some(GitStatusViewData {
+                                summary_line: String::new(),
+                                entries: Vec::new(),
+                                lines: vec!["Git status unavailable.".to_string()],
+                            });
                         }
                     }
                     cx.notify();

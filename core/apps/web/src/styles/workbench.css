@@ -3564,6 +3564,76 @@
   white-space: pre-wrap;
 }
 
+.wb-git-status-body {
+  margin: 6px 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  font-family: var(--mono);
+  color: var(--text);
+}
+
+.wb-git-status-line {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.wb-git-status-summary {
+  color: var(--muted);
+}
+
+.wb-git-status-code {
+  display: inline-flex;
+  gap: 2px;
+  min-width: 2ch;
+}
+
+.wb-git-status-code-char {
+  display: inline-flex;
+  width: 1ch;
+  justify-content: center;
+}
+
+.wb-git-status-code-neutral {
+  color: var(--muted);
+}
+
+.wb-git-status-code-added {
+  color: var(--success);
+}
+
+.wb-git-status-code-modified {
+  color: var(--warning);
+}
+
+.wb-git-status-code-deleted {
+  color: var(--error);
+}
+
+.wb-git-status-code-renamed {
+  color: var(--accent);
+}
+
+.wb-git-status-code-untracked {
+  color: color-mix(in srgb, var(--accent) 75%, white 25%);
+}
+
+.wb-git-status-code-conflict {
+  color: var(--error);
+  font-weight: 600;
+}
+
+.wb-git-status-code-ignored {
+  color: var(--muted);
+}
+
+.wb-git-status-path {
+  flex: 1;
+  word-break: break-word;
+}
+
 .wb-diff-status-error {
   margin-top: 6px;
   font-size: 12px;
