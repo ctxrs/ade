@@ -77,6 +77,18 @@ import {
   subagentChildLabel,
 } from "./SessionPage.helpers";
 
+type PendingMessageEntry = {
+  clientId: string;
+  message: Message;
+};
+
+const createClientMessageId = (): string => {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return `client-${crypto.randomUUID()}`;
+  }
+  return `client-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+};
+
 function buildCustomStatusByTurnId(events: SessionEvent[]): Map<string, string> {
   const normalize = (value: unknown): string | null => {
     const t = String(value ?? "").trim();
@@ -404,6 +416,7 @@ export function SessionView({
   const [workbenchModeInternal, setWorkbenchModeInternal] = useState<WorkbenchModeId>("default");
   const [sendBusy, setSendBusy] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
+  const [pendingMessages, setPendingMessages] = useState<PendingMessageEntry[]>([]);
   const [fileOpenError, setFileOpenError] = useState<string | null>(null);
   const [modifierDown, setModifierDown] = useState(false);
   const [atBottom, setAtBottom] = useState(true);
@@ -417,6 +430,10 @@ export function SessionView({
   const [expandedTurnDetailsById, setExpandedTurnDetailsById] = useState<Record<string, boolean>>({});
   const [expandedToolById, setExpandedToolById] = useState<Record<string, boolean>>({});
   const virtuosoRef = useRef<VirtuosoHandle | null>(null);
+
+  useEffect(() => {
+    setPendingMessages([]);
+  }, [id]);
   const didInitialScrollRef = useRef(false);
   const lastScrollPersistedRef = useRef<{
     stickToBottom: boolean;
@@ -831,6 +848,33 @@ export function SessionView({
   const eventsKey = `${entry?.lastEventSeq ?? 0}:${events.length}`;
   const turnsKey = deriveTurnsKey(turns);
   const messagesKey = deriveMessagesKey(messages);
+  useEffect(() => {
+    if (pendingMessages.length === 0) return;
+    const realIds = new Set(messages.map((m) => idToString(m.id)));
+    setPendingMessages((prev) => {
+      if (prev.length === 0) return prev;
+      const next = prev.filter((entry) => {
+        const pid = idToString(entry.message.id);
+        return pid ? !realIds.has(pid) : true;
+      });
+      return next.length === prev.length ? prev : next;
+    });
+  }, [messagesKey, pendingMessages.length, messages]);
+
+  const displayMessages = useMemo(
+    () => mergeMessagesForView(messages, pendingMessages),
+    [messagesKey, pendingMessages],
+  );
+  const displayMessagesKey = deriveMessagesKey(displayMessages);
+  const pendingTurns = useMemo(
+    () => buildPendingTurns(turns, displayMessages),
+    [turnsKey, displayMessagesKey],
+  );
+  const displayTurns = useMemo(
+    () => (pendingTurns.length > 0 ? [...turns, ...pendingTurns] : turns),
+    [turnsKey, pendingTurns],
+  );
+  const displayTurnsKey = deriveTurnsKey(displayTurns);
   const contextWindow = useMemo<ContextWindowInfo | null>(() => {
     let latestMetrics: any = null;
     let latestAt = -1;
@@ -1187,12 +1231,12 @@ export function SessionView({
   }, [perfEnabled, entry?.loading, entry?.events.length, entry?.diff]);
 
   const workbenchThreadView = useMemo(() => {
-    if (turns.length === 0) {
+    if (displayTurns.length === 0) {
       return { groups: [], debugEvents: [] };
     }
     return buildWorkbenchThreadViewModelFromTurns(
-      turns,
-      messages,
+      displayTurns,
+      displayMessages,
       toolSummariesReady ? turnToolsByTurnId : {},
       events,
       askUserQuestionAnswers,
@@ -1200,11 +1244,11 @@ export function SessionView({
     // messages are canonical for turn headers; include in memo key
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
-    turnsKey,
-    messagesKey,
+    displayTurnsKey,
+    displayMessagesKey,
     toolSummariesReady ? turnToolsByTurnId : null,
     eventsKey,
-    turns.length,
+    displayTurns.length,
     askUserQuestionAnswers,
   ]);
 
@@ -1243,8 +1287,8 @@ export function SessionView({
   const prevActiveRef = useRef(isActive);
   const virtuosoPersistTimerRef = useRef<number | null>(null);
   const scrollSyncKey = useMemo(
-    () => `${eventsKey}:${messagesKey}:${turnsKey}`,
-    [eventsKey, messagesKey, turnsKey],
+    () => `${eventsKey}:${displayMessagesKey}:${displayTurnsKey}`,
+    [eventsKey, displayMessagesKey, displayTurnsKey],
   );
   const [restoreInProgress, setRestoreInProgress] = useState(false);
   const { initialTopMostItemIndex, markAutoScroll, scheduleAutoScroll } = usePinnedScrollManager({
@@ -1566,25 +1610,46 @@ export function SessionView({
     if (sendBusy) return;
     const text = (dictationRecording ? await stopDictation({ awaitFinal: true }) : input).trim();
     if (!text) return;
+    const attachmentsToSend = draftAttachments;
+    const optimisticId = createClientMessageId();
+    const optimisticMessage: Message = {
+      id: optimisticId,
+      session_id: id,
+      task_id: session?.task_id ?? "",
+      turn_id: null,
+      turn_sequence: null,
+      role: "user",
+      content: text,
+      attachments: attachmentsToSend,
+      delivery: "queued",
+      created_at: new Date().toISOString(),
+    };
     setSendBusy(true);
     setSendError(null);
+    setPendingMessages((prev) => [...prev, { clientId: optimisticId, message: optimisticMessage }]);
+    stickToBottomRef.current = true;
+    setStickToBottom(true);
+    liveScrollTopRef.current = null;
+    pendingScrollToBottomRef.current = true;
+    setInput("");
+    setDraftAttachments([]);
     try {
-      await postMessage(id, text, undefined, draftAttachments);
+      const posted = await postMessage(id, text, undefined, attachmentsToSend);
+      setPendingMessages((prev) =>
+        prev.map((entry) => (entry.clientId === optimisticId ? { ...entry, message: posted } : entry)),
+      );
       // Refresh Messages immediately so user turns render without waiting for a `done` event.
-      await supervisor.refreshQueue(id);
+      supervisor.refreshQueue(id);
       supervisor.refreshSession(id, { watchDiff: true });
-      stickToBottomRef.current = true;
-      setStickToBottom(true);
-      liveScrollTopRef.current = null;
-      pendingScrollToBottomRef.current = true;
-      setInput("");
-      setDraftAttachments([]);
       try {
         await onDraftPersistNow?.();
       } catch {
         // best-effort
       }
     } catch (e: any) {
+      setPendingMessages((prev) => prev.filter((entry) => entry.clientId !== optimisticId));
+      setInput(text);
+      setDraftAttachments(attachmentsToSend);
       setSendError(e?.message ? String(e.message) : String(e));
     } finally {
       setSendBusy(false);
@@ -2242,7 +2307,7 @@ export function SessionView({
         {queue.length > 0 && (
           <div className="queue-panel card">
             <div className="row">
-              <strong>Queued messages ({queue.length})</strong>
+              <strong>Pending messages ({queue.length})</strong>
             </div>
             <ul className="sublist">
               {queue.map((m) => {
@@ -2407,6 +2472,74 @@ function deriveTurnsKey(turns: SessionTurn[]): string {
   return `${turns.length}:${first.start_seq ?? ""}:${last.start_seq ?? ""}:${last.updated_at ?? ""}`;
 }
 
+const compareMessageOrder = (a: Message, b: Message): number => {
+  const c = String(a.created_at).localeCompare(String(b.created_at));
+  if (c !== 0) return c;
+  const sa = Number(a.turn_sequence ?? Number.NaN);
+  const sb = Number(b.turn_sequence ?? Number.NaN);
+  if (Number.isFinite(sa) && Number.isFinite(sb) && sa !== sb) return sa - sb;
+  if (Number.isFinite(sa) && !Number.isFinite(sb)) return -1;
+  if (!Number.isFinite(sa) && Number.isFinite(sb)) return 1;
+  return String(idToString(a.id)).localeCompare(String(idToString(b.id)));
+};
+
+function mergeMessagesForView(messages: Message[], pending: PendingMessageEntry[]): Message[] {
+  if (pending.length === 0) return messages;
+  const byId = new Map<string, Message>();
+  for (const m of messages) {
+    const id = idToString(m.id);
+    if (id) byId.set(id, m);
+  }
+  for (const entry of pending) {
+    const id = idToString(entry.message.id);
+    if (!id || byId.has(id)) continue;
+    byId.set(id, entry.message);
+  }
+  return Array.from(byId.values()).sort(compareMessageOrder);
+}
+
+function buildPendingTurns(turns: SessionTurn[], messages: Message[]): SessionTurn[] {
+  if (messages.length === 0) return [];
+  const turnIds = new Set<string>();
+  const userMessageIds = new Set<string>();
+  for (const turn of turns) {
+    const tid = idToString(turn.turn_id);
+    if (tid) turnIds.add(tid);
+    const uid = turn.user_message_id ? idToString(turn.user_message_id) : "";
+    if (uid) userMessageIds.add(uid);
+  }
+  const pending: SessionTurn[] = [];
+  for (const message of messages) {
+    if (message.role !== "user") continue;
+    const mid = idToString(message.id);
+    if (!mid || userMessageIds.has(mid)) continue;
+    let turnId = idToString(message.turn_id);
+    if (!turnId) turnId = `pending-turn-${mid}`;
+    if (turnIds.has(turnId)) continue;
+    pending.push({
+      turn_id: turnId,
+      session_id: message.session_id,
+      run_id: null,
+      user_message_id: message.id,
+      status: message.delivery === "immediate" ? "running" : "queued",
+      start_seq: null,
+      end_seq: null,
+      started_at: message.created_at,
+      updated_at: message.created_at,
+      assistant_partial: "",
+      thought_partial: "",
+      metrics_json: null,
+      tool_total: 0,
+      tool_pending: 0,
+      tool_running: 0,
+      tool_completed: 0,
+      tool_failed: 0,
+    });
+    turnIds.add(turnId);
+  }
+  return pending;
+}
+
 function filterThreadItemsForVerbosity(items: ThreadItem[], verbosity: SessionViewVerbosity): ThreadItem[] {
   if (verbosity === "terse") {
     return items.filter((item) => item.kind !== "tool" && item.kind !== "tool_group" && item.kind !== "thought");
@@ -2442,7 +2575,6 @@ function buildSystemMessageGroups(messages: Message[]): SortableThreadGroup[] {
             content: m.content ?? "",
             attachments,
             created_at: m.created_at,
-            delivery: m.delivery,
           },
         ],
       },

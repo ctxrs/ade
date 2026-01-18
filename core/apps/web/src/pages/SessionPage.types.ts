@@ -8,7 +8,6 @@ export type ThreadItem =
       content: string;
       attachments: MessageAttachment[];
       created_at: string;
-      delivery?: "immediate" | "queued";
     }
   | {
       kind: "spacer";

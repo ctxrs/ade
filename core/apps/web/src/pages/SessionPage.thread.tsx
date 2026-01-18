@@ -165,7 +165,6 @@ export function ThreadItemView({
           role={item.role}
           content={item.content}
           attachments={item.attachments}
-          delivery={item.delivery}
           worktreeId={worktreeId}
           onFileOpenError={onFileOpenError}
           modifierDown={modifierDown}
@@ -281,7 +280,6 @@ function CollapsibleMessage({
   role,
   content,
   attachments,
-  delivery,
   worktreeId,
   onFileOpenError,
   modifierDown,
@@ -290,7 +288,6 @@ function CollapsibleMessage({
   role: "user" | "assistant" | "system";
   content: string;
   attachments: MessageAttachment[];
-  delivery?: "immediate" | "queued";
   worktreeId: string | null;
   onFileOpenError: (message: string | null) => void;
   modifierDown: boolean;
@@ -332,7 +329,6 @@ function CollapsibleMessage({
           })}
         </div>
       )}
-      {delivery === "queued" && <span className="badge">Queued</span>}
       {isLong && (
         <button
           type="button"

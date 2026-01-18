@@ -1,17 +1,17 @@
 use std::{
     collections::{HashMap, HashSet},
-    sync::Arc,
-    time::Instant,
+    sync::{Arc, OnceLock},
+    time::{Duration, Instant},
 };
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 
-use ctx_core::models::{MessageRole, SessionTurnStatus};
+use ctx_core::models::{MessageDelivery, MessageRole, SessionTurnStatus};
 use gpui::{
-    div, img, linear_color_stop, linear_gradient, list, prelude::*, px, AnyElement, App,
-    ClickEvent, Context, Edges, ElementId, Element, Image, ImageFormat, InteractiveElement,
-    ListState, ObjectFit, Pixels, Rgba, SharedString, Stateful, StatefulInteractiveElement,
-    StyleRefinement, WeakEntity, Window,
+    Animation, AnimationExt, Transformation, div, img, linear_color_stop, linear_gradient, list,
+    percentage, prelude::*, px, AnyElement, App, ClickEvent, Context, Edges, ElementId, Element,
+    Image, ImageFormat, InteractiveElement, ListState, ObjectFit, Pixels, Rgba, SharedString,
+    Stateful, StatefulInteractiveElement, StyleRefinement, WeakEntity, Window,
 };
 use gpui_component::{Icon, IconName, StyledExt};
 use gpui_component::text::{InlineCodeStyle, TextView, TextViewStyle};
@@ -19,6 +19,7 @@ use gpui_component::text::{InlineCodeStyle, TextView, TextViewStyle};
 use crate::automation_tree;
 use crate::theme::{ThemeColors, ThemeMetrics};
 
+use super::super::icons::{Icon as AppIcon, IconName as AppIconName};
 use super::super::models::{
     attachment_cache_key, MessageAttachment, ThreadItem, ThreadListItem, ThreadToolItem,
 };
@@ -26,6 +27,9 @@ use super::super::state::ShellView;
 
 const COLLAPSED_MESSAGE_MAX_LINES: usize = 8;
 const COLLAPSED_MESSAGE_MAX_CHARS: usize = 1000;
+const SPINNER_DURATION: Duration = Duration::from_millis(800);
+
+static SPINNER_ANCHOR: OnceLock<Instant> = OnceLock::new();
 
 fn markdown_view(
     id: impl Into<ElementId>,
@@ -269,6 +273,14 @@ impl<'a> ThreadListView<'a> {
                                 &attachment_loading,
                                 &attachment_failed,
                                 AttachmentVariant::Header,
+                            ))
+                            .child(render_delivery_indicator(
+                                ElementId::from(format!(
+                                    "sticky-turn-header-send-{}",
+                                    header.id
+                                )),
+                                header.delivery.clone(),
+                                colors,
                             )),
                     )
                     .into_any_element()
@@ -404,6 +416,11 @@ fn render_thread_item(
                 &attachment_failed,
                 AttachmentVariant::Header,
             );
+            let delivery_indicator = render_delivery_indicator(
+                ElementId::from(format!("turn-header-send-{id}")),
+                header.delivery.clone(),
+                colors,
+            );
             let copy_button = if !has_copy_button {
                 div().into_any_element()
             } else {
@@ -464,7 +481,8 @@ fn render_thread_item(
                     .id(format!("turn-header-container-{id}"))
                     .child(copy_button)
                     .child(content)
-                    .child(attachments),
+                    .child(attachments)
+                    .child(delivery_indicator),
                 click_handler(
                     weak_view.clone(),
                     move |view, _ev, _window, cx| {
@@ -1210,6 +1228,74 @@ fn inline_attachment_image(mime_type: &str, data_base64: &str) -> Option<Arc<Ima
     let format = ImageFormat::from_mime_type(mime_type).unwrap_or(ImageFormat::Png);
     let bytes = STANDARD.decode(data_base64).ok()?;
     Some(Arc::new(Image::from_bytes(format, bytes)))
+}
+
+fn render_delivery_indicator(
+    spinner_id: ElementId,
+    delivery: Option<MessageDelivery>,
+    colors: ThemeColors,
+) -> AnyElement {
+    if !matches!(delivery, Some(MessageDelivery::Queued)) {
+        return div().into_any_element();
+    }
+
+    let ring_color = Rgba {
+        a: (colors.border.a * 0.6).min(1.0),
+        ..colors.border
+    };
+    let arc = AppIcon::new(AppIconName::SpinnerArc, 12.0, colors.accent).with_animation(
+        spinner_id,
+        Animation::new(SPINNER_DURATION).repeat(),
+        |icon, _delta| {
+            let phase = spinner_phase();
+            icon.transform(Transformation::rotate(percentage(phase)))
+        },
+    );
+    let spinner = div()
+        .w(px(12.0))
+        .h(px(12.0))
+        .relative()
+        .child(
+            div()
+                .w(px(12.0))
+                .h(px(12.0))
+                .rounded_full()
+                .border_1()
+                .border_color(ring_color),
+        )
+        .child(
+            div()
+                .absolute()
+                .top_0()
+                .left_0()
+                .right_0()
+                .bottom_0()
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(arc),
+        );
+
+    div()
+        .mt(px(4.0))
+        .flex()
+        .items_center()
+        .gap(px(6.0))
+        .text_sm()
+        .text_color(colors.muted)
+        .child(spinner)
+        .child("Sending...")
+        .into_any_element()
+}
+
+fn spinner_phase() -> f32 {
+    let anchor = SPINNER_ANCHOR.get_or_init(Instant::now);
+    let duration = SPINNER_DURATION.as_secs_f32();
+    if duration <= f32::EPSILON {
+        return 0.0;
+    }
+    let elapsed = anchor.elapsed().as_secs_f32();
+    (elapsed / duration).rem_euclid(1.0)
 }
 
 fn truncate_plain_text(input: &str, max_lines: usize, max_chars: usize) -> String {

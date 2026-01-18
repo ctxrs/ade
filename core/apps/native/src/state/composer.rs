@@ -14,7 +14,7 @@ use gpui_tokio::Tokio;
 use tokio::time::sleep;
 
 use ctx_client::{EnvTarget, InstallInfo, InstallProgressEvent, InstallStateKind, ProviderOptions};
-use ctx_core::ids::SessionId;
+use ctx_core::ids::{MessageId, SessionId};
 use ctx_core::models::{MessageAttachment, MessageDelivery, MessageRole};
 use ctx_providers::adapters::ProviderHealth;
 
@@ -1186,14 +1186,24 @@ impl ShellView {
             return;
         }
         let attachments = self.composer_attachments.clone();
+        let optimistic_id = MessageId::new();
+        let mut optimistic_message = MessageItem::new(MessageRole::User, content.clone());
+        optimistic_message.id = Some(optimistic_id);
+        optimistic_message.attachments = attachments.clone();
+        optimistic_message.delivery = MessageDelivery::Queued;
+        self.push_message(optimistic_message, cx);
+        self.mark_composer_cleared();
+        cx.notify();
 
+        let request_content = content.clone();
+        let request_attachments = attachments.clone();
         let task = Tokio::spawn_result(cx, async move {
             let config = ctx_client::resolve_daemon_config()?;
             let client = ctx_client::Client::new(config)?;
             let request = ctx_client::PostMessageRequest {
-                content,
+                content: request_content,
                 delivery: None,
-                attachments,
+                attachments: request_attachments,
             };
             client.post_message(session_id, &request).await?;
             Ok(session_id)
@@ -1206,17 +1216,46 @@ impl ShellView {
                 this.update(&mut cx, |view, cx| {
                     match result {
                         Ok(session_id) => {
-                            view.mark_composer_cleared();
                             view.load_session_details(session_id, cx);
                         }
                         Err(_) => {
-                            view.push_message(
-                                MessageItem::new(
-                                    MessageRole::Assistant,
-                                    "Unable to send message.",
-                                ),
-                                cx,
-                            );
+                            view.remove_message_by_id(optimistic_id);
+                            let should_restore = view.is_session_selected(session_id)
+                                && view
+                                    .active_composer_input()
+                                    .read(cx)
+                                    .value()
+                                    .trim()
+                                    .is_empty()
+                                && view.composer_attachments.is_empty()
+                            ;
+                            if should_restore {
+                                if let Some(draft) =
+                                    view.composer_session_drafts.get_mut(&session_id)
+                                {
+                                    draft.text = content.clone();
+                                } else {
+                                    view.composer_session_drafts.insert(
+                                        session_id,
+                                        ComposerDraft {
+                                            text: content.clone(),
+                                            mode_id: view.composer_mode_id,
+                                        },
+                                    );
+                                }
+                                view.composer_session_attachments
+                                    .insert(session_id, attachments.clone());
+                                view.composer_needs_apply = true;
+                            }
+                            if view.is_session_selected(session_id) {
+                                view.push_message(
+                                    MessageItem::new(
+                                        MessageRole::Assistant,
+                                        "Unable to send message.",
+                                    ),
+                                    cx,
+                                );
+                            }
                         }
                     }
                     cx.notify();

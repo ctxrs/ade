@@ -10,7 +10,7 @@ use gpui::{
 };
 use gpui_tokio::Tokio;
 
-use ctx_core::ids::{SessionId, TurnId};
+use ctx_core::ids::{MessageId, SessionId, TurnId};
 use ctx_core::models::{
     MessageRole, SessionEvent, SessionHeadSnapshot, SessionHistoryPage, SessionSnapshot,
     SessionTurn, SessionTurnStatus,
@@ -555,6 +555,21 @@ impl ShellView {
         } else if new_len > old_len {
             self.new_thread_item_count =
                 self.new_thread_item_count.saturating_add(new_len - old_len);
+        }
+    }
+
+    pub(super) fn remove_message_by_id(&mut self, message_id: MessageId) {
+        let before = self.messages.len();
+        self.messages
+            .retain(|message| message.id != Some(message_id));
+        if self.messages.len() == before {
+            return;
+        }
+        self.rebuild_thread_items();
+        if self.thread_auto_follow {
+            self.scroll_thread_to_bottom();
+        } else if self.thread_list_len == 0 {
+            self.new_thread_item_count = 0;
         }
     }
 

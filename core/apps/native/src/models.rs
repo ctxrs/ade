@@ -347,6 +347,7 @@ pub(crate) struct WorkbenchTurnHeader {
     pub(crate) plain_text: String,
     pub(crate) attachments: Vec<MessageAttachment>,
     pub(crate) created_at: DateTime<Utc>,
+    pub(crate) delivery: Option<MessageDelivery>,
 }
 
 #[derive(Clone)]
@@ -605,6 +606,7 @@ fn build_thread_view_model_from_turns(
             plain_text: markdown_to_plain_text(&message.content),
             attachments: message.attachments.clone(),
             created_at: message.created_at,
+            delivery: Some(message.delivery.clone()),
         });
 
         let tools_snapshot = tools_by_turn_id
@@ -813,6 +815,34 @@ fn build_thread_view_model_from_turns(
                 key: format!("turn-{}", turn_id_string),
                 header,
                 items,
+            },
+        });
+    }
+
+    for message in messages.iter().filter(|message| {
+        matches!(message.role, MessageRole::User)
+            && matches!(message.delivery, MessageDelivery::Queued)
+            && message.turn_id.is_none()
+    }) {
+        let message_id = message_id_string(message.id)
+            .unwrap_or_else(|| format!("pending-{}", message.created_at));
+        let header = WorkbenchTurnHeader {
+            id: message_id.clone(),
+            content: message.content.clone(),
+            plain_text: markdown_to_plain_text(&message.content),
+            attachments: message.attachments.clone(),
+            created_at: message.created_at,
+            delivery: Some(message.delivery.clone()),
+        };
+        groups.push(SortableThreadGroup {
+            sort_at: message.created_at,
+            group: ThreadGroup {
+                key: format!("pending-{}", message_id),
+                header: Some(header),
+                items: vec![ThreadItem::Spacer {
+                    id: format!("pending-spacer-{}", message_id),
+                    created_at: message.created_at,
+                }],
             },
         });
     }
@@ -1101,6 +1131,7 @@ fn build_thread_view_model_from_events(
                 ),
                 attachments,
                 created_at: user_event.created_at,
+                delivery: Some(MessageDelivery::Immediate),
             };
 
             let mut group = TurnGroup {
@@ -1326,6 +1357,7 @@ fn build_thread_view_model_from_events(
                 plain_text: user_message.content.clone(),
                 attachments: user_message.attachments.clone(),
                 created_at: user_message.created_at,
+                delivery: Some(user_message.delivery.clone()),
             }),
             first_at: user_message.created_at,
             tool_items: Vec::new(),

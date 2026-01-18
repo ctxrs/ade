@@ -74,6 +74,7 @@ export function humanTurnStatus(status: SessionTurn["status"]): string {
     case "failed":
       return "Error";
     case "queued":
+      return "Starting";
     case "running":
     default:
       return "Working";
@@ -85,7 +86,7 @@ export function humanToolStatus(status: string): string {
   switch (s) {
     case "pending":
     case "queued":
-      return "Queued";
+      return "Pending";
     case "running":
     case "in_progress":
     case "inprogress":
