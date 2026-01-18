@@ -262,10 +262,6 @@ pub struct AzureCloudWorkersSettings {
     #[serde(default)]
     pub disk_sku: String,
     #[serde(default)]
-    pub delete_disk_on_pause: bool,
-    #[serde(default)]
-    pub use_public_ip: bool,
-    #[serde(default)]
     pub artifact_storage_account: Option<String>,
     #[serde(default)]
     pub artifact_container: Option<String>,
@@ -333,8 +329,6 @@ pub struct PublicAzureCloudWorkersSettings {
     pub ssh_public_key: String,
     pub disk_size_gb: i32,
     pub disk_sku: String,
-    pub delete_disk_on_pause: bool,
-    pub use_public_ip: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub artifact_storage_account: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -682,10 +676,6 @@ pub struct UpdateAzureCloudWorkersSettingsReq {
     #[serde(default)]
     pub disk_sku: Option<String>,
     #[serde(default)]
-    pub delete_disk_on_pause: Option<bool>,
-    #[serde(default)]
-    pub use_public_ip: Option<bool>,
-    #[serde(default)]
     pub artifact_storage_account: Option<String>,
     #[serde(default)]
     pub artifact_container: Option<String>,
@@ -915,8 +905,6 @@ pub fn to_public(settings: &Settings) -> PublicSettings {
                     ssh_public_key: azure.ssh_public_key.clone(),
                     disk_size_gb: azure.disk_size_gb,
                     disk_sku: azure.disk_sku.clone(),
-                    delete_disk_on_pause: azure.delete_disk_on_pause,
-                    use_public_ip: azure.use_public_ip,
                     artifact_storage_account: azure.artifact_storage_account.clone(),
                     artifact_container: azure.artifact_container.clone(),
                 }),
@@ -1148,12 +1136,6 @@ pub fn apply_update(mut current: Settings, req: UpdateSettingsReq) -> Settings {
                 azure.disk_size_gb = if size > 0 { size } else { 0 };
             }
             set_string(&mut azure.disk_sku, azure_req.disk_sku);
-            if let Some(delete_disk_on_pause) = azure_req.delete_disk_on_pause {
-                azure.delete_disk_on_pause = delete_disk_on_pause;
-            }
-            if let Some(use_public_ip) = azure_req.use_public_ip {
-                azure.use_public_ip = use_public_ip;
-            }
             set_optional(
                 &mut azure.artifact_storage_account,
                 azure_req.artifact_storage_account,

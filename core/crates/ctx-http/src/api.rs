@@ -14515,7 +14515,6 @@ async fn launch_gcp_gateway_inner(
 
     let gateway_url = format!("https://{public_ip}:8787");
     let region = gcp_region_from_zone(&gcp.zone);
-    let worker_instance_type = gcp.machine_type.clone();
     let gateway = user_settings::CloudGatewaySettings {
         provider: "gcp".to_string(),
         gateway_url: gateway_url.clone(),
@@ -14536,8 +14535,8 @@ async fn launch_gcp_gateway_inner(
                 if let Err(err) = update_workspace_cloud_workers_config(
                     StdPath::new(&workspace.root_path),
                     &gateway_url,
-                    &region,
-                    &worker_instance_type,
+                    "",
+                    "",
                 )
                 .await
                 {
@@ -14754,8 +14753,6 @@ async fn launch_azure_gateway_inner(
         ssh_public_key: &azure.ssh_public_key,
         disk_size_gb: azure.disk_size_gb,
         disk_sku: &azure.disk_sku,
-        delete_disk_on_pause: azure.delete_disk_on_pause,
-        use_public_ip: azure.use_public_ip,
     });
     let user_data_b64 = base64::engine::general_purpose::STANDARD.encode(user_data.as_bytes());
 
@@ -15354,8 +15351,6 @@ struct AzureGatewayUserDataSpec<'a> {
     ssh_public_key: &'a str,
     disk_size_gb: i32,
     disk_sku: &'a str,
-    delete_disk_on_pause: bool,
-    use_public_ip: bool,
 }
 
 #[derive(Debug)]
@@ -16648,14 +16643,6 @@ fn render_azure_gateway_user_data(spec: &AzureGatewayUserDataSpec<'_>) -> String
         toml::Value::Integer(spec.disk_size_gb as i64).to_string()
     ));
     config_lines.push(format!("disk_sku = {}", toml_string(spec.disk_sku)));
-    config_lines.push(format!(
-        "delete_disk_on_pause = {}",
-        toml::Value::Boolean(spec.delete_disk_on_pause).to_string()
-    ));
-    config_lines.push(format!(
-        "use_public_ip = {}",
-        toml::Value::Boolean(spec.use_public_ip).to_string()
-    ));
     let config_body = config_lines.join("\n");
 
     let mut script = String::new();
