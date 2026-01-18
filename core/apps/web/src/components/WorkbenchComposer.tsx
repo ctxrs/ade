@@ -1508,6 +1508,9 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
               ) : (
                 <span className="wb-switcher-logo-fallback" />
               )}
+              {variant === "newSession" && harnessControl.label && (
+                <span className="wb-switcher-label">{harnessControl.label}</span>
+              )}
               {variant === "newSession" && <ChevronDown size={14} />}
             </button>
             {openMenu === "harness" && harnessMenu}
