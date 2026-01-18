@@ -41,6 +41,7 @@ pub async fn submit_merge_queue_entry(
     if !config.enabled {
         bail!("merge queue is disabled for this workspace");
     }
+
     let target_branch = params
         .target_branch
         .as_deref()
