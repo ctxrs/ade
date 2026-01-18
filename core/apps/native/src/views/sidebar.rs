@@ -1,7 +1,6 @@
 use std::collections::HashSet;
 use std::rc::Rc;
-use std::sync::OnceLock;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use gpui::{
     Animation, AnimationExt, BoxShadow, ClickEvent, Context, ElementId, FontWeight, Hsla,
@@ -76,7 +75,6 @@ const SIDEBAR_FADE_RATIO: f32 = 140.0 / 180.0;
 const HOVER_FADE_DURATION: Duration = Duration::from_millis(120);
 
 const SPINNER_DURATION: Duration = Duration::from_millis(800);
-static SPINNER_ANCHOR: OnceLock<Instant> = OnceLock::new();
 
 #[derive(Debug, Clone, Copy)]
 enum TaskListItem {
@@ -956,10 +954,7 @@ fn render_task_spinner(
     let arc = Icon::new(IconName::SpinnerArc, 12.0, accent).with_animation(
         spinner_id,
         Animation::new(SPINNER_DURATION).repeat(),
-        |icon, _delta| {
-            let phase = spinner_phase();
-            icon.transform(Transformation::rotate(percentage(phase)))
-        },
+        |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
     );
 
     div()
@@ -1471,16 +1466,6 @@ fn clamp(value: f32, min: f32, max: f32) -> f32 {
         return min;
     }
     value.min(max).max(min)
-}
-
-fn spinner_phase() -> f32 {
-    let anchor = SPINNER_ANCHOR.get_or_init(Instant::now);
-    let duration = SPINNER_DURATION.as_secs_f32();
-    if duration <= f32::EPSILON {
-        return 0.0;
-    }
-    let elapsed = anchor.elapsed().as_secs_f32();
-    (elapsed / duration).rem_euclid(1.0)
 }
 
 const fn rgba(r: u8, g: u8, b: u8, a: f32) -> Rgba {
