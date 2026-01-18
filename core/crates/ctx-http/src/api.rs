@@ -24,19 +24,14 @@ use axum::response::IntoResponse;
 use axum::response::Response;
 use axum::routing::{delete, get, post, put};
 use axum::Json;
-use azure_core::auth::TokenCredential;
-use azure_identity::{DefaultAzureCredential, TokenCredentialOptions};
 use base64::Engine;
 use futures::{SinkExt, Stream, StreamExt};
-use gcp_auth::{provider as gcp_provider, TokenProvider};
-use hmac::{Hmac, Mac};
 use opentelemetry::trace::SpanKind;
 use opentelemetry::KeyValue;
 use rand_core::RngCore;
 use rcgen::generate_simple_self_signed;
-use reqwest::Method;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
+use sha2::Digest;
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, AsyncWriteExt, BufReader, SeekFrom};
 use tokio::process::Command;
@@ -46,14 +41,14 @@ use tokio_tungstenite::{connect_async, tungstenite::Message as TungsteniteMessag
 use tokio_util::io::ReaderStream;
 use tower::util::ServiceExt;
 use tower_http::services::{ServeDir, ServeFile};
-use url::form_urlencoded;
 use url::Url;
 
 use chrono::{DateTime, Utc};
 use ctx_core::ids::*;
 use ctx_core::models::*;
 use ctx_fs::git::{
-    assert_git_repo, git_merge_base, list_tracked_files, list_untracked_files, rev_parse_head,
+    assert_git_repo, git_merge_base, git_status_porcelain, git_status_short, list_tracked_files,
+    list_untracked_files, rev_parse_head,
 };
 use ctx_fs::worktrees::{create_worktree, managed_worktree_path};
 use ctx_store::store::MobileDeviceUpsert;
@@ -64,11 +59,8 @@ use crate::buffers::{
     BufferUpdateResp,
 };
 use crate::completions;
-use crate::daemon::AppState;
+use crate::daemon::{AppState, GitStatusSnapshotCacheEntry};
 use crate::dictation_livekit;
-use crate::git_status::{
-    emit_git_status_snapshot_for_sessions, load_git_status_snapshot, GitStatusSnapshot,
-};
 use crate::installer;
 use crate::installs::{InstallId, InstallInfo, InstallProgressEvent};
 use crate::logs;
@@ -202,14 +194,6 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
         .route(
             "/api/settings/cloud_workers/aws/launch",
             post(launch_aws_gateway),
-        )
-        .route(
-            "/api/settings/cloud_workers/gcp/launch",
-            post(launch_gcp_gateway),
-        )
-        .route(
-            "/api/settings/cloud_workers/azure/launch",
-            post(launch_azure_gateway),
         )
         .route("/api/diagnostics", get(diagnostics))
         .route("/api/resource_utilization", get(resource_utilization))
@@ -567,14 +551,6 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
         .route(
             "/api/cloud_workers/aws/gateway/launch",
             post(launch_aws_gateway),
-        )
-        .route(
-            "/api/cloud_workers/gcp/gateway/launch",
-            post(launch_gcp_gateway),
-        )
-        .route(
-            "/api/cloud_workers/azure/gateway/launch",
-            post(launch_azure_gateway),
         )
         .route(
             "/api/dictation/livekit/stream",
@@ -9131,10 +9107,6 @@ async fn create_session_for_task(
             .await;
     }
 
-    if let Ok(Some(worktree)) = state.store.get_worktree(worktree_id).await {
-        state.ensure_git_status_watcher(worktree).await;
-    }
-
     if let Some(prompt) = req.initial_prompt {
         let run_id = RunId::new();
         let turn_id = TurnId::new();
@@ -9279,7 +9251,19 @@ struct SessionDiffSummaryResponse {
     line_deletions: i64,
 }
 
-type SessionGitStatusResponse = GitStatusSnapshot;
+#[derive(Debug, Serialize)]
+struct SessionGitStatusResponse {
+    raw: String,
+    summary_line: String,
+    branch: Option<String>,
+    upstream: Option<String>,
+    ahead: i64,
+    behind: i64,
+    detached: bool,
+    staged: i64,
+    unstaged: i64,
+    untracked: i64,
+}
 
 async fn get_session_snapshot(
     State(state): State<Arc<AppState>>,
@@ -9538,8 +9522,16 @@ async fn get_session_git_status(
                 }),
             )
         })?;
-    state.ensure_git_status_watcher(worktree.clone()).await;
-    let resp = load_git_status_snapshot(StdPath::new(&worktree.root_path))
+    let status_text = git_status_short(&worktree.root_path).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&e.to_string()),
+            }),
+        )
+    })?;
+    let branch_info = parse_git_status_short(&status_text);
+    let entries = git_status_porcelain(&worktree.root_path)
         .await
         .map_err(|e| {
             (
@@ -9549,9 +9541,113 @@ async fn get_session_git_status(
                 }),
             )
         })?;
-    emit_git_status_snapshot_for_sessions(&state, &[session_id], worktree.id, &resp).await;
+    let (staged, unstaged, untracked) = count_git_status_entries(&entries);
+    let resp = SessionGitStatusResponse {
+        raw: status_text,
+        summary_line: branch_info.summary_line,
+        branch: branch_info.branch,
+        upstream: branch_info.upstream,
+        ahead: branch_info.ahead,
+        behind: branch_info.behind,
+        detached: branch_info.detached,
+        staged,
+        unstaged,
+        untracked,
+    };
+    maybe_emit_git_status_snapshot(&state, session_id, worktree.id, &resp).await;
     Ok(Json(resp))
 }
+
+struct GitStatusBranchInfo {
+    summary_line: String,
+    branch: Option<String>,
+    upstream: Option<String>,
+    ahead: i64,
+    behind: i64,
+    detached: bool,
+}
+
+fn parse_git_status_short(output: &str) -> GitStatusBranchInfo {
+    let mut info = GitStatusBranchInfo {
+        summary_line: String::new(),
+        branch: None,
+        upstream: None,
+        ahead: 0,
+        behind: 0,
+        detached: false,
+    };
+    let mut lines = output.lines();
+    let Some(line) = lines.next() else {
+        return info;
+    };
+    info.summary_line = line.trim().to_string();
+    let Some(mut line) = line.trim().strip_prefix("## ") else {
+        return info;
+    };
+    let mut counts_part = None;
+    if let Some(idx) = line.find(" [") {
+        counts_part = Some(line[idx + 2..].trim());
+        line = line[..idx].trim();
+    }
+    if line.starts_with("HEAD") {
+        info.detached = true;
+    }
+    if let Some((local, upstream)) = line.split_once("...") {
+        if !local.trim().is_empty() {
+            info.branch = Some(local.trim().to_string());
+        }
+        if !upstream.trim().is_empty() {
+            info.upstream = Some(upstream.trim().to_string());
+        }
+    } else if !line.trim().is_empty() && !info.detached {
+        info.branch = Some(line.trim().to_string());
+    }
+    if let Some(mut counts) = counts_part {
+        if counts.ends_with(']') {
+            counts = &counts[..counts.len() - 1];
+        }
+        for part in counts.split(',') {
+            let mut iter = part.split_whitespace();
+            let Some(kind) = iter.next() else {
+                continue;
+            };
+            let Some(value) = iter.next() else {
+                continue;
+            };
+            let count = value.parse::<i64>().unwrap_or(0);
+            match kind {
+                "ahead" => info.ahead = count,
+                "behind" => info.behind = count,
+                _ => {}
+            }
+        }
+    }
+    info
+}
+
+fn count_git_status_entries(entries: &[String]) -> (i64, i64, i64) {
+    let mut staged = 0;
+    let mut unstaged = 0;
+    let mut untracked = 0;
+    for entry in entries {
+        let trimmed = entry.trim_end();
+        if trimmed.starts_with("?? ") {
+            untracked += 1;
+            continue;
+        }
+        let mut chars = trimmed.chars();
+        let index_status = chars.next().unwrap_or(' ');
+        let worktree_status = chars.next().unwrap_or(' ');
+        if index_status != ' ' {
+            staged += 1;
+        }
+        if worktree_status != ' ' {
+            unstaged += 1;
+        }
+    }
+    (staged, unstaged, untracked)
+}
+
 async fn resolve_session_diff_base(
     workspace: &Workspace,
     worktree: &Worktree,
@@ -9603,6 +9699,60 @@ async fn resolve_session_diff_base(
         }
     }
     Ok(worktree.base_commit_sha.clone())
+}
+
+async fn maybe_emit_git_status_snapshot(
+    state: &Arc<AppState>,
+    session_id: SessionId,
+    worktree_id: WorktreeId,
+    snapshot: &SessionGitStatusResponse,
+) {
+    const GIT_STATUS_DEBOUNCE_MS: u64 = 1500;
+    let summary = serde_json::json!({
+        "summary_line": snapshot.summary_line,
+        "branch": snapshot.branch,
+        "upstream": snapshot.upstream,
+        "ahead": snapshot.ahead,
+        "behind": snapshot.behind,
+        "detached": snapshot.detached,
+        "staged": snapshot.staged,
+        "unstaged": snapshot.unstaged,
+        "untracked": snapshot.untracked,
+    });
+    let payload = serde_json::json!({
+        "kind": "git_status_snapshot",
+        "worktree_id": worktree_id.0.to_string(),
+        "summary": summary,
+    });
+    let payload_raw = match serde_json::to_string(&payload) {
+        Ok(value) => value,
+        Err(_) => return,
+    };
+    let now = Instant::now();
+    {
+        let mut cache = state.git_status_snapshots.lock().await;
+        let entry = cache
+            .entry(worktree_id)
+            .or_insert_with(|| GitStatusSnapshotCacheEntry {
+                payload: String::new(),
+                emitted_at: now - Duration::from_millis(GIT_STATUS_DEBOUNCE_MS + 1),
+            });
+        if entry.payload == payload_raw {
+            return;
+        }
+        if now.duration_since(entry.emitted_at) < Duration::from_millis(GIT_STATUS_DEBOUNCE_MS) {
+            return;
+        }
+        entry.payload = payload_raw;
+        entry.emitted_at = now;
+    }
+    let notice = state
+        .store
+        .append_session_event(session_id, None, None, SessionEventType::Notice, payload)
+        .await;
+    if let Ok(event) = notice {
+        state.publish_event(event).await;
+    }
 }
 
 async fn apply_session_diff_patch(
@@ -13820,13 +13970,15 @@ async fn fetch_remote_diff(
     let settings = user_settings::load_settings(&state.data_root).await;
     let gateway_token = resolve_gateway_token(&settings);
     let gateway_ca_pem = resolve_gateway_ca_pem(&settings);
-    let client =
-        build_gateway_client(gateway_ca_pem.as_deref()).map_err(|_| StatusCode::BAD_GATEWAY)?;
+    let client = build_gateway_client(gateway_ca_pem.as_deref()).map_err(|_| StatusCode::BAD_GATEWAY)?;
     let mut request = client.get(url);
     if let Some(token) = gateway_token.as_deref() {
         request = request.header("x-ctx-gateway-token", token);
     }
-    let resp = request.send().await.map_err(|_| StatusCode::BAD_GATEWAY)?;
+    let resp = request
+        .send()
+        .await
+        .map_err(|_| StatusCode::BAD_GATEWAY)?;
     if !resp.status().is_success() {
         return Err(StatusCode::BAD_GATEWAY);
     }
@@ -14105,32 +14257,6 @@ struct AwsGatewayLaunchResp {
     gateway: user_settings::CloudGatewaySettings,
 }
 
-#[derive(Debug, Deserialize)]
-#[allow(dead_code)]
-struct GcpGatewayLaunchReq {
-    #[serde(default)]
-    workspace_id: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-#[allow(dead_code)]
-struct GcpGatewayLaunchResp {
-    gateway: user_settings::CloudGatewaySettings,
-}
-
-#[derive(Debug, Deserialize)]
-#[allow(dead_code)]
-struct AzureGatewayLaunchReq {
-    #[serde(default)]
-    workspace_id: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-#[allow(dead_code)]
-struct AzureGatewayLaunchResp {
-    gateway: user_settings::CloudGatewaySettings,
-}
-
 #[allow(dead_code)]
 async fn launch_aws_gateway(
     State(state): State<Arc<AppState>>,
@@ -14309,517 +14435,6 @@ async fn launch_aws_gateway_inner(
         provider: "aws".to_string(),
         gateway_url: gateway_url.clone(),
         instance_id: Some(instance_id),
-        region: Some(region.clone()),
-        public_ip: Some(public_ip),
-        gateway_ca_pem: Some(gateway_cert_pem.clone()),
-        gateway_token: Some(gateway_token.clone()),
-    };
-
-    cloud.gateway = Some(gateway.clone());
-    user_settings::save_settings(&state.data_root, &settings).await?;
-
-    if let Some(workspace_id) = req.workspace_id.as_deref() {
-        if let Ok(workspace_id) = uuid::Uuid::parse_str(workspace_id) {
-            if let Ok(Some(workspace)) = state.store.get_workspace(WorkspaceId(workspace_id)).await
-            {
-                if let Err(err) = update_workspace_cloud_workers_config(
-                    StdPath::new(&workspace.root_path),
-                    &gateway_url,
-                    &region,
-                    &worker_instance_type,
-                )
-                .await
-                {
-                    tracing::warn!("failed to update cloud worker config: {err:#}");
-                }
-            }
-        }
-    }
-
-    Ok(gateway)
-}
-
-#[allow(dead_code)]
-async fn launch_gcp_gateway(
-    State(state): State<Arc<AppState>>,
-    Json(req): Json<GcpGatewayLaunchReq>,
-) -> Result<Json<GcpGatewayLaunchResp>, (StatusCode, Json<ApiErrorResp>)> {
-    let gateway = launch_gcp_gateway_inner(state, req).await.map_err(|err| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(ApiErrorResp {
-                error: logs::redact_sensitive(&err.to_string()),
-            }),
-        )
-    })?;
-
-    Ok(Json(GcpGatewayLaunchResp { gateway }))
-}
-
-#[allow(dead_code)]
-async fn launch_gcp_gateway_inner(
-    state: Arc<AppState>,
-    req: GcpGatewayLaunchReq,
-) -> anyhow::Result<user_settings::CloudGatewaySettings> {
-    const DEFAULT_GCP_ZONE: &str = "us-central1-a";
-    const DEFAULT_GCP_MACHINE_TYPE: &str = "e2-standard-2";
-    const DEFAULT_GCP_IMAGE: &str = "projects/debian-cloud/global/images/family/debian-12";
-    const DEFAULT_GCP_DISK_SIZE_GB: i64 = 50;
-    const DEFAULT_GCP_DISK_TYPE: &str = "pd-standard";
-
-    let mut settings = user_settings::load_settings(&state.data_root).await;
-    let cloud = settings.cloud_workers.get_or_insert_default();
-    let gcp = cloud.gcp.get_or_insert_default();
-
-    if gcp.project_id.trim().is_empty() {
-        anyhow::bail!("GCP project id is required");
-    }
-    if gcp.zone.trim().is_empty() {
-        gcp.zone = DEFAULT_GCP_ZONE.to_string();
-    }
-    if gcp.machine_type.trim().is_empty() {
-        gcp.machine_type = DEFAULT_GCP_MACHINE_TYPE.to_string();
-    }
-    if gcp.image.trim().is_empty() {
-        gcp.image = DEFAULT_GCP_IMAGE.to_string();
-    }
-    let service_account = gcp
-        .service_account
-        .as_ref()
-        .map(|value| value.trim())
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| anyhow::anyhow!("GCP service account email is required"))?
-        .to_string();
-
-    let disk_size_gb = gcp
-        .disk_size_gb
-        .filter(|value| *value > 0)
-        .unwrap_or(DEFAULT_GCP_DISK_SIZE_GB);
-    gcp.disk_size_gb = Some(disk_size_gb);
-    let disk_type = gcp
-        .disk_type
-        .as_ref()
-        .map(|value| value.trim())
-        .filter(|value| !value.is_empty())
-        .unwrap_or(DEFAULT_GCP_DISK_TYPE)
-        .to_string();
-    gcp.disk_type = Some(disk_type.clone());
-
-    let scopes = gcp
-        .scopes
-        .clone()
-        .unwrap_or_default()
-        .into_iter()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .collect::<Vec<_>>();
-    if scopes.is_empty() {
-        gcp.scopes = None;
-    } else {
-        gcp.scopes = Some(scopes.clone());
-    }
-
-    let gcp_auth = gcp_provider().await.context("gcp auth init")?;
-    let gcp_client = GcpApiClient::new(gcp_auth);
-
-    let bucket = if let Some(existing) = gcp
-        .artifact_bucket
-        .as_ref()
-        .filter(|value| !value.trim().is_empty())
-    {
-        ensure_gcs_bucket(&gcp_client, &gcp.project_id, existing.trim(), &gcp.zone).await?;
-        existing.trim().to_string()
-    } else {
-        let name = default_gcp_bucket_name(&gcp.project_id);
-        ensure_gcs_bucket(&gcp_client, &gcp.project_id, &name, &gcp.zone).await?;
-        gcp.artifact_bucket = Some(name.clone());
-        name
-    };
-
-    let gateway_bin = resolve_binary_path("CTX_WORKER_GATEWAY_BIN", "ctx-worker-gateway")
-        .context("ctx-worker-gateway binary not found")?;
-    let shim_bin = resolve_binary_path("CTX_WORKER_SHIM_BIN", "ctx-worker-shim")
-        .context("ctx-worker-shim binary not found")?;
-
-    let gateway_key = format!(
-        "ctx-cloud-workers/binaries/{}/ctx-worker-gateway",
-        uuid::Uuid::new_v4()
-    );
-    let shim_key = format!(
-        "ctx-cloud-workers/binaries/{}/ctx-worker-shim",
-        uuid::Uuid::new_v4()
-    );
-    upload_file_to_gcs(&gcp_client, &bucket, &gateway_key, &gateway_bin).await?;
-    upload_file_to_gcs(&gcp_client, &bucket, &shim_key, &shim_bin).await?;
-
-    let gateway_download_url = gcs_signed_get_url(
-        &gcp_client,
-        &bucket,
-        &gateway_key,
-        &service_account,
-        Duration::from_secs(3600),
-    )
-    .await?;
-    let shim_download_url = gcs_signed_get_url(
-        &gcp_client,
-        &bucket,
-        &shim_key,
-        &service_account,
-        Duration::from_secs(3600),
-    )
-    .await?;
-
-    let gateway_token = generate_gateway_token();
-    let (gateway_cert_pem, gateway_key_pem) = generate_gateway_tls_material()?;
-
-    let startup_script = render_gcp_gateway_startup_script(&GcpGatewayStartupSpec {
-        gateway_download_url: &gateway_download_url,
-        shim_download_url: &shim_download_url,
-        gateway_auth_token: &gateway_token,
-        gateway_cert_pem: &gateway_cert_pem,
-        gateway_key_pem: &gateway_key_pem,
-        project_id: &gcp.project_id,
-        zone: &gcp.zone,
-        machine_type: &gcp.machine_type,
-        image: &gcp.image,
-        network: gcp.network.as_deref(),
-        subnetwork: gcp.subnetwork.as_deref(),
-        service_account: Some(&service_account),
-        scopes: &scopes,
-        disk_size_gb,
-        disk_type: &disk_type,
-        ssh_user: gcp.ssh_user.as_deref(),
-        delete_disk_on_pause: gcp.delete_disk_on_pause.unwrap_or(false),
-    });
-
-    let network_url = gcp_network_url(&gcp.project_id, gcp.network.as_deref());
-    ensure_gcp_firewall_rule(&gcp_client, &gcp.project_id, &network_url).await?;
-
-    let instance_name = gcp_sanitize_name("ctx-gateway", &uuid::Uuid::new_v4().to_string());
-    gcp_create_gateway_instance(
-        &gcp_client,
-        &gcp.project_id,
-        &gcp.zone,
-        &instance_name,
-        &gcp.machine_type,
-        &gcp.image,
-        gcp.network.as_deref(),
-        gcp.subnetwork.as_deref(),
-        &service_account,
-        &scopes,
-        &startup_script,
-    )
-    .await?;
-    let public_ip =
-        gcp_wait_instance_ip(&gcp_client, &gcp.project_id, &gcp.zone, &instance_name).await?;
-
-    let gateway_url = format!("https://{public_ip}:8787");
-    let region = gcp_region_from_zone(&gcp.zone);
-    let gateway = user_settings::CloudGatewaySettings {
-        provider: "gcp".to_string(),
-        gateway_url: gateway_url.clone(),
-        instance_id: Some(instance_name),
-        region: Some(region.clone()),
-        public_ip: Some(public_ip),
-        gateway_ca_pem: Some(gateway_cert_pem.clone()),
-        gateway_token: Some(gateway_token.clone()),
-    };
-
-    cloud.gateway = Some(gateway.clone());
-    user_settings::save_settings(&state.data_root, &settings).await?;
-
-    if let Some(workspace_id) = req.workspace_id.as_deref() {
-        if let Ok(workspace_id) = uuid::Uuid::parse_str(workspace_id) {
-            if let Ok(Some(workspace)) = state.store.get_workspace(WorkspaceId(workspace_id)).await
-            {
-                if let Err(err) = update_workspace_cloud_workers_config(
-                    StdPath::new(&workspace.root_path),
-                    &gateway_url,
-                    "",
-                    "",
-                )
-                .await
-                {
-                    tracing::warn!("failed to update cloud worker config: {err:#}");
-                }
-            }
-        }
-    }
-
-    Ok(gateway)
-}
-
-#[allow(dead_code)]
-async fn launch_azure_gateway(
-    State(state): State<Arc<AppState>>,
-    Json(req): Json<AzureGatewayLaunchReq>,
-) -> Result<Json<AzureGatewayLaunchResp>, (StatusCode, Json<ApiErrorResp>)> {
-    let gateway = launch_azure_gateway_inner(state, req)
-        .await
-        .map_err(|err| {
-            (
-                StatusCode::BAD_REQUEST,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&err.to_string()),
-                }),
-            )
-        })?;
-
-    Ok(Json(AzureGatewayLaunchResp { gateway }))
-}
-
-#[allow(dead_code)]
-async fn launch_azure_gateway_inner(
-    state: Arc<AppState>,
-    req: AzureGatewayLaunchReq,
-) -> anyhow::Result<user_settings::CloudGatewaySettings> {
-    const DEFAULT_AZURE_LOCATION: &str = "eastus";
-    const DEFAULT_AZURE_VM_SIZE: &str = "Standard_B2s";
-    const DEFAULT_AZURE_IMAGE: &str = "Canonical:0001-com-ubuntu-server-jammy:22_04-lts:latest";
-    const DEFAULT_AZURE_DISK_SIZE_GB: i32 = 100;
-    const DEFAULT_AZURE_DISK_SKU: &str = "Premium_LRS";
-    const DEFAULT_AZURE_ADMIN_USERNAME: &str = "ctx";
-    const DEFAULT_AZURE_ARTIFACT_CONTAINER: &str = "ctx-cloud-workers";
-
-    let mut settings = user_settings::load_settings(&state.data_root).await;
-    let cloud = settings.cloud_workers.get_or_insert_default();
-    let azure = cloud.azure.get_or_insert_default();
-
-    if azure.subscription_id.trim().is_empty() {
-        anyhow::bail!("Azure subscription id is required");
-    }
-    azure.subscription_id = azure.subscription_id.trim().to_string();
-    if azure.resource_group.trim().is_empty() {
-        anyhow::bail!("Azure resource group is required");
-    }
-    azure.resource_group = azure.resource_group.trim().to_string();
-    if azure.location.trim().is_empty() {
-        azure.location = DEFAULT_AZURE_LOCATION.to_string();
-    }
-    if azure.vm_size.trim().is_empty() {
-        azure.vm_size = DEFAULT_AZURE_VM_SIZE.to_string();
-    }
-    if azure.image.trim().is_empty() {
-        azure.image = DEFAULT_AZURE_IMAGE.to_string();
-    }
-    if azure.vnet.trim().is_empty() {
-        anyhow::bail!("Azure vnet is required");
-    }
-    azure.vnet = azure.vnet.trim().to_string();
-    if azure.subnet.trim().is_empty() {
-        anyhow::bail!("Azure subnet is required");
-    }
-    azure.subnet = azure.subnet.trim().to_string();
-    if azure.ssh_public_key.trim().is_empty() {
-        anyhow::bail!("Azure SSH public key is required");
-    }
-    azure.ssh_public_key = azure.ssh_public_key.trim().to_string();
-    if azure.admin_username.trim().is_empty() {
-        azure.admin_username = DEFAULT_AZURE_ADMIN_USERNAME.to_string();
-    } else {
-        azure.admin_username = azure.admin_username.trim().to_string();
-    }
-    if azure.disk_size_gb <= 0 {
-        azure.disk_size_gb = DEFAULT_AZURE_DISK_SIZE_GB;
-    }
-    if azure.disk_sku.trim().is_empty() {
-        azure.disk_sku = DEFAULT_AZURE_DISK_SKU.to_string();
-    } else {
-        azure.disk_sku = azure.disk_sku.trim().to_string();
-    }
-
-    let storage_account = if let Some(existing) = azure
-        .artifact_storage_account
-        .as_ref()
-        .map(|value| value.trim())
-        .filter(|value| !value.is_empty())
-    {
-        existing.to_string()
-    } else {
-        let name = default_azure_storage_account_name();
-        azure.artifact_storage_account = Some(name.clone());
-        name
-    };
-    let storage_container = if let Some(existing) = azure
-        .artifact_container
-        .as_ref()
-        .map(|value| value.trim())
-        .filter(|value| !value.is_empty())
-    {
-        existing.to_string()
-    } else {
-        let name = DEFAULT_AZURE_ARTIFACT_CONTAINER.to_string();
-        azure.artifact_container = Some(name.clone());
-        name
-    };
-
-    let credential = DefaultAzureCredential::create(TokenCredentialOptions::default())
-        .context("azure credential init")?;
-    let http = reqwest::Client::new();
-    let arm = AzureArmClient::new(credential, http.clone(), azure.subscription_id.clone());
-
-    ensure_azure_storage_account(
-        &arm,
-        &azure.resource_group,
-        &azure.location,
-        &storage_account,
-    )
-    .await?;
-    ensure_azure_blob_container(
-        &arm,
-        &azure.resource_group,
-        &storage_account,
-        &storage_container,
-    )
-    .await?;
-    let storage_key =
-        azure_storage_account_key(&arm, &azure.resource_group, &storage_account).await?;
-
-    let gateway_bin = resolve_binary_path("CTX_WORKER_GATEWAY_BIN", "ctx-worker-gateway")
-        .context("ctx-worker-gateway binary not found")?;
-    let shim_bin = resolve_binary_path("CTX_WORKER_SHIM_BIN", "ctx-worker-shim")
-        .context("ctx-worker-shim binary not found")?;
-
-    let gateway_key = format!(
-        "ctx-cloud-workers/binaries/{}/ctx-worker-gateway",
-        uuid::Uuid::new_v4()
-    );
-    let shim_key = format!(
-        "ctx-cloud-workers/binaries/{}/ctx-worker-shim",
-        uuid::Uuid::new_v4()
-    );
-    upload_file_to_azure_blob(
-        &http,
-        &storage_account,
-        &storage_container,
-        &gateway_key,
-        &gateway_bin,
-        &storage_key,
-    )
-    .await?;
-    upload_file_to_azure_blob(
-        &http,
-        &storage_account,
-        &storage_container,
-        &shim_key,
-        &shim_bin,
-        &storage_key,
-    )
-    .await?;
-
-    let gateway_download_url = azure_blob_download_url(
-        &storage_account,
-        &storage_container,
-        &gateway_key,
-        &storage_key,
-        Duration::from_secs(3600),
-    )?;
-    let shim_download_url = azure_blob_download_url(
-        &storage_account,
-        &storage_container,
-        &shim_key,
-        &storage_key,
-        Duration::from_secs(3600),
-    )?;
-
-    let gateway_token = generate_gateway_token();
-    let (gateway_cert_pem, gateway_key_pem) = generate_gateway_tls_material()?;
-    let azure_tenant_id = std::env::var("AZURE_TENANT_ID").ok();
-    let azure_client_id = std::env::var("AZURE_CLIENT_ID").ok();
-    let azure_client_secret = std::env::var("AZURE_CLIENT_SECRET").ok();
-    if azure_tenant_id.is_none() || azure_client_id.is_none() || azure_client_secret.is_none() {
-        anyhow::bail!(
-            "missing Azure client credentials; set AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET"
-        );
-    }
-
-    let user_data = render_azure_gateway_user_data(&AzureGatewayUserDataSpec {
-        gateway_download_url: &gateway_download_url,
-        shim_download_url: &shim_download_url,
-        gateway_auth_token: &gateway_token,
-        gateway_cert_pem: &gateway_cert_pem,
-        gateway_key_pem: &gateway_key_pem,
-        azure_tenant_id: azure_tenant_id.as_deref(),
-        azure_client_id: azure_client_id.as_deref(),
-        azure_client_secret: azure_client_secret.as_deref(),
-        subscription_id: &azure.subscription_id,
-        resource_group: &azure.resource_group,
-        location: &azure.location,
-        vm_size: &azure.vm_size,
-        image: &azure.image,
-        vnet: &azure.vnet,
-        subnet: &azure.subnet,
-        admin_username: &azure.admin_username,
-        ssh_public_key: &azure.ssh_public_key,
-        disk_size_gb: azure.disk_size_gb,
-        disk_sku: &azure.disk_sku,
-    });
-    let user_data_b64 = base64::engine::general_purpose::STANDARD.encode(user_data.as_bytes());
-
-    let gateway_id = uuid::Uuid::new_v4().simple().to_string();
-    let vm_name = azure_sanitize_name("ctx-gateway", &gateway_id);
-    let nic_name = azure_sanitize_name("ctx-gateway-nic", &gateway_id);
-    let public_ip_name = azure_sanitize_name("ctx-gateway-ip", &gateway_id);
-    let nsg_name = azure_sanitize_name("ctx-gateway-nsg", &gateway_id);
-    let resource_base = arm.resource_base();
-    let subnet_id = azure_subnet_id(
-        &resource_base,
-        &azure.resource_group,
-        &azure.vnet,
-        &azure.subnet,
-    );
-    let public_ip_id = azure_public_ip_id(&resource_base, &azure.resource_group, &public_ip_name);
-    let nic_id = azure_nic_id(&resource_base, &azure.resource_group, &nic_name);
-    let nsg_id = azure_nsg_id(&resource_base, &azure.resource_group, &nsg_name);
-
-    ensure_azure_network_security_group(
-        &arm,
-        &azure.resource_group,
-        &azure.location,
-        &nsg_name,
-        false,
-    )
-    .await?;
-    ensure_azure_public_ip(
-        &arm,
-        &azure.resource_group,
-        &azure.location,
-        &public_ip_name,
-    )
-    .await?;
-    ensure_azure_nic(
-        &arm,
-        &azure.resource_group,
-        &azure.location,
-        &nic_name,
-        &subnet_id,
-        &public_ip_id,
-        Some(&nsg_id),
-    )
-    .await?;
-    ensure_azure_vm(
-        &arm,
-        &azure.resource_group,
-        &azure.location,
-        &vm_name,
-        &nic_id,
-        &user_data_b64,
-        &azure.admin_username,
-        &azure.ssh_public_key,
-        &azure.vm_size,
-        &azure.image,
-    )
-    .await?;
-
-    let public_ip = wait_azure_public_ip(&arm, &azure.resource_group, &public_ip_name).await?;
-    let public_ip = public_ip.context("gateway instance missing public IP")?;
-    let gateway_url = format!("https://{public_ip}:8787");
-    let region = azure.location.clone();
-    let worker_instance_type = azure.vm_size.clone();
-    let gateway = user_settings::CloudGatewaySettings {
-        provider: "azure".to_string(),
-        gateway_url: gateway_url.clone(),
-        instance_id: Some(vm_name),
         region: Some(region.clone()),
         public_ip: Some(public_ip),
         gateway_ca_pem: Some(gateway_cert_pem.clone()),
@@ -15329,52 +14944,6 @@ struct GatewayUserDataSpec<'a> {
     ssh_user: Option<&'a str>,
 }
 
-#[derive(Debug)]
-#[allow(dead_code)]
-struct AzureGatewayUserDataSpec<'a> {
-    gateway_download_url: &'a str,
-    shim_download_url: &'a str,
-    gateway_auth_token: &'a str,
-    gateway_cert_pem: &'a str,
-    gateway_key_pem: &'a str,
-    azure_tenant_id: Option<&'a str>,
-    azure_client_id: Option<&'a str>,
-    azure_client_secret: Option<&'a str>,
-    subscription_id: &'a str,
-    resource_group: &'a str,
-    location: &'a str,
-    vm_size: &'a str,
-    image: &'a str,
-    vnet: &'a str,
-    subnet: &'a str,
-    admin_username: &'a str,
-    ssh_public_key: &'a str,
-    disk_size_gb: i32,
-    disk_sku: &'a str,
-}
-
-#[derive(Debug)]
-#[allow(dead_code)]
-struct GcpGatewayStartupSpec<'a> {
-    gateway_download_url: &'a str,
-    shim_download_url: &'a str,
-    gateway_auth_token: &'a str,
-    gateway_cert_pem: &'a str,
-    gateway_key_pem: &'a str,
-    project_id: &'a str,
-    zone: &'a str,
-    machine_type: &'a str,
-    image: &'a str,
-    network: Option<&'a str>,
-    subnetwork: Option<&'a str>,
-    service_account: Option<&'a str>,
-    scopes: &'a [String],
-    disk_size_gb: i64,
-    disk_type: &'a str,
-    ssh_user: Option<&'a str>,
-    delete_disk_on_pause: bool,
-}
-
 fn generate_gateway_token() -> String {
     let mut bytes = [0u8; 32];
     rand_core::OsRng.fill_bytes(&mut bytes);
@@ -15387,8 +14956,10 @@ fn generate_gateway_token() -> String {
 fn generate_gateway_tls_material() -> anyhow::Result<(String, String)> {
     let cert = generate_simple_self_signed(vec!["ctx-gateway".to_string()])
         .context("generate gateway certificate")?;
-    let cert_pem = cert.cert.pem();
-    let key_pem = cert.key_pair.serialize_pem();
+    let cert_pem = cert
+        .serialize_pem()
+        .context("serialize gateway certificate")?;
+    let key_pem = cert.serialize_private_key_pem();
     Ok((cert_pem, key_pem))
 }
 
@@ -15426,7 +14997,12 @@ async fn resolve_subnet_and_vpc(
 
     let vpc_resp = ec2
         .describe_vpcs()
-        .filters(Filter::builder().name("isDefault").values("true").build())
+        .filters(
+            Filter::builder()
+                .name("isDefault")
+                .values("true")
+                .build(),
+        )
         .send()
         .await
         .context("describe_vpcs")?;
@@ -15435,7 +15011,12 @@ async fn resolve_subnet_and_vpc(
 
     let subnet_resp = ec2
         .describe_subnets()
-        .filters(Filter::builder().name("vpc-id").values(vpc_id).build())
+        .filters(
+            Filter::builder()
+                .name("vpc-id")
+                .values(vpc_id)
+                .build(),
+        )
         .filters(
             Filter::builder()
                 .name("default-for-az")
@@ -15445,12 +15026,17 @@ async fn resolve_subnet_and_vpc(
         .send()
         .await
         .context("describe_subnets")?;
-    let subnet_id = if let Some(subnet) = subnet_resp.subnets().first() {
-        subnet.subnet_id().context("subnet missing id")?.to_string()
+    let subnet = if let Some(subnet) = subnet_resp.subnets().first() {
+        subnet
     } else {
         let fallback = ec2
             .describe_subnets()
-            .filters(Filter::builder().name("vpc-id").values(vpc_id).build())
+            .filters(
+                Filter::builder()
+                    .name("vpc-id")
+                    .values(vpc_id)
+                    .build(),
+            )
             .send()
             .await
             .context("describe_subnets fallback")?;
@@ -15458,11 +15044,9 @@ async fn resolve_subnet_and_vpc(
             .subnets()
             .first()
             .context("default subnet not found")?
-            .subnet_id()
-            .context("subnet missing id")?
-            .to_string()
     };
-    Ok((subnet_id, vpc_id.to_string()))
+    let subnet_id = subnet.subnet_id().context("subnet missing id")?;
+    Ok((subnet_id.to_string(), vpc_id.to_string()))
 }
 
 #[allow(dead_code)]
@@ -15542,12 +15126,7 @@ async fn resolve_latest_amazon_linux_2023_ami(ec2: &Ec2Client) -> anyhow::Result
     let resp = ec2
         .describe_images()
         .owners("amazon")
-        .filters(
-            Filter::builder()
-                .name("name")
-                .values("al2023-ami-*")
-                .build(),
-        )
+        .filters(Filter::builder().name("name").values("al2023-ami-*").build())
         .filters(
             Filter::builder()
                 .name("architecture")
@@ -15566,7 +15145,12 @@ async fn resolve_latest_amazon_linux_2023_ami(ec2: &Ec2Client) -> anyhow::Result
                 .values("hvm")
                 .build(),
         )
-        .filters(Filter::builder().name("state").values("available").build())
+        .filters(
+            Filter::builder()
+                .name("state")
+                .values("available")
+                .build(),
+        )
         .send()
         .await
         .context("describe_images")?;
@@ -15616,7 +15200,7 @@ async fn ensure_bucket(s3: &S3Client, bucket: &str, region: &str) -> anyhow::Res
 
     let mut create = s3.create_bucket().bucket(bucket);
     if region != "us-east-1" {
-        let location = BucketLocationConstraint::from(region);
+        let location = BucketLocationConstraint::from(region.to_string());
         create = create.create_bucket_configuration(
             aws_sdk_s3::types::CreateBucketConfiguration::builder()
                 .location_constraint(location)
@@ -15687,570 +15271,6 @@ async fn presign_get_url(
         .await
         .context("presign get_object")?;
     Ok(presigned.uri().to_string())
-}
-
-struct GcpApiClient {
-    auth: Arc<dyn TokenProvider>,
-    http: reqwest::Client,
-}
-
-impl GcpApiClient {
-    fn new(auth: Arc<dyn TokenProvider>) -> Self {
-        Self {
-            auth,
-            http: reqwest::Client::new(),
-        }
-    }
-
-    async fn token(&self) -> anyhow::Result<String> {
-        let scopes = ["https://www.googleapis.com/auth/cloud-platform"];
-        let token = self.auth.token(&scopes).await.context("gcp token")?;
-        Ok(token.as_str().to_string())
-    }
-
-    async fn request_json(
-        &self,
-        method: Method,
-        url: &str,
-        body: Option<serde_json::Value>,
-    ) -> anyhow::Result<serde_json::Value> {
-        let token = self.token().await?;
-        let needs_body = method != Method::GET;
-        let mut req = self.http.request(method, url).bearer_auth(token);
-        if let Some(body) = body {
-            req = req.json(&body);
-        } else if needs_body {
-            req = req
-                .header(reqwest::header::CONTENT_LENGTH, "0")
-                .body(Vec::new());
-        }
-        let resp = req.send().await.context("gcp request")?;
-        let status = resp.status();
-        let text = resp.text().await.context("gcp response text")?;
-        if !status.is_success() {
-            anyhow::bail!("gcp request failed: {status} {text}");
-        }
-        if text.trim().is_empty() {
-            return Ok(serde_json::Value::Null);
-        }
-        serde_json::from_str(&text).context("gcp response json")
-    }
-
-    async fn request_bytes(&self, method: Method, url: &str, body: Vec<u8>) -> anyhow::Result<()> {
-        let token = self.token().await?;
-        let resp = self
-            .http
-            .request(method, url)
-            .bearer_auth(token)
-            .header(header::CONTENT_TYPE, "application/octet-stream")
-            .body(body)
-            .send()
-            .await
-            .context("gcp request")?;
-        let status = resp.status();
-        let text = resp.text().await.context("gcp response text")?;
-        if !status.is_success() {
-            anyhow::bail!("gcp request failed: {status} {text}");
-        }
-        Ok(())
-    }
-}
-
-fn gcp_region_from_zone(zone: &str) -> String {
-    let zone = zone.trim();
-    if let Some(pos) = zone.rfind('-') {
-        zone[..pos].to_string()
-    } else {
-        zone.to_string()
-    }
-}
-
-fn gcp_compute_base(project_id: &str) -> String {
-    format!("https://compute.googleapis.com/compute/v1/projects/{project_id}")
-}
-
-fn gcp_machine_type_url(project_id: &str, zone: &str, machine_type: &str) -> String {
-    if machine_type.contains('/') {
-        machine_type.to_string()
-    } else {
-        format!(
-            "{}/zones/{}/machineTypes/{}",
-            gcp_compute_base(project_id),
-            zone,
-            machine_type
-        )
-    }
-}
-
-fn gcp_image_url(project_id: &str, image: &str) -> String {
-    if image.starts_with("projects/") || image.starts_with("https://") {
-        image.to_string()
-    } else {
-        format!("projects/{}/global/images/{}", project_id, image)
-    }
-}
-
-fn gcp_network_url(project_id: &str, network: Option<&str>) -> String {
-    if let Some(network) = network
-        .map(|value| value.trim())
-        .filter(|value| !value.is_empty())
-    {
-        if network.starts_with("projects/") || network.starts_with("https://") {
-            network.to_string()
-        } else {
-            format!(
-                "{}/global/networks/{}",
-                gcp_compute_base(project_id),
-                network
-            )
-        }
-    } else {
-        format!("{}/global/networks/default", gcp_compute_base(project_id))
-    }
-}
-
-fn gcp_subnetwork_url(project_id: &str, zone: &str, subnetwork: Option<&str>) -> Option<String> {
-    let subnetwork = subnetwork
-        .map(|value| value.trim())
-        .filter(|value| !value.is_empty())?;
-    if subnetwork.starts_with("projects/") || subnetwork.starts_with("https://") {
-        Some(subnetwork.to_string())
-    } else {
-        Some(format!(
-            "{}/regions/{}/subnetworks/{}",
-            gcp_compute_base(project_id),
-            gcp_region_from_zone(zone),
-            subnetwork
-        ))
-    }
-}
-
-fn gcp_sanitize_name(prefix: &str, suffix: &str) -> String {
-    let raw = format!("{}-{}", prefix, suffix);
-    let mut out = String::new();
-    for ch in raw.chars() {
-        let ch = ch.to_ascii_lowercase();
-        if ch.is_ascii_alphanumeric() || ch == '-' {
-            out.push(ch);
-        } else {
-            out.push('-');
-        }
-    }
-    if !out
-        .chars()
-        .next()
-        .map(|c| c.is_ascii_alphabetic())
-        .unwrap_or(false)
-    {
-        out.insert(0, 'a');
-    }
-    if !out
-        .chars()
-        .last()
-        .map(|c| c.is_ascii_alphanumeric())
-        .unwrap_or(false)
-    {
-        out.push('0');
-    }
-    out.truncate(63);
-    out.trim_matches('-').to_string()
-}
-
-async fn gcp_wait_zone_operation(
-    client: &GcpApiClient,
-    project_id: &str,
-    zone: &str,
-    op_name: &str,
-) -> anyhow::Result<()> {
-    let url = format!(
-        "{}/zones/{}/operations/{}",
-        gcp_compute_base(project_id),
-        zone,
-        op_name
-    );
-    for _ in 0..120 {
-        let resp = client.request_json(Method::GET, &url, None).await?;
-        let status = resp.get("status").and_then(|v| v.as_str());
-        if status == Some("DONE") {
-            if let Some(error) = resp.get("error") {
-                anyhow::bail!("gcp operation error: {}", error);
-            }
-            return Ok(());
-        }
-        tokio::time::sleep(Duration::from_secs(5)).await;
-    }
-    anyhow::bail!("gcp operation timeout")
-}
-
-async fn gcp_wait_global_operation(
-    client: &GcpApiClient,
-    project_id: &str,
-    op_name: &str,
-) -> anyhow::Result<()> {
-    let url = format!(
-        "{}/global/operations/{}",
-        gcp_compute_base(project_id),
-        op_name
-    );
-    for _ in 0..120 {
-        let resp = client.request_json(Method::GET, &url, None).await?;
-        let status = resp.get("status").and_then(|v| v.as_str());
-        if status == Some("DONE") {
-            if let Some(error) = resp.get("error") {
-                anyhow::bail!("gcp operation error: {}", error);
-            }
-            return Ok(());
-        }
-        tokio::time::sleep(Duration::from_secs(5)).await;
-    }
-    anyhow::bail!("gcp operation timeout")
-}
-
-async fn gcp_create_gateway_instance(
-    client: &GcpApiClient,
-    project_id: &str,
-    zone: &str,
-    name: &str,
-    machine_type: &str,
-    image: &str,
-    network: Option<&str>,
-    subnetwork: Option<&str>,
-    service_account: &str,
-    scopes: &[String],
-    startup_script: &str,
-) -> anyhow::Result<()> {
-    let mut network_interface = serde_json::json!({
-        "network": gcp_network_url(project_id, network),
-        "accessConfigs": [{
-            "name": "External NAT",
-            "type": "ONE_TO_ONE_NAT"
-        }]
-    });
-    if let Some(subnetwork) = gcp_subnetwork_url(project_id, zone, subnetwork) {
-        network_interface
-            .as_object_mut()
-            .expect("network interface")
-            .insert(
-                "subnetwork".to_string(),
-                serde_json::Value::String(subnetwork),
-            );
-    }
-
-    let mut instance = serde_json::json!({
-        "name": name,
-        "machineType": gcp_machine_type_url(project_id, zone, machine_type),
-        "disks": [{
-            "boot": true,
-            "autoDelete": true,
-            "initializeParams": {
-                "sourceImage": gcp_image_url(project_id, image)
-            }
-        }],
-        "metadata": {
-            "items": [
-                { "key": "startup-script", "value": startup_script }
-            ]
-        },
-        "networkInterfaces": [network_interface],
-        "tags": {
-            "items": ["ctx-worker-gateway"]
-        },
-        "labels": {
-            "ctx-gateway": "true"
-        }
-    });
-
-    let scopes = if scopes.is_empty() {
-        vec!["https://www.googleapis.com/auth/cloud-platform".to_string()]
-    } else {
-        scopes.to_vec()
-    };
-    instance.as_object_mut().expect("instance").insert(
-        "serviceAccounts".to_string(),
-        serde_json::json!([{
-            "email": service_account,
-            "scopes": scopes,
-        }]),
-    );
-
-    let url = format!("{}/zones/{}/instances", gcp_compute_base(project_id), zone);
-    let resp = client
-        .request_json(Method::POST, &url, Some(instance))
-        .await?;
-    let op_name = resp
-        .get("name")
-        .and_then(|v| v.as_str())
-        .context("missing instance op name")?;
-    gcp_wait_zone_operation(client, project_id, zone, op_name).await
-}
-
-async fn gcp_fetch_instance_ip(
-    client: &GcpApiClient,
-    project_id: &str,
-    zone: &str,
-    name: &str,
-) -> anyhow::Result<Option<String>> {
-    let url = format!(
-        "{}/zones/{}/instances/{}",
-        gcp_compute_base(project_id),
-        zone,
-        name
-    );
-    let resp = client.request_json(Method::GET, &url, None).await?;
-    let ip = resp
-        .get("networkInterfaces")
-        .and_then(|v| v.as_array())
-        .and_then(|arr| arr.first())
-        .and_then(|v| v.get("accessConfigs"))
-        .and_then(|v| v.as_array())
-        .and_then(|arr| arr.first())
-        .and_then(|v| v.get("natIP"))
-        .and_then(|v| v.as_str())
-        .map(|v| v.to_string());
-    Ok(ip)
-}
-
-async fn gcp_wait_instance_ip(
-    client: &GcpApiClient,
-    project_id: &str,
-    zone: &str,
-    name: &str,
-) -> anyhow::Result<String> {
-    for _ in 0..120 {
-        let ip = gcp_fetch_instance_ip(client, project_id, zone, name).await?;
-        if let Some(ip) = ip {
-            return Ok(ip);
-        }
-        tokio::time::sleep(Duration::from_secs(5)).await;
-    }
-    anyhow::bail!("gateway instance missing public IP")
-}
-
-async fn ensure_gcp_firewall_rule(
-    client: &GcpApiClient,
-    project_id: &str,
-    network_url: &str,
-) -> anyhow::Result<()> {
-    let name = "ctx-worker-gateway";
-    let url = format!("{}/global/firewalls/{}", gcp_compute_base(project_id), name);
-    if let Err(err) = client.request_json(Method::GET, &url, None).await {
-        let msg = err.to_string();
-        if !(msg.contains("404") || msg.contains("Not Found")) {
-            return Err(err).context("get firewall rule");
-        }
-    } else {
-        return Ok(());
-    }
-
-    let rule = serde_json::json!({
-        "name": name,
-        "network": network_url,
-        "direction": "INGRESS",
-        "sourceRanges": ["0.0.0.0/0"],
-        "targetTags": [name],
-        "allowed": [{
-            "IPProtocol": "tcp",
-            "ports": ["8787"]
-        }]
-    });
-
-    let create_url = format!("{}/global/firewalls", gcp_compute_base(project_id));
-    let resp = client
-        .request_json(Method::POST, &create_url, Some(rule))
-        .await?;
-    let op_name = resp
-        .get("name")
-        .and_then(|v| v.as_str())
-        .context("missing firewall op name")?;
-    gcp_wait_global_operation(client, project_id, op_name).await
-}
-
-fn default_gcp_bucket_name(project_id: &str) -> String {
-    let mut name = format!(
-        "ctx-worker-gateway-{}",
-        project_id.trim().to_ascii_lowercase()
-    );
-    name = name
-        .chars()
-        .map(|ch| {
-            if ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '-' {
-                ch
-            } else {
-                '-'
-            }
-        })
-        .collect();
-    if !name
-        .chars()
-        .next()
-        .map(|ch| ch.is_ascii_alphanumeric())
-        .unwrap_or(false)
-    {
-        name.insert(0, 'c');
-    }
-    if !name
-        .chars()
-        .last()
-        .map(|ch| ch.is_ascii_alphanumeric())
-        .unwrap_or(false)
-    {
-        name.push('0');
-    }
-    if name.len() < 3 {
-        name.push_str("ctx");
-    }
-    if name.len() > 63 {
-        name.truncate(63);
-    }
-    name
-}
-
-async fn ensure_gcs_bucket(
-    client: &GcpApiClient,
-    project_id: &str,
-    bucket: &str,
-    zone: &str,
-) -> anyhow::Result<()> {
-    let url = format!("https://storage.googleapis.com/storage/v1/b/{}", bucket);
-    if let Err(err) = client.request_json(Method::GET, &url, None).await {
-        let msg = err.to_string();
-        if !(msg.contains("404") || msg.contains("Not Found")) {
-            return Err(err).context("get bucket");
-        }
-    } else {
-        return Ok(());
-    }
-
-    let location = if zone.trim().is_empty() {
-        "US".to_string()
-    } else {
-        gcp_region_from_zone(zone)
-    };
-    let create_url = format!(
-        "https://storage.googleapis.com/storage/v1/b?project={}",
-        urlencoding::encode(project_id)
-    );
-    let body = serde_json::json!({
-        "name": bucket,
-        "location": location,
-    });
-    let resp = client
-        .request_json(Method::POST, &create_url, Some(body))
-        .await;
-    match resp {
-        Ok(_) => Ok(()),
-        Err(err) => {
-            let msg = err.to_string();
-            if msg.contains("409") || msg.contains("AlreadyExists") {
-                Ok(())
-            } else {
-                Err(err).context("create bucket")
-            }
-        }
-    }
-}
-
-async fn upload_file_to_gcs(
-    client: &GcpApiClient,
-    bucket: &str,
-    key: &str,
-    path: &PathBuf,
-) -> anyhow::Result<()> {
-    let bytes = tokio::fs::read(path)
-        .await
-        .with_context(|| format!("reading {}", path.display()))?;
-    let object = urlencoding::encode(key);
-    let url = format!(
-        "https://storage.googleapis.com/upload/storage/v1/b/{}/o?uploadType=media&name={}",
-        bucket, object
-    );
-    client.request_bytes(Method::POST, &url, bytes).await
-}
-
-fn gcs_encode_path(value: &str) -> String {
-    value
-        .split('/')
-        .map(|part| urlencoding::encode(part).to_string())
-        .collect::<Vec<_>>()
-        .join("/")
-}
-
-async fn gcp_sign_blob(
-    client: &GcpApiClient,
-    service_account: &str,
-    payload: &str,
-) -> anyhow::Result<Vec<u8>> {
-    let payload_b64 = base64::engine::general_purpose::STANDARD.encode(payload.as_bytes());
-    let encoded_account = urlencoding::encode(service_account);
-    let url = format!(
-        "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/{}:signBlob",
-        encoded_account
-    );
-    let body = serde_json::json!({ "payload": payload_b64 });
-    let resp = client.request_json(Method::POST, &url, Some(body)).await?;
-    let signed_blob = resp
-        .get("signedBlob")
-        .and_then(|v| v.as_str())
-        .context("missing signedBlob")?;
-    let bytes = base64::engine::general_purpose::STANDARD
-        .decode(signed_blob)
-        .context("decode signed blob")?;
-    Ok(bytes)
-}
-
-async fn gcs_signed_get_url(
-    client: &GcpApiClient,
-    bucket: &str,
-    key: &str,
-    service_account: &str,
-    expires_in: Duration,
-) -> anyhow::Result<String> {
-    let now = Utc::now();
-    let date = now.format("%Y%m%d").to_string();
-    let timestamp = now.format("%Y%m%dT%H%M%SZ").to_string();
-    let credential_scope = format!("{}/auto/storage/goog4_request", date);
-    let credential = format!("{}/{}", service_account, credential_scope);
-
-    let mut params = vec![
-        ("X-Goog-Algorithm", "GOOG4-RSA-SHA256".to_string()),
-        ("X-Goog-Credential", credential),
-        ("X-Goog-Date", timestamp.clone()),
-        ("X-Goog-Expires", expires_in.as_secs().to_string()),
-        ("X-Goog-SignedHeaders", "host".to_string()),
-    ];
-    params.sort_by(|(a, _), (b, _)| a.cmp(b));
-    let canonical_query = params
-        .iter()
-        .map(|(key, value)| {
-            format!(
-                "{}={}",
-                urlencoding::encode(key),
-                urlencoding::encode(value)
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("&");
-
-    let canonical_uri = format!("/{}/{}", bucket, gcs_encode_path(key));
-    let canonical_headers = "host:storage.googleapis.com\n";
-    let signed_headers = "host";
-    let canonical_request = format!(
-        "GET\n{}\n{}\n{}\n{}\nUNSIGNED-PAYLOAD",
-        canonical_uri, canonical_query, canonical_headers, signed_headers
-    );
-    let mut hasher = sha2::Sha256::new();
-    hasher.update(canonical_request.as_bytes());
-    let canonical_hash = hex::encode(hasher.finalize());
-    let string_to_sign = format!(
-        "GOOG4-RSA-SHA256\n{}\n{}\n{}",
-        timestamp, credential_scope, canonical_hash
-    );
-    let signature = gcp_sign_blob(client, service_account, &string_to_sign).await?;
-    let signature_hex = hex::encode(signature);
-    Ok(format!(
-        "https://storage.googleapis.com{}?{}&X-Goog-Signature={}",
-        canonical_uri, canonical_query, signature_hex
-    ))
 }
 
 fn shell_escape(value: &str) -> String {
@@ -16338,9 +15358,7 @@ fn render_gateway_user_data(spec: &GatewayUserDataSpec<'_>) -> String {
     script.push_str("  if [ -n \"$token\" ]; then\n");
     script.push_str("    curl -fsSL -H \"X-aws-ec2-metadata-token: $token\" \"http://169.254.169.254/latest/meta-data/${path}\" 2>/dev/null || true\n");
     script.push_str("  else\n");
-    script.push_str(
-        "    curl -fsSL \"http://169.254.169.254/latest/meta-data/${path}\" 2>/dev/null || true\n",
-    );
+    script.push_str("    curl -fsSL \"http://169.254.169.254/latest/meta-data/${path}\" 2>/dev/null || true\n");
     script.push_str("  fi\n");
     script.push_str("}\n\n");
 
@@ -16388,7 +15406,10 @@ fn render_gateway_user_data(spec: &GatewayUserDataSpec<'_>) -> String {
         spec.aws_secret_access_key.trim()
     ));
     script.push_str(&format!("AWS_REGION={}\n", spec.aws_region.trim()));
-    script.push_str(&format!("AWS_DEFAULT_REGION={}\n", spec.aws_region.trim()));
+    script.push_str(&format!(
+        "AWS_DEFAULT_REGION={}\n",
+        spec.aws_region.trim()
+    ));
     script.push_str("EOF\n");
     script.push_str("chmod 600 /etc/ctx-gateway/ctx-gateway.env\n");
     script.push_str("cat > /etc/ctx-gateway/config.toml <<EOF\n");
@@ -16405,339 +15426,6 @@ fn render_gateway_user_data(spec: &GatewayUserDataSpec<'_>) -> String {
     script.push_str("Wants=network-online.target\n\n");
     script.push_str("[Service]\n");
     script.push_str("EnvironmentFile=/etc/ctx-gateway/ctx-gateway.env\n");
-    script.push_str(
-        "ExecStart=/usr/local/bin/ctx-worker-gateway --config /etc/ctx-gateway/config.toml\n",
-    );
-    script.push_str("Restart=on-failure\n");
-    script.push_str("RestartSec=5\n");
-    script.push_str("User=root\n\n");
-    script.push_str("[Install]\n");
-    script.push_str("WantedBy=multi-user.target\n");
-    script.push_str("EOF\n");
-    script.push_str("systemctl daemon-reload\n");
-    script.push_str("systemctl enable --now ctx-worker-gateway\n");
-    script
-}
-
-#[allow(dead_code)]
-fn render_gcp_gateway_startup_script(spec: &GcpGatewayStartupSpec<'_>) -> String {
-    let toml_string = |value: &str| toml::Value::String(value.to_string()).to_string();
-    let mut config_lines = Vec::new();
-    config_lines.push("[server]".to_string());
-    config_lines.push(format!("bind = {}", toml_string("0.0.0.0:8787")));
-    config_lines.push(format!("driver = {}", toml_string("gcp")));
-    config_lines.push(format!(
-        "worker_shim_path = {}",
-        toml_string("/usr/local/bin/ctx-worker-shim")
-    ));
-    config_lines.push(format!(
-        "auth_token = {}",
-        toml_string(spec.gateway_auth_token)
-    ));
-    config_lines.push("public_base_url = \"${public_base_url}\"".to_string());
-    config_lines.push(format!(
-        "tls_cert_path = {}",
-        toml_string("/etc/ctx-gateway/tls.crt")
-    ));
-    config_lines.push(format!(
-        "tls_key_path = {}",
-        toml_string("/etc/ctx-gateway/tls.key")
-    ));
-    config_lines.push(String::new());
-    config_lines.push("[gcp]".to_string());
-    config_lines.push(format!("project_id = {}", toml_string(spec.project_id)));
-    config_lines.push(format!("zone = {}", toml_string(spec.zone)));
-    config_lines.push(format!("machine_type = {}", toml_string(spec.machine_type)));
-    config_lines.push(format!("image = {}", toml_string(spec.image)));
-    if let Some(network) = spec
-        .network
-        .map(|value| value.trim())
-        .filter(|value| !value.is_empty())
-    {
-        config_lines.push(format!("network = {}", toml_string(network)));
-    }
-    if let Some(subnetwork) = spec
-        .subnetwork
-        .map(|value| value.trim())
-        .filter(|value| !value.is_empty())
-    {
-        config_lines.push(format!("subnetwork = {}", toml_string(subnetwork)));
-    }
-    if let Some(service_account) = spec
-        .service_account
-        .map(|value| value.trim())
-        .filter(|value| !value.is_empty())
-    {
-        config_lines.push(format!(
-            "service_account = {}",
-            toml_string(service_account)
-        ));
-    }
-    if !spec.scopes.is_empty() {
-        let scopes = toml::Value::Array(
-            spec.scopes
-                .iter()
-                .map(|scope| toml::Value::String(scope.to_string()))
-                .collect(),
-        )
-        .to_string();
-        config_lines.push(format!("scopes = {}", scopes));
-    }
-    config_lines.push(format!("disk_size_gb = {}", spec.disk_size_gb));
-    config_lines.push(format!("disk_type = {}", toml_string(spec.disk_type)));
-    if let Some(ssh_user) = spec
-        .ssh_user
-        .map(|value| value.trim())
-        .filter(|value| !value.is_empty())
-    {
-        config_lines.push(format!("ssh_user = {}", toml_string(ssh_user)));
-    }
-    if spec.delete_disk_on_pause {
-        config_lines.push("delete_disk_on_pause = true".to_string());
-    }
-    let config_body = config_lines.join("\n");
-
-    let mut script = String::new();
-    script.push_str("#!/usr/bin/env bash\n");
-    script.push_str("set -euo pipefail\n\n");
-    script.push_str("install_deps() {\n");
-    script.push_str("  if command -v curl >/dev/null 2>&1; then\n");
-    script.push_str("    return 0\n");
-    script.push_str("  fi\n");
-    script.push_str("  for _ in 1 2 3 4 5; do\n");
-    script.push_str("    if command -v apt-get >/dev/null 2>&1; then\n");
-    script.push_str("      export DEBIAN_FRONTEND=noninteractive\n");
-    script
-        .push_str("      apt-get update -y && apt-get install -y curl ca-certificates && break\n");
-    script.push_str("    elif command -v dnf >/dev/null 2>&1; then\n");
-    script.push_str("      dnf install -y curl ca-certificates && break\n");
-    script.push_str("    elif command -v yum >/dev/null 2>&1; then\n");
-    script.push_str("      yum install -y curl ca-certificates && break\n");
-    script.push_str("    fi\n");
-    script.push_str("    sleep 2\n");
-    script.push_str("  done\n");
-    script.push_str("  if ! command -v curl >/dev/null 2>&1; then\n");
-    script.push_str("    echo \"failed to install curl\" >&2\n");
-    script.push_str("    exit 1\n");
-    script.push_str("  fi\n");
-    script.push_str("}\n\n");
-
-    script.push_str("fetch_metadata() {\n");
-    script.push_str("  local path=\"$1\"\n");
-    script.push_str("  curl -fsSL -H \"Metadata-Flavor: Google\" \"http://metadata.google.internal/computeMetadata/v1/${path}\" 2>/dev/null || true\n");
-    script.push_str("}\n\n");
-
-    script.push_str("install_deps\n");
-    script.push_str(
-        "public_ip=$(fetch_metadata instance/network-interfaces/0/access-configs/0/external-ip)\n",
-    );
-    script.push_str("if [ -z \"$public_ip\" ]; then\n");
-    script.push_str("  public_ip=$(fetch_metadata instance/network-interfaces/0/ip)\n");
-    script.push_str("fi\n");
-    script.push_str("if [ -z \"$public_ip\" ]; then\n");
-    script.push_str("  echo \"missing instance IP\" >&2\n");
-    script.push_str("  exit 1\n");
-    script.push_str("fi\n");
-    script.push_str("public_base_url=\"https://${public_ip}:8787\"\n");
-    script.push_str("mkdir -p /etc/ctx-gateway /usr/local/bin\n");
-    script.push_str(&format!(
-        "curl -fsSL {} -o /usr/local/bin/ctx-worker-gateway\n",
-        shell_escape(spec.gateway_download_url)
-    ));
-    script.push_str("chmod +x /usr/local/bin/ctx-worker-gateway\n");
-    script.push_str(&format!(
-        "curl -fsSL {} -o /usr/local/bin/ctx-worker-shim\n",
-        shell_escape(spec.shim_download_url)
-    ));
-    script.push_str("chmod +x /usr/local/bin/ctx-worker-shim\n");
-    script.push_str("cat > /etc/ctx-gateway/tls.crt <<'EOF'\n");
-    script.push_str(spec.gateway_cert_pem);
-    if !spec.gateway_cert_pem.ends_with('\n') {
-        script.push('\n');
-    }
-    script.push_str("EOF\n");
-    script.push_str("cat > /etc/ctx-gateway/tls.key <<'EOF'\n");
-    script.push_str(spec.gateway_key_pem);
-    if !spec.gateway_key_pem.ends_with('\n') {
-        script.push('\n');
-    }
-    script.push_str("EOF\n");
-    script.push_str("chmod 600 /etc/ctx-gateway/tls.key\n");
-    script.push_str("cat > /etc/ctx-gateway/config.toml <<EOF\n");
-    script.push_str(&config_body);
-    if !config_body.ends_with('\n') {
-        script.push('\n');
-    }
-    script.push_str("EOF\n");
-    script.push_str("chmod 600 /etc/ctx-gateway/config.toml\n");
-
-    script.push_str("cat > /etc/systemd/system/ctx-worker-gateway.service <<'EOF'\n");
-    script.push_str("[Unit]\n");
-    script.push_str("Description=ctx worker gateway\n");
-    script.push_str("After=network-online.target\n");
-    script.push_str("Wants=network-online.target\n\n");
-    script.push_str("[Service]\n");
-    script.push_str(
-        "ExecStart=/usr/local/bin/ctx-worker-gateway --config /etc/ctx-gateway/config.toml\n",
-    );
-    script.push_str("Restart=on-failure\n");
-    script.push_str("RestartSec=5\n");
-    script.push_str("User=root\n\n");
-    script.push_str("[Install]\n");
-    script.push_str("WantedBy=multi-user.target\n");
-    script.push_str("EOF\n");
-    script.push_str("systemctl daemon-reload\n");
-    script.push_str("systemctl enable --now ctx-worker-gateway\n");
-    script
-}
-
-#[allow(dead_code)]
-fn render_azure_gateway_user_data(spec: &AzureGatewayUserDataSpec<'_>) -> String {
-    let toml_string = |value: &str| toml::Value::String(value.to_string()).to_string();
-    let mut config_lines = Vec::new();
-    config_lines.push("[server]".to_string());
-    config_lines.push(format!("bind = {}", toml_string("0.0.0.0:8787")));
-    config_lines.push(format!("driver = {}", toml_string("azure")));
-    config_lines.push(format!(
-        "worker_shim_path = {}",
-        toml_string("/usr/local/bin/ctx-worker-shim")
-    ));
-    config_lines.push(format!(
-        "auth_token = {}",
-        toml_string(spec.gateway_auth_token)
-    ));
-    config_lines.push("public_base_url = \"${public_base_url}\"".to_string());
-    config_lines.push(format!(
-        "tls_cert_path = {}",
-        toml_string("/etc/ctx-gateway/tls.crt")
-    ));
-    config_lines.push(format!(
-        "tls_key_path = {}",
-        toml_string("/etc/ctx-gateway/tls.key")
-    ));
-    config_lines.push(String::new());
-    config_lines.push("[azure]".to_string());
-    config_lines.push(format!(
-        "subscription_id = {}",
-        toml_string(spec.subscription_id)
-    ));
-    config_lines.push(format!(
-        "resource_group = {}",
-        toml_string(spec.resource_group)
-    ));
-    config_lines.push(format!("location = {}", toml_string(spec.location)));
-    config_lines.push(format!("vm_size = {}", toml_string(spec.vm_size)));
-    config_lines.push(format!("image = {}", toml_string(spec.image)));
-    config_lines.push(format!("vnet = {}", toml_string(spec.vnet)));
-    config_lines.push(format!("subnet = {}", toml_string(spec.subnet)));
-    config_lines.push(format!(
-        "admin_username = {}",
-        toml_string(spec.admin_username)
-    ));
-    config_lines.push(format!(
-        "ssh_public_key = {}",
-        toml_string(spec.ssh_public_key)
-    ));
-    config_lines.push(format!(
-        "disk_size_gb = {}",
-        toml::Value::Integer(spec.disk_size_gb as i64).to_string()
-    ));
-    config_lines.push(format!("disk_sku = {}", toml_string(spec.disk_sku)));
-    let config_body = config_lines.join("\n");
-
-    let mut script = String::new();
-    script.push_str("#!/usr/bin/env bash\n");
-    script.push_str("set -euo pipefail\n\n");
-    script.push_str("install_deps() {\n");
-    script.push_str("  if command -v curl >/dev/null 2>&1; then\n");
-    script.push_str("    return 0\n");
-    script.push_str("  fi\n");
-    script.push_str("  if command -v apt-get >/dev/null 2>&1; then\n");
-    script.push_str("    apt-get update -y >/dev/null 2>&1 || true\n");
-    script.push_str("    apt-get install -y curl ca-certificates >/dev/null 2>&1 || true\n");
-    script.push_str("  elif command -v dnf >/dev/null 2>&1; then\n");
-    script.push_str("    dnf install -y curl ca-certificates >/dev/null 2>&1 || true\n");
-    script.push_str("  elif command -v yum >/dev/null 2>&1; then\n");
-    script.push_str("    yum install -y curl ca-certificates >/dev/null 2>&1 || true\n");
-    script.push_str("  fi\n");
-    script.push_str("}\n\n");
-    script.push_str("fetch_metadata() {\n");
-    script.push_str("  local path=\"$1\"\n");
-    script.push_str(
-        "  curl -fsSL -H \"Metadata: true\" \"http://169.254.169.254/metadata/instance/${path}?api-version=2021-02-01&format=text\" 2>/dev/null || true\n",
-    );
-    script.push_str("}\n\n");
-
-    script.push_str("install_deps\n");
-    script.push_str(
-        "public_ip=$(fetch_metadata \"network/interface/0/ipv4/ipAddress/0/publicIpAddress\")\n",
-    );
-    script.push_str("if [ -z \"$public_ip\" ]; then\n");
-    script.push_str(
-        "  public_ip=$(fetch_metadata \"network/interface/0/ipv4/ipAddress/0/privateIpAddress\")\n",
-    );
-    script.push_str("fi\n");
-    script.push_str("if [ -z \"$public_ip\" ]; then\n");
-    script.push_str("  echo \"missing instance IP\" >&2\n");
-    script.push_str("  exit 1\n");
-    script.push_str("fi\n");
-    script.push_str("public_base_url=\"https://${public_ip}:8787\"\n");
-    script.push_str("mkdir -p /etc/ctx-gateway /usr/local/bin\n");
-    script.push_str(&format!(
-        "curl -fsSL {} -o /usr/local/bin/ctx-worker-gateway\n",
-        shell_escape(spec.gateway_download_url)
-    ));
-    script.push_str("chmod +x /usr/local/bin/ctx-worker-gateway\n");
-    script.push_str(&format!(
-        "curl -fsSL {} -o /usr/local/bin/ctx-worker-shim\n",
-        shell_escape(spec.shim_download_url)
-    ));
-    script.push_str("chmod +x /usr/local/bin/ctx-worker-shim\n");
-    script.push_str("cat > /etc/ctx-gateway/tls.crt <<'EOF'\n");
-    script.push_str(spec.gateway_cert_pem);
-    if !spec.gateway_cert_pem.ends_with('\n') {
-        script.push('\n');
-    }
-    script.push_str("EOF\n");
-    script.push_str("cat > /etc/ctx-gateway/tls.key <<'EOF'\n");
-    script.push_str(spec.gateway_key_pem);
-    if !spec.gateway_key_pem.ends_with('\n') {
-        script.push('\n');
-    }
-    script.push_str("EOF\n");
-    script.push_str("chmod 600 /etc/ctx-gateway/tls.key\n");
-    script.push_str("cat > /etc/ctx-gateway/config.toml <<EOF\n");
-    script.push_str(&config_body);
-    if !config_body.ends_with('\n') {
-        script.push('\n');
-    }
-    script.push_str("EOF\n");
-    script.push_str("chmod 600 /etc/ctx-gateway/config.toml\n");
-
-    if let (Some(tenant_id), Some(client_id), Some(client_secret)) = (
-        spec.azure_tenant_id,
-        spec.azure_client_id,
-        spec.azure_client_secret,
-    ) {
-        script.push_str("cat > /etc/ctx-gateway/azure.env <<'EOF'\n");
-        script.push_str(&format!("AZURE_TENANT_ID={tenant_id}\n"));
-        script.push_str(&format!("AZURE_CLIENT_ID={client_id}\n"));
-        script.push_str(&format!("AZURE_CLIENT_SECRET={client_secret}\n"));
-        script.push_str("EOF\n");
-        script.push_str("chmod 600 /etc/ctx-gateway/azure.env\n");
-    }
-    script.push_str("cat > /etc/systemd/system/ctx-worker-gateway.service <<'EOF'\n");
-    script.push_str("[Unit]\n");
-    script.push_str("Description=ctx worker gateway\n");
-    script.push_str("After=network-online.target\n");
-    script.push_str("Wants=network-online.target\n\n");
-    script.push_str("[Service]\n");
-    if spec.azure_tenant_id.is_some()
-        && spec.azure_client_id.is_some()
-        && spec.azure_client_secret.is_some()
-    {
-        script.push_str("EnvironmentFile=/etc/ctx-gateway/azure.env\n");
-    }
     script.push_str(
         "ExecStart=/usr/local/bin/ctx-worker-gateway --config /etc/ctx-gateway/config.toml\n",
     );
@@ -16829,671 +15517,6 @@ async fn wait_instance_ips(
     }
     Ok((None, None))
 }
-
-struct AzureArmClient {
-    credential: DefaultAzureCredential,
-    http: reqwest::Client,
-    subscription_id: String,
-}
-
-impl AzureArmClient {
-    fn new(
-        credential: DefaultAzureCredential,
-        http: reqwest::Client,
-        subscription_id: String,
-    ) -> Self {
-        Self {
-            credential,
-            http,
-            subscription_id,
-        }
-    }
-
-    fn api_base(&self) -> String {
-        format!(
-            "https://management.azure.com/subscriptions/{}",
-            self.subscription_id
-        )
-    }
-
-    fn resource_base(&self) -> String {
-        format!("/subscriptions/{}", self.subscription_id)
-    }
-
-    async fn token(&self, scope: &str) -> anyhow::Result<String> {
-        let token = self
-            .credential
-            .get_token(&[scope])
-            .await
-            .context("azure token")?;
-        Ok(token.token.secret().to_string())
-    }
-
-    async fn request(
-        &self,
-        method: Method,
-        url: &str,
-        body: Option<serde_json::Value>,
-    ) -> anyhow::Result<serde_json::Value> {
-        const AZURE_MANAGEMENT_SCOPE: &str = "https://management.azure.com/.default";
-        let method_name = method.as_str().to_string();
-        let token = self.token(AZURE_MANAGEMENT_SCOPE).await?;
-        let needs_body = method != Method::GET;
-        let mut req = self.http.request(method, url).bearer_auth(token);
-        if let Some(body) = body {
-            req = req.json(&body);
-        } else if needs_body {
-            req = req
-                .header(reqwest::header::CONTENT_LENGTH, "0")
-                .body(Vec::new());
-        }
-        let resp = req.send().await.context("azure request")?;
-        let status = resp.status();
-        let text = resp.text().await.context("azure response text")?;
-        if !status.is_success() {
-            anyhow::bail!("azure request failed ({method_name} {url}): {status} {text}");
-        }
-        if text.trim().is_empty() {
-            return Ok(serde_json::Value::Null);
-        }
-        serde_json::from_str(&text).context("azure response json")
-    }
-
-    async fn request_allow_conflict(
-        &self,
-        method: Method,
-        url: &str,
-        body: Option<serde_json::Value>,
-    ) -> anyhow::Result<()> {
-        const AZURE_MANAGEMENT_SCOPE: &str = "https://management.azure.com/.default";
-        let method_name = method.as_str().to_string();
-        let token = self.token(AZURE_MANAGEMENT_SCOPE).await?;
-        let needs_body = method != Method::GET;
-        let mut req = self.http.request(method, url).bearer_auth(token);
-        if let Some(body) = body {
-            req = req.json(&body);
-        } else if needs_body {
-            req = req.body(Vec::new());
-        }
-        let resp = req.send().await.context("azure request")?;
-        let status = resp.status();
-        if status == reqwest::StatusCode::CONFLICT {
-            return Ok(());
-        }
-        let text = resp.text().await.context("azure response text")?;
-        if !status.is_success() {
-            anyhow::bail!("azure request failed ({method_name} {url}): {status} {text}");
-        }
-        Ok(())
-    }
-
-    async fn wait_resource(&self, url: &str) -> anyhow::Result<()> {
-        for _ in 0..120 {
-            let resp = self.request(Method::GET, url, None).await?;
-            let status = resp
-                .get("properties")
-                .and_then(|v| v.get("provisioningState"))
-                .and_then(|v| v.as_str());
-            if status == Some("Succeeded") {
-                return Ok(());
-            }
-            if status == Some("Failed") {
-                anyhow::bail!("azure provisioning failed");
-            }
-            tokio::time::sleep(Duration::from_secs(5)).await;
-        }
-        anyhow::bail!("azure provisioning timeout")
-    }
-}
-
-fn default_azure_storage_account_name() -> String {
-    let mut suffix = uuid::Uuid::new_v4().simple().to_string();
-    suffix.truncate(18);
-    format!("ctxgw{}", suffix)
-}
-
-fn azure_sanitize_name(prefix: &str, id: &str) -> String {
-    let raw = format!("{}-{}", prefix, id);
-    let mut out = String::new();
-    for ch in raw.chars() {
-        let ch = ch.to_ascii_lowercase();
-        if ch.is_ascii_alphanumeric() || ch == '-' {
-            out.push(ch);
-        } else {
-            out.push('-');
-        }
-    }
-    if out.len() > 63 {
-        out.truncate(63);
-    }
-    while out.ends_with('-') {
-        out.pop();
-    }
-    out
-}
-
-fn azure_subnet_id(base: &str, resource_group: &str, vnet: &str, subnet: &str) -> String {
-    format!(
-        "{}/resourceGroups/{}/providers/Microsoft.Network/virtualNetworks/{}/subnets/{}",
-        base, resource_group, vnet, subnet
-    )
-}
-
-fn azure_public_ip_id(base: &str, resource_group: &str, name: &str) -> String {
-    format!(
-        "{}/resourceGroups/{}/providers/Microsoft.Network/publicIPAddresses/{}",
-        base, resource_group, name
-    )
-}
-
-fn azure_nic_id(base: &str, resource_group: &str, name: &str) -> String {
-    format!(
-        "{}/resourceGroups/{}/providers/Microsoft.Network/networkInterfaces/{}",
-        base, resource_group, name
-    )
-}
-
-fn azure_nsg_id(base: &str, resource_group: &str, name: &str) -> String {
-    format!(
-        "{}/resourceGroups/{}/providers/Microsoft.Network/networkSecurityGroups/{}",
-        base, resource_group, name
-    )
-}
-
-fn azure_image_reference(image: &str) -> serde_json::Value {
-    if image.starts_with("/subscriptions/") {
-        serde_json::json!({ "id": image })
-    } else if image.contains(':') {
-        let parts: Vec<&str> = image.split(':').collect();
-        if parts.len() == 4 {
-            serde_json::json!({
-                "publisher": parts[0],
-                "offer": parts[1],
-                "sku": parts[2],
-                "version": parts[3],
-            })
-        } else {
-            serde_json::json!({ "id": image })
-        }
-    } else {
-        serde_json::json!({ "id": image })
-    }
-}
-
-async fn ensure_azure_storage_account(
-    arm: &AzureArmClient,
-    resource_group: &str,
-    location: &str,
-    account: &str,
-) -> anyhow::Result<()> {
-    let url = format!(
-        "{}/resourceGroups/{}/providers/Microsoft.Storage/storageAccounts/{}?api-version=2023-01-01",
-        arm.api_base(),
-        resource_group,
-        account
-    );
-    let body = serde_json::json!({
-        "location": location,
-        "kind": "StorageV2",
-        "sku": { "name": "Standard_LRS" },
-        "properties": {
-            "accessTier": "Hot",
-            "allowBlobPublicAccess": false
-        }
-    });
-    arm.request(Method::PUT, &url, Some(body)).await?;
-    arm.wait_resource(&url).await
-}
-
-async fn azure_storage_account_key(
-    arm: &AzureArmClient,
-    resource_group: &str,
-    account: &str,
-) -> anyhow::Result<String> {
-    let url = format!(
-        "{}/resourceGroups/{}/providers/Microsoft.Storage/storageAccounts/{}/listKeys?api-version=2023-01-01",
-        arm.api_base(),
-        resource_group,
-        account
-    );
-    let resp = arm.request(Method::POST, &url, None).await?;
-    let key = resp
-        .get("keys")
-        .and_then(|v| v.as_array())
-        .and_then(|v| v.first())
-        .and_then(|v| v.get("value"))
-        .and_then(|v| v.as_str())
-        .context("storage account key missing")?;
-    Ok(key.to_string())
-}
-
-fn azure_blob_url(account: &str, container: &str, blob: &str) -> String {
-    format!(
-        "https://{}.blob.core.windows.net/{}/{}",
-        account, container, blob
-    )
-}
-
-fn azure_canonicalized_resource(account: &str, container: &str, blob: Option<&str>) -> String {
-    match blob {
-        Some(blob) => format!("/blob/{account}/{container}/{blob}"),
-        None => format!("/blob/{account}/{container}"),
-    }
-}
-
-fn azure_sas_signature(key_b64: &str, string_to_sign: &str) -> anyhow::Result<String> {
-    let key = base64::engine::general_purpose::STANDARD
-        .decode(key_b64)
-        .context("decode storage key")?;
-    let mut mac = Hmac::<Sha256>::new_from_slice(&key).context("hmac key")?;
-    mac.update(string_to_sign.as_bytes());
-    let signature = mac.finalize().into_bytes();
-    Ok(base64::engine::general_purpose::STANDARD.encode(signature))
-}
-
-fn azure_sas_timestamp(ts: chrono::DateTime<chrono::Utc>) -> String {
-    ts.format("%Y-%m-%dT%H:%M:%SZ").to_string()
-}
-
-fn azure_blob_sas(
-    account: &str,
-    key_b64: &str,
-    container: &str,
-    blob: Option<&str>,
-    permissions: &str,
-    resource: &str,
-    expiry: chrono::DateTime<chrono::Utc>,
-) -> anyhow::Result<String> {
-    let key_b64 = key_b64.trim();
-    let start = chrono::Utc::now() - chrono::Duration::minutes(5);
-    let signed_start = azure_sas_timestamp(start);
-    let signed_expiry = azure_sas_timestamp(expiry);
-    let canonicalized = azure_canonicalized_resource(account, container, blob);
-    let signed_identifier = "";
-    let signed_ip = "";
-    let signed_protocol = "https";
-    let signed_version = "2026-02-06";
-    let signed_snapshot = "";
-    let signed_encryption_scope = "";
-    let rscc = "";
-    let rscd = "";
-    let rsce = "";
-    let rscl = "";
-    let rsct = "";
-    let string_to_sign = format!(
-        "{permissions}\n{signed_start}\n{signed_expiry}\n{canonicalized}\n{signed_identifier}\n{signed_ip}\n{signed_protocol}\n{signed_version}\n{resource}\n{signed_snapshot}\n{signed_encryption_scope}\n{rscc}\n{rscd}\n{rsce}\n{rscl}\n{rsct}"
-    );
-    let signature = azure_sas_signature(key_b64, &string_to_sign)?;
-    let mut serializer = form_urlencoded::Serializer::new(String::new());
-    serializer.append_pair("sv", signed_version);
-    serializer.append_pair("spr", signed_protocol);
-    serializer.append_pair("st", &signed_start);
-    serializer.append_pair("se", &signed_expiry);
-    serializer.append_pair("sr", resource);
-    serializer.append_pair("sp", permissions);
-    serializer.append_pair("sig", &signature);
-    Ok(serializer.finish())
-}
-
-async fn ensure_azure_blob_container(
-    arm: &AzureArmClient,
-    resource_group: &str,
-    account: &str,
-    container: &str,
-) -> anyhow::Result<()> {
-    let url = format!(
-        "{}/resourceGroups/{}/providers/Microsoft.Storage/storageAccounts/{}/blobServices/default/containers/{}?api-version=2023-01-01",
-        arm.api_base(),
-        resource_group,
-        account,
-        container
-    );
-    let body = serde_json::json!({ "properties": {} });
-    arm.request_allow_conflict(Method::PUT, &url, Some(body))
-        .await
-        .context("create azure container")?;
-    Ok(())
-}
-
-async fn upload_file_to_azure_blob(
-    http: &reqwest::Client,
-    account: &str,
-    container: &str,
-    blob: &str,
-    path: &StdPath,
-    key_b64: &str,
-) -> anyhow::Result<()> {
-    let expiry = chrono::Utc::now() + chrono::Duration::hours(1);
-    let sas = azure_blob_sas(account, key_b64, container, Some(blob), "cw", "b", expiry)?;
-    let url = format!("{}?{}", azure_blob_url(account, container, blob), sas);
-    let bytes = tokio::fs::read(path)
-        .await
-        .context("read azure blob upload")?;
-    let resp = http
-        .put(url)
-        .header("x-ms-blob-type", "BlockBlob")
-        .header("x-ms-version", "2026-02-06")
-        .body(bytes)
-        .send()
-        .await
-        .context("upload azure blob")?;
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let text = resp.text().await.unwrap_or_default();
-        anyhow::bail!("azure blob upload failed: {status} {text}");
-    }
-    Ok(())
-}
-
-fn azure_blob_download_url(
-    account: &str,
-    container: &str,
-    blob: &str,
-    key_b64: &str,
-    ttl: Duration,
-) -> anyhow::Result<String> {
-    let expiry =
-        chrono::Utc::now() + chrono::Duration::seconds(ttl.as_secs().min(i64::MAX as u64) as i64);
-    let sas = azure_blob_sas(account, key_b64, container, Some(blob), "r", "b", expiry)?;
-    Ok(format!(
-        "{}?{}",
-        azure_blob_url(account, container, blob),
-        sas
-    ))
-}
-
-async fn ensure_azure_network_security_group(
-    arm: &AzureArmClient,
-    resource_group: &str,
-    location: &str,
-    name: &str,
-    allow_ssh: bool,
-) -> anyhow::Result<()> {
-    let url = format!(
-        "{}/resourceGroups/{}/providers/Microsoft.Network/networkSecurityGroups/{}?api-version=2023-09-01",
-        arm.api_base(),
-        resource_group,
-        name
-    );
-    let mut rules = vec![serde_json::json!({
-        "name": "ctx-gateway-https",
-        "properties": {
-            "protocol": "Tcp",
-            "sourcePortRange": "*",
-            "destinationPortRange": "8787",
-            "sourceAddressPrefix": "*",
-            "destinationAddressPrefix": "*",
-            "access": "Allow",
-            "priority": 100,
-            "direction": "Inbound"
-        }
-    })];
-    if allow_ssh {
-        rules.push(serde_json::json!({
-            "name": "ctx-gateway-ssh",
-            "properties": {
-                "protocol": "Tcp",
-                "sourcePortRange": "*",
-                "destinationPortRange": "22",
-                "sourceAddressPrefix": "*",
-                "destinationAddressPrefix": "*",
-                "access": "Allow",
-                "priority": 110,
-                "direction": "Inbound"
-            }
-        }));
-    }
-    let body = serde_json::json!({
-        "location": location,
-        "properties": { "securityRules": rules }
-    });
-    arm.request(Method::PUT, &url, Some(body)).await?;
-    arm.wait_resource(&url).await
-}
-
-async fn ensure_azure_public_ip(
-    arm: &AzureArmClient,
-    resource_group: &str,
-    location: &str,
-    name: &str,
-) -> anyhow::Result<()> {
-    let url = format!(
-        "{}/resourceGroups/{}/providers/Microsoft.Network/publicIPAddresses/{}?api-version=2023-09-01",
-        arm.api_base(),
-        resource_group,
-        name
-    );
-    let body = serde_json::json!({
-        "location": location,
-        "sku": { "name": "Standard" },
-        "properties": { "publicIPAllocationMethod": "Static" }
-    });
-    arm.request(Method::PUT, &url, Some(body)).await?;
-    arm.wait_resource(&url).await
-}
-
-async fn ensure_azure_nic(
-    arm: &AzureArmClient,
-    resource_group: &str,
-    location: &str,
-    name: &str,
-    subnet_id: &str,
-    public_ip_id: &str,
-    network_security_group_id: Option<&str>,
-) -> anyhow::Result<()> {
-    let url = format!(
-        "{}/resourceGroups/{}/providers/Microsoft.Network/networkInterfaces/{}?api-version=2023-09-01",
-        arm.api_base(),
-        resource_group,
-        name
-    );
-    let ip_config = serde_json::json!({
-        "name": "ipconfig1",
-        "properties": {
-            "subnet": { "id": subnet_id },
-            "publicIPAddress": { "id": public_ip_id }
-        }
-    });
-    let mut props = serde_json::json!({
-        "ipConfigurations": [ip_config]
-    });
-    if let Some(nsg_id) = network_security_group_id {
-        props.as_object_mut().expect("nic props").insert(
-            "networkSecurityGroup".to_string(),
-            serde_json::json!({ "id": nsg_id }),
-        );
-    }
-    let body = serde_json::json!({
-        "location": location,
-        "properties": props
-    });
-    arm.request(Method::PUT, &url, Some(body)).await?;
-    arm.wait_resource(&url).await
-}
-
-async fn ensure_azure_vm(
-    arm: &AzureArmClient,
-    resource_group: &str,
-    location: &str,
-    name: &str,
-    nic_id: &str,
-    custom_data_b64: &str,
-    admin_username: &str,
-    ssh_public_key: &str,
-    vm_size: &str,
-    image: &str,
-) -> anyhow::Result<()> {
-    let url = format!(
-        "{}/resourceGroups/{}/providers/Microsoft.Compute/virtualMachines/{}?api-version=2023-07-01",
-        arm.api_base(),
-        resource_group,
-        name
-    );
-    let mut candidates = vec![vm_size.to_string()];
-    let fallbacks = [
-        "Standard_B1s",
-        "Standard_B1ls",
-        "Standard_D2s_v3",
-        "Standard_B2s",
-    ];
-    for fallback in fallbacks {
-        if fallback != vm_size {
-            candidates.push(fallback.to_string());
-        }
-    }
-
-    let mut last_err = None;
-    for size in candidates {
-        let body = serde_json::json!({
-            "location": location,
-            "identity": { "type": "SystemAssigned" },
-            "properties": {
-                "hardwareProfile": { "vmSize": size },
-                "storageProfile": {
-                    "imageReference": azure_image_reference(image),
-                    "osDisk": {
-                        "createOption": "FromImage"
-                    }
-                },
-                "osProfile": {
-                    "computerName": name,
-                    "adminUsername": admin_username,
-                    "customData": custom_data_b64,
-                    "linuxConfiguration": {
-                        "disablePasswordAuthentication": true,
-                        "ssh": {
-                            "publicKeys": [{
-                                "path": format!("/home/{}/.ssh/authorized_keys", admin_username),
-                                "keyData": ssh_public_key
-                            }]
-                        }
-                    }
-                },
-                "networkProfile": {
-                    "networkInterfaces": [{
-                        "id": nic_id,
-                        "properties": { "primary": true }
-                    }]
-                }
-            }
-        });
-        match arm.request(Method::PUT, &url, Some(body)).await {
-            Ok(_) => return arm.wait_resource(&url).await,
-            Err(err) => {
-                let message = err.to_string();
-                if message.contains("SkuNotAvailable")
-                    || message.contains("Hypervisor Generation")
-                    || message.contains("cannot boot Hypervisor Generation")
-                {
-                    tracing::warn!(vm_size = %size, "azure vm size rejected; trying fallback");
-                    last_err = Some(err);
-                    continue;
-                }
-                return Err(err);
-            }
-        }
-    }
-
-    Err(last_err.unwrap_or_else(|| anyhow::anyhow!("azure vm create failed")))
-}
-
-async fn wait_azure_public_ip(
-    arm: &AzureArmClient,
-    resource_group: &str,
-    public_ip_name: &str,
-) -> anyhow::Result<Option<String>> {
-    let url = format!(
-        "{}/resourceGroups/{}/providers/Microsoft.Network/publicIPAddresses/{}?api-version=2023-09-01",
-        arm.api_base(),
-        resource_group,
-        public_ip_name
-    );
-    for _ in 0..60 {
-        let resp = arm.request(Method::GET, &url, None).await?;
-        let ip = resp
-            .get("properties")
-            .and_then(|v| v.get("ipAddress"))
-            .and_then(|v| v.as_str())
-            .map(|v| v.to_string());
-        if ip.is_some() {
-            return Ok(ip);
-        }
-        tokio::time::sleep(Duration::from_secs(5)).await;
-    }
-    Ok(None)
-}
-
-#[allow(dead_code)]
-async fn wait_azure_vm_principal_id(
-    arm: &AzureArmClient,
-    resource_group: &str,
-    vm_name: &str,
-) -> anyhow::Result<String> {
-    let url = format!(
-        "{}/resourceGroups/{}/providers/Microsoft.Compute/virtualMachines/{}?api-version=2023-07-01",
-        arm.api_base(),
-        resource_group,
-        vm_name
-    );
-    for _ in 0..60 {
-        let resp = arm.request(Method::GET, &url, None).await?;
-        if let Some(principal_id) = resp
-            .get("identity")
-            .and_then(|v| v.get("principalId"))
-            .and_then(|v| v.as_str())
-        {
-            return Ok(principal_id.to_string());
-        }
-        tokio::time::sleep(Duration::from_secs(5)).await;
-    }
-    anyhow::bail!("azure managed identity not ready")
-}
-
-#[allow(dead_code)]
-async fn ensure_azure_role_assignment(
-    arm: &AzureArmClient,
-    resource_group: &str,
-    principal_id: &str,
-) -> anyhow::Result<()> {
-    const CONTRIBUTOR_ROLE_ID: &str = "b24988ac-6180-42a0-ab88-20f7382dd24c";
-    let scope = format!(
-        "/subscriptions/{}/resourceGroups/{}",
-        arm.subscription_id, resource_group
-    );
-    let assignment_id = uuid::Uuid::new_v4().simple().to_string();
-    let role_definition_id =
-        format!("{scope}/providers/Microsoft.Authorization/roleDefinitions/{CONTRIBUTOR_ROLE_ID}");
-    let url = format!(
-        "https://management.azure.com{scope}/providers/Microsoft.Authorization/roleAssignments/{assignment_id}?api-version=2022-04-01"
-    );
-    let body = serde_json::json!({
-        "properties": {
-            "roleDefinitionId": role_definition_id,
-            "principalId": principal_id,
-            "principalType": "ServicePrincipal"
-        }
-    });
-    for attempt in 0..12 {
-        match arm
-            .request_allow_conflict(Method::PUT, &url, Some(body.clone()))
-            .await
-        {
-            Ok(_) => return Ok(()),
-            Err(err) => {
-                let message = err.to_string();
-                let is_propagation = message.contains("PrincipalNotFound")
-                    || message.contains("principalId")
-                    || message.contains("principal");
-                if attempt >= 11 || !is_propagation {
-                    return Err(err);
-                }
-            }
-        }
-        tokio::time::sleep(Duration::from_secs(5)).await;
-    }
-    anyhow::bail!("azure role assignment failed to propagate")
-}
-
 async fn start_track_worker(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
