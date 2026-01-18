@@ -126,8 +126,8 @@ async fn run_acp_fake() -> Result<()> {
                     .pointer("/params/sessionId")
                     .and_then(|v| v.as_str())
                     .unwrap_or("sess_1");
-                let response_text = extract_expected_reply(&value)
-                    .unwrap_or_else(|| "ok".to_string());
+                let response_text =
+                    extract_expected_reply(&value).unwrap_or_else(|| "ok".to_string());
 
                 let update = serde_json::json!({
                     "jsonrpc": "2.0",

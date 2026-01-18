@@ -209,7 +209,10 @@ async fn wait_for_worker_ready(
             if resp.status().is_success() {
                 let info: GatewayWorkerInfo = resp.json().await.context("parsing worker info")?;
                 if matches!(info.state, GatewayWorkerState::Running)
-                    && (info.acp_log_dir.as_ref().is_some_and(|v| !v.trim().is_empty())
+                    && (info
+                        .acp_log_dir
+                        .as_ref()
+                        .is_some_and(|v| !v.trim().is_empty())
                         || info.last_diff_at.is_some())
                 {
                     return Ok(info);

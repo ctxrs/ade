@@ -14765,10 +14765,13 @@ async fn launch_azure_gateway_inner(
     let public_ip_name = azure_sanitize_name("ctx-gateway-ip", &gateway_id);
     let nsg_name = azure_sanitize_name("ctx-gateway-nsg", &gateway_id);
     let resource_base = arm.resource_base();
-    let subnet_id =
-        azure_subnet_id(&resource_base, &azure.resource_group, &azure.vnet, &azure.subnet);
-    let public_ip_id =
-        azure_public_ip_id(&resource_base, &azure.resource_group, &public_ip_name);
+    let subnet_id = azure_subnet_id(
+        &resource_base,
+        &azure.resource_group,
+        &azure.vnet,
+        &azure.subnet,
+    );
+    let public_ip_id = azure_public_ip_id(&resource_base, &azure.resource_group, &public_ip_name);
     let nic_id = azure_nic_id(&resource_base, &azure.resource_group, &nic_name);
     let nsg_id = azure_nsg_id(&resource_base, &azure.resource_group, &nsg_name);
 
@@ -16509,7 +16512,8 @@ fn render_gcp_gateway_startup_script(spec: &GcpGatewayStartupSpec<'_>) -> String
     script.push_str("  for _ in 1 2 3 4 5; do\n");
     script.push_str("    if command -v apt-get >/dev/null 2>&1; then\n");
     script.push_str("      export DEBIAN_FRONTEND=noninteractive\n");
-    script.push_str("      apt-get update -y && apt-get install -y curl ca-certificates && break\n");
+    script
+        .push_str("      apt-get update -y && apt-get install -y curl ca-certificates && break\n");
     script.push_str("    elif command -v dnf >/dev/null 2>&1; then\n");
     script.push_str("      dnf install -y curl ca-certificates && break\n");
     script.push_str("    elif command -v yum >/dev/null 2>&1; then\n");
